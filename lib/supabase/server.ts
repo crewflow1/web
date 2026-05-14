@@ -14,30 +14,41 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * For privileged operations that need to bypass RLS (e.g., creating a
  * user's mirror row before they have any memberships), use the admin
  * client from ./admin instead.
+ *
+ * Env vars are read into constants and asserted explicitly so a missing
+ * anon key fails loudly here instead of producing Supabase's downstream
+ * "No API key found in request" error during signInWithOAuth /
+ * exchangeCodeForSession.
  */
 export async function createClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  }
+  if (!supabaseAnonKey) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+
   const cookieStore = await cookies();
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: CookieToSet[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
-            );
-          } catch {
-            // Setting cookies from a Server Component throws.
-            // The middleware refreshes sessions on every request, so this
-            // is safe to ignore here.
-          }
-        },
+  return createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet: CookieToSet[]) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options),
+          );
+        } catch {
+          // Setting cookies from a Server Component throws.
+          // The middleware refreshes sessions on every request, so this
+          // is safe to ignore here.
+        }
       },
     },
-  );
+  });
 }
