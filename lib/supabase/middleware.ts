@@ -26,7 +26,7 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet: any[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
@@ -64,16 +64,28 @@ export async function updateSession(request: NextRequest) {
     pathname === "/signup" ||
     pathname.startsWith("/check-email");
 
+  // Build a redirect response that preserves any session cookies Supabase
+  // wrote during getUser(). Without this, a refreshed JWT cookie that landed
+  // on `supabaseResponse` would be lost the moment we returned a brand-new
+  // NextResponse.redirect — causing auth loops and stale sessions.
+  const redirectTo = (url: URL) => {
+    const response = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      response.cookies.set(cookie);
+    });
+    return response;
+  };
+
   // Logged in but visiting auth pages → send them in.
   if (user && isAuthFlow) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return redirectTo(new URL("/dashboard", request.url));
   }
 
   // Logged out and visiting anything else → send them to login.
   if (!user && !isPublicRoute && !isAuthFlow) {
     const url = new URL("/login", request.url);
     if (pathname !== "/") url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+    return redirectTo(url);
   }
 
   return supabaseResponse;

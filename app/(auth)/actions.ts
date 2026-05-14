@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { env } from "@/lib/env";
 
 function getOrigin(headerList: Headers): string {
   const fromHeader = headerList.get("origin") ?? headerList.get("referer");
@@ -14,7 +15,7 @@ function getOrigin(headerList: Headers): string {
       // fall through to env
     }
   }
-  return process.env.NEXT_PUBLIC_APP_URL ?? "https://crewflow.uk";
+  return env.NEXT_PUBLIC_APP_URL;
 }
 
 /**
@@ -44,6 +45,10 @@ export async function signInWithGoogle() {
   if (data?.url) {
     redirect(data.url);
   }
+
+  // Defensive: Supabase returned neither an error nor a URL. Don't leave the
+  // form silently broken — surface it so the user can retry.
+  redirect("/login?error=oauth_no_url");
 }
 
 const magicLinkSchema = z.object({

@@ -7,6 +7,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing_code: "Sign-in link was invalid or already used. Try again.",
   auth_failed: "We couldn't sign you in. Please try again.",
   bootstrap_failed: "Account created but something went wrong setting it up. Try again.",
+  oauth_no_url: "We couldn't start the Google sign-in. Please try again.",
 };
 
 export default async function LoginPage({
