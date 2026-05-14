@@ -14,7 +14,7 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  *   3. Redirect authenticated visitors away from /login & /signup.
  *
  * The "do they have an org?" check is intentionally done in the
- * (app) and (onboarding) layouts instead of here — that keeps middleware
+ * (app) and onboarding layouts instead of here — that keeps middleware
  * fast and avoids a DB query on every public-page request.
  *
  * Env vars are read into constants and asserted explicitly so a missing
