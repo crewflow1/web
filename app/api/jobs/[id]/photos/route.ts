@@ -13,15 +13,13 @@ import { requireOrgContext } from "@/server/auth/session";
  *                                signed URL for in-browser display.
  *
  * RLS posture:
- *   - jobs.photos UPDATE is admin-only at the DB (per Phase-2 spec).
  *   - storage.objects writes are open to any org member.
- *   - => Without admin rights, the upload succeeds in storage but the
- *     jobs.photos array update fails silently (count = 0). We undo the
- *     orphan storage upload in that case so the bucket stays clean.
- *
- * Note: the photos column being admin-only update is the existing prod
- * RLS rule. If you want staff to upload-but-not-edit, we'd loosen the
- * `jobs UPDATE` policy in a follow-up — out of scope for this PR.
+ *   - Mutations to jobs.photos go through the SECURITY DEFINER RPCs
+ *     append_job_photo() / remove_job_photo() so any org member can
+ *     attach/detach photos. All other jobs columns remain admin-only
+ *     to update (the broader "jobs: admins can update" policy stands).
+ *   - The RPCs verify org membership against the caller's auth.uid()
+ *     before touching the row.
  */
 
 const MAX_FILES_PER_REQUEST = 10;
@@ -154,26 +152,39 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     uploaded.push(path);
   }
 
-  // Append to jobs.photos. RLS allows only admins to update jobs, so this
-  // can return count=0 for non-admins. Treat that as a permission error.
-  const next = [...(job.photos ?? []), ...uploaded];
-  const { error: updErr, count } = await supabase
-    .from("jobs")
-    .update({ photos: next }, { count: "exact" })
-    .eq("id", jobId);
-
-  if (updErr || count === 0) {
-    console.error("[job photos] photos-array update failed", updErr);
-    // Roll back storage so we don't accumulate orphans.
-    await admin.storage.from("job-photos").remove(uploaded);
-    return NextResponse.json(
-      {
-        error: updErr
-          ? "Failed to attach photos to job"
-          : "Only admins/owners can attach photos to a job",
-      },
-      { status: updErr ? 500 : 403 },
-    );
+  // Append each uploaded path via the SECURITY DEFINER RPC so any org
+  // member (not just admins) can attach. If any append fails, roll back
+  // both the storage uploads from this batch AND the prior appends that
+  // succeeded in this batch — leaves no orphans and no partial-state
+  // photos array.
+  const appended: string[] = [];
+  for (const path of uploaded) {
+    const { error: rpcErr } = await supabase.rpc("append_job_photo", {
+      target_job_id: jobId,
+      photo_path: path,
+    });
+    if (rpcErr) {
+      console.error("[job photos] append RPC failed", rpcErr);
+      // Best-effort rollback of paths already appended in this batch.
+      for (const a of appended) {
+        await supabase.rpc("remove_job_photo", {
+          target_job_id: jobId,
+          photo_path: a,
+        });
+      }
+      // Clean every uploaded object from storage.
+      await admin.storage.from("job-photos").remove(uploaded);
+      const forbidden = rpcErr.code === "42501";
+      return NextResponse.json(
+        {
+          error: forbidden
+            ? "Not a member of this org"
+            : "Failed to attach photos to job",
+        },
+        { status: forbidden ? 403 : 500 },
+      );
+    }
+    appended.push(path);
   }
 
   return NextResponse.json({ uploaded }, { status: 201 });

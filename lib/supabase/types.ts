@@ -1078,9 +1078,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      append_job_photo: {
+        Args: { photo_path: string; target_job_id: string }
+        Returns: undefined
+      }
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }
       next_invoice_number: { Args: { target_org: string }; Returns: string }
+      remove_job_photo: {
+        Args: { photo_path: string; target_job_id: string }
+        Returns: undefined
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
