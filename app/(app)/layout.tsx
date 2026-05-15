@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
+import { Sidebar } from "./_components/sidebar";
 
 export default async function AppLayout({
   children,
@@ -23,7 +24,9 @@ export default async function AppLayout({
             <span className="text-slate-300" aria-hidden>
               /
             </span>
-            <span className="truncate text-sm text-slate-600">{ctx.org.name}</span>
+            <span className="truncate text-sm text-slate-600">
+              {ctx.org.name}
+            </span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -42,7 +45,10 @@ export default async function AppLayout({
         </div>
       </header>
 
-      <main className="container py-6 sm:py-10">{children}</main>
+      <div className="flex">
+        <Sidebar />
+        <main className="container flex-1 py-6 sm:py-10">{children}</main>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
+import type { Database } from "./types";
 
 /**
  * Browser Supabase client.
@@ -23,5 +24,5 @@ export function createClient() {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  return createBrowserClient<Database>(supabaseUrl, supabaseAnonKey);
 }
