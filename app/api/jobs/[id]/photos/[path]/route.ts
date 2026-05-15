@@ -8,11 +8,16 @@ import { requireOrgContext } from "@/server/auth/session";
  *
  *   DELETE /api/jobs/[id]/photos/[path]
  *
- * `path` is the URL-encoded last segment of the storage path (the filename
- * within the <org_id>/<job_id>/ folder).
+ * `path` is the URL-encoded last segment of the storage path (the
+ * filename within the <org_id>/<job_id>/ folder).
  *
- * RLS gates the jobs.photos update to admins/owners; storage delete on
- * `job-photos` is also admin-only. Non-admin requests get 403.
+ * Permission model:
+ *   - jobs.photos mutation goes through remove_job_photo() SECURITY
+ *     DEFINER RPC — any org member can detach. The RPC enforces org
+ *     membership via auth.uid() before touching the row.
+ *   - Storage object deletion uses the service-role admin client. We've
+ *     already verified org membership via the RPC return, so this is
+ *     a safe follow-up.
  */
 
 type Ctx = { params: Promise<{ id: string; path: string }> };
@@ -38,34 +43,33 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Photo not on this job" }, { status: 404 });
   }
 
-  // Remove from array first under user JWT (admin-only via RLS).
-  const next = current.filter((p) => p !== fullPath);
-  const { error: updErr, count } = await supabase
-    .from("jobs")
-    .update({ photos: next }, { count: "exact" })
-    .eq("id", jobId);
-
-  if (updErr) {
-    console.error("[job photos] update failed during delete", updErr);
-    return NextResponse.json({ error: "Failed to update job" }, { status: 500 });
-  }
-  if (count === 0) {
+  // Detach from jobs.photos via the SECURITY DEFINER RPC (members allowed).
+  const { error: rpcErr } = await supabase.rpc("remove_job_photo", {
+    target_job_id: jobId,
+    photo_path: fullPath,
+  });
+  if (rpcErr) {
+    console.error("[job photos] remove RPC failed", rpcErr);
+    const forbidden = rpcErr.code === "42501";
     return NextResponse.json(
-      { error: "Only admins/owners can delete job photos" },
-      { status: 403 },
+      {
+        error: forbidden ? "Not a member of this org" : "Failed to detach photo",
+      },
+      { status: forbidden ? 403 : 500 },
     );
   }
 
-  // Now remove the storage object. Use admin client since the storage-delete
-  // policy is admin-only and we've already verified admin via the row update.
+  // Remove the underlying storage object. Storage delete policy on the
+  // bucket is admin-only; we use the service-role admin client so this
+  // succeeds regardless of role (RPC already enforced membership above).
   const admin = createAdminClient();
   const { error: rmErr } = await admin.storage
     .from("job-photos")
     .remove([fullPath]);
   if (rmErr) {
     console.error("[job photos] storage delete failed", rmErr);
-    // The row is already updated; the object may stay orphaned but the
-    // user sees it gone from the gallery. Surface as warning.
+    // The row is already updated; surface partial success so the caller
+    // can see the gallery item is gone but the underlying object lingered.
     return NextResponse.json({ ok: true, warning: "Object cleanup failed" });
   }
 
