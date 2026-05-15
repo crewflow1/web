@@ -198,6 +198,66 @@ export type Database = {
           },
         ]
       }
+      finances: {
+        Row: {
+          amount: number
+          category: string | null
+          created_at: string
+          currency: string
+          id: string
+          job_id: string | null
+          notes: string | null
+          org_id: string
+          receipt_url: string | null
+          updated_at: string
+          vat_rate: number
+          vat_total: number | null
+        }
+        Insert: {
+          amount: number
+          category?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          org_id: string
+          receipt_url?: string | null
+          updated_at?: string
+          vat_rate?: number
+          vat_total?: number | null
+        }
+        Update: {
+          amount?: number
+          category?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          org_id?: string
+          receipt_url?: string | null
+          updated_at?: string
+          vat_rate?: number
+          vat_total?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finances_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finances_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       jobs: {
         Row: {
           ai_summary: string | null
