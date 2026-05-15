@@ -17,6 +17,7 @@ const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/jobs", label: "Jobs" },
   { href: "/customers", label: "Customers" },
+  { href: "/finances", label: "Finances" },
 ];
 
 export function Sidebar() {
