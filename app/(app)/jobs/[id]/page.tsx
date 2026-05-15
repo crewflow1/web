@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { Field, TextareaField, SelectField } from "../../_components/field";
+import { PhotoGallery } from "./_photo-gallery";
 
 /**
  * Job edit page.
@@ -158,6 +159,8 @@ export default async function EditJobPage({
           </Link>
         </div>
       </form>
+
+      <PhotoGallery jobId={job.id} />
 
       <form
         action={deleteAction}
