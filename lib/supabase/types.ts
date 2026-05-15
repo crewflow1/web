@@ -258,6 +258,72 @@ export type Database = {
           },
         ]
       }
+      invoices: {
+        Row: {
+          amount: number
+          created_at: string
+          due_date: string | null
+          id: string
+          notes: string | null
+          number: string
+          org_id: string
+          paid_at: string | null
+          quote_id: string | null
+          sent_at: string | null
+          status: Database["public"]["Enums"]["invoice_status"]
+          total: number | null
+          updated_at: string
+          vat_total: number
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          number: string
+          org_id: string
+          paid_at?: string | null
+          quote_id?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["invoice_status"]
+          total?: number | null
+          updated_at?: string
+          vat_total?: number
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          number?: string
+          org_id?: string
+          paid_at?: string | null
+          quote_id?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["invoice_status"]
+          total?: number | null
+          updated_at?: string
+          vat_total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoices_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       jobs: {
         Row: {
           ai_summary: string | null
@@ -1014,11 +1080,12 @@ export type Database = {
     Functions: {
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }
+      next_invoice_number: { Args: { target_org: string }; Returns: string }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      [_ in never]: never
+      invoice_status: "draft" | "sent" | "paid" | "overdue"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1145,6 +1212,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      invoice_status: ["draft", "sent", "paid", "overdue"],
+    },
   },
 } as const
