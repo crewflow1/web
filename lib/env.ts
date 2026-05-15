@@ -81,7 +81,6 @@ const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   // Log to server console and crash early. Vercel build logs will surface this.
-  // eslint-disable-next-line no-console
   console.error(
     "❌ Invalid environment variables:",
     JSON.stringify(parsed.error.flatten().fieldErrors, null, 2),

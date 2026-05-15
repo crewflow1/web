@@ -11,7 +11,6 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     // Block 2 wires this to Sentry.captureException(error)
-    // eslint-disable-next-line no-console
     console.error(error);
   }, [error]);
 
