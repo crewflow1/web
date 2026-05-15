@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import type { Database } from "./types";
 
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
 
@@ -34,7 +35,7 @@ export async function updateSession(request: NextRequest) {
 
   let supabaseResponse = NextResponse.next({ request });
 
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+  const supabase = createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -68,7 +69,8 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/terms") ||
     pathname.startsWith("/q/") || // public quote accept (Block 4)
     pathname.startsWith("/auth/callback") ||
-    pathname === "/api/health";
+    pathname === "/api/health" ||
+    pathname === "/api/waitlist";
 
   // Auth-flow pages (login / signup / check-email).
   const isAuthFlow =
