@@ -3,6 +3,7 @@ import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
 import { Sidebar } from "./_components/sidebar";
 import { OrgSwitcher } from "./_components/org-switcher";
+import { BottomNav } from "./_components/bottom-nav";
 
 export default async function AppLayout({
   children,
@@ -50,8 +51,12 @@ export default async function AppLayout({
 
       <div className="flex">
         <Sidebar />
-        <main className="container flex-1 py-6 sm:py-10">{children}</main>
+        {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
+        <main className="container flex-1 py-6 pb-24 sm:py-10 md:pb-10">
+          {children}
+        </main>
       </div>
+      <BottomNav />
     </div>
   );
 }

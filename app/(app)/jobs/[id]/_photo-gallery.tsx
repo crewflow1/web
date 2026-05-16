@@ -160,7 +160,9 @@ export function PhotoGallery({ jobId }: { jobId: string }) {
                 <button
                   type="button"
                   onClick={() => onDelete(p)}
-                  className="absolute right-1.5 top-1.5 rounded-md bg-white/90 px-2 py-0.5 text-xs font-medium text-red-700 opacity-0 shadow-sm transition group-hover:opacity-100 hover:bg-white"
+                  // Always visible on touch devices; fades in on hover for
+                  // mouse users (covers both cases without a JS check).
+                  className="absolute right-1.5 top-1.5 rounded-md bg-white/90 px-2 py-0.5 text-xs font-medium text-red-700 shadow-sm transition hover:bg-white md:opacity-0 md:group-hover:opacity-100"
                   aria-label={`Delete ${filename}`}
                 >
                   Delete

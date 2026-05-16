@@ -117,6 +117,7 @@ export default async function InvoiceDetailPage({
             <h2 className="text-base font-semibold text-slate-900">Line items</h2>
             <p className="text-xs text-slate-500">From quote {invoice.quote_id?.slice(0, 8)}</p>
           </header>
+          <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
@@ -145,6 +146,7 @@ export default async function InvoiceDetailPage({
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       ) : (
         <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
