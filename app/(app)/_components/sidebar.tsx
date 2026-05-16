@@ -19,6 +19,7 @@ const LINKS = [
   { href: "/customers", label: "Customers" },
   { href: "/finances", label: "Finances" },
   { href: "/invoices", label: "Invoices" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function Sidebar() {
