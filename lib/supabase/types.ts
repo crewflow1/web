@@ -14,6 +14,50 @@ export type Database = {
   }
   public: {
     Tables: {
+      activity_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_name: string | null
+          created_at: string
+          id: string
+          metadata: Json | null
+          org_id: string
+          target_id: string
+          target_table: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          org_id: string
+          target_id: string
+          target_table: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_name?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          org_id?: string
+          target_id?: string
+          target_table?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       calls: {
         Row: {
           ai_extracted: Json | null
@@ -1096,6 +1140,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _record_activity: {
+        Args: {
+          p_action: string
+          p_actor_override?: string
+          p_metadata?: Json
+          p_org_id: string
+          p_target_id: string
+          p_target_table: string
+        }
+        Returns: undefined
+      }
       append_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
