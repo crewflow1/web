@@ -51,7 +51,7 @@ export default async function SettingsPage({
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, phone, vat_number, address")
+    .select("id, name, phone, vat_number, address, logo_url, default_terms, bank_details")
     .eq("id", ctx.org.id)
     .maybeSingle();
 
@@ -62,6 +62,13 @@ export default async function SettingsPage({
 
   const address =
     (org?.address as { line1?: string; city?: string; postcode?: string } | null) ?? {};
+  const bank =
+    (org?.bank_details as {
+      name?: string;
+      sort_code?: string;
+      account_number?: string;
+      reference?: string;
+    } | null) ?? {};
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;
   const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? "Saved." : null;
@@ -194,6 +201,74 @@ export default async function SettingsPage({
                 optional
                 defaultValue={address.postcode ?? ""}
               />
+            </div>
+
+            <div className="border-t border-slate-200 pt-5">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Branding &amp; payment details
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Shown on quote and invoice PDFs sent to customers.
+              </p>
+              <div className="mt-4 space-y-4">
+                <Field
+                  name="logo_url"
+                  label="Logo URL"
+                  type="url"
+                  optional
+                  placeholder="https://yourbrand.com/logo.png"
+                  defaultValue={org?.logo_url ?? ""}
+                  help="A publicly accessible image URL. Square or wide PNG/JPEG works best."
+                />
+                <div>
+                  <label
+                    htmlFor="default_terms"
+                    className="block text-sm font-medium text-slate-800"
+                  >
+                    Default terms <span className="text-xs text-slate-400">Optional</span>
+                  </label>
+                  <textarea
+                    id="default_terms"
+                    name="default_terms"
+                    rows={4}
+                    defaultValue={org?.default_terms ?? ""}
+                    className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    placeholder="50% deposit on acceptance, balance on completion. Materials warranty 12 months..."
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Pre-fills the Terms field on new quotes.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field
+                    name="bank_name"
+                    label="Bank account name"
+                    optional
+                    defaultValue={bank.name ?? ""}
+                  />
+                  <Field
+                    name="bank_sort_code"
+                    label="Sort code"
+                    optional
+                    placeholder="20-00-00"
+                    defaultValue={bank.sort_code ?? ""}
+                  />
+                  <Field
+                    name="bank_account_number"
+                    label="Account number"
+                    optional
+                    placeholder="12345678"
+                    defaultValue={bank.account_number ?? ""}
+                  />
+                  <Field
+                    name="bank_reference"
+                    label="Default reference"
+                    optional
+                    placeholder="Defaults to invoice/quote number"
+                    defaultValue={bank.reference ?? ""}
+                  />
+                </div>
+              </div>
             </div>
           </fieldset>
           {isAdmin ? (

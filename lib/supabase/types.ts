@@ -621,8 +621,10 @@ export type Database = {
       organizations: {
         Row: {
           address: Json | null
+          bank_details: Json | null
           country: string
           created_at: string
+          default_terms: string | null
           email: string | null
           id: string
           logo_url: string | null
@@ -639,8 +641,10 @@ export type Database = {
         }
         Insert: {
           address?: Json | null
+          bank_details?: Json | null
           country?: string
           created_at?: string
+          default_terms?: string | null
           email?: string | null
           id?: string
           logo_url?: string | null
@@ -657,8 +661,10 @@ export type Database = {
         }
         Update: {
           address?: Json | null
+          bank_details?: Json | null
           country?: string
           created_at?: string
+          default_terms?: string | null
           email?: string | null
           id?: string
           logo_url?: string | null
@@ -1085,6 +1091,7 @@ export type Database = {
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }
       next_invoice_number: { Args: { target_org: string }; Returns: string }
+      next_quote_number: { Args: { target_org: string }; Returns: string }
       remove_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined

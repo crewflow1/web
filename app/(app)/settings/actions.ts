@@ -29,38 +29,34 @@ const profileSchema = z.object({
     .or(z.literal("").transform(() => undefined)),
 });
 
+const optional = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .or(z.literal("").transform(() => undefined));
+
 const orgSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  phone: z
+  phone: optional(50),
+  vat_number: optional(50),
+  address_line1: optional(200),
+  address_city: optional(100),
+  address_postcode: optional(20),
+  // PDF branding (added in 4B / quotes module)
+  logo_url: z
     .string()
     .trim()
-    .max(50)
+    .url("Logo URL must be a full https://… URL")
+    .max(500)
     .optional()
     .or(z.literal("").transform(() => undefined)),
-  vat_number: z
-    .string()
-    .trim()
-    .max(50)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  address_line1: z
-    .string()
-    .trim()
-    .max(200)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  address_city: z
-    .string()
-    .trim()
-    .max(100)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  address_postcode: z
-    .string()
-    .trim()
-    .max(20)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
+  default_terms: optional(20000),
+  bank_name: optional(200),
+  bank_sort_code: optional(20),
+  bank_account_number: optional(30),
+  bank_reference: optional(100),
 });
 
 export async function updateProfile(formData: FormData) {
@@ -105,6 +101,12 @@ export async function updateOrganization(formData: FormData) {
     address_line1: formData.get("address_line1") ?? "",
     address_city: formData.get("address_city") ?? "",
     address_postcode: formData.get("address_postcode") ?? "",
+    logo_url: formData.get("logo_url") ?? "",
+    default_terms: formData.get("default_terms") ?? "",
+    bank_name: formData.get("bank_name") ?? "",
+    bank_sort_code: formData.get("bank_sort_code") ?? "",
+    bank_account_number: formData.get("bank_account_number") ?? "",
+    bank_reference: formData.get("bank_reference") ?? "",
   });
   if (!parsed.success) {
     redirect("/settings?error=invalid_org");
@@ -119,6 +121,16 @@ export async function updateOrganization(formData: FormData) {
   ].filter(([, v]) => v !== undefined && v !== null && v !== "");
   const address = addressEntries.length > 0 ? Object.fromEntries(addressEntries) : null;
 
+  // Collapse the four bank fields into a single jsonb blob (null if all empty).
+  const bankEntries = [
+    ["name", parsed.data.bank_name],
+    ["sort_code", parsed.data.bank_sort_code],
+    ["account_number", parsed.data.bank_account_number],
+    ["reference", parsed.data.bank_reference],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== "");
+  const bank_details =
+    bankEntries.length > 0 ? Object.fromEntries(bankEntries) : null;
+
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("organizations")
@@ -128,6 +140,9 @@ export async function updateOrganization(formData: FormData) {
         phone: parsed.data.phone ?? null,
         vat_number: parsed.data.vat_number ?? null,
         address,
+        logo_url: parsed.data.logo_url ?? null,
+        default_terms: parsed.data.default_terms ?? null,
+        bank_details,
       },
       { count: "exact" },
     )

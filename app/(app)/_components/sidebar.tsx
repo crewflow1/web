@@ -17,6 +17,7 @@ const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/jobs", label: "Jobs" },
   { href: "/customers", label: "Customers" },
+  { href: "/quotes", label: "Quotes" },
   { href: "/finances", label: "Finances" },
   { href: "/invoices", label: "Invoices" },
   { href: "/settings", label: "Settings" },
