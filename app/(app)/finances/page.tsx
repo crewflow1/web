@@ -248,7 +248,7 @@ export default async function FinancesPage({
         </Link>
       </form>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         {!rows || rows.length === 0 ? (
           <EmptyState
             icon="🧾"
