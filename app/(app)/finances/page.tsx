@@ -5,6 +5,7 @@ import {
   FINANCE_CATEGORIES,
   FINANCE_VAT_RATES,
 } from "@/lib/finances/schema";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Finances list — server component.
@@ -249,15 +250,12 @@ export default async function FinancesPage({
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         {!rows || rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            No finance entries yet.{" "}
-            <Link
-              href="/finances/new"
-              className="font-medium text-slate-900 underline"
-            >
-              Add the first one.
-            </Link>
-          </div>
+          <EmptyState
+            icon="🧾"
+            title="No finance entries yet"
+            body="Log receipts, expenses, and earnings. VAT is computed automatically; you can export the lot to CSV at quarter-end."
+            primary={{ href: "/finances/new", label: "Add first entry" }}
+          />
         ) : (
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">

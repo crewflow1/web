@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Invoices list.
@@ -103,15 +104,12 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         {!rows || rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            No invoices yet.{" "}
-            <Link
-              href="/invoices/new"
-              className="font-medium text-slate-900 underline"
-            >
-              Generate one from a quote.
-            </Link>
-          </div>
+          <EmptyState
+            icon="💷"
+            title="No invoices yet"
+            body="Once a quote is accepted, generate a sequential HMRC-compliant invoice from it. Status transitions stamp sent/paid timestamps for the audit trail."
+            primary={{ href: "/invoices/new", label: "Generate first invoice" }}
+          />
         ) : (
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">

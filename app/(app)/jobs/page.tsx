@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Jobs list.
@@ -68,12 +69,13 @@ export default async function JobsPage() {
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         {rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            No jobs yet.{" "}
-            <Link href="/jobs/new" className="font-medium text-slate-900 underline">
-              Create the first one.
-            </Link>
-          </div>
+          <EmptyState
+            icon="🔧"
+            title="No jobs yet"
+            body="Schedule your first job — pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses."
+            primary={{ href: "/jobs/new", label: "Create first job" }}
+            secondary={{ href: "/customers/new", label: "Add a customer first" }}
+          />
         ) : (
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
