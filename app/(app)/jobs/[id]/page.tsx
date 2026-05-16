@@ -30,7 +30,7 @@ export default async function EditJobPage({
     .from("jobs")
     .select(
       `
-        id, status, scheduled_date, notes, customer_id, assigned_to,
+        id, status, scheduled_date, notes, customer_id, assigned_to, recurring,
         customer:customers ( id, name )
       `,
     )
@@ -136,6 +136,37 @@ export default async function EditJobPage({
           optional
           defaultValue={job.scheduled_date ?? ""}
         />
+
+        {(() => {
+          const recurring =
+            (job.recurring as { pattern?: string; end_date?: string } | null) ??
+            null;
+          return (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SelectField
+                name="recurring_pattern"
+                label="Recurring"
+                defaultValue={recurring?.pattern ?? ""}
+                options={[
+                  { value: "", label: "One-off" },
+                  { value: "weekly", label: "Weekly" },
+                  { value: "biweekly", label: "Every 2 weeks" },
+                  { value: "monthly", label: "Monthly" },
+                  { value: "quarterly", label: "Quarterly" },
+                ]}
+                help="Shows extra occurrences on the calendar from the scheduled date."
+              />
+              <Field
+                name="recurring_end_date"
+                label="Repeat until"
+                type="date"
+                optional
+                defaultValue={recurring?.end_date ?? ""}
+              />
+            </div>
+          );
+        })()}
+
         <TextareaField
           name="notes"
           label="Notes"

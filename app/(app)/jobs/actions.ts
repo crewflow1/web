@@ -24,6 +24,8 @@ import { requireOrgContext } from "@/server/auth/session";
 
 const STATUSES = ["new", "in-progress", "completed", "blocked"] as const;
 
+const RECURRING_PATTERNS = ["weekly", "biweekly", "monthly", "quarterly"] as const;
+
 const jobSchema = z.object({
   customer_id: z.string().uuid().or(z.literal("").transform(() => undefined)).optional(),
   assigned_to: z.string().uuid().or(z.literal("").transform(() => undefined)).optional(),
@@ -34,6 +36,15 @@ const jobSchema = z.object({
     .or(z.literal("").transform(() => undefined))
     .optional(),
   notes: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
+  recurring_pattern: z
+    .enum(RECURRING_PATTERNS)
+    .or(z.literal("").transform(() => undefined))
+    .optional(),
+  recurring_end_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+    .or(z.literal("").transform(() => undefined))
+    .optional(),
 });
 
 function parseForm(formData: FormData) {
@@ -43,7 +54,17 @@ function parseForm(formData: FormData) {
     status: formData.get("status") ?? "new",
     scheduled_date: formData.get("scheduled_date") ?? "",
     notes: formData.get("notes") ?? "",
+    recurring_pattern: formData.get("recurring_pattern") ?? "",
+    recurring_end_date: formData.get("recurring_end_date") ?? "",
   });
+}
+
+function buildRecurring(
+  pattern: string | undefined,
+  endDate: string | undefined,
+): { pattern: string; end_date?: string } | null {
+  if (!pattern) return null;
+  return endDate ? { pattern, end_date: endDate } : { pattern };
 }
 
 export async function createJob(formData: FormData) {
@@ -55,6 +76,10 @@ export async function createJob(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const recurring = buildRecurring(
+    parsed.data.recurring_pattern,
+    parsed.data.recurring_end_date,
+  );
   const { data, error } = await supabase
     .from("jobs")
     .insert({
@@ -64,6 +89,7 @@ export async function createJob(formData: FormData) {
       status: parsed.data.status,
       scheduled_date: parsed.data.scheduled_date ?? null,
       notes: parsed.data.notes ?? null,
+      recurring,
     })
     .select("id")
     .single();
@@ -86,6 +112,10 @@ export async function updateJob(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
+  const recurring = buildRecurring(
+    parsed.data.recurring_pattern,
+    parsed.data.recurring_end_date,
+  );
   const { error, count } = await supabase
     .from("jobs")
     .update({
@@ -94,6 +124,7 @@ export async function updateJob(id: string, formData: FormData) {
       status: parsed.data.status,
       scheduled_date: parsed.data.scheduled_date ?? null,
       notes: parsed.data.notes ?? null,
+      recurring,
     }, { count: "exact" })
     .eq("id", id);
 
