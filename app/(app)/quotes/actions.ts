@@ -124,7 +124,31 @@ export async function createQuote(formData: FormData) {
     redirect(`/quotes/${quote.id}?error=line_items_failed`);
   }
 
+  // Pipeline integration: if a lead was linked AND it's still in an
+  // earlier stage, advance it to "quoted" so the kanban reflects reality.
+  // Won/lost/job_booked are not overwritten.
+  if (parsed.data.lead_id) {
+    const { data: leadRow } = await supabase
+      .from("leads")
+      .select("status")
+      .eq("id", parsed.data.lead_id)
+      .maybeSingle();
+    const stalled = leadRow?.status === "new" ||
+      leadRow?.status === "contacted" ||
+      leadRow?.status === "qualified";
+    if (stalled) {
+      await supabase
+        .from("leads")
+        .update({
+          status: "quoted",
+          last_activity_at: new Date().toISOString(),
+        })
+        .eq("id", parsed.data.lead_id);
+    }
+  }
+
   revalidatePath("/quotes");
+  revalidatePath("/leads");
   redirect(`/quotes/${quote.id}`);
 }
 
@@ -289,8 +313,26 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
   }
 
+  // Pipeline integration: if the quote was linked to a lead, advance
+  // the lead to "won" so the kanban reflects the close.
+  const { data: quoteWithLead } = await supabase
+    .from("quotes")
+    .select("lead_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (quoteWithLead?.lead_id) {
+    await supabase
+      .from("leads")
+      .update({
+        status: "won",
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", quoteWithLead.lead_id);
+  }
+
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
+  revalidatePath("/leads");
   redirect(`/quotes/${id}?saved=accepted`);
 }
 
@@ -328,7 +370,7 @@ export async function acceptQuoteByToken(
   // Find the quote by public_token.
   const { data: quote, error: lookupErr } = await admin
     .from("quotes")
-    .select("id, org_id, status, subtotal, vat_total, valid_until")
+    .select("id, org_id, status, subtotal, vat_total, valid_until, lead_id")
     .eq("public_token", token)
     .maybeSingle();
 
@@ -367,6 +409,18 @@ export async function acceptQuoteByToken(
       vat_total: quote.vat_total,
       status: "draft",
     });
+  }
+
+  // Pipeline integration: advance the linked lead to "won" so the kanban
+  // reflects the close — applies whether owner-accepted or public-accepted.
+  if (quote.lead_id) {
+    await admin
+      .from("leads")
+      .update({
+        status: "won",
+        last_activity_at: now,
+      })
+      .eq("id", quote.lead_id);
   }
 
   return { ok: true, quoteId: quote.id };
