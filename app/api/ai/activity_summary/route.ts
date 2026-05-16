@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { computeActivitySummary } from "@/lib/ai/aggregates";
+import { maybeGenerateSummary } from "@/lib/ai/llm";
 
 /**
  * GET /api/ai/activity_summary?window=7
@@ -18,5 +19,13 @@ export async function GET(request: NextRequest) {
   const windowDays = Math.max(1, Math.min(Number.isFinite(rawWindow) ? rawWindow : 7, 90));
 
   const payload = await computeActivitySummary(ctx.org.id, windowDays);
+  // Phase 5 prep: when an LLM key is set in Vercel env, fill in the
+  // prose `summary`. With no key configured, returns null — the
+  // deterministic body is unchanged and the dashboard renders as today.
+  // The org_id is stripped from the prompt payload so the LLM never
+  // sees raw identifiers.
+  const { org_id: _strippedOrgId, ...promptInput } = payload;
+  void _strippedOrgId;
+  payload.summary = await maybeGenerateSummary("activity", promptInput);
   return NextResponse.json(payload);
 }
