@@ -24,7 +24,7 @@ import type { CacheStatus } from "@/lib/ai/types";
  */
 
 const CACHE_TTL_HOURS = 24;
-const KV_NAMESPACE = "ai:lead_insights";
+const KV_NAMESPACE = "ai:lead";
 
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
