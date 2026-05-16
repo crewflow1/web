@@ -98,6 +98,14 @@ export function describeActivity(row: ActivityRow): string {
       return `updated a finance entry`;
     case "finance.deleted":
       return `deleted a finance entry`;
+    case "lead.created":
+      return `captured a new lead ${m["service"] ? `(${m["service"]})` : ""}`.trim();
+    case "lead.stage_changed":
+      return `moved a lead ${fmtMeta(m, ["from", "to"]) || "to a new stage"}`;
+    case "lead.assigned":
+      return `reassigned a lead`;
+    case "lead.deleted":
+      return `deleted a lead`;
     default:
       return row.action;
   }
@@ -143,6 +151,7 @@ export function relativeTime(iso: string): string {
 /** Coarse filter prefixes the UI exposes as quick filters. */
 export const ACTIVITY_TYPES = [
   { value: "", label: "All" },
+  { value: "lead.", label: "Leads" },
   { value: "job.", label: "Jobs" },
   { value: "quote.", label: "Quotes" },
   { value: "invoice.", label: "Invoices" },
