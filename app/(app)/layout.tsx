@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
 import { Sidebar } from "./_components/sidebar";
+import { OrgSwitcher } from "./_components/org-switcher";
 
 export default async function AppLayout({
   children,
@@ -9,6 +10,7 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { user, ctx } = await requireOrgContext();
+  const orgs = await listOrgsForUser(user.id);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -24,9 +26,10 @@ export default async function AppLayout({
             <span className="text-slate-300" aria-hidden>
               /
             </span>
-            <span className="truncate text-sm text-slate-600">
-              {ctx.org.name}
-            </span>
+            <OrgSwitcher
+              current={{ id: ctx.org.id, name: ctx.org.name }}
+              orgs={orgs}
+            />
           </div>
 
           <div className="flex items-center gap-3">
