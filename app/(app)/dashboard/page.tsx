@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { ActivityFeed } from "./_activity-feed";
+import type { ActivityRow } from "@/lib/activity/render";
 
 /**
  * Owner dashboard.
@@ -73,7 +75,8 @@ export default async function DashboardPage() {
   const weekStart = sevenDaysAgoISO();
 
   // Fetch everything in parallel under RLS.
-  const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes] =
+  const ACTIVITY_PAGE_SIZE = 25;
+  const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes] =
     await Promise.all([
       supabase
         .from("jobs")
@@ -107,6 +110,14 @@ export default async function DashboardPage() {
       supabase
         .from("leads")
         .select("id, status, source, estimated_value, created_at"),
+      supabase
+        .from("activity_log")
+        .select(
+          "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
+          { count: "exact" },
+        )
+        .order("created_at", { ascending: false })
+        .range(0, ACTIVITY_PAGE_SIZE - 1),
     ]);
 
   const jobs = jobsRes.data ?? [];
@@ -116,6 +127,9 @@ export default async function DashboardPage() {
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
   const allLeads = leadsAllRes.data ?? [];
+  const activity = (activityRes.data ?? []) as unknown as ActivityRow[];
+  const activityTotal = activityRes.count ?? 0;
+  const activityHasMore = activity.length < activityTotal;
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (
@@ -513,6 +527,9 @@ export default async function DashboardPage() {
           )}
         </Card>
       </section>
+
+      {/* Activity feed — last section so it can grow with "Load more" */}
+      <ActivityFeed initial={activity} initialHasMore={activityHasMore} />
     </div>
   );
 }
