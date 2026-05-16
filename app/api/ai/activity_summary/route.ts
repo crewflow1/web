@@ -34,7 +34,7 @@ import type { CacheStatus } from "@/lib/ai/types";
  */
 
 const CACHE_TTL_HOURS = 24;
-const KV_NAMESPACE = "ai:activity_summary";
+const KV_NAMESPACE = "ai:activity";
 
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
