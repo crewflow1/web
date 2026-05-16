@@ -59,12 +59,20 @@ export default async function JobsPage() {
             {rows.length} {rows.length === 1 ? "job" : "jobs"}
           </p>
         </div>
-        <Link
-          href="/jobs/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          + New job
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/jobs/calendar"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Calendar
+          </Link>
+          <Link
+            href="/jobs/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            + New job
+          </Link>
+        </div>
       </header>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">

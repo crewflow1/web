@@ -337,6 +337,7 @@ export type Database = {
           notes: string | null
           org_id: string
           photos: string[]
+          recurring: Json | null
           scheduled_date: string | null
           status: string
           updated_at: string
@@ -350,6 +351,7 @@ export type Database = {
           notes?: string | null
           org_id: string
           photos?: string[]
+          recurring?: Json | null
           scheduled_date?: string | null
           status?: string
           updated_at?: string
@@ -363,6 +365,7 @@ export type Database = {
           notes?: string | null
           org_id?: string
           photos?: string[]
+          recurring?: Json | null
           scheduled_date?: string | null
           status?: string
           updated_at?: string
