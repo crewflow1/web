@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { updateCustomer, deleteCustomer } from "../actions";
+import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { Field, TextareaField } from "../../_components/field";
 
 /**
@@ -26,7 +26,7 @@ export default async function EditCustomerPage({
   const supabase = await createClient();
   const { data: customer } = await supabase
     .from("customers")
-    .select("id, name, email, phone, notes")
+    .select("id, name, email, phone, notes, portal_token")
     .eq("id", id)
     .maybeSingle();
 
@@ -37,8 +37,14 @@ export default async function EditCustomerPage({
       ? "Couldn't save. Try again."
       : error === "delete_failed"
         ? "Couldn't delete. Only admins/owners can delete customers."
-        : decodeURIComponent(error)
+        : error === "portal_token_failed"
+          ? "Couldn't generate the portal link. Try again."
+          : error === "not_allowed"
+            ? "You don't have permission for that action."
+            : decodeURIComponent(error)
     : null;
+
+  const portalSaved = saved === "portal_link";
 
   // Bind id into action so the form submission knows which customer.
   const updateAction = updateCustomer.bind(null, customer.id);
@@ -66,12 +72,20 @@ export default async function EditCustomerPage({
           {errorMessage}
         </div>
       ) : null}
-      {saved ? (
+      {saved && !portalSaved ? (
         <div
           role="status"
           className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
         >
           Saved.
+        </div>
+      ) : null}
+      {portalSaved ? (
+        <div
+          role="status"
+          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
+        >
+          Portal link generated. Share the URL below with the customer.
         </div>
       ) : null}
 
@@ -115,6 +129,50 @@ export default async function EditCustomerPage({
           </Link>
         </div>
       </form>
+
+      {/* Customer portal link */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Customer portal link</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Share this URL with {customer.name} so they can see their quotes
+          and invoices online. Anyone with the link gets access — no
+          password needed.
+        </p>
+
+        {customer.portal_token ? (
+          <div className="mt-4 space-y-3">
+            <div className="break-all rounded-md bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
+              /customer-portal/{customer.portal_token}
+            </div>
+            <p className="text-xs text-slate-500">
+              Prepend your site URL when sharing —
+              <code className="ml-1 rounded bg-slate-100 px-1 py-0.5">
+                https://crewflow.uk/customer-portal/{customer.portal_token.slice(0, 8)}…
+              </code>
+            </p>
+            <form action={rotateCustomerPortalToken.bind(null, customer.id)}>
+              <button
+                type="submit"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Regenerate (invalidates current link)
+              </button>
+            </form>
+          </div>
+        ) : (
+          <form
+            action={rotateCustomerPortalToken.bind(null, customer.id)}
+            className="mt-4"
+          >
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
+            >
+              Generate portal link
+            </button>
+          </form>
+        )}
+      </section>
 
       <form
         action={deleteAction}
