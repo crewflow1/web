@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Customers list.
@@ -46,12 +47,12 @@ export default async function CustomersPage() {
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         {rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            No customers yet.{" "}
-            <Link href="/customers/new" className="font-medium text-slate-900 underline">
-              Add the first one.
-            </Link>
-          </div>
+          <EmptyState
+            icon="👥"
+            title="No customers yet"
+            body="Capture the people you do work for. You can link jobs, quotes, and invoices to customers later."
+            primary={{ href: "/customers/new", label: "Add first customer" }}
+          />
         ) : (
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
