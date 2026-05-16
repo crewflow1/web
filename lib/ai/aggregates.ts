@@ -40,19 +40,37 @@ export async function computeActivitySummary(
   const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
 
   // --- 1) action counts within the window, bucketed by prefix --------------
+  //     + daily volume time series with per-prefix breakdown.
   const { data: actions } = await supabase
     .from("activity_log")
-    .select("action")
+    .select("action, created_at")
     .gte("created_at", since);
 
   const prefixCounts = new Map<string, number>();
+  const dailyMap = new Map<string, { count: number; by_prefix: Record<string, number> }>();
+  // Pre-fill every day in the window so flat days show as 0 in the chart.
+  for (let i = windowDays - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * DAY_MS);
+    dailyMap.set(d.toISOString().slice(0, 10), { count: 0, by_prefix: {} });
+  }
   for (const row of actions ?? []) {
     const prefix = row.action.split(".")[0] ?? "other";
     prefixCounts.set(prefix, (prefixCounts.get(prefix) ?? 0) + 1);
+    const dayKey = row.created_at.slice(0, 10);
+    const slot = dailyMap.get(dayKey);
+    if (slot) {
+      slot.count++;
+      slot.by_prefix[prefix] = (slot.by_prefix[prefix] ?? 0) + 1;
+    }
   }
   const action_counts = Array.from(prefixCounts.entries())
     .map(([prefix, count]) => ({ prefix, count }))
     .sort((a, b) => b.count - a.count);
+  const daily_volume = Array.from(dailyMap.entries()).map(([date, agg]) => ({
+    date,
+    count: agg.count,
+    by_prefix: agg.by_prefix,
+  }));
 
   // --- 2) quote funnel + latencies -----------------------------------------
   const { data: quotes } = await supabase
@@ -177,6 +195,7 @@ export async function computeActivitySummary(
     window_days: windowDays,
     summary: null, // LLM-prose slot reserved
     action_counts,
+    daily_volume,
     key_metrics: {
       total_events: actions?.length ?? 0,
       quote_funnel,

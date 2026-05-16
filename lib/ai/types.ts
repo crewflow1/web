@@ -62,12 +62,23 @@ export type SourceCloseRate = {
   close_pct: number | null;
 };
 
+export type DailyVolume = {
+  /** ISO date for the bucket. */
+  date: string;
+  /** Total events that day. */
+  count: number;
+  /** Per-prefix breakdown. Keys: "job", "quote", "invoice", "finance", "lead", "other". */
+  by_prefix: Record<string, number>;
+};
+
 export type ActivitySummaryResponse = {
   org_id: string;
   window_days: number;
   /** Natural-language prose. Populated by the LLM in a later phase. */
   summary: string | null;
   action_counts: ActionCounts[];
+  /** Per-day volume across the window, pre-filled with zeroes on flat days. */
+  daily_volume: DailyVolume[];
   key_metrics: {
     total_events: number;
     quote_funnel: QuoteFunnel;
