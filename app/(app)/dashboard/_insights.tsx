@@ -71,6 +71,22 @@ export function InsightsSection({
         </div>
       ) : null}
 
+      {/* Row 0 — activity volume sparkline (per-day, last window) */}
+      {activity.daily_volume.length > 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-900">
+              Activity volume
+            </h3>
+            <span className="text-xs text-slate-500">
+              {activity.key_metrics.total_events} events ·{" "}
+              {activity.window_days}d window
+            </span>
+          </div>
+          <DailySparkline data={activity.daily_volume} />
+        </div>
+      ) : null}
+
       {/* Row 1 — quote pipeline + lead conversion */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -258,6 +274,108 @@ function Stat({ label, value }: { label: string; value: number }) {
       <div className="mt-0.5 text-base font-semibold text-slate-900">
         {value}
       </div>
+    </div>
+  );
+}
+
+const PREFIX_COLOURS: Record<string, string> = {
+  lead: "bg-cyan-500",
+  quote: "bg-blue-500",
+  invoice: "bg-emerald-500",
+  job: "bg-amber-500",
+  finance: "bg-violet-500",
+  other: "bg-slate-400",
+};
+
+function DailySparkline({
+  data,
+}: {
+  data: ActivitySummaryResponse["daily_volume"];
+}) {
+  const max = Math.max(1, ...data.map((d) => d.count));
+  const total = data.reduce((s, d) => s + d.count, 0);
+
+  // Determine which prefixes actually appear so the legend isn't lying.
+  const presentPrefixes = new Set<string>();
+  for (const d of data)
+    for (const p of Object.keys(d.by_prefix)) presentPrefixes.add(p);
+
+  function dayLabel(iso: string): string {
+    const d = new Date(`${iso}T00:00:00Z`);
+    return d.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    });
+  }
+
+  if (total === 0) {
+    return (
+      <p className="mt-3 text-sm text-slate-500">
+        No activity in this window.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <ol
+        className="mt-3 flex items-end gap-0.5"
+        style={{ height: "80px" }}
+        aria-label="Daily activity volume bar chart"
+      >
+        {data.map((d) => {
+          const heightPct = (d.count / max) * 100;
+          // Stacked segments per prefix so the bar shows composition.
+          const prefixes = Object.keys(d.by_prefix);
+          return (
+            <li
+              key={d.date}
+              className="flex flex-1 flex-col justify-end"
+              title={`${dayLabel(d.date)} · ${d.count} events`}
+            >
+              <div
+                className="relative w-full overflow-hidden rounded-t bg-slate-100"
+                style={{ height: `${Math.max(2, heightPct)}%` }}
+              >
+                {prefixes.length === 0 ? null : (
+                  <div className="absolute inset-0 flex flex-col-reverse">
+                    {prefixes.map((p) => {
+                      const segPct = (d.by_prefix[p]! / d.count) * 100;
+                      return (
+                        <div
+                          key={p}
+                          className={PREFIX_COLOURS[p] ?? PREFIX_COLOURS.other}
+                          style={{ height: `${segPct}%` }}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+        <span>{dayLabel(data[0]?.date ?? "")}</span>
+        <span>{dayLabel(data[data.length - 1]?.date ?? "")}</span>
+      </div>
+      {presentPrefixes.size > 1 ? (
+        <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+          {Array.from(presentPrefixes)
+            .sort()
+            .map((p) => (
+              <li key={p} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className={`inline-block h-2 w-2 rounded-sm ${PREFIX_COLOURS[p] ?? PREFIX_COLOURS.other}`}
+                />
+                {p}
+              </li>
+            ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
