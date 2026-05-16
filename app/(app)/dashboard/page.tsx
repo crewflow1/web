@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
+import { InsightsSection } from "./_insights";
+import {
+  computeActivitySummary,
+  computeLeadInsights,
+} from "@/lib/ai/aggregates";
 
 /**
  * Owner dashboard.
@@ -130,6 +135,14 @@ export default async function DashboardPage() {
   const activity = (activityRes.data ?? []) as unknown as ActivityRow[];
   const activityTotal = activityRes.count ?? 0;
   const activityHasMore = activity.length < activityTotal;
+
+  // Slice 6 — deterministic insight payloads. Run in parallel so the
+  // page-render fan-out doesn't grow linearly. LLM prose lands later
+  // when ANTHROPIC_API_KEY / OPENAI_API_KEY is added to Vercel.
+  const [activityInsights, leadInsights] = await Promise.all([
+    computeActivitySummary(ctx.org.id, 7),
+    computeLeadInsights(ctx.org.id, 30),
+  ]);
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (
@@ -527,6 +540,11 @@ export default async function DashboardPage() {
           )}
         </Card>
       </section>
+
+      {/* Slice 6 — Insights (deterministic). Above the activity feed
+          because warnings/trends are higher-value than the chronological
+          log for daily owner-coffee viewing. */}
+      <InsightsSection activity={activityInsights} leads={leadInsights} />
 
       {/* Activity feed — last section so it can grow with "Load more" */}
       <ActivityFeed initial={activity} initialHasMore={activityHasMore} />
