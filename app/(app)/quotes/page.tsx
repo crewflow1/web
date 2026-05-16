@@ -1,0 +1,188 @@
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
+import { requireOrgContext } from "@/server/auth/session";
+import { EmptyState } from "../_components/empty-state";
+import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+
+/**
+ * Quotes list page.
+ *
+ * Filter by status via search params. RLS scopes to caller's org.
+ */
+
+const PAGE_SIZE = 50;
+
+const GBP = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+});
+
+const STATUS_STYLES: Record<QuoteStatus, string> = {
+  draft: "bg-slate-100 text-slate-700",
+  sent: "bg-blue-100 text-blue-700",
+  viewed: "bg-indigo-100 text-indigo-700",
+  accepted: "bg-green-100 text-green-700",
+  declined: "bg-red-100 text-red-700",
+  expired: "bg-slate-200 text-slate-600",
+};
+
+type SP = Promise<{ status?: string; page?: string }>;
+
+export default async function QuotesPage({ searchParams }: { searchParams: SP }) {
+  await requireOrgContext();
+  const sp = await searchParams;
+  const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
+  const offset = (page - 1) * PAGE_SIZE;
+  const status = sp.status;
+
+  const supabase = await createClient();
+  let q = supabase
+    .from("quotes")
+    .select(
+      "id, number, status, total, valid_until, created_at, customer:customers ( id, name )",
+      { count: "exact" },
+    )
+    .order("created_at", { ascending: false })
+    .range(offset, offset + PAGE_SIZE - 1);
+
+  if (status && (QUOTE_STATUSES as readonly string[]).includes(status)) {
+    q = q.eq("status", status);
+  }
+
+  const { data: rows, count } = await q;
+  const totalCount = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  return (
+    <div className="space-y-6">
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Quotes</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {totalCount} {totalCount === 1 ? "quote" : "quotes"}
+          </p>
+        </div>
+        <Link
+          href="/quotes/new"
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+        >
+          + New quote
+        </Link>
+      </header>
+
+      <form
+        method="GET"
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div>
+          <label className="block text-xs font-medium text-slate-700">Status</label>
+          <select
+            name="status"
+            defaultValue={status ?? ""}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">All</option>
+            {QUOTE_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="submit"
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+        >
+          Apply
+        </button>
+        <Link
+          href="/quotes"
+          className="text-sm font-medium text-slate-600 hover:text-slate-900"
+        >
+          Clear
+        </Link>
+      </form>
+
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+        {!rows || rows.length === 0 ? (
+          <EmptyState
+            icon="📝"
+            title="No quotes yet"
+            body="Send your first priced proposal. Builder lets you add line items, terms, and a customer-facing link they can accept online."
+            primary={{ href: "/quotes/new", label: "Create first quote" }}
+            secondary={{ href: "/customers/new", label: "Add a customer first" }}
+          />
+        ) : (
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Number</th>
+                <th className="px-4 py-3">Customer</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Valid until</th>
+                <th className="px-4 py-3 text-right">Total</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white text-sm">
+              {rows.map((q) => (
+                <tr key={q.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 font-medium text-slate-900">{q.number}</td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {q.customer?.name ?? "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
+                    >
+                      {q.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">{q.valid_until ?? "—"}</td>
+                  <td className="px-4 py-3 text-right font-medium text-slate-900">
+                    {GBP.format(Number(q.total ?? 0))}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Link
+                      href={`/quotes/${q.id}`}
+                      className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                    >
+                      Open →
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {totalPages > 1 ? (
+        <nav className="flex items-center justify-between text-sm text-slate-600">
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            {page > 1 ? (
+              <Link
+                href={{ pathname: "/quotes", query: { ...sp, page: page - 1 } }}
+                className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+              >
+                ← Previous
+              </Link>
+            ) : null}
+            {page < totalPages ? (
+              <Link
+                href={{ pathname: "/quotes", query: { ...sp, page: page + 1 } }}
+                className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+              >
+                Next →
+              </Link>
+            ) : null}
+          </div>
+        </nav>
+      ) : null}
+    </div>
+  );
+}

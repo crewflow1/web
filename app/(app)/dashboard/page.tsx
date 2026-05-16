@@ -73,43 +73,53 @@ export default async function DashboardPage() {
   const weekStart = sevenDaysAgoISO();
 
   // Fetch everything in parallel under RLS.
-  const [jobsRes, invoicesRes, financesRes, leadsRes, membersRes] = await Promise.all([
-    supabase
-      .from("jobs")
-      .select(
-        "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("invoices")
-      .select(
-        "id, number, status, amount, vat_total, total, due_date, paid_at, created_at",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("finances")
-      .select("id, amount, vat_total, created_at, category")
-      .gte("created_at", quarterStart),
-    supabase
-      .from("leads")
-      .select(
-        "id, source, urgency, service, postcode, created_at, customer:customers ( id, name )",
-      )
-      .order("created_at", { ascending: false })
-      .limit(5),
-    supabase
-      .from("memberships")
-      .select("user_id, role, user:users ( id, full_name, email )"),
-  ]);
+  const [jobsRes, invoicesRes, financesRes, leadsRes, membersRes, quotesRes] =
+    await Promise.all([
+      supabase
+        .from("jobs")
+        .select(
+          "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
+        )
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at",
+        )
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("finances")
+        .select("id, amount, vat_total, created_at, category")
+        .gte("created_at", quarterStart),
+      supabase
+        .from("leads")
+        .select(
+          "id, source, urgency, service, postcode, created_at, customer:customers ( id, name )",
+        )
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("memberships")
+        .select("user_id, role, user:users ( id, full_name, email )"),
+      supabase
+        .from("quotes")
+        .select("id, status, total, accepted_at, created_at"),
+    ]);
 
   const jobs = jobsRes.data ?? [];
   const invoices = invoicesRes.data ?? [];
   const finances = financesRes.data ?? [];
   const leads = leadsRes.data ?? [];
   const members = membersRes.data ?? [];
+  const quotes = quotesRes.data ?? [];
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
-  if (jobs.length === 0 && invoices.length === 0 && finances.length === 0) {
+  if (
+    jobs.length === 0 &&
+    invoices.length === 0 &&
+    finances.length === 0 &&
+    quotes.length === 0
+  ) {
     return <FirstRun userEmail={user.email ?? ""} orgName={ctx.org.name} />;
   }
 
@@ -162,6 +172,39 @@ export default async function DashboardPage() {
     inputVatQuarter += Number(f.vat_total ?? 0);
   }
   const netVatQuarter = outputVatQuarter - inputVatQuarter;
+
+  // ---- quote analytics -------------------------------------------------
+  let pendingQuoteCount = 0; // draft / sent / viewed
+  let acceptedThisMonthCount = 0;
+  let acceptedThisMonthValue = 0;
+  let conversionDecided = 0; // accepted + declined
+  let conversionAccepted = 0;
+  let totalQuoteValue = 0;
+  for (const q of quotes) {
+    const total = Number(q.total ?? 0);
+    totalQuoteValue += total;
+    if (q.status === "draft" || q.status === "sent" || q.status === "viewed") {
+      pendingQuoteCount++;
+    }
+    if (q.status === "accepted" || q.status === "declined") {
+      conversionDecided++;
+      if (q.status === "accepted") conversionAccepted++;
+    }
+    if (
+      q.status === "accepted" &&
+      q.accepted_at &&
+      q.accepted_at >= monthStart
+    ) {
+      acceptedThisMonthCount++;
+      acceptedThisMonthValue += total;
+    }
+  }
+  const conversionPct =
+    conversionDecided === 0
+      ? null
+      : Math.round((conversionAccepted / conversionDecided) * 100);
+  const avgQuoteValue =
+    quotes.length === 0 ? 0 : totalQuoteValue / quotes.length;
 
   // Recent jobs (top 5 from the full fetch).
   const recentJobs = jobs.slice(0, 5);
@@ -221,6 +264,38 @@ export default async function DashboardPage() {
           value={GBP.format(netVatQuarter)}
           href="/finances"
           sub={`output ${GBP.format(outputVatQuarter)} − input ${GBP.format(inputVatQuarter)}`}
+        />
+      </section>
+
+      {/* Quote analytics row */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Quote conversion"
+          value={conversionPct === null ? "—" : `${conversionPct}%`}
+          href="/quotes"
+          sub={
+            conversionDecided === 0
+              ? "no decisions yet"
+              : `${conversionAccepted}/${conversionDecided} accepted`
+          }
+        />
+        <Kpi
+          label="Pending quotes"
+          value={pendingQuoteCount.toString()}
+          href="/quotes?status=sent"
+          sub="awaiting decision"
+        />
+        <Kpi
+          label="Accepted this month"
+          value={GBP.format(acceptedThisMonthValue)}
+          href="/quotes?status=accepted"
+          sub={`${acceptedThisMonthCount} ${acceptedThisMonthCount === 1 ? "quote" : "quotes"}`}
+        />
+        <Kpi
+          label="Avg quote value"
+          value={GBP.format(avgQuoteValue)}
+          href="/quotes"
+          sub={`across ${quotes.length} ${quotes.length === 1 ? "quote" : "quotes"}`}
         />
       </section>
 

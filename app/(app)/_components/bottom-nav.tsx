@@ -17,8 +17,8 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/dashboard", label: "Home", icon: "🏠" },
   { href: "/jobs", label: "Jobs", icon: "🔧" },
-  { href: "/customers", label: "Customers", icon: "👥" },
-  { href: "/finances", label: "Finances", icon: "🧾" },
+  { href: "/quotes", label: "Quotes", icon: "📝" },
+  { href: "/customers", label: "People", icon: "👥" },
   { href: "/invoices", label: "Invoices", icon: "💷" },
 ];
 
