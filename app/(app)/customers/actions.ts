@@ -101,6 +101,37 @@ export async function updateCustomer(id: string, formData: FormData) {
   redirect(`/customers/${id}?saved=1`);
 }
 
+/**
+ * Generate (or rotate) the customer's portal access token.
+ *
+ * The token is the only credential a customer needs to view their
+ * quotes + invoices at /customer-portal/<token>. Re-running this
+ * action mints a fresh UUID, which silently invalidates whatever link
+ * the customer had — useful if the link was forwarded or leaked.
+ *
+ * Members can rotate (allowed by RLS UPDATE policy). Delete-of-token
+ * is reachable via re-rotation only; we never set it back to NULL
+ * from the UI to keep "has been generated" a one-way state.
+ */
+export async function rotateCustomerPortalToken(id: string) {
+  await requireOrgContext();
+  const supabase = await createClient();
+  const token = crypto.randomUUID();
+  const { error, count } = await supabase
+    .from("customers")
+    .update({ portal_token: token }, { count: "exact" })
+    .eq("id", id);
+  if (error) {
+    console.error("[customers] rotate portal token failed", error);
+    redirect(`/customers/${id}?error=portal_token_failed`);
+  }
+  if (count === 0) {
+    redirect(`/customers/${id}?error=not_allowed`);
+  }
+  revalidatePath(`/customers/${id}`);
+  redirect(`/customers/${id}?saved=portal_link`);
+}
+
 export async function deleteCustomer(id: string) {
   await requireOrgContext();
   const supabase = await createClient();

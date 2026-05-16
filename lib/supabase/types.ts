@@ -166,6 +166,7 @@ export type Database = {
           notes: string | null
           org_id: string
           phone: string | null
+          portal_token: string | null
           updated_at: string
         }
         Insert: {
@@ -176,6 +177,7 @@ export type Database = {
           notes?: string | null
           org_id: string
           phone?: string | null
+          portal_token?: string | null
           updated_at?: string
         }
         Update: {
@@ -186,6 +188,7 @@ export type Database = {
           notes?: string | null
           org_id?: string
           phone?: string | null
+          portal_token?: string | null
           updated_at?: string
         }
         Relationships: [
