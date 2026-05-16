@@ -394,9 +394,11 @@ export type Database = {
           assigned_to: string | null
           created_at: string
           customer_id: string | null
+          estimated_value: number | null
           first_contact_at: string
           id: string
           last_activity_at: string
+          notes: string | null
           org_id: string
           postcode: string | null
           preferred_callback_at: string | null
@@ -412,9 +414,11 @@ export type Database = {
           assigned_to?: string | null
           created_at?: string
           customer_id?: string | null
+          estimated_value?: number | null
           first_contact_at?: string
           id?: string
           last_activity_at?: string
+          notes?: string | null
           org_id: string
           postcode?: string | null
           preferred_callback_at?: string | null
@@ -430,9 +434,11 @@ export type Database = {
           assigned_to?: string | null
           created_at?: string
           customer_id?: string | null
+          estimated_value?: number | null
           first_contact_at?: string
           id?: string
           last_activity_at?: string
+          notes?: string | null
           org_id?: string
           postcode?: string | null
           preferred_callback_at?: string | null

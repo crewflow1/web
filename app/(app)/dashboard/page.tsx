@@ -73,7 +73,7 @@ export default async function DashboardPage() {
   const weekStart = sevenDaysAgoISO();
 
   // Fetch everything in parallel under RLS.
-  const [jobsRes, invoicesRes, financesRes, leadsRes, membersRes, quotesRes] =
+  const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes] =
     await Promise.all([
       supabase
         .from("jobs")
@@ -104,21 +104,26 @@ export default async function DashboardPage() {
       supabase
         .from("quotes")
         .select("id, status, total, accepted_at, created_at"),
+      supabase
+        .from("leads")
+        .select("id, status, source, estimated_value, created_at"),
     ]);
 
   const jobs = jobsRes.data ?? [];
   const invoices = invoicesRes.data ?? [];
   const finances = financesRes.data ?? [];
-  const leads = leadsRes.data ?? [];
+  const leads = leadsRecentRes.data ?? [];
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
+  const allLeads = leadsAllRes.data ?? [];
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (
     jobs.length === 0 &&
     invoices.length === 0 &&
     finances.length === 0 &&
-    quotes.length === 0
+    quotes.length === 0 &&
+    allLeads.length === 0
   ) {
     return <FirstRun userEmail={user.email ?? ""} orgName={ctx.org.name} />;
   }
@@ -205,6 +210,40 @@ export default async function DashboardPage() {
       : Math.round((conversionAccepted / conversionDecided) * 100);
   const avgQuoteValue =
     quotes.length === 0 ? 0 : totalQuoteValue / quotes.length;
+
+  // ---- lead pipeline analytics ----------------------------------------
+  let leadsThisMonth = 0;
+  let leadsWon = 0;
+  let leadsLost = 0;
+  let pipelineForecast = 0;
+  const leadsBySource = new Map<string, { count: number; won: number }>();
+  for (const l of allLeads) {
+    if (l.created_at >= monthStart) leadsThisMonth++;
+    const src = l.source ?? "other";
+    const prev = leadsBySource.get(src) ?? { count: 0, won: 0 };
+    prev.count++;
+    if (l.status === "won" || l.status === "job_booked") {
+      prev.won++;
+      leadsWon++;
+    }
+    if (l.status === "lost") leadsLost++;
+    // Forecast: open stages × estimated_value (open = not won/lost/job_booked).
+    if (
+      l.status === "new" ||
+      l.status === "contacted" ||
+      l.status === "qualified" ||
+      l.status === "quoted"
+    ) {
+      pipelineForecast += Number(l.estimated_value ?? 0);
+    }
+    leadsBySource.set(src, prev);
+  }
+  const leadDecided = leadsWon + leadsLost;
+  const leadConversionPct =
+    leadDecided === 0 ? null : Math.round((leadsWon / leadDecided) * 100);
+  const topSources = Array.from(leadsBySource.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5);
 
   // Recent jobs (top 5 from the full fetch).
   const recentJobs = jobs.slice(0, 5);
@@ -297,6 +336,56 @@ export default async function DashboardPage() {
           href="/quotes"
           sub={`across ${quotes.length} ${quotes.length === 1 ? "quote" : "quotes"}`}
         />
+      </section>
+
+      {/* Lead pipeline KPI row */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Leads this month"
+          value={leadsThisMonth.toString()}
+          href="/leads"
+          sub={`${allLeads.length} total`}
+        />
+        <Kpi
+          label="Lead conversion"
+          value={leadConversionPct === null ? "—" : `${leadConversionPct}%`}
+          href="/leads"
+          sub={
+            leadDecided === 0
+              ? "no decisions yet"
+              : `${leadsWon}/${leadDecided} won`
+          }
+        />
+        <Kpi
+          label="Pipeline forecast"
+          value={GBP.format(pipelineForecast)}
+          href="/leads"
+          sub="sum of open lead values"
+        />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Top sources
+          </div>
+          {topSources.length === 0 ? (
+            <div className="mt-2 text-sm text-slate-500">No leads yet.</div>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm">
+              {topSources.map(([src, agg]) => (
+                <li key={src} className="flex items-center justify-between">
+                  <span className="text-slate-700">{src}</span>
+                  <span className="text-xs text-slate-500">
+                    {agg.count}
+                    {agg.won > 0 ? (
+                      <span className="ml-1 font-medium text-green-700">
+                        · {agg.won} won
+                      </span>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
 
       {/* Status + photos + staff */}

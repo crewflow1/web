@@ -21,7 +21,11 @@ const ERROR_MAP: Record<string, string> = {
   line_items_failed: "Quote saved but line items didn't — open the quote to retry.",
 };
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{
+  error?: string;
+  lead_id?: string;
+  customer_id?: string;
+}>;
 
 export default async function NewQuotePage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
@@ -43,6 +47,15 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
     : null;
+
+  // Pre-fill from /leads/[id] "Create a quote" CTA. Validates the IDs are
+  // org-visible (RLS already filtered both lists, so we just check inclusion).
+  const customerIds = new Set(customers.map((c) => c.id));
+  const leadIds = new Set(leads.map((l) => l.id));
+  const prefillCustomerId =
+    sp.customer_id && customerIds.has(sp.customer_id) ? sp.customer_id : "";
+  const prefillLeadId =
+    sp.lead_id && leadIds.has(sp.lead_id) ? sp.lead_id : "";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -68,6 +81,8 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
         customers={customers}
         properties={properties}
         leads={leads}
+        defaultCustomerId={prefillCustomerId}
+        defaultLeadId={prefillLeadId}
         defaultTerms={orgRow?.default_terms ?? ""}
         errorMessage={errorMessage}
       />
