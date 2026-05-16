@@ -193,7 +193,8 @@ export async function computeActivitySummary(
   return {
     org_id: orgId,
     window_days: windowDays,
-    summary: null, // LLM-prose slot reserved
+    summary: null, // populated by the route handler if LLM + cache says so
+    cache: "disabled", // route handler overrides on hit / miss
     action_counts,
     daily_volume,
     key_metrics: {
@@ -273,6 +274,7 @@ export async function computeLeadInsights(
     org_id: orgId,
     window_days: windowDays,
     summary: null,
+    cache: "disabled", // overridden by the route handler on hit/miss
     funnel,
     conversion_pct,
     source_close_rates,

@@ -26,6 +26,7 @@
     "@sentry/nextjs": "^8.40.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
+    "@vercel/kv": "^3.0.0",
     "@vercel/og": "^0.6.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

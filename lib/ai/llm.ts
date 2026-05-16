@@ -1,27 +1,30 @@
 import "server-only";
 
 /**
- * LLM scaffold for the AI insight endpoints.
+ * LLM integration for the AI insight endpoints.
  *
- * Phase 5 prep: this module is wired into /api/ai/activity_summary and
- * /api/ai/lead_insights but does nothing today because neither key is
- * set in Vercel. When ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY
- * lands in Vercel prod, the call goes live with no further code
- * changes — the response's `summary` field gets populated with prose.
+ * Calls Anthropic Claude Haiku 4.5 (preferred) or OpenAI gpt-4o-mini
+ * (fallback) to turn the deterministic insight JSON into a 2-3 sentence
+ * prose summary.
  *
  * Privacy posture:
  *   - The payload passed to the LLM is the aggregate JSON the endpoints
  *     already build — counts, latencies, names already visible to the
  *     org. No actor IDs, JWTs, IP hashes, or accept_signature blobs
- *     are passed in.
- *   - On any error (rate limit, timeout, malformed response) we
- *     swallow the error and return null. The dashboard renders just
- *     the deterministic data — degradation is invisible to the user.
+ *     are passed in. Callers also strip org_id before invoking.
+ *   - On timeout, rate limit, or any thrown error we swallow and return
+ *     null. The dashboard renders the deterministic data only —
+ *     degradation is invisible to the user.
  *
  * Model choices (set in code, not env, so they can be tuned in PR):
  *   - Anthropic: claude-haiku-4-5 — fast + cheap for ~3-sentence summaries
  *   - OpenAI:    gpt-4o-mini
+ *
+ * Timeout: 8s. Tuned for daily/weekly summaries on the Vercel free-tier
+ * 10s function limit. Haiku 4.5 typically responds in 600-1200ms.
  */
+
+const LLM_TIMEOUT_MS = 8000;
 
 type SummaryKind = "activity" | "lead";
 
@@ -71,11 +74,14 @@ export async function maybeGenerateSummary(
     if (anthropicKey) {
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
       const client = new Anthropic({ apiKey: anthropicKey });
-      const msg = await client.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 400,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const msg = await client.messages.create(
+        {
+          model: "claude-haiku-4-5",
+          max_tokens: 400,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { signal: AbortSignal.timeout(LLM_TIMEOUT_MS) },
+      );
       const block = msg.content[0];
       if (block && block.type === "text") {
         return block.text.trim() || null;
@@ -86,11 +92,14 @@ export async function maybeGenerateSummary(
     // OpenAI fallback if only that key is set.
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: openaiKey });
-    const res = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_tokens: 400,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const res = await client.chat.completions.create(
+      {
+        model: "gpt-4o-mini",
+        max_tokens: 400,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: AbortSignal.timeout(LLM_TIMEOUT_MS) },
+    );
     const text = res.choices[0]?.message?.content?.trim();
     return text && text.length > 0 ? text : null;
   } catch (err) {

@@ -71,11 +71,22 @@ export type DailyVolume = {
   by_prefix: Record<string, number>;
 };
 
+/**
+ * Cache status surfaced in API responses so callers (and the QA report)
+ * can see whether the prose came from KV or a fresh LLM call.
+ *   - "hit"      summary served from cache
+ *   - "miss"     LLM was called this request; result was written to cache
+ *   - "disabled" no LLM key set OR LLM call failed; summary is null
+ */
+export type CacheStatus = "hit" | "miss" | "disabled";
+
 export type ActivitySummaryResponse = {
   org_id: string;
   window_days: number;
-  /** Natural-language prose. Populated by the LLM in a later phase. */
+  /** Natural-language prose. Populated when LLM key is set and call succeeds. */
   summary: string | null;
+  /** Where the summary came from. Only meaningful when summary !== null. */
+  cache: CacheStatus;
   action_counts: ActionCounts[];
   /** Per-day volume across the window, pre-filled with zeroes on flat days. */
   daily_volume: DailyVolume[];
@@ -94,6 +105,7 @@ export type LeadInsightsResponse = {
   org_id: string;
   window_days: number;
   summary: string | null;
+  cache: CacheStatus;
   funnel: {
     new: number;
     contacted: number;
