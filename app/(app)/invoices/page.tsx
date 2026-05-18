@@ -54,19 +54,38 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Invoices</h1>
           <p className="mt-1 text-sm text-slate-600">
             {totalCount} {totalCount === 1 ? "invoice" : "invoices"}
           </p>
         </div>
-        <Link
-          href="/invoices/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          + Generate from quote
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={`/api/invoices/export?format=simple${status ? `&status=${status}` : ""}`}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Export CSV
+          </a>
+          <a
+            href={`/api/invoices/export?format=xero${status ? `&status=${status}` : ""}`}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="One row per line item, mapped to Xero's sales-invoice import schema"
+          >
+            Export Xero
+          </a>
+          <Link
+            href="/invoices/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            + Generate from quote
+          </Link>
+        </div>
       </header>
 
       <form
