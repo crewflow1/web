@@ -9,9 +9,7 @@ import type { InvoiceStatus } from "@/lib/invoices/schema";
  * Invoice detail view.
  *
  * Shows invoice header, the linked quote's line items, totals, audit
- * timestamps, and the status-update / delete controls.
- *
- * PDF generation deferred per spec.
+ * timestamps, status controls, and a branded PDF download.
  */
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -69,7 +67,7 @@ export default async function InvoiceDetailPage({
         <span className="text-slate-900">{invoice.number}</span>
       </div>
 
-      <header className="flex items-start justify-between">
+      <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{invoice.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -77,11 +75,21 @@ export default async function InvoiceDetailPage({
             {invoice.due_date ? ` · Due ${invoice.due_date}` : ""}
           </p>
         </div>
-        <span
-          className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
-        >
-          {status}
-        </span>
+        <div className="flex items-center gap-3">
+          <a
+            href={`/api/invoices/${invoice.id}/pdf`}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Download PDF
+          </a>
+          <span
+            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
+          >
+            {status}
+          </span>
+        </div>
       </header>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
