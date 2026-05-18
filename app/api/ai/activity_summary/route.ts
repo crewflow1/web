@@ -2,16 +2,40 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { computeActivitySummary } from "@/lib/ai/aggregates";
 import { maybeGenerateSummary } from "@/lib/ai/llm";
+import { buildCacheKey, cacheGet, cacheSet, isKvConfigured } from "@/lib/cache/kv";
+import type { CacheStatus } from "@/lib/ai/types";
 
 /**
  * GET /api/ai/activity_summary?window=7
  *
- * Deterministic-only response — no LLM call. `summary` returns null
- * as a placeholder; the prose slot fills in once an Anthropic/OpenAI
- * key lands in Vercel and a follow-up PR lights up the inference path.
+ * Response shape (always):
+ *   {
+ *     org_id, window_days,
+ *     summary: string | null,
+ *     cache: "hit" | "miss" | "disabled",
+ *     action_counts, daily_volume, key_metrics, stalled_actions
+ *   }
  *
- * Window defaults to 7 days; capped at 90 to bound the underlying scan.
+ * Phase 6 flow:
+ *   1. Compute deterministic metrics (RLS-scoped under user JWT).
+ *   2. Build cache key including org + ISO date + window.
+ *   3. Cache lookup. If hit → return with cache: "hit".
+ *   4. Otherwise call LLM (max 8s). Strip org_id from prompt input.
+ *   5. On success → write to KV with 24h TTL → cache: "miss".
+ *   6. On LLM failure / no key / KV disabled → summary stays null,
+ *      cache: "disabled". Deterministic body is always intact.
+ *
+ * Privacy:
+ *   - org_id is stripped from the LLM prompt input (never reaches
+ *     Anthropic/OpenAI). It's part of the KV cache key only — KV is
+ *     server-side, token-gated, never exposed to clients.
+ *   - All deterministic metrics derive from RLS-scoped queries; no
+ *     PII beyond what's already visible to org members.
  */
+
+const CACHE_TTL_HOURS = 24;
+const KV_NAMESPACE = "ai:activity";
+
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
   const url = request.nextUrl;
@@ -19,13 +43,33 @@ export async function GET(request: NextRequest) {
   const windowDays = Math.max(1, Math.min(Number.isFinite(rawWindow) ? rawWindow : 7, 90));
 
   const payload = await computeActivitySummary(ctx.org.id, windowDays);
-  // Phase 5 prep: when an LLM key is set in Vercel env, fill in the
-  // prose `summary`. With no key configured, returns null — the
-  // deterministic body is unchanged and the dashboard renders as today.
-  // The org_id is stripped from the prompt payload so the LLM never
-  // sees raw identifiers.
+
+  // Cache key includes the day-bucket so summaries roll over at UTC midnight.
+  const today = new Date().toISOString().slice(0, 10);
+  const cacheKey = buildCacheKey([KV_NAMESPACE, ctx.org.id, today, String(windowDays)]);
+
+  if (isKvConfigured()) {
+    const cached = await cacheGet<string>(cacheKey);
+    if (cached) {
+      payload.summary = cached;
+      payload.cache = "hit" as CacheStatus;
+      return NextResponse.json(payload);
+    }
+  }
+
+  // Strip org_id before the LLM sees the prompt input.
   const { org_id: _strippedOrgId, ...promptInput } = payload;
   void _strippedOrgId;
-  payload.summary = await maybeGenerateSummary("activity", promptInput);
+  const summary = await maybeGenerateSummary("activity", promptInput);
+
+  if (summary) {
+    payload.summary = summary;
+    const written = await cacheSet(cacheKey, summary, CACHE_TTL_HOURS);
+    payload.cache = (written ? "miss" : "disabled") as CacheStatus;
+  } else {
+    payload.summary = null;
+    payload.cache = "disabled" as CacheStatus;
+  }
+
   return NextResponse.json(payload);
 }
