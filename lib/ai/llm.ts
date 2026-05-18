@@ -26,25 +26,6 @@ import "server-only";
 
 const LLM_TIMEOUT_MS = 8000;
 
-// TEMPORARY DIAGNOSTIC — fires on cold-start of any function that imports
-// this module (no auth required). Logs ENV PRESENCE ONLY, never values.
-// Remove after Phase 6 env-injection root cause is fixed.
-const _diagAnthropic = process.env.ANTHROPIC_API_KEY;
-const _diagOpenai = process.env.OPENAI_API_KEY;
-console.log(
-  "[ai/llm-diag] cold-start env probe",
-  JSON.stringify({
-    anthropic_present: !!_diagAnthropic,
-    anthropic_length: _diagAnthropic ? _diagAnthropic.length : 0,
-    openai_present: !!_diagOpenai,
-    openai_length: _diagOpenai ? _diagOpenai.length : 0,
-    kv_url_present: !!process.env.KV_REST_API_URL,
-    kv_token_present: !!process.env.KV_REST_API_TOKEN,
-    node_env: process.env.NODE_ENV ?? null,
-    vercel_env: process.env.VERCEL_ENV ?? null,
-  }),
-);
-
 type SummaryKind = "activity" | "lead";
 
 const PROMPTS: Record<SummaryKind, string> = {
