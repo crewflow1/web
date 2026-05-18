@@ -1,0 +1,278 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { requireOrgContext } from "@/server/auth/session";
+import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+
+/**
+ * CSV export of an org's invoices.
+ *
+ *   GET /api/invoices/export?format=xero|simple&from=YYYY-MM-DD&to=YYYY-MM-DD&status=sent,paid
+ *
+ * Formats:
+ *   - "simple" (default): flat per-invoice rows. Same columns the
+ *     /invoices list shows: number, date, status, customer, net, vat,
+ *     total, due_date, paid_at.
+ *   - "xero": one row per line item, mappable directly to Xero's
+ *     "Import sales invoices" CSV schema. TaxType is derived from the
+ *     line vat_rate. AccountCode is left blank for the operator to
+ *     fill in Xero (each Xero account is org-specific).
+ *
+ * RLS scopes the underlying queries to the caller's org.
+ */
+
+const MAX_INVOICES = 10_000;
+const XERO_DATE = (iso: string | null): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getUTCFullYear()}`;
+};
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+// Map a numeric VAT rate to Xero's TaxType string. Anything we can't map
+// falls through to "Tax Exempt" so the import doesn't reject the row —
+// the operator can re-tag inside Xero.
+function xeroTaxType(rate: number): string {
+  if (rate === 20) return "20% (VAT on Income)";
+  if (rate === 5) return "5% (VAT on Income)";
+  if (rate === 0) return "Zero Rated Income";
+  return "Tax Exempt";
+}
+
+type InvoiceRow = {
+  id: string;
+  number: string;
+  status: string;
+  amount: number | string | null;
+  vat_total: number | string | null;
+  total: number | string | null;
+  due_date: string | null;
+  paid_at: string | null;
+  created_at: string;
+  notes: string | null;
+  quote_id: string | null;
+  quote: { customer: { name: string | null } | null } | null;
+};
+
+type LineItemRow = {
+  quote_id: string;
+  description: string;
+  qty: number | string | null;
+  unit_price: number | string | null;
+  vat_rate: number | string | null;
+  line_total: number | string | null;
+  sort_order: number | null;
+};
+
+export async function GET(request: NextRequest) {
+  await requireOrgContext();
+  const url = request.nextUrl;
+  const format = (url.searchParams.get("format") ?? "simple").toLowerCase();
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  const status = url.searchParams.get("status");
+
+  if (format !== "simple" && format !== "xero") {
+    return NextResponse.json(
+      { error: "Unsupported format. Use 'simple' or 'xero'." },
+      { status: 400 },
+    );
+  }
+
+  const supabase = await createClient();
+
+  let q = supabase
+    .from("invoices")
+    .select(
+      `
+        id, number, status, amount, vat_total, total, due_date, paid_at,
+        created_at, notes, quote_id,
+        quote:quotes ( customer:customers ( name ) )
+      `,
+    )
+    .order("created_at", { ascending: true })
+    .limit(MAX_INVOICES);
+
+  if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    q = q.gte("created_at", `${from}T00:00:00Z`);
+  }
+  if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    q = q.lte("created_at", `${to}T23:59:59Z`);
+  }
+  if (status) {
+    const allowed = new Set<string>(INVOICE_STATUSES);
+    const wanted: InvoiceStatus[] = status
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => allowed.has(s)) as InvoiceStatus[];
+    if (wanted.length > 0) q = q.in("status", wanted);
+  }
+
+  const { data: invoices, error } = await q;
+  if (error) {
+    console.error("[invoices] export failed", error);
+    return NextResponse.json({ error: "Failed to export" }, { status: 500 });
+  }
+
+  const rows = (invoices ?? []) as unknown as InvoiceRow[];
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (format === "simple") {
+    const header = [
+      "invoice_number",
+      "date",
+      "status",
+      "customer",
+      "net",
+      "vat",
+      "total",
+      "due_date",
+      "paid_at",
+      "notes",
+    ];
+    const lines = [header.join(",")];
+    for (const r of rows) {
+      const net = Number(r.amount ?? 0);
+      const vat = Number(r.vat_total ?? 0);
+      lines.push(
+        [
+          r.number,
+          r.created_at.slice(0, 10),
+          r.status,
+          r.quote?.customer?.name ?? "",
+          net.toFixed(2),
+          vat.toFixed(2),
+          (net + vat).toFixed(2),
+          r.due_date ?? "",
+          r.paid_at ? r.paid_at.slice(0, 10) : "",
+          r.notes ?? "",
+        ]
+          .map(csvEscape)
+          .join(","),
+      );
+    }
+    return new NextResponse(lines.join("\n"), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="crewflow-invoices-${stamp}.csv"`,
+      },
+    });
+  }
+
+  // format === "xero"
+  // Fetch all line items for the invoices we got back in one query. Xero
+  // imports one row per line; multi-line invoices repeat the header
+  // columns. If an invoice has no source quote (quote_id null) or the
+  // quote has no line items, we still emit a single fallback row using
+  // the invoice header totals so the import doesn't drop the invoice.
+  const quoteIds = Array.from(
+    new Set(rows.map((r) => r.quote_id).filter((v): v is string => !!v)),
+  );
+
+  let lineItemsByQuote = new Map<string, LineItemRow[]>();
+  if (quoteIds.length > 0) {
+    const { data: lis } = await supabase
+      .from("quote_line_items")
+      .select("quote_id, description, qty, unit_price, vat_rate, line_total, sort_order")
+      .in("quote_id", quoteIds)
+      .order("sort_order", { ascending: true });
+    const grouped = new Map<string, LineItemRow[]>();
+    for (const li of (lis ?? []) as unknown as LineItemRow[]) {
+      const arr = grouped.get(li.quote_id) ?? [];
+      arr.push(li);
+      grouped.set(li.quote_id, arr);
+    }
+    lineItemsByQuote = grouped;
+  }
+
+  const header = [
+    "ContactName",
+    "InvoiceNumber",
+    "InvoiceDate",
+    "DueDate",
+    "Description",
+    "Quantity",
+    "UnitAmount",
+    "AccountCode",
+    "TaxType",
+    "TaxAmount",
+    "Currency",
+  ];
+  const lines = [header.join(",")];
+  for (const inv of rows) {
+    const contact = inv.quote?.customer?.name ?? "";
+    const invDate = XERO_DATE(inv.created_at);
+    const dueDate = inv.due_date ? XERO_DATE(`${inv.due_date}T00:00:00Z`) : "";
+
+    const liList = inv.quote_id ? lineItemsByQuote.get(inv.quote_id) ?? [] : [];
+
+    if (liList.length === 0) {
+      const net = Number(inv.amount ?? 0);
+      const vat = Number(inv.vat_total ?? 0);
+      // No source line items — collapse to a single row using totals.
+      const taxRate = net > 0 ? Math.round((vat / net) * 100) : 0;
+      lines.push(
+        [
+          contact,
+          inv.number,
+          invDate,
+          dueDate,
+          inv.notes ?? `Invoice ${inv.number}`,
+          "1",
+          net.toFixed(2),
+          "",
+          xeroTaxType(taxRate),
+          vat.toFixed(2),
+          "GBP",
+        ]
+          .map(csvEscape)
+          .join(","),
+      );
+      continue;
+    }
+
+    for (const li of liList) {
+      const qty = Number(li.qty ?? 0);
+      const unit = Number(li.unit_price ?? 0);
+      const rate = Number(li.vat_rate ?? 0);
+      const lineTotalNet = qty * unit;
+      const taxAmount = lineTotalNet * (rate / 100);
+      lines.push(
+        [
+          contact,
+          inv.number,
+          invDate,
+          dueDate,
+          li.description,
+          qty.toString(),
+          unit.toFixed(2),
+          "", // AccountCode — operator fills in Xero
+          xeroTaxType(rate),
+          taxAmount.toFixed(2),
+          "GBP",
+        ]
+          .map(csvEscape)
+          .join(","),
+      );
+    }
+  }
+
+  return new NextResponse(lines.join("\n"), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="crewflow-invoices-xero-${stamp}.csv"`,
+    },
+  });
+}
