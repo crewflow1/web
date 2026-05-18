@@ -100,24 +100,30 @@ export async function updateLead(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("leads")
-    .update({
-      source: parsed.data.source ?? undefined,
-      service: parsed.data.service ?? null,
-      urgency: parsed.data.urgency ?? undefined,
-      postcode: parsed.data.postcode ?? null,
-      customer_id: parsed.data.customer_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
-      estimated_value: parsed.data.estimated_value ?? null,
-      notes: parsed.data.notes ?? null,
-      ai_summary: parsed.data.ai_summary ?? null,
-      last_activity_at: new Date().toISOString(),
-    })
+    .update(
+      {
+        source: parsed.data.source ?? undefined,
+        service: parsed.data.service ?? null,
+        urgency: parsed.data.urgency ?? undefined,
+        postcode: parsed.data.postcode ?? null,
+        customer_id: parsed.data.customer_id ?? null,
+        assigned_to: parsed.data.assigned_to ?? null,
+        estimated_value: parsed.data.estimated_value ?? null,
+        notes: parsed.data.notes ?? null,
+        ai_summary: parsed.data.ai_summary ?? null,
+        last_activity_at: new Date().toISOString(),
+      },
+      { count: "exact" },
+    )
     .eq("id", id);
   if (error) {
     console.error("[leads] update failed", error);
     redirect(`/leads/${id}?error=update_failed`);
+  }
+  if (count === 0) {
+    redirect(`/leads/${id}?error=update_denied`);
   }
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
@@ -161,10 +167,16 @@ export async function deleteLead(id: string) {
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const supabase = await createClient();
-  const { error } = await supabase.from("leads").delete().eq("id", id);
+  const { error, count } = await supabase
+    .from("leads")
+    .delete({ count: "exact" })
+    .eq("id", id);
   if (error) {
     console.error("[leads] delete failed", error);
     redirect(`/leads/${id}?error=delete_failed`);
+  }
+  if (count === 0) {
+    redirect(`/leads/${id}?error=delete_denied`);
   }
   revalidatePath("/leads");
   redirect("/leads");

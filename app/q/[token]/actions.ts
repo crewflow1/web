@@ -25,7 +25,16 @@ import { publicAcceptSchema, publicDeclineSchema } from "@/lib/quotes/schema";
 
 function hashIp(ip: string | null): string | null {
   if (!ip) return null;
-  const salt = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "fallback-salt";
+  // Salt MUST be a high-entropy server secret. The previous code fell back
+  // to the literal string "fallback-salt" when the env var was unset, which
+  // silently downgraded the hash to something trivially forgeable. We now
+  // refuse to hash without a real salt — quote-accept still succeeds, just
+  // with ip_hash=null. Accept flow is never broken by a misconfigured env.
+  const salt = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!salt) {
+    console.error("[quotes/public] SUPABASE_SERVICE_ROLE_KEY not set; storing ip_hash=null instead of using a fallback salt");
+    return null;
+  }
   return crypto.createHash("sha256").update(`${salt}:${ip}`).digest("hex").slice(0, 32);
 }
 

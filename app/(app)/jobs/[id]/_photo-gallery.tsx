@@ -36,7 +36,8 @@ export function PhotoGallery({ jobId }: { jobId: string }) {
       }
       const j = (await res.json()) as { photos: Photo[] };
       setPhotos(j.photos ?? []);
-    } catch {
+    } catch (err) {
+      console.error("[photo-gallery] load failed", err);
       setError("Network error loading photos.");
     } finally {
       setLoading(false);
@@ -75,7 +76,8 @@ export function PhotoGallery({ jobId }: { jobId: string }) {
       } else {
         await refresh();
       }
-    } catch {
+    } catch (err) {
+      console.error("[photo-gallery] upload failed", err);
       setError("Network error uploading.");
     } finally {
       setUploading(false);
@@ -99,7 +101,8 @@ export function PhotoGallery({ jobId }: { jobId: string }) {
       } else {
         await refresh();
       }
-    } catch {
+    } catch (err) {
+      console.error("[photo-gallery] delete failed", err);
       setError("Network error deleting.");
     }
   }
