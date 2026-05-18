@@ -13,5 +13,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Skip Next internals, static files, and the health check (always public).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health).*)"],
+  // Crons are gated by CRON_SECRET (lib/cron/auth.ts), not by the Supabase
+  // session middleware; exclude them so Vercel's scheduler can reach them.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health|api/cron).*)"],
 };
