@@ -37,12 +37,19 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, notes, created_at, quote_id",
+      `
+        id, number, status, amount, vat_total, total, due_date, sent_at,
+        paid_at, notes, created_at, quote_id,
+        quote:quotes ( customer:customers ( email ) )
+      `,
     )
     .eq("id", id)
     .maybeSingle();
 
   if (!invoice) notFound();
+  const customerEmail =
+    (invoice as unknown as { quote: { customer: { email: string | null } | null } | null })
+      .quote?.customer?.email ?? null;
 
   // Line items from the source quote (if still present).
   const lineItems = invoice.quote_id
@@ -188,7 +195,7 @@ export default async function InvoiceDetailPage({
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Actions</h2>
         <div className="mt-3">
-          <InvoiceControls id={invoice.id} status={status} />
+          <InvoiceControls id={invoice.id} status={status} customerEmail={customerEmail} />
         </div>
       </section>
     </div>
