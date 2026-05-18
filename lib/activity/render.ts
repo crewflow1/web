@@ -28,6 +28,7 @@ export function actionIcon(action: string): string {
   if (action.startsWith("job.photo")) return "📸";
   if (action.startsWith("job.")) return "🔧";
   if (action.startsWith("lead.")) return "🎯";
+  if (action.startsWith("customer.")) return "👤";
   return "•";
 }
 
@@ -106,6 +107,12 @@ export function describeActivity(row: ActivityRow): string {
       return `reassigned a lead`;
     case "lead.deleted":
       return `deleted a lead`;
+    case "customer.created":
+      return `added a new customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
+    case "customer.updated":
+      return `updated a customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
+    case "customer.deleted":
+      return `deleted a customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
     default:
       return row.action;
   }
@@ -124,6 +131,8 @@ export function activityHref(row: ActivityRow): string | null {
       return `/finances`;
     case "leads":
       return `/leads/${row.target_id}`;
+    case "customers":
+      return `/customers/${row.target_id}`;
     default:
       return null;
   }
@@ -156,4 +165,5 @@ export const ACTIVITY_TYPES = [
   { value: "quote.", label: "Quotes" },
   { value: "invoice.", label: "Invoices" },
   { value: "finance.", label: "Finances" },
+  { value: "customer.", label: "Customers" },
 ] as const;

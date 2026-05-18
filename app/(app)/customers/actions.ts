@@ -81,19 +81,25 @@ export async function updateCustomer(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("customers")
-    .update({
-      name: parsed.data.name,
-      email: parsed.data.email ?? null,
-      phone: parsed.data.phone ?? null,
-      notes: parsed.data.notes ?? null,
-    })
+    .update(
+      {
+        name: parsed.data.name,
+        email: parsed.data.email ?? null,
+        phone: parsed.data.phone ?? null,
+        notes: parsed.data.notes ?? null,
+      },
+      { count: "exact" },
+    )
     .eq("id", id);
 
   if (error) {
     console.error("[customers] update failed", error);
     redirect(`/customers/${id}?error=update_failed`);
+  }
+  if (count === 0) {
+    redirect(`/customers/${id}?error=update_denied`);
   }
 
   revalidatePath("/customers");
