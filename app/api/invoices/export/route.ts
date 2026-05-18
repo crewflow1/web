@@ -6,7 +6,7 @@ import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
 /**
  * CSV export of an org's invoices.
  *
- *   GET /api/invoices/export?format=xero|simple&from=YYYY-MM-DD&to=YYYY-MM-DD&status=sent,paid
+ *   GET /api/invoices/export?format=xero|sage|simple&from=YYYY-MM-DD&to=YYYY-MM-DD&status=sent,paid
  *
  * Formats:
  *   - "simple" (default): flat per-invoice rows. Same columns the
@@ -16,6 +16,10 @@ import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
  *     "Import sales invoices" CSV schema. TaxType is derived from the
  *     line vat_rate. AccountCode is left blank for the operator to
  *     fill in Xero (each Xero account is org-specific).
+ *   - "sage": one row per line item, mappable to Sage Business Cloud's
+ *     "Import sales invoices" CSV schema. TaxRate is derived from the
+ *     line vat_rate. LedgerAccount is left blank — chart of accounts
+ *     codes are Sage-side per-org.
  *
  * RLS scopes the underlying queries to the caller's org.
  */
@@ -47,6 +51,14 @@ function xeroTaxType(rate: number): string {
   if (rate === 5) return "5% (VAT on Income)";
   if (rate === 0) return "Zero Rated Income";
   return "Tax Exempt";
+}
+
+// Map a numeric VAT rate to Sage Business Cloud's TaxRate label.
+function sageTaxRate(rate: number): string {
+  if (rate === 20) return "Standard 20%";
+  if (rate === 5) return "Lower Rate 5%";
+  if (rate === 0) return "Zero Rated 0%";
+  return "Exempt";
 }
 
 type InvoiceRow = {
@@ -82,9 +94,9 @@ export async function GET(request: NextRequest) {
   const to = url.searchParams.get("to");
   const status = url.searchParams.get("status");
 
-  if (format !== "simple" && format !== "xero") {
+  if (format !== "simple" && format !== "xero" && format !== "sage") {
     return NextResponse.json(
-      { error: "Unsupported format. Use 'simple' or 'xero'." },
+      { error: "Unsupported format. Use 'simple', 'xero', or 'sage'." },
       { status: 400 },
     );
   }
@@ -170,12 +182,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // format === "xero"
-  // Fetch all line items for the invoices we got back in one query. Xero
-  // imports one row per line; multi-line invoices repeat the header
-  // columns. If an invoice has no source quote (quote_id null) or the
-  // quote has no line items, we still emit a single fallback row using
-  // the invoice header totals so the import doesn't drop the invoice.
+  // format === "xero" | "sage" — both are one-row-per-line-item accounting
+  // exports. Fetch line items once, then branch on format for header /
+  // column composition + tax-code mapping.
   const quoteIds = Array.from(
     new Set(rows.map((r) => r.quote_id).filter((v): v is string => !!v)),
   );
@@ -196,20 +205,37 @@ export async function GET(request: NextRequest) {
     lineItemsByQuote = grouped;
   }
 
-  const header = [
-    "ContactName",
-    "InvoiceNumber",
-    "InvoiceDate",
-    "DueDate",
-    "Description",
-    "Quantity",
-    "UnitAmount",
-    "AccountCode",
-    "TaxType",
-    "TaxAmount",
-    "Currency",
-  ];
+  const isXero = format === "xero";
+  const header = isXero
+    ? [
+        "ContactName",
+        "InvoiceNumber",
+        "InvoiceDate",
+        "DueDate",
+        "Description",
+        "Quantity",
+        "UnitAmount",
+        "AccountCode",
+        "TaxType",
+        "TaxAmount",
+        "Currency",
+      ]
+    : [
+        "ContactName",
+        "Reference",
+        "Date",
+        "DueDate",
+        "Description",
+        "Quantity",
+        "UnitPrice",
+        "LedgerAccount",
+        "TaxRate",
+        "NetAmount",
+        "TaxAmount",
+        "Currency",
+      ];
   const lines = [header.join(",")];
+
   for (const inv of rows) {
     const contact = inv.quote?.customer?.name ?? "";
     const invDate = XERO_DATE(inv.created_at);
@@ -218,27 +244,40 @@ export async function GET(request: NextRequest) {
     const liList = inv.quote_id ? lineItemsByQuote.get(inv.quote_id) ?? [] : [];
 
     if (liList.length === 0) {
+      // No source line items — collapse to a single fallback row using
+      // the invoice's header totals so the import doesn't drop it.
       const net = Number(inv.amount ?? 0);
       const vat = Number(inv.vat_total ?? 0);
-      // No source line items — collapse to a single row using totals.
       const taxRate = net > 0 ? Math.round((vat / net) * 100) : 0;
-      lines.push(
-        [
-          contact,
-          inv.number,
-          invDate,
-          dueDate,
-          inv.notes ?? `Invoice ${inv.number}`,
-          "1",
-          net.toFixed(2),
-          "",
-          xeroTaxType(taxRate),
-          vat.toFixed(2),
-          "GBP",
-        ]
-          .map(csvEscape)
-          .join(","),
-      );
+      const row = isXero
+        ? [
+            contact,
+            inv.number,
+            invDate,
+            dueDate,
+            inv.notes ?? `Invoice ${inv.number}`,
+            "1",
+            net.toFixed(2),
+            "",
+            xeroTaxType(taxRate),
+            vat.toFixed(2),
+            "GBP",
+          ]
+        : [
+            contact,
+            inv.number,
+            invDate,
+            dueDate,
+            inv.notes ?? `Invoice ${inv.number}`,
+            "1",
+            net.toFixed(2),
+            "", // LedgerAccount — operator fills in Sage
+            sageTaxRate(taxRate),
+            net.toFixed(2),
+            vat.toFixed(2),
+            "GBP",
+          ];
+      lines.push(row.map(csvEscape).join(","));
       continue;
     }
 
@@ -248,23 +287,35 @@ export async function GET(request: NextRequest) {
       const rate = Number(li.vat_rate ?? 0);
       const lineTotalNet = qty * unit;
       const taxAmount = lineTotalNet * (rate / 100);
-      lines.push(
-        [
-          contact,
-          inv.number,
-          invDate,
-          dueDate,
-          li.description,
-          qty.toString(),
-          unit.toFixed(2),
-          "", // AccountCode — operator fills in Xero
-          xeroTaxType(rate),
-          taxAmount.toFixed(2),
-          "GBP",
-        ]
-          .map(csvEscape)
-          .join(","),
-      );
+      const row = isXero
+        ? [
+            contact,
+            inv.number,
+            invDate,
+            dueDate,
+            li.description,
+            qty.toString(),
+            unit.toFixed(2),
+            "", // AccountCode — operator fills in Xero
+            xeroTaxType(rate),
+            taxAmount.toFixed(2),
+            "GBP",
+          ]
+        : [
+            contact,
+            inv.number,
+            invDate,
+            dueDate,
+            li.description,
+            qty.toString(),
+            unit.toFixed(2),
+            "", // LedgerAccount — operator fills in Sage
+            sageTaxRate(rate),
+            lineTotalNet.toFixed(2),
+            taxAmount.toFixed(2),
+            "GBP",
+          ];
+      lines.push(row.map(csvEscape).join(","));
     }
   }
 
@@ -272,7 +323,7 @@ export async function GET(request: NextRequest) {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="crewflow-invoices-xero-${stamp}.csv"`,
+      "Content-Disposition": `attachment; filename="crewflow-invoices-${format}-${stamp}.csv"`,
     },
   });
 }
