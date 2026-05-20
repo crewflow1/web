@@ -14,16 +14,16 @@ const inter = Inter({
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://crewflow.uk"),
   title: {
-    default: "CrewFlow — Never miss another construction lead",
+    default: "CrewFlow — The operating system for UK construction companies",
     template: "%s · CrewFlow",
   },
   description:
-    "AI receptionist + quotes for construction companies. Pick up every call, send quotes from a voice note, get paid faster. Built in Belfast.",
+    "Leads, quotes, jobs, staff, rota, invoices, payments, profitability and tax — every part of your construction company in one place.",
   applicationName: "CrewFlow",
   authors: [{ name: "CrewFlow", url: "https://crewflow.uk" }],
   keywords: [
     "construction software",
-    "AI receptionist",
+    "construction operating system",
     "construction CRM",
     "UK construction",
     "quotes",
@@ -36,15 +36,15 @@ export const metadata: Metadata = {
     locale: "en_GB",
     url: "https://crewflow.uk",
     siteName: "CrewFlow",
-    title: "CrewFlow — Never miss another construction lead",
+    title: "CrewFlow — The operating system for UK construction companies",
     description:
-      "AI receptionist + quotes for UK construction companies. Built in Belfast.",
+      "Leads, quotes, jobs, staff, rota, invoices, payments, profitability and tax — one system for the whole company.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "CrewFlow — Never miss another construction lead",
+    title: "CrewFlow — The operating system for UK construction companies",
     description:
-      "AI receptionist + quotes for UK construction companies. Built in Belfast.",
+      "Leads, quotes, jobs, staff, rota, invoices, payments, profitability and tax — one system for the whole company.",
   },
   robots: {
     index: true,
