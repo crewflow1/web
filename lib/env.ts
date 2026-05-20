@@ -66,6 +66,13 @@ const envSchema = z.object({
   CRON_SECRET: z.string().optional(),
   INTERNAL_API_SECRET: z.string().optional(),
 
+  // -- Dev/preview-only auth bypass (Wave 1) ------------------------------
+  // Set in Vercel for the Preview environment only. The /api/dev/test-login
+  // route refuses to run in production regardless of these vars, but for
+  // belt-and-braces we keep them out of prod env too.
+  DEV_TEST_LOGIN_TOKEN: z.string().optional(),
+  DEV_TEST_USER_EMAIL: z.string().email().optional(),
+
   // -- Feature flags ------------------------------------------------------
   NEXT_PUBLIC_FEATURE_VOICE_NOTES: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
