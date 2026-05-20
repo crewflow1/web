@@ -34,22 +34,49 @@ export default async function InvoiceDetailPage({
   await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: invoice } = await supabase
+  // Cast: job_id is in the 20260520150000 migration but not yet in the
+  // generated Supabase types. We re-type the whole row through unknown
+  // so subsequent property accesses resolve normally.
+  type LoadedInvoice = {
+    id: string;
+    number: string;
+    status: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    total: number | string | null;
+    due_date: string | null;
+    sent_at: string | null;
+    paid_at: string | null;
+    notes: string | null;
+    created_at: string;
+    quote_id: string | null;
+    job_id: string | null;
+    quote: { customer: { email: string | null } | null } | null;
+  };
+  const { data: invoiceRaw } = await supabase
     .from("invoices")
     .select(
       `
         id, number, status, amount, vat_total, total, due_date, sent_at,
-        paid_at, notes, created_at, quote_id,
+        paid_at, notes, created_at, quote_id, job_id,
         quote:quotes ( customer:customers ( email ) )
       `,
     )
     .eq("id", id)
     .maybeSingle();
+  const invoice = invoiceRaw as unknown as LoadedInvoice | null;
 
   if (!invoice) notFound();
-  const customerEmail =
-    (invoice as unknown as { quote: { customer: { email: string | null } | null } | null })
-      .quote?.customer?.email ?? null;
+  const customerEmail = invoice.quote?.customer?.email ?? null;
+  const linkedJobId = invoice.job_id;
+
+  // Fetch the org's jobs for the link-to-job picker (customer surfaced
+  // for recognisability). Limit + RLS-scoped under the user JWT.
+  const { data: jobsForPicker } = await supabase
+    .from("jobs")
+    .select("id, status, scheduled_date, customer:customers ( name )")
+    .order("created_at", { ascending: false })
+    .limit(50);
 
   // Line items from the source quote (if still present).
   const lineItems = invoice.quote_id
@@ -195,7 +222,16 @@ export default async function InvoiceDetailPage({
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Actions</h2>
         <div className="mt-3">
-          <InvoiceControls id={invoice.id} status={status} customerEmail={customerEmail} />
+          <InvoiceControls
+            id={invoice.id}
+            status={status}
+            customerEmail={customerEmail}
+            linkedJobId={linkedJobId}
+            jobsForPicker={(jobsForPicker ?? []).map((j) => ({
+              id: j.id,
+              label: `${j.customer?.name ?? "Job"} · ${j.status}${j.scheduled_date ? ` · ${j.scheduled_date}` : ""}`,
+            }))}
+          />
         </div>
       </section>
     </div>

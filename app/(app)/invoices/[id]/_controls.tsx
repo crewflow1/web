@@ -15,10 +15,14 @@ export function InvoiceControls({
   id,
   status,
   customerEmail,
+  linkedJobId,
+  jobsForPicker,
 }: {
   id: string;
   status: InvoiceStatus;
   customerEmail: string | null;
+  linkedJobId: string | null;
+  jobsForPicker: Array<{ id: string; label: string }>;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -81,6 +85,31 @@ export function InvoiceControls({
       }
     } catch (err) {
       console.error("[invoice-send] failed", err);
+      setError("Network error.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onLinkJob(nextJobId: string) {
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch(`/api/invoices/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: nextJobId || null }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setError(j.error ?? `Failed (${res.status})`);
+      } else {
+        setInfo(nextJobId ? "Linked to job — profitability updated." : "Unlinked from job.");
+        router.refresh();
+      }
+    } catch (err) {
+      console.error("[invoice-link-job] failed", err);
       setError("Network error.");
     } finally {
       setBusy(false);
@@ -154,6 +183,30 @@ export function InvoiceControls({
               {s}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="border-t border-slate-200 pt-3">
+        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Link to job
+        </div>
+        <div className="mt-2">
+          <select
+            value={linkedJobId ?? ""}
+            onChange={(e) => onLinkJob(e.target.value)}
+            disabled={busy}
+            className="block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50"
+          >
+            <option value="">— Not linked —</option>
+            {jobsForPicker.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Attribute this invoice&apos;s revenue to a job for profitability tracking.
+          </p>
         </div>
       </div>
 
