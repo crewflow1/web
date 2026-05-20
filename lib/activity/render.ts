@@ -22,6 +22,7 @@ const GBP = new Intl.NumberFormat("en-GB", {
 });
 
 export function actionIcon(action: string): string {
+  if (action.startsWith("variation.")) return "📐";
   if (action.startsWith("quote.")) return "📝";
   if (action.startsWith("invoice.")) return "💷";
   if (action.startsWith("finance.")) return "🧾";
@@ -107,6 +108,16 @@ export function describeActivity(row: ActivityRow): string {
       return `reassigned a lead`;
     case "lead.deleted":
       return `deleted a lead`;
+    case "variation.created":
+      return `created Variation #${String(m["variation_number"] ?? "").padStart(3, "0")} ${fmtNumber(m["total"]) ?? ""}`.trim();
+    case "variation.sent":
+      return `sent Variation #${String(m["variation_number"] ?? "").padStart(3, "0")}`;
+    case "variation.viewed":
+      return `viewed Variation #${String(m["variation_number"] ?? "").padStart(3, "0")}`;
+    case "variation.accepted":
+      return `approved Variation #${String(m["variation_number"] ?? "").padStart(3, "0")} ${fmtNumber(m["total"]) ?? ""}`.trim();
+    case "variation.declined":
+      return `rejected Variation #${String(m["variation_number"] ?? "").padStart(3, "0")}`;
     case "customer.created":
       return `added a new customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
     case "customer.updated":
@@ -166,4 +177,5 @@ export const ACTIVITY_TYPES = [
   { value: "invoice.", label: "Invoices" },
   { value: "finance.", label: "Finances" },
   { value: "customer.", label: "Customers" },
+  { value: "variation.", label: "Variations" },
 ] as const;
