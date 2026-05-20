@@ -47,11 +47,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   }
   if (parsed.data.due_date !== undefined) patch.due_date = parsed.data.due_date ?? null;
   if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes ?? null;
-  if (parsed.data.job_id !== undefined) {
-    // Cast: job_id is in the 20260520150000 migration but not yet in the
-    // generated Supabase types. Safe at runtime post-deploy.
-    (patch as Record<string, unknown>).job_id = parsed.data.job_id;
-  }
+  if (parsed.data.job_id !== undefined) patch.job_id = parsed.data.job_id;
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });

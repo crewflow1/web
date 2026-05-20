@@ -52,23 +52,18 @@ export default async function EditJobPage({
   const [customers, staff, invoicesForJob, financesForJob, variationsForJob] = await Promise.all([
     listCustomersForOrg(),
     listStaffForOrg(),
-    // Cast: job_id is in the 20260520150000 migration but not yet in
-    // the generated Supabase types. Force the column-typed eq().
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
+    supabase
       .from("invoices")
       .select(
         "id, number, status, amount, vat_total, total, job_id, quote_id, quote:quotes ( variation_number )",
       )
       .eq("job_id", job.id),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
+    supabase
       .from("finances")
       .select("id, amount, vat_total, category, created_at, job_id")
       .eq("job_id", job.id),
     // Variations on this job (any status).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
+    supabase
       .from("quotes")
       .select(
         "id, number, variation_number, status, subtotal, vat_total, total, accepted_at, declined_at, created_at, notes, public_token",

@@ -32,10 +32,7 @@ export default async function PublicQuotePage({
   const sp = await searchParams;
   const admin = createAdminClient();
 
-  // Cast: variation_number is in the 20260520180000 migration but not
-  // yet in the generated Supabase types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: quote } = await (admin as any)
+  const { data: quote } = await admin
     .from("quotes")
     .select(
       `

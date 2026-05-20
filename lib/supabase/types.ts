@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       activity_log: {
@@ -305,12 +330,61 @@ export type Database = {
           },
         ]
       }
+      invoice_reminders: {
+        Row: {
+          created_at: string
+          email_id: string | null
+          id: string
+          invoice_id: string
+          org_id: string
+          recipient: string | null
+          sent_at: string
+          stage: string
+        }
+        Insert: {
+          created_at?: string
+          email_id?: string | null
+          id?: string
+          invoice_id: string
+          org_id: string
+          recipient?: string | null
+          sent_at?: string
+          stage: string
+        }
+        Update: {
+          created_at?: string
+          email_id?: string | null
+          id?: string
+          invoice_id?: string
+          org_id?: string
+          recipient?: string | null
+          sent_at?: string
+          stage?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_reminders_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_reminders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           amount: number
           created_at: string
           due_date: string | null
           id: string
+          job_id: string | null
           notes: string | null
           number: string
           org_id: string
@@ -327,6 +401,7 @@ export type Database = {
           created_at?: string
           due_date?: string | null
           id?: string
+          job_id?: string | null
           notes?: string | null
           number: string
           org_id: string
@@ -343,6 +418,7 @@ export type Database = {
           created_at?: string
           due_date?: string | null
           id?: string
+          job_id?: string | null
           notes?: string | null
           number?: string
           org_id?: string
@@ -355,6 +431,13 @@ export type Database = {
           vat_total?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "invoices_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "invoices_org_id_fkey"
             columns: ["org_id"]
@@ -526,6 +609,76 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leave_requests: {
+        Row: {
+          created_at: string
+          ends_at: string
+          id: string
+          org_id: string
+          reason: string | null
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          starts_at: string
+          status: string
+          type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          ends_at: string
+          id?: string
+          org_id: string
+          reason?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          starts_at: string
+          status?: string
+          type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          ends_at?: string
+          id?: string
+          org_id?: string
+          reason?: string | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          starts_at?: string
+          status?: string
+          type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leave_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leave_requests_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leave_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -840,9 +993,12 @@ export type Database = {
           created_at: string
           created_by: string | null
           currency: string
+          customer_comment: string | null
           customer_id: string
           declined_at: string | null
+          followup_sent_at: string | null
           id: string
+          job_id: string | null
           lead_id: string | null
           notes: string | null
           number: string
@@ -856,6 +1012,7 @@ export type Database = {
           total: number
           updated_at: string
           valid_until: string | null
+          variation_number: number | null
           vat_total: number
           viewed_at: string | null
         }
@@ -865,9 +1022,12 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          customer_comment?: string | null
           customer_id: string
           declined_at?: string | null
+          followup_sent_at?: string | null
           id?: string
+          job_id?: string | null
           lead_id?: string | null
           notes?: string | null
           number: string
@@ -881,6 +1041,7 @@ export type Database = {
           total?: number
           updated_at?: string
           valid_until?: string | null
+          variation_number?: number | null
           vat_total?: number
           viewed_at?: string | null
         }
@@ -890,9 +1051,12 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           currency?: string
+          customer_comment?: string | null
           customer_id?: string
           declined_at?: string | null
+          followup_sent_at?: string | null
           id?: string
+          job_id?: string | null
           lead_id?: string | null
           notes?: string | null
           number?: string
@@ -906,6 +1070,7 @@ export type Database = {
           total?: number
           updated_at?: string
           valid_until?: string | null
+          variation_number?: number | null
           vat_total?: number
           viewed_at?: string | null
         }
@@ -922,6 +1087,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
             referencedColumns: ["id"]
           },
           {
@@ -943,6 +1115,74 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rota_entries: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          ends_at: string
+          id: string
+          job_id: string | null
+          notes: string | null
+          org_id: string
+          starts_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          ends_at: string
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          org_id: string
+          starts_at: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          ends_at?: string
+          id?: string
+          job_id?: string | null
+          notes?: string | null
+          org_id?: string
+          starts_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rota_entries_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rota_entries_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rota_entries_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rota_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -999,27 +1239,39 @@ export type Database = {
           avatar_url: string | null
           created_at: string
           email: string
+          emergency_contact: Json | null
+          employment_type: string | null
           full_name: string | null
+          hourly_pay: number | null
           id: string
           phone: string | null
+          start_date: string | null
           updated_at: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
           email: string
+          emergency_contact?: Json | null
+          employment_type?: string | null
           full_name?: string | null
+          hourly_pay?: number | null
           id: string
           phone?: string | null
+          start_date?: string | null
           updated_at?: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
           email?: string
+          emergency_contact?: Json | null
+          employment_type?: string | null
           full_name?: string | null
+          hourly_pay?: number | null
           id?: string
           phone?: string | null
+          start_date?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -1157,8 +1409,10 @@ export type Database = {
       }
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }
+      is_org_member: { Args: { target_org: string }; Returns: boolean }
       next_invoice_number: { Args: { target_org: string }; Returns: string }
       next_quote_number: { Args: { target_org: string }; Returns: string }
+      next_variation_number: { Args: { target_job: string }; Returns: number }
       remove_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
@@ -1293,6 +1547,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       invoice_status: ["draft", "sent", "paid", "overdue"],

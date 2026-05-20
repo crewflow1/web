@@ -36,8 +36,7 @@ export default async function StaffDetailPage({
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
   // Target row + extended profile.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: row } = await (supabase as any)
+  const { data: row } = await supabase
     .from("memberships")
     .select(
       `

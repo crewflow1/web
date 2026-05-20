@@ -184,10 +184,7 @@ export async function updateStaffProfile(userId: string, formData: FormData) {
         }
       : null;
 
-  // Cast: hourly_pay / employment_type / start_date / emergency_contact
-  // are in the 20260521000000 migration but not yet in generated types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("users")
     .update({
       full_name: parsed.data.full_name ?? null,
@@ -268,16 +265,12 @@ export async function createRotaEntry(formData: FormData) {
   // shift on this day? Pull a window and compare in-process so we don't
   // require a Postgres range type.
   const dayStart = parsed.data.starts_at.slice(0, 10);
-  // Cast: rota_entries not yet in generated types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: sameDay } = (await (supabase as any)
+  const { data: sameDay } = await supabase
     .from("rota_entries")
     .select("starts_at, ends_at")
     .eq("user_id", parsed.data.user_id)
     .gte("starts_at", `${dayStart}T00:00:00Z`)
-    .lte("starts_at", `${dayStart}T23:59:59Z`)) as {
-    data: { starts_at: string; ends_at: string }[] | null;
-  };
+    .lte("starts_at", `${dayStart}T23:59:59Z`);
   if (sameDay && sameDay.length > 0) {
     const ns = new Date(parsed.data.starts_at).getTime();
     const ne = new Date(parsed.data.ends_at).getTime();
@@ -291,9 +284,7 @@ export async function createRotaEntry(formData: FormData) {
     }
   }
 
-  // Cast: rota_entries not yet in generated types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("rota_entries")
     .insert({
       org_id: ctx.org.id,
@@ -319,8 +310,7 @@ export async function deleteRotaEntry(entryId: string) {
   if (!uuid.safeParse(entryId).success) redirect("/staff/rota");
 
   const supabase = await createClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("rota_entries")
     .delete()
     .eq("id", entryId)
@@ -353,8 +343,7 @@ export async function createLeaveRequest(formData: FormData) {
   }
 
   const supabase = await createClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("leave_requests")
     .insert({
       org_id: ctx.org.id,
@@ -389,8 +378,7 @@ export async function reviewLeaveRequest(
   const note = String(formData.get("review_note") ?? "").trim() || null;
 
   const supabase = await createClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error, count } = await (supabase as any)
+  const { error, count } = await supabase
     .from("leave_requests")
     .update(
       {
@@ -422,8 +410,7 @@ export async function cancelLeaveRequest(requestId: string) {
   if (!uuid.safeParse(requestId).success) redirect("/staff/leave");
 
   const supabase = await createClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error, count } = await (supabase as any)
+  const { error, count } = await supabase
     .from("leave_requests")
     .update({ status: "cancelled" }, { count: "exact" })
     .eq("id", requestId)

@@ -50,9 +50,7 @@ export default async function StaffPage({
     .single();
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
-  // Cast: extended user columns not yet in generated types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: membersRaw } = await (supabase as any)
+  const { data: membersRaw } = await supabase
     .from("memberships")
     .select(
       `

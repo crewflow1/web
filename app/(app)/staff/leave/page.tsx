@@ -64,8 +64,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   const filter = sp.filter ?? (isAdmin ? "pending" : "mine");
 
   // Build query. Filter "mine" overrides org-wide via .eq(user_id).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase as any)
+  let q = supabase
     .from("leave_requests")
     .select(
       "id, user_id, type, starts_at, ends_at, reason, status, reviewed_at, review_note, created_at",

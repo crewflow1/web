@@ -106,11 +106,9 @@ export async function GET(request: Request) {
       continue;
     }
 
-    // Cast: followup_sent_at is in the 20260518150000 migration but not yet
-    // in the generated Supabase types. Safe at runtime post-deploy.
     const { error: updErr } = await admin
       .from("quotes")
-      .update({ followup_sent_at: new Date().toISOString() } as never)
+      .update({ followup_sent_at: new Date().toISOString() })
       .eq("id", q.id);
     if (updErr) {
       stats.failed++;

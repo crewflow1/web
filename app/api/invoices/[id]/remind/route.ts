@@ -83,10 +83,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   // Insert the reminder row (trigger emits invoice.reminder_sent).
-  // Cast: invoice_reminders is in the 20260520000000 migration but not
-  // yet in the generated Supabase types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: insErr } = await (supabase as any)
+  const { error: insErr } = await supabase
     .from("invoice_reminders")
     .insert({
       invoice_id: id,

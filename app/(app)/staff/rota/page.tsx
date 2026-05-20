@@ -90,8 +90,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
     .limit(50);
 
   // Rota entries for the week.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: entriesRaw } = await (supabase as any)
+  const { data: entriesRaw } = await supabase
     .from("rota_entries")
     .select("id, user_id, job_id, starts_at, ends_at, notes")
     .gte("starts_at", startIso)

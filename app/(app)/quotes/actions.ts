@@ -274,10 +274,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 
   const supabase = await createClient();
   const now = new Date().toISOString();
-  // Cast the entire chain: job_id / variation_number are in the
-  // 20260520180000 migration but not yet in the generated Supabase types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: quoteRaw, error } = await (supabase as any)
+  const { data: quote, error } = await supabase
     .from("quotes")
     .update({
       status: "accepted",
@@ -287,16 +284,6 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     .eq("id", id)
     .select("id, org_id, subtotal, vat_total, job_id, variation_number")
     .single();
-  const quote = quoteRaw as
-    | {
-        id: string;
-        org_id: string;
-        subtotal: number;
-        vat_total: number;
-        job_id: string | null;
-        variation_number: number | null;
-      }
-    | null;
 
   if (error || !quote) {
     console.error("[quotes] accept failed", error);
@@ -314,11 +301,9 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     console.error("[quotes] invoice number alloc failed", numErr);
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
   }
-  // Cast: invoices.job_id is in the 20260520150000 migration but not
-  // yet in the generated Supabase types. Pass through so revenue from
-  // accepted quotes (including variations) rolls up on the dashboard.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: newInvoice, error: invErr } = await (supabase as any)
+  // Pass job_id through so revenue from accepted quotes (including
+  // variations) rolls up on the dashboard.
+  const { data: newInvoice, error: invErr } = await supabase
     .from("invoices")
     .insert({
       org_id: quote.org_id,
@@ -400,30 +385,13 @@ export async function acceptQuoteByToken(
   const admin = createAdminClient();
   const now = new Date().toISOString();
 
-  // Find the quote by public_token. job_id / variation_number are
-  // cast-selected because the 20260520180000 migration adds them but
-  // they aren't in the generated Supabase types yet.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: quoteRaw, error: lookupErr } = await (admin as any)
+  const { data: quote, error: lookupErr } = await admin
     .from("quotes")
     .select(
       "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number",
     )
     .eq("public_token", token)
     .maybeSingle();
-  const quote = quoteRaw as
-    | {
-        id: string;
-        org_id: string;
-        status: string;
-        subtotal: number;
-        vat_total: number;
-        valid_until: string | null;
-        lead_id: string | null;
-        job_id: string | null;
-        variation_number: number | null;
-      }
-    | null;
 
   if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
   if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
@@ -434,8 +402,7 @@ export async function acceptQuoteByToken(
     return { ok: false, error: "Quote has expired" };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: updErr } = await (admin as any)
+  const { error: updErr } = await admin
     .from("quotes")
     .update({
       status: "accepted",
@@ -457,8 +424,7 @@ export async function acceptQuoteByToken(
   });
   let newInvoiceId: string | null = null;
   if (invNumber) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: newInvoice, error: invErr } = await (admin as any)
+    const { data: newInvoice, error: invErr } = await admin
       .from("invoices")
       .insert({
         org_id: quote.org_id,
@@ -525,8 +491,7 @@ export async function declineQuoteByToken(
     ? `${quote.notes ?? ""}\n\n[Declined ${now}] ${reason}`.trim()
     : quote.notes;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (admin as any)
+  const { error } = await admin
     .from("quotes")
     .update({
       status: "declined",
@@ -606,8 +571,7 @@ export async function createVariation(jobId: string, formData: FormData) {
   // Allocate per-org quote number AND per-job variation number.
   const [{ data: quoteNumber }, { data: varNumber }] = await Promise.all([
     supabase.rpc("next_quote_number", { target_org: job.org_id }),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any).rpc("next_variation_number", { target_job: jobId }),
+    supabase.rpc("next_variation_number", { target_job: jobId }),
   ]);
   if (!quoteNumber || !varNumber) {
     console.error("[variations] number allocation failed", { quoteNumber, varNumber });
@@ -616,10 +580,8 @@ export async function createVariation(jobId: string, formData: FormData) {
 
   const publicToken = crypto.randomUUID();
 
-  // Insert the variation as a quote. Cast: job_id / variation_number
-  // not yet in generated Supabase types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: variation, error: qErr } = await (supabase as any)
+  // Insert the variation as a quote.
+  const { data: variation, error: qErr } = await supabase
     .from("quotes")
     .insert({
       org_id: job.org_id,

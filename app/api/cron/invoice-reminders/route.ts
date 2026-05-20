@@ -107,10 +107,7 @@ export async function GET(request: Request) {
       stats.scanned++;
 
       // Check if this stage already fired for this invoice.
-      // Cast: invoice_reminders is in the 20260520000000 migration but
-      // not yet in the generated Supabase types.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { count: existing } = await (admin as any)
+      const { count: existing } = await admin
         .from("invoice_reminders")
         .select("id", { count: "exact", head: true })
         .eq("invoice_id", inv.id)
@@ -142,10 +139,7 @@ export async function GET(request: Request) {
       }
 
       // Insert the reminder row (the trigger writes to activity_log).
-      // Cast: invoice_reminders is in the 20260520000000 migration but
-      // not yet in the generated Supabase types.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: insErr } = await (admin as any)
+      const { error: insErr } = await admin
         .from("invoice_reminders")
         .insert({
           invoice_id: inv.id,
