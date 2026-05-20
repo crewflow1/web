@@ -274,7 +274,10 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 
   const supabase = await createClient();
   const now = new Date().toISOString();
-  const { data: quote, error } = await supabase
+  // Cast the entire chain: job_id / variation_number are in the
+  // 20260520180000 migration but not yet in the generated Supabase types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: quoteRaw, error } = await (supabase as any)
     .from("quotes")
     .update({
       status: "accepted",
@@ -282,8 +285,18 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       accept_signature: { name: signerName, signed_at: now, source: "owner" },
     })
     .eq("id", id)
-    .select("id, org_id, subtotal, vat_total")
+    .select("id, org_id, subtotal, vat_total, job_id, variation_number")
     .single();
+  const quote = quoteRaw as
+    | {
+        id: string;
+        org_id: string;
+        subtotal: number;
+        vat_total: number;
+        job_id: string | null;
+        variation_number: number | null;
+      }
+    | null;
 
   if (error || !quote) {
     console.error("[quotes] accept failed", error);
@@ -301,7 +314,11 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     console.error("[quotes] invoice number alloc failed", numErr);
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
   }
-  const { data: newInvoice, error: invErr } = await supabase
+  // Cast: invoices.job_id is in the 20260520150000 migration but not
+  // yet in the generated Supabase types. Pass through so revenue from
+  // accepted quotes (including variations) rolls up on the dashboard.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: newInvoice, error: invErr } = await (supabase as any)
     .from("invoices")
     .insert({
       org_id: quote.org_id,
@@ -310,6 +327,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       amount: quote.subtotal,
       vat_total: quote.vat_total,
       status: "draft",
+      job_id: quote.job_id,
     })
     .select("id")
     .single();
@@ -377,16 +395,35 @@ export async function acceptQuoteByToken(
   token: string,
   signerName: string,
   ipHash: string | null,
+  customerComment: string | null = null,
 ): Promise<{ ok: true; quoteId: string } | { ok: false; error: string }> {
   const admin = createAdminClient();
   const now = new Date().toISOString();
 
-  // Find the quote by public_token.
-  const { data: quote, error: lookupErr } = await admin
+  // Find the quote by public_token. job_id / variation_number are
+  // cast-selected because the 20260520180000 migration adds them but
+  // they aren't in the generated Supabase types yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: quoteRaw, error: lookupErr } = await (admin as any)
     .from("quotes")
-    .select("id, org_id, status, subtotal, vat_total, valid_until, lead_id")
+    .select(
+      "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number",
+    )
     .eq("public_token", token)
     .maybeSingle();
+  const quote = quoteRaw as
+    | {
+        id: string;
+        org_id: string;
+        status: string;
+        subtotal: number;
+        vat_total: number;
+        valid_until: string | null;
+        lead_id: string | null;
+        job_id: string | null;
+        variation_number: number | null;
+      }
+    | null;
 
   if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
   if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
@@ -397,12 +434,14 @@ export async function acceptQuoteByToken(
     return { ok: false, error: "Quote has expired" };
   }
 
-  const { error: updErr } = await admin
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: updErr } = await (admin as any)
     .from("quotes")
     .update({
       status: "accepted",
       accepted_at: now,
       accept_signature: { name: signerName, signed_at: now, ip_hash: ipHash, source: "public" },
+      customer_comment: customerComment,
     })
     .eq("id", quote.id);
   if (updErr) {
@@ -410,13 +449,16 @@ export async function acceptQuoteByToken(
     return { ok: false, error: "Couldn't record acceptance" };
   }
 
-  // Auto-create invoice (draft) from the accepted quote.
+  // Auto-create invoice (draft) from the accepted quote. When the source
+  // is a variation, the new invoice picks up the same job_id so revenue
+  // rolls up to the job on the profitability dashboard.
   const { data: invNumber } = await admin.rpc("next_invoice_number", {
     target_org: quote.org_id,
   });
   let newInvoiceId: string | null = null;
   if (invNumber) {
-    const { data: newInvoice, error: invErr } = await admin
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: newInvoice, error: invErr } = await (admin as any)
       .from("invoices")
       .insert({
         org_id: quote.org_id,
@@ -425,6 +467,7 @@ export async function acceptQuoteByToken(
         amount: quote.subtotal,
         vat_total: quote.vat_total,
         status: "draft",
+        job_id: quote.job_id,
       })
       .select("id")
       .single();
@@ -463,6 +506,7 @@ export async function acceptQuoteByToken(
 export async function declineQuoteByToken(
   token: string,
   reason: string | null,
+  customerComment: string | null = null,
 ): Promise<{ ok: true; quoteId: string } | { ok: false; error: string }> {
   const admin = createAdminClient();
   const now = new Date().toISOString();
@@ -481,12 +525,14 @@ export async function declineQuoteByToken(
     ? `${quote.notes ?? ""}\n\n[Declined ${now}] ${reason}`.trim()
     : quote.notes;
 
-  const { error } = await admin
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (admin as any)
     .from("quotes")
     .update({
       status: "declined",
       declined_at: now,
       notes: nextNotes,
+      customer_comment: customerComment,
     })
     .eq("id", quote.id);
   if (error) {
@@ -494,4 +540,178 @@ export async function declineQuoteByToken(
     return { ok: false, error: "Couldn't record decline" };
   }
   return { ok: true, quoteId: quote.id };
+}
+
+
+
+/**
+ * Create a Variation Order — a quote scoped to a specific job with a
+ * per-job sequence number. Uses the same quotes/quote_line_items
+ * pipeline so PDF + public portal + accept/decline + auto-invoice all
+ * work for free.
+ *
+ * The form captures the operator's cost breakdown (labour/materials/
+ * subcontractors/misc) + desired margin %; revenue is derived. Each
+ * non-zero cost bucket becomes a quote_line_item so the PDF reads
+ * cleanly, while the customer-facing line shows the bucket as a
+ * description and the bucket's net-of-margin price as the unit_price.
+ *
+ * For the customer the variation looks like a small quote with a few
+ * line items. Internally we mark it as a variation via the new
+ * quotes.variation_number column. On accept, an invoice is generated
+ * exactly as for a normal quote — and because we carry the job_id
+ * through, the new invoice automatically rolls up under the same job
+ * on the profitability dashboard.
+ */
+export async function createVariation(jobId: string, formData: FormData) {
+  const { user } = await requireOrgContext();
+  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
+
+  const { variationFormSchema, computeVariation } = await import(
+    "@/lib/variations/schema"
+  );
+
+  const parsed = variationFormSchema.safeParse({
+    title: formData.get("title") ?? "",
+    description: formData.get("description") ?? "",
+    labour_cost: formData.get("labour_cost") ?? 0,
+    materials_cost: formData.get("materials_cost") ?? 0,
+    subcontractor_cost: formData.get("subcontractor_cost") ?? 0,
+    misc_cost: formData.get("misc_cost") ?? 0,
+    margin_pct: formData.get("margin_pct") ?? 0,
+    vat_rate: formData.get("vat_rate") ?? 20,
+    note: formData.get("note") ?? "",
+    target_completion_date: formData.get("target_completion_date") ?? "",
+  });
+
+  if (!parsed.success) {
+    const msg = parsed.error.issues[0]?.message ?? "Invalid variation";
+    redirect(`/jobs/${jobId}/variations/new?error=${encodeURIComponent(msg)}`);
+  }
+
+  const computed = computeVariation(parsed.data);
+  const supabase = await createClient();
+
+  // Resolve job: org check + customer_id for the quote FK.
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("id, org_id, customer_id")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (!job) redirect("/jobs?error=job_not_found");
+  if (!job.customer_id) {
+    redirect(`/jobs/${jobId}?error=variation_needs_customer`);
+  }
+
+  // Allocate per-org quote number AND per-job variation number.
+  const [{ data: quoteNumber }, { data: varNumber }] = await Promise.all([
+    supabase.rpc("next_quote_number", { target_org: job.org_id }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).rpc("next_variation_number", { target_job: jobId }),
+  ]);
+  if (!quoteNumber || !varNumber) {
+    console.error("[variations] number allocation failed", { quoteNumber, varNumber });
+    redirect(`/jobs/${jobId}/variations/new?error=create_failed`);
+  }
+
+  const publicToken = crypto.randomUUID();
+
+  // Insert the variation as a quote. Cast: job_id / variation_number
+  // not yet in generated Supabase types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: variation, error: qErr } = await (supabase as any)
+    .from("quotes")
+    .insert({
+      org_id: job.org_id,
+      customer_id: job.customer_id,
+      lead_id: null,
+      job_id: jobId,
+      variation_number: varNumber,
+      number: quoteNumber as unknown as string,
+      status: "draft",
+      currency: "GBP",
+      subtotal: computed.subtotal,
+      vat_total: computed.vat_total,
+      total: computed.total,
+      notes: parsed.data.description
+        ? `${parsed.data.title}\n\n${parsed.data.description}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim()
+        : `${parsed.data.title}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim(),
+      terms: null,
+      valid_until: parsed.data.target_completion_date ?? null,
+      public_token: publicToken,
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+
+  if (qErr || !variation) {
+    console.error("[variations] insert failed", qErr);
+    redirect(`/jobs/${jobId}/variations/new?error=create_failed`);
+  }
+
+  // Build customer-facing line items from the cost breakdown. We split
+  // the variation revenue across buckets in proportion to their costs
+  // so the customer sees a meaningful breakdown rather than a single
+  // opaque "variation" line.
+  const { labour, materials, subcontractors, misc } = computed.cost_breakdown;
+  const totalCost = computed.total_cost;
+  type LIRow = { label: string; cost: number };
+  const buckets: LIRow[] = [
+    { label: "Labour", cost: labour },
+    { label: "Materials", cost: materials },
+    { label: "Subcontractors", cost: subcontractors },
+    { label: "Other", cost: misc },
+  ].filter((b) => b.cost > 0);
+
+  let lineItems: LineItemInsert[];
+  if (totalCost === 0 || buckets.length === 0) {
+    // Fallback: a single line representing the whole revenue.
+    lineItems = [
+      {
+        quote_id: variation.id,
+        org_id: job.org_id,
+        description: parsed.data.title,
+        qty: 1,
+        unit_price: computed.subtotal,
+        vat_rate: parsed.data.vat_rate,
+        line_total: computed.subtotal,
+        sort_order: 0,
+      },
+    ];
+  } else {
+    lineItems = buckets.map((b, idx) => {
+      const share = b.cost / totalCost;
+      const unit_price = Math.round(computed.subtotal * share * 100) / 100;
+      return {
+        quote_id: variation.id,
+        org_id: job.org_id,
+        description: b.label,
+        qty: 1,
+        unit_price,
+        vat_rate: parsed.data.vat_rate,
+        line_total: unit_price,
+        sort_order: idx,
+      };
+    });
+    // Adjust the last line to ensure sum == computed.subtotal (rounding).
+    const summed = lineItems.reduce((s, l) => s + Number(l.unit_price ?? 0), 0);
+    const delta = Math.round((computed.subtotal - summed) * 100) / 100;
+    if (delta !== 0 && lineItems.length > 0) {
+      const last = lineItems[lineItems.length - 1]!;
+      last.unit_price = Math.round((Number(last.unit_price ?? 0) + delta) * 100) / 100;
+      last.line_total = last.unit_price;
+    }
+  }
+
+  const { error: liErr } = await supabase
+    .from("quote_line_items")
+    .insert(lineItems);
+  if (liErr) {
+    console.error("[variations] line items insert failed", liErr);
+    redirect(`/jobs/${jobId}?error=variation_line_items_failed`);
+  }
+
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath(`/quotes/${variation.id}`);
+  redirect(`/quotes/${variation.id}?saved=variation_created`);
 }

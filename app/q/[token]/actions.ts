@@ -47,6 +47,7 @@ function getIpFromHeaders(h: Headers): string | null {
 export async function publicAcceptQuote(token: string, formData: FormData) {
   const parsed = publicAcceptSchema.safeParse({
     signer_name: formData.get("signer_name") ?? "",
+    comment: formData.get("comment") ?? "",
   });
   if (!parsed.success) {
     const msg = parsed.error.issues[0]?.message ?? "Invalid input";
@@ -56,7 +57,12 @@ export async function publicAcceptQuote(token: string, formData: FormData) {
   const h = await headers();
   const ipHash = hashIp(getIpFromHeaders(h));
 
-  const res = await acceptQuoteByToken(token, parsed.data.signer_name, ipHash);
+  const res = await acceptQuoteByToken(
+    token,
+    parsed.data.signer_name,
+    ipHash,
+    parsed.data.comment ?? null,
+  );
   if (!res.ok) {
     redirect(`/q/${token}?error=${encodeURIComponent(res.error)}`);
   }
@@ -66,10 +72,12 @@ export async function publicAcceptQuote(token: string, formData: FormData) {
 export async function publicDeclineQuote(token: string, formData: FormData) {
   const parsed = publicDeclineSchema.safeParse({
     reason: formData.get("reason") ?? "",
+    comment: formData.get("comment") ?? "",
   });
   const reason = parsed.success ? parsed.data.reason ?? null : null;
+  const comment = parsed.success ? parsed.data.comment ?? null : null;
 
-  const res = await declineQuoteByToken(token, reason);
+  const res = await declineQuoteByToken(token, reason, comment);
   if (!res.ok) {
     redirect(`/q/${token}?error=${encodeURIComponent(res.error)}`);
   }

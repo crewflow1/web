@@ -32,13 +32,17 @@ export default async function PublicQuotePage({
   const sp = await searchParams;
   const admin = createAdminClient();
 
-  const { data: quote } = await admin
+  // Cast: variation_number is in the 20260520180000 migration but not
+  // yet in the generated Supabase types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: quote } = await (admin as any)
     .from("quotes")
     .select(
       `
         id, org_id, number, status, currency, subtotal, vat_total, total,
         notes, terms, valid_until, public_token,
         sent_at, viewed_at, accepted_at, declined_at, accept_signature,
+        job_id, variation_number,
         customer:customers ( id, name, email ),
         org:organizations ( id, name, logo_url, vat_number, address, bank_details, phone, default_terms )
       `,
@@ -90,6 +94,16 @@ export default async function PublicQuotePage({
     quote.status === "declined" ||
     quote.status === "expired";
 
+  // Variation surface: when quotes.variation_number is set, the same
+  // record represents a Variation Order. Header copy, badge, and the
+  // accept/decline labels switch accordingly.
+  const variationNumber =
+    (quote as unknown as { variation_number: number | null }).variation_number ?? null;
+  const isVariation = variationNumber !== null;
+  const variationLabel = isVariation
+    ? `Variation #${String(variationNumber).padStart(3, "0")}`
+    : null;
+
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
@@ -98,10 +112,10 @@ export default async function PublicQuotePage({
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Quote
+                {isVariation ? variationLabel : "Quote"}
               </div>
               <h1 className="mt-1 text-2xl font-bold text-slate-900">
-                {quote.number}
+                {isVariation ? variationLabel : quote.number}
               </h1>
               <p className="mt-1 text-sm text-slate-600">
                 From <span className="font-medium text-slate-900">{org?.name}</span>
@@ -304,7 +318,7 @@ export default async function PublicQuotePage({
         {!isLocked ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">
-              Accept this quote
+              {isVariation ? "Approve this variation" : "Accept this quote"}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               Type your full name to accept. We&apos;ll record your signature,
@@ -313,7 +327,7 @@ export default async function PublicQuotePage({
             </p>
             <form
               action={publicAcceptQuote.bind(null, token)}
-              className="mt-4 flex flex-col gap-2 sm:flex-row"
+              className="mt-4 space-y-2"
             >
               <input
                 type="text"
@@ -321,19 +335,25 @@ export default async function PublicQuotePage({
                 required
                 placeholder="Your full name"
                 autoComplete="name"
-                className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                className="block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              />
+              <textarea
+                name="comment"
+                rows={3}
+                placeholder="Optional — leave a comment for the team"
+                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
               <button
                 type="submit"
                 className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
               >
-                Accept &amp; sign
+                {isVariation ? "Approve & sign" : "Accept & sign"}
               </button>
             </form>
 
             <details className="mt-4 text-sm text-slate-600">
               <summary className="cursor-pointer text-slate-500 hover:text-slate-900">
-                Decline instead
+                {isVariation ? "Reject instead" : "Decline instead"}
               </summary>
               <form
                 action={publicDeclineQuote.bind(null, token)}
@@ -342,14 +362,20 @@ export default async function PublicQuotePage({
                 <textarea
                   name="reason"
                   rows={3}
-                  placeholder="Optional — reason for declining"
+                  placeholder={isVariation ? "Optional — reason for rejecting" : "Optional — reason for declining"}
+                  className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <textarea
+                  name="comment"
+                  rows={2}
+                  placeholder="Optional — additional comment for the team"
                   className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 />
                 <button
                   type="submit"
                   className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
                 >
-                  Decline quote
+                  {isVariation ? "Reject variation" : "Decline quote"}
                 </button>
               </form>
             </details>

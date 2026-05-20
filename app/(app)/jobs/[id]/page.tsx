@@ -49,7 +49,7 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
-  const [customers, staff, invoicesForJob, financesForJob] = await Promise.all([
+  const [customers, staff, invoicesForJob, financesForJob, variationsForJob] = await Promise.all([
     listCustomersForOrg(),
     listStaffForOrg(),
     // Cast: job_id is in the 20260520150000 migration but not yet in
@@ -57,28 +57,72 @@ export default async function EditJobPage({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (supabase as any)
       .from("invoices")
-      .select("id, number, status, amount, vat_total, total, job_id")
+      .select(
+        "id, number, status, amount, vat_total, total, job_id, quote_id, quote:quotes ( variation_number )",
+      )
       .eq("job_id", job.id),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (supabase as any)
       .from("finances")
       .select("id, amount, vat_total, category, created_at, job_id")
       .eq("job_id", job.id),
+    // Variations on this job (any status).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from("quotes")
+      .select(
+        "id, number, variation_number, status, subtotal, vat_total, total, accepted_at, declined_at, created_at, notes, public_token",
+      )
+      .eq("job_id", job.id)
+      .not("variation_number", "is", null)
+      .order("variation_number", { ascending: true }),
   ]);
 
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types.
-  type InvRow = { job_id: string | null; amount: number | string | null };
+  type InvRow = {
+    job_id: string | null;
+    amount: number | string | null;
+    quote?: { variation_number: number | null } | null;
+  };
   type FinRow = {
     job_id: string | null;
     amount: number | string | null;
     category: string | null;
   };
-  const profit = computeJobProfitability(
-    job.id,
-    (invoicesForJob.data ?? []) as unknown as InvRow[],
-    (financesForJob.data ?? []) as unknown as FinRow[],
-  );
+  type VarRow = {
+    id: string;
+    number: string;
+    variation_number: number;
+    status: string;
+    subtotal: number | string | null;
+    vat_total: number | string | null;
+    total: number | string | null;
+    accepted_at: string | null;
+    declined_at: string | null;
+    created_at: string;
+    notes: string | null;
+    public_token: string | null;
+  };
+  const invRows = (invoicesForJob.data ?? []) as unknown as InvRow[];
+  const finRows = (financesForJob.data ?? []) as unknown as FinRow[];
+  const varRows = (variationsForJob.data ?? []) as unknown as VarRow[];
+
+  const profit = computeJobProfitability(job.id, invRows, finRows);
+
+  // Original vs Variations breakdown — split invoice revenue by whether
+  // the source quote has variation_number set.
+  let originalRevenue = 0;
+  let variationRevenue = 0;
+  for (const inv of invRows) {
+    const amt = Number(inv.amount ?? 0);
+    if (inv.quote?.variation_number !== null && inv.quote?.variation_number !== undefined) {
+      variationRevenue += amt;
+    } else {
+      originalRevenue += amt;
+    }
+  }
+  const totalCommitted = originalRevenue + variationRevenue;
 
   const errorMessage = error
     ? error === "update_failed"
@@ -228,6 +272,123 @@ export default async function EditJobPage({
       </form>
 
       <PhotoGallery jobId={job.id} />
+
+      {/* Original / Variations / Total breakdown — the CEO-asked tile */}
+      {(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold text-slate-900">
+              Job value
+            </h2>
+            <Link
+              href={`/jobs/${job.id}/variations/new`}
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              + Add variation
+            </Link>
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Original</dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {GBP.format(originalRevenue)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Variations</dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {variationRevenue > 0 ? "+" : ""}
+                {GBP.format(variationRevenue)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Total</dt>
+              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                {GBP.format(totalCommitted)}
+              </dd>
+            </div>
+            {profit ? (
+              <>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-slate-500">Profit</dt>
+                  <dd
+                    className={`mt-0.5 text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
+                  >
+                    {GBP.format(profit.gross_profit)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-slate-500">Margin</dt>
+                  <dd className="mt-0.5">
+                    <span
+                      className={`rounded-full border px-2.5 py-0.5 text-sm font-semibold ${marginPillClass(profit.band)}`}
+                    >
+                      {profit.margin_pct === null ? "—" : `${profit.margin_pct}%`}
+                    </span>
+                  </dd>
+                </div>
+              </>
+            ) : null}
+          </dl>
+
+          {varRows.length > 0 ? (
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Variations
+              </div>
+              <ul className="mt-2 divide-y divide-slate-100">
+                {varRows.map((v) => {
+                  const label = `Variation #${String(v.variation_number).padStart(3, "0")}`;
+                  const statusColor =
+                    v.status === "accepted"
+                      ? "bg-green-100 text-green-800"
+                      : v.status === "declined"
+                        ? "bg-red-100 text-red-800"
+                        : "bg-slate-100 text-slate-700";
+                  const title = v.notes?.split("\n")[0]?.slice(0, 80) ?? label;
+                  return (
+                    <li key={v.id} className="flex items-center gap-3 py-2 text-sm">
+                      <Link
+                        href={`/quotes/${v.id}`}
+                        className="min-w-0 flex-1 truncate hover:underline"
+                      >
+                        <span className="font-medium text-slate-900">{label}</span>
+                        <span className="ml-2 text-slate-600">{title}</span>
+                      </Link>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {GBP.format(Number(v.total ?? 0))}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusColor}`}
+                      >
+                        {v.status}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {!(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
+        <section className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+          <div className="flex items-center justify-between gap-3">
+            <p>
+              No invoices linked yet. Once you link an invoice to this job
+              (Invoice → <em>Link to job</em>), you can add variation orders
+              here.
+            </p>
+            <Link
+              href={`/jobs/${job.id}/variations/new`}
+              className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              + Add variation
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between gap-3">

@@ -77,8 +77,10 @@ export type QuoteFormInput = z.infer<typeof quoteFormSchema>;
  */
 export const publicAcceptSchema = z.object({
   signer_name: z.string().trim().min(1, "Please enter your full name").max(200),
+  comment: optionalString(2000),
 });
 
 export const publicDeclineSchema = z.object({
   reason: optionalString(2000),
+  comment: optionalString(2000),
 });
