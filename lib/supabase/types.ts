@@ -392,6 +392,68 @@ export type Database = {
           },
         ]
       }
+      demo_requests: {
+        Row: {
+          company: string
+          created_at: string
+          current_systems: string | null
+          email: string
+          employees: string | null
+          id: string
+          internal_lead_id: string | null
+          name: string
+          notes: string | null
+          phone: string | null
+          preferred_demo_time: string | null
+          source: string | null
+          status: string
+          turnover_range: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          current_systems?: string | null
+          email: string
+          employees?: string | null
+          id?: string
+          internal_lead_id?: string | null
+          name: string
+          notes?: string | null
+          phone?: string | null
+          preferred_demo_time?: string | null
+          source?: string | null
+          status?: string
+          turnover_range?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          current_systems?: string | null
+          email?: string
+          employees?: string | null
+          id?: string
+          internal_lead_id?: string | null
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          preferred_demo_time?: string | null
+          source?: string | null
+          status?: string
+          turnover_range?: string | null
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "demo_requests_internal_lead_id_fkey"
+            columns: ["internal_lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finances: {
         Row: {
           amount: number

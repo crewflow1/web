@@ -1,13 +1,15 @@
 import Link from "next/link";
+import {
+  BookDemoButton,
+  BookDemoModal,
+} from "./(public)/_book-demo-modal";
 
 /**
- * Landing — repositioned for Wave 6.
+ * Landing page.
  *
- *   CrewFlow is the operating system for UK construction companies.
- *
- * Hero + 11 feature sections covering everything Waves 0–5 shipped.
- * Book Demo is the primary CTA; waitlist remains as a secondary.
- * No more "Message Moe" copy — it's a product, not a Moe-person.
+ * Primary CTA: Book demo (opens the BookDemoModal). Secondary CTA:
+ * See CrewFlow in action (scrolls to the feature grid). Everything
+ * routes through the modal — no mailto links, no waitlist form.
  */
 export default function HomePage() {
   return (
@@ -33,12 +35,7 @@ export default function HomePage() {
             >
               Sign in
             </Link>
-            <a
-              href="#book-demo"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-            >
-              Book a demo
-            </a>
+            <BookDemoButton size="sm">Book demo</BookDemoButton>
           </nav>
         </div>
       </header>
@@ -50,31 +47,22 @@ export default function HomePage() {
             For UK construction companies
           </p>
           <h1 className="mt-5 max-w-4xl text-4xl font-bold leading-[1.1] tracking-tight text-slate-900 sm:text-6xl">
-            The operating system for the UK building trade.
+            Win more jobs. Cut admin. Know exactly where your money goes.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-relaxed text-slate-600 sm:text-xl">
-            Leads, quotes, jobs, staff, rota, invoices, payments,
-            profitability and tax — every part of your construction
-            company in one place. Built so you can stop juggling
-            spreadsheets, WhatsApp groups and accountants&apos; emails.
+            Everything your construction company needs to run from winning jobs to tracking profit in one place.
           </p>
           <div className="mt-10 flex flex-wrap items-center gap-3">
+            <BookDemoButton size="lg">Book demo</BookDemoButton>
             <a
-              href="#book-demo"
-              className="rounded-md bg-slate-900 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              href="#features"
+              className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              Book a demo
-            </a>
-            <a
-              href="mailto:hello@crewflow.uk?subject=CrewFlow%20waitlist"
-              className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Join the waitlist
+              See CrewFlow in action
             </a>
           </div>
           <p className="mt-6 text-sm text-slate-500">
-            HMRC-compliant invoicing. Bank-transfer payments. Full data
-            migration from your current setup.
+            HMRC-compliant invoicing. Bank-transfer payments. Full data migration from your current setup.
           </p>
 
           {/* Hero stat strip */}
@@ -189,23 +177,15 @@ export default function HomePage() {
             See it on your own data.
           </h2>
           <p className="mt-3 text-base text-slate-600">
-            30-minute demo. We&apos;ll walk through quotes → jobs →
-            invoices → tax with figures from a company like yours. Then
-            we&apos;ll import your existing data live so you see exactly
-            what your dashboard would look like tomorrow.
+            30 minutes on a call. We will walk through your numbers so you see exactly what CrewFlow would change.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
+            <BookDemoButton size="lg">Book demo</BookDemoButton>
             <a
-              href="mailto:hello@crewflow.uk?subject=Demo%20—%20CrewFlow&body=Hi%20CrewFlow%20team%2C%0A%0ACompany%3A%0AContact%3A%0ATrade%3A%0AStaff%20count%3A%0APreferred%20time%3A%0A"
-              className="rounded-md bg-slate-900 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              href="#features"
+              className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              Book a demo
-            </a>
-            <a
-              href="mailto:hello@crewflow.uk?subject=CrewFlow%20waitlist"
-              className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Join the waitlist
+              See CrewFlow in action
             </a>
           </div>
         </div>
@@ -217,6 +197,8 @@ export default function HomePage() {
           <span>© 2026 CrewFlow. Built in Belfast.</span>
         </div>
       </footer>
+
+      <BookDemoModal />
     </main>
   );
 }
