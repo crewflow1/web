@@ -1,8 +1,18 @@
 import "server-only";
 
 /**
- * Email body builders for the cron-driven follow-ups (Phase 8.2 b/c/d).
- * Plain HTML, short copy, attachment carries the visual identity.
+ * Email body builders for the cron-driven follow-ups.
+ *
+ * Invoice reminders are stage-based (see invoice_reminders.stage):
+ *   day_3   Friendly reminder
+ *   day_7   Payment reminder
+ *   day_14  Invoice overdue
+ *   day_21  Final reminder
+ *   manual  Operator-triggered send
+ *
+ * Quote follow-up is a single stage (5 days after sent, unviewed).
+ *
+ * Plain HTML, short copy. The attachment carries the visual identity.
  */
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -32,108 +42,88 @@ function shell(bodyHtml: string): string {
 }
 
 // -------------------------------------------------------------------------
-// 8.2b — payment reminder (N days before due_date)
+// Invoice reminders (4 stages + manual)
 // -------------------------------------------------------------------------
-export type PaymentReminderInput = {
+export type ReminderStage = "day_3" | "day_7" | "day_14" | "day_21" | "manual";
+
+export type InvoiceReminderInput = {
   org_name: string;
   customer_name: string | null;
   invoice_number: string;
   total: number;
-  due_date: string;
-  days_until_due: number;
+  due_date: string | null;
+  stage: ReminderStage;
+  /** Free-text message — used for stage="manual" so the operator can add a note. */
+  custom_message?: string | null;
 };
 
-export function buildPaymentReminder(input: PaymentReminderInput): {
+const STAGE_HEADERS: Record<ReminderStage, string> = {
+  day_3: "Friendly reminder",
+  day_7: "Payment reminder",
+  day_14: "Invoice overdue",
+  day_21: "Final reminder",
+  manual: "Payment reminder",
+};
+
+const STAGE_TONES: Record<ReminderStage, string> = {
+  day_3:
+    "Just a friendly reminder that the invoice attached is awaiting payment. No rush — let us know if you have any questions.",
+  day_7:
+    "This is a polite reminder that the invoice attached is still outstanding. The PDF and bank details for payment are attached.",
+  day_14:
+    "The attached invoice is now overdue. Please settle it at your earliest convenience, or reply to this email if there's an issue we can help resolve.",
+  day_21:
+    "This is a final reminder that the attached invoice remains unpaid. If we don't hear from you, we may need to pause further work. Please reply to this email so we can sort it out.",
+  manual:
+    "Just following up on the attached invoice. The PDF and bank details for payment are included.",
+};
+
+export function buildInvoiceReminder(input: InvoiceReminderInput): {
   subject: string;
   html: string;
   text: string;
 } {
-  const subject = `Reminder: Invoice ${input.invoice_number} due ${input.days_until_due === 0 ? "today" : `in ${input.days_until_due} day${input.days_until_due === 1 ? "" : "s"}`}`;
+  const header = STAGE_HEADERS[input.stage];
+  const tone = input.custom_message?.trim() || STAGE_TONES[input.stage];
+
+  const subject = `${header}: Invoice ${input.invoice_number} (${GBP.format(input.total)})`;
   const greeting = input.customer_name
     ? `Hi ${escapeHtml(input.customer_name)},`
     : "Hi,";
+  const dueLine = input.due_date
+    ? `<p style="margin:0 0 16px;color:#475569;">Original due date: <strong>${escapeHtml(input.due_date)}</strong>.</p>`
+    : "";
+
   const html = shell(`
     <p style="margin:0 0 16px;font-size:16px;">${greeting}</p>
     <p style="margin:0 0 16px;font-size:16px;">
-      Just a friendly reminder that <strong>Invoice ${escapeHtml(input.invoice_number)}</strong>
-      for <strong>${GBP.format(input.total)}</strong> is due
-      ${input.days_until_due === 0
-        ? "<strong>today</strong>"
-        : `in <strong>${input.days_until_due} day${input.days_until_due === 1 ? "" : "s"}</strong> (${escapeHtml(input.due_date)})`}.
+      ${escapeHtml(tone)}
     </p>
-    <p style="margin:0 0 16px;color:#475569;">
-      The invoice PDF is attached for your reference. Bank details for payment are at the bottom of the PDF.
+    <p style="margin:0 0 16px;font-size:15px;color:#0f172a;">
+      <strong>Invoice ${escapeHtml(input.invoice_number)}</strong> &middot;
+      <strong>${GBP.format(input.total)}</strong>
     </p>
+    ${dueLine}
     <p style="margin:24px 0 0;color:#0f172a;">Thanks,<br/>${escapeHtml(input.org_name)}</p>
   `);
   const text = [
     `${greeting.replace(/&#39;/g, "'")}`,
     "",
-    `Just a friendly reminder that Invoice ${input.invoice_number} for ${GBP.format(input.total)} is due ${input.days_until_due === 0 ? "today" : `in ${input.days_until_due} day${input.days_until_due === 1 ? "" : "s"} (${input.due_date})`}.`,
+    tone,
     "",
-    `The invoice PDF is attached. Bank details for payment are at the bottom of the PDF.`,
+    `Invoice ${input.invoice_number} — ${GBP.format(input.total)}`,
+    input.due_date ? `Original due date: ${input.due_date}` : "",
     "",
     `Thanks,`,
     input.org_name,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
   return { subject, html, text };
 }
 
 // -------------------------------------------------------------------------
-// 8.2c — overdue reminder (N days past due_date)
-// -------------------------------------------------------------------------
-export type OverdueReminderInput = {
-  org_name: string;
-  customer_name: string | null;
-  invoice_number: string;
-  total: number;
-  due_date: string;
-  days_overdue: number;
-};
-
-export function buildOverdueReminder(input: OverdueReminderInput): {
-  subject: string;
-  html: string;
-  text: string;
-} {
-  const subject = `Overdue: Invoice ${input.invoice_number} (${input.days_overdue} day${input.days_overdue === 1 ? "" : "s"} past due)`;
-  const greeting = input.customer_name
-    ? `Hi ${escapeHtml(input.customer_name)},`
-    : "Hi,";
-  const html = shell(`
-    <p style="margin:0 0 16px;font-size:16px;">${greeting}</p>
-    <p style="margin:0 0 16px;font-size:16px;">
-      <strong>Invoice ${escapeHtml(input.invoice_number)}</strong> for
-      <strong>${GBP.format(input.total)}</strong> is now
-      <strong>${input.days_overdue} day${input.days_overdue === 1 ? "" : "s"} overdue</strong>
-      (due ${escapeHtml(input.due_date)}).
-    </p>
-    <p style="margin:0 0 16px;color:#475569;">
-      If you've already settled this, please ignore this message — we may not have matched it up yet.
-      Otherwise, the invoice PDF is attached and bank details for payment are at the bottom.
-    </p>
-    <p style="margin:0 0 16px;color:#475569;">
-      If there's anything blocking payment, just reply to this email and we'll sort it.
-    </p>
-    <p style="margin:24px 0 0;color:#0f172a;">Thanks,<br/>${escapeHtml(input.org_name)}</p>
-  `);
-  const text = [
-    `${greeting.replace(/&#39;/g, "'")}`,
-    "",
-    `Invoice ${input.invoice_number} for ${GBP.format(input.total)} is now ${input.days_overdue} day${input.days_overdue === 1 ? "" : "s"} overdue (due ${input.due_date}).`,
-    "",
-    `If you've already settled this, please ignore this message. Otherwise, the invoice PDF is attached and bank details are at the bottom.`,
-    "",
-    `If there's anything blocking payment, just reply and we'll sort it.`,
-    "",
-    `Thanks,`,
-    input.org_name,
-  ].join("\n");
-  return { subject, html, text };
-}
-
-// -------------------------------------------------------------------------
-// 8.2d — quote follow-up (N days after sent, no view yet)
+// Quote follow-up (single stage, kept from earlier)
 // -------------------------------------------------------------------------
 export type QuoteFollowupInput = {
   org_name: string;
