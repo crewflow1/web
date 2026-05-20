@@ -990,6 +990,9 @@ export type Database = {
         Row: {
           accept_signature: Json | null
           accepted_at: string | null
+          approval_comment: string | null
+          approved_at: string | null
+          approved_by: string | null
           created_at: string
           created_by: string | null
           currency: string
@@ -1019,6 +1022,9 @@ export type Database = {
         Insert: {
           accept_signature?: Json | null
           accepted_at?: string | null
+          approval_comment?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -1048,6 +1054,9 @@ export type Database = {
         Update: {
           accept_signature?: Json | null
           accepted_at?: string | null
+          approval_comment?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -1075,6 +1084,13 @@ export type Database = {
           viewed_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "quotes_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "quotes_created_by_fkey"
             columns: ["created_by"]

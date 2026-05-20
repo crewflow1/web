@@ -129,7 +129,7 @@ export default async function DashboardPage() {
         .select("user_id, role, user:users ( id, full_name, email )"),
       supabase
         .from("quotes")
-        .select("id, status, total, accepted_at, created_at"),
+        .select("id, status, total, accepted_at, created_at, approved_at"),
       supabase
         .from("leads")
         .select("id, status, source, estimated_value, created_at"),
@@ -293,17 +293,32 @@ export default async function DashboardPage() {
   }
 
   // ---- quote analytics -------------------------------------------------
-  let pendingQuoteCount = 0; // draft / sent / viewed
+  let pendingQuoteCount = 0; // draft / pending_approval / approved / sent / viewed
+  let pendingApprovalCount = 0; // pending_approval only — for the approval tile
+  let approvedTodayCount = 0;
+  let rejectedCount = 0; // approver-rejected (not customer-declined)
   let acceptedThisMonthCount = 0;
   let acceptedThisMonthValue = 0;
   let conversionDecided = 0; // accepted + declined
   let conversionAccepted = 0;
   let totalQuoteValue = 0;
+  const todayIsoStr = new Date().toISOString().slice(0, 10);
   for (const q of quotes) {
     const total = Number(q.total ?? 0);
     totalQuoteValue += total;
-    if (q.status === "draft" || q.status === "sent" || q.status === "viewed") {
+    if (
+      q.status === "draft" ||
+      q.status === "pending_approval" ||
+      q.status === "approved" ||
+      q.status === "sent" ||
+      q.status === "viewed"
+    ) {
       pendingQuoteCount++;
+    }
+    if (q.status === "pending_approval") pendingApprovalCount++;
+    if (q.status === "rejected") rejectedCount++;
+    if (q.approved_at && q.approved_at.slice(0, 10) === todayIsoStr) {
+      approvedTodayCount++;
     }
     if (q.status === "accepted" || q.status === "declined") {
       conversionDecided++;
@@ -622,8 +637,26 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* Quote analytics row */}
+      {/* Approval workflow row (Wave 2) */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Pending approvals"
+          value={pendingApprovalCount.toString()}
+          href="/quotes?status=pending_approval"
+          sub={pendingApprovalCount === 0 ? "all clear" : "awaiting owner/admin review"}
+        />
+        <Kpi
+          label="Approved today"
+          value={approvedTodayCount.toString()}
+          href="/quotes?status=approved"
+          sub="cleared the approval gate today"
+        />
+        <Kpi
+          label="Rejected"
+          value={rejectedCount.toString()}
+          href="/quotes?status=rejected"
+          sub="awaiting edit + resubmit"
+        />
         <Kpi
           label="Quote conversion"
           value={conversionPct === null ? "—" : `${conversionPct}%`}
@@ -634,11 +667,15 @@ export default async function DashboardPage() {
               : `${conversionAccepted}/${conversionDecided} accepted`
           }
         />
+      </section>
+
+      {/* Quote analytics row */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi
           label="Pending quotes"
           value={pendingQuoteCount.toString()}
           href="/quotes?status=sent"
-          sub="awaiting decision"
+          sub="all in-flight (draft → viewed)"
         />
         <Kpi
           label="Accepted this month"
@@ -651,6 +688,12 @@ export default async function DashboardPage() {
           value={GBP.format(avgQuoteValue)}
           href="/quotes"
           sub={`across ${quotes.length} ${quotes.length === 1 ? "quote" : "quotes"}`}
+        />
+        <Kpi
+          label="Total quote value"
+          value={GBP.format(totalQuoteValue)}
+          href="/quotes"
+          sub="all-time"
         />
       </section>
 

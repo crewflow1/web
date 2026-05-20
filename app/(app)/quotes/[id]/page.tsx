@@ -14,6 +14,8 @@ import {
   deleteQuote,
   acceptQuoteAsOwner,
   declineQuoteAsOwner,
+  requestQuoteApproval,
+  reviewQuote,
 } from "../actions";
 import type { LineItem } from "@/lib/quotes/schema";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
@@ -39,6 +41,9 @@ const GBP = new Intl.NumberFormat("en-GB", {
 
 const STATUS_STYLES: Record<QuoteStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
+  pending_approval: "bg-amber-100 text-amber-800",
+  approved: "bg-emerald-100 text-emerald-800",
+  rejected: "bg-red-100 text-red-700",
   sent: "bg-blue-100 text-blue-700",
   viewed: "bg-indigo-100 text-indigo-700",
   accepted: "bg-green-100 text-green-700",
@@ -57,6 +62,10 @@ const ERROR_MAP: Record<string, string> = {
 
 const SAVED_MAP: Record<string, string> = {
   "1": "Saved.",
+  approval_requested: "Sent for approval. An owner or admin will review.",
+  approved: "Approved. You can now send to the customer.",
+  rejected: "Rejected. Edit and request approval again to resubmit.",
+  changes_requested: "Changes requested — comment recorded.",
   sent: "Marked as sent. Share the customer link below.",
   accepted: "Accepted. Draft invoice created.",
   declined: "Marked as declined.",
@@ -74,22 +83,29 @@ export default async function EditQuotePage({
   const { id } = await params;
   const sp = await searchParams;
 
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: quote } = await supabase
-    .from("quotes")
-    .select(
-      `
-        id, number, status, currency, subtotal, vat_total, total,
-        customer_id, property_id, lead_id, valid_until, notes, terms,
-        public_token, sent_at, viewed_at, accepted_at, declined_at,
-        accept_signature, created_at
-      `,
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // Role + quote in parallel.
+  const [{ data: myRow }, { data: quote }] = await Promise.all([
+    supabase.from("memberships").select("role").eq("org_id", ctx.org.id).single(),
+    supabase
+      .from("quotes")
+      .select(
+        `
+          id, number, status, currency, subtotal, vat_total, total,
+          customer_id, property_id, lead_id, valid_until, notes, terms,
+          public_token, sent_at, viewed_at, accepted_at, declined_at,
+          accept_signature, created_at,
+          approved_by, approved_at, approval_comment,
+          approver:users!quotes_approved_by_fkey ( id, full_name, email )
+        `,
+      )
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
   if (!quote) notFound();
+  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
   const { data: rawItems } = await supabase
     .from("quote_line_items")
@@ -191,17 +207,33 @@ export default async function EditQuotePage({
           </ul>
 
           <div className="flex flex-wrap gap-2 pt-2">
-            {status === "draft" || status === "viewed" ? (
+            {/* Draft or rejected → request approval */}
+            {(status === "draft" || status === "rejected") ? (
+              <form action={requestQuoteApproval.bind(null, id)}>
+                <button
+                  type="submit"
+                  className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+                >
+                  Request approval
+                </button>
+              </form>
+            ) : null}
+
+            {/* Approved → send to customer */}
+            {status === "approved" ? (
               <form action={sendQuote.bind(null, id)}>
                 <button
                   type="submit"
                   className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
                 >
-                  Mark as sent
+                  Send to customer
                 </button>
               </form>
             ) : null}
-            {!isLocked ? (
+
+            {/* Owner-accept / mark-declined remain available once the quote
+                is actually live with the customer (approved + onwards). */}
+            {(status === "sent" || status === "viewed" || status === "approved") ? (
               <form action={acceptQuoteAsOwner.bind(null, id)}>
                 <input
                   type="hidden"
@@ -216,7 +248,7 @@ export default async function EditQuotePage({
                 </button>
               </form>
             ) : null}
-            {!isLocked ? (
+            {(status === "sent" || status === "viewed" || status === "approved") ? (
               <form action={declineQuoteAsOwner.bind(null, id)}>
                 <button
                   type="submit"
@@ -226,6 +258,7 @@ export default async function EditQuotePage({
                 </button>
               </form>
             ) : null}
+
             <a
               href={`/api/quotes/${id}/pdf`}
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -237,6 +270,95 @@ export default async function EditQuotePage({
           </div>
         </div>
       </section>
+
+      {/* Approval panel — visible when pending_approval, approved, or
+          rejected. Admins see Approve / Reject / Request changes; staff
+          see a read-only status note. */}
+      {(status === "pending_approval" || status === "approved" || status === "rejected") ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Approval</h2>
+
+          {/* Header line — who/when */}
+          {status === "approved" ? (
+            <p className="mt-1 text-sm text-slate-600">
+              Approved by{" "}
+              <strong className="text-slate-900">
+                {quote.approver?.full_name ?? quote.approver?.email ?? "—"}
+              </strong>
+              {quote.approved_at ? ` on ${quote.approved_at.slice(0, 10)}` : ""}.
+            </p>
+          ) : status === "rejected" ? (
+            <p className="mt-1 text-sm text-slate-600">
+              Rejected by{" "}
+              <strong className="text-slate-900">
+                {quote.approver?.full_name ?? quote.approver?.email ?? "—"}
+              </strong>
+              {quote.approved_at ? ` on ${quote.approved_at.slice(0, 10)}` : ""}.
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-600">
+              Awaiting approval from an owner or admin.
+            </p>
+          )}
+
+          {/* Last comment */}
+          {quote.approval_comment ? (
+            <div className="mt-3 rounded-md border-l-2 border-slate-900 bg-slate-50 p-3 text-sm">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                Comment
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-slate-700">
+                {quote.approval_comment}
+              </p>
+            </div>
+          ) : null}
+
+          {/* Action form — admins only, only when pending_approval */}
+          {isAdmin && status === "pending_approval" ? (
+            <form action={reviewQuote.bind(null, id)} className="mt-4 space-y-2">
+              <label className="block text-xs text-slate-600">
+                Comment
+                <textarea
+                  name="comment"
+                  rows={2}
+                  placeholder="Required for reject or request-changes; optional for approve"
+                  className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  name="action"
+                  value="approve"
+                  className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+                >
+                  Approve
+                </button>
+                <button
+                  type="submit"
+                  name="action"
+                  value="request_changes"
+                  className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50"
+                >
+                  Request changes
+                </button>
+                <button
+                  type="submit"
+                  name="action"
+                  value="reject"
+                  className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                >
+                  Reject
+                </button>
+              </div>
+            </form>
+          ) : !isAdmin && status === "pending_approval" ? (
+            <p className="mt-3 text-xs text-slate-500">
+              Only owners and admins can approve quotes.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {isLocked ? (
         <div

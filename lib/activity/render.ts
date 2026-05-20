@@ -76,6 +76,16 @@ export function describeActivity(row: ActivityRow): string {
       return "deleted a job";
     case "quote.created":
       return `created quote ${m["number"] ?? ""} ${fmtNumber(m["total"]) ?? ""}`.trim();
+    case "quote.approval_requested":
+      return `requested approval on quote ${m["number"] ?? ""}`;
+    case "quote.approved":
+      return `approved quote ${m["number"] ?? ""} ${fmtNumber(m["total"]) ?? ""}`.trim();
+    case "quote.rejected":
+      return `rejected quote ${m["number"] ?? ""}`;
+    case "quote.changes_requested":
+      return `requested changes on a quote`;
+    case "quote.changed_after_approval":
+      return `edited approved quote ${m["number"] ?? ""} — re-approval required`;
     case "quote.sent":
       return `sent quote ${m["number"] ?? ""}`;
     case "quote.viewed":
