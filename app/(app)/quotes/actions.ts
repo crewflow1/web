@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { quoteFormSchema, type LineItem } from "@/lib/quotes/schema";
 import { computeTotals } from "@/lib/quotes/totals";
+import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -300,17 +301,30 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     console.error("[quotes] invoice number alloc failed", numErr);
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
   }
-  const { error: invErr } = await supabase.from("invoices").insert({
-    org_id: quote.org_id,
-    quote_id: quote.id,
-    number: invNumber as unknown as string,
-    amount: quote.subtotal,
-    vat_total: quote.vat_total,
-    status: "draft",
-  });
-  if (invErr) {
+  const { data: newInvoice, error: invErr } = await supabase
+    .from("invoices")
+    .insert({
+      org_id: quote.org_id,
+      quote_id: quote.id,
+      number: invNumber as unknown as string,
+      amount: quote.subtotal,
+      vat_total: quote.vat_total,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+  if (invErr || !newInvoice) {
     console.error("[quotes] auto-invoice failed", invErr);
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
+  }
+
+  // Auto-email the invoice PDF to the customer. Best-effort: a send
+  // failure (missing key, customer has no email, Resend rejection) does
+  // NOT block the accept response — the invoice still exists and the
+  // owner can manually re-send from /invoices/[id].
+  const emailRes = await sendInvoiceEmail(supabase, newInvoice.id);
+  if (!emailRes.sent) {
+    console.warn("[quotes] auto-email after accept skipped", emailRes);
   }
 
   // Pipeline integration: if the quote was linked to a lead, advance
@@ -400,15 +414,35 @@ export async function acceptQuoteByToken(
   const { data: invNumber } = await admin.rpc("next_invoice_number", {
     target_org: quote.org_id,
   });
+  let newInvoiceId: string | null = null;
   if (invNumber) {
-    await admin.from("invoices").insert({
-      org_id: quote.org_id,
-      quote_id: quote.id,
-      number: invNumber as unknown as string,
-      amount: quote.subtotal,
-      vat_total: quote.vat_total,
-      status: "draft",
-    });
+    const { data: newInvoice, error: invErr } = await admin
+      .from("invoices")
+      .insert({
+        org_id: quote.org_id,
+        quote_id: quote.id,
+        number: invNumber as unknown as string,
+        amount: quote.subtotal,
+        vat_total: quote.vat_total,
+        status: "draft",
+      })
+      .select("id")
+      .single();
+    if (invErr) {
+      console.error("[quotes] public auto-invoice failed", invErr);
+    } else {
+      newInvoiceId = newInvoice?.id ?? null;
+    }
+  }
+
+  // Auto-email the invoice PDF to the customer. Best-effort — accept must
+  // succeed even if Resend rejects, the customer email is missing, or
+  // RESEND_API_KEY is not configured yet.
+  if (newInvoiceId) {
+    const emailRes = await sendInvoiceEmail(admin, newInvoiceId);
+    if (!emailRes.sent) {
+      console.warn("[quotes] public auto-email after accept skipped", emailRes);
+    }
   }
 
   // Pipeline integration: advance the linked lead to "won" so the kanban
