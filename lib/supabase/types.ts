@@ -83,6 +83,128 @@ export type Database = {
           },
         ]
       }
+      bank_statement_lines: {
+        Row: {
+          amount: number
+          bank_statement_id: string
+          created_at: string
+          description: string | null
+          id: string
+          match_confidence: number | null
+          match_status: string
+          matched_invoice_id: string | null
+          matched_payment_id: string | null
+          org_id: string
+          posted_at: string
+          reference: string | null
+        }
+        Insert: {
+          amount: number
+          bank_statement_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_confidence?: number | null
+          match_status?: string
+          matched_invoice_id?: string | null
+          matched_payment_id?: string | null
+          org_id: string
+          posted_at: string
+          reference?: string | null
+        }
+        Update: {
+          amount?: number
+          bank_statement_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          match_confidence?: number | null
+          match_status?: string
+          matched_invoice_id?: string | null
+          matched_payment_id?: string | null
+          org_id?: string
+          posted_at?: string
+          reference?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_bank_statement_id_fkey"
+            columns: ["bank_statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_matched_invoice_id_fkey"
+            columns: ["matched_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_matched_payment_id_fkey"
+            columns: ["matched_payment_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bank_statements: {
+        Row: {
+          filename: string
+          id: string
+          line_count: number
+          matched_count: number
+          notes: string | null
+          org_id: string
+          uploaded_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          filename: string
+          id?: string
+          line_count?: number
+          matched_count?: number
+          notes?: string | null
+          org_id: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          filename?: string
+          id?: string
+          line_count?: number
+          matched_count?: number
+          notes?: string | null
+          org_id?: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statements_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statements_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       calls: {
         Row: {
           ai_extracted: Json | null
@@ -323,6 +445,80 @@ export type Database = {
           },
           {
             foreignKeyName: "finances_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_payments: {
+        Row: {
+          amount: number
+          bank_line_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          notes: string | null
+          org_id: string
+          paid_at: string
+          reference: string | null
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          bank_line_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          notes?: string | null
+          org_id: string
+          paid_at: string
+          reference?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          bank_line_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          notes?: string | null
+          org_id?: string
+          paid_at?: string
+          reference?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_payments_bank_line_fkey"
+            columns: ["bank_line_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1437,7 +1633,13 @@ export type Database = {
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      invoice_status: "draft" | "sent" | "paid" | "overdue"
+      invoice_status:
+        | "draft"
+        | "sent"
+        | "awaiting_payment"
+        | "partially_paid"
+        | "paid"
+        | "overdue"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1568,7 +1770,14 @@ export const Constants = {
   },
   public: {
     Enums: {
-      invoice_status: ["draft", "sent", "paid", "overdue"],
+      invoice_status: [
+        "draft",
+        "sent",
+        "awaiting_payment",
+        "partially_paid",
+        "paid",
+        "overdue",
+      ],
     },
   },
 } as const

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
+import { PaymentsPanel } from "./_payments-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
 
 /**
@@ -21,6 +22,8 @@ const GBP = new Intl.NumberFormat("en-GB", {
 const STATUS_STYLES: Record<InvoiceStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
   sent: "bg-blue-100 text-blue-700",
+  awaiting_payment: "bg-amber-100 text-amber-800",
+  partially_paid: "bg-indigo-100 text-indigo-800",
   paid: "bg-green-100 text-green-700",
   overdue: "bg-red-100 text-red-700",
 };
@@ -77,6 +80,17 @@ export default async function InvoiceDetailPage({
     .select("id, status, scheduled_date, customer:customers ( name )")
     .order("created_at", { ascending: false })
     .limit(50);
+
+  // Payments against this invoice.
+  const { data: paymentsRaw } = await supabase
+    .from("invoice_payments")
+    .select("id, amount, paid_at, reference, notes, source, created_at")
+    .eq("invoice_id", id)
+    .order("paid_at", { ascending: false });
+  const payments = paymentsRaw ?? [];
+  const paidTotal = payments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  const invTotal = Number(invoice.total ?? 0);
+  const outstanding = Math.max(0, invTotal - paidTotal);
 
   // Line items from the source quote (if still present).
   const lineItems = invoice.quote_id
@@ -196,6 +210,22 @@ export default async function InvoiceDetailPage({
           has no line items.
         </p>
       )}
+
+      {/* Payments panel — manual record + history. Wave 3. */}
+      <PaymentsPanel
+        invoiceId={invoice.id}
+        invoiceTotal={invTotal}
+        paidTotal={paidTotal}
+        outstanding={outstanding}
+        payments={payments.map((p) => ({
+          id: p.id,
+          amount: Number(p.amount),
+          paid_at: p.paid_at,
+          reference: p.reference,
+          notes: p.notes,
+          source: p.source as "manual" | "bank_csv",
+        }))}
+      />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Audit</h2>

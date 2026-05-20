@@ -23,6 +23,8 @@ const GBP = new Intl.NumberFormat("en-GB", {
 const STATUS_STYLES: Record<InvoiceStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
   sent: "bg-blue-100 text-blue-700",
+  awaiting_payment: "bg-amber-100 text-amber-800",
+  partially_paid: "bg-indigo-100 text-indigo-800",
   paid: "bg-green-100 text-green-700",
   overdue: "bg-red-100 text-red-700",
 };

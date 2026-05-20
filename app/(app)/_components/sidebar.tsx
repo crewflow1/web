@@ -21,6 +21,8 @@ const LINKS = [
   { href: "/quotes", label: "Quotes" },
   { href: "/finances", label: "Finances" },
   { href: "/invoices", label: "Invoices" },
+  { href: "/payments", label: "Payments" },
+  { href: "/tax", label: "Tax" },
   { href: "/staff", label: "Staff" },
   { href: "/reports", label: "Reports" },
   { href: "/settings", label: "Settings" },
