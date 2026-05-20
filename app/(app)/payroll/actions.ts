@@ -1,0 +1,184 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { createClient } from "@/lib/supabase/server";
+import { requireOrgContext } from "@/server/auth/session";
+import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
+import { computePayrollLine } from "@/lib/payroll/compute";
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const runSchema = z.object({
+  cycle: z.enum(["weekly", "monthly"]),
+  period_start: isoDate,
+  period_end: isoDate,
+});
+
+/**
+ * Generate a payroll run for the given period.
+ * Pulls every member of the org, sums their hours from time_entries in
+ * window, computes gross/PAYE/NI, and writes draft payroll_lines.
+ */
+export async function createPayrollRun(formData: FormData) {
+  const { ctx, user } = await requireOrgContext();
+  if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
+  const parsed = runSchema.safeParse({
+    cycle: formData.get("cycle"),
+    period_start: formData.get("period_start"),
+    period_end: formData.get("period_end"),
+  });
+  if (!parsed.success) {
+    redirect(`/payroll?error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "invalid")}`);
+  }
+  const { cycle, period_start, period_end } = parsed.data;
+  if (period_end < period_start) redirect("/payroll?error=bad_window");
+
+  const supabase = await createClient();
+
+  // Insert the run.
+  const { data: run, error: runErr } = await supabase
+    .from("payroll_runs")
+    .insert({
+      org_id: ctx.org.id,
+      cycle,
+      period_start,
+      period_end,
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+  if (runErr || !run) {
+    console.error("[payroll] create run failed", runErr);
+    redirect("/payroll?error=run_create_failed");
+  }
+
+  // Pull every member + their hourly_pay.
+  const { data: members } = await supabase
+    .from("memberships")
+    .select("user_id, user:users ( id, full_name, hourly_pay )")
+    .eq("org_id", ctx.org.id);
+
+  // Time entries inside the window (use ended_at < period_end+1d so half-open).
+  const windowEndIso = `${period_end}T23:59:59.999Z`;
+  const windowStartIso = `${period_start}T00:00:00Z`;
+  const { data: entriesRaw } = await supabase
+    .from("time_entries")
+    .select("id, user_id, job_id, started_at, ended_at, breaks")
+    .gte("started_at", windowStartIso)
+    .lte("started_at", windowEndIso)
+    .not("ended_at", "is", null);
+  const entries = (entriesRaw ?? []) as TimeEntry[];
+  const hoursByU = hoursByUser(
+    entries,
+    new Date(windowStartIso),
+    new Date(windowEndIso),
+  );
+
+  type PayrollLineInsert = {
+    org_id: string;
+    payroll_run_id: string;
+    user_id: string;
+    hours: number;
+    hourly_pay: number;
+    gross_pay: number;
+    paye_estimate: number;
+    ni_estimate: number;
+    net_pay: number;
+  };
+  const lines: PayrollLineInsert[] = [];
+  for (const m of members ?? []) {
+    const uid = (m as { user_id: string }).user_id;
+    const u = (m as { user?: { id: string; full_name: string | null; hourly_pay: number | null } }).user;
+    const hours = hoursByU.get(uid) ?? 0;
+    if (hours === 0) continue; // skip unpaid rows
+    const hourlyPay = Number(u?.hourly_pay ?? 0);
+    const c = computePayrollLine(hours, hourlyPay, cycle);
+    lines.push({
+      org_id: ctx.org.id,
+      payroll_run_id: run.id,
+      user_id: uid,
+      hours: c.hours,
+      hourly_pay: c.hourly_pay,
+      gross_pay: c.gross_pay,
+      paye_estimate: c.paye_estimate,
+      ni_estimate: c.ni_estimate,
+      net_pay: c.net_pay,
+    });
+  }
+
+  if (lines.length > 0) {
+    const { error: linesErr } = await supabase.from("payroll_lines").insert(lines);
+    if (linesErr) {
+      console.error("[payroll] lines insert failed", linesErr);
+      redirect(`/payroll/${run.id}?error=lines_failed`);
+    }
+  }
+
+  revalidatePath("/payroll");
+  revalidatePath("/dashboard");
+  redirect(`/payroll/${run.id}?saved=created`);
+}
+
+/** Lock a draft run. Time entries that fed it become read-only. */
+export async function finalisePayrollRun(runId: string) {
+  const { ctx } = await requireOrgContext();
+  if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
+  const supabase = await createClient();
+
+  const { data: run } = await supabase
+    .from("payroll_runs")
+    .select("id, period_start, period_end, status")
+    .eq("id", runId)
+    .maybeSingle();
+  if (!run) redirect("/payroll?error=not_found");
+  if (run.status === "finalised") redirect(`/payroll/${runId}`);
+
+  // Lock the time entries whose user appears in this run.
+  const { data: lines } = await supabase
+    .from("payroll_lines")
+    .select("id, user_id")
+    .eq("payroll_run_id", runId);
+
+  for (const l of lines ?? []) {
+    await supabase
+      .from("time_entries")
+      .update({ payroll_line_id: l.id })
+      .eq("user_id", l.user_id)
+      .gte("started_at", `${run.period_start}T00:00:00Z`)
+      .lte("started_at", `${run.period_end}T23:59:59.999Z`)
+      .not("ended_at", "is", null)
+      .is("payroll_line_id", null);
+  }
+
+  await supabase
+    .from("payroll_runs")
+    .update({ status: "finalised", finalised_at: new Date().toISOString() })
+    .eq("id", runId);
+
+  revalidatePath(`/payroll/${runId}`);
+  revalidatePath("/payroll");
+  redirect(`/payroll/${runId}?saved=finalised`);
+}
+
+/** Delete a draft run (and its lines via cascade) — finalised runs are immutable. */
+export async function deletePayrollRun(runId: string) {
+  const { ctx } = await requireOrgContext();
+  if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
+  const supabase = await createClient();
+  const { data: run } = await supabase
+    .from("payroll_runs")
+    .select("status")
+    .eq("id", runId)
+    .maybeSingle();
+  if (!run) redirect("/payroll?error=not_found");
+  if (run.status === "finalised") redirect(`/payroll/${runId}?error=cannot_delete_finalised`);
+  await supabase.from("payroll_runs").delete().eq("id", runId);
+  revalidatePath("/payroll");
+  redirect("/payroll?saved=deleted");
+}
+
+function isOwnerOrAdmin(role: string): boolean {
+  return role === "owner" || role === "admin";
+}

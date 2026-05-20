@@ -54,16 +54,22 @@ export default async function TaxDashboardPage() {
   const quarterStartIso = startOfQuarterIso();
   const yearStartIso = startOfTaxYearIso();
 
-  const [{ data: invoicesRaw }, { data: financesRaw }] = await Promise.all([
-    supabase
-      .from("invoices")
-      .select("status, vat_total, total, amount, paid_at, created_at")
-      .gte("created_at", yearStartIso),
-    supabase
-      .from("finances")
-      .select("vat_total, amount, created_at")
-      .gte("created_at", yearStartIso),
-  ]);
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const [{ data: invoicesRaw }, { data: financesRaw }, { data: payrollRaw }] =
+    await Promise.all([
+      supabase
+        .from("invoices")
+        .select("status, vat_total, total, amount, paid_at, created_at")
+        .gte("created_at", yearStartIso),
+      supabase
+        .from("finances")
+        .select("vat_total, amount, created_at")
+        .gte("created_at", yearStartIso),
+      supabase
+        .from("payroll_lines")
+        .select("paye_estimate, ni_estimate, run:payroll_runs ( period_start, status, cycle )")
+        .gte("created_at", `${monthKey}-01T00:00:00Z`),
+    ]);
 
   const invoices = (invoicesRaw ?? []).map((i) => ({
     status: i.status as string,
@@ -79,8 +85,20 @@ export default async function TaxDashboardPage() {
     created_at: f.created_at as string,
   }));
 
+  const payrollLines = (payrollRaw ?? []).map((l) => ({
+    paye_estimate: l.paye_estimate,
+    ni_estimate: l.ni_estimate,
+    run: l.run
+      ? {
+          period_start: l.run.period_start as string,
+          status: l.run.status as string,
+          cycle: l.run.cycle as string,
+        }
+      : null,
+  }));
+
   const vat = computeVatQuarter(invoices, finances, quarterStartIso);
-  const paye = computePayeMonth();
+  const paye = computePayeMonth(payrollLines);
   const corp = computeCorpTaxYear(invoices, finances, yearStartIso);
 
   const quarterStartDate = new Date(quarterStartIso);

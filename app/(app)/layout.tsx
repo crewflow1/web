@@ -50,13 +50,13 @@ export default async function AppLayout({
       </header>
 
       <div className="flex">
-        <Sidebar />
+        <Sidebar role={ctx.membership.role} />
         {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
         <main className="container flex-1 py-6 pb-24 sm:py-10 md:pb-10">
           {children}
         </main>
       </div>
-      <BottomNav />
+      <BottomNav role={ctx.membership.role} />
     </div>
   );
 }

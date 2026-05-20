@@ -9,11 +9,11 @@ import { usePathname } from "next/navigation";
  * Client component because we read pathname to highlight the active link.
  * Mobile: hidden behind the header (md:block).
  *
- * Order is fixed for v1 — Dashboard, Jobs, Customers. New modules
- * (quotes/invoices/accounting) get added here as they ship.
+ * Role scoping (Wave 4): staff see a slim nav focused on their day —
+ * My day / Jobs / Leave. Owners/admins see the full business surface.
  */
 
-const LINKS = [
+const ADMIN_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },
@@ -22,14 +22,23 @@ const LINKS = [
   { href: "/finances", label: "Finances" },
   { href: "/invoices", label: "Invoices" },
   { href: "/payments", label: "Payments" },
+  { href: "/payroll", label: "Payroll" },
   { href: "/tax", label: "Tax" },
   { href: "/staff", label: "Staff" },
   { href: "/reports", label: "Reports" },
   { href: "/settings", label: "Settings" },
 ];
 
-export function Sidebar() {
+const STAFF_LINKS = [
+  { href: "/me", label: "My day" },
+  { href: "/jobs", label: "Jobs" },
+  { href: "/staff/leave", label: "Leave" },
+  { href: "/settings", label: "Settings" },
+];
+
+export function Sidebar({ role = "owner" }: { role?: string }) {
   const pathname = usePathname();
+  const LINKS = role === "staff" ? STAFF_LINKS : ADMIN_LINKS;
 
   return (
     <nav
