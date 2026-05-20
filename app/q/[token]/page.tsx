@@ -173,8 +173,9 @@ export default async function PublicQuotePage({
             role="status"
             className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
           >
-            <strong>Accepted.</strong> Thanks. {org?.name} will be in touch to
-            schedule the work and will send an invoice.
+            <strong>Quote accepted successfully.</strong> Invoice generated and
+            emailed{quote.customer?.email ? ` to ${quote.customer.email}` : ""}.
+            {org?.name ? ` ${org.name} will be in touch to schedule the work.` : ""}
           </div>
         ) : null}
         {declinedMessage ? (
