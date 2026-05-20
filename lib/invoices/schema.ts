@@ -32,8 +32,14 @@ export const createInvoiceSchema = z.object({
 
 // Body for PATCH /api/invoices/[id] — update mutable fields only.
 // amount/vat_total/total/number/quote_id/org_id are NOT patchable here.
+// job_id may be set to a UUID or explicitly nulled (unlink).
+const optionalJobId = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.union([z.string().uuid(), z.null()]).optional(),
+);
 export const updateInvoiceSchema = z.object({
   status: z.enum(INVOICE_STATUSES).optional(),
   due_date: optionalDate,
   notes: optionalString(5000),
+  job_id: optionalJobId,
 });

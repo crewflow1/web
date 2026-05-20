@@ -8,6 +8,17 @@ import {
   computeActivitySummary,
   computeLeadInsights,
 } from "@/lib/ai/aggregates";
+import {
+  computeAllJobsProfitability,
+  topProfitableJobs,
+  worstJobs,
+  averageMargin,
+  totalProfitThisMonth,
+  profitByMonth,
+  marginPillClass,
+  marginBand,
+  type JobProfitability,
+} from "@/lib/profitability/compute";
 
 /**
  * Owner dashboard.
@@ -78,6 +89,13 @@ export default async function DashboardPage() {
   const monthStart = startOfMonthISO();
   const quarterStart = startOfQuarterISO();
   const weekStart = sevenDaysAgoISO();
+  // Profitability charts span 6 calendar months — widen finance fetch
+  // so the older buckets render with real data rather than zeros.
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 5);
+  sixMonthsAgo.setUTCDate(1);
+  sixMonthsAgo.setUTCHours(0, 0, 0, 0);
+  const sixMonthsAgoIso = sixMonthsAgo.toISOString();
 
   // Fetch everything in parallel under RLS.
   const ACTIVITY_PAGE_SIZE = 25;
@@ -92,13 +110,13 @@ export default async function DashboardPage() {
       supabase
         .from("invoices")
         .select(
-          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at",
+          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
         )
         .order("created_at", { ascending: false }),
       supabase
         .from("finances")
-        .select("id, amount, vat_total, created_at, category")
-        .gte("created_at", quarterStart),
+        .select("id, amount, vat_total, created_at, category, job_id")
+        .gte("created_at", sixMonthsAgoIso),
       supabase
         .from("leads")
         .select(
@@ -126,8 +144,30 @@ export default async function DashboardPage() {
     ]);
 
   const jobs = jobsRes.data ?? [];
-  const invoices = invoicesRes.data ?? [];
-  const finances = financesRes.data ?? [];
+  // Cast: job_id is in the 20260520150000 migration but not yet in
+  // the generated Supabase types — same pattern as the reminder cols.
+  type InvoiceWithJob = {
+    id: string;
+    number: string;
+    status: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    total: number | string | null;
+    due_date: string | null;
+    paid_at: string | null;
+    created_at: string;
+    job_id: string | null;
+  };
+  type FinanceWithJob = {
+    id: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    created_at: string;
+    category: string | null;
+    job_id: string | null;
+  };
+  const invoices = (invoicesRes.data ?? []) as unknown as InvoiceWithJob[];
+  const finances = (financesRes.data ?? []) as unknown as FinanceWithJob[];
   const leads = leadsRecentRes.data ?? [];
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
@@ -223,6 +263,34 @@ export default async function DashboardPage() {
     inputVatQuarter += Number(f.vat_total ?? 0);
   }
   const netVatQuarter = outputVatQuarter - inputVatQuarter;
+
+  // ---- profitability ---------------------------------------------------
+  // Per-job rollup. Invoices contribute revenue via job_id; finances
+  // contribute costs via job_id. Jobs with neither don't appear.
+  const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
+    jobs,
+    invoices,
+    finances,
+  );
+  const topProfitable = topProfitableJobs(profitabilityRows, 5);
+  const worstMarginJobs = worstJobs(profitabilityRows, 5);
+  const avgMargin = averageMargin(profitabilityRows);
+  const profitMonth = totalProfitThisMonth(invoices, finances);
+  const profitSeries = profitByMonth(invoices, finances, 6, "created_at");
+  const profitChartMax = Math.max(1, ...profitSeries.map((b) => Math.abs(b.profit)));
+  const revCostChartMax = Math.max(
+    1,
+    ...profitSeries.flatMap((b) => [b.revenue, b.costs]),
+  );
+  const jobNameById = new Map<string, string>();
+  for (const j of jobs) {
+    jobNameById.set(
+      j.id,
+      // jobs don't have a title column; surface the customer name to
+      // make each row recognisable in the leaderboard.
+      j.customer?.name ?? `Job ${j.id.slice(0, 8)}`,
+    );
+  }
 
   // ---- quote analytics -------------------------------------------------
   let pendingQuoteCount = 0; // draft / sent / viewed
@@ -378,6 +446,158 @@ export default async function DashboardPage() {
           href="/invoices"
           sub="day 3 / 7 / 14 / 21 after sent"
         />
+      </section>
+
+      {/* Profitability ----------------------------------------------------- */}
+      <section className="space-y-3">
+        <h2 className="text-base font-semibold text-slate-900">
+          Job profitability
+        </h2>
+        {profitabilityRows.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+            No jobs have revenue or costs yet. Link an invoice to a job
+            (Invoice → Link to job) and log finances against the job (Finance
+            → select job) to see profitability appear here.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Kpi
+                label="Total profit this month"
+                value={GBP.format(profitMonth)}
+                href="/jobs"
+                sub="revenue minus costs (excl VAT)"
+              />
+              <Kpi
+                label="Average margin"
+                value={avgMargin === null ? "—" : `${avgMargin}%`}
+                href="/jobs"
+                sub={`${profitabilityRows.length} ${profitabilityRows.length === 1 ? "job" : "jobs"} with revenue`}
+              />
+              <Kpi
+                label="Best margin"
+                value={
+                  topProfitable[0]?.margin_pct !== null && topProfitable[0]?.margin_pct !== undefined
+                    ? `${topProfitable[0].margin_pct}%`
+                    : "—"
+                }
+                href={topProfitable[0] ? `/jobs/${topProfitable[0].job_id}` : "/jobs"}
+                sub={
+                  topProfitable[0]
+                    ? `${jobNameById.get(topProfitable[0].job_id) ?? "—"}`
+                    : ""
+                }
+              />
+              <Kpi
+                label="Worst margin"
+                value={
+                  worstMarginJobs[0]?.margin_pct !== null &&
+                  worstMarginJobs[0]?.margin_pct !== undefined
+                    ? `${worstMarginJobs[0].margin_pct}%`
+                    : "—"
+                }
+                href={worstMarginJobs[0] ? `/jobs/${worstMarginJobs[0].job_id}` : "/jobs"}
+                sub={
+                  worstMarginJobs[0]
+                    ? `${jobNameById.get(worstMarginJobs[0].job_id) ?? "—"}`
+                    : ""
+                }
+              />
+            </div>
+
+            {/* Top + Worst tables */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <ProfitTable
+                title="Top profitable jobs"
+                rows={topProfitable}
+                jobNameById={jobNameById}
+              />
+              <ProfitTable
+                title="Worst-margin jobs"
+                rows={worstMarginJobs}
+                jobNameById={jobNameById}
+              />
+            </div>
+
+            {/* Charts */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <ChartCard title="Profit by month (last 6)">
+                <div className="space-y-2">
+                  {profitSeries.map((b) => {
+                    const widthPct = (Math.abs(b.profit) / profitChartMax) * 100;
+                    const negative = b.profit < 0;
+                    return (
+                      <div key={b.month} className="text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-600">{b.month}</span>
+                          <span
+                            className={
+                              negative
+                                ? "font-semibold text-red-700"
+                                : "font-semibold text-slate-900"
+                            }
+                          >
+                            {GBP.format(b.profit)}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-2 w-full overflow-hidden rounded bg-slate-100">
+                          <div
+                            className={
+                              negative
+                                ? "h-full bg-red-500"
+                                : "h-full bg-green-500"
+                            }
+                            style={{ width: `${widthPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ChartCard>
+              <ChartCard title="Revenue vs cost (last 6 months)">
+                <div className="space-y-3">
+                  {profitSeries.map((b) => (
+                    <div key={b.month} className="text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600">{b.month}</span>
+                        <span className="text-slate-500">
+                          {GBP.format(b.revenue)} · {GBP.format(b.costs)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex h-2 w-full gap-px">
+                        <div
+                          className="h-full rounded-l bg-blue-500"
+                          style={{
+                            width: `${(b.revenue / revCostChartMax) * 50}%`,
+                          }}
+                          title={`Revenue: ${GBP.format(b.revenue)}`}
+                        />
+                        <div
+                          className="h-full rounded-r bg-orange-500"
+                          style={{
+                            width: `${(b.costs / revCostChartMax) * 50}%`,
+                          }}
+                          title={`Costs: ${GBP.format(b.costs)}`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex gap-3 text-[11px] text-slate-500">
+                    <span>
+                      <span className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-500" />
+                      Revenue
+                    </span>
+                    <span>
+                      <span className="mr-1 inline-block h-2 w-2 rounded-full bg-orange-500" />
+                      Costs
+                    </span>
+                  </div>
+                </div>
+              </ChartCard>
+            </div>
+          </>
+        )}
       </section>
 
       {/* Quote analytics row */}
@@ -653,6 +873,70 @@ function Card({
         ) : null}
       </div>
       {children}
+    </div>
+  );
+}
+
+function ChartCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function ProfitTable({
+  title,
+  rows,
+  jobNameById,
+}: {
+  title: string;
+  rows: JobProfitability[];
+  jobNameById: Map<string, string>;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="text-xs text-slate-500">No jobs with revenue yet.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {rows.map((r) => {
+            const name = jobNameById.get(r.job_id) ?? r.job_id.slice(0, 8);
+            const band = marginBand(r.margin_pct);
+            return (
+              <li key={r.job_id} className="flex items-center gap-3 py-2">
+                <Link
+                  href={`/jobs/${r.job_id}`}
+                  className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 hover:underline"
+                >
+                  {name}
+                </Link>
+                <div className="text-right text-xs text-slate-600">
+                  <div className="text-sm font-semibold text-slate-900">
+                    {GBP.format(r.gross_profit)}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    rev {GBP.format(r.revenue)} · cost {GBP.format(r.costs_total)}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${marginPillClass(band)}`}
+                >
+                  {r.margin_pct === null ? "—" : `${r.margin_pct}%`}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

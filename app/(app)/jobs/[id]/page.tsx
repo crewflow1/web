@@ -6,6 +6,16 @@ import { updateJob, deleteJob } from "../actions";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { Field, TextareaField, SelectField } from "../../_components/field";
 import { PhotoGallery } from "./_photo-gallery";
+import {
+  computeJobProfitability,
+  marginPillClass,
+} from "@/lib/profitability/compute";
+
+const GBP = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+});
 
 /**
  * Job edit page.
@@ -39,10 +49,36 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
-  const [customers, staff] = await Promise.all([
+  const [customers, staff, invoicesForJob, financesForJob] = await Promise.all([
     listCustomersForOrg(),
     listStaffForOrg(),
+    // Cast: job_id is in the 20260520150000 migration but not yet in
+    // the generated Supabase types. Force the column-typed eq().
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from("invoices")
+      .select("id, number, status, amount, vat_total, total, job_id")
+      .eq("job_id", job.id),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from("finances")
+      .select("id, amount, vat_total, category, created_at, job_id")
+      .eq("job_id", job.id),
   ]);
+
+  // Cast: job_id is in the 20260520150000 migration but not yet in
+  // the generated Supabase types.
+  type InvRow = { job_id: string | null; amount: number | string | null };
+  type FinRow = {
+    job_id: string | null;
+    amount: number | string | null;
+    category: string | null;
+  };
+  const profit = computeJobProfitability(
+    job.id,
+    (invoicesForJob.data ?? []) as unknown as InvRow[],
+    (financesForJob.data ?? []) as unknown as FinRow[],
+  );
 
   const errorMessage = error
     ? error === "update_failed"
@@ -192,6 +228,86 @@ export default async function EditJobPage({
       </form>
 
       <PhotoGallery jobId={job.id} />
+
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-slate-900">Profitability</h2>
+          {profit ? (
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${marginPillClass(profit.band)}`}
+            >
+              {profit.margin_pct === null ? "no revenue yet" : `${profit.margin_pct}% margin`}
+            </span>
+          ) : null}
+        </div>
+        {!profit ? (
+          <p className="mt-3 text-sm text-slate-500">
+            No invoices or finance entries linked to this job yet. Open an
+            invoice and pick this job under <em>Link to job</em>, and log
+            finances against this job, to see profitability.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Revenue</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {GBP.format(profit.revenue)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Costs</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {GBP.format(profit.costs_total)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Gross profit</div>
+                <div
+                  className={`mt-1 text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
+                >
+                  {GBP.format(profit.gross_profit)}
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">
+                Costs by category
+              </div>
+              <ul className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <li className="rounded border border-slate-200 p-2">
+                  <div className="text-[11px] text-slate-500">Labour</div>
+                  <div className="font-medium text-slate-900">
+                    {GBP.format(profit.costs_by_bucket.labour)}
+                  </div>
+                </li>
+                <li className="rounded border border-slate-200 p-2">
+                  <div className="text-[11px] text-slate-500">Materials</div>
+                  <div className="font-medium text-slate-900">
+                    {GBP.format(profit.costs_by_bucket.materials)}
+                  </div>
+                </li>
+                <li className="rounded border border-slate-200 p-2">
+                  <div className="text-[11px] text-slate-500">Subcontractors</div>
+                  <div className="font-medium text-slate-900">
+                    {GBP.format(profit.costs_by_bucket.subcontractors)}
+                  </div>
+                </li>
+                <li className="rounded border border-slate-200 p-2">
+                  <div className="text-[11px] text-slate-500">Misc</div>
+                  <div className="font-medium text-slate-900">
+                    {GBP.format(profit.costs_by_bucket.misc)}
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Revenue and costs are net of VAT. Margin bands: green &gt; 30%,
+              amber 15–30%, red &lt; 15%.
+            </p>
+          </div>
+        )}
+      </section>
 
       <form
         action={deleteAction}
