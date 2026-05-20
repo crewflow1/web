@@ -8,6 +8,9 @@ import { z } from "zod";
 
 export const QUOTE_STATUSES = [
   "draft",
+  "pending_approval",
+  "approved",
+  "rejected",
   "sent",
   "viewed",
   "accepted",
@@ -16,6 +19,39 @@ export const QUOTE_STATUSES = [
 ] as const;
 
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+/** Statuses safe to expose on the public /q/<token> portal. */
+export const PUBLIC_VISIBLE_STATUSES: ReadonlyArray<QuoteStatus> = [
+  "approved",
+  "sent",
+  "viewed",
+  "accepted",
+  "declined",
+  "expired",
+];
+
+/** Statuses from which sendQuote() is allowed to fire. */
+export const SENDABLE_STATUSES: ReadonlyArray<QuoteStatus> = ["approved"];
+
+/** Statuses where editing reverts to pending_approval (re-approval required). */
+export const APPROVED_OR_BEYOND: ReadonlyArray<QuoteStatus> = [
+  "approved",
+  "sent",
+  "viewed",
+];
+
+/** Approval action types — drives the UI form on the quote detail page. */
+export const APPROVAL_ACTIONS = ["approve", "reject", "request_changes"] as const;
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+export const approvalActionSchema = z.object({
+  action: z.enum(APPROVAL_ACTIONS),
+  // Required at app-layer for reject + request_changes; optional for approve.
+  comment: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(5000).optional(),
+  ),
+});
 
 export const QUOTE_VAT_RATES = [0, 5, 20] as const;
 

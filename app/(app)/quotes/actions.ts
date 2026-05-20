@@ -166,6 +166,19 @@ export async function updateQuote(id: string, formData: FormData) {
   const supabase = await createClient();
   const totals = computeTotals(parsed.data.line_items);
 
+  // Wave 2 — if the quote is past the approval gate (approved/sent/viewed),
+  // editing reverts it to pending_approval so the approver re-confirms the
+  // new numbers. The trigger emits quote.changed_after_approval.
+  const { data: existing } = await supabase
+    .from("quotes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  const revertToPending =
+    existing?.status === "approved" ||
+    existing?.status === "sent" ||
+    existing?.status === "viewed";
+
   // Update parent row.
   const { error: qErr } = await supabase
     .from("quotes")
@@ -179,6 +192,15 @@ export async function updateQuote(id: string, formData: FormData) {
       notes: parsed.data.notes ?? null,
       terms: parsed.data.terms ?? null,
       valid_until: parsed.data.valid_until ?? null,
+      ...(revertToPending
+        ? {
+            status: "pending_approval" as const,
+            approved_by: null,
+            approved_at: null,
+            // Keep the prior approval_comment as context — operator can
+            // see why it had been approved before.
+          }
+        : {}),
     })
     .eq("id", id);
   if (qErr) {
@@ -231,6 +253,28 @@ export async function sendQuote(id: string) {
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
+
+  // Wave 2: cannot send a quote until it's been approved.
+  const { data: current } = await supabase
+    .from("quotes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (!current) redirect(`/quotes/${id}?error=not_found`);
+  if (current.status !== "approved") {
+    redirect(
+      `/quotes/${id}?error=${encodeURIComponent(
+        current.status === "draft"
+          ? "Request approval first — quotes can't be sent in draft."
+          : current.status === "pending_approval"
+            ? "Quote is awaiting approval. An owner or admin must approve before sending."
+            : current.status === "rejected"
+              ? "Quote was rejected. Edit and request approval again."
+              : `Quote is in '${current.status}' status — only approved quotes can be sent.`,
+      )}`,
+    );
+  }
+
   const { error } = await supabase
     .from("quotes")
     .update({
@@ -245,6 +289,160 @@ export async function sendQuote(id: string) {
   }
   revalidatePath(`/quotes/${id}`);
   redirect(`/quotes/${id}?saved=sent`);
+}
+
+/**
+ * Wave 2 — approval workflow actions.
+ *
+ * Lifecycle:
+ *   draft ──(requestApproval)──► pending_approval
+ *                                       │
+ *                       ┌───────────────┼───────────────┐
+ *               (approve)         (requestChanges)   (reject)
+ *                  │                    │                │
+ *                  ▼                    ▼                ▼
+ *               approved           pending_approval   rejected
+ *                                  + comment in log
+ *
+ *   approved ──(updateQuote ANY field)──► pending_approval (re-approval)
+ *
+ * Only owners + admins can approve / reject / request_changes. The DB
+ * RLS allows any member to UPDATE the quotes row; the role gate is
+ * enforced at the action layer (clearer error messages than RLS denial).
+ */
+
+async function requireQuoteApprover(orgId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: me } = await supabase
+    .from("memberships")
+    .select("role")
+    .eq("org_id", orgId)
+    .single();
+  if (!me || (me.role !== "owner" && me.role !== "admin")) {
+    redirect("/dashboard?error=forbidden");
+  }
+}
+
+export async function requestQuoteApproval(id: string) {
+  await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/quotes");
+
+  const supabase = await createClient();
+  const { data: current } = await supabase
+    .from("quotes")
+    .select("status, org_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!current) redirect(`/quotes/${id}?error=not_found`);
+  if (current.status !== "draft" && current.status !== "rejected") {
+    redirect(
+      `/quotes/${id}?error=${encodeURIComponent(
+        `Quote is in '${current.status}' status — only draft or rejected quotes can be sent for approval.`,
+      )}`,
+    );
+  }
+
+  // Clear any prior approval state — the trigger emits
+  // quote.approval_requested.
+  const { error } = await supabase
+    .from("quotes")
+    .update({
+      status: "pending_approval",
+      approved_by: null,
+      approved_at: null,
+      approval_comment: null,
+    })
+    .eq("id", id);
+  if (error) {
+    console.error("[quotes] requestApproval failed", error);
+    redirect(`/quotes/${id}?error=request_failed`);
+  }
+
+  revalidatePath(`/quotes/${id}`);
+  revalidatePath("/quotes");
+  revalidatePath("/dashboard");
+  redirect(`/quotes/${id}?saved=approval_requested`);
+}
+
+export async function reviewQuote(id: string, formData: FormData) {
+  const { ctx, user } = await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/quotes");
+  await requireQuoteApprover(ctx.org.id);
+
+  const action = String(formData.get("action") ?? "");
+  if (action !== "approve" && action !== "reject" && action !== "request_changes") {
+    redirect(`/quotes/${id}?error=invalid_action`);
+  }
+  const comment = String(formData.get("comment") ?? "").trim() || null;
+  if ((action === "reject" || action === "request_changes") && !comment) {
+    redirect(
+      `/quotes/${id}?error=${encodeURIComponent(
+        "Comment is required when rejecting or requesting changes.",
+      )}`,
+    );
+  }
+
+  const supabase = await createClient();
+  const { data: current } = await supabase
+    .from("quotes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (!current) redirect(`/quotes/${id}?error=not_found`);
+  if (current.status !== "pending_approval") {
+    redirect(
+      `/quotes/${id}?error=${encodeURIComponent(
+        `Only quotes in 'pending_approval' can be reviewed. This one is '${current.status}'.`,
+      )}`,
+    );
+  }
+
+  if (action === "request_changes") {
+    // Stay in pending_approval; only record the comment (trigger emits
+    // quote.approval_requested again — that's fine, it's a re-request).
+    const { error } = await supabase
+      .from("quotes")
+      .update({ approval_comment: comment })
+      .eq("id", id);
+    if (error) {
+      console.error("[quotes] request_changes failed", error);
+      redirect(`/quotes/${id}?error=review_failed`);
+    }
+    // Emit a dedicated activity event via the helper for clarity. The
+    // _record_activity helper is SECURITY DEFINER so this works through
+    // the user JWT.
+    const admin = createAdminClient();
+    await admin.rpc("_record_activity", {
+      p_org_id: ctx.org.id,
+      p_action: "quote.changes_requested",
+      p_target_table: "quotes",
+      p_target_id: id,
+      p_metadata: { comment, reviewer_id: user.id },
+    } as never);
+    revalidatePath(`/quotes/${id}`);
+    revalidatePath("/dashboard");
+    redirect(`/quotes/${id}?saved=changes_requested`);
+  }
+
+  const nextStatus = action === "approve" ? "approved" : "rejected";
+  const { error } = await supabase
+    .from("quotes")
+    .update({
+      status: nextStatus,
+      approved_by: user.id,
+      approved_at: new Date().toISOString(),
+      approval_comment: comment,
+    })
+    .eq("id", id);
+  if (error) {
+    console.error("[quotes] review failed", error);
+    redirect(`/quotes/${id}?error=review_failed`);
+  }
+
+  revalidatePath(`/quotes/${id}`);
+  revalidatePath("/quotes");
+  revalidatePath("/dashboard");
+  redirect(`/quotes/${id}?saved=${nextStatus}`);
 }
 
 export async function deleteQuote(id: string) {

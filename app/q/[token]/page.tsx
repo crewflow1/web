@@ -49,6 +49,18 @@ export default async function PublicQuotePage({
 
   if (!quote) notFound();
 
+  // Wave 2 — hide quotes that haven't cleared the approval gate. Returning
+  // 404 (not 403) keeps the existence of unapproved quotes private to the org.
+  const VISIBLE = new Set([
+    "approved",
+    "sent",
+    "viewed",
+    "accepted",
+    "declined",
+    "expired",
+  ]);
+  if (!VISIBLE.has(quote.status)) notFound();
+
   // Stamp viewed_at on first open. Don't await heavily — the failure mode
   // is a missing analytics datapoint, not a broken page.
   if (!quote.viewed_at && (quote.status === "sent" || quote.status === "draft")) {
