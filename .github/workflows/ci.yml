@@ -1,0 +1,67 @@
+name: CI
+
+# Gates every PR. Fails the merge button if any check fails.
+#
+# Checks (run in parallel as separate jobs for clear pass/fail rows):
+#   - typecheck  (tsc --noEmit)
+#   - lint       (eslint via next lint — soon to migrate to next-lint-to-eslint-cli)
+#   - tests      (vitest run)
+#
+# Migration dry-run is intentionally NOT here yet — would need a
+# disposable Supabase project per PR. Vercel preview's own DB-less build
+# catches most schema-vs-code mismatches via the generated types.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    env:
+      # The test-setup file (__tests__/setup.ts) stubs these defaults,
+      # but exporting them again here keeps the intent explicit + lets
+      # CI run identically whether or not setup.ts changes.
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+      - run: npx vitest run
