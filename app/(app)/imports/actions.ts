@@ -434,6 +434,74 @@ export async function ignoreDuplicateRow(rowId: string) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Wave 6 — send Supabase magic-link invites for staff rows that were
+ * detected on import but couldn't be auto-provisioned (no auth.users
+ * mapping exists yet). One invite email per unique address. Marks
+ * each import_row as 'merged' with a note so the wizard doesn't keep
+ * offering them.
+ */
+export async function sendStaffInvitesFromImport(importId: string) {
+  const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
+  if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
+
+  const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const { data: rows } = await supabase
+    .from("import_rows")
+    .select("id, mapped, status")
+    .eq("import_id", importId)
+    .eq("entity_type", "staff")
+    .in("status", ["pending", "skipped"]);
+  if (!rows || rows.length === 0) {
+    redirect(`/imports/${importId}?error=no_staff_to_invite`);
+  }
+
+  const sent: string[] = [];
+  for (const r of rows) {
+    const m = (r.mapped ?? {}) as { email?: string; full_name?: string };
+    const email = (m.email ?? "").toLowerCase().trim();
+    if (!email) {
+      await supabase
+        .from("import_rows")
+        .update({ status: "skipped", error_message: "no email" })
+        .eq("id", r.id);
+      continue;
+    }
+    if (sent.includes(email)) {
+      await supabase
+        .from("import_rows")
+        .update({ status: "merged", error_message: "duplicate email — invite already sent" })
+        .eq("id", r.id);
+      continue;
+    }
+    try {
+      await admin.auth.admin.inviteUserByEmail(email, {
+        data: { full_name: m.full_name ?? null, source: "import", org_id: ctx.org.id },
+        redirectTo: process.env.NEXT_PUBLIC_APP_URL
+          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}`
+          : undefined,
+      });
+      sent.push(email);
+      await supabase
+        .from("import_rows")
+        .update({ status: "merged", error_message: "invite sent" })
+        .eq("id", r.id);
+    } catch (e) {
+      console.error("[imports] invite failed", e);
+      await supabase
+        .from("import_rows")
+        .update({ status: "error", error_message: (e as Error).message ?? "invite failed" })
+        .eq("id", r.id);
+    }
+  }
+
+  revalidatePath(`/imports/${importId}`);
+  redirect(`/imports/${importId}?saved=invites_sent&count=${sent.length}`);
+}
+
 function tableFor(entity: EntityType): string {
   switch (entity) {
     case "customer":

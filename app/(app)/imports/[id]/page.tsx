@@ -7,6 +7,7 @@ import {
   commitImport,
   rollbackImport,
   ignoreDuplicateRow,
+  sendStaffInvitesFromImport,
 } from "../actions";
 
 /**
@@ -25,7 +26,7 @@ const GBP = new Intl.NumberFormat("en-GB", {
   minimumFractionDigits: 2,
 });
 
-type SP = Promise<{ error?: string; saved?: string; imported?: string; skipped?: string }>;
+type SP = Promise<{ error?: string; saved?: string; imported?: string; skipped?: string; count?: string }>;
 
 export default async function ImportWizardPage({
   params,
@@ -85,7 +86,9 @@ export default async function ImportWizardPage({
           ? "Everything rolled back. Imported rows have been deleted."
           : sp.saved === "duplicate_skipped"
             ? "Duplicate skipped — existing record kept."
-            : null
+            : sp.saved === "invites_sent"
+              ? `Sent ${sp.count ?? 0} staff invite${sp.count === "1" ? "" : "s"}.`
+              : null
     : null;
 
   return (
@@ -320,6 +323,29 @@ export default async function ImportWizardPage({
               </li>
             ))}
           </ul>
+
+          {/* Wave 6 — staff invite follow-up */}
+          {(summary.get("staff")?.count ?? 0) > 0 ? (
+            <div className="mt-5 rounded-md border border-blue-200 bg-blue-50 p-4">
+              <p className="text-sm font-medium text-blue-900">
+                {summary.get("staff")?.count} staff row{summary.get("staff")?.count === 1 ? "" : "s"} detected
+              </p>
+              <p className="mt-1 text-xs text-blue-800">
+                Staff rows can&apos;t be auto-provisioned — they need an
+                auth account first. Send each one a magic-link invite to
+                join your org now.
+              </p>
+              <form action={sendStaffInvitesFromImport.bind(null, imp.id)} className="mt-3">
+                <button
+                  type="submit"
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                >
+                  Send invites to imported staff
+                </button>
+              </form>
+            </div>
+          ) : null}
+
           <form action={rollbackImport.bind(null, imp.id)} className="mt-4">
             <button
               type="submit"
