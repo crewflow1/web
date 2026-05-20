@@ -27,6 +27,9 @@ export function InvoiceControls({
   const [showSendForm, setShowSendForm] = useState(false);
   const [overrideEmail, setOverrideEmail] = useState("");
   const [emailMessage, setEmailMessage] = useState("");
+  const [showRemindForm, setShowRemindForm] = useState(false);
+  const [remindOverrideEmail, setRemindOverrideEmail] = useState("");
+  const [remindMessage, setRemindMessage] = useState("");
 
   async function setStatus(next: InvoiceStatus) {
     if (next === status) return;
@@ -88,6 +91,12 @@ export function InvoiceControls({
   }
 
   async function onRemind() {
+    const override = remindOverrideEmail.trim();
+    const recipient = override || customerEmail;
+    if (!recipient) {
+      setError("Add a recipient email before sending reminder.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setInfo(null);
@@ -95,13 +104,19 @@ export function InvoiceControls({
       const res = await fetch(`/api/invoices/${id}/remind`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          to: override || undefined,
+          message: remindMessage.trim() || undefined,
+        }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.sent) {
         setError(j.detail ?? j.error ?? `Failed (${res.status})`);
       } else {
         setInfo(`Reminder sent to ${j.to}.`);
+        setShowRemindForm(false);
+        setRemindOverrideEmail("");
+        setRemindMessage("");
         router.refresh();
       }
     } catch (err) {
@@ -227,20 +242,83 @@ export function InvoiceControls({
         <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
           Send reminder
         </div>
-        <button
-          type="button"
-          onClick={onRemind}
-          disabled={busy || status === "paid"}
-          className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          title={status === "paid" ? "Already paid — no reminder needed" : "Send a one-off reminder now (in addition to the auto-schedule)"}
-        >
-          Send reminder now
-          {customerEmail ? (
-            <span className="ml-1 text-slate-500">→ {customerEmail}</span>
-          ) : (
-            <span className="ml-1 text-amber-700">(no customer email)</span>
-          )}
-        </button>
+        {!showRemindForm ? (
+          <button
+            type="button"
+            onClick={() => {
+              setShowRemindForm(true);
+              setRemindOverrideEmail("");
+              setRemindMessage("");
+              setError(null);
+              setInfo(null);
+            }}
+            disabled={busy || status === "paid"}
+            className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title={
+              status === "paid"
+                ? "Already paid — no reminder needed"
+                : "Send a one-off reminder now (in addition to the auto-schedule)"
+            }
+          >
+            Send reminder now
+            {status === "paid" ? (
+              <span className="ml-1 text-slate-500">(invoice is paid)</span>
+            ) : customerEmail ? (
+              <span className="ml-1 text-slate-500">→ {customerEmail}</span>
+            ) : (
+              <span className="ml-1 text-amber-700">(no customer email)</span>
+            )}
+          </button>
+        ) : (
+          <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <label className="block text-xs text-slate-600">
+              Recipient
+              <input
+                type="email"
+                value={remindOverrideEmail}
+                onChange={(e) => setRemindOverrideEmail(e.target.value)}
+                placeholder={customerEmail ?? "name@example.com"}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+              />
+              <span className="mt-1 block text-[11px] text-slate-500">
+                {customerEmail
+                  ? `Leave blank to send to the customer on file (${customerEmail}).`
+                  : "No customer email on file — type a recipient above."}
+              </span>
+            </label>
+            <label className="block text-xs text-slate-600">
+              Optional note
+              <textarea
+                value={remindMessage}
+                onChange={(e) => setRemindMessage(e.target.value)}
+                rows={3}
+                placeholder="e.g. Hope you're well — just a nudge on the invoice attached, thanks."
+                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+              />
+              <span className="mt-1 block text-[11px] text-slate-500">
+                If provided, this appears at the top of the email body.
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onRemind}
+                disabled={busy}
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {busy ? "Sending…" : "Send reminder"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRemindForm(false)}
+                disabled={busy}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {info ? (
