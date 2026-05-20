@@ -4,23 +4,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import { sendEmail } from "@/lib/email/send";
 import { buildInvoiceEmail } from "@/lib/email/templates/invoice";
+import {
+  buildInvoiceReminder,
+  type ReminderStage,
+} from "@/lib/email/templates/reminders";
 import { env } from "@/lib/env";
 
 /**
- * Send an invoice PDF email by invoice id, using whichever Supabase
- * client the caller provides (user-scoped or service-role).
+ * Render + send an invoice PDF.
  *
- * Used by:
- *   - POST /api/invoices/[id]/send (on-demand)
- *   - acceptQuoteByToken / acceptQuoteAsOwner (auto-email on accept)
+ * Two send modes:
+ *   - kind="initial" (default): the original "here's your invoice" email,
+ *     uses lib/email/templates/invoice. Stamps invoices.sent_at and flips
+ *     draft → sent. Used by the manual "Send" button + auto-send on quote
+ *     accept.
+ *   - kind="reminder": stage-driven copy from lib/email/templates/reminders.
+ *     Does NOT change invoices.sent_at or status (those reflect the
+ *     original send). The reminder row is the audit trail.
  *
- * Side effects on success:
- *   - Stamps invoices.sent_at = now
- *   - Flips invoices.status from 'draft' -> 'sent' (the existing trigger
- *     emits invoice.sent into activity_log on that transition)
- *
- * Never throws. All outcomes are returned via the result tuple so callers
- * can decide whether a downstream failure should affect their own response.
+ * Never throws. All outcomes are returned via the result tuple.
  */
 
 export type SendInvoiceEmailResult =
@@ -51,14 +53,21 @@ type InvoiceJoined = {
   } | null;
 };
 
+type SendOptions = {
+  to?: string;
+  message?: string;
+  /** Defaults to "initial" — the standard invoice send. */
+  kind?: "initial" | "reminder";
+  /** Required when kind="reminder"; ignored otherwise. */
+  reminder_stage?: ReminderStage;
+};
+
 export async function sendInvoiceEmail(
   supabase: SupabaseClient,
   invoiceId: string,
-  options: { to?: string; message?: string } = {},
+  options: SendOptions = {},
 ): Promise<SendInvoiceEmailResult> {
-  if (!env.RESEND_API_KEY) {
-    return { sent: false, reason: "no_resend_key" };
-  }
+  if (!env.RESEND_API_KEY) return { sent: false, reason: "no_resend_key" };
 
   const { data: invoiceRaw, error: iErr } = await supabase
     .from("invoices")
@@ -121,15 +130,27 @@ export async function sendInvoiceEmail(
   };
   const pdfBuffer = await renderToBuffer(InvoicePdf({ inv: pdfInput }));
 
-  const { html, text, subject } = buildInvoiceEmail({
-    org_name: pdfInput.org_name,
-    customer_name: pdfInput.customer_name,
-    invoice_number: invoice.number,
-    total: pdfInput.total,
-    due_date: invoice.due_date,
-    message: options.message ?? null,
-    pdf_url: null,
-  });
+  const kind = options.kind ?? "initial";
+  const { html, text, subject } =
+    kind === "reminder" && options.reminder_stage
+      ? buildInvoiceReminder({
+          org_name: pdfInput.org_name,
+          customer_name: pdfInput.customer_name,
+          invoice_number: invoice.number,
+          total: pdfInput.total,
+          due_date: invoice.due_date,
+          stage: options.reminder_stage,
+          custom_message: options.message ?? null,
+        })
+      : buildInvoiceEmail({
+          org_name: pdfInput.org_name,
+          customer_name: pdfInput.customer_name,
+          invoice_number: invoice.number,
+          total: pdfInput.total,
+          due_date: invoice.due_date,
+          message: options.message ?? null,
+          pdf_url: null,
+        });
 
   const result = await sendEmail({
     to: recipient,
@@ -147,15 +168,25 @@ export async function sendInvoiceEmail(
   }
 
   const sentAt = new Date().toISOString();
-  const updates: { sent_at: string; status?: "sent" } = { sent_at: sentAt };
-  if (invoice.status === "draft") updates.status = "sent";
-  const { error: updErr } = await supabase
-    .from("invoices")
-    .update(updates)
-    .eq("id", invoice.id);
-  if (updErr) {
-    // Email went out — we should not mask the success. Log + report.
-    console.error("[send-invoice] post-send update failed", updErr);
+
+  // Only flip status on the INITIAL send — reminders leave status alone.
+  if (kind === "initial") {
+    const updates: { sent_at: string; status?: "sent" } = { sent_at: sentAt };
+    if (invoice.status === "draft") updates.status = "sent";
+    const { error: updErr } = await supabase
+      .from("invoices")
+      .update(updates)
+      .eq("id", invoice.id);
+    if (updErr) {
+      console.error("[send-invoice] post-send update failed", updErr);
+    }
+    return {
+      sent: true,
+      emailId: result.id,
+      to: recipient,
+      sent_at: sentAt,
+      new_status: updates.status ?? invoice.status,
+    };
   }
 
   return {
@@ -163,6 +194,6 @@ export async function sendInvoiceEmail(
     emailId: result.id,
     to: recipient,
     sent_at: sentAt,
-    new_status: updates.status ?? invoice.status,
+    new_status: invoice.status,
   };
 }

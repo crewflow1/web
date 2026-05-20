@@ -183,7 +183,15 @@ export default async function DashboardPage() {
   let revenueThisMonth = 0;
   let outstandingCount = 0;
   let outstandingTotal = 0;
+  let overdueCount = 0;
+  let overdueTotal = 0;
+  let dueThisWeekCount = 0;
+  let dueThisWeekTotal = 0;
   let outputVatQuarter = 0;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const weekFromNowIso = new Date(Date.now() + 7 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   for (const inv of invoices) {
     const total = Number(inv.total ?? 0);
     const vat = Number(inv.vat_total ?? 0);
@@ -193,6 +201,17 @@ export default async function DashboardPage() {
     if (inv.status === "sent" || inv.status === "overdue") {
       outstandingCount++;
       outstandingTotal += total;
+      if (inv.due_date && inv.due_date < todayIso) {
+        overdueCount++;
+        overdueTotal += total;
+      } else if (
+        inv.due_date &&
+        inv.due_date >= todayIso &&
+        inv.due_date <= weekFromNowIso
+      ) {
+        dueThisWeekCount++;
+        dueThisWeekTotal += total;
+      }
     }
     if (inv.status === "paid" && inv.paid_at && inv.paid_at >= quarterStart) {
       outputVatQuarter += vat;
@@ -330,6 +349,34 @@ export default async function DashboardPage() {
           value={GBP.format(netVatQuarter)}
           href="/finances"
           sub={`output ${GBP.format(outputVatQuarter)} − input ${GBP.format(inputVatQuarter)}`}
+        />
+      </section>
+
+      {/* Receivables row — outstanding / overdue / due-this-week */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Total outstanding"
+          value={GBP.format(outstandingTotal)}
+          href="/invoices?status=sent"
+          sub={`${outstandingCount} unpaid ${outstandingCount === 1 ? "invoice" : "invoices"}`}
+        />
+        <Kpi
+          label="Overdue"
+          value={GBP.format(overdueTotal)}
+          href="/invoices?status=overdue"
+          sub={`${overdueCount} past due_date`}
+        />
+        <Kpi
+          label="Due this week"
+          value={GBP.format(dueThisWeekTotal)}
+          href="/invoices?status=sent"
+          sub={`${dueThisWeekCount} ${dueThisWeekCount === 1 ? "invoice" : "invoices"} in next 7 days`}
+        />
+        <Kpi
+          label="Reminders enabled"
+          value="auto + manual"
+          href="/invoices"
+          sub="day 3 / 7 / 14 / 21 after sent"
         />
       </section>
 

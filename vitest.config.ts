@@ -2,11 +2,8 @@ import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 /**
- * Vitest config — first test slice.
- *
- * Keeps tests fast and dependency-free: unit tests with mocked Supabase
- * clients only. No DB, no network, no PDF rendering inside the tests
- * (we mock the email-send helper too).
+ * Vitest config — keeps tests fast and dependency-free: unit tests with
+ * mocked Supabase clients only. No DB, no network, no PDF rendering.
  */
 export default defineConfig({
   test: {
