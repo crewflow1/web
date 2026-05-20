@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
+import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "./_components/sidebar";
 import { OrgSwitcher } from "./_components/org-switcher";
 import { BottomNav } from "./_components/bottom-nav";
+import { NotificationsBell, type Notification } from "./_components/notifications";
+import { SearchPalette } from "./_components/search-palette";
 
 export default async function AppLayout({
   children,
@@ -11,7 +14,19 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { user, ctx } = await requireOrgContext();
-  const orgs = await listOrgsForUser(user.id);
+  const [orgs, notificationsRes] = await Promise.all([
+    listOrgsForUser(user.id),
+    (async () => {
+      const supabase = await createClient();
+      return supabase
+        .from("notifications")
+        .select("id, type, title, body, action_url, read_at, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+    })(),
+  ]);
+  const notifications: Notification[] = (notificationsRes.data ?? []) as Notification[];
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -33,8 +48,10 @@ export default async function AppLayout({
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-slate-500 sm:inline">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <SearchPalette />
+            <NotificationsBell initial={notifications} />
+            <span className="hidden text-xs text-slate-500 md:inline">
               {user.email}
             </span>
             <form action={signOut}>
