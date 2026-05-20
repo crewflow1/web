@@ -143,6 +143,19 @@ export default async function DashboardPage() {
         .range(0, ACTIVITY_PAGE_SIZE - 1),
     ]);
 
+  // Wave 3 — payment + reconciliation rollups.
+  const [{ data: paymentsThisMonth }, { data: unmatchedLines }] =
+    await Promise.all([
+      supabase
+        .from("invoice_payments")
+        .select("amount, paid_at, source")
+        .gte("paid_at", monthStart.slice(0, 10)),
+      supabase
+        .from("bank_statement_lines")
+        .select("id, amount, posted_at")
+        .eq("match_status", "suggested"),
+    ]);
+
   const jobs = jobsRes.data ?? [];
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types — same pattern as the reminder cols.
@@ -263,6 +276,19 @@ export default async function DashboardPage() {
     inputVatQuarter += Number(f.vat_total ?? 0);
   }
   const netVatQuarter = outputVatQuarter - inputVatQuarter;
+
+  // ---- cashflow (Wave 3) ----
+  let cashInThisMonth = 0;
+  let cashInFromBank = 0;
+  for (const p of paymentsThisMonth ?? []) {
+    const amt = Number(p.amount ?? 0);
+    cashInThisMonth += amt;
+    if (p.source === "bank_csv") cashInFromBank += amt;
+  }
+  const unmatchedSuggestions = (unmatchedLines ?? []).length;
+  // Expected incoming = unpaid invoice totals minus what's already been
+  // partially paid against them. Use outstandingTotal for the overall pool.
+  const expectedIncoming = outstandingTotal;
 
   // ---- profitability ---------------------------------------------------
   // Per-job rollup. Invoices contribute revenue via job_id; finances
@@ -482,6 +508,42 @@ export default async function DashboardPage() {
           value="auto + manual"
           href="/invoices"
           sub="day 3 / 7 / 14 / 21 after sent"
+        />
+      </section>
+
+      {/* Cashflow row (Wave 3) — incoming + bank reconciliation status */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Cash in this month"
+          value={GBP.format(cashInThisMonth)}
+          href="/payments"
+          sub={
+            cashInFromBank > 0
+              ? `${GBP.format(cashInFromBank)} via bank CSV`
+              : "from recorded payments"
+          }
+        />
+        <Kpi
+          label="Expected incoming"
+          value={GBP.format(expectedIncoming)}
+          href="/invoices?status=sent"
+          sub={`${outstandingCount} unpaid ${outstandingCount === 1 ? "invoice" : "invoices"}`}
+        />
+        <Kpi
+          label="Bank matches to review"
+          value={unmatchedSuggestions.toString()}
+          href="/payments"
+          sub={
+            unmatchedSuggestions === 0
+              ? "no suggestions waiting"
+              : "confirm or pick a different invoice"
+          }
+        />
+        <Kpi
+          label="Tax estimates"
+          value="VAT · Corp · PAYE"
+          href="/tax"
+          sub="quarterly + annual rollups"
         />
       </section>
 

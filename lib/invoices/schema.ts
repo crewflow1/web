@@ -6,8 +6,23 @@
 
 import { z } from "zod";
 
-export const INVOICE_STATUSES = ["draft", "sent", "paid", "overdue"] as const;
+export const INVOICE_STATUSES = [
+  "draft",
+  "sent",
+  "awaiting_payment",
+  "partially_paid",
+  "paid",
+  "overdue",
+] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/** Statuses where the invoice is outstanding (operator should chase). */
+export const OUTSTANDING_STATUSES: ReadonlyArray<InvoiceStatus> = [
+  "sent",
+  "awaiting_payment",
+  "partially_paid",
+  "overdue",
+];
 
 const optionalString = (max: number) =>
   z.preprocess(
