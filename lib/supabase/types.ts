@@ -452,6 +452,239 @@ export type Database = {
           },
         ]
       }
+      import_audit: {
+        Row: {
+          created_at: string
+          id: string
+          import_id: string
+          import_row_id: string | null
+          org_id: string
+          target_id: string
+          target_table: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          import_id: string
+          import_row_id?: string | null
+          org_id: string
+          target_id: string
+          target_table: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          import_id?: string
+          import_row_id?: string | null
+          org_id?: string
+          target_id?: string
+          target_table?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_audit_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_audit_import_row_id_fkey"
+            columns: ["import_row_id"]
+            isOneToOne: false
+            referencedRelation: "import_rows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_audit_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      import_files: {
+        Row: {
+          created_at: string
+          filename: string
+          id: string
+          import_id: string
+          mime_type: string | null
+          org_id: string
+          row_count: number
+          size_bytes: number | null
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          filename: string
+          id?: string
+          import_id: string
+          mime_type?: string | null
+          org_id: string
+          row_count?: number
+          size_bytes?: number | null
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          filename?: string
+          id?: string
+          import_id?: string
+          mime_type?: string | null
+          org_id?: string
+          row_count?: number
+          size_bytes?: number | null
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_files_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_files_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      import_rows: {
+        Row: {
+          confidence: number
+          created_at: string
+          duplicate_of_id: string | null
+          entity_type: string | null
+          error_message: string | null
+          file_id: string
+          id: string
+          import_id: string
+          mapped: Json | null
+          org_id: string
+          raw: Json
+          source_row_number: number
+          status: string
+          target_id: string | null
+          target_table: string | null
+          updated_at: string
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          duplicate_of_id?: string | null
+          entity_type?: string | null
+          error_message?: string | null
+          file_id: string
+          id?: string
+          import_id: string
+          mapped?: Json | null
+          org_id: string
+          raw: Json
+          source_row_number: number
+          status?: string
+          target_id?: string | null
+          target_table?: string | null
+          updated_at?: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          duplicate_of_id?: string | null
+          entity_type?: string | null
+          error_message?: string | null
+          file_id?: string
+          id?: string
+          import_id?: string
+          mapped?: Json | null
+          org_id?: string
+          raw?: Json
+          source_row_number?: number
+          status?: string
+          target_id?: string | null
+          target_table?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_rows_file_id_fkey"
+            columns: ["file_id"]
+            isOneToOne: false
+            referencedRelation: "import_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_rows_import_id_fkey"
+            columns: ["import_id"]
+            isOneToOne: false
+            referencedRelation: "imports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_rows_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      imports: {
+        Row: {
+          committed_at: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string
+          org_id: string
+          rolled_back_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          committed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name: string
+          org_id: string
+          rolled_back_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          committed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string
+          org_id?: string
+          rolled_back_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "imports_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "imports_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoice_payments: {
         Row: {
           amount: number
