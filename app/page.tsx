@@ -107,18 +107,18 @@ function Hero() {
             Built for UK construction companies
           </div>
           <h1 className="mt-5 text-4xl font-bold leading-[1.05] tracking-tight text-slate-900 sm:text-5xl lg:text-6xl">
-            Stop losing jobs because your construction business runs on WhatsApp, spreadsheets and memory.
+            Win more jobs. Cut admin. Know exactly where your money goes.
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-slate-600">
-            CrewFlow runs leads, jobs, quotes, staff, payroll, profitability and tax in one operating system.
+            Everything your construction company needs to run from winning jobs to tracking profit in one place.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <BookDemoButton size="lg">Book a demo</BookDemoButton>
+            <BookDemoButton size="lg">Book demo</BookDemoButton>
             <Link
-              href="#how-it-works"
-              className="text-sm font-semibold text-slate-700 hover:text-slate-900"
+              href="#features"
+              className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              See how it works →
+              See CrewFlow in action
             </Link>
           </div>
           <div className="mt-10 grid grid-cols-3 gap-4 border-t border-slate-200 pt-6 text-sm">
@@ -852,7 +852,7 @@ function FinalCta() {
               30 minutes. We&apos;ll import a sample of your existing setup live on the call so you see exactly what your dashboard would look like tomorrow morning.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <BookDemoButton size="lg">Book a demo</BookDemoButton>
+              <BookDemoButton size="lg">Book demo</BookDemoButton>
               <ButtonLink href="/login" variant="ghost" size="lg" className="text-white hover:bg-white/10">
                 Sign in
               </ButtonLink>
