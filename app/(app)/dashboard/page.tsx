@@ -317,11 +317,33 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {ctx.org.name} — overview of your last week.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {ctx.org.name} — overview of your last week.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Link
+            href="/leads/new"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            + Add lead
+          </Link>
+          <Link
+            href="/jobs/new"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            + Add job
+          </Link>
+          <Link
+            href="/staff"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            + Add staff
+          </Link>
+        </div>
       </header>
 
       {/* KPI row */}
@@ -437,16 +459,31 @@ export default async function DashboardPage() {
           sub="sum of open lead values"
         />
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Top sources
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Top sources
+            </div>
+            <Link
+              href="/leads"
+              className="text-xs font-medium text-slate-500 hover:text-slate-900"
+            >
+              View all →
+            </Link>
           </div>
           {topSources.length === 0 ? (
-            <div className="mt-2 text-sm text-slate-500">No leads yet.</div>
+            <div className="mt-2 text-sm text-slate-500">
+              No leads yet. <Link href="/leads/new" className="text-slate-700 underline">Add one</Link>
+            </div>
           ) : (
             <ul className="mt-2 space-y-1 text-sm">
               {topSources.map(([src, agg]) => (
                 <li key={src} className="flex items-center justify-between">
-                  <span className="text-slate-700">{src}</span>
+                  <Link
+                    href={`/leads?source=${encodeURIComponent(src)}`}
+                    className="text-slate-700 hover:text-slate-900 hover:underline"
+                  >
+                    {src}
+                  </Link>
                   <span className="text-xs text-slate-500">
                     {agg.count}
                     {agg.won > 0 ? (
@@ -489,14 +526,21 @@ export default async function DashboardPage() {
           </p>
         </Card>
 
-        <Card title="Staff workload">
+        <Card title="Staff workload" href="/staff">
           {staffWorkload.length === 0 ? (
-            <p className="text-sm text-slate-500">No team members yet.</p>
+            <p className="text-sm text-slate-500">
+              No team members yet. <Link href="/staff" className="text-slate-700 underline">Add staff</Link>
+            </p>
           ) : (
             <ul className="space-y-2 text-sm">
               {staffWorkload.map((s) => (
                 <li key={s.id} className="flex items-center justify-between">
-                  <span className="truncate text-slate-700">{s.name}</span>
+                  <Link
+                    href={`/staff/${s.id}`}
+                    className="truncate text-slate-700 hover:text-slate-900 hover:underline"
+                  >
+                    {s.name}
+                  </Link>
                   <span className="ml-3 shrink-0 text-xs text-slate-500">
                     <span className="font-medium text-slate-900">{s.active}</span> active ·{" "}
                     <span className="font-medium text-slate-900">{s.done}</span> done
@@ -563,21 +607,23 @@ export default async function DashboardPage() {
           )}
         </Card>
 
-        <Card title="Recent leads">
+        <Card title="Recent leads" href="/leads">
           {leads.length === 0 ? (
-            <p className="text-sm text-slate-500">No leads yet.</p>
+            <p className="text-sm text-slate-500">
+              No leads yet. <Link href="/leads/new" className="text-slate-700 underline">Add one</Link>
+            </p>
           ) : (
             <ul className="divide-y divide-slate-100 text-sm">
               {leads.map((l) => (
                 <li key={l.id} className="flex items-center justify-between py-1.5">
-                  <div className="min-w-0">
+                  <Link href={`/leads/${l.id}`} className="min-w-0 flex-1 hover:underline">
                     <div className="truncate text-slate-700">
                       {l.customer?.name ?? "—"}
                     </div>
                     <div className="truncate text-xs text-slate-500">
                       {l.service ?? "—"}
                     </div>
-                  </div>
+                  </Link>
                   <span className="ml-3 shrink-0 text-xs font-medium text-slate-500">
                     {l.urgency ?? l.source}
                   </span>
