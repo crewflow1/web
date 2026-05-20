@@ -25,6 +25,7 @@ const ADMIN_LINKS = [
   { href: "/payroll", label: "Payroll" },
   { href: "/tax", label: "Tax" },
   { href: "/staff", label: "Staff" },
+  { href: "/imports", label: "Migrate data" },
   { href: "/reports", label: "Reports" },
   { href: "/settings", label: "Settings" },
 ];
