@@ -14,7 +14,7 @@ import { usePathname } from "next/navigation";
  * mobile if we expand later — for v1, fits in the bar).
  */
 
-const LINKS = [
+const ADMIN_LINKS = [
   { href: "/dashboard", label: "Home", icon: "🏠" },
   { href: "/leads", label: "Leads", icon: "🎯" },
   { href: "/jobs", label: "Jobs", icon: "🔧" },
@@ -22,8 +22,15 @@ const LINKS = [
   { href: "/invoices", label: "Invoices", icon: "💷" },
 ];
 
-export function BottomNav() {
+const STAFF_LINKS = [
+  { href: "/me", label: "My day", icon: "⏱️" },
+  { href: "/jobs", label: "Jobs", icon: "🔧" },
+  { href: "/staff/leave", label: "Leave", icon: "🌴" },
+];
+
+export function BottomNav({ role = "owner" }: { role?: string }) {
   const pathname = usePathname();
+  const LINKS = role === "staff" ? STAFF_LINKS : ADMIN_LINKS;
   return (
     <nav
       aria-label="Primary mobile"
@@ -31,7 +38,10 @@ export function BottomNav() {
       // safe-area for iPhone home indicator
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-5">
+      <ul
+        className="grid"
+        style={{ gridTemplateColumns: `repeat(${LINKS.length}, minmax(0, 1fr))` }}
+      >
         {LINKS.map((l) => {
           const active = pathname === l.href || pathname.startsWith(`${l.href}/`);
           return (

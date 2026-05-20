@@ -1086,6 +1086,130 @@ export type Database = {
         }
         Relationships: []
       }
+      payroll_lines: {
+        Row: {
+          created_at: string
+          gross_pay: number
+          hourly_pay: number
+          hours: number
+          id: string
+          net_pay: number
+          ni_estimate: number
+          note: string | null
+          org_id: string
+          paye_estimate: number
+          payroll_run_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          gross_pay?: number
+          hourly_pay?: number
+          hours?: number
+          id?: string
+          net_pay?: number
+          ni_estimate?: number
+          note?: string | null
+          org_id: string
+          paye_estimate?: number
+          payroll_run_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          gross_pay?: number
+          hourly_pay?: number
+          hours?: number
+          id?: string
+          net_pay?: number
+          ni_estimate?: number
+          note?: string | null
+          org_id?: string
+          paye_estimate?: number
+          payroll_run_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_lines_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_lines_payroll_run_id_fkey"
+            columns: ["payroll_run_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_lines_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_runs: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          cycle: string
+          finalised_at: string | null
+          id: string
+          org_id: string
+          period_end: string
+          period_start: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          cycle: string
+          finalised_at?: string | null
+          id?: string
+          org_id: string
+          period_end: string
+          period_start: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          cycle?: string
+          finalised_at?: string | null
+          id?: string
+          org_id?: string
+          period_end?: string
+          period_start?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_runs_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       properties: {
         Row: {
           address: Json
@@ -1446,6 +1570,83 @@ export type Database = {
           },
         ]
       }
+      time_entries: {
+        Row: {
+          breaks: Json
+          created_at: string
+          ended_at: string | null
+          gps_lat: number | null
+          gps_lng: number | null
+          id: string
+          job_id: string | null
+          note: string | null
+          org_id: string
+          payroll_line_id: string | null
+          started_at: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          breaks?: Json
+          created_at?: string
+          ended_at?: string | null
+          gps_lat?: number | null
+          gps_lng?: number | null
+          id?: string
+          job_id?: string | null
+          note?: string | null
+          org_id: string
+          payroll_line_id?: string | null
+          started_at?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          breaks?: Json
+          created_at?: string
+          ended_at?: string | null
+          gps_lat?: number | null
+          gps_lng?: number | null
+          id?: string
+          job_id?: string | null
+          note?: string | null
+          org_id?: string
+          payroll_line_id?: string | null
+          started_at?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_entries_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_payroll_line_id_fkey"
+            columns: ["payroll_line_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           avatar_url: string | null
@@ -1456,6 +1657,7 @@ export type Database = {
           full_name: string | null
           hourly_pay: number | null
           id: string
+          ni_number: string | null
           phone: string | null
           start_date: string | null
           updated_at: string
@@ -1469,6 +1671,7 @@ export type Database = {
           full_name?: string | null
           hourly_pay?: number | null
           id: string
+          ni_number?: string | null
           phone?: string | null
           start_date?: string | null
           updated_at?: string
@@ -1482,6 +1685,7 @@ export type Database = {
           full_name?: string | null
           hourly_pay?: number | null
           id?: string
+          ni_number?: string | null
           phone?: string | null
           start_date?: string | null
           updated_at?: string

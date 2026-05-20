@@ -17,8 +17,17 @@ import {
   profitByMonth,
   marginPillClass,
   marginBand,
+  labourCostsFromTimeEntries,
   type JobProfitability,
 } from "@/lib/profitability/compute";
+import {
+  hoursInWindow,
+  hoursByJob,
+  startOfWeekIso,
+  addDaysIso,
+  type TimeEntry,
+} from "@/lib/time/compute";
+import { computePayrollLine } from "@/lib/payroll/compute";
 
 /**
  * Owner dashboard.
@@ -84,6 +93,11 @@ const INVOICE_STATUS_STYLES: Record<string, string> = {
 
 export default async function DashboardPage() {
   const { user, ctx } = await requireOrgContext();
+  // Wave 4 — staff role goes to /me; the business dashboard is owner/admin.
+  if (ctx.membership.role === "staff") {
+    const { redirect } = await import("next/navigation");
+    redirect("/me");
+  }
   const supabase = await createClient();
 
   const monthStart = startOfMonthISO();
@@ -155,6 +169,19 @@ export default async function DashboardPage() {
         .select("id, amount, posted_at")
         .eq("match_status", "suggested"),
     ]);
+
+  // Wave 4 — time + payroll rollups (last 30 days of time entries is plenty
+  // for "this week" + "this month" tiles).
+  const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const [{ data: timeEntriesRaw }, { data: payableMembers }] = await Promise.all([
+    supabase
+      .from("time_entries")
+      .select("id, user_id, job_id, started_at, ended_at, breaks")
+      .gte("started_at", thirtyDaysAgoIso),
+    supabase
+      .from("memberships")
+      .select("user_id, role, user:users ( id, hourly_pay )"),
+  ]);
 
   const jobs = jobsRes.data ?? [];
   // Cast: job_id is in the 20260520150000 migration but not yet in
@@ -277,6 +304,62 @@ export default async function DashboardPage() {
   }
   const netVatQuarter = outputVatQuarter - inputVatQuarter;
 
+  // ---- time + labour (Wave 4) ----
+  const timeEntries = (timeEntriesRaw ?? []) as TimeEntry[];
+  const weekStartIsoDate = startOfWeekIso();
+  const weekStartDate = new Date(`${weekStartIsoDate}T00:00:00Z`);
+  const weekEndDate = new Date(`${addDaysIso(weekStartIsoDate, 7)}T00:00:00Z`);
+  const monthStartDate = new Date(monthStart);
+  // monthEndDate ≈ now + a hair so an open entry counts toward "this month".
+  const monthEndDate = new Date(Date.now() + 86_400_000);
+  const teamHoursWeek = hoursInWindow(timeEntries, weekStartDate, weekEndDate);
+  const teamHoursMonth = hoursInWindow(timeEntries, monthStartDate, monthEndDate);
+  const hoursPerJob = hoursByJob(timeEntries, monthStartDate, monthEndDate);
+
+  // Per-user hourly rate for the labour cost roll-up.
+  const hourlyByUser = new Map<string, number>();
+  for (const m of payableMembers ?? []) {
+    const uid = (m as { user_id: string }).user_id;
+    const u = (m as { user?: { hourly_pay: number | null } }).user;
+    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
+  }
+
+  // Sum org-wide labour cost this month + week.
+  let labourCostWeek = 0;
+  let labourCostMonth = 0;
+  for (const e of timeEntries) {
+    const rate = hourlyByUser.get(e.user_id) ?? 0;
+    if (rate <= 0) continue;
+    // Approximate: use entry's full hours and check which window it overlaps.
+    const weekHrs = hoursInWindow([e], weekStartDate, weekEndDate);
+    const monthHrs = hoursInWindow([e], monthStartDate, monthEndDate);
+    labourCostWeek += weekHrs * rate;
+    labourCostMonth += monthHrs * rate;
+  }
+  labourCostWeek = Math.round(labourCostWeek * 100) / 100;
+  labourCostMonth = Math.round(labourCostMonth * 100) / 100;
+
+  // Estimated payroll-due for the current week (sum across users of the
+  // weekly computePayrollLine net pay) — what's actually owed if a run
+  // is generated right now.
+  let payrollDueThisWeek = 0;
+  const hoursByUserThisWeek = new Map<string, number>();
+  for (const e of timeEntries) {
+    const h = hoursInWindow([e], weekStartDate, weekEndDate);
+    if (h === 0) continue;
+    hoursByUserThisWeek.set(
+      e.user_id,
+      (hoursByUserThisWeek.get(e.user_id) ?? 0) + h,
+    );
+  }
+  for (const [uid, hours] of hoursByUserThisWeek) {
+    const rate = hourlyByUser.get(uid) ?? 0;
+    if (rate <= 0) continue;
+    const c = computePayrollLine(hours, rate, "weekly");
+    payrollDueThisWeek += c.net_pay;
+  }
+  payrollDueThisWeek = Math.round(payrollDueThisWeek * 100) / 100;
+
   // ---- cashflow (Wave 3) ----
   let cashInThisMonth = 0;
   let cashInFromBank = 0;
@@ -293,10 +376,30 @@ export default async function DashboardPage() {
   // ---- profitability ---------------------------------------------------
   // Per-job rollup. Invoices contribute revenue via job_id; finances
   // contribute costs via job_id. Jobs with neither don't appear.
+  // Wave 4 — labour cost from time entries is treated as a virtual
+  // finance row tagged 'labour', so the existing profitability code
+  // picks it up under the labour bucket without bespoke wiring.
+  const labourRows = labourCostsFromTimeEntries(
+    Array.from(hoursPerJob.entries()).flatMap(([jobId]) => {
+      const entriesForJob = timeEntries.filter((te) => te.job_id === jobId);
+      // Aggregate hours per (user, job) for fair cost attribution.
+      const byUser = new Map<string, number>();
+      for (const te of entriesForJob) {
+        const h = hoursInWindow([te], monthStartDate, monthEndDate);
+        if (h > 0) byUser.set(te.user_id, (byUser.get(te.user_id) ?? 0) + h);
+      }
+      return Array.from(byUser.entries()).map(([userId, hours]) => ({
+        job_id: jobId,
+        user_id: userId,
+        hours,
+      }));
+    }),
+    hourlyByUser,
+  );
   const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
     jobs,
     invoices,
-    finances,
+    [...finances, ...labourRows],
   );
   const topProfitable = topProfitableJobs(profitabilityRows, 5);
   const worstMarginJobs = worstJobs(profitabilityRows, 5);
@@ -544,6 +647,34 @@ export default async function DashboardPage() {
           value="VAT · Corp · PAYE"
           href="/tax"
           sub="quarterly + annual rollups"
+        />
+      </section>
+
+      {/* Field-ops row (Wave 4) — hours, labour cost, payroll due */}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi
+          label="Hours this week"
+          value={`${teamHoursWeek.toFixed(1)} h`}
+          href="/payroll"
+          sub={`${teamHoursMonth.toFixed(1)} h this month`}
+        />
+        <Kpi
+          label="Labour cost (week)"
+          value={GBP.format(labourCostWeek)}
+          href="/payroll"
+          sub={`${GBP.format(labourCostMonth)} this month`}
+        />
+        <Kpi
+          label="Payroll due (week)"
+          value={GBP.format(payrollDueThisWeek)}
+          href="/payroll"
+          sub="net pay if you run weekly now"
+        />
+        <Kpi
+          label="Staff dashboard"
+          value="Clock in/out"
+          href="/me"
+          sub="hours, leave, earnings"
         />
       </section>
 

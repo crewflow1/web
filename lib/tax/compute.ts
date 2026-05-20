@@ -84,12 +84,44 @@ export function computeVatQuarter(
   };
 }
 
-/** PAYE estimate — placeholder until time_entries + payroll land. */
-export function computePayeMonth(): TaxSummary["paye_month"] {
+type PayrollLineRow = {
+  paye_estimate: number | string | null;
+  ni_estimate: number | string | null;
+  run: { period_start: string; status: string; cycle: string } | null;
+};
+
+/**
+ * PAYE / NI estimate for the current calendar month.
+ *
+ * Sums PAYE + NI across every payroll_line whose parent run's period
+ * starts in the current month. Returns 'placeholder' confidence when
+ * no payroll has been run yet, so the UI can keep the "set this up"
+ * affordance until it has real data.
+ */
+export function computePayeMonth(
+  payrollLines: PayrollLineRow[] = [],
+  now: Date = new Date(),
+): TaxSummary["paye_month"] {
+  if (payrollLines.length === 0) {
+    return {
+      estimate: 0,
+      confidence: "placeholder",
+      note: "No payroll runs this month. Generate a weekly or monthly payroll in /payroll to populate this tile.",
+    };
+  }
+  const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  let paye = 0;
+  let ni = 0;
+  for (const l of payrollLines) {
+    if (!l.run) continue;
+    if (l.run.period_start.slice(0, 7) !== monthKey) continue;
+    paye += Number(l.paye_estimate ?? 0);
+    ni += Number(l.ni_estimate ?? 0);
+  }
   return {
-    estimate: 0,
-    confidence: "placeholder",
-    note: "Awaiting time-tracking + payroll (Wave 4). Once staff hours are logged + paid, this tile will show monthly PAYE / NI on gross pay.",
+    estimate: Math.round((paye + ni) * 100) / 100,
+    confidence: "computed",
+    note: `PAYE ${paye.toFixed(2)} + NI ${ni.toFixed(2)} from this month's payroll runs. Pay HMRC by the 22nd of the following month.`,
   };
 }
 

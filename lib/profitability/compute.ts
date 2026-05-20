@@ -81,6 +81,41 @@ type FinanceRow = {
 };
 
 /**
+ * Time-entry shape consumed for labour cost. Hours can be precomputed by
+ * the caller (via `lib/time/compute.hoursByJob`) — we keep this loosely
+ * shaped so callers can also pass raw entries with hours field.
+ */
+export type LabourEntry = {
+  job_id: string | null;
+  user_id: string;
+  hours: number;
+};
+
+/**
+ * Convert time_entries + per-user hourly rates into the same shape as
+ * `finances` rows so they slot into the existing labour bucket. Anything
+ * with no hourly_pay falls to 0 — owners get warned about missing rates
+ * on the staff page.
+ */
+export function labourCostsFromTimeEntries(
+  entries: LabourEntry[],
+  hourlyRateByUser: Map<string, number>,
+): FinanceRow[] {
+  const out: FinanceRow[] = [];
+  for (const e of entries) {
+    if (!e.job_id) continue;
+    const rate = hourlyRateByUser.get(e.user_id) ?? 0;
+    if (e.hours <= 0 || rate <= 0) continue;
+    out.push({
+      job_id: e.job_id,
+      amount: Math.round(e.hours * rate * 100) / 100,
+      category: "labour",
+    });
+  }
+  return out;
+}
+
+/**
  * Compute profitability for a single job. Returns null when no invoice
  * AND no finance is linked (no data → not meaningful).
  */
