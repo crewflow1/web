@@ -84,7 +84,11 @@ export function buildInvoiceReminder(input: InvoiceReminderInput): {
   text: string;
 } {
   const header = STAGE_HEADERS[input.stage];
-  const tone = input.custom_message?.trim() || STAGE_TONES[input.stage];
+  // Optional note renders ABOVE the default polite tone, set apart with
+  // its own block so the operator's words stand out. The stage default
+  // is never replaced — if the operator wrote a note, they get both.
+  const note = input.custom_message?.trim() || null;
+  const tone = STAGE_TONES[input.stage];
 
   const subject = `${header}: Invoice ${input.invoice_number} (${GBP.format(input.total)})`;
   const greeting = input.customer_name
@@ -93,9 +97,15 @@ export function buildInvoiceReminder(input: InvoiceReminderInput): {
   const dueLine = input.due_date
     ? `<p style="margin:0 0 16px;color:#475569;">Original due date: <strong>${escapeHtml(input.due_date)}</strong>.</p>`
     : "";
+  const noteBlock = note
+    ? `<div style="margin:0 0 16px;padding:12px;border-left:3px solid #0f172a;background:#f8fafc;">
+        <p style="margin:0;font-size:14px;color:#0f172a;white-space:pre-wrap;">${escapeHtml(note)}</p>
+      </div>`
+    : "";
 
   const html = shell(`
     <p style="margin:0 0 16px;font-size:16px;">${greeting}</p>
+    ${noteBlock}
     <p style="margin:0 0 16px;font-size:16px;">
       ${escapeHtml(tone)}
     </p>
@@ -109,6 +119,8 @@ export function buildInvoiceReminder(input: InvoiceReminderInput): {
   const text = [
     `${greeting.replace(/&#39;/g, "'")}`,
     "",
+    note ? note : "",
+    note ? "" : "",
     tone,
     "",
     `Invoice ${input.invoice_number} — ${GBP.format(input.total)}`,
