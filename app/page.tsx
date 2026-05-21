@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { ButtonLink } from "@/components/ui/button";
 import { BookDemoModal, BookDemoButton } from "./(public)/_book-demo-modal";
-import { TestButton } from "./(public)/_test-button";
 
 /**
  * Hero screenshot drop-in slot.
@@ -73,7 +72,6 @@ export default function HomePage() {
       <FinalCta />
       <SiteFooter />
       <BookDemoModal />
-      <TestButton />
     </main>
   );
 }

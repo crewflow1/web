@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "static",
+      "runtimeExecutable": "/opt/homebrew/bin/node",
+      "runtimeArgs": [
+        "-e",
+        "require('http').createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/html'});res.end('<html><body>preview-shell</body></html>');}).listen(3344);console.error('static-on-3344');setInterval(()=>{},1<<30);"
+      ],
+      "port": 3344
+    }
+  ]
+}

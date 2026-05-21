@@ -71,7 +71,8 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/customer-portal/") || // customer-scoped portal
     pathname.startsWith("/auth/callback") ||
     pathname === "/api/health" ||
-    pathname === "/api/waitlist";
+    pathname === "/api/waitlist" ||
+    pathname === "/api/demo";
 
   // Auth-flow pages (login / signup / check-email).
   const isAuthFlow =

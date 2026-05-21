@@ -12,8 +12,11 @@ import {
   TURNOVER_LABELS,
   TURNOVER_RANGES,
 } from "@/lib/demo/schema";
-import { submitDemoRequest } from "./actions";
 import { buttonClass } from "@/components/ui/button";
+
+type SubmitResult =
+  | { ok: true; deduped?: boolean }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 /**
  * Premium book-demo modal. Submitted form goes to the server action,
@@ -68,13 +71,32 @@ export function BookDemoModal() {
     const formData = new FormData(form);
     setError(null);
     setFieldErrors({});
+
+    // Convert FormData → plain object so the API route's Zod schema can
+    // validate it directly. Empty optional fields become undefined.
+    const payload: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      if (typeof value === "string" && value.trim() !== "") {
+        payload[key] = value;
+      }
+    });
+
     startTransition(async () => {
-      // The action is contract-bound to never throw, but defence in
-      // depth: if a network blip or runtime hiccup causes a rejection,
-      // surface a real message instead of letting it bubble to the
-      // global error boundary ("Something went wrong" page).
       try {
-        const result = await submitDemoRequest(formData);
+        const res = await fetch("/api/demo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        let result: SubmitResult;
+        try {
+          result = (await res.json()) as SubmitResult;
+        } catch {
+          result = {
+            ok: false,
+            error: `Server returned ${res.status}. Email hello@crewflow.uk and we'll book you in directly.`,
+          };
+        }
         if (result.ok) {
           setDone(true);
           form.reset();
@@ -83,7 +105,7 @@ export function BookDemoModal() {
           setFieldErrors(result.fieldErrors ?? {});
         }
       } catch (err) {
-        console.error("[demo] submit threw — falling back to friendly error", err);
+        console.error("[demo] fetch threw — surfacing friendly error", err);
         setError(
           "We hit a network problem sending your request. Email hello@crewflow.uk and we will book you in directly.",
         );

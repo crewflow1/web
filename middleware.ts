@@ -15,5 +15,5 @@ export const config = {
   // Skip Next internals, static files, and the health check (always public).
   // Crons are gated by CRON_SECRET (lib/cron/auth.ts), not by the Supabase
   // session middleware; exclude them so Vercel's scheduler can reach them.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health|api/cron).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health|api/cron|api/demo).*)"],
 };
