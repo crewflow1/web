@@ -35,6 +35,10 @@ function logStep(step: string, info?: Record<string, unknown>) {
 }
 
 export async function submitDemoRequest(formData: FormData): Promise<DemoSubmitResult> {
+  // Smoke-log at the absolute first line so we can tell from `vercel logs`
+  // whether the action body ever executes. If you don't see this in logs,
+  // the failure is in middleware / module load / RSC dispatch — NOT here.
+  console.log("[demo] submitDemoRequest invoked");
   try {
     // 1. Validate -----------------------------------------------------------
     const raw = {
