@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   updateStaffProfileSchema,
@@ -57,20 +58,37 @@ export async function inviteStaff(formData: FormData) {
   }
 
   const supabase = await createClient();
-  // Find or fail — we don't auto-create auth.users from the staff page.
   const { data: existing } = await supabase
     .from("users")
     .select("id, email")
     .eq("email", email)
     .maybeSingle();
 
+  // Case A — user does not exist in public.users yet. Send them a
+  // Supabase magic-link invite carrying the org + role in user_metadata.
+  // The onboarding flow will pick that up and provision the membership.
   if (!existing) {
-    redirect(
-      `/staff?error=${encodeURIComponent("No user with that email exists yet. Ask them to sign up first (magic-link signup invite is a future feature).")}`,
-    );
+    const admin = createAdminClient();
+    try {
+      await admin.auth.admin.inviteUserByEmail(email, {
+        data: {
+          invited_org_id: ctx.org.id,
+          invited_role: validatedRole.data.role,
+          source: "staff_invite",
+        },
+        redirectTo: process.env.NEXT_PUBLIC_APP_URL
+          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${validatedRole.data.role}`
+          : undefined,
+      });
+      revalidatePath("/staff");
+      redirect("/staff?saved=invite_sent");
+    } catch (e) {
+      console.error("[staff] magic-link invite failed", e);
+      redirect("/staff?error=invite_email_failed");
+    }
   }
 
-  // Skip if already a member.
+  // Case B — user exists; check they aren't already a member.
   const { data: dup } = await supabase
     .from("memberships")
     .select("id")

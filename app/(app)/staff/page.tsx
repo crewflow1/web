@@ -63,11 +63,29 @@ export default async function StaffPage({
 
   const members = (membersRaw ?? []) as MemberRow[];
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = (() => {
+    if (!sp.error) return null;
+    switch (sp.error) {
+      case "already_member":
+        return "That person is already a member of this org.";
+      case "invalid_input":
+        return "Please enter a valid email and pick a role.";
+      case "owner_role_not_assignable":
+        return "Owner role can't be assigned through the invite form.";
+      case "invite_failed":
+        return "Couldn't add the member. Try again.";
+      case "invite_email_failed":
+        return "Couldn't send the invite email. Check that the address is valid, then try again.";
+      default:
+        return decodeURIComponent(sp.error);
+    }
+  })();
   const savedMessage = (() => {
     switch (sp.saved) {
       case "invited":
-        return "Staff member added.";
+        return "Staff member added to your org.";
+      case "invite_sent":
+        return "Invite email sent. They'll get a magic-link to join your org.";
       case "removed":
         return "Staff member removed.";
       default:
@@ -106,11 +124,11 @@ export default async function StaffPage({
 
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Invite by email</h2>
+          <h2 className="text-sm font-semibold text-slate-900">Add staff</h2>
           <p className="mt-1 text-xs text-slate-500">
-            The person must already have signed up at least once — we link
-            them into this organisation. Magic-link invites for new users
-            are a future feature.
+            Already a CrewFlow user? They&apos;ll be added to your org
+            instantly. New to CrewFlow? We&apos;ll email them a magic-link
+            invite — they click it, set their name and they&apos;re in.
           </p>
           <form action={inviteStaff} className="mt-3 flex flex-wrap items-end gap-2">
             <label className="block text-xs text-slate-600">

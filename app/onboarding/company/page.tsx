@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { createOrg } from "./actions";
+import { requireUser } from "@/server/auth/session";
 
 type SearchParams = Promise<{ error?: string }>;
 
@@ -7,6 +9,14 @@ export default async function CompanyPage({
 }: {
   searchParams: SearchParams;
 }) {
+  // Invited users (with invited_org_id in their auth metadata) go to the
+  // join flow instead of the create-org flow.
+  const user = await requireUser();
+  const meta = (user.user_metadata ?? {}) as { invited_org_id?: string };
+  if (meta.invited_org_id) {
+    redirect("/onboarding/join");
+  }
+
   const { error } = await searchParams;
   const errorMessage = error ? decodeURIComponent(error) : null;
 
