@@ -132,64 +132,102 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
         </Link>
       </form>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        {!rows || rows.length === 0 ? (
+      {!rows || rows.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="💷"
             title="No invoices yet"
             body="Once a quote is accepted, generate a sequential HMRC-compliant invoice from it. Status transitions stamp sent/paid timestamps for the audit trail."
             primary={{ href: "/invoices/new", label: "Generate first invoice" }}
           />
-        ) : (
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Number</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Due</th>
-                <th className="px-4 py-3 text-right">Net</th>
-                <th className="px-4 py-3 text-right">VAT</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((inv) => (
-                <tr key={inv.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-900">{inv.number}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[inv.status]}`}
-                    >
-                      {inv.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {inv.due_date ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                    {GBP.format(Number(inv.amount ?? 0))}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-600">
-                    {GBP.format(Number(inv.vat_total ?? 0))}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                    {GBP.format(Number(inv.total ?? 0))}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/invoices/${inv.id}`}
-                      className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                    >
-                      Open →
-                    </Link>
-                  </td>
+        </div>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Number</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Due</th>
+                  <th className="px-4 py-3 text-right">Net</th>
+                  <th className="px-4 py-3 text-right">VAT</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white text-sm">
+                {rows.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-900">{inv.number}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[inv.status]}`}
+                      >
+                        {inv.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {inv.due_date ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-900">
+                      {GBP.format(Number(inv.amount ?? 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-600">
+                      {GBP.format(Number(inv.vat_total ?? 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-900">
+                      {GBP.format(Number(inv.total ?? 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link
+                        href={`/invoices/${inv.id}`}
+                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                      >
+                        Open →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <ul className="space-y-2 md:hidden">
+            {rows.map((inv) => (
+              <li key={inv.id}>
+                <Link
+                  href={`/invoices/${inv.id}`}
+                  className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900">{inv.number}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        {inv.due_date ? `Due ${inv.due_date}` : "No due date"}
+                        {" · VAT "}
+                        {GBP.format(Number(inv.vat_total ?? 0))}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {GBP.format(Number(inv.total ?? 0))}
+                      </div>
+                      <span
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[inv.status]}`}
+                      >
+                        {inv.status}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {totalPages > 1 ? (
         <nav className="flex items-center justify-between text-sm text-slate-600">

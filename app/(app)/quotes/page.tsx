@@ -107,8 +107,8 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
         </Link>
       </form>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        {!rows || rows.length === 0 ? (
+      {!rows || rows.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="📝"
             title="No quotes yet"
@@ -116,50 +116,87 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
             primary={{ href: "/quotes/new", label: "Create first quote" }}
             secondary={{ href: "/customers/new", label: "Add a customer first" }}
           />
-        ) : (
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Number</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Valid until</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((q) => (
-                <tr key={q.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-900">{q.number}</td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {q.customer?.name ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
-                    >
-                      {q.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{q.valid_until ?? "—"}</td>
-                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                    {GBP.format(Number(q.total ?? 0))}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/quotes/${q.id}`}
-                      className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                    >
-                      Open →
-                    </Link>
-                  </td>
+        </div>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Number</th>
+                  <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Valid until</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white text-sm">
+                {rows.map((q) => (
+                  <tr key={q.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-900">{q.number}</td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {q.customer?.name ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
+                      >
+                        {q.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{q.valid_until ?? "—"}</td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-900">
+                      {GBP.format(Number(q.total ?? 0))}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link
+                        href={`/quotes/${q.id}`}
+                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                      >
+                        Open →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <ul className="space-y-2 md:hidden">
+            {rows.map((q) => (
+              <li key={q.id}>
+                <Link
+                  href={`/quotes/${q.id}`}
+                  className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900">{q.number}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {q.customer?.name ?? "—"}
+                        {q.valid_until ? ` · valid ${q.valid_until}` : ""}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {GBP.format(Number(q.total ?? 0))}
+                      </div>
+                      <span
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
+                      >
+                        {q.status}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {totalPages > 1 ? (
         <nav className="flex items-center justify-between text-sm text-slate-600">
