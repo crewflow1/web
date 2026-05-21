@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
+import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -46,7 +47,7 @@ export default async function PayrollRunPage({
       .select(
         `
           id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay, note,
-          user:users ( full_name, ni_number, email )
+          user:users ( full_name, email )
         `,
       )
       .eq("payroll_run_id", id)
@@ -54,6 +55,8 @@ export default async function PayrollRunPage({
   ]);
 
   if (!run) notFound();
+  // Per-user NI numbers, sourced from the admin-gated staff_secrets table.
+  const niByUser = await fetchNiNumbersForOrg(ctx.org.id);
   const lines = linesRaw ?? [];
 
   const totals = lines.reduce(
@@ -186,7 +189,7 @@ export default async function PayrollRunPage({
                     {l.user?.full_name ?? l.user?.email ?? l.user_id.slice(0, 8)}
                   </td>
                   <td className="px-4 py-2 text-slate-500 text-xs">
-                    {l.user?.ni_number ?? "—"}
+                    {maskNiNumber(niByUser.get(l.user_id) ?? null)}
                   </td>
                   <td className="px-4 py-2 text-right text-slate-700">{Number(l.hours).toFixed(2)}</td>
                   <td className="px-4 py-2 text-right text-slate-700">{GBP.format(Number(l.hourly_pay ?? 0))}</td>

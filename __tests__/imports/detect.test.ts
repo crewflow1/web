@@ -65,8 +65,10 @@ describe("mapRow", () => {
   });
 
   it("knocks confidence down when required fields are missing on this row", () => {
-    const sheet = parseCsvFile("Name,Email\nJane,j@x.test\n,missing-name@x.test");
+    // Postcode column makes this an unambiguous customer sheet (staff has no postcode field).
+    const sheet = parseCsvFile("Name,Email,Postcode\nJane,j@x.test,SW1A 1AA\n,missing-name@x.test,SW1A 2BB");
     const d = detectEntityType(sheet);
+    expect(d.entity_type).toBe("customer");
     const ok = mapRow(d, sheet.rows[0]!);
     const bad = mapRow(d, sheet.rows[1]!);
     expect(ok.confidence).toBeGreaterThan(bad.confidence);
@@ -74,8 +76,9 @@ describe("mapRow", () => {
   });
 
   it("rejects bad email values with a warning but keeps the row", () => {
-    const sheet = parseCsvFile("Name,Email\nJane,not-an-email");
+    const sheet = parseCsvFile("Name,Email,Postcode\nJane,not-an-email,SW1A 1AA");
     const d = detectEntityType(sheet);
+    expect(d.entity_type).toBe("customer");
     const r = mapRow(d, sheet.rows[0]!);
     expect(r.mapped.email).toBeUndefined();
     expect(r.mapped.name).toBe("Jane");

@@ -158,8 +158,10 @@ export default async function QaPage() {
             on /onboarding/company and the owner approves there.
           </li>
           <li>
-            NI numbers in users.ni_number are plain-text — encrypt at rest
-            before serving a real customer with payroll on.
+            NI numbers live in a separate `staff_secrets` table with
+            admin-only RLS and a UK-format check constraint. Displayed
+            masked (AB****56C) in payroll tables; full value visible
+            only on the admin-downloaded payslip PDF + CSV.
           </li>
           <li>
             PAYE/NI estimator assumes 1257L tax code + UK 2025-26 thresholds.

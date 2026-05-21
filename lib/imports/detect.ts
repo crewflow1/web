@@ -94,7 +94,9 @@ const STAFF_FIELDS: Record<string, string[]> = {
   hourly_pay: ["hourly rate", "hourly pay", "rate", "wage", "pay"],
   employment_type: ["employment type", "employment", "contract type"],
   start_date: ["start date", "started", "hire date"],
-  ni_number: ["ni number", "national insurance", "ni no"],
+  // NI numbers are deliberately NOT auto-imported — they live in the
+  // admin-gated staff_secrets table and must be entered explicitly by
+  // an org admin to avoid leaking sensitive data through a malformed CSV.
 };
 
 const COST_FIELDS: Record<string, string[]> = {

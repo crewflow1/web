@@ -144,9 +144,30 @@ function HeroBadge({ label, sub }: { label: string; sub: string }) {
   );
 }
 
+/**
+ * Hero mockup. v1 ships as a CSS-drawn dashboard placeholder so we can
+ * launch the landing without waiting on a polished product screenshot.
+ *
+ * REPLACEMENT INSTRUCTIONS (when a real screenshot is ready):
+ *   1. Drop a 2:1 PNG (recommended 1200×600) into `public/landing/`.
+ *   2. Replace the body of this function with a Next.js `<Image>`:
+ *        <Image
+ *          src="/landing/hero-dashboard.png"
+ *          alt="CrewFlow dashboard showing weekly cash, outstanding and profit"
+ *          width={1200}
+ *          height={600}
+ *          priority
+ *          className="rounded-2xl border border-slate-200 shadow-xl"
+ *        />
+ *   3. Delete MockTile + MockRow if they have no other callers.
+ */
 function HeroMockup() {
   return (
-    <div className="relative rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-2 shadow-xl">
+    <div
+      className="relative rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-2 shadow-xl"
+      data-screenshot-pending="true"
+      aria-label="CrewFlow dashboard mockup"
+    >
       <div className="rounded-xl border border-slate-200 bg-white p-3">
         {/* Window chrome */}
         <div className="flex items-center gap-1.5 border-b border-slate-100 px-1 pb-2">
@@ -730,7 +751,7 @@ function SecurityCompliance() {
             />
             <SecurityItem
               title="HMRC-compliant invoicing"
-              body="Sequential numbering with HMRC-compliant fields. Audit trail on every invoice — who, when, what changed."
+              body="Sequential numbering with HMRC-compliant fields. Audit trail on every invoice. Who, when, what changed."
             />
           </ul>
         </div>
@@ -797,7 +818,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Does CrewFlow process payments?",
-    a: "No. UK construction runs on bank transfer. CrewFlow tracks payments, doesn't process them. You keep 100% of every invoice — no card processor skim, no monthly gateway fee. Upload your bank CSV and we match payments to invoices automatically.",
+    a: "No. UK construction runs on bank transfer. CrewFlow tracks payments, doesn't process them. You keep 100% of every invoice. No card processor skim, no monthly gateway fee. Upload your bank CSV and we match payments to invoices automatically.",
   },
   {
     q: "What about my field staff who only have phones?",
@@ -809,7 +830,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What's the pricing?",
-    a: "We're in private beta with the first cohort of UK construction companies. Pricing is finalised after the closed beta — book a demo and we'll talk numbers that make sense for your size.",
+    a: "We're in private beta with the first cohort of UK construction companies. Pricing is finalised after the closed beta. Book a demo and we'll talk numbers that make sense for your size.",
   },
   {
     q: "Can I leave whenever I want?",

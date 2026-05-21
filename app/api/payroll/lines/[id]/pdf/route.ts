@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .select(
       `
         id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
-        user:users ( full_name, ni_number ),
+        user:users ( full_name ),
         run:payroll_runs ( cycle, period_start, period_end )
       `,
     )
@@ -43,17 +43,31 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("name, phone")
-    .eq("id", ctx.org.id)
-    .maybeSingle();
+  // Read the NI number from staff_secrets (admin-only RLS). A staff
+  // user downloading their own payslip won't see the full number;
+  // the masked form is rendered instead.
+  const [{ data: org }, { data: secret }] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select("name, phone")
+      .eq("id", ctx.org.id)
+      .maybeSingle(),
+    supabase
+      .from("staff_secrets")
+      .select("ni_number")
+      .eq("org_id", ctx.org.id)
+      .eq("user_id", line.user_id)
+      .maybeSingle(),
+  ]);
+
+  const { maskNiNumber } = await import("@/lib/staff/secrets");
+  const niForPayslip = isAdmin ? secret?.ni_number ?? null : maskNiNumber(secret?.ni_number ?? null);
 
   const input: PayslipInput = {
     org_name: org?.name ?? ctx.org.name,
     org_phone: org?.phone ?? null,
     full_name: line.user?.full_name ?? "—",
-    ni_number: line.user?.ni_number ?? null,
+    ni_number: niForPayslip === "—" ? null : niForPayslip,
     cycle: line.run?.cycle ?? "weekly",
     period_start: line.run?.period_start ?? "",
     period_end: line.run?.period_end ?? "",
