@@ -78,6 +78,34 @@ export const updateStaffProfileSchema = z.object({
 export type UpdateStaffProfileInput = z.infer<typeof updateStaffProfileSchema>;
 
 // -------------------------------------------------------------------------
+// Invite-staff form. Email is the identity; the rest is optional pre-fill
+// that auto-populates the user's profile after they accept the invite.
+// -------------------------------------------------------------------------
+export const inviteStaffSchema = z.object({
+  full_name: optionalString(200),
+  email: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
+    z.string().email("Enter a valid email"),
+  ),
+  // UI shows Owner/Admin/Staff but Owner is rejected by the action.
+  // Only the onboarding flow assigns owner role.
+  role: z.enum(STAFF_ROLES, { errorMap: () => ({ message: "Pick a role" }) }),
+  employment_type: z
+    .enum(EMPLOYMENT_TYPES)
+    .or(z.literal(""))
+    .optional()
+    .transform((v) => (v === "" ? undefined : v)),
+  hourly_pay: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.coerce.number().min(0).max(1000).optional(),
+  ),
+  emergency_contact_name: optionalString(200),
+  emergency_contact_phone: optionalString(40),
+  emergency_contact_relationship: optionalString(80),
+});
+export type InviteStaffInput = z.infer<typeof inviteStaffSchema>;
+
+// -------------------------------------------------------------------------
 // Membership / role change
 // -------------------------------------------------------------------------
 export const updateStaffRoleSchema = z.object({

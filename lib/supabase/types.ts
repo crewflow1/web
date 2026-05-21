@@ -403,6 +403,9 @@ export type Database = {
           internal_lead_id: string | null
           name: string
           notes: string | null
+          notification_email_id: string | null
+          notification_error: string | null
+          notification_sent_at: string | null
           phone: string | null
           preferred_demo_time: string | null
           source: string | null
@@ -420,6 +423,9 @@ export type Database = {
           internal_lead_id?: string | null
           name: string
           notes?: string | null
+          notification_email_id?: string | null
+          notification_error?: string | null
+          notification_sent_at?: string | null
           phone?: string | null
           preferred_demo_time?: string | null
           source?: string | null
@@ -437,6 +443,9 @@ export type Database = {
           internal_lead_id?: string | null
           name?: string
           notes?: string | null
+          notification_email_id?: string | null
+          notification_error?: string | null
+          notification_sent_at?: string | null
           phone?: string | null
           preferred_demo_time?: string | null
           source?: string | null

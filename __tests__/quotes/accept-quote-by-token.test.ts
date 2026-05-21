@@ -166,6 +166,11 @@ const SAMPLE_QUOTE = {
   vat_total: 200,
   valid_until: null,
   lead_id: null,
+  job_id: null,
+  variation_number: null,
+  customer_id: "customer-uuid-1",
+  number: "Q-0001",
+  notes: null,
 };
 
 beforeEach(() => {
@@ -183,30 +188,33 @@ beforeEach(() => {
 // ------------------------------------------------------------------------
 
 describe("acceptQuoteByToken", () => {
-  it("creates exactly one invoice on first accept, copying totals", async () => {
+  it("creates exactly one invoice + one job on first accept, copying totals + linking them", async () => {
     // 1. lookup quote by token
     mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
     // 2. update quote → accepted
     mockAdmin.enqueue("update", { data: null, error: null });
-    // 3. next_invoice_number rpc
+    // 3. insert job (auto-create, returns id via .select().single())
+    mockAdmin.enqueue("insert", { data: { id: "job-uuid-1" }, error: null });
+    // 4. update quote with job_id
+    mockAdmin.enqueue("update", { data: null, error: null });
+    // 5. next_invoice_number rpc
     mockAdmin.enqueue("rpc", { data: "INV-0001", error: null });
-    // 4. insert invoice (with .select().single())
+    // 6. insert invoice
     mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-1" }, error: null });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", "iphash");
 
     expect(res).toEqual({ ok: true, quoteId: "quote-uuid-1" });
 
-    // Exactly one invoice INSERT was attempted
+    // Exactly one invoice INSERT was attempted with the new job_id
     const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { quote_id: string; amount: number; vat_total: number; status: string } =>
+      (p): p is { quote_id: string; amount: number; vat_total: number; status: string; job_id: string | null } =>
         typeof p === "object" && p !== null && "quote_id" in p,
     );
     expect(invoiceInserts).toHaveLength(1);
     const insertedInvoice = invoiceInserts[0];
     if (!insertedInvoice) throw new Error("unreachable — already asserted length");
 
-    // Totals carry across from the quote
     expect(insertedInvoice).toMatchObject({
       org_id: SAMPLE_QUOTE.org_id,
       quote_id: SAMPLE_QUOTE.id,
@@ -214,6 +222,19 @@ describe("acceptQuoteByToken", () => {
       amount: SAMPLE_QUOTE.subtotal,
       vat_total: SAMPLE_QUOTE.vat_total,
       status: "draft",
+      job_id: "job-uuid-1",
+    });
+
+    // Exactly one job INSERT was attempted
+    const jobInserts = mockAdmin.inserts.filter(
+      (p): p is { customer_id: string; status: string } =>
+        typeof p === "object" && p !== null && "customer_id" in p && "status" in p && !("quote_id" in p),
+    );
+    expect(jobInserts).toHaveLength(1);
+    expect(jobInserts[0]).toMatchObject({
+      org_id: SAMPLE_QUOTE.org_id,
+      customer_id: SAMPLE_QUOTE.customer_id,
+      status: "new",
     });
 
     // Auto-email was attempted (no key → no_resend_key, but the call happens)
@@ -222,6 +243,33 @@ describe("acceptQuoteByToken", () => {
       mockAdmin.client,
       "invoice-uuid-1",
     );
+  });
+
+  it("does NOT create a second job when the quote is a variation (job_id already set)", async () => {
+    mockAdmin.enqueue("maybeSingle", {
+      data: { ...SAMPLE_QUOTE, job_id: "existing-job-uuid", variation_number: 2 },
+      error: null,
+    });
+    mockAdmin.enqueue("update", { data: null, error: null });
+    // No job-insert queued — variations skip auto-job creation.
+    mockAdmin.enqueue("rpc", { data: "INV-0002", error: null });
+    mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-2" }, error: null });
+
+    const res = await actions.acceptQuoteByToken("public-token-2", "Customer Name", null);
+    expect(res).toEqual({ ok: true, quoteId: "quote-uuid-1" });
+
+    const jobInserts = mockAdmin.inserts.filter(
+      (p): p is { status: string } =>
+        typeof p === "object" && p !== null && "status" in p && p.status === "new" && !("quote_id" in p),
+    );
+    expect(jobInserts).toHaveLength(0);
+
+    // Invoice still carries the existing job_id.
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { job_id: string | null } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-uuid" });
   });
 
   it("does NOT create a duplicate invoice when accept is called a second time", async () => {

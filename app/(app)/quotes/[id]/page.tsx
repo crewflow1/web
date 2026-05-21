@@ -96,7 +96,7 @@ export default async function EditQuotePage({
           id, number, status, currency, subtotal, vat_total, total,
           customer_id, property_id, lead_id, valid_until, notes, terms,
           public_token, sent_at, viewed_at, accepted_at, declined_at,
-          accept_signature, created_at,
+          accept_signature, created_at, job_id,
           approved_by, approved_at, approval_comment,
           approver:users!quotes_approved_by_fkey ( id, full_name, email )
         `,
@@ -205,6 +205,18 @@ export default async function EditQuotePage({
             <li>Accepted: {quote.accepted_at ?? "—"}</li>
             <li>Declined: {quote.declined_at ?? "—"}</li>
           </ul>
+
+          {quote.job_id ? (
+            <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Linked job:{" "}
+              <Link
+                href={`/jobs/${quote.job_id}`}
+                className="font-semibold underline hover:text-emerald-900"
+              >
+                /jobs/{quote.job_id.slice(0, 8)}
+              </Link>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap gap-2 pt-2">
             {/* Draft or rejected → request approval */}

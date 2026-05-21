@@ -586,12 +586,14 @@ export async function acceptQuoteByToken(
   const { data: quote, error: lookupErr } = await admin
     .from("quotes")
     .select(
-      "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number",
+      "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number, customer_id, number, notes",
     )
     .eq("public_token", token)
     .maybeSingle();
 
   if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
+  // Idempotency: a re-accept is a no-op. The first accept already created
+  // (or linked) the invoice + job, so nothing to redo.
   if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
   if (quote.status === "declined") return { ok: false, error: "Quote already declined" };
   if (quote.status === "expired") return { ok: false, error: "Quote has expired" };
@@ -614,9 +616,38 @@ export async function acceptQuoteByToken(
     return { ok: false, error: "Couldn't record acceptance" };
   }
 
-  // Auto-create invoice (draft) from the accepted quote. When the source
-  // is a variation, the new invoice picks up the same job_id so revenue
-  // rolls up to the job on the profitability dashboard.
+  // Auto-create a job (status=new) from the accepted quote — but only when
+  // the quote isn't a variation against an existing job. Variations
+  // already carry the parent's job_id; using it preserves the revenue
+  // rollup on /jobs profitability.
+  let newJobId: string | null = quote.job_id;
+  let createdJob = false;
+  if (!quote.job_id && quote.customer_id) {
+    const { data: newJob, error: jobErr } = await admin
+      .from("jobs")
+      .insert({
+        org_id: quote.org_id,
+        customer_id: quote.customer_id,
+        status: "new",
+        notes: `Auto-created from accepted quote ${quote.number}.${
+          quote.notes ? `\n\nQuote notes:\n${quote.notes}` : ""
+        }`,
+      })
+      .select("id")
+      .single();
+    if (jobErr) {
+      console.error("[quotes] public auto-job failed", jobErr);
+    } else if (newJob?.id) {
+      newJobId = newJob.id;
+      createdJob = true;
+      // Backlink so the quote knows which job it spawned.
+      await admin.from("quotes").update({ job_id: newJobId }).eq("id", quote.id);
+    }
+  }
+
+  // Auto-create invoice (draft) from the accepted quote. Picks up the
+  // job_id we just resolved so revenue rolls up to the job on the
+  // profitability dashboard.
   const { data: invNumber } = await admin.rpc("next_invoice_number", {
     target_org: quote.org_id,
   });
@@ -631,7 +662,7 @@ export async function acceptQuoteByToken(
         amount: quote.subtotal,
         vat_total: quote.vat_total,
         status: "draft",
-        job_id: quote.job_id,
+        job_id: newJobId,
       })
       .select("id")
       .single();
@@ -641,6 +672,8 @@ export async function acceptQuoteByToken(
       newInvoiceId = newInvoice?.id ?? null;
     }
   }
+
+  void createdJob;
 
   // Auto-email the invoice PDF to the customer. Best-effort — accept must
   // succeed even if Resend rejects, the customer email is missing, or

@@ -11,6 +11,7 @@ import {
   updateStaffRoleSchema,
   rotaEntryFormSchema,
   leaveRequestFormSchema,
+  inviteStaffSchema,
 } from "@/lib/staff/schema";
 
 /**
@@ -43,52 +44,103 @@ async function requireAdmin(orgId: string) {
 // Staff CRUD
 // -------------------------------------------------------------------------
 
-export async function inviteStaff(formData: FormData) {
+export type InviteStaffResult =
+  | { ok: true; outcome: "added" | "invite_sent"; message: string }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> };
+
+/**
+ * Invite a teammate. Returns a structured result so the modal can render
+ * inline errors instead of relying on redirect-with-querystring.
+ *
+ * Flow:
+ *   - Owner role refused.
+ *   - Existing public.users row → membership created, profile pre-fill
+ *     applied only to columns currently null (so we don't overwrite a
+ *     user's existing data).
+ *   - No public.users row → Supabase magic-link invite with the same
+ *     pre-fill payload in user_metadata; /onboarding/join hydrates it.
+ */
+export async function inviteStaff(formData: FormData): Promise<InviteStaffResult> {
   const { ctx } = await requireOrgContext();
   await requireAdmin(ctx.org.id);
 
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const role = String(formData.get("role") ?? "staff");
-  const validatedRole = updateStaffRoleSchema.safeParse({ role });
-  if (!validatedRole.success || email.length === 0) {
-    redirect("/staff?error=invalid_input");
+  const parsed = inviteStaffSchema.safeParse({
+    full_name: formData.get("full_name") ?? "",
+    email: formData.get("email"),
+    role: formData.get("role"),
+    employment_type: formData.get("employment_type") ?? "",
+    hourly_pay: formData.get("hourly_pay") ?? "",
+    emergency_contact_name: formData.get("emergency_contact_name") ?? "",
+    emergency_contact_phone: formData.get("emergency_contact_phone") ?? "",
+    emergency_contact_relationship: formData.get("emergency_contact_relationship") ?? "",
+  });
+  if (!parsed.success) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const k = issue.path[0];
+      if (typeof k === "string" && !fieldErrors[k]) fieldErrors[k] = issue.message;
+    }
+    return { ok: false, error: "Fix the highlighted fields.", fieldErrors };
   }
-  if (validatedRole.data.role === "owner") {
-    redirect("/staff?error=owner_role_not_assignable");
+  if (parsed.data.role === "owner") {
+    return {
+      ok: false,
+      error: "Owner role can only be assigned during onboarding.",
+      fieldErrors: { role: "Pick admin or staff." },
+    };
   }
+  const data = parsed.data;
 
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
-    .select("id, email")
-    .eq("email", email)
+    .select("id, email, full_name, hourly_pay, employment_type, emergency_contact")
+    .eq("email", data.email)
     .maybeSingle();
 
-  // Case A — user does not exist in public.users yet. Send them a
-  // Supabase magic-link invite carrying the org + role in user_metadata.
-  // The onboarding flow will pick that up and provision the membership.
+  const emergencyContact = data.emergency_contact_name || data.emergency_contact_phone || data.emergency_contact_relationship
+    ? {
+        name: data.emergency_contact_name ?? null,
+        phone: data.emergency_contact_phone ?? null,
+        relationship: data.emergency_contact_relationship ?? null,
+      }
+    : null;
+
+  // Case A — brand-new email. Send a magic-link with metadata so
+  // /onboarding/join can hydrate the profile after they click.
   if (!existing) {
     const admin = createAdminClient();
     try {
-      await admin.auth.admin.inviteUserByEmail(email, {
+      await admin.auth.admin.inviteUserByEmail(data.email, {
         data: {
           invited_org_id: ctx.org.id,
-          invited_role: validatedRole.data.role,
+          invited_role: data.role,
+          invited_full_name: data.full_name ?? null,
+          invited_employment_type: data.employment_type ?? null,
+          invited_hourly_pay: data.hourly_pay ?? null,
+          invited_emergency_contact: emergencyContact,
           source: "staff_invite",
         },
         redirectTo: process.env.NEXT_PUBLIC_APP_URL
-          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${validatedRole.data.role}`
+          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${data.role}`
           : undefined,
       });
-      revalidatePath("/staff");
-      redirect("/staff?saved=invite_sent");
     } catch (e) {
       console.error("[staff] magic-link invite failed", e);
-      redirect("/staff?error=invite_email_failed");
+      return {
+        ok: false,
+        error: "Couldn't send the invite email. Check the address and try again.",
+      };
     }
+    revalidatePath("/staff");
+    return {
+      ok: true,
+      outcome: "invite_sent",
+      message: `Invite emailed to ${data.email}. They'll click the magic link to set their name and join.`,
+    };
   }
 
-  // Case B — user exists; check they aren't already a member.
+  // Case B — existing user. Already a member?
   const { data: dup } = await supabase
     .from("memberships")
     .select("id")
@@ -96,21 +148,49 @@ export async function inviteStaff(formData: FormData) {
     .eq("user_id", existing.id)
     .maybeSingle();
   if (dup) {
-    redirect("/staff?error=already_member");
+    return {
+      ok: false,
+      error: "That person is already a member of this organisation.",
+    };
   }
 
-  const { error } = await supabase.from("memberships").insert({
+  const { error: memErr } = await supabase.from("memberships").insert({
     org_id: ctx.org.id,
     user_id: existing.id,
-    role: validatedRole.data.role,
+    role: data.role,
   });
-  if (error) {
-    console.error("[staff] invite failed", error);
-    redirect("/staff?error=invite_failed");
+  if (memErr) {
+    console.error("[staff] invite failed", memErr);
+    return { ok: false, error: "Couldn't add the member. Try again." };
+  }
+
+  // Pre-fill profile fields ONLY where the user currently has nothing —
+  // never overwrite a user's existing data.
+  type UserUpdate = {
+    full_name?: string;
+    hourly_pay?: number;
+    employment_type?: string;
+    emergency_contact?: { name: string | null; phone: string | null; relationship: string | null };
+  };
+  const profileUpdates: UserUpdate = {};
+  if (!existing.full_name && data.full_name) profileUpdates.full_name = data.full_name;
+  if (existing.hourly_pay === null && data.hourly_pay !== undefined)
+    profileUpdates.hourly_pay = data.hourly_pay;
+  if (!existing.employment_type && data.employment_type)
+    profileUpdates.employment_type = data.employment_type;
+  if (!existing.emergency_contact && emergencyContact)
+    profileUpdates.emergency_contact = emergencyContact;
+  if (Object.keys(profileUpdates).length > 0) {
+    const admin = createAdminClient();
+    await admin.from("users").update(profileUpdates).eq("id", existing.id);
   }
 
   revalidatePath("/staff");
-  redirect("/staff?saved=invited");
+  return {
+    ok: true,
+    outcome: "added",
+    message: `${data.full_name || data.email} added to ${ctx.org.name}.`,
+  };
 }
 
 export async function updateStaffRole(userId: string, formData: FormData) {

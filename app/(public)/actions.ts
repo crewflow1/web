@@ -113,9 +113,11 @@ export async function submitDemoRequest(formData: FormData): Promise<DemoSubmitR
     }
   }
 
-  // 3. Notify the owner via Resend (best-effort).
+  // 3. Notify the owner via Resend. Record the message ID + outcome on
+  //    the demo_requests row so we have a verifiable audit trail (no
+  //    "did the email actually send?" mystery on future submissions).
   const notifyTo = process.env.DEMO_NOTIFY_EMAIL || "hello@crewflow.uk";
-  await sendEmail({
+  const emailResult = await sendEmail({
     to: notifyTo,
     subject: `New demo request — ${data.company}`,
     html: renderEmail(data, internalLeadId),
@@ -123,8 +125,27 @@ export async function submitDemoRequest(formData: FormData): Promise<DemoSubmitR
     replyTo: data.email,
   }).catch((e) => {
     console.error("[demo] email failed", e);
-    return null;
+    return { sent: false as const, reason: "error" as const, error: (e as Error).message };
   });
+  if (emailResult.sent) {
+    await admin
+      .from("demo_requests")
+      .update({
+        notification_email_id: emailResult.id,
+        notification_sent_at: new Date().toISOString(),
+      })
+      .eq("id", requestRow.id);
+  } else {
+    await admin
+      .from("demo_requests")
+      .update({
+        notification_error:
+          "reason" in emailResult
+            ? `${emailResult.reason}${"error" in emailResult ? `: ${emailResult.error}` : ""}`
+            : "unknown",
+      })
+      .eq("id", requestRow.id);
+  }
 
   return { ok: true };
 }

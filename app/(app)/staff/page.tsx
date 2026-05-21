@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { inviteStaff } from "./actions";
+import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
 
 /**
  * Staff list page.
@@ -95,7 +95,7 @@ export default async function StaffPage({
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -109,6 +109,7 @@ export default async function StaffPage({
             </Link>
           </p>
         </div>
+        {isAdmin ? <AddStaffButton size="md">+ Add staff</AddStaffButton> : null}
       </header>
 
       {errorMessage ? (
@@ -122,45 +123,6 @@ export default async function StaffPage({
         </div>
       ) : null}
 
-      {isAdmin ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Add staff</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Already a CrewFlow user? They&apos;ll be added to your org
-            instantly. New to CrewFlow? We&apos;ll email them a magic-link
-            invite — they click it, set their name and they&apos;re in.
-          </p>
-          <form action={inviteStaff} className="mt-3 flex flex-wrap items-end gap-2">
-            <label className="block text-xs text-slate-600">
-              Email
-              <input
-                type="email"
-                name="email"
-                required
-                placeholder="name@example.com"
-                className="mt-1 block w-64 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
-            </label>
-            <label className="block text-xs text-slate-600">
-              Role
-              <select
-                name="role"
-                defaultValue="staff"
-                className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              >
-                <option value="staff">Staff</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-            >
-              Add
-            </button>
-          </form>
-        </section>
-      ) : null}
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -218,6 +180,8 @@ export default async function StaffPage({
           </table>
         </div>
       </section>
+
+      {isAdmin ? <InviteStaffModal /> : null}
     </div>
   );
 }
