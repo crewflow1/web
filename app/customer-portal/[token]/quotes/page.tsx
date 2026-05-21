@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
  * Customer-side quotes list.
@@ -46,7 +46,7 @@ export default async function PortalQuotesPage({
   const { token } = await params;
   const sp = await searchParams;
   const loaded = await loadCustomerByPortalToken(token);
-  if (!loaded) notFound();
+  if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
 
   const admin = createAdminClient();

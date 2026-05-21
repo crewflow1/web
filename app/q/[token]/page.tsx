@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publicAcceptQuote, publicDeclineQuote } from "./actions";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
  * Public customer-facing quote view.
@@ -47,10 +47,12 @@ export default async function PublicQuotePage({
     .eq("public_token", token)
     .maybeSingle();
 
-  if (!quote) notFound();
-
-  // Wave 2 — hide quotes that haven't cleared the approval gate. Returning
-  // 404 (not 403) keeps the existence of unapproved quotes private to the org.
+  // Wave 2 — hide quotes that haven't cleared the approval gate. We still
+  // serve a friendly "link not available" page rather than a bare 404
+  // because customers don't know what a 404 means, and they DO know the
+  // contractor sent them a link. When the token doesn't resolve at all,
+  // we have no contractor contact info to surface; otherwise we pass the
+  // org's phone/email so the customer can chase a fresh link.
   const VISIBLE = new Set([
     "approved",
     "sent",
@@ -59,7 +61,22 @@ export default async function PublicQuotePage({
     "declined",
     "expired",
   ]);
-  if (!VISIBLE.has(quote.status)) notFound();
+  if (!quote || !VISIBLE.has(quote.status)) {
+    const orgForFallback = quote?.org as
+      | { name?: string | null; phone?: string | null }
+      | null
+      | undefined;
+    return (
+      <InvalidLinkPage
+        kind="quote"
+        contractor={
+          orgForFallback
+            ? { name: orgForFallback.name, phone: orgForFallback.phone }
+            : undefined
+        }
+      />
+    );
+  }
 
   // Stamp viewed_at on first open. Don't await heavily — the failure mode
   // is a missing analytics datapoint, not a broken page.
