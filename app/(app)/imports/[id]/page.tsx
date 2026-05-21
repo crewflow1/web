@@ -163,10 +163,15 @@ export default async function ImportWizardPage({
               type="file"
               name="file"
               multiple
-              accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".csv,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
               required
               className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
             />
+            <p className="text-xs text-slate-500">
+              Supports CSV, Excel, PDF invoices/quotes, and photos or
+              screenshots (JPG / PNG / HEIC). PDFs and images are read by
+              an LLM — every extracted row is reviewable before commit.
+            </p>
             <button
               type="submit"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"

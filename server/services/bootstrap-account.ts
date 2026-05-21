@@ -58,6 +58,10 @@ export async function createOrgWithOwner(input: {
 }): Promise<{ orgId: string }> {
   const supabase = createAdminClient();
 
+  // Access gate (migration 20260602000000): brand-new signups land in
+  // 'pending' status and cannot use the product until a CrewFlow admin
+  // approves them. status is set explicitly so the intent reads in
+  // grep, even though it matches the column default.
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .insert({
@@ -67,7 +71,8 @@ export async function createOrgWithOwner(input: {
       vat_number: input.vatNumber ?? null,
       address: input.postcode ? { postcode: input.postcode } : null,
       onboarding_state: { company: true },
-    })
+      status: "pending",
+    } as never)
     .select("id")
     .single();
 

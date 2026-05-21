@@ -61,6 +61,13 @@ const envSchema = z.object({
   CRON_SECRET: z.string().optional(),
   INTERNAL_API_SECRET: z.string().optional(),
 
+  // -- Super-admin access gate -------------------------------------------
+  // Comma-separated email allowlist. Users with one of these emails see
+  // the /admin/organizations panel and can approve/reject/suspend orgs.
+  // Empty/unset → no super-admins (the /admin route 404s for everyone).
+  // Set in Vercel project env for production.
+  CREWFLOW_SUPERADMIN_EMAILS: z.string().default(""),
+
   // -- Dev/preview-only auth bypass (Wave 1) ------------------------------
   // Set in Vercel for the Preview environment only. The /api/dev/test-login
   // route refuses to run in production regardless of these vars, but for
