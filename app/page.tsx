@@ -895,7 +895,7 @@ function SiteFooter() {
         <FooterCol
           heading="Company"
           links={[
-            { label: "Contact", href: "mailto:hello@crewflow.uk" },
+            { label: "Book a demo", href: "#book-demo" },
             { label: "Privacy", href: "/privacy" },
             { label: "Terms", href: "/terms" },
           ]}
