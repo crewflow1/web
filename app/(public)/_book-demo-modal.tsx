@@ -69,13 +69,24 @@ export function BookDemoModal() {
     setError(null);
     setFieldErrors({});
     startTransition(async () => {
-      const result = await submitDemoRequest(formData);
-      if (result.ok) {
-        setDone(true);
-        form.reset();
-      } else {
-        setError(result.error);
-        setFieldErrors(result.fieldErrors ?? {});
+      // The action is contract-bound to never throw, but defence in
+      // depth: if a network blip or runtime hiccup causes a rejection,
+      // surface a real message instead of letting it bubble to the
+      // global error boundary ("Something went wrong" page).
+      try {
+        const result = await submitDemoRequest(formData);
+        if (result.ok) {
+          setDone(true);
+          form.reset();
+        } else {
+          setError(result.error);
+          setFieldErrors(result.fieldErrors ?? {});
+        }
+      } catch (err) {
+        console.error("[demo] submit threw — falling back to friendly error", err);
+        setError(
+          "We hit a network problem sending your request. Email hello@crewflow.uk and we will book you in directly.",
+        );
       }
     });
   }
