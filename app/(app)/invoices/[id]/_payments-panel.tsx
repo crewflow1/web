@@ -1,4 +1,5 @@
 import { addInvoicePayment, removeInvoicePayment } from "./payment-actions";
+import { AddPaymentForm } from "./_add-payment-form";
 
 /**
  * Server component (no client interactivity needed — form posts use
@@ -36,7 +37,6 @@ export function PaymentsPanel({
   outstanding: number;
   payments: Payment[];
 }) {
-  const todayIso = new Date().toISOString().slice(0, 10);
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-base font-semibold text-slate-900">Payments</h2>
@@ -105,63 +105,10 @@ export function PaymentsPanel({
 
       {/* Add form */}
       {outstanding > 0 ? (
-        <form
+        <AddPaymentForm
           action={addInvoicePayment.bind(null, invoiceId)}
-          className="mt-5 grid grid-cols-1 gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 sm:grid-cols-5"
-        >
-          <label className="block text-xs text-slate-600">
-            Amount (£)
-            <input
-              type="number"
-              name="amount"
-              required
-              min={0.01}
-              step={0.01}
-              defaultValue={outstanding.toFixed(2)}
-              className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            />
-          </label>
-          <label className="block text-xs text-slate-600">
-            Paid on
-            <input
-              type="date"
-              name="paid_at"
-              required
-              defaultValue={todayIso}
-              className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            />
-          </label>
-          <label className="block text-xs text-slate-600 sm:col-span-1">
-            Reference
-            <input
-              type="text"
-              name="reference"
-              placeholder="bank ref / cheque #"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            />
-          </label>
-          <label className="block text-xs text-slate-600 sm:col-span-2">
-            Notes
-            <input
-              type="text"
-              name="notes"
-              placeholder="e.g. transferred via Faster Payments"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            />
-          </label>
-          <div className="sm:col-span-5">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Record payment
-            </button>
-            <p className="mt-1 text-[11px] text-slate-500">
-              Status auto-updates: any amount &gt; 0 → partially_paid; total
-              fully paid → paid. Adding multiple smaller payments is fine.
-            </p>
-          </div>
-        </form>
+          defaultAmount={outstanding.toFixed(2)}
+        />
       ) : (
         <p className="mt-5 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
           Paid in full. Add or remove payments above if anything changes.

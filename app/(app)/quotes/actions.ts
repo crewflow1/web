@@ -6,10 +6,19 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
-import { quoteFormSchema, type LineItem } from "@/lib/quotes/schema";
+import {
+  quoteFormSchema,
+  type LineItem,
+  type QuoteFormInput,
+} from "@/lib/quotes/schema";
 import { computeTotals } from "@/lib/quotes/totals";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import type { Database } from "@/lib/supabase/types";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+} from "@/lib/forms/state";
 
 /**
  * Quote CRUD + lifecycle server actions.
@@ -40,7 +49,25 @@ function parseLineItemsJson(raw: FormDataEntryValue | null): LineItem[] {
   }
 }
 
-function parseForm(formData: FormData) {
+/**
+ * Mirror the raw form payload into the `values` echo so the form can
+ * re-render with what the user typed, even when validation fails. Line
+ * items round-trip as the parsed array (best-effort) so the client can
+ * restore them.
+ */
+function echoValuesFromForm(formData: FormData): Partial<QuoteFormInput> {
+  return {
+    customer_id: String(formData.get("customer_id") ?? ""),
+    property_id: String(formData.get("property_id") ?? ""),
+    lead_id: String(formData.get("lead_id") ?? ""),
+    valid_until: String(formData.get("valid_until") ?? ""),
+    notes: String(formData.get("notes") ?? ""),
+    terms: String(formData.get("terms") ?? ""),
+    line_items: parseLineItemsJson(formData.get("line_items")),
+  };
+}
+
+function parseQuoteForm(formData: FormData) {
   return quoteFormSchema.safeParse({
     customer_id: formData.get("customer_id") ?? "",
     property_id: formData.get("property_id") ?? "",
@@ -52,13 +79,33 @@ function parseForm(formData: FormData) {
   });
 }
 
-export async function createQuote(formData: FormData) {
-  const { user, ctx } = await requireOrgContext();
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid quote";
-    redirect(`/quotes/new?error=${encodeURIComponent(msg)}`);
+function quoteValidationFailure(
+  parsed: z.SafeParseError<QuoteFormInput>,
+  formData: FormData,
+): FormState<QuoteFormInput> {
+  const fieldErrors: Record<string, string> = {};
+  for (const issue of parsed.error.issues) {
+    const key = issue.path[0];
+    if (typeof key === "string" && !fieldErrors[key]) {
+      fieldErrors[key] = issue.message;
+    }
   }
+  return {
+    ok: false,
+    error: "Fix the highlighted fields and try again.",
+    fieldErrors,
+    values: echoValuesFromForm(formData),
+    submittedAt: Date.now(),
+  };
+}
+
+export async function createQuote(
+  _prevState: FormState<QuoteFormInput>,
+  formData: FormData,
+): Promise<FormState<QuoteFormInput>> {
+  const { user, ctx } = await requireOrgContext();
+  const parsed = parseQuoteForm(formData);
+  if (!parsed.success) return quoteValidationFailure(parsed, formData);
 
   const supabase = await createClient();
 
@@ -69,7 +116,10 @@ export async function createQuote(formData: FormData) {
   );
   if (numErr || !numberRpc) {
     console.error("[quotes] number allocation failed", numErr);
-    redirect("/quotes/new?error=create_failed");
+    return formError(
+      "Couldn't allocate a quote number. Try again.",
+      echoValuesFromForm(formData),
+    );
   }
 
   const totals = computeTotals(parsed.data.line_items);
@@ -103,7 +153,10 @@ export async function createQuote(formData: FormData) {
 
   if (qErr || !quote) {
     console.error("[quotes] insert failed", qErr);
-    redirect("/quotes/new?error=create_failed");
+    return formError(
+      "Couldn't save the quote. Try again.",
+      echoValuesFromForm(formData),
+    );
   }
 
   // Insert line items.
@@ -121,8 +174,12 @@ export async function createQuote(formData: FormData) {
   const { error: liErr } = await supabase.from("quote_line_items").insert(rows);
   if (liErr) {
     console.error("[quotes] line items insert failed", liErr);
-    // Best-effort: leave the parent row so the user can re-add lines from edit.
-    redirect(`/quotes/${quote.id}?error=line_items_failed`);
+    // Best-effort: parent row is saved; bounce the user to the edit page
+    // with an explanatory banner. Input loss is moot — the quote exists.
+    return formSuccess({
+      successMessage: "Quote saved but line items didn't — open it and re-add.",
+      redirectTo: `/quotes/${quote.id}?error=line_items_failed`,
+    });
   }
 
   // Pipeline integration: if a lead was linked AND it's still in an
@@ -150,18 +207,24 @@ export async function createQuote(formData: FormData) {
 
   revalidatePath("/quotes");
   revalidatePath("/leads");
-  redirect(`/quotes/${quote.id}`);
+  return formSuccess({
+    successMessage: "Quote saved.",
+    redirectTo: `/quotes/${quote.id}`,
+  });
 }
 
-export async function updateQuote(id: string, formData: FormData) {
+export async function updateQuote(
+  id: string,
+  _prevState: FormState<QuoteFormInput>,
+  formData: FormData,
+): Promise<FormState<QuoteFormInput>> {
   await requireOrgContext();
-  if (!idSchema.safeParse(id).success) redirect("/quotes");
-
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid quote";
-    redirect(`/quotes/${id}?error=${encodeURIComponent(msg)}`);
+  if (!idSchema.safeParse(id).success) {
+    return formError("Invalid quote id.");
   }
+
+  const parsed = parseQuoteForm(formData);
+  if (!parsed.success) return quoteValidationFailure(parsed, formData);
 
   const supabase = await createClient();
   const totals = computeTotals(parsed.data.line_items);
@@ -205,7 +268,10 @@ export async function updateQuote(id: string, formData: FormData) {
     .eq("id", id);
   if (qErr) {
     console.error("[quotes] update failed", qErr);
-    redirect(`/quotes/${id}?error=update_failed`);
+    return formError(
+      "Couldn't save changes. Try again.",
+      echoValuesFromForm(formData),
+    );
   }
 
   // Replace line items (delete + insert is simpler than diffing for v1).
@@ -215,7 +281,10 @@ export async function updateQuote(id: string, formData: FormData) {
     .eq("quote_id", id);
   if (delErr) {
     console.error("[quotes] line items delete failed", delErr);
-    redirect(`/quotes/${id}?error=update_failed`);
+    return formError(
+      "Couldn't save line items. Try again.",
+      echoValuesFromForm(formData),
+    );
   }
 
   // Need org_id for the inserts; pull from the parent row.
@@ -224,7 +293,12 @@ export async function updateQuote(id: string, formData: FormData) {
     .select("org_id")
     .eq("id", id)
     .single();
-  if (!parent) redirect(`/quotes/${id}?error=update_failed`);
+  if (!parent) {
+    return formError(
+      "Couldn't load the quote. Try again.",
+      echoValuesFromForm(formData),
+    );
+  }
 
   const rows: LineItemInsert[] = parsed.data.line_items.map((li, idx) => ({
     quote_id: id,
@@ -240,12 +314,15 @@ export async function updateQuote(id: string, formData: FormData) {
   const { error: insErr } = await supabase.from("quote_line_items").insert(rows);
   if (insErr) {
     console.error("[quotes] line items re-insert failed", insErr);
-    redirect(`/quotes/${id}?error=update_failed`);
+    return formError(
+      "Couldn't save line items. Try again.",
+      echoValuesFromForm(formData),
+    );
   }
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
-  redirect(`/quotes/${id}?saved=1`);
+  return formSuccess({ successMessage: "Saved." });
 }
 
 export async function sendQuote(id: string) {

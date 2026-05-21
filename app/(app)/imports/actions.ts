@@ -20,18 +20,31 @@ import {
   findStaffDuplicate,
   findLeadDuplicate,
 } from "@/lib/imports/duplicates";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+} from "@/lib/forms/state";
 
 const uuid = z.string().uuid();
 
 /**
  * Create a new import session. Step 1 of the wizard.
  */
-export async function createImport(formData: FormData) {
+export async function createImport(
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
+  if (!isAdmin(ctx.membership.role)) {
+    return formError("Only admins/owners can create imports.");
+  }
 
   const rawName = ((formData.get("name") as string) ?? "").trim();
-  const name = rawName.length > 0 ? rawName.slice(0, 200) : `Import ${new Date().toISOString().slice(0, 10)}`;
+  const name =
+    rawName.length > 0
+      ? rawName.slice(0, 200)
+      : `Import ${new Date().toISOString().slice(0, 10)}`;
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -41,9 +54,12 @@ export async function createImport(formData: FormData) {
     .single();
   if (error || !data) {
     console.error("[imports] create failed", error);
-    redirect("/imports?error=create_failed");
+    return formError("Couldn't create the import. Try again.", { name: rawName });
   }
-  redirect(`/imports/${data.id}`);
+  return formSuccess({
+    successMessage: "Import created.",
+    redirectTo: `/imports/${data.id}`,
+  });
 }
 
 /**

@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { Field } from "../_components/field";
 import { updateProfile, updateOrganization } from "./actions";
+import { ProfileForm, OrganizationForm } from "./_forms";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -11,34 +11,13 @@ import { updateProfile, updateOrganization } from "./actions";
  *   for plain members.
  * Members section: read-only list of everyone in the current org.
  *
- * Designed for v1 simplicity — no avatar upload, no email change
- * (auth.users.email is governed by Supabase auth flows), no role
- * promotion UI (manual via Supabase Studio for now).
+ * Both forms inline-validate via React 19 useActionState — no
+ * `?error=` round-trip. Designed for v1 simplicity — no avatar
+ * upload, no email change (auth.users.email is governed by Supabase
+ * auth flows), no role promotion UI.
  */
-
-const ERROR_MAP: Record<string, string> = {
-  invalid_profile: "Profile details didn't validate.",
-  profile_update_failed: "Couldn't save your profile. Try again.",
-  invalid_org: "Organisation details didn't validate.",
-  org_update_failed: "Couldn't save the organisation. Try again.",
-  not_admin: "Only admins/owners can edit organisation details.",
-  not_allowed: "Only admins/owners can edit organisation details.",
-};
-
-const SAVED_MAP: Record<string, string> = {
-  profile: "Profile saved.",
-  org: "Organisation saved.",
-};
-
-type SP = Promise<{ error?: string; saved?: string }>;
-
-export default async function SettingsPage({
-  searchParams,
-}: {
-  searchParams: SP;
-}) {
+export default async function SettingsPage() {
   const { user, ctx } = await requireOrgContext();
-  const sp = await searchParams;
   const supabase = await createClient();
 
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
@@ -70,9 +49,6 @@ export default async function SettingsPage({
       reference?: string;
     } | null) ?? {};
 
-  const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;
-  const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? "Saved." : null;
-
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header>
@@ -82,23 +58,6 @@ export default async function SettingsPage({
         </p>
       </header>
 
-      {errorMessage ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </div>
-      ) : null}
-      {savedMessage ? (
-        <div
-          role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
-        >
-          {savedMessage}
-        </div>
-      ) : null}
-
       {/* Profile ------------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Profile</h2>
@@ -106,39 +65,14 @@ export default async function SettingsPage({
           How you appear in CrewFlow to teammates.
         </p>
 
-        <form action={updateProfile} className="mt-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-800">
-              Email
-            </label>
-            <p className="mt-1 text-sm text-slate-700">{profile?.email ?? user.email}</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Email is tied to your sign-in. Contact us to change it.
-            </p>
-          </div>
-          <Field
-            name="full_name"
-            label="Full name"
-            required
-            defaultValue={profile?.full_name ?? ""}
-            autoComplete="name"
-          />
-          <Field
-            name="phone"
-            label="Phone"
-            type="tel"
-            inputMode="tel"
-            optional
-            defaultValue={profile?.phone ?? ""}
-            autoComplete="tel"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Save profile
-          </button>
-        </form>
+        <ProfileForm
+          action={updateProfile}
+          email={profile?.email ?? user.email ?? ""}
+          defaults={{
+            full_name: profile?.full_name ?? "",
+            phone: profile?.phone ?? "",
+          }}
+        />
       </section>
 
       {/* Organisation -------------------------------------------------- */}
@@ -157,129 +91,24 @@ export default async function SettingsPage({
           ) : null}
         </div>
 
-        <form action={updateOrganization} className="mt-5 space-y-4">
-          <fieldset disabled={!isAdmin} className="space-y-4 disabled:opacity-60">
-            <Field
-              name="name"
-              label="Trading name"
-              required
-              defaultValue={org?.name ?? ""}
-            />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field
-                name="phone"
-                label="Phone"
-                type="tel"
-                inputMode="tel"
-                optional
-                defaultValue={org?.phone ?? ""}
-              />
-              <Field
-                name="vat_number"
-                label="VAT number"
-                optional
-                placeholder="GB123456789"
-                defaultValue={org?.vat_number ?? ""}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Field
-                name="address_line1"
-                label="Address line 1"
-                optional
-                defaultValue={address.line1 ?? ""}
-              />
-              <Field
-                name="address_city"
-                label="City"
-                optional
-                defaultValue={address.city ?? ""}
-              />
-              <Field
-                name="address_postcode"
-                label="Postcode"
-                optional
-                defaultValue={address.postcode ?? ""}
-              />
-            </div>
-
-            <div className="border-t border-slate-200 pt-5">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Branding &amp; payment details
-              </h3>
-              <p className="mt-1 text-xs text-slate-500">
-                Shown on quote and invoice PDFs sent to customers.
-              </p>
-              <div className="mt-4 space-y-4">
-                <Field
-                  name="logo_url"
-                  label="Logo URL"
-                  type="url"
-                  optional
-                  placeholder="https://yourbrand.com/logo.png"
-                  defaultValue={org?.logo_url ?? ""}
-                  help="A publicly accessible image URL. Square or wide PNG/JPEG works best."
-                />
-                <div>
-                  <label
-                    htmlFor="default_terms"
-                    className="block text-sm font-medium text-slate-800"
-                  >
-                    Default terms <span className="text-xs text-slate-400">Optional</span>
-                  </label>
-                  <textarea
-                    id="default_terms"
-                    name="default_terms"
-                    rows={4}
-                    defaultValue={org?.default_terms ?? ""}
-                    className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-                    placeholder="50% deposit on acceptance, balance on completion. Materials warranty 12 months..."
-                  />
-                  <p className="mt-1 text-xs text-slate-500">
-                    Pre-fills the Terms field on new quotes.
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field
-                    name="bank_name"
-                    label="Bank account name"
-                    optional
-                    defaultValue={bank.name ?? ""}
-                  />
-                  <Field
-                    name="bank_sort_code"
-                    label="Sort code"
-                    optional
-                    placeholder="20-00-00"
-                    defaultValue={bank.sort_code ?? ""}
-                  />
-                  <Field
-                    name="bank_account_number"
-                    label="Account number"
-                    optional
-                    placeholder="12345678"
-                    defaultValue={bank.account_number ?? ""}
-                  />
-                  <Field
-                    name="bank_reference"
-                    label="Default reference"
-                    optional
-                    placeholder="Defaults to invoice/quote number"
-                    defaultValue={bank.reference ?? ""}
-                  />
-                </div>
-              </div>
-            </div>
-          </fieldset>
-          {isAdmin ? (
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-            >
-              Save organisation
-            </button>
-          ) : null}
-        </form>
+        <OrganizationForm
+          action={updateOrganization}
+          isAdmin={isAdmin}
+          defaults={{
+            name: org?.name ?? "",
+            phone: org?.phone ?? "",
+            vat_number: org?.vat_number ?? "",
+            address_line1: address.line1 ?? "",
+            address_city: address.city ?? "",
+            address_postcode: address.postcode ?? "",
+            logo_url: org?.logo_url ?? "",
+            default_terms: org?.default_terms ?? "",
+            bank_name: bank.name ?? "",
+            bank_sort_code: bank.sort_code ?? "",
+            bank_account_number: bank.account_number ?? "",
+            bank_reference: bank.reference ?? "",
+          }}
+        />
       </section>
 
       {/* Members ------------------------------------------------------- */}

@@ -14,15 +14,12 @@ import { createQuote } from "../actions";
  *
  * Server-renders dropdown options + the org's saved default_terms (so a
  * fresh quote pre-fills with the boilerplate the owner set in Settings).
+ *
+ * Form-level errors are surfaced inline via useActionState in the
+ * QuoteBuilder — no `?error=` querystring round-trip.
  */
 
-const ERROR_MAP: Record<string, string> = {
-  create_failed: "Couldn't save the quote. Try again.",
-  line_items_failed: "Quote saved but line items didn't — open the quote to retry.",
-};
-
 type SP = Promise<{
-  error?: string;
   lead_id?: string;
   customer_id?: string;
 }>;
@@ -43,10 +40,6 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
       .maybeSingle()
       .then((r) => r.data),
   ]);
-
-  const errorMessage = sp.error
-    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
-    : null;
 
   // Pre-fill from /leads/[id] "Create a quote" CTA. Validates the IDs are
   // org-visible (RLS already filtered both lists, so we just check inclusion).
@@ -84,7 +77,6 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
         defaultCustomerId={prefillCustomerId}
         defaultLeadId={prefillLeadId}
         defaultTerms={orgRow?.default_terms ?? ""}
-        errorMessage={errorMessage}
       />
     </div>
   );

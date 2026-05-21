@@ -7,7 +7,8 @@ import {
   updateStaffRole,
   removeStaff,
 } from "../actions";
-import { EMPLOYMENT_TYPES, STAFF_ROLES } from "@/lib/staff/schema";
+import { STAFF_ROLES } from "@/lib/staff/schema";
+import { StaffProfileForm } from "./_profile-form";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -100,77 +101,21 @@ export default async function StaffDetailPage({
       {/* Profile form — admin-only edit */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Profile</h2>
-        <form action={updateStaffProfile.bind(null, id)} className="mt-4 space-y-3">
-          <Pair label="Full name" name="full_name" defaultValue={user?.full_name ?? ""} disabled={!isAdmin} />
-          <Pair label="Phone" name="phone" defaultValue={user?.phone ?? ""} disabled={!isAdmin} />
-          <Pair
-            label="Hourly pay (£)"
-            name="hourly_pay"
-            type="number"
-            step={0.01}
-            defaultValue={user?.hourly_pay != null ? String(user.hourly_pay) : ""}
-            disabled={!isAdmin}
-          />
-          <label className="block text-xs text-slate-600">
-            Employment type
-            <select
-              name="employment_type"
-              defaultValue={user?.employment_type ?? ""}
-              disabled={!isAdmin}
-              className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm disabled:opacity-60"
-            >
-              <option value="">—</option>
-              {EMPLOYMENT_TYPES.map((t) => (
-                <option key={t} value={t}>{t.replace("_", " ")}</option>
-              ))}
-            </select>
-          </label>
-          <Pair
-            label="Start date"
-            name="start_date"
-            type="date"
-            defaultValue={user?.start_date ?? ""}
-            disabled={!isAdmin}
-          />
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Emergency contact
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <Pair
-                label="Name"
-                name="emergency_contact_name"
-                defaultValue={user?.emergency_contact?.name ?? ""}
-                disabled={!isAdmin}
-                bare
-              />
-              <Pair
-                label="Phone"
-                name="emergency_contact_phone"
-                defaultValue={user?.emergency_contact?.phone ?? ""}
-                disabled={!isAdmin}
-                bare
-              />
-              <Pair
-                label="Relationship"
-                name="emergency_contact_relationship"
-                defaultValue={user?.emergency_contact?.relationship ?? ""}
-                disabled={!isAdmin}
-                bare
-              />
-            </div>
-          </div>
-          {isAdmin ? (
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-            >
-              Save profile
-            </button>
-          ) : (
-            <p className="text-xs text-slate-500">Only admins can edit profile fields.</p>
-          )}
-        </form>
+        <StaffProfileForm
+          action={updateStaffProfile.bind(null, id)}
+          isAdmin={isAdmin}
+          defaults={{
+            full_name: user?.full_name ?? "",
+            phone: user?.phone ?? "",
+            hourly_pay: user?.hourly_pay != null ? String(user.hourly_pay) : "",
+            employment_type: user?.employment_type ?? "",
+            start_date: user?.start_date ?? "",
+            emergency_contact_name: user?.emergency_contact?.name ?? "",
+            emergency_contact_phone: user?.emergency_contact?.phone ?? "",
+            emergency_contact_relationship:
+              user?.emergency_contact?.relationship ?? "",
+          }}
+        />
       </section>
 
       {/* Pay summary (read-only mini-tile) */}
@@ -239,34 +184,3 @@ export default async function StaffDetailPage({
   );
 }
 
-function Pair({
-  label,
-  name,
-  defaultValue,
-  type = "text",
-  step,
-  disabled = false,
-  bare = false,
-}: {
-  label: string;
-  name: string;
-  defaultValue: string;
-  type?: string;
-  step?: number;
-  disabled?: boolean;
-  bare?: boolean;
-}) {
-  return (
-    <label className={bare ? "block text-xs text-slate-600" : "block text-xs text-slate-600"}>
-      {label}
-      <input
-        type={type}
-        name={name}
-        defaultValue={defaultValue}
-        step={step}
-        disabled={disabled}
-        className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-60"
-      />
-    </label>
-  );
-}

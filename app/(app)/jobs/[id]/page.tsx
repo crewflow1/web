@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
+import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
-import { Field, TextareaField, SelectField } from "../../_components/field";
 import { PhotoGallery } from "./_photo-gallery";
 import {
   computeJobProfitability,
@@ -29,10 +29,10 @@ export default async function EditJobPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { id } = await params;
-  const { error, saved } = await searchParams;
+  const { error } = await searchParams;
 
   await requireOrgContext();
   const supabase = await createClient();
@@ -119,16 +119,14 @@ export default async function EditJobPage({
   }
   const totalCommitted = originalRevenue + variationRevenue;
 
+  // Lifecycle (delete) still redirects with ?error. Update form errors
+  // surface inline via useActionState inside JobForm.
   const errorMessage = error
-    ? error === "update_failed"
-      ? "Couldn't save the job. Try again."
-      : error === "update_denied"
-        ? "Only admins/owners can update jobs."
-        : error === "delete_failed"
-          ? "Couldn't delete the job."
-          : error === "delete_denied"
-            ? "Only admins/owners can delete jobs."
-            : decodeURIComponent(error)
+    ? error === "delete_failed"
+      ? "Couldn't delete the job."
+      : error === "delete_denied"
+        ? "Only admins/owners can delete jobs."
+        : decodeURIComponent(error)
     : null;
 
   const updateAction = updateJob.bind(null, job.id);
@@ -158,113 +156,30 @@ export default async function EditJobPage({
           {errorMessage}
         </div>
       ) : null}
-      {saved ? (
-        <div
-          role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
-        >
-          Saved.
-        </div>
-      ) : null}
 
-      <form
-        action={updateAction}
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <SelectField
-          name="customer_id"
-          label="Customer"
-          defaultValue={job.customer_id ?? ""}
-          options={[
-            { value: "", label: "— None —" },
-            ...customers.map((c) => ({ value: c.id, label: c.name })),
-          ]}
-        />
-        <SelectField
-          name="assigned_to"
-          label="Assigned to"
-          defaultValue={job.assigned_to ?? ""}
-          options={[
-            { value: "", label: "— Unassigned —" },
-            ...staff.map((s) => ({
-              value: s.id,
-              label: s.full_name ?? s.email,
-            })),
-          ]}
-        />
-        <SelectField
-          name="status"
-          label="Status"
-          required
-          defaultValue={job.status}
-          options={[
-            { value: "new", label: "New" },
-            { value: "in-progress", label: "In progress" },
-            { value: "completed", label: "Completed" },
-            { value: "blocked", label: "Blocked" },
-          ]}
-        />
-        <Field
-          name="scheduled_date"
-          label="Scheduled date"
-          type="date"
-          optional
-          defaultValue={job.scheduled_date ?? ""}
-        />
-
-        {(() => {
-          const recurring =
-            (job.recurring as { pattern?: string; end_date?: string } | null) ??
-            null;
-          return (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <SelectField
-                name="recurring_pattern"
-                label="Recurring"
-                defaultValue={recurring?.pattern ?? ""}
-                options={[
-                  { value: "", label: "One-off" },
-                  { value: "weekly", label: "Weekly" },
-                  { value: "biweekly", label: "Every 2 weeks" },
-                  { value: "monthly", label: "Monthly" },
-                  { value: "quarterly", label: "Quarterly" },
-                ]}
-                help="Shows extra occurrences on the calendar from the scheduled date."
-              />
-              <Field
-                name="recurring_end_date"
-                label="Repeat until"
-                type="date"
-                optional
-                defaultValue={recurring?.end_date ?? ""}
-              />
-            </div>
-          );
-        })()}
-
-        <TextareaField
-          name="notes"
-          label="Notes"
-          optional
-          rows={4}
-          defaultValue={job.notes ?? ""}
-        />
-
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Save changes
-          </button>
-          <Link
-            href="/jobs"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+      {(() => {
+        const recurring =
+          (job.recurring as { pattern?: string; end_date?: string } | null) ??
+          null;
+        return (
+          <JobForm
+            action={updateAction}
+            submitLabel="Save changes"
+            cancelHref="/jobs"
+            customers={customers}
+            staff={staff}
+            defaults={{
+              customer_id: job.customer_id ?? "",
+              assigned_to: job.assigned_to ?? "",
+              status: job.status,
+              scheduled_date: job.scheduled_date ?? "",
+              recurring_pattern: recurring?.pattern ?? "",
+              recurring_end_date: recurring?.end_date ?? "",
+              notes: job.notes ?? "",
+            }}
+          />
+        );
+      })()}
 
       <PhotoGallery jobId={job.id} />
 

@@ -1,0 +1,174 @@
+"use client";
+
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  INITIAL_FORM_STATE,
+  type FormState,
+} from "@/lib/forms/state";
+import {
+  FormErrorBanner,
+  FormSuccessBanner,
+} from "@/components/forms/Field";
+import { SubmitButton } from "@/components/forms/FormShell";
+import {
+  Field,
+  TextareaField,
+  SelectField,
+} from "../_components/field";
+
+type JobValues = Record<string, unknown>;
+
+type JobAction = (
+  prevState: FormState<JobValues>,
+  formData: FormData,
+) => Promise<FormState<JobValues>>;
+
+export function JobForm({
+  action,
+  submitLabel,
+  cancelHref,
+  customers,
+  staff,
+  defaults,
+}: {
+  action: JobAction;
+  submitLabel: string;
+  cancelHref: string;
+  customers: { id: string; name: string }[];
+  staff: { id: string; full_name: string | null; email: string }[];
+  defaults?: Partial<Record<string, string | null | undefined>>;
+}) {
+  const [state, formAction, pending] = useActionState(
+    action,
+    INITIAL_FORM_STATE as FormState<JobValues>,
+  );
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!state.ok) return;
+    if (state.redirectTo) {
+      router.push(state.redirectTo);
+      return;
+    }
+    router.refresh();
+  }, [state.ok, state.redirectTo, state.submittedAt, router]);
+
+  const v = (state.values ?? {}) as Record<string, unknown>;
+  const fe = state.fieldErrors ?? {};
+  const pick = (k: string, fallback = "") => {
+    const fromState = v[k];
+    if (typeof fromState === "string" && fromState.length > 0) return fromState;
+    const fromDefaults = defaults?.[k];
+    if (fromDefaults === undefined || fromDefaults === null) return fallback;
+    return String(fromDefaults);
+  };
+
+  return (
+    <form
+      action={formAction}
+      noValidate
+      className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+    >
+      <FormErrorBanner error={state.error} />
+      <FormSuccessBanner message={state.ok ? state.successMessage : null} />
+
+      <SelectField
+        name="customer_id"
+        label="Customer"
+        defaultValue={pick("customer_id")}
+        error={fe.customer_id}
+        options={[
+          {
+            value: "",
+            label: customers.length === 0 ? "— No customers yet —" : "— None —",
+          },
+          ...customers.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+        help={
+          customers.length === 0
+            ? "Add a customer first via the Customers tab."
+            : undefined
+        }
+      />
+      <SelectField
+        name="assigned_to"
+        label="Assigned to"
+        defaultValue={pick("assigned_to")}
+        error={fe.assigned_to}
+        options={[
+          { value: "", label: "— Unassigned —" },
+          ...staff.map((s) => ({
+            value: s.id,
+            label: s.full_name ?? s.email,
+          })),
+        ]}
+      />
+      <SelectField
+        name="status"
+        label="Status"
+        required
+        defaultValue={pick("status", "new")}
+        error={fe.status}
+        options={[
+          { value: "new", label: "New" },
+          { value: "in-progress", label: "In progress" },
+          { value: "completed", label: "Completed" },
+          { value: "blocked", label: "Blocked" },
+        ]}
+      />
+      <Field
+        name="scheduled_date"
+        label="Scheduled date"
+        type="date"
+        optional
+        defaultValue={pick("scheduled_date")}
+        error={fe.scheduled_date}
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <SelectField
+          name="recurring_pattern"
+          label="Recurring"
+          defaultValue={pick("recurring_pattern")}
+          error={fe.recurring_pattern}
+          options={[
+            { value: "", label: "One-off" },
+            { value: "weekly", label: "Weekly" },
+            { value: "biweekly", label: "Every 2 weeks" },
+            { value: "monthly", label: "Monthly" },
+            { value: "quarterly", label: "Quarterly" },
+          ]}
+          help="Shows extra occurrences on the calendar from the scheduled date."
+        />
+        <Field
+          name="recurring_end_date"
+          label="Repeat until"
+          type="date"
+          optional
+          defaultValue={pick("recurring_end_date")}
+          error={fe.recurring_end_date}
+        />
+      </div>
+      <TextareaField
+        name="notes"
+        label="Notes"
+        optional
+        rows={4}
+        placeholder="Scope, materials, access notes…"
+        defaultValue={pick("notes")}
+        error={fe.notes}
+      />
+
+      <div className="flex items-center gap-3">
+        <SubmitButton pending={pending}>{submitLabel}</SubmitButton>
+        <Link
+          href={cancelHref}
+          className="text-sm font-medium text-slate-600 hover:text-slate-900"
+        >
+          Cancel
+        </Link>
+      </div>
+    </form>
+  );
+}

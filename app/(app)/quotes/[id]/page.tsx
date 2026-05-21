@@ -52,12 +52,15 @@ const STATUS_STYLES: Record<QuoteStatus, string> = {
 };
 
 const ERROR_MAP: Record<string, string> = {
-  update_failed: "Couldn't save changes. Try again.",
   send_failed: "Couldn't mark as sent. Try again.",
   accept_failed: "Couldn't accept the quote.",
   decline_failed: "Couldn't decline the quote.",
   delete_failed: "Couldn't delete.",
   line_items_failed: "Line items didn't save — please re-enter them and save again.",
+  request_failed: "Couldn't request approval. Try again.",
+  review_failed: "Couldn't record the review. Try again.",
+  not_found: "Quote not found.",
+  invalid_action: "Invalid action.",
 };
 
 const SAVED_MAP: Record<string, string> = {
@@ -128,6 +131,9 @@ export default async function EditQuotePage({
   ]);
 
   const status = quote.status as QuoteStatus;
+  // Banner messages from lifecycle button actions (send/approve/etc.)
+  // which still redirect with ?error/?saved. Form-level update errors
+  // surface inline via useActionState inside QuoteBuilder.
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
     : null;
@@ -177,6 +183,22 @@ export default async function EditQuotePage({
           className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
         >
           {warnMessage}
+        </div>
+      ) : null}
+      {errorMessage ? (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {errorMessage}
+        </div>
+      ) : null}
+      {savedMessage ? (
+        <div
+          role="status"
+          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
+        >
+          {savedMessage}
         </div>
       ) : null}
 
@@ -395,8 +417,6 @@ export default async function EditQuotePage({
           defaultNotes={quote.notes ?? ""}
           defaultTerms={quote.terms ?? ""}
           defaultLineItems={lineItems}
-          errorMessage={errorMessage}
-          savedMessage={savedMessage}
           cancelHref="/quotes"
         />
       )}

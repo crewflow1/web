@@ -6,8 +6,16 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
 const uuid = z.string().uuid();
+
+type PaymentValues = Record<string, unknown>;
 
 /**
  * Manually record a payment against an invoice.
@@ -15,20 +23,16 @@ const uuid = z.string().uuid();
  *   sum(payments) >= total  → 'paid'
  *   0 < sum(payments) < total → 'partially_paid'
  */
-export async function addInvoicePayment(invoiceId: string, formData: FormData) {
+export async function addInvoicePayment(
+  invoiceId: string,
+  _prevState: FormState<PaymentValues>,
+  formData: FormData,
+): Promise<FormState<PaymentValues>> {
   const { ctx, user } = await requireOrgContext();
-  if (!uuid.safeParse(invoiceId).success) redirect("/invoices");
+  if (!uuid.safeParse(invoiceId).success) return formError("Invalid invoice id.");
 
-  const parsed = addPaymentSchema.safeParse({
-    amount: formData.get("amount") ?? "",
-    paid_at: formData.get("paid_at") ?? "",
-    reference: formData.get("reference") ?? "",
-    notes: formData.get("notes") ?? "",
-  });
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid payment";
-    redirect(`/invoices/${invoiceId}?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, addPaymentSchema);
+  if (!result.ok) return result.state as FormState<PaymentValues>;
 
   const supabase = await createClient();
   const { data: inv } = await supabase
@@ -36,28 +40,36 @@ export async function addInvoicePayment(invoiceId: string, formData: FormData) {
     .select("id, total, org_id")
     .eq("id", invoiceId)
     .maybeSingle();
-  if (!inv) redirect("/invoices?error=not_found");
+  if (!inv) {
+    return formError(
+      "Invoice not found.",
+      result.data as PaymentValues,
+    );
+  }
 
   const { error } = await supabase.from("invoice_payments").insert({
     org_id: inv.org_id,
     invoice_id: invoiceId,
-    amount: parsed.data.amount,
-    paid_at: parsed.data.paid_at,
-    reference: parsed.data.reference ?? null,
-    notes: parsed.data.notes ?? null,
+    amount: result.data.amount,
+    paid_at: result.data.paid_at,
+    reference: result.data.reference ?? null,
+    notes: result.data.notes ?? null,
     source: "manual",
     created_by: user.id,
   });
   if (error) {
     console.error("[invoice-payment] insert failed", error);
-    redirect(`/invoices/${invoiceId}?error=payment_failed`);
+    return formError(
+      "Couldn't record payment. Try again.",
+      result.data as PaymentValues,
+    );
   }
 
   void ctx;
   revalidatePath(`/invoices/${invoiceId}`);
   revalidatePath("/invoices");
   revalidatePath("/dashboard");
-  redirect(`/invoices/${invoiceId}?saved=payment_recorded`);
+  return formSuccess({ successMessage: "Payment recorded." });
 }
 
 export async function removeInvoicePayment(paymentId: string) {

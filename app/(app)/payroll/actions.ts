@@ -7,8 +7,14 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 
 const runSchema = z.object({
   cycle: z.enum(["weekly", "monthly"]),
@@ -21,19 +27,24 @@ const runSchema = z.object({
  * Pulls every member of the org, sums their hours from time_entries in
  * window, computes gross/PAYE/NI, and writes draft payroll_lines.
  */
-export async function createPayrollRun(formData: FormData) {
+export async function createPayrollRun(
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
-  const parsed = runSchema.safeParse({
-    cycle: formData.get("cycle"),
-    period_start: formData.get("period_start"),
-    period_end: formData.get("period_end"),
-  });
-  if (!parsed.success) {
-    redirect(`/payroll?error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "invalid")}`);
+  if (!isOwnerOrAdmin(ctx.membership.role)) {
+    return formError("Only admins/owners can create payroll runs.");
   }
-  const { cycle, period_start, period_end } = parsed.data;
-  if (period_end < period_start) redirect("/payroll?error=bad_window");
+  const result = validateFormData(formData, runSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const { cycle, period_start, period_end } = result.data;
+  if (period_end < period_start) {
+    return formError(
+      "Period end must be on or after period start.",
+      result.data as Record<string, unknown>,
+    );
+  }
 
   const supabase = await createClient();
 
@@ -51,7 +62,10 @@ export async function createPayrollRun(formData: FormData) {
     .single();
   if (runErr || !run) {
     console.error("[payroll] create run failed", runErr);
-    redirect("/payroll?error=run_create_failed");
+    return formError(
+      "Couldn't create the payroll run. Try again.",
+      result.data as Record<string, unknown>,
+    );
   }
 
   // Pull every member + their hourly_pay.
@@ -112,13 +126,22 @@ export async function createPayrollRun(formData: FormData) {
     const { error: linesErr } = await supabase.from("payroll_lines").insert(lines);
     if (linesErr) {
       console.error("[payroll] lines insert failed", linesErr);
-      redirect(`/payroll/${run.id}?error=lines_failed`);
+      // Parent row was saved — bounce to the run with a warning rather
+      // than losing the run.
+      return formSuccess({
+        successMessage:
+          "Run created, but some lines didn't save — open and re-generate.",
+        redirectTo: `/payroll/${run.id}?error=lines_failed`,
+      });
     }
   }
 
   revalidatePath("/payroll");
   revalidatePath("/dashboard");
-  redirect(`/payroll/${run.id}?saved=created`);
+  return formSuccess({
+    successMessage: "Draft payroll run created.",
+    redirectTo: `/payroll/${run.id}?saved=created`,
+  });
 }
 
 /** Lock a draft run. Time entries that fed it become read-only. */

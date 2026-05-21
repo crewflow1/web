@@ -2,8 +2,10 @@
  * Reusable form field — extracted from the onboarding/company pattern so
  * jobs and customers forms have the same look + behaviour.
  *
- * Server-rendered; no client state. For interactive validation, wrap in a
- * client component upstream.
+ * Server/client-safe (no client hooks). Pair with React 19
+ * `useActionState` upstream: pass `defaultValue` from the action's
+ * echoed `state.values` so input survives validation failures, and
+ * `error` from `state.fieldErrors[name]` so messages render inline.
  */
 
 import type { InputHTMLAttributes } from "react";
@@ -19,6 +21,7 @@ type Props = {
   defaultValue?: string;
   autoComplete?: string;
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
+  error?: string;
 };
 
 export function Field({
@@ -32,7 +35,9 @@ export function Field({
   defaultValue,
   autoComplete,
   inputMode,
+  error,
 }: Props) {
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <div>
       <label
@@ -56,9 +61,21 @@ export function Field({
         placeholder={placeholder}
         autoComplete={autoComplete}
         inputMode={inputMode}
-        className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
+        className={`mt-1.5 block w-full rounded-md border px-3 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-1 ${
+          error
+            ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+            : "border-slate-300 focus:border-slate-500 focus:ring-slate-500"
+        }`}
       />
-      {help ? <p className="mt-1 text-xs text-slate-500">{help}</p> : null}
+      {error ? (
+        <p id={errorId} role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      ) : help ? (
+        <p className="mt-1 text-xs text-slate-500">{help}</p>
+      ) : null}
     </div>
   );
 }
@@ -72,6 +89,7 @@ type TextareaProps = {
   placeholder?: string;
   help?: string;
   defaultValue?: string;
+  error?: string;
 };
 
 export function TextareaField({
@@ -83,7 +101,9 @@ export function TextareaField({
   placeholder,
   help,
   defaultValue,
+  error,
 }: TextareaProps) {
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <div>
       <label
@@ -105,9 +125,21 @@ export function TextareaField({
         required={required}
         defaultValue={defaultValue}
         placeholder={placeholder}
-        className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
+        className={`mt-1.5 block w-full rounded-md border px-3 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-1 ${
+          error
+            ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+            : "border-slate-300 focus:border-slate-500 focus:ring-slate-500"
+        }`}
       />
-      {help ? <p className="mt-1 text-xs text-slate-500">{help}</p> : null}
+      {error ? (
+        <p id={errorId} role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      ) : help ? (
+        <p className="mt-1 text-xs text-slate-500">{help}</p>
+      ) : null}
     </div>
   );
 }
@@ -119,6 +151,7 @@ type SelectProps = {
   defaultValue?: string;
   required?: boolean;
   help?: string;
+  error?: string;
 };
 
 export function SelectField({
@@ -128,7 +161,9 @@ export function SelectField({
   defaultValue,
   required = false,
   help,
+  error,
 }: SelectProps) {
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <div>
       <label
@@ -143,7 +178,13 @@ export function SelectField({
         name={name}
         defaultValue={defaultValue}
         required={required}
-        className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
+        className={`mt-1.5 block w-full rounded-md border bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-1 ${
+          error
+            ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+            : "border-slate-300 focus:border-slate-500 focus:ring-slate-500"
+        }`}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -151,7 +192,13 @@ export function SelectField({
           </option>
         ))}
       </select>
-      {help ? <p className="mt-1 text-xs text-slate-500">{help}</p> : null}
+      {error ? (
+        <p id={errorId} role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      ) : help ? (
+        <p className="mt-1 text-xs text-slate-500">{help}</p>
+      ) : null}
     </div>
   );
 }
