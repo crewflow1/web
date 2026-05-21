@@ -6,6 +6,8 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendEmail } from "@/lib/email/send";
+import { env } from "@/lib/env";
 
 /**
  * Super-admin organisation moderation actions.
@@ -106,8 +108,100 @@ export async function setOrganizationStatus(formData: FormData): Promise<void> {
     },
   } as never);
 
+  // Best-effort notify the owner that their org status changed.
+  // We email on the user-facing transitions only — pending→pending is
+  // a no-op, suspended/rejected the customer needs to hear about, and
+  // active/trial is the "you're in" moment. Failures are logged, never
+  // thrown — the moderation action itself has already succeeded.
+  if (parsed.data.status !== "pending") {
+    await notifyOrgOwner(supabase, parsed.data.org_id, parsed.data.status);
+  }
+
   revalidatePath("/admin/organizations");
   redirect(
     `/admin/organizations?saved=${encodeURIComponent(parsed.data.status)}`,
   );
+}
+
+type StatusTransition = "active" | "trial" | "suspended" | "rejected";
+
+const STATUS_EMAIL: Record<
+  StatusTransition,
+  { subject: string; heading: string; body: string; cta: string | null }
+> = {
+  active: {
+    subject: "Your CrewFlow access is live",
+    heading: "You're in.",
+    body: "Your CrewFlow workspace is approved and ready to use. Sign in and pick up where you left off.",
+    cta: "Open CrewFlow",
+  },
+  trial: {
+    subject: "Your CrewFlow trial is live",
+    heading: "Trial unlocked.",
+    body: "Your CrewFlow trial is active. Sign in and have a poke around — we'll be in touch before it ends to talk pricing.",
+    cta: "Open CrewFlow",
+  },
+  suspended: {
+    subject: "CrewFlow access paused",
+    heading: "Access paused.",
+    body: "We've temporarily paused access to your CrewFlow workspace. Reply to this email and we'll get it sorted.",
+    cta: null,
+  },
+  rejected: {
+    subject: "About your CrewFlow signup",
+    heading: "Signup not approved.",
+    body: "We weren't able to approve your CrewFlow signup. If you think this is a mistake, reply to this email and we'll take another look.",
+    cta: null,
+  },
+};
+
+async function notifyOrgOwner(
+  supabase: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  status: string,
+): Promise<void> {
+  if (!(status in STATUS_EMAIL)) return;
+  const copy = STATUS_EMAIL[status as StatusTransition];
+
+  const { data: owner } = await supabase
+    .from("memberships")
+    .select("user:users ( email, full_name )")
+    .eq("org_id", orgId)
+    .eq("role", "owner")
+    .maybeSingle();
+
+  const ownerEmail = owner?.user?.email;
+  if (!ownerEmail) {
+    console.warn("[admin] notifyOrgOwner: no owner email", { orgId, status });
+    return;
+  }
+
+  const appUrl = env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  const ctaUrl = copy.cta ? `${appUrl}/dashboard` : null;
+  const greeting = owner?.user?.full_name
+    ? `Hi ${owner.user.full_name.split(" ")[0]},`
+    : "Hi,";
+
+  const html = `<div style="font-family:system-ui,-apple-system,sans-serif;color:#0f172a;line-height:1.55">
+  <p>${greeting}</p>
+  <h1 style="margin:16px 0;font-size:20px">${copy.heading}</h1>
+  <p>${copy.body}</p>
+  ${ctaUrl
+    ? `<p style="margin:24px 0"><a href="${ctaUrl}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600">${copy.cta}</a></p>`
+    : ""}
+  <p style="color:#475569;font-size:12px;margin-top:32px">Reply to this email if you need anything — we read every one.</p>
+</div>`;
+
+  const result = await sendEmail({
+    to: ownerEmail,
+    subject: copy.subject,
+    html,
+  });
+  if (!result.sent) {
+    console.warn("[admin] notifyOrgOwner email skipped", {
+      orgId,
+      status,
+      reason: result.reason,
+    });
+  }
 }

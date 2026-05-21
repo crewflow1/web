@@ -49,13 +49,42 @@ export default async function SettingsPage() {
       reference?: string;
     } | null) ?? {};
 
+  const status = ctx.org.status;
+  const STATUS_PILL: Record<string, string> = {
+    active: "bg-emerald-100 text-emerald-800",
+    trial: "bg-blue-100 text-blue-800",
+    pending: "bg-amber-100 text-amber-800",
+    suspended: "bg-red-100 text-red-700",
+    rejected: "bg-slate-200 text-slate-600",
+  };
+  const trialDaysLeft =
+    status === "trial" && ctx.org.trial_ends_at
+      ? Math.max(
+          0,
+          Math.ceil(
+            (new Date(ctx.org.trial_ends_at).getTime() - Date.now()) /
+              86_400_000,
+          ),
+        )
+      : null;
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Your profile, your organisation, and the people in it.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Your profile, your organisation, and the people in it.
+          </p>
+        </div>
+        <span
+          className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-medium capitalize ${STATUS_PILL[status] ?? STATUS_PILL.active}`}
+          title={`Workspace status: ${status}`}
+        >
+          {status === "trial" && trialDaysLeft !== null
+            ? `Trial · ${trialDaysLeft} ${trialDaysLeft === 1 ? "day" : "days"} left`
+            : status}
+        </span>
       </header>
 
       {/* Profile ------------------------------------------------------- */}
@@ -109,6 +138,67 @@ export default async function SettingsPage() {
             bank_reference: bank.reference ?? "",
           }}
         />
+      </section>
+
+      {/* Plan & billing ----------------------------------------------- */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-900">
+            Plan &amp; billing
+          </h2>
+          <span
+            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${STATUS_PILL[status] ?? STATUS_PILL.active}`}
+          >
+            {status}
+          </span>
+        </div>
+        <p className="mt-1 text-sm text-slate-600">
+          Read-only for now. We&apos;ll add self-serve billing in a later
+          release — for now, email us to change plan or extend a trial.
+        </p>
+
+        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2">
+            <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Plan
+            </dt>
+            <dd className="mt-0.5 text-sm font-semibold text-slate-900 capitalize">
+              {ctx.org.plan}
+            </dd>
+          </div>
+          <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2">
+            <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Status
+            </dt>
+            <dd className="mt-0.5 text-sm font-semibold text-slate-900 capitalize">
+              {status}
+            </dd>
+          </div>
+          {status === "trial" ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 sm:col-span-2">
+              <dt className="text-xs font-medium uppercase tracking-wide text-amber-800">
+                Trial ends
+              </dt>
+              <dd className="mt-0.5 text-sm font-semibold text-amber-900">
+                {ctx.org.trial_ends_at
+                  ? `${ctx.org.trial_ends_at.slice(0, 10)} · ${trialDaysLeft} ${trialDaysLeft === 1 ? "day" : "days"} left`
+                  : "Date not set — contact us"}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <a
+            href={`mailto:hello@crewflow.uk?subject=${encodeURIComponent(`Plan change — ${ctx.org.name}`)}`}
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            Email us to change plan
+          </a>
+          <p className="text-xs text-slate-500">
+            Self-serve upgrade / downgrade lands in a future release.
+          </p>
+        </div>
       </section>
 
       {/* Members ------------------------------------------------------- */}

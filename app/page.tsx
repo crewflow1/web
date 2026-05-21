@@ -115,7 +115,15 @@ function SiteHeader() {
           >
             Sign in
           </Link>
-          <BookDemoButton size="sm">Book demo</BookDemoButton>
+          <Link
+            href="/login"
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            Start free
+          </Link>
+          <BookDemoButton size="sm" variant="secondary">
+            Book demo
+          </BookDemoButton>
         </nav>
       </div>
     </header>
@@ -146,7 +154,15 @@ function Hero() {
             Everything your construction company needs to run from winning jobs to tracking profit in one place.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <BookDemoButton size="lg">Book demo</BookDemoButton>
+            <Link
+              href="/login"
+              className="rounded-md bg-slate-900 px-6 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              Start free
+            </Link>
+            <BookDemoButton size="lg" variant="secondary">
+              Book demo
+            </BookDemoButton>
             <Link
               href="#features"
               className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
@@ -154,6 +170,10 @@ function Hero() {
               See CrewFlow in action
             </Link>
           </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Start free → approved within one UK business day → trial &amp; pricing
+            discussed during onboarding.
+          </p>
           <div className="mt-10 grid grid-cols-3 gap-4 border-t border-slate-200 pt-6 text-sm">
             <HeroBadge label="HMRC-compliant" sub="VAT, PAYE, Corp Tax" />
             <HeroBadge label="No bank fees" sub="Bank transfer tracking" />

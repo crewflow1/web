@@ -1,7 +1,16 @@
 import Link from "next/link";
+import { signInWithMagicLink } from "../actions";
 
 type SearchParams = Promise<{ email?: string }>;
 
+/**
+ * Confirmation page after the magic-link form on /login was submitted.
+ *
+ * Sprint A friction-removal: a "Resend link" button (only when we know
+ * the email) calls the same `signInWithMagicLink` server action that
+ * /login uses. No new endpoint, no new module — just a form posting
+ * the same email back.
+ */
 export default async function CheckEmailPage({
   searchParams,
 }: {
@@ -33,12 +42,37 @@ export default async function CheckEmailPage({
         Click the link in the email to sign in.
       </p>
       <p className="text-xs text-slate-500">
-        The link expires in 15 minutes. Didn&apos;t get it? Check your spam folder, or{" "}
-        <Link href="/login" className="font-medium text-slate-900 underline">
-          try again
-        </Link>
-        .
+        The link expires in 15 minutes. Most arrive within a minute — check
+        your spam folder if not.
       </p>
+
+      {email ? (
+        <form
+          action={signInWithMagicLink}
+          className="flex flex-col items-center gap-2 pt-2"
+        >
+          <input type="hidden" name="email" value={email} />
+          <button
+            type="submit"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+          >
+            Resend the link
+          </button>
+          <p className="text-[11px] text-slate-500">
+            Or{" "}
+            <Link href="/login" className="font-medium text-slate-900 underline">
+              use a different email
+            </Link>
+            .
+          </p>
+        </form>
+      ) : (
+        <p className="text-xs text-slate-500">
+          <Link href="/login" className="font-medium text-slate-900 underline">
+            Try again
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

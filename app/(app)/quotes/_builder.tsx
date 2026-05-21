@@ -165,10 +165,33 @@ export function QuoteBuilder({
   const notesError = state.fieldErrors?.notes;
   const termsError = state.fieldErrors?.terms;
 
+  const noCustomers = customers.length === 0;
+
   return (
     <form action={formAction} className="space-y-6" noValidate>
       <FormErrorBanner error={state.error} />
       <FormSuccessBanner message={state.ok ? state.successMessage : null} />
+
+      {noCustomers ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <div>
+            <p className="font-semibold">Add a customer first.</p>
+            <p className="text-xs">
+              A quote needs a customer to attach to. Add one, then come back
+              and finish this quote.
+            </p>
+          </div>
+          <Link
+            href="/customers/new"
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+          >
+            + Add customer
+          </Link>
+        </div>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Customer + site</h2>
@@ -438,7 +461,9 @@ export function QuoteBuilder({
       </section>
 
       <div className="flex items-center gap-3">
-        <SubmitButton pending={pending}>{submitLabel}</SubmitButton>
+        <SubmitButton pending={pending} disabled={noCustomers}>
+          {submitLabel}
+        </SubmitButton>
         <Link
           href={cancelHref}
           className="text-sm font-medium text-slate-600 hover:text-slate-900"
