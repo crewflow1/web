@@ -1,6 +1,39 @@
 import Link from "next/link";
+import Image from "next/image";
+import fs from "node:fs";
+import path from "node:path";
 import { ButtonLink } from "@/components/ui/button";
 import { BookDemoModal, BookDemoButton } from "./(public)/_book-demo-modal";
+
+/**
+ * Hero screenshot drop-in slot.
+ *
+ * At build time we check `public/landing/` for the supported filenames
+ * below (in order). The first one that exists is rendered as the hero
+ * image; if none exist, the CSS-drawn `HeroMockup` stays as the
+ * fallback. To swap in a real screenshot drop a 2:1 PNG/WEBP/JPG named
+ * `hero-dashboard.<ext>` into `public/landing/` and redeploy. No code
+ * change required.
+ */
+const HERO_CANDIDATES = [
+  "/landing/hero-dashboard.webp",
+  "/landing/hero-dashboard.png",
+  "/landing/hero-dashboard.jpg",
+] as const;
+
+function resolveHeroImage(): string | null {
+  for (const rel of HERO_CANDIDATES) {
+    try {
+      const full = path.join(process.cwd(), "public", rel);
+      if (fs.existsSync(full)) return rel;
+    } catch {
+      // ignore fs errors in restricted runtimes
+    }
+  }
+  return null;
+}
+
+const HERO_IMAGE_SRC: string | null = resolveHeroImage();
 
 /**
  * Landing page.
@@ -162,6 +195,18 @@ function HeroBadge({ label, sub }: { label: string; sub: string }) {
  *   3. Delete MockTile + MockRow if they have no other callers.
  */
 function HeroMockup() {
+  if (HERO_IMAGE_SRC) {
+    return (
+      <Image
+        src={HERO_IMAGE_SRC}
+        alt="CrewFlow dashboard showing weekly cash, outstanding amounts and profit-by-month."
+        width={1200}
+        height={750}
+        priority
+        className="rounded-2xl border border-slate-200 shadow-xl"
+      />
+    );
+  }
   return (
     <div
       className="relative rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-2 shadow-xl"

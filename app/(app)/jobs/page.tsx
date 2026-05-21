@@ -75,61 +75,95 @@ export default async function JobsPage() {
         </div>
       </header>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-        {rows.length === 0 ? (
+      {rows.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="🔧"
             title="No jobs yet"
-            body="Schedule your first job — pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses."
+            body="Schedule your first job. Pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses."
             primary={{ href: "/jobs/new", label: "Create first job" }}
             secondary={{ href: "/customers/new", label: "Add a customer first" }}
           />
-        ) : (
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3">Assigned</th>
-                <th className="px-4 py-3">Scheduled</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((j) => (
-                <tr key={j.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
+        </div>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Assigned</th>
+                  <th className="px-4 py-3">Scheduled</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white text-sm">
+                {rows.map((j) => (
+                  <tr key={j.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[j.status] ?? "bg-slate-100 text-slate-700"}`}
+                      >
+                        {STATUS_LABELS[j.status] ?? j.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {j.customer?.name ?? <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {j.assigned?.full_name ?? j.assigned?.email ?? (
+                        <span className="text-slate-400">Unassigned</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {j.scheduled_date ?? <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link
+                        href={`/jobs/${j.id}`}
+                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                      >
+                        Open →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <ul className="space-y-2 md:hidden">
+            {rows.map((j) => (
+              <li key={j.id}>
+                <Link
+                  href={`/jobs/${j.id}`}
+                  className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold text-slate-900">
+                        {j.customer?.name ?? "—"}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {j.assigned?.full_name ?? j.assigned?.email ?? "Unassigned"}
+                        {j.scheduled_date ? ` · ${j.scheduled_date}` : ""}
+                      </div>
+                    </div>
                     <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[j.status] ?? "bg-slate-100 text-slate-700"}`}
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[j.status] ?? "bg-slate-100 text-slate-700"}`}
                     >
                       {STATUS_LABELS[j.status] ?? j.status}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 font-medium text-slate-900">
-                    {j.customer?.name ?? <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {j.assigned?.full_name ?? j.assigned?.email ?? (
-                      <span className="text-slate-400">Unassigned</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {j.scheduled_date ?? <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/jobs/${j.id}`}
-                      className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                    >
-                      Open →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
