@@ -86,21 +86,89 @@ const optionalNumber = z.preprocess(
   z.coerce.number().nonnegative().max(99_999_999).optional(),
 );
 
-export const createLeadSchema = z.object({
-  source: z.enum(LEAD_SOURCES),
-  service: optionalString(200),
-  urgency: z.enum(LEAD_URGENCIES).default("normal"),
-  postcode: optionalString(20),
-  customer_id: optionalUuid,
-  assigned_to: optionalUuid,
-  estimated_value: optionalNumber,
-  notes: optionalString(5000),
-  ai_summary: optionalString(5000),
-});
+/**
+ * Lead create schema.
+ *
+ * Contact rules — set by CEO directive (a lead with no name/contact is
+ * useless):
+ *   - contact_name is REQUIRED
+ *   - contact_email OR contact_phone — at least one is required (we
+ *     can't follow up without a way to reach them)
+ *
+ * Enforced at the schema layer so both create + update paths surface
+ * the same inline field errors via `useActionState`.
+ */
+const requiredName = z
+  .string()
+  .trim()
+  .min(1, "Enter the lead's name")
+  .max(200, "Name is too long");
+
+const contactEmail = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z
+    .string()
+    .trim()
+    .max(254)
+    .email("Enter a valid email")
+    .optional(),
+);
+
+const contactPhone = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().trim().max(50).optional(),
+);
+
+export const createLeadSchema = z
+  .object({
+    contact_name: requiredName,
+    contact_email: contactEmail,
+    contact_phone: contactPhone,
+    source: z.enum(LEAD_SOURCES),
+    service: optionalString(200),
+    urgency: z.enum(LEAD_URGENCIES).default("normal"),
+    postcode: optionalString(20),
+    customer_id: optionalUuid,
+    assigned_to: optionalUuid,
+    estimated_value: optionalNumber,
+    notes: optionalString(5000),
+    ai_summary: optionalString(5000),
+  })
+  .refine(
+    (v) => Boolean(v.contact_email) || Boolean(v.contact_phone),
+    {
+      message: "Enter at least an email or a phone — we need a way to reach them",
+      path: ["contact_phone"],
+    },
+  );
 
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 
-export const updateLeadSchema = createLeadSchema.partial();
+// Update keeps the same contact gating: editing a lead can't strip its
+// contact info to nothing. We rebuild the shape instead of using
+// `.partial()` so the .refine() still runs.
+export const updateLeadSchema = z
+  .object({
+    contact_name: requiredName,
+    contact_email: contactEmail,
+    contact_phone: contactPhone,
+    source: z.enum(LEAD_SOURCES).optional(),
+    service: optionalString(200),
+    urgency: z.enum(LEAD_URGENCIES).optional(),
+    postcode: optionalString(20),
+    customer_id: optionalUuid,
+    assigned_to: optionalUuid,
+    estimated_value: optionalNumber,
+    notes: optionalString(5000),
+    ai_summary: optionalString(5000),
+  })
+  .refine(
+    (v) => Boolean(v.contact_email) || Boolean(v.contact_phone),
+    {
+      message: "Enter at least an email or a phone — we need a way to reach them",
+      path: ["contact_phone"],
+    },
+  );
 
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 
