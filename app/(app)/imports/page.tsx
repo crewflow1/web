@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createImport } from "./actions";
+import { CreateImportForm } from "./_create-form";
 
 /**
  * Migration OS entry point. Admins only.
@@ -69,23 +70,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
           photos via OCR; v3 native connectors for Sage, Xero, QuickBooks
           and Buildertrend.
         </p>
-        <form action={createImport} className="mt-4 flex flex-wrap items-end gap-2">
-          <label className="flex-1 text-xs text-slate-600">
-            Session name
-            <input
-              type="text"
-              name="name"
-              placeholder="e.g. Sage exports — Jan 2026"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            />
-          </label>
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            New import
-          </button>
-        </form>
+        <CreateImportForm action={createImport} />
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">

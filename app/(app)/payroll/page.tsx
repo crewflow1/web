@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { defaultPeriod } from "@/lib/payroll/compute";
 import { createPayrollRun } from "./actions";
+import { CreateRunForm } from "./_create-run-form";
 
 /**
  * Payroll overview — admins only.
@@ -168,40 +169,12 @@ function RunForm({
   defaultEnd: string;
 }) {
   return (
-    <form action={createPayrollRun} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-      <input type="hidden" name="cycle" value={cycle} />
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <label className="block text-xs text-slate-600">
-          Period start
-          <input
-            type="date"
-            name="period_start"
-            defaultValue={defaultStart}
-            className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            required
-          />
-        </label>
-        <label className="block text-xs text-slate-600">
-          Period end
-          <input
-            type="date"
-            name="period_end"
-            defaultValue={defaultEnd}
-            className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-            required
-          />
-        </label>
-      </div>
-      <button
-        type="submit"
-        className="mt-3 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-      >
-        Generate draft run
-      </button>
-      <p className="mt-1 text-[11px] text-slate-500">
-        Pulls completed time entries in the window. Edit lines before finalising.
-      </p>
-    </form>
+    <CreateRunForm
+      title={title}
+      cycle={cycle}
+      defaultStart={defaultStart}
+      defaultEnd={defaultEnd}
+      action={createPayrollRun}
+    />
   );
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
+import { CreateRotaForm } from "./_create-form";
 
 /**
  * Rota — weekly view, optionally month via ?view=month.
@@ -159,60 +160,23 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">Assign shift</h2>
-          <form action={createRotaEntry} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end">
-            <label className="block text-xs text-slate-600 sm:col-span-2">
-              Staff
-              <select name="user_id" required className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm">
-                <option value="">—</option>
-                {(members ?? []).map((m) => (
-                  <option key={m.user_id} value={m.user_id}>
-                    {m.user?.full_name ?? m.user?.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-xs text-slate-600">
-              Start
-              <input
-                type="datetime-local"
-                name="starts_at"
-                required
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
-            </label>
-            <label className="block text-xs text-slate-600">
-              End
-              <input
-                type="datetime-local"
-                name="ends_at"
-                required
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
-            </label>
-            <label className="block text-xs text-slate-600">
-              Job (optional)
-              <select name="job_id" className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm">
-                <option value="">—</option>
-                {(jobs ?? []).map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.customer?.name ?? "Job"} · {j.status}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Assign
-            </button>
-            <textarea
-              name="notes"
-              rows={1}
-              placeholder="Optional notes (e.g. early start)"
-              className="block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm sm:col-span-6"
-            />
-          </form>
+          <CreateRotaForm
+            action={createRotaEntry}
+            members={(members ?? []).map((m) => ({
+              user_id: m.user_id,
+              user: m.user
+                ? {
+                    full_name: m.user.full_name ?? null,
+                    email: m.user.email ?? "",
+                  }
+                : null,
+            }))}
+            jobs={(jobs ?? []).map((j) => ({
+              id: j.id,
+              status: j.status ?? null,
+              customer: j.customer ? { name: j.customer.name ?? "" } : null,
+            }))}
+          />
           <p className="mt-2 text-[11px] text-slate-500">
             Server enforces conflict detection: if the staff member already
             has an overlapping shift on the same day, the assignment is

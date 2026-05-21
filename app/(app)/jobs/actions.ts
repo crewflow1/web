@@ -2,9 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { jobFormSchema, type JobFormInput } from "@/lib/jobs/schema";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
 /**
  * Job CRUD server actions.
@@ -22,42 +28,7 @@ import { requireOrgContext } from "@/server/auth/session";
  *   - customer_id: empty string -> null (job not yet linked to a customer)
  */
 
-const STATUSES = ["new", "in-progress", "completed", "blocked"] as const;
-
-const RECURRING_PATTERNS = ["weekly", "biweekly", "monthly", "quarterly"] as const;
-
-const jobSchema = z.object({
-  customer_id: z.string().uuid().or(z.literal("").transform(() => undefined)).optional(),
-  assigned_to: z.string().uuid().or(z.literal("").transform(() => undefined)).optional(),
-  status: z.enum(STATUSES),
-  scheduled_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
-    .or(z.literal("").transform(() => undefined))
-    .optional(),
-  notes: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
-  recurring_pattern: z
-    .enum(RECURRING_PATTERNS)
-    .or(z.literal("").transform(() => undefined))
-    .optional(),
-  recurring_end_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
-    .or(z.literal("").transform(() => undefined))
-    .optional(),
-});
-
-function parseForm(formData: FormData) {
-  return jobSchema.safeParse({
-    customer_id: formData.get("customer_id") ?? "",
-    assigned_to: formData.get("assigned_to") ?? "",
-    status: formData.get("status") ?? "new",
-    scheduled_date: formData.get("scheduled_date") ?? "",
-    notes: formData.get("notes") ?? "",
-    recurring_pattern: formData.get("recurring_pattern") ?? "",
-    recurring_end_date: formData.get("recurring_end_date") ?? "",
-  });
-}
+type JobValues = Record<string, unknown>;
 
 function buildRecurring(
   pattern: string | undefined,
@@ -67,28 +38,28 @@ function buildRecurring(
   return endDate ? { pattern, end_date: endDate } : { pattern };
 }
 
-export async function createJob(formData: FormData) {
+export async function createJob(
+  _prevState: FormState<JobValues>,
+  formData: FormData,
+): Promise<FormState<JobValues>> {
   const { ctx } = await requireOrgContext();
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid input";
-    redirect(`/jobs/new?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, jobFormSchema);
+  if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
   const recurring = buildRecurring(
-    parsed.data.recurring_pattern,
-    parsed.data.recurring_end_date,
+    result.data.recurring_pattern,
+    result.data.recurring_end_date,
   );
   const { data, error } = await supabase
     .from("jobs")
     .insert({
       org_id: ctx.org.id,
-      customer_id: parsed.data.customer_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
-      status: parsed.data.status,
-      scheduled_date: parsed.data.scheduled_date ?? null,
-      notes: parsed.data.notes ?? null,
+      customer_id: result.data.customer_id ?? null,
+      assigned_to: result.data.assigned_to ?? null,
+      status: result.data.status,
+      scheduled_date: result.data.scheduled_date ?? null,
+      notes: result.data.notes ?? null,
       recurring,
     })
     .select("id")
@@ -96,50 +67,59 @@ export async function createJob(formData: FormData) {
 
   if (error || !data) {
     console.error("[jobs] create failed", error);
-    redirect("/jobs/new?error=create_failed");
+    return formError("Couldn't save the job. Try again.", result.data as JobValues);
   }
 
   revalidatePath("/jobs");
-  redirect(`/jobs/${data.id}`);
+  return formSuccess({
+    successMessage: "Job created.",
+    redirectTo: `/jobs/${data.id}`,
+  });
 }
 
-export async function updateJob(id: string, formData: FormData) {
+export async function updateJob(
+  id: string,
+  _prevState: FormState<JobValues>,
+  formData: FormData,
+): Promise<FormState<JobValues>> {
   await requireOrgContext();
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid input";
-    redirect(`/jobs/${id}?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, jobFormSchema);
+  if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
   const recurring = buildRecurring(
-    parsed.data.recurring_pattern,
-    parsed.data.recurring_end_date,
+    result.data.recurring_pattern,
+    result.data.recurring_end_date,
   );
   const { error, count } = await supabase
     .from("jobs")
-    .update({
-      customer_id: parsed.data.customer_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
-      status: parsed.data.status,
-      scheduled_date: parsed.data.scheduled_date ?? null,
-      notes: parsed.data.notes ?? null,
-      recurring,
-    }, { count: "exact" })
+    .update(
+      {
+        customer_id: result.data.customer_id ?? null,
+        assigned_to: result.data.assigned_to ?? null,
+        status: result.data.status,
+        scheduled_date: result.data.scheduled_date ?? null,
+        notes: result.data.notes ?? null,
+        recurring,
+      },
+      { count: "exact" },
+    )
     .eq("id", id);
 
   if (error) {
     console.error("[jobs] update failed", error);
-    redirect(`/jobs/${id}?error=update_failed`);
+    return formError("Couldn't save changes. Try again.", result.data as JobValues);
   }
-  // Zero rows = RLS denied (caller isn't admin) or row gone.
   if (count === 0) {
-    redirect(`/jobs/${id}?error=update_denied`);
+    return formError(
+      "Only admins/owners can edit jobs.",
+      result.data as JobValues,
+    );
   }
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
-  redirect(`/jobs/${id}?saved=1`);
+  return formSuccess({ successMessage: "Saved." });
 }
 
 export async function deleteJob(id: string) {
@@ -160,3 +140,6 @@ export async function deleteJob(id: string) {
   revalidatePath("/jobs");
   redirect("/jobs");
 }
+
+// Re-exported for tests that previously imported the shape.
+export type { JobFormInput };

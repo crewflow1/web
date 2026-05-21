@@ -2,9 +2,18 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import {
+  customerFormSchema,
+  type CustomerFormInput,
+} from "@/lib/customers/schema";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
 /**
  * Customer CRUD server actions.
@@ -20,75 +29,60 @@ import { requireOrgContext } from "@/server/auth/session";
  * malicious form payload.
  */
 
-const customerSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(200),
-  email: z
-    .string()
-    .trim()
-    .max(254)
-    .email("Doesn't look like a valid email")
-    .or(z.literal("").transform(() => undefined))
-    .optional(),
-  phone: z.string().trim().max(50).optional().or(z.literal("").transform(() => undefined)),
-  notes: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
-});
-
-function parseForm(formData: FormData) {
-  return customerSchema.safeParse({
-    name: formData.get("name") ?? "",
-    email: formData.get("email") ?? "",
-    phone: formData.get("phone") ?? "",
-    notes: formData.get("notes") ?? "",
-  });
-}
-
-export async function createCustomer(formData: FormData) {
+export async function createCustomer(
+  _prevState: FormState<CustomerFormInput>,
+  formData: FormData,
+): Promise<FormState<CustomerFormInput>> {
   const { ctx } = await requireOrgContext();
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid input";
-    redirect(`/customers/new?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, customerFormSchema);
+  if (!result.ok) return result.state;
 
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("customers")
     .insert({
       org_id: ctx.org.id,
-      name: parsed.data.name,
-      email: parsed.data.email ?? null,
-      phone: parsed.data.phone ?? null,
-      notes: parsed.data.notes ?? null,
+      name: result.data.name,
+      email: result.data.email ?? null,
+      phone: result.data.phone ?? null,
+      notes: result.data.notes ?? null,
     })
     .select("id")
     .single();
 
   if (error || !data) {
     console.error("[customers] create failed", error);
-    redirect("/customers/new?error=create_failed");
+    return formError(
+      "Couldn't save the customer. Try again.",
+      result.data,
+    );
   }
 
   revalidatePath("/customers");
-  redirect(`/customers/${data.id}`);
+  return formSuccess({
+    successMessage: "Customer saved.",
+    redirectTo: `/customers/${data.id}`,
+  });
 }
 
-export async function updateCustomer(id: string, formData: FormData) {
+export async function updateCustomer(
+  id: string,
+  _prevState: FormState<CustomerFormInput>,
+  formData: FormData,
+): Promise<FormState<CustomerFormInput>> {
   await requireOrgContext();
-  const parsed = parseForm(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid input";
-    redirect(`/customers/${id}?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, customerFormSchema);
+  if (!result.ok) return result.state;
 
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("customers")
     .update(
       {
-        name: parsed.data.name,
-        email: parsed.data.email ?? null,
-        phone: parsed.data.phone ?? null,
-        notes: parsed.data.notes ?? null,
+        name: result.data.name,
+        email: result.data.email ?? null,
+        phone: result.data.phone ?? null,
+        notes: result.data.notes ?? null,
       },
       { count: "exact" },
     )
@@ -96,15 +90,18 @@ export async function updateCustomer(id: string, formData: FormData) {
 
   if (error) {
     console.error("[customers] update failed", error);
-    redirect(`/customers/${id}?error=update_failed`);
+    return formError("Couldn't save changes. Try again.", result.data);
   }
   if (count === 0) {
-    redirect(`/customers/${id}?error=update_denied`);
+    return formError(
+      "You don't have permission to edit this customer.",
+      result.data,
+    );
   }
 
   revalidatePath("/customers");
   revalidatePath(`/customers/${id}`);
-  redirect(`/customers/${id}?saved=1`);
+  return formSuccess({ successMessage: "Saved." });
 }
 
 /**
@@ -115,9 +112,8 @@ export async function updateCustomer(id: string, formData: FormData) {
  * action mints a fresh UUID, which silently invalidates whatever link
  * the customer had — useful if the link was forwarded or leaked.
  *
- * Members can rotate (allowed by RLS UPDATE policy). Delete-of-token
- * is reachable via re-rotation only; we never set it back to NULL
- * from the UI to keep "has been generated" a one-way state.
+ * Button-only action — keeps the redirect+querystring pattern because
+ * there's no user input to preserve.
  */
 export async function rotateCustomerPortalToken(id: string) {
   await requireOrgContext();

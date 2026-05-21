@@ -2,13 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { Field, TextareaField, SelectField } from "../../_components/field";
 import {
-  LEAD_SOURCES,
   LEAD_STAGES,
   LEAD_STAGE_LABELS,
   LEAD_STAGE_STYLES,
-  LEAD_URGENCIES,
   type LeadStage,
 } from "@/lib/leads/schema";
 import {
@@ -20,6 +17,7 @@ import {
   moveLeadStage,
   deleteLead,
 } from "../actions";
+import { LeadForm } from "../_form";
 
 /**
  * Lead detail.
@@ -41,13 +39,9 @@ const GBP = new Intl.NumberFormat("en-GB", {
 });
 
 const ERROR_MAP: Record<string, string> = {
-  update_failed: "Couldn't save changes. Try again.",
   move_failed: "Couldn't move stage.",
   delete_failed: "Couldn't delete.",
-};
-
-const SAVED_MAP: Record<string, string> = {
-  "1": "Saved.",
+  delete_denied: "Only admins/owners can delete leads.",
 };
 
 type SP = Promise<{ error?: string; saved?: string }>;
@@ -104,11 +98,10 @@ export default async function LeadDetailPage({
     ? (lead.status as LeadStage)
     : ("new" as LeadStage);
 
+  // Lifecycle (stage move / delete) still redirect with ?error.
+  // Edit form errors render inline via useActionState.
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
-    : null;
-  const savedMessage = sp.saved
-    ? SAVED_MAP[sp.saved] ?? "Saved."
     : null;
 
   return (
@@ -170,14 +163,6 @@ export default async function LeadDetailPage({
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {errorMessage}
-        </div>
-      ) : null}
-      {savedMessage ? (
-        <div
-          role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
-        >
-          {savedMessage}
         </div>
       ) : null}
 
@@ -261,101 +246,27 @@ export default async function LeadDetailPage({
       ) : null}
 
       {/* Edit form */}
-      <form
-        action={updateLead.bind(null, id)}
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <h2 className="text-base font-semibold text-slate-900">Edit lead</h2>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SelectField
-            name="source"
-            label="Source"
-            defaultValue={lead.source}
-            options={LEAD_SOURCES.map((s) => ({ value: s, label: s }))}
-          />
-          <SelectField
-            name="urgency"
-            label="Urgency"
-            defaultValue={lead.urgency ?? "normal"}
-            options={LEAD_URGENCIES.map((u) => ({ value: u, label: u }))}
-          />
-        </div>
-
-        <Field name="service" label="Service" optional defaultValue={lead.service ?? ""} />
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SelectField
-            name="customer_id"
-            label="Customer"
-            defaultValue={lead.customer_id ?? ""}
-            options={[
-              { value: "", label: "— None —" },
-              ...customers.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-          />
-          <SelectField
-            name="assigned_to"
-            label="Assigned to"
-            defaultValue={lead.assigned_to ?? ""}
-            options={[
-              { value: "", label: "— Unassigned —" },
-              ...staff.map((s) => ({
-                value: s.id,
-                label: s.full_name ?? s.email,
-              })),
-            ]}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            name="postcode"
-            label="Postcode"
-            optional
-            defaultValue={lead.postcode ?? ""}
-          />
-          <Field
-            name="estimated_value"
-            label="Estimated value (£)"
-            type="number"
-            inputMode="decimal"
-            optional
-            defaultValue={lead.estimated_value?.toString() ?? ""}
-          />
-        </div>
-
-        <TextareaField
-          name="notes"
-          label="Notes"
-          optional
-          rows={3}
-          defaultValue={lead.notes ?? ""}
+      <section>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Edit lead</h2>
+        <LeadForm
+          action={updateLead.bind(null, id)}
+          submitLabel="Save changes"
+          cancelHref="/leads"
+          customers={customers}
+          staff={staff}
+          defaults={{
+            source: lead.source,
+            service: lead.service ?? "",
+            urgency: lead.urgency ?? "normal",
+            postcode: lead.postcode ?? "",
+            customer_id: lead.customer_id ?? "",
+            assigned_to: lead.assigned_to ?? "",
+            estimated_value: lead.estimated_value?.toString() ?? "",
+            notes: lead.notes ?? "",
+            ai_summary: lead.ai_summary ?? "",
+          }}
         />
-
-        <TextareaField
-          name="ai_summary"
-          label="AI / call summary"
-          optional
-          rows={3}
-          defaultValue={lead.ai_summary ?? ""}
-        />
-
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Save changes
-          </button>
-          <Link
-            href="/leads"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+      </section>
 
       <form
         action={deleteLead.bind(null, id)}

@@ -1,17 +1,37 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { computeTotals } from "@/lib/quotes/totals";
-import { QUOTE_VAT_RATES, type LineItem } from "@/lib/quotes/schema";
+import {
+  QUOTE_VAT_RATES,
+  type LineItem,
+  type QuoteFormInput,
+} from "@/lib/quotes/schema";
+import {
+  INITIAL_FORM_STATE,
+  type FormState,
+} from "@/lib/forms/state";
+import {
+  FormErrorBanner,
+  FormSuccessBanner,
+} from "@/components/forms/Field";
+import { SubmitButton } from "@/components/forms/FormShell";
 
 /**
  * Quote builder — used by both /quotes/new and /quotes/[id].
  *
  * Client component: holds the working line-items list in local state and
  * computes totals live as the user types. On submit, serialises the
- * line items as JSON in a hidden field and posts to the server action
- * supplied via `action` prop.
+ * line items as JSON in a hidden field and posts via React 19
+ * `useActionState`. Action returns a `FormState` so:
+ *
+ *   - Validation errors surface inline next to the offending field
+ *   - Non-validation errors render in the form-level banner
+ *   - Submitted values are echoed back so input is never lost
+ *   - Line items survive because they live in client React state, which
+ *     is preserved across action re-renders
  *
  * Property dropdown is optional and filters to the selected customer
  * via a useMemo over the prefetched list (no extra fetch round-trip).
@@ -35,6 +55,11 @@ const emptyLine: LineItem = {
   vat_rate: 20,
 };
 
+type QuoteAction = (
+  prevState: FormState<QuoteFormInput>,
+  formData: FormData,
+) => Promise<FormState<QuoteFormInput>>;
+
 export function QuoteBuilder({
   action,
   submitLabel,
@@ -48,11 +73,9 @@ export function QuoteBuilder({
   defaultNotes = "",
   defaultTerms = "",
   defaultLineItems,
-  errorMessage,
-  savedMessage,
   cancelHref = "/quotes",
 }: {
-  action: (formData: FormData) => void;
+  action: QuoteAction;
   submitLabel: string;
   customers: CustomerOption[];
   properties: PropertyOption[];
@@ -64,19 +87,53 @@ export function QuoteBuilder({
   defaultNotes?: string;
   defaultTerms?: string;
   defaultLineItems?: LineItem[];
-  errorMessage?: string | null;
-  savedMessage?: string | null;
   cancelHref?: string;
 }) {
-  const [customerId, setCustomerId] = useState(defaultCustomerId);
-  const [items, setItems] = useState<LineItem[]>(
-    defaultLineItems && defaultLineItems.length > 0
-      ? defaultLineItems
-      : [{ ...emptyLine }],
+  const [state, formAction, pending] = useActionState(
+    action,
+    INITIAL_FORM_STATE as FormState<QuoteFormInput>,
   );
+  const router = useRouter();
+
+  // Echoed values take precedence over defaults after a failed submit so
+  // the form re-renders with what the user typed, not the original state.
+  const echoed = state.values ?? {};
+
+  const initialLineItems: LineItem[] =
+    Array.isArray(echoed.line_items) && echoed.line_items.length > 0
+      ? echoed.line_items
+      : defaultLineItems && defaultLineItems.length > 0
+        ? defaultLineItems
+        : [{ ...emptyLine }];
+
+  const [customerId, setCustomerId] = useState(
+    echoed.customer_id ?? defaultCustomerId,
+  );
+  const [items, setItems] = useState<LineItem[]>(initialLineItems);
+
+  // Sync line items from a server echo when the action returns new state.
+  // The submittedAt timestamp changes per-submission, which is our trigger.
+  useEffect(() => {
+    if (!state.submittedAt) return;
+    if (Array.isArray(state.values?.line_items) && state.values.line_items.length > 0) {
+      setItems(state.values.line_items as LineItem[]);
+    }
+    if (typeof state.values?.customer_id === "string") {
+      setCustomerId(state.values.customer_id);
+    }
+  }, [state.submittedAt, state.values?.line_items, state.values?.customer_id]);
+
+  // On success: navigate or refresh.
+  useEffect(() => {
+    if (!state.ok) return;
+    if (state.redirectTo) {
+      router.push(state.redirectTo);
+      return;
+    }
+    router.refresh();
+  }, [state.ok, state.redirectTo, state.submittedAt, router]);
 
   const propertyOptions = useMemo(() => {
-    // If no customer selected, show all; else filter to that customer.
     if (!customerId) return properties;
     return properties.filter(
       (p) => !p.customer_id || p.customer_id === customerId,
@@ -102,37 +159,32 @@ export function QuoteBuilder({
     setItems((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
   }
 
+  const customerError = state.fieldErrors?.customer_id;
+  const lineItemsError = state.fieldErrors?.line_items;
+  const validUntilError = state.fieldErrors?.valid_until;
+  const notesError = state.fieldErrors?.notes;
+  const termsError = state.fieldErrors?.terms;
+
   return (
-    <form action={action} className="space-y-6">
-      {errorMessage ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMessage}
-        </div>
-      ) : null}
-      {savedMessage ? (
-        <div
-          role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
-        >
-          {savedMessage}
-        </div>
-      ) : null}
+    <form action={formAction} className="space-y-6" noValidate>
+      <FormErrorBanner error={state.error} />
+      <FormSuccessBanner message={state.ok ? state.successMessage : null} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Customer + site</h2>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="customer_id">
               Customer <span className="text-red-500">*</span>
             </label>
             <select
+              id="customer_id"
               name="customer_id"
               required
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}
+              aria-invalid={!!customerError}
+              aria-describedby={customerError ? "customer_id-error" : undefined}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="" disabled>
@@ -144,14 +196,20 @@ export function QuoteBuilder({
                 </option>
               ))}
             </select>
+            {customerError ? (
+              <p id="customer_id-error" role="alert" className="mt-1 text-xs text-red-700">
+                {customerError}
+              </p>
+            ) : null}
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="property_id">
               Site / property <span className="text-xs text-slate-400">Optional</span>
             </label>
             <select
+              id="property_id"
               name="property_id"
-              defaultValue={defaultPropertyId}
+              defaultValue={echoed.property_id ?? defaultPropertyId}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="">— None —</option>
@@ -165,12 +223,13 @@ export function QuoteBuilder({
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="lead_id">
               Linked lead <span className="text-xs text-slate-400">Optional</span>
             </label>
             <select
+              id="lead_id"
               name="lead_id"
-              defaultValue={defaultLeadId}
+              defaultValue={echoed.lead_id ?? defaultLeadId}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="">— None —</option>
@@ -182,15 +241,23 @@ export function QuoteBuilder({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="valid_until">
               Valid until <span className="text-xs text-slate-400">Optional</span>
             </label>
             <input
+              id="valid_until"
               type="date"
               name="valid_until"
-              defaultValue={defaultValidUntil}
+              defaultValue={echoed.valid_until ?? defaultValidUntil}
+              aria-invalid={!!validUntilError}
+              aria-describedby={validUntilError ? "valid_until-error" : undefined}
               className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             />
+            {validUntilError ? (
+              <p id="valid_until-error" role="alert" className="mt-1 text-xs text-red-700">
+                {validUntilError}
+              </p>
+            ) : null}
           </div>
         </div>
       </section>
@@ -206,6 +273,12 @@ export function QuoteBuilder({
             + Add line
           </button>
         </div>
+
+        {lineItemsError ? (
+          <p role="alert" className="mt-3 text-xs text-red-700">
+            {lineItemsError}
+          </p>
+        ) : null}
 
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -322,39 +395,50 @@ export function QuoteBuilder({
         <h2 className="text-base font-semibold text-slate-900">Notes + terms</h2>
         <div className="mt-4 grid grid-cols-1 gap-4">
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="notes">
               Notes <span className="text-xs text-slate-400">Visible on the customer PDF</span>
             </label>
             <textarea
+              id="notes"
               name="notes"
               rows={3}
-              defaultValue={defaultNotes}
+              defaultValue={echoed.notes ?? defaultNotes}
+              aria-invalid={!!notesError}
+              aria-describedby={notesError ? "notes-error" : undefined}
               className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
               placeholder="e.g. Includes scaffolding hire and disposal of old roofing."
             />
+            {notesError ? (
+              <p id="notes-error" role="alert" className="mt-1 text-xs text-red-700">
+                {notesError}
+              </p>
+            ) : null}
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800" htmlFor="terms">
               Terms &amp; conditions
             </label>
             <textarea
+              id="terms"
               name="terms"
               rows={5}
-              defaultValue={defaultTerms}
+              defaultValue={echoed.terms ?? defaultTerms}
+              aria-invalid={!!termsError}
+              aria-describedby={termsError ? "terms-error" : undefined}
               className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
               placeholder="Standard payment terms, warranty, etc."
             />
+            {termsError ? (
+              <p id="terms-error" role="alert" className="mt-1 text-xs text-red-700">
+                {termsError}
+              </p>
+            ) : null}
           </div>
         </div>
       </section>
 
       <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          className="rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          {submitLabel}
-        </button>
+        <SubmitButton pending={pending}>{submitLabel}</SubmitButton>
         <Link
           href={cancelHref}
           className="text-sm font-medium text-slate-600 hover:text-slate-900"

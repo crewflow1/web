@@ -13,6 +13,12 @@ import {
   leaveRequestFormSchema,
   inviteStaffSchema,
 } from "@/lib/staff/schema";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
 /**
  * Staff CRUD + rota + leave server actions.
@@ -240,25 +246,19 @@ export async function updateStaffRole(userId: string, formData: FormData) {
   redirect(`/staff/${userId}?saved=role`);
 }
 
-export async function updateStaffProfile(userId: string, formData: FormData) {
+export async function updateStaffProfile(
+  userId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
   const { ctx } = await requireOrgContext();
   await requireAdmin(ctx.org.id);
-  if (!uuid.safeParse(userId).success) redirect("/staff");
-
-  const parsed = updateStaffProfileSchema.safeParse({
-    full_name: formData.get("full_name") ?? "",
-    phone: formData.get("phone") ?? "",
-    hourly_pay: formData.get("hourly_pay") ?? "",
-    employment_type: formData.get("employment_type") ?? "",
-    start_date: formData.get("start_date") ?? "",
-    emergency_contact_name: formData.get("emergency_contact_name") ?? "",
-    emergency_contact_phone: formData.get("emergency_contact_phone") ?? "",
-    emergency_contact_relationship: formData.get("emergency_contact_relationship") ?? "",
-  });
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid input";
-    redirect(`/staff/${userId}?error=${encodeURIComponent(msg)}`);
+  if (!uuid.safeParse(userId).success) {
+    return formError("Invalid staff id.");
   }
+
+  const result = validateFormData(formData, updateStaffProfileSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
 
   // Verify the target user is actually a member of this org.
   const supabase = await createClient();
@@ -268,39 +268,42 @@ export async function updateStaffProfile(userId: string, formData: FormData) {
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId);
   if ((membershipCount ?? 0) === 0) {
-    redirect(`/staff?error=not_a_member`);
+    return formError("That user isn't a member of this organisation.");
   }
 
   const emergency =
-    parsed.data.emergency_contact_name ||
-    parsed.data.emergency_contact_phone ||
-    parsed.data.emergency_contact_relationship
+    result.data.emergency_contact_name ||
+    result.data.emergency_contact_phone ||
+    result.data.emergency_contact_relationship
       ? {
-          name: parsed.data.emergency_contact_name ?? null,
-          phone: parsed.data.emergency_contact_phone ?? null,
-          relationship: parsed.data.emergency_contact_relationship ?? null,
+          name: result.data.emergency_contact_name ?? null,
+          phone: result.data.emergency_contact_phone ?? null,
+          relationship: result.data.emergency_contact_relationship ?? null,
         }
       : null;
 
   const { error } = await supabase
     .from("users")
     .update({
-      full_name: parsed.data.full_name ?? null,
-      phone: parsed.data.phone ?? null,
-      hourly_pay: parsed.data.hourly_pay ?? null,
-      employment_type: parsed.data.employment_type ?? null,
-      start_date: parsed.data.start_date ?? null,
+      full_name: result.data.full_name ?? null,
+      phone: result.data.phone ?? null,
+      hourly_pay: result.data.hourly_pay ?? null,
+      employment_type: result.data.employment_type ?? null,
+      start_date: result.data.start_date ?? null,
       emergency_contact: emergency,
     })
     .eq("id", userId);
   if (error) {
     console.error("[staff] profile update failed", error);
-    redirect(`/staff/${userId}?error=update_failed`);
+    return formError(
+      "Couldn't save changes. Try again.",
+      result.data as Record<string, unknown>,
+    );
   }
 
   revalidatePath(`/staff/${userId}`);
   revalidatePath("/staff");
-  redirect(`/staff/${userId}?saved=profile`);
+  return formSuccess({ successMessage: "Profile saved." });
 }
 
 export async function removeStaff(userId: string) {
@@ -338,23 +341,21 @@ export async function removeStaff(userId: string) {
 // Rota
 // -------------------------------------------------------------------------
 
-export async function createRotaEntry(formData: FormData) {
+export async function createRotaEntry(
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
   await requireAdmin(ctx.org.id);
 
-  const parsed = rotaEntryFormSchema.safeParse({
-    user_id: formData.get("user_id") ?? "",
-    starts_at: formData.get("starts_at") ?? "",
-    ends_at: formData.get("ends_at") ?? "",
-    job_id: formData.get("job_id") ?? "",
-    notes: formData.get("notes") ?? "",
-  });
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid shift";
-    redirect(`/staff/rota?error=${encodeURIComponent(msg)}`);
-  }
-  if (new Date(parsed.data.ends_at) <= new Date(parsed.data.starts_at)) {
-    redirect(`/staff/rota?error=${encodeURIComponent("End must be after start")}`);
+  const result = validateFormData(formData, rotaEntryFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  if (new Date(result.data.ends_at) <= new Date(result.data.starts_at)) {
+    return formError(
+      "End must be after start.",
+      result.data as Record<string, unknown>,
+    );
   }
 
   const supabase = await createClient();
@@ -362,23 +363,26 @@ export async function createRotaEntry(formData: FormData) {
   // Conflict check: does the assigned user already have an overlapping
   // shift on this day? Pull a window and compare in-process so we don't
   // require a Postgres range type.
-  const dayStart = parsed.data.starts_at.slice(0, 10);
+  const dayStart = result.data.starts_at.slice(0, 10);
   const { data: sameDay } = await supabase
     .from("rota_entries")
     .select("starts_at, ends_at")
-    .eq("user_id", parsed.data.user_id)
+    .eq("user_id", result.data.user_id)
     .gte("starts_at", `${dayStart}T00:00:00Z`)
     .lte("starts_at", `${dayStart}T23:59:59Z`);
   if (sameDay && sameDay.length > 0) {
-    const ns = new Date(parsed.data.starts_at).getTime();
-    const ne = new Date(parsed.data.ends_at).getTime();
+    const ns = new Date(result.data.starts_at).getTime();
+    const ne = new Date(result.data.ends_at).getTime();
     const hit = sameDay.find((s) => {
       const a = new Date(s.starts_at).getTime();
       const b = new Date(s.ends_at).getTime();
       return ns < b && a < ne;
     });
     if (hit) {
-      redirect(`/staff/rota?error=${encodeURIComponent("Conflict: this staff member already has an overlapping shift")}`);
+      return formError(
+        "Conflict: this staff member already has an overlapping shift.",
+        result.data as Record<string, unknown>,
+      );
     }
   }
 
@@ -386,20 +390,23 @@ export async function createRotaEntry(formData: FormData) {
     .from("rota_entries")
     .insert({
       org_id: ctx.org.id,
-      user_id: parsed.data.user_id,
-      job_id: parsed.data.job_id ?? null,
-      starts_at: parsed.data.starts_at,
-      ends_at: parsed.data.ends_at,
-      notes: parsed.data.notes ?? null,
+      user_id: result.data.user_id,
+      job_id: result.data.job_id ?? null,
+      starts_at: result.data.starts_at,
+      ends_at: result.data.ends_at,
+      notes: result.data.notes ?? null,
       created_by: user.id,
     });
   if (error) {
     console.error("[rota] insert failed", error);
-    redirect(`/staff/rota?error=create_failed`);
+    return formError(
+      "Couldn't save the shift. Try again.",
+      result.data as Record<string, unknown>,
+    );
   }
 
   revalidatePath("/staff/rota");
-  redirect("/staff/rota?saved=created");
+  return formSuccess({ successMessage: "Shift added." });
 }
 
 export async function deleteRotaEntry(entryId: string) {
@@ -425,20 +432,15 @@ export async function deleteRotaEntry(entryId: string) {
 // Leave requests
 // -------------------------------------------------------------------------
 
-export async function createLeaveRequest(formData: FormData) {
+export async function createLeaveRequest(
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
   // Staff can submit their own — no admin gate.
 
-  const parsed = leaveRequestFormSchema.safeParse({
-    type: formData.get("type") ?? "",
-    starts_at: formData.get("starts_at") ?? "",
-    ends_at: formData.get("ends_at") ?? "",
-    reason: formData.get("reason") ?? "",
-  });
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid request";
-    redirect(`/staff/leave?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, leaveRequestFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -446,19 +448,22 @@ export async function createLeaveRequest(formData: FormData) {
     .insert({
       org_id: ctx.org.id,
       user_id: user.id,
-      type: parsed.data.type,
-      starts_at: parsed.data.starts_at,
-      ends_at: parsed.data.ends_at,
-      reason: parsed.data.reason ?? null,
+      type: result.data.type,
+      starts_at: result.data.starts_at,
+      ends_at: result.data.ends_at,
+      reason: result.data.reason ?? null,
       status: "pending",
     });
   if (error) {
     console.error("[leave] insert failed", error);
-    redirect(`/staff/leave?error=create_failed`);
+    return formError(
+      "Couldn't submit the request. Try again.",
+      result.data as Record<string, unknown>,
+    );
   }
 
   revalidatePath("/staff/leave");
-  redirect("/staff/leave?saved=requested");
+  return formSuccess({ successMessage: "Leave request submitted." });
 }
 
 export async function reviewLeaveRequest(

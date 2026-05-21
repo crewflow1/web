@@ -98,7 +98,11 @@ export const createLeadSchema = z.object({
   ai_summary: optionalString(5000),
 });
 
+export type CreateLeadInput = z.infer<typeof createLeadSchema>;
+
 export const updateLeadSchema = createLeadSchema.partial();
+
+export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 
 export const moveStageSchema = z.object({
   status: z.enum(LEAD_STAGES),

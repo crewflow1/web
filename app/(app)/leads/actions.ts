@@ -10,6 +10,12 @@ import {
   updateLeadSchema,
   moveStageSchema,
 } from "@/lib/leads/schema";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
 
 /**
  * Lead pipeline server actions.
@@ -21,43 +27,17 @@ import {
  * (per the org-wide policy set in 20260515150000).
  */
 
+type LeadValues = Record<string, unknown>;
+
 const idSchema = z.string().uuid();
 
-function parseCreate(formData: FormData) {
-  return createLeadSchema.safeParse({
-    source: formData.get("source") ?? "phone",
-    service: formData.get("service") ?? "",
-    urgency: formData.get("urgency") ?? "normal",
-    postcode: formData.get("postcode") ?? "",
-    customer_id: formData.get("customer_id") ?? "",
-    assigned_to: formData.get("assigned_to") ?? "",
-    estimated_value: formData.get("estimated_value") ?? "",
-    notes: formData.get("notes") ?? "",
-    ai_summary: formData.get("ai_summary") ?? "",
-  });
-}
-
-function parseUpdate(formData: FormData) {
-  return updateLeadSchema.safeParse({
-    source: formData.get("source") ?? undefined,
-    service: formData.get("service") ?? "",
-    urgency: formData.get("urgency") ?? undefined,
-    postcode: formData.get("postcode") ?? "",
-    customer_id: formData.get("customer_id") ?? "",
-    assigned_to: formData.get("assigned_to") ?? "",
-    estimated_value: formData.get("estimated_value") ?? "",
-    notes: formData.get("notes") ?? "",
-    ai_summary: formData.get("ai_summary") ?? "",
-  });
-}
-
-export async function createLead(formData: FormData) {
+export async function createLead(
+  _prevState: FormState<LeadValues>,
+  formData: FormData,
+): Promise<FormState<LeadValues>> {
   const { ctx } = await requireOrgContext();
-  const parsed = parseCreate(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid lead";
-    redirect(`/leads/new?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, createLeadSchema);
+  if (!result.ok) return result.state as FormState<LeadValues>;
 
   const now = new Date().toISOString();
   const supabase = await createClient();
@@ -65,15 +45,15 @@ export async function createLead(formData: FormData) {
     .from("leads")
     .insert({
       org_id: ctx.org.id,
-      source: parsed.data.source,
-      service: parsed.data.service ?? null,
-      urgency: parsed.data.urgency ?? "normal",
-      postcode: parsed.data.postcode ?? null,
-      customer_id: parsed.data.customer_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
-      estimated_value: parsed.data.estimated_value ?? null,
-      notes: parsed.data.notes ?? null,
-      ai_summary: parsed.data.ai_summary ?? null,
+      source: result.data.source,
+      service: result.data.service ?? null,
+      urgency: result.data.urgency ?? "normal",
+      postcode: result.data.postcode ?? null,
+      customer_id: result.data.customer_id ?? null,
+      assigned_to: result.data.assigned_to ?? null,
+      estimated_value: result.data.estimated_value ?? null,
+      notes: result.data.notes ?? null,
+      ai_summary: result.data.ai_summary ?? null,
       status: "new",
       first_contact_at: now,
       last_activity_at: now,
@@ -83,36 +63,40 @@ export async function createLead(formData: FormData) {
 
   if (error || !data) {
     console.error("[leads] create failed", error);
-    redirect("/leads/new?error=create_failed");
+    return formError("Couldn't save the lead. Try again.", result.data as LeadValues);
   }
   revalidatePath("/leads");
-  redirect(`/leads/${data.id}`);
+  return formSuccess({
+    successMessage: "Lead saved.",
+    redirectTo: `/leads/${data.id}`,
+  });
 }
 
-export async function updateLead(id: string, formData: FormData) {
+export async function updateLead(
+  id: string,
+  _prevState: FormState<LeadValues>,
+  formData: FormData,
+): Promise<FormState<LeadValues>> {
   await requireOrgContext();
-  if (!idSchema.safeParse(id).success) redirect("/leads");
+  if (!idSchema.safeParse(id).success) return formError("Invalid lead id.");
 
-  const parsed = parseUpdate(formData);
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid lead";
-    redirect(`/leads/${id}?error=${encodeURIComponent(msg)}`);
-  }
+  const result = validateFormData(formData, updateLeadSchema);
+  if (!result.ok) return result.state as FormState<LeadValues>;
 
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("leads")
     .update(
       {
-        source: parsed.data.source ?? undefined,
-        service: parsed.data.service ?? null,
-        urgency: parsed.data.urgency ?? undefined,
-        postcode: parsed.data.postcode ?? null,
-        customer_id: parsed.data.customer_id ?? null,
-        assigned_to: parsed.data.assigned_to ?? null,
-        estimated_value: parsed.data.estimated_value ?? null,
-        notes: parsed.data.notes ?? null,
-        ai_summary: parsed.data.ai_summary ?? null,
+        source: result.data.source ?? undefined,
+        service: result.data.service ?? null,
+        urgency: result.data.urgency ?? undefined,
+        postcode: result.data.postcode ?? null,
+        customer_id: result.data.customer_id ?? null,
+        assigned_to: result.data.assigned_to ?? null,
+        estimated_value: result.data.estimated_value ?? null,
+        notes: result.data.notes ?? null,
+        ai_summary: result.data.ai_summary ?? null,
         last_activity_at: new Date().toISOString(),
       },
       { count: "exact" },
@@ -120,19 +104,24 @@ export async function updateLead(id: string, formData: FormData) {
     .eq("id", id);
   if (error) {
     console.error("[leads] update failed", error);
-    redirect(`/leads/${id}?error=update_failed`);
+    return formError("Couldn't save changes. Try again.", result.data as LeadValues);
   }
   if (count === 0) {
-    redirect(`/leads/${id}?error=update_denied`);
+    return formError(
+      "You don't have permission to edit this lead.",
+      result.data as LeadValues,
+    );
   }
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
-  redirect(`/leads/${id}?saved=1`);
+  return formSuccess({ successMessage: "Saved." });
 }
 
 /**
  * Quick-move stage from anywhere (card on /leads OR the detail page).
  * Bumps last_activity_at so the recency sort surfaces it.
+ *
+ * Button-only — keeps redirect+querystring pattern.
  */
 export async function moveLeadStage(id: string, formData: FormData) {
   await requireOrgContext();
