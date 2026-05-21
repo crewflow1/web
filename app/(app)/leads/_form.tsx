@@ -89,6 +89,44 @@ export function LeadForm({
       <FormErrorBanner error={state.error} />
       <FormSuccessBanner message={state.ok ? state.successMessage : null} />
 
+      <fieldset className="space-y-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+          Who got in touch
+        </legend>
+        <Field
+          name="contact_name"
+          label="Name"
+          required
+          placeholder="e.g. Sarah Murphy"
+          autoComplete="name"
+          defaultValue={pick("contact_name")}
+          error={fe.contact_name}
+        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            name="contact_email"
+            label="Email"
+            type="email"
+            placeholder="sarah@example.com"
+            autoComplete="email"
+            defaultValue={pick("contact_email")}
+            error={fe.contact_email}
+            help="Email or phone is required."
+          />
+          <Field
+            name="contact_phone"
+            label="Phone"
+            type="tel"
+            inputMode="tel"
+            placeholder="+44 7700 900123"
+            autoComplete="tel"
+            defaultValue={pick("contact_phone")}
+            error={fe.contact_phone}
+            help="Email or phone is required."
+          />
+        </div>
+      </fieldset>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <SelectField
           name="source"

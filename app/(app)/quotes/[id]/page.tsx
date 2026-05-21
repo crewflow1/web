@@ -19,6 +19,8 @@ import {
 } from "../actions";
 import type { LineItem } from "@/lib/quotes/schema";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { ShareLinkPanel } from "@/app/_components/share-link-panel";
+import { env } from "@/lib/env";
 
 /**
  * Quote edit + lifecycle actions page.
@@ -145,7 +147,9 @@ export default async function EditQuotePage({
       ? "Quote accepted, but the auto-invoice didn't create. Generate it manually from /invoices/new."
       : null;
 
-  const publicUrl = quote.public_token ? `/q/${quote.public_token}` : null;
+  const publicAbsoluteUrl = quote.public_token
+    ? `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/q/${quote.public_token}`
+    : null;
 
   const isLocked = status === "accepted" || status === "declined" || status === "expired";
 
@@ -206,19 +210,14 @@ export default async function EditQuotePage({
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Share + lifecycle</h2>
         <div className="mt-3 space-y-3 text-sm">
-          {publicUrl ? (
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Customer link
-              </div>
-              <div className="mt-1 break-all rounded-md bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
-                {publicUrl}
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Share this URL with the customer. They can view, accept, or
-                decline online. Loading the link stamps a viewed-at timestamp.
-              </p>
-            </div>
+          {publicAbsoluteUrl ? (
+            <ShareLinkPanel
+              title="Send this link to your client"
+              hint={`They can view, accept, or decline online. Loading the link stamps a viewed-at timestamp on quote ${quote.number}.`}
+              url={publicAbsoluteUrl}
+              subject={`Your quote ${quote.number}`}
+              bodyText={`Here's your quote ${quote.number} — you can view it and accept or decline online:`}
+            />
           ) : null}
 
           <ul className="space-y-1 text-xs text-slate-600">

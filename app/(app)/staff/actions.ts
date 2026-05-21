@@ -74,6 +74,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
     full_name: formData.get("full_name") ?? "",
     email: formData.get("email"),
     role: formData.get("role"),
+    phone: formData.get("phone") ?? "",
     employment_type: formData.get("employment_type") ?? "",
     hourly_pay: formData.get("hourly_pay") ?? "",
     emergency_contact_name: formData.get("emergency_contact_name") ?? "",
@@ -100,7 +101,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
-    .select("id, email, full_name, hourly_pay, employment_type, emergency_contact")
+    .select("id, email, full_name, phone, hourly_pay, employment_type, emergency_contact")
     .eq("email", data.email)
     .maybeSingle();
 
@@ -122,6 +123,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
           invited_org_id: ctx.org.id,
           invited_role: data.role,
           invited_full_name: data.full_name ?? null,
+          invited_phone: data.phone ?? null,
           invited_employment_type: data.employment_type ?? null,
           invited_hourly_pay: data.hourly_pay ?? null,
           invited_emergency_contact: emergencyContact,
@@ -174,12 +176,14 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   // never overwrite a user's existing data.
   type UserUpdate = {
     full_name?: string;
+    phone?: string;
     hourly_pay?: number;
     employment_type?: string;
     emergency_contact?: { name: string | null; phone: string | null; relationship: string | null };
   };
   const profileUpdates: UserUpdate = {};
   if (!existing.full_name && data.full_name) profileUpdates.full_name = data.full_name;
+  if (!existing.phone && data.phone) profileUpdates.phone = data.phone;
   if (existing.hourly_pay === null && data.hourly_pay !== undefined)
     profileUpdates.hourly_pay = data.hourly_pay;
   if (!existing.employment_type && data.employment_type)

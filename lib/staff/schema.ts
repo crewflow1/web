@@ -90,6 +90,9 @@ export const inviteStaffSchema = z.object({
   // UI shows Owner/Admin/Staff but Owner is rejected by the action.
   // Only the onboarding flow assigns owner role.
   role: z.enum(STAFF_ROLES, { errorMap: () => ({ message: "Pick a role" }) }),
+  // Personal phone (separate from emergency_contact_phone) — pre-fill
+  // that lands on users.phone after they accept the invite.
+  phone: optionalString(40),
   employment_type: z
     .enum(EMPLOYMENT_TYPES)
     .or(z.literal(""))

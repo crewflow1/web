@@ -41,10 +41,17 @@ export async function createLead(
 
   const now = new Date().toISOString();
   const supabase = await createClient();
+  // contact_name/email/phone columns landed in migration
+  // 20260601000000_leads_contact_fields and aren't yet in the generated
+  // Supabase types — the `as never` keeps the typed client happy until
+  // `pnpm db:generate` next runs.
   const { data, error } = await supabase
     .from("leads")
     .insert({
       org_id: ctx.org.id,
+      contact_name: result.data.contact_name,
+      contact_email: result.data.contact_email ?? null,
+      contact_phone: result.data.contact_phone ?? null,
       source: result.data.source,
       service: result.data.service ?? null,
       urgency: result.data.urgency ?? "normal",
@@ -57,7 +64,7 @@ export async function createLead(
       status: "new",
       first_contact_at: now,
       last_activity_at: now,
-    })
+    } as never)
     .select("id")
     .single();
 
@@ -88,6 +95,9 @@ export async function updateLead(
     .from("leads")
     .update(
       {
+        contact_name: result.data.contact_name,
+        contact_email: result.data.contact_email ?? null,
+        contact_phone: result.data.contact_phone ?? null,
         source: result.data.source ?? undefined,
         service: result.data.service ?? null,
         urgency: result.data.urgency ?? undefined,
@@ -98,7 +108,7 @@ export async function updateLead(
         notes: result.data.notes ?? null,
         ai_summary: result.data.ai_summary ?? null,
         last_activity_at: new Date().toISOString(),
-      },
+      } as never,
       { count: "exact" },
     )
     .eq("id", id);

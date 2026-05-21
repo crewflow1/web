@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { CustomerForm } from "../_form";
+import { ShareLinkPanel } from "@/app/_components/share-link-panel";
+import { env } from "@/lib/env";
 
 /**
  * Customer edit page.
@@ -326,15 +328,13 @@ export default async function EditCustomerPage({
 
         {customer.portal_token ? (
           <div className="mt-4 space-y-3">
-            <div className="break-all rounded-md bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">
-              /customer-portal/{customer.portal_token}
-            </div>
-            <p className="text-xs text-slate-500">
-              Prepend your site URL when sharing —
-              <code className="ml-1 rounded bg-slate-100 px-1 py-0.5">
-                https://crewflow.uk/customer-portal/{customer.portal_token.slice(0, 8)}…
-              </code>
-            </p>
+            <ShareLinkPanel
+              title="Send this link to your client"
+              hint={`${customer.name} can view their quotes, invoices and payment history at this URL. Anyone with the link gets access — no password needed.`}
+              url={`${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/customer-portal/${customer.portal_token}`}
+              subject={`Your account with us`}
+              bodyText={`Here's your private link to view your quotes and invoices online:`}
+            />
             <form action={rotateCustomerPortalToken.bind(null, customer.id)}>
               <button
                 type="submit"

@@ -72,6 +72,21 @@ export default async function LeadDetailPage({
     .maybeSingle();
   if (!lead) notFound();
 
+  // contact_name/email/phone landed in migration 20260601000000 and
+  // aren't in the generated Supabase types yet. We fetch them with a
+  // string selector and an `unknown`-cast to keep the rest of the page
+  // strongly typed.
+  const { data: contactRaw } = await supabase
+    .from("leads")
+    .select("contact_name, contact_email, contact_phone" as never)
+    .eq("id", id)
+    .maybeSingle();
+  const leadContact = (contactRaw ?? {}) as unknown as {
+    contact_name: string | null;
+    contact_email: string | null;
+    contact_phone: string | null;
+  };
+
   const [customers, staff, callsRes, quoteRes] = await Promise.all([
     listCustomersForLead(),
     listStaffForLead(),
@@ -119,11 +134,32 @@ export default async function LeadDetailPage({
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900">
-            {lead.customer?.name ?? "Unknown enquirer"}
+            {leadContact.contact_name ?? lead.customer?.name ?? "Unknown enquirer"}
           </h1>
           <p className="mt-1 text-sm text-slate-600">
             {lead.service ?? "—"} · {lead.source}
           </p>
+          {leadContact.contact_email || leadContact.contact_phone ? (
+            <p className="mt-0.5 text-sm text-slate-500">
+              {leadContact.contact_email ? (
+                <a
+                  href={`mailto:${leadContact.contact_email}`}
+                  className="hover:text-slate-900"
+                >
+                  {leadContact.contact_email}
+                </a>
+              ) : null}
+              {leadContact.contact_email && leadContact.contact_phone ? " · " : ""}
+              {leadContact.contact_phone ? (
+                <a
+                  href={`tel:${leadContact.contact_phone}`}
+                  className="hover:text-slate-900"
+                >
+                  {leadContact.contact_phone}
+                </a>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span
@@ -255,6 +291,9 @@ export default async function LeadDetailPage({
           customers={customers}
           staff={staff}
           defaults={{
+            contact_name: leadContact.contact_name ?? "",
+            contact_email: leadContact.contact_email ?? "",
+            contact_phone: leadContact.contact_phone ?? "",
             source: lead.source,
             service: lead.service ?? "",
             urgency: lead.urgency ?? "normal",

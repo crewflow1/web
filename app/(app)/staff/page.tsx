@@ -109,7 +109,11 @@ export default async function StaffPage({
             </Link>
           </p>
         </div>
-        {isAdmin ? <AddStaffButton size="md">+ Add staff</AddStaffButton> : null}
+        {isAdmin ? (
+          <AddStaffButton size="lg" testId="add-staff-button">
+            + Add staff
+          </AddStaffButton>
+        ) : null}
       </header>
 
       {errorMessage ? (
@@ -141,8 +145,19 @@ export default async function StaffPage({
             <tbody className="divide-y divide-slate-100">
               {members.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-sm text-slate-500">
-                    No members yet.
+                  <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                    <p className="font-medium text-slate-700">No members yet.</p>
+                    {isAdmin ? (
+                      <p className="mt-2">
+                        Use the{" "}
+                        <strong className="text-slate-900">+ Add staff</strong>{" "}
+                        button above to invite your first teammate.
+                      </p>
+                    ) : (
+                      <p className="mt-2">
+                        Ask an owner or admin to invite you.
+                      </p>
+                    )}
                   </td>
                 </tr>
               ) : (

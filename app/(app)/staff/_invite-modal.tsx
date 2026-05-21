@@ -171,17 +171,29 @@ export function InviteStaffModal() {
                 </Field>
               </Row>
 
-              <Field label="Hourly pay (£)" error={fieldErrors.hourly_pay}>
-                <input
-                  name="hourly_pay"
-                  type="number"
-                  min={0}
-                  max={1000}
-                  step={0.01}
-                  placeholder="e.g. 18.50"
-                  className={INPUT}
-                />
-              </Field>
+              <Row>
+                <Field label="Phone" error={fieldErrors.phone}>
+                  <input
+                    name="phone"
+                    type="tel"
+                    maxLength={40}
+                    autoComplete="tel"
+                    placeholder="07700 900 123"
+                    className={INPUT}
+                  />
+                </Field>
+                <Field label="Hourly pay (£)" error={fieldErrors.hourly_pay}>
+                  <input
+                    name="hourly_pay"
+                    type="number"
+                    min={0}
+                    max={1000}
+                    step={0.01}
+                    placeholder="e.g. 18.50"
+                    className={INPUT}
+                  />
+                </Field>
+              </Row>
 
               <fieldset className="rounded-lg border border-slate-200 p-3">
                 <legend className="px-1 text-xs font-medium text-slate-700">
@@ -271,21 +283,29 @@ function Field({
 
 /**
  * Button that opens the modal. Render anywhere admins can act.
+ *
+ * NOTE: the parent page is responsible for the admin/staff role gate
+ * (`{isAdmin ? <AddStaffButton/> : null}`). Staff users must never see
+ * this button — the action layer rejects non-admin invites regardless,
+ * but the UX rule is enforced at the parent.
  */
 export function AddStaffButton({
   size = "md",
   variant = "primary",
   children = "+ Add staff",
   className,
+  testId,
 }: {
   size?: "sm" | "md" | "lg";
   variant?: "primary" | "secondary" | "ghost";
   children?: React.ReactNode;
   className?: string;
+  testId?: string;
 }) {
   return (
     <button
       type="button"
+      data-testid={testId}
       onClick={() => window.dispatchEvent(new Event("crewflow:open-add-staff"))}
       className={buttonClass(variant, size, className)}
     >
