@@ -25,11 +25,6 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DIRECT_URL: z.string().min(1).optional(),
 
-  // -- Stripe (required only when payments code runs) ---------------------
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
@@ -45,7 +40,7 @@ const envSchema = z.object({
   // -- Email --------------------------------------------------------------
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
-  RESEND_REPLY_TO: z.string().default("moe@crewflow.uk"),
+  RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
   // -- Inngest ------------------------------------------------------------
   INNGEST_EVENT_KEY: z.string().optional(),

@@ -1390,7 +1390,6 @@ export type Database = {
           phone: string | null
           plan: string
           slug: string
-          stripe_customer_id: string | null
           timezone: string
           trial_ends_at: string | null
           updated_at: string
@@ -1410,7 +1409,6 @@ export type Database = {
           phone?: string | null
           plan?: string
           slug: string
-          stripe_customer_id?: string | null
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
@@ -1430,7 +1428,6 @@ export type Database = {
           phone?: string | null
           plan?: string
           slug?: string
-          stripe_customer_id?: string | null
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
@@ -1922,6 +1919,52 @@ export type Database = {
           },
         ]
       }
+      staff_secrets: {
+        Row: {
+          ni_number: string | null
+          org_id: string
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+        }
+        Insert: {
+          ni_number?: string | null
+          org_id: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+        }
+        Update: {
+          ni_number?: string | null
+          org_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_secrets_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_secrets_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_secrets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       time_entries: {
         Row: {
           breaks: Json
@@ -2009,7 +2052,6 @@ export type Database = {
           full_name: string | null
           hourly_pay: number | null
           id: string
-          ni_number: string | null
           phone: string | null
           start_date: string | null
           updated_at: string
@@ -2023,7 +2065,6 @@ export type Database = {
           full_name?: string | null
           hourly_pay?: number | null
           id: string
-          ni_number?: string | null
           phone?: string | null
           start_date?: string | null
           updated_at?: string
@@ -2037,7 +2078,6 @@ export type Database = {
           full_name?: string | null
           hourly_pay?: number | null
           id?: string
-          ni_number?: string | null
           phone?: string | null
           start_date?: string | null
           updated_at?: string

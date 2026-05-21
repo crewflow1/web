@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { payrollCsv } from "@/lib/payroll/compute";
+import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
 
 export const runtime = "nodejs";
 
@@ -20,22 +21,23 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: run }, { data: lines }] = await Promise.all([
+  const [{ data: run }, { data: lines }, niByUser] = await Promise.all([
     supabase
       .from("payroll_runs")
-      .select("cycle, period_start, period_end")
+      .select("cycle, period_start, period_end, org_id")
       .eq("id", id)
       .maybeSingle(),
     supabase
       .from("payroll_lines")
       .select(
         `
-          hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
-          user:users ( full_name, ni_number )
+          user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
+          user:users ( full_name )
         `,
       )
       .eq("payroll_run_id", id)
       .order("gross_pay", { ascending: false }),
+    fetchNiNumbersForOrg(ctx.org.id),
   ]);
 
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -43,7 +45,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const csv = payrollCsv(
     (lines ?? []).map((l) => ({
       full_name: l.user?.full_name ?? "—",
-      ni_number: l.user?.ni_number ?? null,
+      ni_number: niByUser.get(l.user_id) ?? null,
       hours: Number(l.hours ?? 0),
       hourly_pay: Number(l.hourly_pay ?? 0),
       gross_pay: Number(l.gross_pay ?? 0),
