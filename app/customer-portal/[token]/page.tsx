@@ -1,8 +1,8 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../_helpers";
 import { PortalShell } from "./_shell";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
  * Customer portal overview.
@@ -43,7 +43,10 @@ export default async function PortalOverviewPage({
 }) {
   const { token } = await params;
   const loaded = await loadCustomerByPortalToken(token);
-  if (!loaded) notFound();
+  // Tokens get rotated by the contractor whenever they want to revoke access.
+  // Customers receive multiple links over time; when an old one is hit we
+  // surface a friendly "request a new link" page instead of a bare 404.
+  if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
 
   const admin = createAdminClient();

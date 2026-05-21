@@ -1,7 +1,7 @@
-import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
  * Customer-side invoices list.
@@ -42,7 +42,7 @@ export default async function PortalInvoicesPage({
 }) {
   const { token } = await params;
   const loaded = await loadCustomerByPortalToken(token);
-  if (!loaded) notFound();
+  if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
 
   const admin = createAdminClient();
