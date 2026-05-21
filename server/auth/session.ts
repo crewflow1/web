@@ -18,6 +18,7 @@ export type OrgContext = {
     status: OrgStatus;
     plan: string;
     trial_ends_at: string | null;
+    created_at: string;
     onboarding_state: Record<string, unknown>;
   };
 };
@@ -88,7 +89,7 @@ export async function getOrgForUser(userId: string): Promise<OrgContext | null> 
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at" as never,
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at" as never,
     )
     .eq("id", preferred.org_id)
     .single();
@@ -103,6 +104,7 @@ export async function getOrgForUser(userId: string): Promise<OrgContext | null> 
     status: OrgStatus | null;
     plan: string | null;
     trial_ends_at: string | null;
+    created_at: string;
   };
 
   return {
@@ -118,6 +120,7 @@ export async function getOrgForUser(userId: string): Promise<OrgContext | null> 
       status: (row.status ?? "active") as OrgStatus,
       plan: row.plan ?? "trial",
       trial_ends_at: row.trial_ends_at,
+      created_at: row.created_at,
     },
   };
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser, getOrgForUser, orgHasActiveAccess } from "@/server/auth/session";
+import { RefreshStatusButton } from "./_refresh-button";
 
 /**
  * Lock screen for orgs that aren't active yet.
@@ -9,6 +10,11 @@ import { requireUser, getOrgForUser, orgHasActiveAccess } from "@/server/auth/se
  * the non-access states (pending / suspended / rejected). Each state
  * gets its own headline + body so the customer knows what's happening
  * and what to do.
+ *
+ * Friction-removal pass (Sprint A): explicit signup timestamp, hours-
+ * elapsed counter, "we'll email you when approved" promise, and a
+ * Refresh status button that re-runs the gate — so the user has
+ * something they CAN do other than wait blindly.
  *
  * If the user lands here with an active org (e.g. by typing the URL),
  * we bounce them straight to /dashboard.
@@ -20,18 +26,23 @@ const COPY: Record<
 > = {
   pending: {
     title: "CrewFlow access pending approval.",
-    body: "Thanks for signing up. A CrewFlow team member will review your company and unlock access shortly. You'll get an email at the address you signed up with when it's ready.",
-    action: "Most signups are approved within one UK business day.",
+    body: "Thanks for signing up. A CrewFlow team member is reviewing your company. We'll email you the moment access is unlocked — no need to refresh this page.",
+    action: "Most signups are approved within one UK business day (Mon–Fri, 9–5 GMT).",
   },
   suspended: {
     title: "CrewFlow access is paused for this company.",
-    body: "Access has been temporarily suspended — usually due to billing or an active investigation. Email us and we'll get it sorted.",
+    body: "Access has been temporarily suspended — usually a billing issue or active investigation. Email us and we'll get it sorted.",
   },
   rejected: {
     title: "We couldn't approve this signup.",
     body: "If you think this is a mistake, reply to your signup confirmation email or contact us and we'll take another look.",
   },
 };
+
+function hoursAgo(iso: string): number {
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / 3_600_000));
+}
 
 export default async function AccessPendingPage() {
   const user = await requireUser();
@@ -45,6 +56,14 @@ export default async function AccessPendingPage() {
 
   // COPY.pending is statically present — non-null assertion is safe.
   const copy = COPY[ctx.org.status] ?? COPY.pending!;
+
+  // Created-at on organizations is the closest thing to a "submitted at"
+  // for pending review. We don't expose the exact timestamp (avoid
+  // implying SLA), just an integer hours count so the user knows
+  // something is happening.
+  const createdAtIso =
+    (ctx.org as { created_at?: string }).created_at ?? null;
+  const elapsedHours = createdAtIso ? hoursAgo(createdAtIso) : null;
 
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-12">
@@ -79,12 +98,25 @@ export default async function AccessPendingPage() {
                 <strong className="text-slate-900">Company:</strong>{" "}
                 {ctx.org.name}
               </p>
+              {ctx.org.status === "pending" && elapsedHours !== null ? (
+                <p className="mt-0.5">
+                  <strong className="text-slate-900">Submitted:</strong>{" "}
+                  {elapsedHours === 0
+                    ? "just now"
+                    : elapsedHours === 1
+                      ? "1 hour ago"
+                      : `${elapsedHours} hours ago`}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap gap-2 pt-1">
+              {ctx.org.status === "pending" ? (
+                <RefreshStatusButton />
+              ) : null}
               <a
                 href="mailto:hello@crewflow.uk?subject=Access%20pending%20-%20CrewFlow"
-                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 Email CrewFlow
               </a>

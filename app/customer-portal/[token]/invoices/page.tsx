@@ -172,17 +172,27 @@ export default async function PortalInvoicesPage({
                   <p className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
                     {org.name} has recorded {GBP.format(paid)} so far against
                     this invoice. {GBP.format(outstanding)} remains
-                    outstanding. Use the bank details on the invoice PDF for
-                    the balance.
+                    outstanding. Bank details + payment reference are on the
+                    invoice PDF below.
                   </p>
                 ) : (
                   <p className="mt-3 text-xs text-slate-500">
                     {org.name} accepts payment by bank transfer — bank
-                    details + payment reference are on the invoice PDF.
-                    Payments are matched manually, so allow 1–2 working days
-                    for the status to update.
+                    details + payment reference are on the invoice PDF
+                    below. Payments are matched manually, so allow 1–2
+                    working days for the status to update.
                   </p>
                 )}
+                <div className="mt-3">
+                  <a
+                    href={`/customer-portal/${token}/invoices/${inv.id}/pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <span aria-hidden>↓</span> Download invoice PDF
+                  </a>
+                </div>
               </li>
             );
           })}

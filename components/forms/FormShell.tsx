@@ -70,21 +70,25 @@ export function FormShell({
 
 /**
  * Submit button that surfaces a pending state. Pass the `pending` value
- * from useActionState directly.
+ * from useActionState directly. Optional `disabled` (OR'd with pending)
+ * lets the caller block submit on a precondition — e.g. "no customers
+ * yet" on /quotes/new.
  */
 export function SubmitButton({
   pending,
+  disabled,
   children,
   className,
 }: {
   pending: boolean;
+  disabled?: boolean;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !!disabled}
       className={
         className ??
         "inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
