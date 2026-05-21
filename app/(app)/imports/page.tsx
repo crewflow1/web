@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createImport } from "./actions";
+import { CONNECTORS } from "@/lib/imports/connectors";
 import { CreateImportForm } from "./_create-form";
 
 /**
@@ -66,9 +67,10 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Start a new import</h2>
         <p className="mt-1 text-xs text-slate-500">
-          v1 supports <strong>CSV + Excel</strong>. v2 will add PDF +
-          photos via OCR; v3 native connectors for Sage, Xero, QuickBooks
-          and Buildertrend.
+          Supports <strong>CSV, Excel, PDF invoices/quotes, and photos
+          or screenshots</strong> (JPG, PNG, HEIC). Connectors for Sage,
+          Xero, QuickBooks and Buildertrend are coming — for now upload
+          their CSV/Excel exports here.
         </p>
         <CreateImportForm action={createImport} />
       </section>
@@ -101,6 +103,53 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Connector catalogue — v2 placeholders, file-export upload now */}
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <header className="border-b border-slate-200 px-6 py-3">
+          <h2 className="text-base font-semibold text-slate-900">
+            Move from another system
+          </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Native API connectors are in build. For each system below you
+            can already upload its CSV/Excel export through the
+            &ldquo;Start a new import&rdquo; flow above.
+          </p>
+        </header>
+        <ul className="grid grid-cols-1 gap-3 p-6 sm:grid-cols-2">
+          {CONNECTORS.map((c) => (
+            <li
+              key={c.id}
+              className="rounded-lg border border-slate-200 bg-slate-50/60 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {c.name}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-600">{c.blurb}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Accepts: {c.exportHints.join(", ")}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  Coming soon
+                </span>
+              </div>
+              {c.docs ? (
+                <a
+                  href={c.docs}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-block text-[11px] font-medium text-slate-600 hover:text-slate-900"
+                >
+                  How to export from {c.name} →
+                </a>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   );

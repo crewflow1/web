@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
+export type OrgStatus = "pending" | "active" | "trial" | "suspended" | "rejected";
+
 export type OrgContext = {
   membership: {
     org_id: string;
@@ -13,6 +15,9 @@ export type OrgContext = {
     id: string;
     name: string;
     slug: string;
+    status: OrgStatus;
+    plan: string;
+    trial_ends_at: string | null;
     onboarding_state: Record<string, unknown>;
   };
 };
@@ -77,18 +82,57 @@ export async function getOrgForUser(userId: string): Promise<OrgContext | null> 
     memberships[0];
   if (!preferred) return null;
 
+  // status / plan / trial_ends_at were added in migration 20260602000000
+  // (access gate). They aren't in the generated Supabase types yet — we
+  // pull them via a cast.
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
-    .select("id, name, slug, onboarding_state")
+    .select(
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at" as never,
+    )
     .eq("id", preferred.org_id)
     .single();
 
   if (orgErr || !org) return null;
 
+  const row = org as unknown as {
+    id: string;
+    name: string;
+    slug: string;
+    onboarding_state: Record<string, unknown>;
+    status: OrgStatus | null;
+    plan: string | null;
+    trial_ends_at: string | null;
+  };
+
   return {
     membership: preferred,
-    org: org as OrgContext["org"],
+    org: {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      onboarding_state: row.onboarding_state,
+      // Pre-migration rows (or any backfill miss) fall through as
+      // "active" so we don't accidentally lock out existing customers
+      // if the column isn't yet present.
+      status: (row.status ?? "active") as OrgStatus,
+      plan: row.plan ?? "trial",
+      trial_ends_at: row.trial_ends_at,
+    },
   };
+}
+
+/**
+ * Does this org status grant active product access?
+ *
+ *   active   → yes
+ *   trial    → yes (UI may surface days-remaining banner)
+ *   pending  → no (awaiting CrewFlow approval)
+ *   suspended → no (billing/abuse hold)
+ *   rejected → no (admin rejected the signup)
+ */
+export function orgHasActiveAccess(status: OrgStatus): boolean {
+  return status === "active" || status === "trial";
 }
 
 /**
@@ -114,9 +158,17 @@ export async function listOrgsForUser(userId: string): Promise<OrgSummary[]> {
 }
 
 /**
- * Require an org-bound user. Redirects accordingly:
- *   - no user        → /login
- *   - user, no org   → /onboarding/company
+ * Require an org-bound user that ALSO has active product access.
+ *
+ * Redirects accordingly:
+ *   - no user                                → /login
+ *   - user, no org                           → /onboarding/company
+ *   - user, org not active/trial             → /access-pending
+ *
+ * Pages that need to render content for non-active orgs (the
+ * /access-pending page itself, the super-admin panel, billing) should
+ * use `requireUser()` + `getOrgForUser()` directly so they don't trip
+ * the access-gate redirect loop.
  */
 export async function requireOrgContext(): Promise<{
   user: User;
@@ -125,5 +177,8 @@ export async function requireOrgContext(): Promise<{
   const user = await requireUser();
   const ctx = await getOrgForUser(user.id);
   if (!ctx) redirect("/onboarding/company");
+  if (!orgHasActiveAccess(ctx.org.status)) {
+    redirect("/access-pending");
+  }
   return { user, ctx };
 }

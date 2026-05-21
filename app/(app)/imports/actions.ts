@@ -13,6 +13,11 @@ import {
   rowToRecord,
   type ParsedSheet,
 } from "@/lib/imports/parsers";
+import {
+  ocrFileToSheet,
+  isOcrFile,
+  OcrUnavailableError,
+} from "@/lib/imports/ocr";
 import { detectEntityType, mapRow, type EntityType } from "@/lib/imports/detect";
 import {
   findCustomerDuplicate,
@@ -104,12 +109,26 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
         file.type === "application/vnd.ms-excel"
       ) {
         sheets = parseXlsxBuffer(new Uint8Array(buffer));
+      } else if (isOcrFile({ type: file.type, name: file.name })) {
+        // Migration OS v2 — PDF / photo / screenshot OCR via Claude vision.
+        // The OCR helper returns a ParsedSheet with the same canonical
+        // header names so the existing detect/map pipeline works unchanged.
+        const sheet = await ocrFileToSheet({
+          filename: file.name,
+          mimeType: file.type || "application/pdf",
+          bytes: new Uint8Array(buffer),
+        });
+        sheets = [sheet];
       } else {
         // Treat as CSV best-effort.
         const text = new TextDecoder().decode(new Uint8Array(buffer));
         sheets = [parseCsvFile(text, file.name)];
       }
     } catch (e) {
+      if (e instanceof OcrUnavailableError) {
+        console.error("[imports] OCR unavailable", e);
+        redirect(`/imports/${importId}?error=ocr_unavailable`);
+      }
       console.error("[imports] parse failed", e);
       redirect(`/imports/${importId}?error=parse_failed`);
     }
