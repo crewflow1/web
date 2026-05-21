@@ -18,7 +18,7 @@ import {
  * Receipt is optional and validated client-side for size before upload.
  * Server-side validation in the route is the authoritative check.
  */
-export function NewFinanceForm() {
+export function NewFinanceForm({ jobId, jobLabel }: { jobId?: string; jobLabel?: string } = {}) {
   const router = useRouter();
   const [amount, setAmount] = useState("");
   const [vatRate, setVatRate] = useState("20");
@@ -63,7 +63,10 @@ export function NewFinanceForm() {
         setSubmitting(false);
         return;
       }
-      router.push("/finances");
+      // When the cost was filed against a specific job, send the user
+      // back to that job's detail page so they can verify the rollup —
+      // otherwise the generic finance list.
+      router.push(jobId ? `/jobs/${jobId}` : "/finances");
       router.refresh();
     } catch (err) {
       console.error(err);
@@ -83,6 +86,14 @@ export function NewFinanceForm() {
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {error}
+        </div>
+      ) : null}
+
+      {jobId ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          Linking this cost to <strong>{jobLabel ?? `job ${jobId.slice(0, 8)}`}</strong>.
+          Margin will update once saved.
+          <input type="hidden" name="job_id" value={jobId} />
         </div>
       ) : null}
 

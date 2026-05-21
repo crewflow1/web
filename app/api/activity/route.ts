@@ -23,46 +23,59 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
-  const url = request.nextUrl;
-  const page = Math.max(parseInt(url.searchParams.get("page") ?? "1", 10) || 1, 1);
-  const offset = (page - 1) * PAGE_SIZE;
+  try {
+    await requireOrgContext();
+    const url = request.nextUrl;
+    const page = Math.max(parseInt(url.searchParams.get("page") ?? "1", 10) || 1, 1);
+    const offset = (page - 1) * PAGE_SIZE;
 
-  const supabase = await createClient();
-  let q = supabase
-    .from("activity_log")
-    .select("id, actor_id, actor_name, action, target_table, target_id, metadata, created_at", {
-      count: "exact",
-    })
-    .order("created_at", { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1);
+    const supabase = await createClient();
+    let q = supabase
+      .from("activity_log")
+      .select(
+        "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
+        { count: "exact" },
+      )
+      .order("created_at", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
 
-  const from = url.searchParams.get("from");
-  if (from && DATE_RE.test(from)) q = q.gte("created_at", `${from}T00:00:00Z`);
-  const to = url.searchParams.get("to");
-  if (to && DATE_RE.test(to)) q = q.lte("created_at", `${to}T23:59:59Z`);
+    const from = url.searchParams.get("from");
+    if (from && DATE_RE.test(from)) q = q.gte("created_at", `${from}T00:00:00Z`);
+    const to = url.searchParams.get("to");
+    if (to && DATE_RE.test(to)) q = q.lte("created_at", `${to}T23:59:59Z`);
 
-  const type = url.searchParams.get("type");
-  if (type) {
-    // Support exact match ("quote.accepted") and prefix ("quote.")
-    if (type.endsWith(".")) q = q.like("action", `${type}%`);
-    else q = q.eq("action", type);
+    const type = url.searchParams.get("type");
+    if (type) {
+      // Support exact match ("quote.accepted") and prefix ("quote.")
+      if (type.endsWith(".")) q = q.like("action", `${type}%`);
+      else q = q.eq("action", type);
+    }
+
+    const actor = url.searchParams.get("actor");
+    if (actor && UUID_RE.test(actor)) q = q.eq("actor_id", actor);
+
+    const { data, error, count } = await q;
+    if (error) {
+      console.error("[activity] list failed", error);
+      return NextResponse.json(
+        { ok: false, error: "Failed to load activity" },
+        { status: 500 },
+      );
+    }
+    const total = count ?? 0;
+    return NextResponse.json({
+      ok: true,
+      data: data ?? [],
+      page,
+      pageSize: PAGE_SIZE,
+      hasMore: offset + (data?.length ?? 0) < total,
+      total,
+    });
+  } catch (e) {
+    console.error("[activity] unhandled", e);
+    return NextResponse.json(
+      { ok: false, error: "Activity feed temporarily unavailable" },
+      { status: 500 },
+    );
   }
-
-  const actor = url.searchParams.get("actor");
-  if (actor && UUID_RE.test(actor)) q = q.eq("actor_id", actor);
-
-  const { data, error, count } = await q;
-  if (error) {
-    console.error("[activity] list failed", error);
-    return NextResponse.json({ error: "Failed to load activity" }, { status: 500 });
-  }
-  const total = count ?? 0;
-  return NextResponse.json({
-    data: data ?? [],
-    page,
-    pageSize: PAGE_SIZE,
-    hasMore: offset + (data?.length ?? 0) < total,
-    total,
-  });
 }
