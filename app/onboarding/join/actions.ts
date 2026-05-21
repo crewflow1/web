@@ -41,8 +41,45 @@ export async function acceptOrgInvite(formData: FormData) {
 
   const admin = createAdminClient();
 
-  // Update the user's display name.
-  await admin.from("users").update({ full_name }).eq("id", user.id);
+  // Hydrate the public.users row from the form + the invite metadata.
+  // Profile pre-fill only writes columns that are currently null/empty so
+  // we never overwrite something the user set themselves.
+  const metaInvitee = (user.user_metadata ?? {}) as {
+    invited_full_name?: string | null;
+    invited_employment_type?: string | null;
+    invited_hourly_pay?: number | null;
+    invited_emergency_contact?: {
+      name?: string | null;
+      phone?: string | null;
+      relationship?: string | null;
+    } | null;
+  };
+  const { data: profile } = await admin
+    .from("users")
+    .select("full_name, hourly_pay, employment_type, emergency_contact")
+    .eq("id", user.id)
+    .maybeSingle();
+  type UserUpdate = {
+    full_name: string;
+    hourly_pay?: number;
+    employment_type?: string;
+    emergency_contact?: {
+      name?: string | null;
+      phone?: string | null;
+      relationship?: string | null;
+    };
+  };
+  const profileUpdates: UserUpdate = { full_name };
+  if (profile && profile.hourly_pay === null && typeof metaInvitee.invited_hourly_pay === "number") {
+    profileUpdates.hourly_pay = metaInvitee.invited_hourly_pay;
+  }
+  if (profile && !profile.employment_type && metaInvitee.invited_employment_type) {
+    profileUpdates.employment_type = metaInvitee.invited_employment_type;
+  }
+  if (profile && !profile.emergency_contact && metaInvitee.invited_emergency_contact) {
+    profileUpdates.emergency_contact = metaInvitee.invited_emergency_contact;
+  }
+  await admin.from("users").update(profileUpdates).eq("id", user.id);
 
   // Create the membership (or no-op if it already exists).
   const { data: existing } = await admin
@@ -61,12 +98,16 @@ export async function acceptOrgInvite(formData: FormData) {
     }
   }
 
-  // Clear the invited_org metadata so subsequent logins skip this page.
+  // Clear the invited_* metadata so subsequent logins skip this page.
   await admin.auth.admin.updateUserById(user.id, {
     user_metadata: {
       ...(user.user_metadata ?? {}),
       invited_org_id: null,
       invited_role: null,
+      invited_full_name: null,
+      invited_employment_type: null,
+      invited_hourly_pay: null,
+      invited_emergency_contact: null,
     },
   });
 
