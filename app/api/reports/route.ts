@@ -19,18 +19,27 @@ import {
  *   - top_customers         all-time, top 10 by paid-invoice revenue
  */
 export async function GET() {
-  await requireOrgContext();
-  const [jobs_per_week, revenue_per_month, vat_per_quarter, top_customers] =
-    await Promise.all([
-      jobsPerWeek(8),
-      revenuePerMonth(12),
-      vatPerQuarter(4),
-      topCustomersByRevenue(10),
-    ]);
-  return NextResponse.json({
-    jobs_per_week,
-    revenue_per_month,
-    vat_per_quarter,
-    top_customers,
-  });
+  try {
+    await requireOrgContext();
+    const [jobs_per_week, revenue_per_month, vat_per_quarter, top_customers] =
+      await Promise.all([
+        jobsPerWeek(8),
+        revenuePerMonth(12),
+        vatPerQuarter(4),
+        topCustomersByRevenue(10),
+      ]);
+    return NextResponse.json({
+      ok: true,
+      jobs_per_week,
+      revenue_per_month,
+      vat_per_quarter,
+      top_customers,
+    });
+  } catch (e) {
+    console.error("[reports] unhandled", e);
+    return NextResponse.json(
+      { ok: false, error: "Reports temporarily unavailable" },
+      { status: 500 },
+    );
+  }
 }
