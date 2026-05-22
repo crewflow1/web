@@ -1,0 +1,54 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { requireUser } from "@/server/auth/session";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { recomputeAllOrgs } from "@/server/services/hq-health-recompute";
+import { recordAdminActivity } from "@/server/services/hq-audit";
+
+/**
+ * Analytics (HQ-6) — server actions.
+ *
+ * Operator-driven actions that complement the nightly cron:
+ *   - recomputeHealthNow: manual trigger when the operator wants
+ *     fresh scores without waiting for midnight.
+ *
+ * Every action re-checks isSuperAdminEmail + writes the summary to
+ * admin_activity_log so the audit trail records who ran it.
+ */
+
+async function requireAdmin(): Promise<{ id: string; email: string }> {
+  const user = await requireUser();
+  if (!isSuperAdminEmail(user.email)) {
+    redirect("/dashboard");
+  }
+  return { id: user.id, email: user.email ?? "" };
+}
+
+export async function recomputeHealthNow(): Promise<void> {
+  const admin = await requireAdmin();
+  const summary = await recomputeAllOrgs("manual", admin);
+
+  // One audit row for the operator-triggered batch run, separate
+  // from the per-org rows the engine writes when scores change.
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "health.batch_recomputed",
+    targetTable: "health_score_events",
+    targetId: "batch",
+    metadata: {
+      trigger: summary.trigger,
+      processed: summary.processed,
+      changed: summary.changed,
+      errors: summary.errors,
+      duration_ms: summary.durationMs,
+    },
+  });
+
+  revalidatePath("/admin/analytics");
+  redirect(
+    `/admin/analytics?saved=1&processed=${summary.processed}&changed=${summary.changed}`,
+  );
+}
