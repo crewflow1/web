@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser, getOrgForUser, orgHasActiveAccess } from "@/server/auth/session";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { RefreshStatusButton } from "./_refresh-button";
 
 /**
@@ -50,6 +51,18 @@ function hoursAgo(iso: string): number {
 
 export default async function AccessPendingPage() {
   const user = await requireUser();
+
+  // Super-admin override (CEO directive 2026-05-22): a CrewFlow HQ
+  // operator must never see the customer access-pending screen. They
+  // have permanent unrestricted access to /admin/* regardless of which
+  // workspace they happen to also be a member of. Without this, the
+  // CEO clicking a demo-approval email and ending up on a workspace
+  // route with a stale active-org cookie would land here instead of
+  // the HQ panel they actually need.
+  if (isSuperAdminEmail(user.email)) {
+    redirect("/admin/organizations");
+  }
+
   const ctx = await getOrgForUser(user.id);
 
   // No org → finish onboarding first.

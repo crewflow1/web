@@ -1,19 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ensureUserRow } from "@/server/services/bootstrap-account";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
 
 /**
  * OAuth + magic-link callback.
  *
  * Receives `?code=...` from Supabase, exchanges it for a session, mirrors
- * the auth.users row into public.users, then redirects to the `next` param
- * (default /dashboard). Middleware handles the rest of the routing
- * (logged in → dashboard, no org yet → onboarding/company).
+ * the auth.users row into public.users, then redirects.
+ *
+ * Default landing:
+ *   - super-admin email   → /admin/organizations (CrewFlow HQ)
+ *   - everyone else       → /dashboard
+ * Explicit `?next=...` always wins so deep links survive sign-in.
+ *
+ * Middleware handles the rest of the routing (no org → onboarding,
+ * non-active org → access-pending — and access-pending itself bounces
+ * super-admins to /admin so the lock screen can never trap them).
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  const explicitNext = searchParams.get("next");
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`);
@@ -52,7 +60,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=bootstrap_failed`);
   }
 
-  // Validate `next` is a same-origin path before redirecting.
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  // Choose default landing based on role; explicit `next` always wins
+  // when same-origin so deep links survive sign-in.
+  const fallback = isSuperAdminEmail(data.user.email ?? null)
+    ? "/admin/organizations"
+    : "/dashboard";
+  const candidate = explicitNext ?? fallback;
+  const safeNext =
+    candidate.startsWith("/") && !candidate.startsWith("//")
+      ? candidate
+      : fallback;
   return NextResponse.redirect(`${origin}${safeNext}`);
 }

@@ -92,9 +92,20 @@ export async function updateSession(request: NextRequest) {
     return response;
   };
 
-  // Logged in but visiting auth pages → send them in.
+  // Logged in but visiting auth pages → send them in. Super-admins land
+  // on the HQ panel by default; everyone else on their workspace
+  // dashboard. We read the allowlist directly here (env), not via the
+  // helper, so the middleware stays free of server-only imports.
   if (user && isAuthFlow) {
-    return redirectTo(new URL("/dashboard", request.url));
+    const allowlist = (process.env.CREWFLOW_SUPERADMIN_EMAILS ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const isSuperAdmin =
+      !!user.email && allowlist.includes(user.email.trim().toLowerCase());
+    return redirectTo(
+      new URL(isSuperAdmin ? "/admin/organizations" : "/dashboard", request.url),
+    );
   }
 
   // Logged out and visiting anything else → send them to login.
