@@ -4,6 +4,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
+import { SetupChecklist } from "./_setup-checklist";
+import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -219,10 +221,15 @@ export default async function DashboardPage() {
   // Slice 6 — deterministic insight payloads. Run in parallel so the
   // page-render fan-out doesn't grow linearly. LLM prose lands later
   // when ANTHROPIC_API_KEY / OPENAI_API_KEY is added to Vercel.
-  const [activityInsights, leadInsights] = await Promise.all([
-    computeActivitySummary(ctx.org.id, 7),
-    computeLeadInsights(ctx.org.id, 30),
-  ]);
+  //
+  // The onboarding snapshot is fetched alongside so the SetupChecklist
+  // card has live data without an extra round-trip waterfall.
+  const [activityInsights, leadInsights, onboardingSnapshot] =
+    await Promise.all([
+      computeActivitySummary(ctx.org.id, 7),
+      computeLeadInsights(ctx.org.id, 30),
+      buildOnboardingSnapshot(ctx.org.id),
+    ]);
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (
@@ -557,6 +564,9 @@ export default async function DashboardPage() {
           </Link>
         </div>
       </header>
+
+      {/* Onboarding checklist — pinned at the top until setup is 100% */}
+      <SetupChecklist snapshot={onboardingSnapshot} />
 
       {/* KPI row */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">

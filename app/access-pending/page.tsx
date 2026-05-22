@@ -37,6 +37,10 @@ const COPY: Record<
     title: "We couldn't approve this signup.",
     body: "If you think this is a mistake, reply to your signup confirmation email or contact us and we'll take another look.",
   },
+  cancelled: {
+    title: "This CrewFlow workspace has been cancelled.",
+    body: "Your subscription was cancelled. Your data is retained for 30 days in case you change your mind — email us and we'll reactivate the workspace.",
+  },
 };
 
 function hoursAgo(iso: string): number {
