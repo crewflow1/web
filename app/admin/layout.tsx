@@ -1,0 +1,106 @@
+import { notFound } from "next/navigation";
+import Link from "next/link";
+import { requireUser } from "@/server/auth/session";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { HqNavMobile } from "./_nav-mobile";
+
+/**
+ * CrewFlow HQ — internal operating system for the team running CrewFlow.
+ *
+ * NOT the customer product. Gated at this layout level so every child
+ * route inherits the 404-for-non-allowlisted rule; the existing
+ * /admin/organizations page also calls `notFound()` itself for
+ * defence-in-depth.
+ *
+ * Sidebar carries all 12 sections from the directive. Sections not yet
+ * built render a "Coming in HQ Sprint N" stub — no dead ends.
+ */
+
+type NavItem = {
+  href: string;
+  label: string;
+  /** When true, the link routes to the legacy /admin/organizations
+   *  panel while the dedicated section is on the roadmap. */
+  legacy?: boolean;
+  /** Sprint number that ships the dedicated page. Stubs render until. */
+  shipsIn?: "HQ-2" | "HQ-3" | "HQ-4" | "HQ-5" | "HQ-6";
+};
+
+export const HQ_NAV: ReadonlyArray<NavItem> = [
+  { href: "/admin/overview", label: "Overview" },
+  { href: "/admin/demos", label: "Demos CRM", shipsIn: "HQ-2", legacy: true },
+  { href: "/admin/customers", label: "Customers", shipsIn: "HQ-3", legacy: true },
+  { href: "/admin/onboarding", label: "Onboarding & migration", shipsIn: "HQ-4" },
+  { href: "/admin/billing", label: "Billing", shipsIn: "HQ-4" },
+  { href: "/admin/support", label: "Support queue", shipsIn: "HQ-5" },
+  { href: "/admin/alerts", label: "Alerts", shipsIn: "HQ-5" },
+  { href: "/admin/analytics", label: "Analytics", shipsIn: "HQ-6" },
+  { href: "/admin/impersonation", label: "Impersonation log", shipsIn: "HQ-3" },
+  { href: "/admin/notes", label: "Internal notes", shipsIn: "HQ-5" },
+  { href: "/admin/health", label: "Customer health", shipsIn: "HQ-6" },
+  { href: "/admin/settings", label: "Settings", shipsIn: "HQ-6" },
+];
+
+export default async function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const user = await requireUser();
+  if (!isSuperAdminEmail(user.email)) notFound();
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {/* Mobile top bar with hamburger */}
+      <HqNavMobile email={user.email ?? ""} items={HQ_NAV} />
+
+      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:gap-8">
+        {/* Sidebar — hidden on mobile, fixed-ish column on lg */}
+        <aside className="hidden w-56 shrink-0 lg:block">
+          <div className="sticky top-6 space-y-4">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                CrewFlow HQ
+              </p>
+              <p className="mt-0.5 truncate text-xs text-slate-500">
+                {user.email}
+              </p>
+            </div>
+            <nav className="space-y-0.5">
+              {HQ_NAV.map((item) => (
+                <NavLink key={item.href} item={item} />
+              ))}
+            </nav>
+            <div className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
+              <Link
+                href="/dashboard"
+                className="block hover:text-slate-900"
+              >
+                ↩ Switch to customer view
+              </Link>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main content */}
+        <main className="min-w-0 flex-1 pb-12">{children}</main>
+      </div>
+    </div>
+  );
+}
+
+function NavLink({ item }: { item: NavItem }) {
+  return (
+    <Link
+      href={item.href}
+      className="group flex items-center justify-between rounded-md px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-white hover:text-slate-900 aria-[current=page]:bg-slate-900 aria-[current=page]:text-white"
+    >
+      <span>{item.label}</span>
+      {item.shipsIn ? (
+        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800 group-aria-[current=page]:bg-amber-200">
+          {item.shipsIn}
+        </span>
+      ) : null}
+    </Link>
+  );
+}
