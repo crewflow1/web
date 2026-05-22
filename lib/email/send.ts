@@ -23,6 +23,8 @@ export type SendEmailInput = {
   subject: string;
   html: string;
   text?: string;
+  /** Override RESEND_FROM_EMAIL for this send (e.g. notify@ vs hello@). */
+  from?: string;
   /** Override RESEND_REPLY_TO for this send (e.g. so the org owner gets replies). */
   replyTo?: string;
   attachments?: EmailAttachment[];
@@ -31,7 +33,15 @@ export type SendEmailInput = {
 export type SendEmailResult =
   | { sent: true; id: string }
   | { sent: false; reason: "no_key" }
+  | { sent: false; reason: "self_loop"; from: string; to: string }
   | { sent: false; reason: "error"; error: string };
+
+/** Extract the bare email out of `"Display Name <addr@host>"` or just `addr@host`. */
+function extractAddress(field: string): string {
+  const m = field.match(/<([^>]+)>/);
+  const bare = m && m[1] ? m[1] : field;
+  return bare.trim().toLowerCase();
+}
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const apiKey = env.RESEND_API_KEY;
@@ -39,12 +49,26 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     return { sent: false, reason: "no_key" };
   }
 
+  const from = input.from ?? env.RESEND_FROM_EMAIL;
+
+  // Self-loop guard. Sending From and To the same mailbox is one of the
+  // top reasons Gmail/Workspace silently drops mail as spam/loop —
+  // surface the failure now so the caller can correct the From address
+  // instead of silently losing notifications.
+  const fromAddr = extractAddress(from);
+  const tos = Array.isArray(input.to) ? input.to : [input.to];
+  for (const to of tos) {
+    if (extractAddress(to) === fromAddr) {
+      return { sent: false, reason: "self_loop", from, to };
+    }
+  }
+
   try {
     const { Resend } = await import("resend");
     const client = new Resend(apiKey);
 
     const res = await client.emails.send({
-      from: env.RESEND_FROM_EMAIL,
+      from,
       to: input.to,
       subject: input.subject,
       html: input.html,
