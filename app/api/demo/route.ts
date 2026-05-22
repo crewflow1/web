@@ -177,10 +177,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Best-effort: Resend email + audit columns.
+    //
+    // From/To: notifications use a DEDICATED `notify@` address so the
+    // mail is From: notify@crewflow.uk → To: hello@crewflow.uk. Same
+    // domain (DKIM/SPF align) but distinct mailbox so Gmail/Workspace
+    // don't silently drop it as a self-loop. Verified domain is the
+    // only requirement on the Resend side.
+    //
+    // reply-to is the prospect's email so a one-click reply lands them
+    // back in the conversation.
     try {
       const notifyTo = process.env.DEMO_NOTIFY_EMAIL || "hello@crewflow.uk";
+      const notifyFrom =
+        process.env.RESEND_NOTIFICATIONS_FROM ||
+        "CrewFlow Notifications <notify@crewflow.uk>";
       const emailResult = await sendEmail({
         to: notifyTo,
+        from: notifyFrom,
         subject: `New demo request — ${data.company}`,
         html: renderEmail(data, internalLeadId),
         text: renderTextEmail(data, internalLeadId),
@@ -197,11 +210,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         logStep("email_sent", { resend_id: emailResult.id });
       } else {
         const reason =
-          "reason" in emailResult
-            ? "error" in emailResult
-              ? `${emailResult.reason}: ${emailResult.error}`
-              : emailResult.reason
-            : "unknown";
+          emailResult.reason === "error"
+            ? `error: ${emailResult.error}`
+            : emailResult.reason === "self_loop"
+              ? `self_loop: from=${emailResult.from} to=${emailResult.to}`
+              : emailResult.reason;
         await admin
           .from("demo_requests")
           .update({ notification_error: reason })
@@ -209,7 +222,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         logStep("email_skipped", { reason });
       }
     } catch (e) {
+      // Even the catch path must leave a fingerprint — without this an
+      // unhandled exception (network, dynamic-import failure, anything)
+      // would silently produce a demo_requests row with all-null
+      // notification_* columns. We learned that the hard way.
+      const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       console.error("[demo] email step failed", e);
+      try {
+        await admin
+          .from("demo_requests")
+          .update({ notification_error: `exception: ${msg}` })
+          .eq("id", requestRow.id);
+      } catch (innerErr) {
+        console.error("[demo] notification_error update failed", innerErr);
+      }
+      logStep("email_exception", { msg });
     }
 
     return NextResponse.json({ ok: true });

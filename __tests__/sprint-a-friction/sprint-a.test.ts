@@ -29,17 +29,23 @@ const PORTAL_PDF_ROUTE = read(
 );
 const CHECK_EMAIL = read("app/(auth)/check-email/page.tsx");
 
-describe("Sprint A item 1 — signup CTA on landing", () => {
-  it("landing has a 'Start free' link routing to /login", () => {
-    expect(LANDING).toMatch(/Start free/);
-    expect(LANDING).toMatch(/href="\/login"/);
+describe("Sprint A item 1 — landing positioning (CEO directive 2026-05-22)", () => {
+  // CrewFlow is premium onboarding (£1k setup + £500/mo). The earlier
+  // "Start free" CTAs were removed because they conflicted with the
+  // positioning. Book demo / Request onboarding are the only entry CTAs.
+  it("landing does NOT advertise a free tier", () => {
+    expect(LANDING).not.toMatch(/Start free/);
   });
 
-  it("the start-free CTA is in the hero, not just the nav", () => {
-    // The hero hero CTA group sits next to the BookDemoButton. Both
-    // start-free copies are present.
-    const matches = LANDING.match(/Start free/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it("landing leads with 'Book demo' as the primary CTA", () => {
+    // Two BookDemoButton usages: nav + hero.
+    const matches = LANDING.match(/BookDemoButton/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(3); // import + nav + hero
+  });
+
+  it("landing copy reflects premium £1k/£500-mo positioning", () => {
+    expect(LANDING).toMatch(/£1,000 setup/);
+    expect(LANDING).toMatch(/£500\/mo/);
   });
 });
 
