@@ -237,11 +237,11 @@ describe("HQ layout — auth gate", () => {
   it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {
     // Sections still on the roadmap carry a shipsIn annotation. As each
     // sprint flips a section to ready, the annotation drops — so this
-    // threshold decreases over time. After HQ-3 (Customers OS), the
-    // stubs still on the roadmap are: onboarding, billing, support,
-    // alerts, analytics, impersonation, notes, health, settings — 9.
+    // threshold decreases over time. After HQ-4 (Billing + Onboarding),
+    // the stubs still on the roadmap are: support, alerts, analytics,
+    // impersonation, notes, health, settings — 7.
     const shipsInCount = (LAYOUT.match(/shipsIn:/g) ?? []).length;
-    expect(shipsInCount).toBeGreaterThanOrEqual(9);
+    expect(shipsInCount).toBeGreaterThanOrEqual(7);
   });
 });
 
