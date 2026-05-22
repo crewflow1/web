@@ -69,7 +69,10 @@ describe("scenario (a) — new signup lands in 'pending'", () => {
   it("bootstrap-account explicitly sets status: 'pending' on insert", () => {
     // Both the explicit literal and the comment justify "pending" so
     // a future refactor doesn't accidentally drop it.
-    expect(BOOTSTRAP).toMatch(/status:\s*["']pending["']/);
+    // Default value of initialStatus must be "pending" — only flipped
+    // to "trial" by the auto-approve-on-signup wiring (migration
+    // 20260603000000, admin approval panel).
+    expect(BOOTSTRAP).toMatch(/let\s+initialStatus:\s*"pending"\s*\|\s*"trial"\s*=\s*"pending"/);
   });
 
   it("migration backfills existing orgs to 'active' so they don't get locked out", () => {

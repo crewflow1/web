@@ -50,6 +50,8 @@ export async function ensureUserRow(input: {
  */
 export async function createOrgWithOwner(input: {
   userId: string;
+  /** Caller may pass the user's email so we can look up an approved demo_request. */
+  userEmail?: string | null;
   name: string;
   slug: string;
   phone?: string | null;
@@ -58,10 +60,37 @@ export async function createOrgWithOwner(input: {
 }): Promise<{ orgId: string }> {
   const supabase = createAdminClient();
 
-  // Access gate (migration 20260602000000): brand-new signups land in
-  // 'pending' status and cannot use the product until a CrewFlow admin
-  // approves them. status is set explicitly so the intent reads in
-  // grep, even though it matches the column default.
+  // Auto-trial wiring (migration 20260603000000): if the signing-up
+  // user's email matches an approved demo_request, the CEO has
+  // already pre-approved them — start the 14-day trial immediately
+  // instead of dropping them at /access-pending. Trial window is
+  // anchored to right now so the customer gets the full 14 days.
+  let initialStatus: "pending" | "trial" = "pending";
+  let trialEndsAt: string | null = null;
+  let approvedDemoId: string | null = null;
+  if (input.userEmail) {
+    const normalisedEmail = input.userEmail.trim().toLowerCase();
+    // approved_at landed in migration 20260603000000 and isn't in the
+    // generated types yet — cast through unknown so tsc is happy until
+    // the next `pnpm db:generate`.
+    const { data: approvedRaw } = await supabase
+      .from("demo_requests")
+      .select("id, approved_at" as never)
+      .eq("email", normalisedEmail)
+      .eq("status", "approved")
+      .order("approved_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const approved = approvedRaw as unknown as
+      | { id: string; approved_at: string | null }
+      | null;
+    if (approved?.id) {
+      initialStatus = "trial";
+      trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      approvedDemoId = approved.id;
+    }
+  }
+
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .insert({
@@ -71,7 +100,8 @@ export async function createOrgWithOwner(input: {
       vat_number: input.vatNumber ?? null,
       address: input.postcode ? { postcode: input.postcode } : null,
       onboarding_state: { company: true },
-      status: "pending",
+      status: initialStatus,
+      trial_ends_at: trialEndsAt,
     } as never)
     .select("id")
     .single();
@@ -92,6 +122,16 @@ export async function createOrgWithOwner(input: {
     // Best-effort rollback so we don't leave an orphan org.
     await supabase.from("organizations").delete().eq("id", org.id);
     throw new Error("Failed to attach owner to organisation");
+  }
+
+  // If we promoted to trial via an approved demo, mark the demo_request
+  // as having yielded a signup. Best-effort — the org is created either
+  // way.
+  if (approvedDemoId) {
+    await supabase
+      .from("demo_requests")
+      .update({ internal_lead_id: null, status: "approved" } as never)
+      .eq("id", approvedDemoId);
   }
 
   return { orgId: org.id };
