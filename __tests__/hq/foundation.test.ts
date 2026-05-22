@@ -235,9 +235,14 @@ describe("HQ layout — auth gate", () => {
   });
 
   it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {
-    // shipsIn must appear at least 11 times — one per non-overview section.
+    // Sections still on the roadmap carry a shipsIn annotation. As each
+    // sprint flips a section to ready, the annotation drops — so this
+    // threshold decreases over time. HQ-2 ships /admin/demos, so demos
+    // no longer needs `shipsIn` — there are now 10 stub sections left
+    // (customers, onboarding, billing, support, alerts, analytics,
+    // impersonation, notes, health, settings).
     const shipsInCount = (LAYOUT.match(/shipsIn:/g) ?? []).length;
-    expect(shipsInCount).toBeGreaterThanOrEqual(11);
+    expect(shipsInCount).toBeGreaterThanOrEqual(10);
   });
 });
 

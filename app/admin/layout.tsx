@@ -28,7 +28,7 @@ type NavItem = {
 
 export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/overview", label: "Overview" },
-  { href: "/admin/demos", label: "Demos CRM", shipsIn: "HQ-2", legacy: true },
+  { href: "/admin/demos", label: "Demos CRM" },
   { href: "/admin/customers", label: "Customers", shipsIn: "HQ-3", legacy: true },
   { href: "/admin/onboarding", label: "Onboarding & migration", shipsIn: "HQ-4" },
   { href: "/admin/billing", label: "Billing", shipsIn: "HQ-4" },
