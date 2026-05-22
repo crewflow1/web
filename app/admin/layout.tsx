@@ -33,7 +33,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/onboarding", label: "Onboarding & migration" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue", shipsIn: "HQ-5" },
-  { href: "/admin/alerts", label: "Alerts", shipsIn: "HQ-5" },
+  { href: "/admin/alerts", label: "Alerts" },
   { href: "/admin/analytics", label: "Analytics", shipsIn: "HQ-6" },
   { href: "/admin/impersonation", label: "Impersonation log", shipsIn: "HQ-3" },
   { href: "/admin/notes", label: "Internal notes", shipsIn: "HQ-5" },
