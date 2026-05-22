@@ -267,8 +267,15 @@ function buildLeadNotes(d: DemoRequestInput): string {
 function renderEmail(d: DemoRequestInput, leadId: string | null): string {
   const turnover = d.turnover_range ? TURNOVER_LABELS[d.turnover_range] : "—";
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://crewflow.uk";
+  // CEO-directive routing fix: the link must take the recipient to the
+  // approval panel, not into some randomly-picked customer workspace's
+  // CRM lead view. Previous /leads/<id> link bounced super-admins to
+  // /access-pending or /onboarding depending on cookie state.
+  const adminLink = `<p style="margin-top: 16px;">Review &amp; approve in CrewFlow HQ: <a href="${appUrl}/admin/organizations" style="color:#0f172a;font-weight:600">${appUrl}/admin/organizations</a></p>`;
+  // Internal CRM lead remains tracked in the audit — link it for ops
+  // visibility but DON'T make it the headline CTA.
   const leadLink = leadId
-    ? `<p style="margin-top: 16px;">View in dashboard: <a href="${appUrl}/leads/${leadId}">${appUrl}/leads/${leadId.slice(0, 8)}…</a></p>`
+    ? `<p style="margin-top: 8px;color:#64748b;font-size:12px">Internal CRM lead: <a href="${appUrl}/leads/${leadId}" style="color:#64748b">/leads/${leadId.slice(0, 8)}…</a> (admin only)</p>`
     : "";
   return `
 <div style="font-family: -apple-system, sans-serif; max-width: 560px; margin: 0 auto;">
@@ -284,6 +291,10 @@ function renderEmail(d: DemoRequestInput, leadId: string | null): string {
     <tr><td style="padding: 6px 0; color: #64748b;">Current systems</td><td style="padding: 6px 0;">${esc(d.current_systems ?? "—")}</td></tr>
     <tr><td style="padding: 6px 0; color: #64748b;">Preferred time</td><td style="padding: 6px 0;">${esc(d.preferred_demo_time ?? "—")}</td></tr>
   </table>
+  <p style="margin: 24px 0 8px;">
+    <a href="${appUrl}/admin/organizations" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600">Review &amp; approve in CrewFlow HQ</a>
+  </p>
+  ${adminLink}
   ${leadLink}
 </div>`;
 }
@@ -302,7 +313,9 @@ function renderTextEmail(d: DemoRequestInput, leadId: string | null): string {
     `Turnover: ${turnover}`,
     `Current:  ${d.current_systems ?? "—"}`,
     `Time:     ${d.preferred_demo_time ?? "—"}`,
-    leadId ? `\nDashboard: ${appUrl}/leads/${leadId}` : "",
+    "",
+    `Review & approve: ${appUrl}/admin/organizations`,
+    leadId ? `Internal CRM lead: ${appUrl}/leads/${leadId}` : "",
   ].join("\n");
 }
 
