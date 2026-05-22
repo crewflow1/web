@@ -4,7 +4,13 @@ import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
-export type OrgStatus = "pending" | "active" | "trial" | "suspended" | "rejected";
+export type OrgStatus =
+  | "pending"
+  | "active"
+  | "trial"
+  | "suspended"
+  | "rejected"
+  | "cancelled";
 
 export type OrgContext = {
   membership: {

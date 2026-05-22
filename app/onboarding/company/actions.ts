@@ -62,6 +62,7 @@ export async function createOrg(formData: FormData) {
   try {
     await createOrgWithOwner({
       userId: user.id,
+      userEmail: user.email ?? null,
       name,
       slug: makeSlug(name),
       phone,
