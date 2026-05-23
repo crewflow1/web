@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "./client";
 import { env } from "@/lib/env";
+import { PRODUCT_SPECS } from "./provisioning";
 
 /**
  * Stripe price discovery.
@@ -128,7 +129,56 @@ async function resolve(
     }
   }
 
-  // 2. Auto-discover by amount + currency.
+  // 2. Stable lookup_key — the recommended Stripe pattern. The
+  //    /api/admin/stripe/provision endpoint sets these on the
+  //    canonical CrewFlow prices, and they survive renames / price
+  //    rotation. Always check this BEFORE falling back to
+  //    amount-matching.
+  const lookupKey = PRODUCT_SPECS[kind].lookupKey;
+  try {
+    const byLookup = await stripe.prices.list({
+      active: true,
+      lookup_keys: [lookupKey],
+      limit: 5,
+      expand: ["data.product"],
+    });
+    if (byLookup.data.length === 1) {
+      const m = byLookup.data[0]!;
+      return {
+        ok: true,
+        price: {
+          kind,
+          price_id: m.id,
+          unit_amount: m.unit_amount,
+          currency: m.currency,
+          interval:
+            m.recurring?.interval === "month"
+              ? "month"
+              : m.recurring?.interval === "year"
+                ? "year"
+                : "one_time",
+          product_name:
+            typeof m.product === "object" && m.product && "name" in m.product
+              ? (m.product as { name?: string }).name ?? null
+              : null,
+          source: "auto_discovery",
+        },
+      };
+    }
+    // 0 or 2+ matches: fall through to amount-matching so the
+    // operator gets a useful disambiguation error from there.
+  } catch (e) {
+    return {
+      ok: false,
+      error: {
+        kind,
+        reason: `Stripe prices.list({lookup_keys}) failed: ${e instanceof Error ? e.message : String(e)}`,
+        candidates: [],
+      },
+    };
+  }
+
+  // 3. Fallback: discover by amount + currency.
   const targetAmount =
     kind === "setup_fee" ? SETUP_AMOUNT_PENCE : SUBSCRIPTION_AMOUNT_PENCE;
   const requireRecurring = kind === "subscription";
@@ -185,7 +235,7 @@ async function resolve(
       ok: false,
       error: {
         kind,
-        reason: `No active ${kind === "setup_fee" ? "one-time" : "monthly"} GBP price at £${targetAmount / 100}. Create the product/price in Stripe or set the override env var.`,
+        reason: `No active ${kind === "setup_fee" ? "one-time" : "monthly"} GBP price at £${targetAmount / 100}. Click 'Provision Stripe products' on /admin/customers/<id> (or POST /api/admin/stripe/provision) to create them with the stable lookup_key '${lookupKey}'.`,
         candidates: prices.data.slice(0, 5).map((p) => ({
           id: p.id,
           unit_amount: p.unit_amount,

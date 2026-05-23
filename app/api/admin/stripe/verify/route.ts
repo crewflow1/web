@@ -147,6 +147,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     ok: allOk,
     env_mode: isLiveMode() ? "LIVE" : "TEST",
+    provision_url: `${env.NEXT_PUBLIC_APP_URL}/api/admin/stripe/provision`,
     app_url: env.NEXT_PUBLIC_APP_URL,
     webhook_endpoint: `${env.NEXT_PUBLIC_APP_URL}/api/webhooks/stripe`,
     checks,
