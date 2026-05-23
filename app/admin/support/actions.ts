@@ -7,6 +7,12 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import {
+  notifyOnSupportReplyToCustomer,
+  notifyOnSupportStatusChanged,
+  notifyOnSupportPriorityUrgent,
+} from "@/lib/notifications/events";
 import {
   SUPPORT_STATUSES,
   SUPPORT_PRIORITIES,
@@ -109,6 +115,32 @@ export async function replyAsHq(formData: FormData): Promise<void> {
     },
   });
 
+  // Notify the customer of the HQ reply (skipped for internal notes —
+  // those are HQ-only by definition).
+  if (!isInternal) {
+    // Pull ticket subject + number so the notification body is
+    // useful. Best-effort — failure to fetch shouldn't break the
+    // reply.
+    const { data: tRow } = await supabase
+      .from("support_tickets" as never)
+      .select("subject, ticket_number" as never)
+      .eq("id" as never, parsed.data.ticket_id)
+      .maybeSingle();
+    const ticketInfo = tRow as unknown as {
+      subject?: string;
+      ticket_number?: number;
+    } | null;
+    await emitNotifications(
+      notifyOnSupportReplyToCustomer({
+        org_id: orgId,
+        ticket_id: parsed.data.ticket_id,
+        ticket_number: ticketInfo?.ticket_number ?? 0,
+        subject: ticketInfo?.subject ?? "Your ticket",
+        body_preview: parsed.data.body.slice(0, 200),
+      }),
+    );
+  }
+
   revalidatePath(`/admin/support/${parsed.data.ticket_id}`);
   revalidatePath(`/admin/support`);
   revalidatePath(`/admin/customers/${orgId}`);
@@ -146,13 +178,17 @@ export async function setTicketStatus(formData: FormData): Promise<void> {
     .from("support_tickets" as never)
     .update(patch as never)
     .eq("id", parsed.data.ticket_id)
-    .select("org_id" as never)
+    .select("org_id, ticket_number" as never)
     .maybeSingle();
   if (error) {
     console.error("[admin-support] setTicketStatus failed", error);
     redirect(`/admin/support/${parsed.data.ticket_id}?error=status_failed`);
   }
-  const orgId = (data as unknown as { org_id: string } | null)?.org_id ?? null;
+  const row = data as unknown as {
+    org_id: string;
+    ticket_number: number;
+  } | null;
+  const orgId = row?.org_id ?? null;
 
   await recordAdminActivity({
     actorId: admin.id,
@@ -171,6 +207,15 @@ export async function setTicketStatus(formData: FormData): Promise<void> {
       targetId: orgId,
       metadata: { ticket_id: parsed.data.ticket_id, new_status: parsed.data.status },
     });
+    // Notify the customer of the status change.
+    await emitNotifications(
+      notifyOnSupportStatusChanged({
+        org_id: orgId,
+        ticket_id: parsed.data.ticket_id,
+        ticket_number: row?.ticket_number ?? 0,
+        new_status: parsed.data.status,
+      }),
+    );
   }
   revalidatePath(`/admin/support/${parsed.data.ticket_id}`);
   revalidatePath(`/admin/support`);
@@ -190,10 +235,17 @@ export async function setTicketPriority(formData: FormData): Promise<void> {
   });
   if (!parsed.success) redirect(`/admin/support?error=invalid_input`);
   const supabase = createAdminClient();
-  await supabase
+  const { data } = await supabase
     .from("support_tickets" as never)
     .update({ priority: parsed.data.priority } as never)
-    .eq("id", parsed.data.ticket_id);
+    .eq("id", parsed.data.ticket_id)
+    .select("org_id, ticket_number, subject" as never)
+    .maybeSingle();
+  const row = data as unknown as {
+    org_id: string;
+    ticket_number: number;
+    subject: string;
+  } | null;
   await recordAdminActivity({
     actorId: admin.id,
     actorEmail: admin.email,
@@ -202,6 +254,17 @@ export async function setTicketPriority(formData: FormData): Promise<void> {
     targetId: parsed.data.ticket_id,
     metadata: { new_priority: parsed.data.priority },
   });
+  // Urgent priority pings HQ as a separate, loud notification.
+  if (parsed.data.priority === "urgent" && row) {
+    await emitNotifications(
+      notifyOnSupportPriorityUrgent({
+        org_id: row.org_id,
+        ticket_id: parsed.data.ticket_id,
+        ticket_number: row.ticket_number,
+        subject: row.subject,
+      }),
+    );
+  }
   revalidatePath(`/admin/support/${parsed.data.ticket_id}`);
   revalidatePath(`/admin/support`);
   redirect(`/admin/support/${parsed.data.ticket_id}?saved=priority`);

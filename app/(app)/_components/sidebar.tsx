@@ -27,6 +27,7 @@ const ADMIN_LINKS = [
   { href: "/staff", label: "Staff" },
   { href: "/imports", label: "Migrate data" },
   { href: "/reports", label: "Reports" },
+  { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },
   { href: "/settings", label: "Settings" },
 ];
@@ -35,6 +36,7 @@ const STAFF_LINKS = [
   { href: "/me", label: "My day" },
   { href: "/jobs", label: "Jobs" },
   { href: "/staff/leave", label: "Leave" },
+  { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },
   { href: "/settings", label: "Settings" },
 ];

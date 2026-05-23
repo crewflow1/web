@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { createOrgWithOwner } from "@/server/services/bootstrap-account";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnCustomerSignup } from "@/lib/notifications/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Loose UK postcode regex — accepts most real UK formats with or without spaces.
@@ -60,7 +62,7 @@ export async function createOrg(formData: FormData) {
   const { name, first_name, phone, postcode, vat_number } = parsed.data;
 
   try {
-    await createOrgWithOwner({
+    const result = await createOrgWithOwner({
       userId: user.id,
       userEmail: user.email ?? null,
       name,
@@ -76,6 +78,15 @@ export async function createOrg(formData: FormData) {
       .from("users")
       .update({ full_name: first_name })
       .eq("id", user.id);
+
+    // Loud HQ notification: a new company just signed up.
+    await emitNotifications(
+      notifyOnCustomerSignup({
+        org_id: result.orgId,
+        org_name: name,
+        owner_email: user.email ?? null,
+      }),
+    );
   } catch (e) {
     console.error("[onboarding/company] createOrg failed", e);
     redirect("/onboarding/company?error=create_failed");

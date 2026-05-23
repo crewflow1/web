@@ -228,10 +228,12 @@ describe("HQ layout — auth gate", () => {
     expect(LAYOUT).toMatch(/export const HQ_NAV/);
   });
 
-  it("HQ_NAV covers every directive section (12 entries)", () => {
+  it("HQ_NAV covers every directive section (12 directive entries + the post-HQ-8 notifications module = 13)", () => {
     const navEntries = (LAYOUT.match(/href:\s*"\/admin\/[^"]+"/g) ?? []).length;
-    // 12 sections from the directive — all present in the nav.
-    expect(navEntries).toBe(12);
+    // 12 sections from the original directive + /admin/notifications
+    // added in HQ-8. The count grows monotonically as new modules
+    // ship — never shrinks.
+    expect(navEntries).toBeGreaterThanOrEqual(13);
   });
 
   it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {

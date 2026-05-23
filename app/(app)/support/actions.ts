@@ -6,6 +6,10 @@ import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import {
+  notifyOnSupportReplyToHq,
+} from "@/lib/notifications/events";
 import {
   SUPPORT_CATEGORIES,
   SUPPORT_PRIORITIES,
@@ -149,6 +153,27 @@ export async function replyToSupportTicket(
     targetId: parsed.data.ticket_id,
     metadata: { org_id: ctx.membership.org_id },
   });
+
+  // Notify HQ that the customer replied — high priority, drives the
+  // "needs attention" sort on /admin/support.
+  const { data: tRow } = await supabase
+    .from("support_tickets" as never)
+    .select("subject, ticket_number" as never)
+    .eq("id" as never, parsed.data.ticket_id)
+    .maybeSingle();
+  const tInfo = tRow as unknown as {
+    subject?: string;
+    ticket_number?: number;
+  } | null;
+  await emitNotifications(
+    notifyOnSupportReplyToHq({
+      org_id: ctx.membership.org_id,
+      ticket_id: parsed.data.ticket_id,
+      ticket_number: tInfo?.ticket_number ?? 0,
+      subject: tInfo?.subject ?? "Ticket reply",
+      body_preview: parsed.data.body.slice(0, 200),
+    }),
+  );
 
   revalidatePath(`/support/${parsed.data.ticket_id}`);
   revalidatePath(`/support`);

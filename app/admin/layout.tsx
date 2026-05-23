@@ -4,6 +4,8 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
 import { badgeText } from "@/lib/hq/support";
+import { getUnreadCountForHq } from "@/server/services/notifications-service";
+import { badgeText as notifBadgeText } from "@/lib/notifications/sort";
 import { HqNavMobile } from "./_nav-mobile";
 
 /**
@@ -35,6 +37,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/onboarding", label: "Onboarding & migration" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue" },
+  { href: "/admin/notifications", label: "Notifications" },
   { href: "/admin/alerts", label: "Alerts" },
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/impersonation", label: "Impersonation log", shipsIn: "HQ-3" },
@@ -55,6 +58,9 @@ export default async function AdminLayout({
   // failures degrade to no badge rather than breaking the layout.
   const openTickets = await countOpenSupportTicketsForHq().catch(() => 0);
   const supportBadge = badgeText(openTickets);
+  // Same pattern for unread HQ notifications.
+  const unreadNotifs = await getUnreadCountForHq().catch(() => 0);
+  const notifBadge = notifBadgeText(unreadNotifs);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -79,7 +85,11 @@ export default async function AdminLayout({
                   key={item.href}
                   item={item}
                   badge={
-                    item.href === "/admin/support" ? supportBadge : null
+                    item.href === "/admin/support"
+                      ? supportBadge
+                      : item.href === "/admin/notifications"
+                        ? notifBadge
+                        : null
                   }
                 />
               ))}
