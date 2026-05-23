@@ -90,13 +90,40 @@ describe("/auth/callback defaults super-admins to /admin/organizations", () => {
     expect(AUTH_CALLBACK).toMatch(/"\/dashboard"/);
   });
 
-  it("explicit `?next=` still wins for deep links", () => {
-    // The handler must honour explicitNext when same-origin, otherwise
-    // post-magic-link deep links break.
+  it("validates explicit `?next=` is same-origin before honouring it", () => {
+    // The handler must reject `//host.evil/...` and require leading slash.
     expect(AUTH_CALLBACK).toMatch(/explicitNext/);
-    expect(AUTH_CALLBACK).toMatch(/candidate\.startsWith\("\/"\)/);
+    expect(AUTH_CALLBACK).toMatch(/startsWith\("\/"\)/);
+    expect(AUTH_CALLBACK).toMatch(/!.*startsWith\("\/\/"\)/);
   });
+
+  it(
+    "REGRESSION: super-admins always land in /admin even if explicit `?next=/dashboard` (sent the CEO into a contractor workspace once)",
+    () => {
+      // For a super-admin user, the only `?next=` accepted is one that
+      // starts with `/admin`. Any other `?next` (including the old
+      // hardcoded `/dashboard` from the login form) MUST be ignored
+      // in favour of the role-based fallback.
+      expect(AUTH_CALLBACK).toMatch(/safeExplicit\.startsWith\("\/admin"\)/);
+    },
+  );
 });
+
+describe(
+  "REGRESSION: login form does NOT hardcode ?next=/dashboard (would override super-admin fallback)",
+  () => {
+    const ACTIONS = read("app/(auth)/actions.ts");
+    it("Google OAuth redirectTo has no hardcoded ?next", () => {
+      expect(ACTIONS).not.toMatch(/\/auth\/callback\?next=\/dashboard/);
+    });
+    it("magic-link emailRedirectTo has no hardcoded ?next", () => {
+      // Same pattern check — `?next=/dashboard` anywhere in this file
+      // would re-introduce the bug.
+      const occurrences = (ACTIONS.match(/\?next=\/dashboard/g) ?? []).length;
+      expect(occurrences).toBe(0);
+    });
+  },
+);
 
 describe("middleware sends signed-in super-admins on auth pages to /admin/organizations", () => {
   it("reads CREWFLOW_SUPERADMIN_EMAILS directly to avoid server-only imports", () => {

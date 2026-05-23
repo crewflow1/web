@@ -28,10 +28,15 @@ export async function signInWithGoogle() {
   const supabase = await createClient();
   const origin = getOrigin(await headers());
 
+  // No hardcoded `?next=` — the auth callback already picks the
+  // correct landing per role (super-admins → /admin/organizations,
+  // everyone else → /dashboard). A hardcoded next pointing at the
+  // contractor dashboard would override the super-admin fallback
+  // and silently route the CEO into a tenant workspace.
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${origin}/auth/callback?next=/dashboard`,
+      redirectTo: `${origin}/auth/callback`,
       queryParams: {
         prompt: "select_account",
       },
@@ -73,10 +78,11 @@ export async function signInWithMagicLink(formData: FormData) {
   const supabase = await createClient();
   const origin = getOrigin(await headers());
 
+  // No hardcoded `?next=` — see signInWithGoogle above.
   const { error } = await supabase.auth.signInWithOtp({
     email: parsed.data.email,
     options: {
-      emailRedirectTo: `${origin}/auth/callback?next=/dashboard`,
+      emailRedirectTo: `${origin}/auth/callback`,
       shouldCreateUser: true,
     },
   });

@@ -60,15 +60,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=bootstrap_failed`);
   }
 
-  // Choose default landing based on role; explicit `next` always wins
-  // when same-origin so deep links survive sign-in.
-  const fallback = isSuperAdminEmail(data.user.email ?? null)
-    ? "/admin/organizations"
-    : "/dashboard";
-  const candidate = explicitNext ?? fallback;
-  const safeNext =
-    candidate.startsWith("/") && !candidate.startsWith("//")
-      ? candidate
-      : fallback;
+  // Choose default landing based on role.
+  //
+  // For SUPER-ADMINS, the role-based fallback (/admin/organizations)
+  // ALWAYS wins unless an explicit `?next=/admin/...` deep-link is
+  // present. This is defence-in-depth — a stale magic-link, OAuth
+  // re-bounce, or bookmarked URL with `?next=/dashboard` must never
+  // route the CEO into a contractor workspace. (We hit this exact
+  // bug once already.)
+  //
+  // For everyone else, the explicit `?next=` deep link wins so
+  // contractors returning from a protected page land where they
+  // expected to.
+  const isAdmin = isSuperAdminEmail(data.user.email ?? null);
+  const fallback = isAdmin ? "/admin/organizations" : "/dashboard";
+  const safeExplicit =
+    explicitNext && explicitNext.startsWith("/") && !explicitNext.startsWith("//")
+      ? explicitNext
+      : null;
+  const safeNext = isAdmin
+    ? safeExplicit && safeExplicit.startsWith("/admin")
+      ? safeExplicit
+      : fallback
+    : (safeExplicit ?? fallback);
   return NextResponse.redirect(`${origin}${safeNext}`);
 }
