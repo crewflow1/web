@@ -19,6 +19,10 @@ import {
 } from "../actions";
 import { CustomerImpersonateModal } from "./_impersonate";
 import { ClientConfirmForm } from "./_confirm";
+import {
+  createSetupCheckout,
+  createSubscriptionCheckout,
+} from "./_stripe-actions";
 
 /**
  * Customers OS — per-customer detail page (HQ-3).
@@ -336,6 +340,51 @@ export default async function HqCustomerDetailPage({
             )}
           </div>
         </form>
+      </section>
+
+      {/* Stripe checkout actions */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold text-slate-900">
+            Stripe checkout
+          </h2>
+          <a
+            href="/api/admin/stripe/verify"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+          >
+            Run integration diagnostic →
+          </a>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Open a hosted Stripe Checkout. The webhook at{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
+            /api/webhooks/stripe
+          </code>{" "}
+          is the source of truth — billing state updates only when Stripe
+          confirms payment.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <form action={createSetupCheckout}>
+            <input type="hidden" name="org_id" value={org.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-900 hover:bg-indigo-100"
+            >
+              Open setup-fee checkout (£1,000)
+            </button>
+          </form>
+          <form action={createSubscriptionCheckout}>
+            <input type="hidden" name="org_id" value={org.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100"
+            >
+              Open subscription checkout (£500/mo)
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* Onboarding / migration */}

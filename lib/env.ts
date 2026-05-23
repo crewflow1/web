@@ -42,6 +42,30 @@ const envSchema = z.object({
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
+  // -- Stripe -------------------------------------------------------------
+  // Optional at boot — the app starts without Stripe configured. The
+  // webhook + checkout routes return 503 with a clear error when these
+  // aren't set, so a half-configured environment fails loudly rather
+  // than processing payments silently against the wrong account.
+  //
+  // STRIPE_SECRET_KEY            — Restricted key (Customers/
+  //                                Subscriptions/Invoices/Payment
+  //                                Intents/Checkout write; Prices/
+  //                                Webhooks read).
+  // STRIPE_WEBHOOK_SECRET        — Endpoint signing secret (whsec_...).
+  // NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY — Browser-safe key. Unused today
+  //                                (Checkout is fully hosted), reserved
+  //                                for a future Payment Element flow.
+  // STRIPE_SETUP_PRICE_ID        — Optional. If unset, the integration
+  //                                auto-discovers the one-off £1,000
+  //                                price by amount + currency match.
+  // STRIPE_SUBSCRIPTION_PRICE_ID — Same, for the £500/mo recurring.
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
+  STRIPE_SETUP_PRICE_ID: z.string().optional(),
+  STRIPE_SUBSCRIPTION_PRICE_ID: z.string().optional(),
+
   // -- Inngest ------------------------------------------------------------
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
