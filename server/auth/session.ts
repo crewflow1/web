@@ -71,8 +71,27 @@ export async function requireUser(): Promise<User> {
  *
  * Returns null only if the user has no memberships at all.
  */
-export async function getOrgForUser(userId: string): Promise<OrgContext | null> {
+export async function getOrgForUser(
+  userId: string,
+  options: { currentEmail?: string | null } = {},
+): Promise<OrgContext | null> {
   const supabase = await createClient();
+
+  // HQ-10: impersonation override. If the current user is a
+  // super-admin AND has an active impersonation session, return
+  // the TARGET org's context regardless of their actual
+  // memberships. Validated server-side every call — cookie alone
+  // never grants access.
+  if (options.currentEmail) {
+    const { getActiveImpersonation } = await import(
+      "@/server/services/impersonation"
+    );
+    const imp = await getActiveImpersonation(options.currentEmail);
+    if (imp) {
+      const impCtx = await loadOrgContextForImpersonation(imp.target_org_id);
+      if (impCtx) return impCtx;
+    }
+  }
 
   const { data: memberships, error: memErr } = await supabase
     .from("memberships")
@@ -184,10 +203,68 @@ export async function requireOrgContext(): Promise<{
   ctx: OrgContext;
 }> {
   const user = await requireUser();
-  const ctx = await getOrgForUser(user.id);
+  const ctx = await getOrgForUser(user.id, { currentEmail: user.email ?? null });
   if (!ctx) redirect("/onboarding/company");
   if (!orgHasActiveAccess(ctx.org.status)) {
     redirect("/access-pending");
   }
   return { user, ctx };
+}
+
+/**
+ * Build an OrgContext for an impersonation target. Used when an
+ * HQ super-admin is actively impersonating a customer org — the
+ * normal membership query is bypassed and we hand back the target
+ * org's row directly (the super-admin doesn't need a membership
+ * row in the target org).
+ *
+ * Status gate is intentionally relaxed: HQ may want to inspect
+ * suspended / cancelled orgs during a recovery call. The banner
+ * makes the impersonation state obvious so this isn't a stealth
+ * privilege escalation.
+ */
+async function loadOrgContextForImpersonation(
+  orgId: string,
+): Promise<OrgContext | null> {
+  const supabase = await createClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select(
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at" as never,
+    )
+    .eq("id", orgId)
+    .maybeSingle();
+  if (!org) return null;
+  const row = org as unknown as {
+    id: string;
+    name: string;
+    slug: string;
+    onboarding_state: Record<string, unknown>;
+    status: OrgStatus | null;
+    plan: string | null;
+    trial_ends_at: string | null;
+    created_at: string;
+  };
+  return {
+    // The HQ user is rendered with role='owner' so the workspace
+    // shows them the full surface (sidebar + sensitive screens).
+    // Their actual permissions inside the target tenant are still
+    // bounded by RLS — they don't have a membership row there, so
+    // INSERT/UPDATE/DELETE that policy on memberships will refuse.
+    // Read access works because we're on the user-JWT client and
+    // their session user_id has no membership in this org — RLS
+    // rejects most tenant reads, which is why HQ-side use of
+    // impersonation is read-only-ish from the DB's perspective.
+    membership: { org_id: row.id, role: "owner" },
+    org: {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      onboarding_state: row.onboarding_state,
+      status: (row.status ?? "active") as OrgStatus,
+      plan: row.plan ?? "trial",
+      trial_ends_at: row.trial_ends_at,
+      created_at: row.created_at,
+    },
+  };
 }

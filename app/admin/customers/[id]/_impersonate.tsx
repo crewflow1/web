@@ -5,17 +5,16 @@ import { useState } from "react";
 /**
  * Impersonate button + confirmation modal.
  *
- * Full session-swap impersonation is a high-risk feature — it gets its
- * own focused PR (HQ-3.1) where we'll:
- *   - inject a banner into the customer workspace so the operator can
- *     never accidentally type AS the customer
- *   - cap the impersonation session duration
- *   - write a dedicated impersonation-session row + audit pair
+ * HQ-10: real session-swap. Clicking the submit button:
+ *   * Writes an impersonation_sessions row (admin_user_id,
+ *     target_org_id, reason).
+ *   * Sets the cf_impersonation_session cookie (24h cap).
+ *   * Redirects the operator to /dashboard where the customer-side
+ *     layout renders a red "you are impersonating X" banner with
+ *     an "Exit" button.
  *
- * For HQ-3.0 this button records the operator's intent (mandatory
- * "reason" field) into admin_activity_log so the audit trail is in
- * place before the real flow lands. Clicking submit writes the audit
- * entry and bounces back to the page with a banner.
+ * Every load re-validates the impersonation row server-side — the
+ * cookie alone can never grant access.
  */
 export function CustomerImpersonateModal({
   orgId,
@@ -55,9 +54,9 @@ export function CustomerImpersonateModal({
                 Impersonate {orgName}
               </h2>
               <p className="mt-1 text-xs text-slate-600">
-                Full session-swap lands in HQ-3.1. For now this records your
-                intent into the audit log so the trail is in place before
-                the live flow ships.
+                You&apos;ll be dropped into the customer&apos;s workspace
+                with a persistent banner. Auto-expires after 24h. Click
+                &ldquo;Exit&rdquo; from the banner to return to HQ.
               </p>
             </header>
             <form action={action} className="space-y-3 px-5 py-4">
@@ -82,9 +81,9 @@ export function CustomerImpersonateModal({
                 </button>
                 <button
                   type="submit"
-                  className="rounded-md bg-indigo-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-800"
+                  className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800"
                 >
-                  Log impersonation intent
+                  Start impersonating
                 </button>
               </div>
             </form>

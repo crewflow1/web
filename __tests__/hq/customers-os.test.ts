@@ -317,15 +317,14 @@ describe("/admin/customers/[id] detail page", () => {
   });
 });
 
-describe("impersonation — audit-logged stub for HQ-3.0", () => {
+describe("impersonation — modal + action wiring (HQ-10 full session swap)", () => {
   it("renders a confirmation modal with a required reason field", () => {
     expect(IMPERSONATE).toMatch(/role="dialog"/);
     expect(IMPERSONATE).toMatch(/name="reason"[^>]*required/);
   });
-  it("action body for the action prop wires through to logImpersonationAttempt", () => {
-    expect(DETAIL_PAGE).toMatch(
-      /action=\{logImpersonationAttempt\}/,
-    );
+  it("modal action prop wires through to startImpersonation (HQ-10) — no longer the legacy logImpersonationAttempt stub", () => {
+    expect(DETAIL_PAGE).toMatch(/action=\{startImpersonation\}/);
+    expect(DETAIL_PAGE).not.toMatch(/action=\{logImpersonationAttempt\}/);
   });
 });
 
