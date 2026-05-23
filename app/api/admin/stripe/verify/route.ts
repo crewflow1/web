@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { getStripe, isLiveMode } from "@/lib/stripe/client";
@@ -37,7 +37,7 @@ export const dynamic = "force-dynamic";
 
 type Check = { name: string; ok: boolean; detail?: unknown };
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const user = await requireUser();
   if (!isSuperAdminEmail(user.email)) {
     return NextResponse.json({ error: "not_authorised" }, { status: 404 });
@@ -141,6 +141,104 @@ export async function GET(): Promise<NextResponse> {
     });
   }
 
+  // Optional: also try creating a real Checkout Session as proof
+  // that the full flow works end-to-end. Triggered with
+  // `?sample_checkout=setup_fee` or `?sample_checkout=subscription`.
+  // Real session — appears in Stripe dashboard, expires in 24h,
+  // safe in test mode.
+  let sampleCheckout:
+    | {
+        kind: string;
+        org_id: string;
+        session_id: string;
+        url: string | null;
+        amount_total: number | null;
+      }
+    | { error: string }
+    | null = null;
+  const sampleKind = request.nextUrl.searchParams.get("sample_checkout");
+  const sampleOrgId = request.nextUrl.searchParams.get("org_id");
+  if (sampleKind && stripe) {
+    try {
+      const priceLookup =
+        sampleKind === "setup_fee"
+          ? await resolveSetupFeePrice()
+          : sampleKind === "subscription"
+            ? await resolveSubscriptionPrice()
+            : null;
+      if (!priceLookup) {
+        sampleCheckout = { error: `unknown kind '${sampleKind}'` };
+      } else if (!priceLookup.ok) {
+        sampleCheckout = {
+          error: `price_unresolved: ${priceLookup.error.reason}`,
+        };
+      } else if (!sampleOrgId) {
+        sampleCheckout = { error: "missing ?org_id=<uuid>" };
+      } else {
+        // Find/create a Stripe customer for this org.
+        const admin = createAdminClient();
+        const { data: orgRow } = await admin
+          .from("organizations")
+          .select(
+            "id, name, billing_email, stripe_customer_id" as never,
+          )
+          .eq("id", sampleOrgId)
+          .maybeSingle();
+        const org = orgRow as unknown as {
+          id: string;
+          name: string;
+          billing_email: string | null;
+          stripe_customer_id: string | null;
+        } | null;
+        if (!org) {
+          sampleCheckout = { error: `org ${sampleOrgId} not found` };
+        } else {
+          let customerId = org.stripe_customer_id;
+          if (!customerId) {
+            const c = await stripe.customers.create({
+              name: org.name,
+              email: org.billing_email ?? undefined,
+              metadata: { org_id: org.id, source: "verify_endpoint_sample" },
+            });
+            customerId = c.id;
+            await admin
+              .from("organizations")
+              .update({ stripe_customer_id: customerId } as never)
+              .eq("id", org.id);
+          }
+          const params = {
+            customer: customerId,
+            line_items: [{ price: priceLookup.price.price_id, quantity: 1 }],
+            metadata: { org_id: org.id, kind: sampleKind, source: "verify_sample" },
+            success_url: `${env.NEXT_PUBLIC_APP_URL}/admin/customers/${org.id}?stripe=success&kind=${sampleKind}`,
+            cancel_url: `${env.NEXT_PUBLIC_APP_URL}/admin/customers/${org.id}?stripe=cancelled`,
+          };
+          const session =
+            sampleKind === "subscription"
+              ? await stripe.checkout.sessions.create({
+                  ...params,
+                  mode: "subscription",
+                })
+              : await stripe.checkout.sessions.create({
+                  ...params,
+                  mode: "payment",
+                });
+          sampleCheckout = {
+            kind: sampleKind,
+            org_id: org.id,
+            session_id: session.id,
+            url: session.url,
+            amount_total: session.amount_total,
+          };
+        }
+      }
+    } catch (e) {
+      sampleCheckout = {
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
   const allOk = checks.every((c) => c.ok);
   const blockers = checks.filter((c) => !c.ok).map((c) => c.name);
 
@@ -148,6 +246,7 @@ export async function GET(): Promise<NextResponse> {
     ok: allOk,
     env_mode: isLiveMode() ? "LIVE" : "TEST",
     provision_url: `${env.NEXT_PUBLIC_APP_URL}/api/admin/stripe/provision`,
+    ...(sampleCheckout !== null ? { sample_checkout: sampleCheckout } : {}),
     app_url: env.NEXT_PUBLIC_APP_URL,
     webhook_endpoint: `${env.NEXT_PUBLIC_APP_URL}/api/webhooks/stripe`,
     checks,
