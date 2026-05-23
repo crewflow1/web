@@ -45,7 +45,7 @@ import {
  */
 
 type Params = Promise<{ id: string }>;
-type SP = Promise<{ saved?: string; error?: string }>;
+type SP = Promise<{ saved?: string; error?: string; detail?: string; stripe?: string; kind?: string }>;
 
 export default async function HqCustomerDetailPage({
   params,
@@ -65,7 +65,12 @@ export default async function HqCustomerDetailPage({
   const saved = sp.saved
     ? prettySaved(decodeURIComponent(sp.saved))
     : null;
-  const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMsg = sp.error
+    ? prettyCheckoutError(
+        decodeURIComponent(sp.error),
+        sp.detail ? decodeURIComponent(sp.detail) : null,
+      )
+    : null;
 
   // Open-workspace deep link — operator wants to view what the
   // customer sees. Goes via /dashboard so the org switcher picks up
@@ -551,6 +556,30 @@ export default async function HqCustomerDetailPage({
       </section>
     </div>
   );
+}
+
+function prettyCheckoutError(code: string, detail: string | null): string {
+  const labels: Record<string, string> = {
+    stripe_not_configured:
+      "Stripe isn't configured on the server (STRIPE_SECRET_KEY missing).",
+    setup_fee_price_unresolved:
+      "Couldn't find a £1,000 GBP one-off price in Stripe.",
+    subscription_price_unresolved:
+      "Couldn't find a £500/mo GBP recurring price in Stripe.",
+    stripe_customer_create_failed:
+      "Stripe rejected the customer.create call (often: invalid email or restricted-key permissions).",
+    stripe_session_create_failed:
+      "Stripe rejected checkout.sessions.create.",
+    stripe_no_session_url:
+      "Stripe returned a session but no checkout URL.",
+    org_not_found: "Org lookup failed.",
+    invalid_input: "Invalid input.",
+    db_org_load_failed: "Database lookup for this org failed.",
+    unhandled_exception:
+      "Unhandled exception in the checkout action — see Vercel function logs (grep for `[stripe-checkout]`).",
+  };
+  const head = labels[code] ?? `Checkout failed: ${code}`;
+  return detail ? `${head} · ${detail}` : head;
 }
 
 function prettySaved(saved: string): string {

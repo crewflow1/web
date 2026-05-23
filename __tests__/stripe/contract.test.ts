@@ -224,8 +224,11 @@ describe("checkout server actions", () => {
 
   it("attaches metadata { org_id, kind, actor_id } so the webhook can dispatch", () => {
     expect(CHECKOUT_ACTIONS).toMatch(/org_id: org\.id/);
-    expect(CHECKOUT_ACTIONS).toMatch(/kind: "setup_fee"/);
-    expect(CHECKOUT_ACTIONS).toMatch(/kind: "subscription"/);
+    // `kind` arrives as a parameter to runCheckout — the literal
+    // strings appear in CheckoutKind, in branch logic, and in the
+    // page-redirect labels.
+    expect(CHECKOUT_ACTIONS).toMatch(/"setup_fee"/);
+    expect(CHECKOUT_ACTIONS).toMatch(/"subscription"/);
     expect(CHECKOUT_ACTIONS).toMatch(/actor_id: admin\.id/);
   });
 
@@ -244,9 +247,28 @@ describe("checkout server actions", () => {
     expect(CHECKOUT_ACTIONS).toMatch(/"stripe\.checkout_created"/);
   });
 
-  it("redirects the operator to the hosted Stripe Checkout URL", () => {
-    expect(CHECKOUT_ACTIONS).toMatch(/redirect\(session\.url\)/);
+  it("redirects the operator to the hosted Stripe Checkout URL (or to an error page on failure)", () => {
+    // Post-refactor: runCheckout() returns session.url, the action
+    // then redirect()s to that target. On exception the action
+    // redirects with ?error= and ?detail= so the page can render a
+    // diagnostic banner instead of bouncing to /error.tsx.
+    expect(CHECKOUT_ACTIONS).toMatch(/return session\.url/);
+    expect(CHECKOUT_ACTIONS).toMatch(/redirect\(target\)/);
+    expect(CHECKOUT_ACTIONS).toMatch(/\?error=\$\{encodeURIComponent\(code\)\}/);
   });
+
+  it(
+    "REGRESSION: wraps every Stripe SDK call so a thrown error never reaches Next's error boundary (was 'Something went wrong' in prod)",
+    () => {
+      // Pin the safety net: outer action body has try/catch around
+      // runCheckout, errors funnel into structured `[stripe-checkout]`
+      // logs, and redirect() runs OUTSIDE the try/catch (so it can
+      // throw NEXT_REDIRECT without being swallowed).
+      expect(CHECKOUT_ACTIONS).toMatch(/\[stripe-checkout\]/);
+      expect(CHECKOUT_ACTIONS).toMatch(/isNextRedirect/);
+      expect(CHECKOUT_ACTIONS).toMatch(/class CheckoutError/);
+    },
+  );
 
   it("success + cancel URLs return to /admin/customers/<id>", () => {
     expect(CHECKOUT_ACTIONS).toMatch(/success_url/);

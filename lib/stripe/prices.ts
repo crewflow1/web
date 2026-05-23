@@ -1,4 +1,5 @@
 import "server-only";
+import type Stripe from "stripe";
 import { getStripe } from "./client";
 import { env } from "@/lib/env";
 
@@ -131,12 +132,28 @@ async function resolve(
   const targetAmount =
     kind === "setup_fee" ? SETUP_AMOUNT_PENCE : SUBSCRIPTION_AMOUNT_PENCE;
   const requireRecurring = kind === "subscription";
-  const prices = await stripe.prices.list({
-    active: true,
-    limit: 100,
-    type: requireRecurring ? "recurring" : "one_time",
-    currency: CURRENCY,
-  });
+  // Wrap the Stripe SDK call so an auth failure / rate limit / network
+  // error returns a clean error result instead of throwing all the way
+  // up to the server-action layer (which would surface as a generic
+  // "Something went wrong" page with no diagnostic context).
+  let prices: Stripe.ApiList<Stripe.Price>;
+  try {
+    prices = await stripe.prices.list({
+      active: true,
+      limit: 100,
+      type: requireRecurring ? "recurring" : "one_time",
+      currency: CURRENCY,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: {
+        kind,
+        reason: `Stripe prices.list() failed: ${e instanceof Error ? e.message : String(e)}`,
+        candidates: [],
+      },
+    };
+  }
 
   const matches = prices.data.filter(
     (p) =>
