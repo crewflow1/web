@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnDemoRequested } from "@/lib/notifications/events";
 import {
   demoRequestSchema,
   TURNOVER_LABELS,
@@ -126,6 +128,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     logStep("demo_request_inserted", { request_id: requestRow.id });
+
+    // Notify HQ of the new demo request. The internal CrewFlow org
+    // is the routing key (HQ-side notifications are org-scoped).
+    const internalOrgIdForNotif = process.env.CREWFLOW_INTERNAL_ORG_ID;
+    if (internalOrgIdForNotif) {
+      await emitNotifications(
+        notifyOnDemoRequested({
+          org_id: internalOrgIdForNotif,
+          demo_id: requestRow.id,
+          company: data.company,
+          contact_name: data.name,
+        }),
+      );
+    }
 
     // Best-effort: internal CrewFlow org lead.
     const internalOrgId = process.env.CREWFLOW_INTERNAL_ORG_ID;

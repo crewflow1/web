@@ -5,6 +5,8 @@ import {
   type SetupFeeStatus,
 } from "@/lib/hq/customer-financials";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnHealthDropped } from "@/lib/notifications/events";
 
 /**
  * CrewFlow HQ — Health-score cache rebuild engine (HQ-6).
@@ -245,6 +247,19 @@ async function processRow(
         reasons: result.reasons,
       },
     });
+
+    // 4. HQ notification when health drops. Only fire when there's
+    //    an old score to compare against (skip first-ever score).
+    if (oldScore !== null && newScore < oldScore) {
+      await emitNotifications(
+        notifyOnHealthDropped({
+          org_id: row.id,
+          org_name: row.name,
+          old_score: oldScore,
+          new_score: newScore,
+        }),
+      );
+    }
   }
 
   return {

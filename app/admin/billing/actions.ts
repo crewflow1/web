@@ -7,6 +7,8 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnSetupFeePaid } from "@/lib/notifications/events";
 import {
   BILLING_INVOICE_KINDS,
   BILLING_INVOICE_STATUSES,
@@ -301,6 +303,18 @@ export async function setBillingInvoiceStatus(
         setup_fee_paid_at: parsed.data.status === "paid" ? now : null,
       } as never)
       .eq("id", row.org_id);
+
+    // When the operator marks a setup-fee invoice paid (e.g. for a
+    // bank-transfer payment outside Stripe), notify customer + HQ
+    // the same as if Stripe had told us.
+    if (parsed.data.status === "paid") {
+      await emitNotifications(
+        notifyOnSetupFeePaid({
+          org_id: row.org_id,
+          amount_gbp: Number(row.amount_gbp ?? 1000),
+        }),
+      );
+    }
   }
 
   await recordAdminActivity({

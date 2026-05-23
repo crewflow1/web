@@ -7,6 +7,11 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import {
+  notifyOnOnboardingMilestone,
+  notifyOnMigrationProgress,
+} from "@/lib/notifications/events";
 import { SETUP_FEE_STATUSES } from "@/lib/hq/customer-financials";
 
 /**
@@ -183,6 +188,19 @@ export async function updateCustomerProgress(formData: FormData): Promise<void> 
   }
 
   const supabase = createAdminClient();
+  // Capture the previous values so we only notify on milestone
+  // crossings (10/25/50/75/100) — avoids spamming the customer
+  // every time the operator nudges the slider by 1%.
+  const { data: prevRow } = await supabase
+    .from("organizations")
+    .select("onboarding_percent, migration_percent" as never)
+    .eq("id", parsed.data.org_id)
+    .maybeSingle();
+  const prev = (prevRow as unknown as {
+    onboarding_percent?: number | null;
+    migration_percent?: number | null;
+  } | null) ?? null;
+
   const { error } = await supabase
     .from("organizations")
     .update({
@@ -212,6 +230,37 @@ export async function updateCustomerProgress(formData: FormData): Promise<void> 
       migration_eta: parsed.data.migration_eta ?? null,
     },
   });
+
+  // Customer-facing notifications on milestone crossings.
+  const MILESTONES = [10, 25, 50, 75, 100];
+  const prevOnboarding = Number(prev?.onboarding_percent ?? 0);
+  const newOnboarding = parsed.data.onboarding_percent;
+  for (const m of MILESTONES) {
+    if (prevOnboarding < m && newOnboarding >= m) {
+      await emitNotifications(
+        notifyOnOnboardingMilestone({
+          org_id: parsed.data.org_id,
+          milestone: parsed.data.migration_stage ?? `${m}% onboarded`,
+          percent: m,
+        }),
+      );
+      break; // one milestone notification per save is plenty
+    }
+  }
+  const prevMigration = Number(prev?.migration_percent ?? 0);
+  const newMigration = parsed.data.migration_percent;
+  if (
+    (prevMigration < 100 && newMigration >= 100) ||
+    (prevMigration < 50 && newMigration >= 50)
+  ) {
+    await emitNotifications(
+      notifyOnMigrationProgress({
+        org_id: parsed.data.org_id,
+        percent: newMigration,
+        import_id: null,
+      }),
+    );
+  }
 
   revalidatePath(`/admin/customers/${parsed.data.org_id}`);
   redirect(`/admin/customers/${parsed.data.org_id}?saved=progress`);

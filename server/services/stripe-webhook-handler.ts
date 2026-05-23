@@ -3,6 +3,13 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { recomputeHealthForOrg } from "@/server/services/hq-health-recompute";
+import { emitNotifications } from "@/server/services/notifications-service";
+import {
+  notifyOnSetupFeePaid,
+  notifyOnSubscriptionStarted,
+  notifyOnSubscriptionCancelled,
+  notifyOnFailedPayment,
+} from "@/lib/notifications/events";
 import {
   isProcessedEvent,
   type CheckoutSessionMetadata,
@@ -213,6 +220,14 @@ async function handleCheckoutCompleted(
       notes: "Auto-created from Stripe checkout.session.completed (setup_fee)",
     });
     out.push("billing_invoice_inserted:setup_fee");
+
+    // Notify customer + HQ that the setup fee landed.
+    await emitNotifications(
+      notifyOnSetupFeePaid({
+        org_id: meta.org_id,
+        amount_gbp: (session.amount_total ?? 0) / 100,
+      }),
+    );
   }
 
   if (meta.kind === "subscription") {
@@ -228,6 +243,15 @@ async function handleCheckoutCompleted(
         })
         .eq("id", meta.org_id);
       out.push(`subscription_started:${subId}`);
+
+      // Notify customer + HQ that the subscription is active.
+      await emitNotifications(
+        notifyOnSubscriptionStarted({
+          org_id: meta.org_id,
+          stripe_subscription_id: subId,
+          next_renewal_at: null,
+        }),
+      );
     }
   }
 
@@ -315,6 +339,14 @@ async function handleSubscriptionDeleted(
     targetId: orgId,
     metadata: { stripe_subscription_id: sub.id, status: sub.status },
   });
+
+  // Loud HQ notification — urgent decision needed.
+  await emitNotifications(
+    notifyOnSubscriptionCancelled({
+      org_id: orgId,
+      stripe_subscription_id: sub.id,
+    }),
+  );
   return ["subscription_deleted_recorded"];
 }
 
@@ -412,6 +444,17 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
     stripe_invoice_id: inv.id,
     notes: "Auto-created from Stripe invoice.payment_failed",
   });
+
+  // Notify both customer + HQ urgently — the customer needs to fix
+  // their card, HQ needs to chase if it doesn't get resolved.
+  await emitNotifications(
+    notifyOnFailedPayment({
+      org_id: orgId,
+      amount_gbp: amount,
+      stripe_invoice_id: inv.id,
+      reason: failureReason,
+    }),
+  );
 
   await recordAdminActivity({
     actorId: null,
