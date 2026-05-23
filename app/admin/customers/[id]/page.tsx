@@ -349,18 +349,28 @@ export default async function HqCustomerDetailPage({
 
       {/* Stripe checkout actions */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
           <h2 className="text-base font-semibold text-slate-900">
             Stripe checkout
           </h2>
-          <a
-            href="/api/admin/stripe/verify"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
-          >
-            Run integration diagnostic →
-          </a>
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href="/api/admin/stripe/provision"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Provision Stripe products →
+            </a>
+            <a
+              href="/api/admin/stripe/verify"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+            >
+              Run integration diagnostic →
+            </a>
+          </div>
         </div>
         <p className="mt-1 text-xs text-slate-500">
           Open a hosted Stripe Checkout. The webhook at{" "}
