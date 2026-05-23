@@ -1,11 +1,491 @@
-import { ComingSoonStub } from "../_coming-soon";
+import Link from "next/link";
+import { listAllInternalNotesForHQ } from "@/server/services/hq-internal-notes";
+import {
+  INTERNAL_NOTE_CATEGORIES,
+  INTERNAL_NOTE_CATEGORY_LABEL,
+  INTERNAL_NOTE_CATEGORY_PILL,
+  INTERNAL_NOTE_PRIORITIES,
+  INTERNAL_NOTE_PRIORITY_LABEL,
+  INTERNAL_NOTE_PRIORITY_PILL,
+  INTERNAL_NOTE_SORTS,
+  INTERNAL_NOTE_SORT_LABEL,
+  filterNotes,
+  sortNotes,
+  type InternalNoteCategory,
+  type InternalNotePriority,
+  type InternalNoteSort,
+} from "@/lib/hq/internal-notes";
+import {
+  createNoteAction,
+  togglePinNoteAction,
+  archiveNoteAction,
+  unarchiveNoteAction,
+} from "./actions";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-export default function HqNotesPage() {
+/**
+ * HQ Internal Notes — /admin/notes (HQ-9).
+ *
+ * Cross-tenant. Service-role read (bypasses RLS, which is exactly
+ * what we want — these rows are invisible to customers by design).
+ *
+ * The page shows every note across every org, sorts pinned first
+ * by default, supports search + org/category/priority filters, and
+ * hides archived rows unless explicitly toggled.
+ */
+
+type SP = Promise<{
+  q?: string;
+  org_id?: string;
+  category?: string;
+  priority?: string;
+  sort?: string;
+  show_archived?: string;
+  pinned_only?: string;
+  saved?: string;
+  error?: string;
+}>;
+
+export const dynamic = "force-dynamic";
+
+export default async function HqNotesPage({
+  searchParams,
+}: {
+  searchParams: SP;
+}) {
+  const sp = await searchParams;
+  const q = (sp.q ?? "").trim();
+  const orgId = (sp.org_id ?? "").trim();
+  const category =
+    (sp.category as InternalNoteCategory | "all" | undefined) ?? "all";
+  const priority =
+    (sp.priority as InternalNotePriority | "all" | undefined) ?? "all";
+  const sort = (INTERNAL_NOTE_SORTS.includes(sp.sort as InternalNoteSort)
+    ? sp.sort
+    : "default") as InternalNoteSort;
+  const showArchived = sp.show_archived === "1";
+  const pinnedOnly = sp.pinned_only === "1";
+
+  const rows = await listAllInternalNotesForHQ({
+    include_archived: showArchived,
+    limit: 500,
+  });
+
+  // Org options for the dropdown — keep it cheap, just pull names
+  // from the notes themselves. If you have 0 notes, the org filter
+  // collapses to "All" which is fine.
+  const orgOptions = Array.from(
+    new Map(rows.map((n) => [n.org_id, n.org_name ?? n.org_id])).entries(),
+  ).sort((a, b) => (a[1] ?? "").localeCompare(b[1] ?? ""));
+
+  const filtered = filterNotes(rows, {
+    q,
+    org_id: orgId || null,
+    category,
+    priority,
+    show_archived: showArchived,
+    pinned_only: pinnedOnly,
+  });
+  const sorted = sortNotes(filtered, sort);
+
+  // KPIs (full unfiltered set, so the operator sees system-wide
+  // truth regardless of current view).
+  const active = rows.filter((n) => n.archived_at === null);
+  const urgentActive = active.filter((n) => n.priority === "urgent").length;
+  const pinnedActive = active.filter((n) => n.pinned).length;
+  const today24h = rows.filter((n) => {
+    return Date.now() - new Date(n.created_at).getTime() <= 24 * 3600_000;
+  }).length;
+
+  // Customers list for the "new note" form (every active org).
+  // The 'status' column type in the generated Supabase types is
+  // narrower than what's actually in the DB (HQ-3 added it via
+  // migration), so cast through unknown.
+  const admin = createAdminClient();
+  const { data: orgs } = await admin
+    .from("organizations")
+    .select("id, name, status" as never)
+    .order("name", { ascending: true });
+  const orgsForForm = ((orgs ?? []) as unknown) as Array<{
+    id: string;
+    name: string;
+    status: string | null;
+  }>;
+
+  const banner = (() => {
+    if (sp.saved)
+      return { tone: "ok" as const, msg: `Saved (${sp.saved}).` };
+    if (sp.error)
+      return { tone: "err" as const, msg: `Error: ${sp.error}` };
+    return null;
+  })();
+
   return (
-    <ComingSoonStub
-      title="Internal notes"
-      sprint="HQ-5"
-      body="Private per-customer CEO notes — 'late payer', 'needs training', 'high value', anything you want to remember. Backed by a new internal_notes table visible only to super-admins. Lands in HQ-5."
-    />
+    <div className="space-y-5 p-6">
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            HQ · Internal notes
+          </p>
+          <h1 className="text-2xl font-bold text-slate-900">
+            Customer context library
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">
+            Sales nuance, onboarding observations, risk flags, billing
+            decisions. Never visible to customers — internal only.
+          </p>
+        </div>
+        <Link
+          href="/admin/overview"
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          ← HQ overview
+        </Link>
+      </header>
+
+      {banner ? (
+        <div
+          className={`rounded-md border px-3 py-2 text-sm ${
+            banner.tone === "ok"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-red-200 bg-red-50 text-red-800"
+          }`}
+        >
+          {banner.msg}
+        </div>
+      ) : null}
+
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="Active notes" value={String(active.length)} tone="slate" />
+        <Kpi label="Urgent" value={String(urgentActive)} tone="red" />
+        <Kpi label="Pinned" value={String(pinnedActive)} tone="amber" />
+        <Kpi label="Last 24h" value={String(today24h)} tone="blue" />
+      </section>
+
+      {/* New note form */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-900">New note</h2>
+        <form action={createNoteAction} className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-[11px] font-medium text-slate-700">
+              Customer
+              <select
+                name="org_id"
+                required
+                defaultValue={orgId}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">Pick a customer…</option>
+                {orgsForForm.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                    {o.status ? ` · ${o.status}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[11px] font-medium text-slate-700">
+              Title (optional)
+              <input
+                name="title"
+                type="text"
+                maxLength={200}
+                placeholder="e.g. Renewal call — next Tuesday"
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <label className="block text-[11px] font-medium text-slate-700">
+            Body
+            <textarea
+              name="body"
+              required
+              minLength={1}
+              maxLength={20_000}
+              rows={4}
+              placeholder="Markdown allowed…"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block text-[11px] font-medium text-slate-700">
+              Category
+              <select
+                name="category"
+                defaultValue="general"
+                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                {INTERNAL_NOTE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {INTERNAL_NOTE_CATEGORY_LABEL[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[11px] font-medium text-slate-700">
+              Priority
+              <select
+                name="priority"
+                defaultValue="normal"
+                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              >
+                {INTERNAL_NOTE_PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {INTERNAL_NOTE_PRIORITY_LABEL[p]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-end gap-2 pb-1 text-[11px] font-medium text-slate-700">
+              <input
+                type="checkbox"
+                name="pinned"
+                value="true"
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              Pin to top
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Save note
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Filter bar */}
+      <form
+        method="get"
+        action="/admin/notes"
+        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+      >
+        <label className="flex flex-col text-[11px] font-medium text-slate-700">
+          Search
+          <input
+            type="text"
+            name="q"
+            defaultValue={q}
+            placeholder="title, body, author"
+            className="mt-1 w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </label>
+        <label className="flex flex-col text-[11px] font-medium text-slate-700">
+          Customer
+          <select
+            name="org_id"
+            defaultValue={orgId}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">All</option>
+            {orgOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name ?? id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-[11px] font-medium text-slate-700">
+          Category
+          <select
+            name="category"
+            defaultValue={category}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="all">All</option>
+            {INTERNAL_NOTE_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {INTERNAL_NOTE_CATEGORY_LABEL[c]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-[11px] font-medium text-slate-700">
+          Priority
+          <select
+            name="priority"
+            defaultValue={priority}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="all">All</option>
+            {INTERNAL_NOTE_PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {INTERNAL_NOTE_PRIORITY_LABEL[p]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-[11px] font-medium text-slate-700">
+          Sort
+          <select
+            name="sort"
+            defaultValue={sort}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            {INTERNAL_NOTE_SORTS.map((s) => (
+              <option key={s} value={s}>
+                {INTERNAL_NOTE_SORT_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
+          <input
+            type="checkbox"
+            name="pinned_only"
+            value="1"
+            defaultChecked={pinnedOnly}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          Pinned only
+        </label>
+        <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
+          <input
+            type="checkbox"
+            name="show_archived"
+            value="1"
+            defaultChecked={showArchived}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          Show archived
+        </label>
+        <button
+          type="submit"
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+        >
+          Apply
+        </button>
+        <Link
+          href="/admin/notes"
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Reset
+        </Link>
+      </form>
+
+      {sorted.length === 0 ? (
+        <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+          No notes match these filters. Add one above.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {sorted.map((n) => (
+            <li
+              key={n.id}
+              className={`rounded-xl border bg-white p-4 shadow-sm ${
+                n.archived_at !== null ? "opacity-60" : ""
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {n.pinned ? (
+                      <span className="rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+                        Pinned
+                      </span>
+                    ) : null}
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${INTERNAL_NOTE_CATEGORY_PILL[n.category as InternalNoteCategory] ?? "bg-slate-100 text-slate-700 border-slate-200"}`}
+                    >
+                      {INTERNAL_NOTE_CATEGORY_LABEL[n.category as InternalNoteCategory] ?? n.category}
+                    </span>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${INTERNAL_NOTE_PRIORITY_PILL[n.priority as InternalNotePriority] ?? "bg-slate-100 text-slate-700 border-slate-200"}`}
+                    >
+                      {INTERNAL_NOTE_PRIORITY_LABEL[n.priority as InternalNotePriority] ?? n.priority}
+                    </span>
+                    <Link
+                      href={`/admin/customers/${n.org_id}`}
+                      className="text-[11px] font-medium text-indigo-700 hover:underline"
+                    >
+                      {n.org_name ?? n.org_id.slice(0, 8)} →
+                    </Link>
+                    {n.archived_at ? (
+                      <span className="text-[10px] font-medium text-slate-500">
+                        Archived {n.archived_at.slice(0, 10)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {n.title ? (
+                    <h3 className="mt-2 text-sm font-semibold text-slate-900">
+                      {n.title}
+                    </h3>
+                  ) : null}
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+                    {n.body}
+                  </p>
+                  <p className="mt-2 text-[10px] text-slate-400">
+                    {n.author_email} · {n.created_at.slice(0, 16).replace("T", " ")} UTC
+                    {n.updated_at !== n.created_at
+                      ? ` · edited ${n.updated_at.slice(0, 10)}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <form action={togglePinNoteAction}>
+                    <input type="hidden" name="id" value={n.id} />
+                    <button
+                      type="submit"
+                      className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+                    >
+                      {n.pinned ? "Unpin" : "Pin"}
+                    </button>
+                  </form>
+                  {n.archived_at === null ? (
+                    <form action={archiveNoteAction}>
+                      <input type="hidden" name="id" value={n.id} />
+                      <button
+                        type="submit"
+                        className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+                      >
+                        Archive
+                      </button>
+                    </form>
+                  ) : (
+                    <form action={unarchiveNoteAction}>
+                      <input type="hidden" name="id" value={n.id} />
+                      <button
+                        type="submit"
+                        className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+                      >
+                        Unarchive
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "red" | "amber" | "blue" | "slate";
+}) {
+  const t: Record<typeof tone, string> = {
+    red: "bg-red-50 border-red-200 text-red-900",
+    amber: "bg-amber-50 border-amber-200 text-amber-900",
+    blue: "bg-blue-50 border-blue-200 text-blue-900",
+    slate: "bg-white border-slate-200 text-slate-900",
+  };
+  return (
+    <div className={`rounded-xl border p-3 shadow-sm ${t[tone]}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide opacity-75">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-bold">{value}</p>
+    </div>
   );
 }
