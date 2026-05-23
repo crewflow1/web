@@ -239,10 +239,10 @@ describe("HQ layout — auth gate", () => {
   it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {
     // Sections still on the roadmap carry a shipsIn annotation. As each
     // sprint flips a section to ready, the annotation drops — so this
-    // threshold decreases over time. After HQ-10 (Impersonation), the
-    // stubs still on the roadmap are: health, settings — 2.
+    // threshold decreases over time. After HQ-11 (Health Deep Dive),
+    // the only stub left is /admin/settings — 1.
     const shipsInCount = (LAYOUT.match(/shipsIn:/g) ?? []).length;
-    expect(shipsInCount).toBeGreaterThanOrEqual(2);
+    expect(shipsInCount).toBeGreaterThanOrEqual(1);
   });
 });
 
