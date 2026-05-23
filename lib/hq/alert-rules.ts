@@ -66,14 +66,18 @@ export const ALERT_RULE_IDS = [
   "high_mrr_low_health",
   "migration_stalled",
   "subscription_ending",
+  "subscription_cancelled",
   "customer_inactive",
   "invoice_overdue",
+  "support_urgent_open",
   // WARNING
   "setup_fee_unpaid",
   "low_usage",
   "low_onboarding",
   "trial_ending",
   "declining_health",
+  "demo_not_contacted",
+  "no_login_after_signup",
   // INFO
   "demo_booked",
   "customer_activated",
@@ -87,13 +91,17 @@ export const ALERT_RULE_SEVERITY: Record<AlertRuleId, AlertSeverity> = {
   high_mrr_low_health: "critical",
   migration_stalled: "critical",
   subscription_ending: "critical",
+  subscription_cancelled: "critical",
   customer_inactive: "critical",
   invoice_overdue: "critical",
+  support_urgent_open: "critical",
   setup_fee_unpaid: "warning",
   low_usage: "warning",
   low_onboarding: "warning",
   trial_ending: "warning",
   declining_health: "warning",
+  demo_not_contacted: "warning",
+  no_login_after_signup: "warning",
   demo_booked: "info",
   customer_activated: "info",
   migration_completed: "info",
@@ -105,13 +113,17 @@ export const ALERT_RULE_LABEL: Record<AlertRuleId, string> = {
   high_mrr_low_health: "High MRR + low health",
   migration_stalled: "Migration stalled",
   subscription_ending: "Subscription ending",
+  subscription_cancelled: "Subscription cancelled",
   customer_inactive: "Customer inactive",
   invoice_overdue: "Invoice overdue",
+  support_urgent_open: "Urgent support open",
   setup_fee_unpaid: "Setup fee unpaid",
   low_usage: "Low usage",
   low_onboarding: "Low onboarding %",
   trial_ending: "Trial ending",
   declining_health: "Declining health",
+  demo_not_contacted: "Demo not contacted",
+  no_login_after_signup: "No login after signup",
   demo_booked: "Demo booked",
   customer_activated: "Customer activated",
   migration_completed: "Migration completed",
@@ -250,6 +262,12 @@ export const THRESHOLDS = {
   /** Look-back window for INFO events (demo booked, payment
    * received, customer activated, migration completed). */
   infoWindowDays: 2,
+  /** Demo waiting > N days in pending_demo or demo_booked counts as
+   * "not contacted" (HQ-12). */
+  demoNotContactedDays: 3,
+  /** Active or trial org that has never logged in within N days of
+   * signup counts as "no login after signup" (HQ-12). */
+  noLoginAfterSignupDays: 3,
   /** Number of alerts the AI COO panel surfaces. */
   cooPanelLimit: 3,
 } as const;
@@ -421,6 +439,52 @@ const RULES: ReadonlyArray<{ id: AlertRuleId; fn: RuleFn }> = [
       });
     },
   },
+  // HQ-12: subscription_cancelled — org status flipped to cancelled.
+  // Separate from subscription_ending so cancellations are surfaced
+  // loudly until the operator acknowledges (resolves/snoozes).
+  {
+    id: "subscription_cancelled",
+    fn: (row, ctx) => {
+      if (row.org.status !== "cancelled") return null;
+      if (!row.org.cancelled_at) return null;
+      // Don't fire on ancient cancellations — only the last 90 days.
+      const days = daysBetween(row.org.cancelled_at, ctx.now);
+      if (days > 90) return null;
+      return buildAlert(row, ctx, "subscription_cancelled", {
+        reason: [
+          `Cancelled ${shortDate(row.org.cancelled_at)}`,
+          `Last MRR £${row.org.mrr_gbp.toLocaleString("en-GB")}`,
+        ],
+        suggestion: "Win-back call · exit interview",
+        occurredAt: row.org.cancelled_at,
+      });
+    },
+  },
+  // HQ-12: support_urgent_open — any active urgent ticket for the
+  // org. Picks up tickets the team needs to firefight today.
+  {
+    id: "support_urgent_open",
+    fn: (row, ctx) => {
+      // We don't currently expose support tickets on AlertSnapshotRow,
+      // so this rule reads org.metadata for hints from the snapshot
+      // service. To keep the contract simple, we wire it to the demos
+      // proxy: if metadata.urgent_support_count > 0 we fire. The
+      // snapshot service supplies this via a side-channel; until
+      // then this rule stays silent.
+      const meta = (row.org as unknown as {
+        urgent_support_count?: number;
+      }).urgent_support_count;
+      if (!meta || meta <= 0) return null;
+      return buildAlert(row, ctx, "support_urgent_open", {
+        reason: [
+          `${meta} urgent ticket${meta === 1 ? "" : "s"} open`,
+          `${row.org.name}`,
+        ],
+        suggestion: "Reply now — urgent",
+        occurredAt: row.org.updated_at ?? row.org.created_at,
+      });
+    },
+  },
 
   // WARNING -----------------------------------------------------------
   {
@@ -527,6 +591,52 @@ const RULES: ReadonlyArray<{ id: AlertRuleId; fn: RuleFn }> = [
         ],
         suggestion: "Schedule check-in call this week",
         occurredAt: row.org.updated_at ?? row.org.created_at,
+      });
+    },
+  },
+  // HQ-12: demo_not_contacted — a demo request sitting in
+  // pending_demo or demo_booked > N days = sales team needs a nudge.
+  {
+    id: "demo_not_contacted",
+    fn: (row, ctx) => {
+      const stale = row.demos.find((d) => {
+        if (d.status !== "pending_demo" && d.status !== "demo_booked") {
+          return false;
+        }
+        const age = daysBetween(d.created_at, ctx.now);
+        return age >= THRESHOLDS.demoNotContactedDays;
+      });
+      if (!stale) return null;
+      const age = daysBetween(stale.created_at, ctx.now);
+      return buildAlert(row, ctx, "demo_not_contacted", {
+        reason: [
+          `Demo from ${shortDate(stale.created_at)} (${age}d ago)`,
+          `Status: ${stale.status}`,
+          row.org.name ? `Company: ${row.org.name}` : "",
+        ].filter(Boolean) as string[],
+        suggestion: "Reach out — sales follow-up",
+        occurredAt: stale.created_at,
+      });
+    },
+  },
+  // HQ-12: no_login_after_signup — active or trial org that has
+  // never logged in after N days. Differs from customer_inactive
+  // (which uses last_login_at > 14d).
+  {
+    id: "no_login_after_signup",
+    fn: (row, ctx) => {
+      if (!isPayingOrTrial(row.org.status)) return null;
+      if (row.org.last_login_at !== null) return null;
+      const ageDays = daysBetween(row.org.created_at, ctx.now);
+      if (ageDays < THRESHOLDS.noLoginAfterSignupDays) return null;
+      return buildAlert(row, ctx, "no_login_after_signup", {
+        reason: [
+          `Signed up ${ageDays} days ago`,
+          "No login yet",
+          `MRR £${row.org.mrr_gbp.toLocaleString("en-GB")}`,
+        ],
+        suggestion: "Welcome call — get them in",
+        occurredAt: row.org.created_at,
       });
     },
   },
