@@ -2,6 +2,8 @@ import Link from "next/link";
 import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
 import { createClient } from "@/lib/supabase/server";
+import { getActiveImpersonation } from "@/server/services/impersonation";
+import { endImpersonation } from "@/app/admin/impersonation/actions";
 import { Sidebar } from "./_components/sidebar";
 import { OrgSwitcher } from "./_components/org-switcher";
 import { BottomNav } from "./_components/bottom-nav";
@@ -14,6 +16,7 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { user, ctx } = await requireOrgContext();
+  const impersonation = await getActiveImpersonation(user.email ?? null);
   const [orgs, notificationsRes] = await Promise.all([
     listOrgsForUser(user.id),
     (async () => {
@@ -30,6 +33,32 @@ export default async function AppLayout({
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {impersonation ? (
+        <div className="border-b-2 border-red-400 bg-red-600 text-white">
+          <div className="container flex h-10 flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-semibold">
+              🛡 IMPERSONATING {impersonation.target_org_name ?? "customer"}
+              {impersonation.reason ? ` · ${impersonation.reason}` : ""}
+            </span>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/admin/impersonation"
+                className="rounded-md border border-red-300 bg-red-700 px-2 py-1 font-medium text-white hover:bg-red-800"
+              >
+                Manage
+              </Link>
+              <form action={endImpersonation}>
+                <button
+                  type="submit"
+                  className="rounded-md bg-white px-3 py-1 font-semibold text-red-700 hover:bg-red-50"
+                >
+                  Exit impersonation
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header className="border-b border-slate-200 bg-white">
         <div className="container flex h-14 items-center justify-between">
           <div className="flex items-center gap-3 truncate">

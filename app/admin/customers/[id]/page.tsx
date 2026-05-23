@@ -15,8 +15,8 @@ import {
   updateCustomerProgress,
   updateCustomerNotes,
   setCustomerLifecycle,
-  logImpersonationAttempt,
 } from "../actions";
+import { startImpersonation } from "@/app/admin/impersonation/actions";
 import { CustomerImpersonateModal } from "./_impersonate";
 import { ClientConfirmForm } from "./_confirm";
 import {
@@ -234,7 +234,7 @@ export default async function HqCustomerDetailPage({
           <CustomerImpersonateModal
             orgId={org.id}
             orgName={org.name}
-            action={logImpersonationAttempt}
+            action={startImpersonation}
           />
           <LifecycleButton
             orgId={org.id}
