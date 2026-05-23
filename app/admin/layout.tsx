@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
+import { badgeText } from "@/lib/hq/support";
 import { HqNavMobile } from "./_nav-mobile";
 
 /**
@@ -32,7 +34,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },
   { href: "/admin/billing", label: "Billing" },
-  { href: "/admin/support", label: "Support queue", shipsIn: "HQ-5" },
+  { href: "/admin/support", label: "Support queue" },
   { href: "/admin/alerts", label: "Alerts" },
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/impersonation", label: "Impersonation log", shipsIn: "HQ-3" },
@@ -48,6 +50,11 @@ export default async function AdminLayout({
 }) {
   const user = await requireUser();
   if (!isSuperAdminEmail(user.email)) notFound();
+
+  // Live ticket count drives the Support queue badge. Best-effort —
+  // failures degrade to no badge rather than breaking the layout.
+  const openTickets = await countOpenSupportTicketsForHq().catch(() => 0);
+  const supportBadge = badgeText(openTickets);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -68,7 +75,13 @@ export default async function AdminLayout({
             </div>
             <nav className="space-y-0.5">
               {HQ_NAV.map((item) => (
-                <NavLink key={item.href} item={item} />
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  badge={
+                    item.href === "/admin/support" ? supportBadge : null
+                  }
+                />
               ))}
             </nav>
             <div className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
@@ -89,7 +102,13 @@ export default async function AdminLayout({
   );
 }
 
-function NavLink({ item }: { item: NavItem }) {
+function NavLink({
+  item,
+  badge,
+}: {
+  item: NavItem;
+  badge?: string | null;
+}) {
   return (
     <Link
       href={item.href}
@@ -99,6 +118,10 @@ function NavLink({ item }: { item: NavItem }) {
       {item.shipsIn ? (
         <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800 group-aria-[current=page]:bg-amber-200">
           {item.shipsIn}
+        </span>
+      ) : badge ? (
+        <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white group-aria-[current=page]:bg-red-500">
+          {badge}
         </span>
       ) : null}
     </Link>
