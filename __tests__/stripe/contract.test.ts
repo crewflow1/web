@@ -33,6 +33,7 @@ const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const WEBHOOK_ROUTE = read("app/api/webhooks/stripe/route.ts");
+const MIDDLEWARE = read("middleware.ts");
 const HANDLER = read("server/services/stripe-webhook-handler.ts");
 const DIAG_ROUTE = read("app/api/admin/stripe/verify/route.ts");
 const CHECKOUT_ACTIONS = read(
@@ -81,6 +82,15 @@ describe("PROCESSED_STRIPE_EVENTS — every directive-mandated event", () => {
 // =====================================================================
 // 2. Webhook route
 // =====================================================================
+
+describe("middleware — webhook endpoints bypass auth redirect", () => {
+  it("excludes api/webhooks from the matcher (Stripe-Signature owns auth)", () => {
+    // Regression guard: I shipped Stripe once with the webhook hitting
+    // the Supabase session middleware, which 307'd Stripe to /login
+    // and broke webhook delivery silently. Pin the exclusion.
+    expect(MIDDLEWARE).toMatch(/api\/webhooks/);
+  });
+});
 
 describe("/api/webhooks/stripe route", () => {
   it("uses the nodejs runtime + force-dynamic", () => {
