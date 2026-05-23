@@ -23,6 +23,7 @@ import {
   createSetupCheckout,
   createSubscriptionCheckout,
 } from "./_stripe-actions";
+import { InternalNotesPanel } from "./_internal-notes-panel";
 
 /**
  * Customers OS — per-customer detail page (HQ-3).
@@ -401,6 +402,9 @@ export default async function HqCustomerDetailPage({
           </form>
         </div>
       </section>
+
+      {/* Internal notes panel */}
+      <InternalNotesPanel orgId={org.id} />
 
       {/* Onboarding / migration */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
