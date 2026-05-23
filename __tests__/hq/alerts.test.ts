@@ -144,7 +144,7 @@ const demo = (over: Partial<AlertDemo> = {}): AlertDemo => ({
 // =====================================================================
 
 describe("ALERT_RULE_IDS — covers every directive bucket", () => {
-  it("has 6 critical, 5 warning, 4 info — matches the directive", () => {
+  it("has the directive's HQ-5 buckets + HQ-12 extensions (8 critical, 7 warning, 4 info)", () => {
     const critical = ALERT_RULE_IDS.filter(
       (r) => ALERT_RULE_SEVERITY[r] === "critical",
     );
@@ -152,8 +152,11 @@ describe("ALERT_RULE_IDS — covers every directive bucket", () => {
       (r) => ALERT_RULE_SEVERITY[r] === "warning",
     );
     const info = ALERT_RULE_IDS.filter((r) => ALERT_RULE_SEVERITY[r] === "info");
-    expect(critical).toHaveLength(6);
-    expect(warning).toHaveLength(5);
+    // HQ-5 shipped 6 critical / 5 warning / 4 info. HQ-12 adds:
+    //  +2 critical (subscription_cancelled, support_urgent_open)
+    //  +2 warning (demo_not_contacted, no_login_after_signup)
+    expect(critical).toHaveLength(8);
+    expect(warning).toHaveLength(7);
     expect(info).toHaveLength(4);
   });
 
