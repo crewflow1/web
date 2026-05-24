@@ -68,11 +68,14 @@ export default async function HqImpersonationPage({
           Customer impersonation
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Drop into a customer workspace. Every start/stop is audit-logged.
-          Sessions auto-expire after 24h. v1 limitation: you&apos;ll see the
-          workspace shell — most customer data reads are still RLS-scoped to
-          your HQ identity (you have no membership in the target org). Full
-          data view via RLS-aware impersonation lands in HQ-10.1.
+          Drop into a customer workspace and see what they see. Every
+          start/stop is audit-logged. Sessions auto-expire after 24h.
+          Cross-tenant access is enforced via{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
+            current_org_ids()
+          </code>{" "}
+          — the same RLS predicate every tenant policy uses — so revocation
+          via Exit is instant.
         </p>
       </header>
 
