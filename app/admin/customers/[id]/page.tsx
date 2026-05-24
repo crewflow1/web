@@ -15,6 +15,9 @@ import {
   updateCustomerProgress,
   updateCustomerNotes,
   setCustomerLifecycle,
+  resetOnboarding,
+  markSetupComplete,
+  resendInvite,
 } from "../actions";
 import { startImpersonation } from "@/app/admin/impersonation/actions";
 import { CustomerImpersonateModal } from "./_impersonate";
@@ -261,6 +264,55 @@ export default async function HqCustomerDetailPage({
               confirm={`Reactivate ${org.name}? Their workspace will unlock immediately.`}
             />
           ) : null}
+        </div>
+      </section>
+
+      {/* Phase 6 — recovery actions */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          Recovery actions
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Operator escape hatches for stuck customers. Each is audit
+          logged.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <ClientConfirmForm
+            action={resetOnboarding}
+            confirm={`Reset onboarding for ${org.name}? The checklist starts fresh; previously completed steps stay done.`}
+          >
+            <input type="hidden" name="org_id" value={org.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Reset onboarding
+            </button>
+          </ClientConfirmForm>
+          <ClientConfirmForm
+            action={markSetupComplete}
+            confirm={`Mark ${org.name}'s setup as complete? Hides the customer's checklist banner.`}
+          >
+            <input type="hidden" name="org_id" value={org.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Mark setup complete
+            </button>
+          </ClientConfirmForm>
+          <ClientConfirmForm
+            action={resendInvite}
+            confirm={`Re-send the magic-link invite to ${org.name}'s owner?`}
+          >
+            <input type="hidden" name="org_id" value={org.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Resend invite
+            </button>
+          </ClientConfirmForm>
         </div>
       </section>
 
