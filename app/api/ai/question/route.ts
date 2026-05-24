@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
 import { askAi } from "@/server/services/ai-question";
+import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 
 /**
  * POST /api/ai/question
@@ -31,6 +32,11 @@ const requestSchema = z.object({
 
 export async function POST(request: Request): Promise<NextResponse> {
   const { ctx } = await requireOrgContext();
+
+  // Phase 7 — rate limit AI questions: 20 per IP per hour. Caps
+  // LLM cost on abuse + keeps the request cheap.
+  const rl = enforce(request, "ai_question", DEFAULT_LIMITS.ai_question);
+  if (rl) return rl as unknown as NextResponse;
 
   let body: unknown;
   try {
