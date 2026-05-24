@@ -93,6 +93,8 @@ export function ProfileForm({
 type OrgDefaults = {
   name: string;
   phone: string;
+  /** Org-level reply-to email — different from the owner's sign-in email. */
+  org_email: string;
   vat_number: string;
   address_line1: string;
   address_city: string;
@@ -141,14 +143,24 @@ export function OrganizationForm({
             error={fe.phone}
           />
           <Field
-            name="vat_number"
-            label="VAT number"
+            name="org_email"
+            label="Reply-to email"
+            type="email"
+            inputMode="email"
             optional
-            placeholder="GB123456789"
-            defaultValue={pickFrom(state, defaults, "vat_number")}
-            error={fe.vat_number}
+            placeholder="ops@yourcompany.co.uk"
+            defaultValue={pickFrom(state, defaults, "org_email")}
+            error={fe.org_email}
           />
         </div>
+        <Field
+          name="vat_number"
+          label="VAT number"
+          optional
+          placeholder="GB123456789"
+          defaultValue={pickFrom(state, defaults, "vat_number")}
+          error={fe.vat_number}
+        />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field
             name="address_line1"

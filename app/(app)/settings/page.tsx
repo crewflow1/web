@@ -30,7 +30,7 @@ export default async function SettingsPage() {
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, phone, vat_number, address, logo_url, default_terms, bank_details")
+    .select("id, name, phone, email, vat_number, address, logo_url, default_terms, bank_details")
     .eq("id", ctx.org.id)
     .maybeSingle();
 
@@ -126,6 +126,7 @@ export default async function SettingsPage() {
           defaults={{
             name: org?.name ?? "",
             phone: org?.phone ?? "",
+            org_email: (org?.email as string | null) ?? "",
             vat_number: org?.vat_number ?? "",
             address_line1: address.line1 ?? "",
             address_city: address.city ?? "",
