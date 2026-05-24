@@ -18,6 +18,7 @@ import {
   reviewQuote,
 } from "../actions";
 import type { LineItem } from "@/lib/quotes/schema";
+import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { env } from "@/lib/env";
@@ -420,9 +421,10 @@ export default async function EditQuotePage({
         />
       )}
 
-      <form
+      <ConfirmForm
         action={deleteQuote.bind(null, id)}
-        className="rounded-xl border border-red-200 bg-red-50/50 p-4"
+        confirm="Delete this quote? Line items go too (cascade). Linked invoices keep their record but lose the quote reference."
+        className="rounded-xl border border-red-200 bg-red-50/50 p-4 block"
       >
         <p className="text-sm font-medium text-red-900">Delete this quote</p>
         <p className="mt-1 text-xs text-red-700">
@@ -435,7 +437,7 @@ export default async function EditQuotePage({
         >
           Delete quote
         </button>
-      </form>
+      </ConfirmForm>
     </div>
   );
 }

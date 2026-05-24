@@ -6,6 +6,7 @@ import { updateJob, deleteJob } from "../actions";
 import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { PhotoGallery } from "./_photo-gallery";
+import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import {
   computeJobProfitability,
   marginPillClass,
@@ -390,9 +391,10 @@ export default async function EditJobPage({
         )}
       </section>
 
-      <form
+      <ConfirmForm
         action={deleteAction}
-        className="rounded-xl border border-red-200 bg-red-50/50 p-4"
+        confirm="Delete this job? Linked photos and timesheet references go too. This can't be undone."
+        className="rounded-xl border border-red-200 bg-red-50/50 p-4 block"
       >
         <p className="text-sm font-medium text-red-900">Delete this job</p>
         <p className="mt-1 text-xs text-red-700">
@@ -405,7 +407,7 @@ export default async function EditJobPage({
         >
           Delete job
         </button>
-      </form>
+      </ConfirmForm>
     </div>
   );
 }

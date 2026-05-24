@@ -9,6 +9,7 @@ import {
 } from "../actions";
 import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
+import { ConfirmForm } from "@/components/forms/ConfirmForm";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -170,14 +171,18 @@ export default async function StaffDetailPage({
             This removes their access. Their historical job assignments + rota
             entries stay (the user record persists).
           </p>
-          <form action={removeStaff.bind(null, id)} className="mt-3">
+          <ConfirmForm
+            action={removeStaff.bind(null, id)}
+            confirm={`Remove ${row.user?.full_name ?? row.user?.email ?? "this staff member"} from the organisation? Their historical assignments stay but they lose access immediately.`}
+            className="mt-3"
+          >
             <button
               type="submit"
               className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
             >
               Remove
             </button>
-          </form>
+          </ConfirmForm>
         </section>
       ) : null}
     </div>

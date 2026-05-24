@@ -27,6 +27,7 @@ const ADMIN_LINKS = [
   { href: "/staff", label: "Staff" },
   { href: "/imports", label: "Migrate data" },
   { href: "/reports", label: "Reports" },
+  { href: "/insights", label: "AI insights" },
   { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },
   { href: "/settings", label: "Settings" },

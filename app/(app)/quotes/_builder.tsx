@@ -18,6 +18,7 @@ import {
   FormSuccessBanner,
 } from "@/components/forms/Field";
 import { SubmitButton } from "@/components/forms/FormShell";
+import { NumericInput } from "@/components/forms/NumericInput";
 
 /**
  * Quote builder — used by both /quotes/new and /quotes/[id].
@@ -331,28 +332,30 @@ export function QuoteBuilder({
                     />
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <NumericInput
                       required
+                      min={0}
+                      max={999_999}
                       value={li.qty}
-                      onChange={(e) =>
-                        updateLine(idx, { qty: Number(e.target.value) || 0 })
+                      onChange={(n) =>
+                        updateLine(idx, { qty: n ?? 0 })
                       }
+                      placeholder="1"
+                      aria-label="Quantity"
                       className="block w-20 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                     />
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <NumericInput
                       required
+                      min={0}
+                      max={99_999_999}
                       value={li.unit_price}
-                      onChange={(e) =>
-                        updateLine(idx, { unit_price: Number(e.target.value) || 0 })
+                      onChange={(n) =>
+                        updateLine(idx, { unit_price: n ?? 0 })
                       }
+                      placeholder="0.00"
+                      aria-label="Unit price"
                       className="block w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                     />
                   </td>
