@@ -19,6 +19,9 @@ export const CRON_ROUTES = [
   "health-recompute",
   "invoice-reminders",
   "quote-followup",
+  "lead-followups",
+  "compliance-expiry",
+  "review-requests",
 ] as const;
 export type CronRouteName = (typeof CRON_ROUTES)[number];
 
@@ -117,6 +120,11 @@ const TRACKED_ENV: ReadonlyArray<Omit<EnvVarStatus, "present">> = [
     name: "ANTHROPIC_API_KEY",
     required: false,
     hint: "Required for Migration OS OCR on PDFs/images. Deterministic flows still work without it.",
+  },
+  {
+    name: "CHANNEL_INBOUND_SECRET",
+    required: false,
+    hint: "Shared bearer token for /api/receptionist/inbound. Required only when external channel adapters (Twilio, WhatsApp Business, Meta) are wired.",
   },
 ];
 
