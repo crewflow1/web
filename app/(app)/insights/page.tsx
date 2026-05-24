@@ -5,6 +5,8 @@ import {
   computeLeadInsights,
 } from "@/lib/ai/aggregates";
 import { InsightsSection } from "../dashboard/_insights";
+import { QuestionBox } from "./_question-box";
+import { isAiConfigured } from "@/lib/ai/safety";
 
 /**
  * /insights — AI Analysis (tenant-side).
@@ -66,6 +68,8 @@ export default async function InsightsPage() {
           the model.
         </p>
       </section>
+
+      <QuestionBox aiConfigured={isAiConfigured()} />
 
       <InsightsSection activity={activity} leads={leads} />
 
