@@ -6,6 +6,8 @@ import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
 import { SetupChecklist } from "./_setup-checklist";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
+import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
+import { RetentionPanel } from "./_retention";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -224,11 +226,12 @@ export default async function DashboardPage() {
   //
   // The onboarding snapshot is fetched alongside so the SetupChecklist
   // card has live data without an extra round-trip waterfall.
-  const [activityInsights, leadInsights, onboardingSnapshot] =
+  const [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot] =
     await Promise.all([
       computeActivitySummary(ctx.org.id, 7),
       computeLeadInsights(ctx.org.id, 30),
       buildOnboardingSnapshot(ctx.org.id),
+      buildRetentionSnapshot(ctx.org.id),
     ]);
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
@@ -567,6 +570,12 @@ export default async function DashboardPage() {
 
       {/* Onboarding checklist — pinned at the top until setup is 100% */}
       <SetupChecklist snapshot={onboardingSnapshot} />
+
+      {/* Retention + experience layer — health, nudges, milestones,
+          weekly summary, inactivity rescue. Sits above the existing
+          KPI grid so the operator sees the highest-signal items
+          first. */}
+      <RetentionPanel signals={retentionSnapshot} />
 
       {/* KPI row */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
