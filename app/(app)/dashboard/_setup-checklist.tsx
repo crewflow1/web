@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { computeProgress, type OnboardingSnapshot } from "@/lib/onboarding/checklist";
+import {
+  computeProgress,
+  nextRecommendedAction,
+  type OnboardingSnapshot,
+} from "@/lib/onboarding/checklist";
 import { dismissChecklistStep } from "./_dismiss-step";
 
 /**
@@ -20,6 +24,7 @@ import { dismissChecklistStep } from "./_dismiss-step";
 export function SetupChecklist({ snapshot }: { snapshot: OnboardingSnapshot }) {
   const progress = computeProgress(snapshot);
   if (!progress.showChecklist) return null;
+  const recommended = nextRecommendedAction(snapshot);
 
   return (
     <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm">
@@ -49,6 +54,29 @@ export function SetupChecklist({ snapshot }: { snapshot: OnboardingSnapshot }) {
           style={{ width: `${progress.pct}%` }}
           aria-label={`Setup ${progress.pct}% complete`}
         />
+      </div>
+
+      {/* Retention hook — single primary CTA above the list pointing to
+          the guided stepper. nextRecommendedAction() names the literal
+          next step ("You haven't created your first quote") so the
+          operator knows exactly what's waiting. */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-900">
+            {recommended
+              ? `You're ${progress.pct}% complete — next: ${recommended.title.toLowerCase()}.`
+              : "Almost there — finish the remaining optional steps."}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-600">
+            Continue in the guided stepper. Progress saves automatically.
+          </p>
+        </div>
+        <Link
+          href="/onboarding/setup"
+          className="shrink-0 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+        >
+          Continue setup →
+        </Link>
       </div>
 
       <ol className="mt-5 space-y-2">

@@ -26,6 +26,7 @@ function emptySnapshot(): OnboardingSnapshot {
     org: {
       name: null,
       phone: null,
+      email: null,
       vat_number: null,
       logo_url: null,
       bank_details: null,
@@ -40,12 +41,16 @@ function emptySnapshot(): OnboardingSnapshot {
       importsCommitted: 0,
     },
     dismissed: new Set<ChecklistStepId>(),
+    timestamps: { started_at: null, completed_at: null },
   };
 }
 
 describe("CHECKLIST_STEPS shape", () => {
-  it("contains exactly 10 steps (directive Part 3)", () => {
-    expect(CHECKLIST_STEPS.length).toBe(10);
+  it("contains exactly 12 steps after the customer-onboarding sprint", () => {
+    // Original directive Part 3 listed 10 steps. The customer-
+    // onboarding sprint added `connect_email` and `first_invoice`
+    // (also CEO-directive items) — total 12.
+    expect(CHECKLIST_STEPS.length).toBe(12);
   });
 
   it("step ids are unique", () => {
@@ -157,13 +162,15 @@ describe("isStepComplete — per-step rules", () => {
 });
 
 describe("computeProgress — visibility + percentage", () => {
-  it("brand-new org shows all 10 steps at 0%", () => {
+  it("brand-new org shows all 12 steps at 0%", () => {
+    // 12 = original 10 directive steps + connect_email + first_invoice
+    // added in the customer-onboarding sprint.
     const progress = computeProgress(emptySnapshot());
     expect(progress.done).toBe(0);
-    expect(progress.total).toBe(10);
+    expect(progress.total).toBe(12);
     expect(progress.pct).toBe(0);
     expect(progress.showChecklist).toBe(true);
-    expect(progress.steps.length).toBe(10);
+    expect(progress.steps.length).toBe(12);
   });
 
   it("fully-set-up org hides the checklist (showChecklist=false)", () => {
@@ -171,6 +178,7 @@ describe("computeProgress — visibility + percentage", () => {
       org: {
         name: "Done Ltd",
         phone: "07700 900222",
+        email: "ops@done.test",
         vat_number: "GB1",
         logo_url: "https://x.test/logo.png",
         bank_details: { sort_code: "20-00-00", account_number: "12345678" },
@@ -185,19 +193,30 @@ describe("computeProgress — visibility + percentage", () => {
         importsCommitted: 1,
       },
       dismissed: new Set(),
+      timestamps: { started_at: null, completed_at: null },
     };
     const progress = computeProgress(snap);
-    expect(progress.done).toBe(10);
-    expect(progress.total).toBe(10);
+    expect(progress.done).toBe(12);
+    expect(progress.total).toBe(12);
     expect(progress.pct).toBe(100);
     expect(progress.showChecklist).toBe(false);
   });
 
   it("dismissed optional steps drop out of the visible total", () => {
     const snap = emptySnapshot();
-    snap.dismissed = new Set<ChecklistStepId>(["logo", "vat", "terms", "staff", "imports", "invoices_import"]);
+    // Dismiss every optional step. After this only required steps
+    // remain visible: company_profile, bank, customers, first_quote = 4.
+    snap.dismissed = new Set<ChecklistStepId>([
+      "logo",
+      "connect_email",
+      "vat",
+      "terms",
+      "staff",
+      "imports",
+      "invoices_import",
+      "first_invoice",
+    ]);
     const progress = computeProgress(snap);
-    // 4 required steps remain visible: company_profile, bank, customers, first_quote.
     expect(progress.total).toBe(4);
     expect(progress.done).toBe(0);
     expect(progress.pct).toBe(0);
@@ -228,8 +247,8 @@ describe("computeProgress — visibility + percentage", () => {
     snap.org.phone = "1";
     snap.org.address = { postcode: "BT1 1AA" };
     const progress = computeProgress(snap);
-    // 1 / 10 = 10
-    expect(progress.pct).toBe(10);
+    // 1 / 12 → 8.33… → rounds to 8
+    expect(progress.pct).toBe(8);
   });
 });
 

@@ -45,6 +45,17 @@ const optional = (max: number) =>
 const orgSchema = z.object({
   name: z.string().trim().min(1, "Trading name is required").max(200),
   phone: optional(50),
+  /** Org-level reply-to email (citext on organizations.email). Used by
+   *  the onboarding "Connect email" step. Optional — falls back to
+   *  the owner's sign-in email on customer-facing PDFs. */
+  org_email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Enter a valid email address")
+    .max(254)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   vat_number: optional(50),
   address_line1: optional(200),
   address_city: optional(100),
@@ -134,6 +145,7 @@ export async function updateOrganization(
       {
         name: result.data.name,
         phone: result.data.phone ?? null,
+        email: result.data.org_email ?? null,
         vat_number: result.data.vat_number ?? null,
         address,
         logo_url: result.data.logo_url ?? null,

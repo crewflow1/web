@@ -64,6 +64,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
         "name",
         "status",
         "phone",
+        "email",
         "vat_number",
         "logo_url",
         "bank_details",
@@ -84,6 +85,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     name: string;
     status: OrgStatus;
     phone: string | null;
+    email: string | null;
     vat_number: string | null;
     logo_url: string | null;
     bank_details: OnboardingSnapshot["org"]["bank_details"];
@@ -253,6 +255,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
 type HqOrgRow = {
   id: string;
   phone: string | null;
+  email: string | null;
   vat_number: string | null;
   logo_url: string | null;
   bank_details: OnboardingSnapshot["org"]["bank_details"];
@@ -339,10 +342,16 @@ async function buildHqChecklistProgress(
         VALID_DISMISSED_IDS.includes(s as ChecklistStepId),
       ),
     );
+    const startedAtRaw = (o.onboarding_state as { started_at?: unknown } | null)
+      ?.started_at;
+    const completedAtRaw = (
+      o.onboarding_state as { completed_at?: unknown } | null
+    )?.completed_at;
     const snap: OnboardingSnapshot = {
       org: {
         name: o.name,
         phone: o.phone,
+        email: (o as unknown as { email?: string | null }).email ?? null,
         vat_number: o.vat_number,
         logo_url: o.logo_url,
         bank_details: o.bank_details,
@@ -357,6 +366,11 @@ async function buildHqChecklistProgress(
         importsCommitted: importsByOrg.get(o.id) ?? 0,
       },
       dismissed,
+      timestamps: {
+        started_at: typeof startedAtRaw === "string" ? startedAtRaw : null,
+        completed_at:
+          typeof completedAtRaw === "string" ? completedAtRaw : null,
+      },
     };
     out.set(o.id, computeProgress(snap).pct);
   }

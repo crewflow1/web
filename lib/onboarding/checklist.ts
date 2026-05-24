@@ -27,7 +27,26 @@ export type ChecklistStepId =
   | "customers"
   | "imports"
   | "invoices_import"
-  | "first_quote";
+  | "first_quote"
+  | "first_invoice"
+  | "connect_email";
+
+/** Stable, ordered list — used by the guided stepper to know the
+ *  sequence and by tests to assert the catalogue. */
+export const CHECKLIST_STEP_ORDER: ReadonlyArray<ChecklistStepId> = [
+  "company_profile",
+  "logo",
+  "connect_email",
+  "vat",
+  "bank",
+  "terms",
+  "staff",
+  "customers",
+  "first_quote",
+  "first_invoice",
+  "imports",
+  "invoices_import",
+] as const;
 
 export type ChecklistStep = {
   id: ChecklistStepId;
@@ -57,6 +76,14 @@ export const CHECKLIST_STEPS: ReadonlyArray<ChecklistStep> = [
     description:
       "Customers expect to see your brand on the quote PDF — it builds trust before they read the number.",
     cta: { label: "Add logo URL", href: "/settings" },
+    required: false,
+  },
+  {
+    id: "connect_email",
+    title: "Set your reply-to email",
+    description:
+      "Customer-facing quote + invoice replies go to this address. Default is your sign-in email; set a team mailbox if you'd rather route there.",
+    cta: { label: "Set reply-to email", href: "/settings" },
     required: false,
   },
   {
@@ -123,6 +150,14 @@ export const CHECKLIST_STEPS: ReadonlyArray<ChecklistStep> = [
     cta: { label: "Create quote", href: "/quotes/new" },
     required: true,
   },
+  {
+    id: "first_invoice",
+    title: "Send your first invoice",
+    description:
+      "An invoice closes the loop — the customer can pay, you get reminded if they don't.",
+    cta: { label: "Open invoices", href: "/invoices" },
+    required: false,
+  },
 ] as const;
 
 export type OnboardingSnapshot = {
@@ -130,6 +165,8 @@ export type OnboardingSnapshot = {
     /** Name was required at signup but a placeholder slug is possible. */
     name: string | null;
     phone: string | null;
+    /** Reply-to email at the org level (citext column on organizations). */
+    email: string | null;
     vat_number: string | null;
     logo_url: string | null;
     /** jsonb — non-null + has at least name/sort_code/account_number = "done". */
@@ -153,6 +190,13 @@ export type OnboardingSnapshot = {
   };
   /** Step ids the user explicitly dismissed from their checklist. */
   dismissed: ReadonlySet<ChecklistStepId>;
+  /** Lifecycle timestamps from organizations.onboarding_state JSONB. */
+  timestamps: {
+    /** First time the operator landed on /onboarding/setup. Best-effort. */
+    started_at: string | null;
+    /** Stamped when computeProgress().pct first reached 100. */
+    completed_at: string | null;
+  };
 };
 
 export function isStepComplete(
@@ -167,6 +211,8 @@ export function isStepComplete(
       );
     case "logo":
       return Boolean(snap.org.logo_url && snap.org.logo_url.length > 0);
+    case "connect_email":
+      return Boolean(snap.org.email && snap.org.email.length > 0);
     case "vat":
       return Boolean(snap.org.vat_number && snap.org.vat_number.length > 0);
     case "bank":
@@ -188,6 +234,8 @@ export function isStepComplete(
       return snap.counts.invoices > 0;
     case "first_quote":
       return snap.counts.quotes > 0;
+    case "first_invoice":
+      return snap.counts.invoices > 0;
   }
 }
 
@@ -233,4 +281,74 @@ export function computeProgress(snap: OnboardingSnapshot): ChecklistProgress {
     showChecklist: done < total,
     steps: visible,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for the guided stepper + retention hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the step ids the snapshot considers DONE. Order matches
+ * CHECKLIST_STEP_ORDER so callers can render a stable timeline.
+ */
+export function completedSteps(
+  snap: OnboardingSnapshot,
+): ChecklistStepId[] {
+  return CHECKLIST_STEP_ORDER.filter((id) => isStepComplete(id, snap));
+}
+
+/**
+ * Return the step ids the user explicitly skipped (dismissed) AND
+ * which are still incomplete. Dismissed-but-now-complete steps are
+ * not "skipped" — they ended up done by another path.
+ */
+export function skippedSteps(snap: OnboardingSnapshot): ChecklistStepId[] {
+  return CHECKLIST_STEP_ORDER.filter(
+    (id) => snap.dismissed.has(id) && !isStepComplete(id, snap),
+  );
+}
+
+/**
+ * The step the operator should be nudged toward right now.
+ *
+ *   1. First INCOMPLETE required step in CHECKLIST_STEP_ORDER.
+ *   2. Else, the first INCOMPLETE optional step that hasn't been
+ *      skipped.
+ *   3. Else null — everything visible is done.
+ *
+ * Drives:
+ *   - The dashboard "Continue setup" CTA destination.
+ *   - The retention banner ("You haven't created your first quote").
+ *   - The /onboarding/setup auto-jump on entry.
+ */
+export function nextRecommendedAction(
+  snap: OnboardingSnapshot,
+): ChecklistStep | null {
+  const byId = new Map(CHECKLIST_STEPS.map((s) => [s.id, s] as const));
+  // Required first.
+  for (const id of CHECKLIST_STEP_ORDER) {
+    const s = byId.get(id);
+    if (!s || !s.required) continue;
+    if (isStepComplete(id, snap)) continue;
+    return s;
+  }
+  // Optional next (skip skipped).
+  for (const id of CHECKLIST_STEP_ORDER) {
+    const s = byId.get(id);
+    if (!s || s.required) continue;
+    if (isStepComplete(id, snap)) continue;
+    if (snap.dismissed.has(id)) continue;
+    return s;
+  }
+  return null;
+}
+
+/**
+ * True when the snapshot says every visible step is done.
+ * The progress.pct can briefly be 100 without `completed_at` being
+ * stamped — server actions write the timestamp in a follow-up call
+ * after the celebration page is shown.
+ */
+export function isOnboardingComplete(snap: OnboardingSnapshot): boolean {
+  return computeProgress(snap).pct === 100;
 }
