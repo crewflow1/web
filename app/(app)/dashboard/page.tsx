@@ -7,6 +7,7 @@ import { InsightsSection } from "./_insights";
 import { SetupChecklist } from "./_setup-checklist";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
+import { ensureMilestoneNotifications } from "@/server/services/retention-milestones";
 import { RetentionPanel } from "./_retention";
 import {
   computeActivitySummary,
@@ -233,6 +234,15 @@ export default async function DashboardPage() {
       buildOnboardingSnapshot(ctx.org.id),
       buildRetentionSnapshot(ctx.org.id),
     ]);
+
+  // Phase 2 — fire the milestone notification + audit-log side
+  // effects for any newly-crossed milestones. Best-effort; idempotent
+  // via onboarding_state.notified_milestones. Errors are swallowed
+  // so a transient DB blip can't break the dashboard.
+  await ensureMilestoneNotifications(ctx.org.id, retentionSnapshot, {
+    id: user.id,
+    email: user.email ?? null,
+  });
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (

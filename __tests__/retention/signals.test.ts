@@ -76,9 +76,12 @@ function makeSignals(
     },
     last_activity_at: override.last_activity_at ?? null,
     overdue_invoice_count: override.overdue_invoice_count ?? 0,
+    support_open_count: override.support_open_count ?? 0,
+    unresolved_alerts_count: override.unresolved_alerts_count ?? 0,
     invoiced_total_gbp: override.invoiced_total_gbp ?? 0,
     celebrated_milestones:
       override.celebrated_milestones ?? new Set<MilestoneId>(),
+    dismissed_nudges: override.dismissed_nudges ?? new Set(),
     now: override.now ?? "2026-05-24T12:00:00.000Z",
   };
 }

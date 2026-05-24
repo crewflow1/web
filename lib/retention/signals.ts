@@ -51,9 +51,16 @@ export type RetentionSignals = {
   overdue_invoice_count: number;
   /** Sum of all paid + sent invoices' totals. Drives the £-milestones. */
   invoiced_total_gbp: number;
+  /** Open support tickets — Phase 2 health/nudge input. */
+  support_open_count: number;
+  /** Unresolved HQ alerts (admin_alert_state without resolved_at). */
+  unresolved_alerts_count: number;
   /** Milestones the org has already celebrated (stored in
    * organizations.onboarding_state.celebrated_milestones). */
   celebrated_milestones: ReadonlySet<MilestoneId>;
+  /** Nudges the operator has explicitly dismissed (persisted on
+   * organizations.onboarding_state.dismissed_nudges). */
+  dismissed_nudges: ReadonlySet<NudgeId>;
   /** Server's idea of "now" — passed in so tests are deterministic. */
   now: string;
 };
@@ -77,6 +84,11 @@ export type NudgeId =
   | "chase_overdue"
   | "upload_logo"
   | "configure_tax"
+  | "add_staff"
+  | "reply_support"
+  | "review_alerts"
+  | "weekly_summary"
+  | "inactive_quote_drought_soft"
   | "inactive_quote_drought"
   | "complete_company_profile";
 
@@ -249,9 +261,77 @@ export function buildNudges(
     });
   }
 
-  // Sort: priority desc, then stable by id order.
+  // 8. Add staff — Phase 2 directive priority slot #5.
+  if (
+    signals.onboarding.counts.staffMembers === 0 &&
+    !snap.dismissed.has("staff")
+  ) {
+    out.push({
+      id: "add_staff",
+      title: "Add a team member",
+      body: "Staff can clock in, see their jobs, and free you up from admin.",
+      cta: { label: "Invite staff", href: "/staff" },
+      impact: "medium",
+      urgency: "low",
+      priority: priorityRank("medium", "low"),
+    });
+  }
+
+  // 9. Open support tickets — Phase 2 directive priority slot #8.
+  if (signals.support_open_count > 0) {
+    out.push({
+      id: "reply_support",
+      title: `Reply to ${signals.support_open_count} open support ticket${signals.support_open_count === 1 ? "" : "s"}`,
+      body: "Your customers are waiting on you.",
+      cta: { label: "Open support queue", href: "/support" },
+      impact: "medium",
+      urgency: "high",
+      priority: priorityRank("medium", "high"),
+    });
+  }
+
+  // 10. Unresolved HQ alerts the operator can act on — Phase 2 #9.
+  if (signals.unresolved_alerts_count > 0) {
+    out.push({
+      id: "review_alerts",
+      title: `Review ${signals.unresolved_alerts_count} open alert${signals.unresolved_alerts_count === 1 ? "" : "s"}`,
+      body: "CrewFlow's rule engine flagged something. Take a look or snooze.",
+      cta: { label: "Open alerts", href: "/admin/alerts" },
+      impact: "medium",
+      urgency: "medium",
+      priority: priorityRank("medium", "medium"),
+    });
+  }
+
+  // 11. Weekly summary — Phase 2 #10, low-priority informational.
+  if (
+    signals.onboarding.counts.quotes > 0 &&
+    !snap.dismissed.has("first_invoice")
+  ) {
+    // The "view weekly summary" nudge fires only when there's signal
+    // worth viewing (any activity in the last 7 days) AND the user
+    // hasn't dismissed it explicitly. Keeps it quiet for brand-new
+    // orgs while still nudging active ones to check in.
+    const w = signals.windows.last_7d;
+    const anySignal =
+      w.customers_added + w.quotes_created + w.invoices_sent > 0;
+    if (anySignal) {
+      out.push({
+        id: "weekly_summary",
+        title: "Check this week's summary",
+        body: "See the numbers behind a productive week — and what to focus on next.",
+        cta: { label: "Open dashboard", href: "/dashboard" },
+        impact: "low",
+        urgency: "low",
+        priority: priorityRank("low", "low") - 1, // tie-breaker below other low/low
+      });
+    }
+  }
+
+  // Filter user-dismissed nudges (Phase 2 step 4) and sort.
   return out
     .slice()
+    .filter((n) => !signals.dismissed_nudges.has(n.id))
     .sort((a, b) => {
       if (b.priority !== a.priority) return b.priority - a.priority;
       return a.id.localeCompare(b.id);
@@ -285,7 +365,16 @@ export type CustomerHealth = {
     overdue: number;
     /** Days since last activity, or null if never active. */
     days_since_activity: number | null;
+    support_open: number;
+    unresolved_alerts: number;
   };
+  /** Up to 3 plain-English reasons explaining the score. */
+  reasons: ReadonlyArray<string>;
+  /** Up to 3 concrete actions the operator can take to improve. */
+  actions: ReadonlyArray<{
+    label: string;
+    href: string;
+  }>;
 };
 
 export function computeCustomerHealth(
@@ -297,6 +386,8 @@ export function computeCustomerHealth(
   const quotes = signals.onboarding.counts.quotes;
   const invoices = signals.onboarding.counts.invoices;
   const overdue = signals.overdue_invoice_count;
+  const support_open = signals.support_open_count;
+  const unresolved_alerts = signals.unresolved_alerts_count;
   const days_since_activity = daysBetween(
     signals.last_activity_at,
     signals.now,
@@ -304,25 +395,116 @@ export function computeCustomerHealth(
 
   // Start at 50, layer signals.
   let score = 50;
-  // Onboarding % maps linearly to +0..+30.
   score += Math.round((onboarding_pct / 100) * 30);
-  // First-of-each milestone bumps.
   if (customers > 0) score += 3;
   if (quotes > 0) score += 5;
   if (invoices > 0) score += 5;
-  // Recent activity rewards.
   if (days_since_activity !== null) {
     if (days_since_activity <= 7) score += 7;
-    else if (days_since_activity <= 14) score += 0; // neutral
+    else if (days_since_activity <= 14) score += 0;
     else if (days_since_activity <= 30) score -= 10;
     else score -= 20;
   }
-  // Overdue invoices are an active drag.
   score -= Math.min(overdue * 4, 20);
+  // Phase 2: support + alerts as health drags. Capped so a single
+  // unhappy customer can't tank the score below "amber".
+  score -= Math.min(support_open * 3, 12);
+  score -= Math.min(unresolved_alerts * 2, 10);
 
   score = clamp(score, 0, 100);
   const band: HealthBand =
     score >= 70 ? "green" : score >= 40 ? "amber" : "red";
+
+  // Build the "3 reasons why" + "3 actions to improve" stripes.
+  // We rank candidate drivers by their actual impact on this score
+  // and surface the top 3.
+  const reasonCandidates: Array<{ delta: number; reason: string }> = [];
+  const actionCandidates: Array<{
+    delta: number;
+    action: { label: string; href: string };
+  }> = [];
+
+  if (onboarding_pct < 100) {
+    const missing = 100 - onboarding_pct;
+    reasonCandidates.push({
+      delta: missing * 0.3,
+      reason: `Setup ${onboarding_pct}% complete — ${missing}% of the score is waiting on the checklist.`,
+    });
+    actionCandidates.push({
+      delta: missing * 0.3,
+      action: { label: "Continue setup", href: "/onboarding/setup" },
+    });
+  }
+  if (days_since_activity !== null && days_since_activity > 14) {
+    reasonCandidates.push({
+      delta: days_since_activity > 30 ? 20 : 10,
+      reason: `${days_since_activity} days since you last created a quote or customer.`,
+    });
+    actionCandidates.push({
+      delta: days_since_activity > 30 ? 20 : 10,
+      action: { label: "Create quote", href: "/quotes/new" },
+    });
+  }
+  if (overdue > 0) {
+    reasonCandidates.push({
+      delta: Math.min(overdue * 4, 20),
+      reason: `${overdue} overdue invoice${overdue === 1 ? "" : "s"} dragging your score down.`,
+    });
+    actionCandidates.push({
+      delta: Math.min(overdue * 4, 20),
+      action: { label: "Chase overdue", href: "/invoices?status=overdue" },
+    });
+  }
+  if (support_open > 0) {
+    reasonCandidates.push({
+      delta: Math.min(support_open * 3, 12),
+      reason: `${support_open} open support ticket${support_open === 1 ? "" : "s"} from customers.`,
+    });
+    actionCandidates.push({
+      delta: Math.min(support_open * 3, 12),
+      action: { label: "Open support", href: "/support" },
+    });
+  }
+  if (customers === 0) {
+    reasonCandidates.push({
+      delta: 3,
+      reason: "No customers added yet.",
+    });
+    actionCandidates.push({
+      delta: 3,
+      action: { label: "Add customer", href: "/customers/new" },
+    });
+  }
+  if (quotes === 0) {
+    reasonCandidates.push({
+      delta: 5,
+      reason: "No quote sent yet — the pipeline starts there.",
+    });
+    actionCandidates.push({
+      delta: 5,
+      action: { label: "Create quote", href: "/quotes/new" },
+    });
+  }
+  if (
+    days_since_activity !== null &&
+    days_since_activity <= 7 &&
+    band === "green"
+  ) {
+    reasonCandidates.push({
+      delta: 7,
+      reason: "Active in the last week — recent activity boosts the score.",
+    });
+  }
+
+  reasonCandidates.sort((a, b) => b.delta - a.delta);
+  actionCandidates.sort((a, b) => b.delta - a.delta);
+  // De-dup actions by href; keep the highest-impact occurrence.
+  const seenHrefs = new Set<string>();
+  const uniqueActions = actionCandidates.filter((a) => {
+    if (seenHrefs.has(a.action.href)) return false;
+    seenHrefs.add(a.action.href);
+    return true;
+  });
 
   return {
     score,
@@ -334,7 +516,11 @@ export function computeCustomerHealth(
       invoices,
       overdue,
       days_since_activity,
+      support_open,
+      unresolved_alerts,
     },
+    reasons: reasonCandidates.slice(0, 3).map((r) => r.reason),
+    actions: uniqueActions.slice(0, 3).map((a) => a.action),
   };
 }
 
@@ -513,29 +699,72 @@ export function buildWeeklySummary(
 // Inactivity rescue
 // =====================================================================
 
-/** Days without a quote insert that triggers the rescue nudge. */
-export const INACTIVE_QUOTE_DAYS = 14;
+/**
+ * Inactivity ladder per Phase 2 directive step 7:
+ *   - SOFT (7d):    dashboard nudge ("just checking in")
+ *   - STRONG (14d): louder dashboard nudge ("haven't created a quote")
+ *   - RISK (30d):   HQ visibility — already covered by HQ-5's
+ *                   `customer_inactive` alert rule which fires at the
+ *                   THRESHOLDS.customerInactiveDays (14d) threshold and
+ *                   stays HOT past 30d. No double-signal here.
+ */
+export const INACTIVE_SOFT_DAYS = 7;
+export const INACTIVE_STRONG_DAYS = 14;
+export const INACTIVE_RISK_DAYS = 30;
+
+/** Back-compat alias — old code referenced this constant. */
+export const INACTIVE_QUOTE_DAYS = INACTIVE_STRONG_DAYS;
+
+export type InactivitySeverity = "ok" | "soft" | "strong" | "risk";
+
+export function inactivitySeverity(
+  signals: RetentionSignals,
+): InactivitySeverity {
+  if (signals.onboarding.counts.quotes === 0) return "ok";
+  const days = daysBetween(signals.last_activity_at, signals.now);
+  if (days === null) return "ok";
+  if (days >= INACTIVE_RISK_DAYS) return "risk";
+  if (days >= INACTIVE_STRONG_DAYS) return "strong";
+  if (days >= INACTIVE_SOFT_DAYS) return "soft";
+  return "ok";
+}
 
 /**
- * Return a nudge IFF the org has been active before (has at least one
- * quote ever) but hasn't created one in INACTIVE_QUOTE_DAYS. Brand-new
- * orgs get the onboarding nudges instead — we don't tell day-1 users
- * they're "inactive".
+ * Return a nudge based on the inactivity ladder. Brand-new orgs (no
+ * quote ever) get the onboarding nudges instead — we don't tell
+ * day-1 users they're "inactive".
  */
 export function inactiveSignal(
   signals: RetentionSignals,
 ): RetentionNudge | null {
-  if (signals.onboarding.counts.quotes === 0) return null;
-  const days = daysBetween(signals.last_activity_at, signals.now);
-  if (days === null || days < INACTIVE_QUOTE_DAYS) return null;
+  const sev = inactivitySeverity(signals);
+  if (sev === "ok") return null;
+  const days = daysBetween(signals.last_activity_at, signals.now) ?? 0;
+
+  if (sev === "soft") {
+    return {
+      id: "inactive_quote_drought_soft",
+      title: `Quick check-in — ${days} days since a new quote`,
+      body: "Nothing wrong yet, but the pipeline runs on momentum. One new quote keeps it warm.",
+      cta: { label: "Create quote", href: "/quotes/new" },
+      impact: "medium",
+      urgency: "medium",
+      priority: priorityRank("medium", "medium"),
+    };
+  }
+  // strong + risk both surface the louder nudge; HQ-side risk
+  // visibility is handled by the existing alert rules.
   return {
     id: "inactive_quote_drought",
     title: `You haven't created a quote in ${days} days`,
-    body: "Pick up a recent lead, or revisit a stalled customer — a single sent quote keeps the pipeline alive.",
+    body:
+      sev === "risk"
+        ? "It's been over a month. Reach out to a recent lead — or check in with an existing customer."
+        : "Pick up a recent lead, or revisit a stalled customer — a single sent quote keeps the pipeline alive.",
     cta: { label: "Create quote", href: "/quotes/new" },
     impact: "high",
-    urgency: "medium",
-    priority: priorityRank("high", "medium"),
+    urgency: sev === "risk" ? "high" : "medium",
+    priority: priorityRank("high", sev === "risk" ? "high" : "medium"),
   };
 }
 
