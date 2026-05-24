@@ -157,6 +157,14 @@ describe("Phase A — AI Receptionist", () => {
     expect(route).toMatch(/status: 401/);
     expect(route).toMatch(/status: 422/);
   });
+
+  it("middleware excludes api/receptionist so Twilio/WhatsApp/Meta webhooks aren't redirected to /login", () => {
+    // Critical: inbound channel webhooks won't have a Supabase session
+    // cookie. If the auth middleware catches them, they 307 → /login
+    // and channel-secret verification never runs.
+    const mw = read("middleware.ts");
+    expect(mw).toMatch(/api\/receptionist/);
+  });
 });
 
 // =====================================================================
