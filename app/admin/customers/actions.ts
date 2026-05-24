@@ -424,3 +424,155 @@ export async function logImpersonationAttempt(
     `/admin/customers/${parsed.data.org_id}?saved=impersonation_logged`,
   );
 }
+
+// --------------------------------------------------------------------
+// Phase 6 — HQ recovery actions
+//
+// Three small actions the directive's Step 3 calls out:
+//   - resetOnboarding:      clears organizations.onboarding_state so
+//                           the customer's checklist starts fresh.
+//   - markSetupComplete:    stamps onboarding_state.completed_at so
+//                           the dashboard's banner hides immediately.
+//   - resendInvite:         re-invites the org owner via Supabase auth
+//                           inviteUserByEmail. Useful when a magic
+//                           link has expired.
+//
+// All three:
+//   - re-check isSuperAdminEmail
+//   - audit-log the action
+//   - return to /admin/customers/[id] with a save banner
+// --------------------------------------------------------------------
+
+const orgIdSchema = z.object({ org_id: z.string().uuid() });
+
+export async function resetOnboarding(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
+  if (!parsed.success) {
+    redirect(`/admin/customers?error=invalid_org_id`);
+  }
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("organizations")
+    .update({ onboarding_state: {} as never })
+    .eq("id", parsed.data.org_id);
+  if (error) {
+    console.error("[hq/customers] resetOnboarding failed", error);
+    redirect(
+      `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent("Couldn't reset.")}`,
+    );
+  }
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "customer.onboarding_reset",
+    targetTable: "organizations",
+    targetId: parsed.data.org_id,
+    metadata: null,
+  });
+  revalidatePath(`/admin/customers/${parsed.data.org_id}`);
+  redirect(
+    `/admin/customers/${parsed.data.org_id}?saved=onboarding_reset`,
+  );
+}
+
+export async function markSetupComplete(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
+  if (!parsed.success) {
+    redirect(`/admin/customers?error=invalid_org_id`);
+  }
+  const supabase = createAdminClient();
+  // Read existing state, merge completed_at, write back. Preserves
+  // dismissed_steps / celebrated_milestones / etc.
+  const { data: row } = await supabase
+    .from("organizations")
+    .select("onboarding_state")
+    .eq("id", parsed.data.org_id)
+    .maybeSingle();
+  const state = ((row?.onboarding_state ?? {}) as Record<string, unknown>) ?? {};
+  const next = {
+    ...state,
+    completed_at: state.completed_at ?? new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("organizations")
+    .update({ onboarding_state: next as never })
+    .eq("id", parsed.data.org_id);
+  if (error) {
+    console.error("[hq/customers] markSetupComplete failed", error);
+    redirect(
+      `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent("Couldn't mark complete.")}`,
+    );
+  }
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "customer.setup_marked_complete",
+    targetTable: "organizations",
+    targetId: parsed.data.org_id,
+    metadata: null,
+  });
+  revalidatePath(`/admin/customers/${parsed.data.org_id}`);
+  redirect(
+    `/admin/customers/${parsed.data.org_id}?saved=setup_marked_complete`,
+  );
+}
+
+export async function resendInvite(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
+  if (!parsed.success) {
+    redirect(`/admin/customers?error=invalid_org_id`);
+  }
+  const supabase = createAdminClient();
+
+  // Resolve the org owner via memberships → users.
+  type OwnerRow = { user: { email: string | null } | null };
+  const { data: rawOwner } = await supabase
+    .from("memberships")
+    .select("user:users ( email )")
+    .eq("org_id", parsed.data.org_id)
+    .eq("role", "owner")
+    .limit(1)
+    .maybeSingle();
+  const owner = rawOwner as unknown as OwnerRow | null;
+  const email = owner?.user?.email ?? null;
+  if (!email) {
+    redirect(
+      `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent("No owner email on file.")}`,
+    );
+  }
+
+  try {
+    const { error } = await supabase.auth.admin.inviteUserByEmail(email);
+    if (error) {
+      console.error("[hq/customers] resendInvite failed", error);
+      redirect(
+        `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent("Couldn't send invite.")}`,
+      );
+    }
+  } catch (e) {
+    // Some Supabase pathways throw on rate limits or already-active
+    // users. Audit + tell the operator.
+    console.error("[hq/customers] resendInvite threw", e);
+    redirect(
+      `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent("Invite send failed.")}`,
+    );
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "customer.invite_resent",
+    targetTable: "organizations",
+    targetId: parsed.data.org_id,
+    metadata: { recipient: email },
+  });
+
+  revalidatePath(`/admin/customers/${parsed.data.org_id}`);
+  redirect(
+    `/admin/customers/${parsed.data.org_id}?saved=invite_resent`,
+  );
+}
