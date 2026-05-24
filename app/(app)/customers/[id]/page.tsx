@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { CustomerForm } from "../_form";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
@@ -362,6 +363,8 @@ export default async function EditCustomerPage({
           </form>
         )}
       </section>
+
+      <AttachmentsPanel targetTable="customers" targetId={customer.id} />
 
       <ConfirmForm
         action={deleteAction}

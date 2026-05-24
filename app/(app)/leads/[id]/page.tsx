@@ -16,8 +16,11 @@ import {
   updateLead,
   moveLeadStage,
   deleteLead,
+  acknowledgeLead,
+  regenerateLeadSummary,
 } from "../actions";
 import { LeadForm } from "../_form";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
 /**
  * Lead detail.
@@ -42,9 +45,24 @@ const ERROR_MAP: Record<string, string> = {
   move_failed: "Couldn't move stage.",
   delete_failed: "Couldn't delete.",
   delete_denied: "Only admins/owners can delete leads.",
+  summary_failed: "AI summary failed — try again.",
+  bad_kind: "Invalid action.",
+  bad_id: "Invalid lead.",
+};
+
+const SAVED_MAP: Record<string, string> = {
+  acknowledged: "Acknowledged — follow-up reminders paused.",
+  summary_regenerated: "AI summary regenerated.",
 };
 
 type SP = Promise<{ error?: string; saved?: string }>;
+
+type FollowupStateRow = {
+  reminder_72h_at: string | null;
+  reminder_7d_at: string | null;
+  acted_at: string | null;
+  acted_kind: string | null;
+};
 
 export default async function LeadDetailPage({
   params,
@@ -87,7 +105,7 @@ export default async function LeadDetailPage({
     contact_phone: string | null;
   };
 
-  const [customers, staff, callsRes, quoteRes] = await Promise.all([
+  const [customers, staff, callsRes, quoteRes, followupRes] = await Promise.all([
     listCustomersForLead(),
     listStaffForLead(),
     supabase
@@ -104,10 +122,23 @@ export default async function LeadDetailPage({
       .eq("lead_id", id)
       .order("created_at", { ascending: false })
       .limit(5),
+    (
+      supabase.from("lead_followup_state" as never) as unknown as {
+        select: (cols: string) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: FollowupStateRow | null }>;
+          };
+        };
+      }
+    )
+      .select("reminder_72h_at, reminder_7d_at, acted_at, acted_kind")
+      .eq("lead_id", id)
+      .maybeSingle(),
   ]);
 
   const calls = callsRes.data ?? [];
   const quotes = quoteRes.data ?? [];
+  const followup = followupRes.data ?? null;
 
   const status = (LEAD_STAGES as readonly string[]).includes(lead.status)
     ? (lead.status as LeadStage)
@@ -118,6 +149,16 @@ export default async function LeadDetailPage({
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
     : null;
+  const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? null : null;
+
+  const createdAt = lead.created_at ? new Date(lead.created_at) : null;
+  const now = Date.now();
+  const hoursSinceCreate = createdAt
+    ? Math.floor((now - createdAt.getTime()) / (1000 * 60 * 60))
+    : null;
+  const past72h = hoursSinceCreate !== null && hoursSinceCreate >= 72;
+  const past7d = hoursSinceCreate !== null && hoursSinceCreate >= 24 * 7;
+  const isActed = !!followup?.acted_at;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -201,6 +242,132 @@ export default async function LeadDetailPage({
           {errorMessage}
         </div>
       ) : null}
+
+      {savedMessage ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+        >
+          {savedMessage}
+        </div>
+      ) : null}
+
+      {/* Phase B — Follow-up state + acknowledge actions */}
+      <section
+        aria-labelledby="followup-heading"
+        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="followup-heading" className="text-sm font-semibold text-slate-900">
+              Follow-up
+            </h2>
+            <p className="mt-1 text-xs text-slate-600">
+              {isActed ? (
+                <>
+                  Acknowledged
+                  {followup?.acted_kind ? ` (${followup.acted_kind})` : ""} on{" "}
+                  {followup?.acted_at?.slice(0, 10) ?? "—"}. Reminders are paused.
+                </>
+              ) : past7d ? (
+                <span className="font-medium text-orange-700">
+                  Over 7 days old — high priority. Reach out today.
+                </span>
+              ) : past72h ? (
+                <span className="font-medium text-amber-700">
+                  Past 72h — time to follow up.
+                </span>
+              ) : hoursSinceCreate !== null ? (
+                <>
+                  Logged {hoursSinceCreate}h ago. First reminder fires at 72h if
+                  there&rsquo;s no activity.
+                </>
+              ) : (
+                "—"
+              )}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {followup?.reminder_72h_at
+                ? `72h reminder sent ${followup.reminder_72h_at.slice(0, 10)}. `
+                : ""}
+              {followup?.reminder_7d_at
+                ? `7d reminder sent ${followup.reminder_7d_at.slice(0, 10)}.`
+                : ""}
+            </p>
+          </div>
+        </div>
+        {!isActed ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <form
+              action={acknowledgeLead.bind(null, id)}
+              className="inline-block"
+            >
+              <input type="hidden" name="kind" value="call" />
+              <button
+                type="submit"
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+              >
+                Mark called
+              </button>
+            </form>
+            <form
+              action={acknowledgeLead.bind(null, id)}
+              className="inline-block"
+            >
+              <input type="hidden" name="kind" value="message" />
+              <button
+                type="submit"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Mark messaged
+              </button>
+            </form>
+            <form
+              action={acknowledgeLead.bind(null, id)}
+              className="inline-block"
+            >
+              <input type="hidden" name="kind" value="archive" />
+              <button
+                type="submit"
+                className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
+              >
+                Archive
+              </button>
+            </form>
+          </div>
+        ) : null}
+      </section>
+
+      {/* Phase C — AI summary panel */}
+      <section
+        aria-labelledby="ai-summary-heading"
+        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2 id="ai-summary-heading" className="text-sm font-semibold text-slate-900">
+            AI summary
+          </h2>
+          <form action={regenerateLeadSummary.bind(null, id)}>
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {lead.ai_summary ? "Regenerate" : "Generate"}
+            </button>
+          </form>
+        </div>
+        {lead.ai_summary ? (
+          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+            {lead.ai_summary}
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-slate-500">
+            No summary yet. Click Generate to summarise location, urgency, job
+            type, photos and a suggested next step. The AI will never invent a
+            price or schedule a job.
+          </p>
+        )}
+      </section>
 
       {/* Linked quote */}
       {quotes.length > 0 ? (
@@ -306,6 +473,8 @@ export default async function LeadDetailPage({
           }}
         />
       </section>
+
+      <AttachmentsPanel targetTable="leads" targetId={id} />
 
       <form
         action={deleteLead.bind(null, id)}
