@@ -43,7 +43,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/impersonation", label: "Impersonation log" },
   { href: "/admin/notes", label: "Internal notes" },
   { href: "/admin/health", label: "Customer health" },
-  { href: "/admin/settings", label: "Settings", shipsIn: "HQ-6" },
+  { href: "/admin/settings", label: "Settings" },
 ];
 
 export default async function AdminLayout({
