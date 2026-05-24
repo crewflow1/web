@@ -238,11 +238,17 @@ describe("HQ layout — auth gate", () => {
 
   it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {
     // Sections still on the roadmap carry a shipsIn annotation. As each
-    // sprint flips a section to ready, the annotation drops — so this
-    // threshold decreases over time. After HQ-11 (Health Deep Dive),
-    // the only stub left is /admin/settings — 1.
+    // sprint flips a section to ready, the annotation drops. Phase 4
+    // shipped /admin/settings — every nav entry now points to a real
+    // page, so shipsIn is allowed to be 0. Any FUTURE roadmap entry
+    // must reintroduce the annotation rather than silently stubbing.
     const shipsInCount = (LAYOUT.match(/shipsIn:/g) ?? []).length;
-    expect(shipsInCount).toBeGreaterThanOrEqual(1);
+    expect(shipsInCount).toBeGreaterThanOrEqual(0);
+    // Defence: if anyone reintroduces a stub, they MUST also keep the
+    // `shipsIn` field on the NavItem type — guarded here by string
+    // search rather than a runtime check so a refactor that drops the
+    // optional field is caught.
+    expect(LAYOUT).toMatch(/shipsIn\?:/);
   });
 });
 
