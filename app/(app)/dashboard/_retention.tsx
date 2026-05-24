@@ -6,7 +6,7 @@ import {
   unseenMilestones,
   type RetentionSignals,
 } from "@/lib/retention/signals";
-import { dismissMilestone } from "./_retention-actions";
+import { dismissMilestone, dismissNudge } from "./_retention-actions";
 
 /**
  * Dashboard retention + experience block.
@@ -171,10 +171,41 @@ export function RetentionPanel({ signals }: { signals: RetentionSignals }) {
             {health.drivers.overdue > 0
               ? ` · ${health.drivers.overdue} overdue`
               : ""}
+            {health.drivers.support_open > 0
+              ? ` · ${health.drivers.support_open} support`
+              : ""}
             {health.drivers.days_since_activity !== null
               ? ` · ${health.drivers.days_since_activity}d since activity`
               : " · no activity yet"}
           </p>
+
+          {/* Phase 2 — "3 reasons why" + "3 actions to improve" */}
+          {health.reasons.length > 0 ? (
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Why
+              </p>
+              <ul className="mt-1 space-y-1 text-xs text-slate-700">
+                {health.reasons.map((r) => (
+                  <li key={r}>· {r}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {health.actions.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {health.actions.map((a) => (
+                <a
+                  key={a.href}
+                  href={a.href}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {a.label} →
+                </a>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -218,12 +249,25 @@ export function RetentionPanel({ signals }: { signals: RetentionSignals }) {
                   <p className="text-sm font-medium text-slate-900">{n.title}</p>
                   <p className="mt-0.5 text-xs text-slate-600">{n.body}</p>
                 </div>
-                <Link
-                  href={n.cta.href}
-                  className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  {n.cta.label} →
-                </Link>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Link
+                    href={n.cta.href}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    {n.cta.label} →
+                  </Link>
+                  {/* Phase 2 — dismissible (persistent via onboarding_state). */}
+                  <form action={dismissNudge}>
+                    <input type="hidden" name="nudge_id" value={n.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800"
+                      aria-label={`Dismiss ${n.title}`}
+                    >
+                      ✕
+                    </button>
+                  </form>
+                </div>
               </li>
             ))}
           </ul>

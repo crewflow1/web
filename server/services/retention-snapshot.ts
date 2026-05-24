@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import type {
   MilestoneId,
+  NudgeId,
   RetentionSignals,
 } from "@/lib/retention/signals";
 
@@ -23,6 +24,8 @@ import type {
 const SEVEN_DAYS_MS = 7 * 86_400_000;
 /** Stored in organizations.onboarding_state.celebrated_milestones[]. */
 const CELEBRATED_KEY = "celebrated_milestones" as const;
+/** Stored in organizations.onboarding_state.dismissed_nudges[]. */
+const DISMISSED_NUDGES_KEY = "dismissed_nudges" as const;
 
 export async function buildRetentionSnapshot(
   orgId: string,
@@ -47,6 +50,8 @@ export async function buildRetentionSnapshot(
     payments7Res,
     invoicesTotalRes,
     overdueRes,
+    supportOpenRes,
+    alertsUnresolvedRes,
     lastActivityRes,
   ] = await Promise.all([
     supabase
@@ -86,6 +91,21 @@ export async function buildRetentionSnapshot(
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
       .eq("status", "overdue"),
+    // Phase 2 — open support tickets count toward health drag.
+    // "open" = anything not 'resolved' / 'closed'. Cast past the
+    // generated supabase types since `support_tickets` is not yet
+    // in the types bundle.
+    supabase
+      .from("support_tickets" as never)
+      .select("id" as never, { count: "exact", head: true })
+      .eq("org_id" as never, orgId)
+      .not("status" as never, "in", "(resolved,closed)"),
+    // Phase 2 — unresolved + unsnoozed admin_alert_state rows for this org.
+    supabase
+      .from("admin_alert_state" as never)
+      .select("id" as never, { count: "exact", head: true })
+      .eq("org_id" as never, orgId)
+      .is("resolved_at" as never, null),
     // Most-recent activity: pick newest created_at across the three
     // tables. One small query each — they index `org_id, created_at`.
     supabase
@@ -168,6 +188,11 @@ export async function buildRetentionSnapshot(
     celebratedArr as MilestoneId[],
   );
 
+  const dismissedNudgesArr = Array.isArray(stateRaw[DISMISSED_NUDGES_KEY])
+    ? (stateRaw[DISMISSED_NUDGES_KEY] as string[])
+    : [];
+  const dismissed_nudges = new Set<NudgeId>(dismissedNudgesArr as NudgeId[]);
+
   return {
     onboarding,
     windows: {
@@ -182,8 +207,11 @@ export async function buildRetentionSnapshot(
     },
     last_activity_at,
     overdue_invoice_count: overdueRes.count ?? 0,
+    support_open_count: supportOpenRes.count ?? 0,
+    unresolved_alerts_count: alertsUnresolvedRes.count ?? 0,
     invoiced_total_gbp,
     celebrated_milestones,
+    dismissed_nudges,
     now: nowIso,
   };
 }
