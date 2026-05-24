@@ -223,9 +223,20 @@ describe("/api/cron/alerts-poll", () => {
     expect(ROUTE).toMatch(/summary/);
   });
 
-  it("absorbs thrown errors and returns 500", () => {
-    expect(ROUTE).toMatch(/status: 500/);
-    expect(ROUTE).toMatch(/ok:\s*false/);
+  it("absorbs thrown errors and returns 500 via withCronTelemetry", () => {
+    // The literal 500 status + ok:false fallback now live inside
+    // lib/ops/cron-telemetry.ts (Phase 1 ops sprint). The route
+    // delegates entirely. Pin the new shape so the invariant —
+    // "throws are absorbed, telemetry records the failure" — stays
+    // testable.
+    expect(ROUTE).toMatch(/withCronTelemetry\("alerts-poll"/);
+    expect(ROUTE).toMatch(/return NextResponse\.json\(payload, \{ status \}\)/);
+    const telem = readFileSync(
+      resolve(ROOT, "lib/ops/cron-telemetry.ts"),
+      "utf8",
+    );
+    expect(telem).toMatch(/status = 500/);
+    expect(telem).toMatch(/payload = \{ ok: false, error: errorMessage \}/);
   });
 });
 

@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email/send";
 import { buildQuoteFollowup } from "@/lib/email/templates/reminders";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { env } from "@/lib/env";
+import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,9 +45,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!env.RESEND_API_KEY) {
-    return NextResponse.json({ skipped: true, reason: "no_resend_key" });
+    const skipResult = await withCronTelemetry("quote-followup", async () => ({
+      ok: true,
+      skipped: true,
+      reason: "no_resend_key",
+    }));
+    return NextResponse.json(skipResult.payload, { status: skipResult.status });
   }
 
+  const { status, payload } = await withCronTelemetry(
+    "quote-followup",
+    async () => runFollowup(),
+  );
+  return NextResponse.json(payload, { status });
+}
+
+async function runFollowup() {
   const admin = createAdminClient();
   const horizon = new Date();
   horizon.setUTCDate(horizon.getUTCDate() - FOLLOWUP_DAYS);
@@ -72,7 +86,9 @@ export async function GET(request: Request) {
 
   if (error) {
     console.error("[cron/quote-followup] query failed", error);
-    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+    // Throwing surfaces the failure to the telemetry wrapper which
+    // marks the run failed + writes the error message into cron_runs.
+    throw new Error(`query_failed: ${error.message ?? "unknown"}`);
   }
 
   const stats = { scanned: rows?.length ?? 0, sent: 0, skipped_no_email: 0, failed: 0 };
@@ -119,5 +135,5 @@ export async function GET(request: Request) {
     stats.sent++;
   }
 
-  return NextResponse.json({ ok: true, ...stats });
+  return { ok: true, ...stats };
 }

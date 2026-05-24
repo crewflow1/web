@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { runAlertsScheduler } from "@/server/services/hq-alerts-scheduler";
+import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 /**
  * Phase 3 — Alerts scheduler.
@@ -28,18 +29,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-
-  try {
+  const { status, payload } = await withCronTelemetry("alerts-poll", async () => {
     const summary = await runAlertsScheduler();
-    return NextResponse.json({ ok: true, summary });
-  } catch (e) {
-    console.error(
-      "[cron/alerts-poll] failed",
-      e instanceof Error ? e.message : String(e),
-    );
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "unknown" },
-      { status: 500 },
-    );
-  }
+    return { ok: true, summary };
+  });
+  return NextResponse.json(payload, { status });
 }

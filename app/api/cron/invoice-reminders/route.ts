@@ -4,6 +4,7 @@ import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { env } from "@/lib/env";
 import type { ReminderStage } from "@/lib/email/templates/reminders";
+import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,9 +56,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!env.RESEND_API_KEY) {
-    return NextResponse.json({ skipped: true, reason: "no_resend_key" });
+    // Skip cleanly — telemetry still records the run so the ops
+    // dashboard sees "this cron is running, just no-opping on env".
+    const skipResult = await withCronTelemetry("invoice-reminders", async () => ({
+      ok: true,
+      skipped: true,
+      reason: "no_resend_key",
+    }));
+    return NextResponse.json(skipResult.payload, { status: skipResult.status });
   }
 
+  const { status, payload } = await withCronTelemetry(
+    "invoice-reminders",
+    async () => runReminders(),
+  );
+  return NextResponse.json(payload, { status });
+}
+
+async function runReminders() {
   const admin = createAdminClient();
   const now = Date.now();
 
@@ -162,5 +178,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, ...stats });
+  return { ok: true, ...stats };
 }
