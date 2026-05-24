@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getLatestNotificationsForHq } from "@/server/services/notifications-service";
+import { getEmailQueueStats } from "@/server/services/notification-email-queue-stats";
 import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CATEGORY_LABEL,
@@ -79,6 +80,9 @@ export default async function HqNotificationsPage({
     return ms <= 24 * 3600_000;
   }).length;
 
+  // Phase-2: email queue health.
+  const emailStats = await getEmailQueueStats().catch(() => null);
+
   const banner = (() => {
     if (sp.saved === "all_read")
       return { tone: "ok" as const, msg: "All HQ notifications marked read." };
@@ -143,6 +147,79 @@ export default async function HqNotificationsPage({
         <Kpi label="High" value={String(high)} tone="amber" />
         <Kpi label="Last 24h" value={String(today24h)} tone="slate" />
       </section>
+
+      {/* Email queue health (Phase-2) */}
+      {emailStats ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Email queue
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              Drained every 15 min via cron · provider: Resend
+            </p>
+          </div>
+          <dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+            <div>
+              <dt className="text-slate-500">Queued</dt>
+              <dd className="text-base font-semibold text-slate-900">
+                {emailStats.queued}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Sent (24h)</dt>
+              <dd className="text-base font-semibold text-emerald-700">
+                {emailStats.sent_24h}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Failed (24h)</dt>
+              <dd
+                className={`text-base font-semibold ${emailStats.failed_24h > 0 ? "text-red-700" : "text-slate-900"}`}
+              >
+                {emailStats.failed_24h}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Skipped</dt>
+              <dd className="text-base font-semibold text-slate-700">
+                {emailStats.skipped}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Permanent fail</dt>
+              <dd
+                className={`text-base font-semibold ${emailStats.permanent_failures > 0 ? "text-red-700" : "text-slate-900"}`}
+              >
+                {emailStats.permanent_failures}
+              </dd>
+            </div>
+          </dl>
+          {emailStats.recent_failures.length > 0 ? (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-medium text-slate-700 hover:text-slate-900">
+                Recent failures ({emailStats.recent_failures.length})
+              </summary>
+              <ul className="mt-2 space-y-1 text-[11px]">
+                {emailStats.recent_failures.map((f) => (
+                  <li
+                    key={f.id}
+                    className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5"
+                  >
+                    <p className="font-medium text-red-900">
+                      {f.to_email} · retry {f.retry_count}
+                    </p>
+                    <p className="text-slate-700">{f.subject}</p>
+                    {f.last_error ? (
+                      <p className="mt-0.5 text-red-700">{f.last_error}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
 
       <form
         method="get"
