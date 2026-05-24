@@ -8,6 +8,7 @@ import {
   TURNOVER_LABELS,
   type DemoRequestInput,
 } from "@/lib/demo/schema";
+import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 
 /**
  * Public demo-request endpoint. Replaces the previous Server Action
@@ -45,6 +46,11 @@ function logStep(step: string, info?: Record<string, unknown>) {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   logStep("invoked");
+
+  // Phase 7 — rate limit: 5 demo requests per IP per 10 minutes.
+  const rl = enforce(request, "demo_booking", DEFAULT_LIMITS.demo_booking);
+  if (rl) return rl as unknown as NextResponse;
+
   try {
     let payload: unknown;
     try {
