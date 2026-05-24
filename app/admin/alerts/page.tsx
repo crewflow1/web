@@ -27,6 +27,7 @@ import {
   snoozeAlert,
   reopenAlert,
 } from "./actions";
+import { ClientConfirmForm } from "../_client-confirm";
 
 /**
  * Alerts + AI COO — HQ-5.
@@ -458,7 +459,10 @@ function AlertCard({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {alert.resolved ? (
-              <form action={reopenAlert}>
+              <ClientConfirmForm
+                action={reopenAlert}
+                confirm={`Reopen "${alert.ruleLabel}" for ${alert.orgName}? It will reappear in the active queue.`}
+              >
                 <input type="hidden" name="rule_id" value={alert.ruleId} />
                 <input type="hidden" name="org_id" value={alert.orgId} />
                 <button
@@ -467,7 +471,7 @@ function AlertCard({
                 >
                   Reopen
                 </button>
-              </form>
+              </ClientConfirmForm>
             ) : (
               <>
                 <ResolveForm ruleId={alert.ruleId} orgId={alert.orgId} />
@@ -495,7 +499,11 @@ function AlertCard({
 
 function ResolveForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
   return (
-    <form action={markAlertResolved} className="flex items-center gap-1">
+    <ClientConfirmForm
+      action={markAlertResolved}
+      confirm="Mark this alert resolved? The notification dedup is cleared so a future re-fire will ping HQ again."
+      className="flex items-center gap-1"
+    >
       <input type="hidden" name="rule_id" value={ruleId} />
       <input type="hidden" name="org_id" value={orgId} />
       <input
@@ -511,13 +519,17 @@ function ResolveForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
       >
         Mark resolved
       </button>
-    </form>
+    </ClientConfirmForm>
   );
 }
 
 function SnoozeForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
   return (
-    <form action={snoozeAlert} className="flex items-center gap-1">
+    <ClientConfirmForm
+      action={snoozeAlert}
+      confirm="Snooze this alert? It will be hidden from the active queue until the snooze window ends."
+      className="flex items-center gap-1"
+    >
       <input type="hidden" name="rule_id" value={ruleId} />
       <input type="hidden" name="org_id" value={orgId} />
       <select
@@ -536,7 +548,7 @@ function SnoozeForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
       >
         Snooze
       </button>
-    </form>
+    </ClientConfirmForm>
   );
 }
 

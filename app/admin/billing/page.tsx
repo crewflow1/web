@@ -23,6 +23,7 @@ import {
   setBillingInvoiceStatus,
   setNextRenewal,
 } from "./actions";
+import { ClientConfirmForm } from "../_client-confirm";
 
 /**
  * Billing OS — HQ-4.
@@ -510,8 +511,12 @@ function FlipButton({
         : tone === "amber"
           ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
           : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
-  return (
-    <form action={setBillingInvoiceStatus} className="inline-block">
+
+  // "Mark paid" is recoverable and routine — no confirm step.
+  // Failed / Refunded / Void all affect customer-visible state or
+  // accounting; require a confirm.
+  const inner = (
+    <>
       <input type="hidden" name="invoice_id" value={invoiceId} />
       <input type="hidden" name="status" value={status} />
       <button
@@ -520,7 +525,28 @@ function FlipButton({
       >
         {label}
       </button>
-    </form>
+    </>
+  );
+
+  if (status === "paid") {
+    return (
+      <form action={setBillingInvoiceStatus} className="inline-block">
+        {inner}
+      </form>
+    );
+  }
+
+  const confirm =
+    status === "failed"
+      ? "Mark this invoice as FAILED? The customer will see the failure status."
+      : status === "refunded"
+        ? "Refund this invoice? This records a refund — irreversible from the UI."
+        : "Void this invoice? It will no longer count toward MRR or be chase-able.";
+
+  return (
+    <ClientConfirmForm action={setBillingInvoiceStatus} confirm={confirm}>
+      {inner}
+    </ClientConfirmForm>
   );
 }
 
