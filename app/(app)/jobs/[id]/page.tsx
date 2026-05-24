@@ -7,6 +7,7 @@ import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import {
   computeJobProfitability,
   marginPillClass,
@@ -390,6 +391,26 @@ export default async function EditJobPage({
           </div>
         )}
       </section>
+
+      <AttachmentsPanel targetTable="jobs" targetId={job.id} />
+
+      {job.status === "done" && job.customer_id ? (
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+          <p className="text-sm font-medium text-emerald-900">
+            Job&rsquo;s done — ask for a review
+          </p>
+          <p className="mt-1 text-xs text-emerald-800">
+            We&rsquo;ll schedule a request the customer can act on at the right
+            moment. Pick the platform and a delay.
+          </p>
+          <Link
+            href={`/reviews/new?customer_id=${job.customer_id}&job_id=${job.id}`}
+            className="mt-3 inline-block rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+          >
+            Request a review
+          </Link>
+        </section>
+      ) : null}
 
       <ConfirmForm
         action={deleteAction}

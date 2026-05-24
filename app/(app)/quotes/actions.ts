@@ -671,6 +671,7 @@ export async function acceptQuoteByToken(
   signerName: string,
   ipHash: string | null,
   customerComment: string | null = null,
+  userAgent: string | null = null,
 ): Promise<{ ok: true; quoteId: string } | { ok: false; error: string }> {
   const admin = createAdminClient();
   const now = new Date().toISOString();
@@ -707,6 +708,30 @@ export async function acceptQuoteByToken(
     console.error("[quotes] public accept failed", updErr);
     return { ok: false, error: "Couldn't record acceptance" };
   }
+
+  // Phase G — write into the polymorphic signatures table so the operator
+  // can see the full e-sign audit trail on the quote detail page. Customer
+  // is anonymous here so we use the admin client; the row gets its
+  // org_id from the quote (RLS still segregates per-org reads).
+  await (admin.from("signatures" as never) as unknown as {
+    insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
+  })
+    .insert({
+      org_id: quote.org_id,
+      target_table: "quotes",
+      target_id: quote.id,
+      signer_name: signerName,
+      signer_email: null,
+      signature_text: signerName,
+      signed_at: now,
+      ip_address: ipHash,
+      user_agent: userAgent,
+    })
+    .then((r) => {
+      if (r.error) {
+        console.error("[quotes] signatures insert failed", r.error);
+      }
+    });
 
   // Auto-create a job (status=new) from the accepted quote — but only when
   // the quote isn't a variation against an existing job. Variations

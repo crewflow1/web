@@ -19,6 +19,7 @@ import {
 } from "../actions";
 import type { LineItem } from "@/lib/quotes/schema";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { env } from "@/lib/env";
@@ -127,11 +128,40 @@ export default async function EditQuotePage({
     vat_rate: Number(li.vat_rate ?? 20),
   }));
 
-  const [customers, properties, leads] = await Promise.all([
+  type SignatureRow = {
+    id: string;
+    signer_name: string;
+    signer_email: string | null;
+    signature_text: string;
+    signed_at: string;
+    ip_address: string | null;
+    user_agent: string | null;
+  };
+  const [customers, properties, leads, signaturesRes] = await Promise.all([
     listCustomersForQuote(),
     listPropertiesForQuote(),
     listLeadsForQuote(),
+    (
+      supabase.from("signatures" as never) as unknown as {
+        select: (cols: string) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => {
+              order: (col: string, opts: { ascending: boolean }) => Promise<{
+                data: SignatureRow[] | null;
+              }>;
+            };
+          };
+        };
+      }
+    )
+      .select(
+        "id, signer_name, signer_email, signature_text, signed_at, ip_address, user_agent",
+      )
+      .eq("target_table", "quotes")
+      .eq("target_id", id)
+      .order("signed_at", { ascending: false }),
   ]);
+  const signatures = signaturesRes.data ?? [];
 
   const status = quote.status as QuoteStatus;
   // Banner messages from lifecycle button actions (send/approve/etc.)
@@ -420,6 +450,57 @@ export default async function EditQuotePage({
           cancelHref="/quotes"
         />
       )}
+
+      {signatures.length > 0 ? (
+        <section
+          aria-labelledby="signatures-heading"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+        >
+          <h2 id="signatures-heading" className="text-sm font-semibold text-slate-900">
+            Signatures ({signatures.length})
+          </h2>
+          <ul className="mt-2 divide-y divide-slate-100">
+            {signatures.map((sig) => (
+              <li key={sig.id} className="py-3 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p
+                    className="text-base font-medium text-slate-900"
+                    style={{
+                      fontFamily:
+                        'ui-serif, Georgia, "Times New Roman", serif',
+                      fontStyle: "italic",
+                    }}
+                  >
+                    {sig.signature_text}
+                  </p>
+                  <span className="text-xs text-slate-500">
+                    {sig.signed_at.slice(0, 16).replace("T", " ")} UTC
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Typed by <strong className="text-slate-700">{sig.signer_name}</strong>
+                  {sig.signer_email ? ` (${sig.signer_email})` : ""}
+                </p>
+                {sig.ip_address || sig.user_agent ? (
+                  <details className="mt-1 text-xs text-slate-500">
+                    <summary className="cursor-pointer">Audit trail</summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {sig.ip_address ? (
+                        <li>IP hash: {sig.ip_address}</li>
+                      ) : null}
+                      {sig.user_agent ? (
+                        <li>Browser: {sig.user_agent.slice(0, 100)}</li>
+                      ) : null}
+                    </ul>
+                  </details>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <AttachmentsPanel targetTable="quotes" targetId={id} />
 
       <ConfirmForm
         action={deleteQuote.bind(null, id)}

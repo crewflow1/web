@@ -10,6 +10,7 @@ import {
 import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -163,6 +164,8 @@ export default async function StaffDetailPage({
           </form>
         </section>
       ) : null}
+
+      <AttachmentsPanel targetTable="memberships" targetId={id} />
 
       {isAdmin && row.role !== "owner" ? (
         <section className="rounded-xl border border-red-200 bg-red-50/50 p-4">

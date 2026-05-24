@@ -347,25 +347,40 @@ export default async function PublicQuotePage({
               {isVariation ? "Approve this variation" : "Accept this quote"}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Type your full name to accept. We&apos;ll record your signature,
-              today&apos;s date, and send {org?.name} a notification so they
-              can schedule the work.
+              Type your full name below — this counts as your electronic
+              signature. We&apos;ll record the date, your name, and send{" "}
+              {org?.name} a notification so they can schedule the work.
             </p>
             <form
               action={publicAcceptQuote.bind(null, token)}
-              className="mt-4 space-y-2"
+              className="mt-4 space-y-3"
             >
+              <label
+                htmlFor="signer_name"
+                className="block text-sm font-medium text-slate-800"
+              >
+                Your full name (this is your signature)
+              </label>
               <input
+                id="signer_name"
                 type="text"
                 name="signer_name"
                 required
-                placeholder="Your full name"
+                placeholder="e.g. Alex Smith"
                 autoComplete="name"
-                className="block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                className="block w-full rounded-md border border-slate-300 px-3 py-2.5 font-[cursive] text-lg focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                style={{ fontFamily: 'ui-serif, Georgia, "Times New Roman", serif', fontStyle: "italic" }}
               />
+              <p className="text-xs text-slate-500">
+                By typing your name and submitting, you agree to the terms of
+                this {isVariation ? "variation" : "quote"} and confirm you are
+                authorised to accept on behalf of the customer. The signature,
+                today&apos;s date, your IP and browser are all recorded as part
+                of the audit trail.
+              </p>
               <textarea
                 name="comment"
-                rows={3}
+                rows={2}
                 placeholder="Optional — leave a comment for the team"
                 className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />

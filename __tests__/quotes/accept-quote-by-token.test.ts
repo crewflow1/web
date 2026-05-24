@@ -193,13 +193,15 @@ describe("acceptQuoteByToken", () => {
     mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
     // 2. update quote → accepted
     mockAdmin.enqueue("update", { data: null, error: null });
-    // 3. insert job (auto-create, returns id via .select().single())
+    // 3. insert into signatures polymorphic table (Phase G)
+    mockAdmin.enqueue("insert", { data: null, error: null });
+    // 4. insert job (auto-create, returns id via .select().single())
     mockAdmin.enqueue("insert", { data: { id: "job-uuid-1" }, error: null });
-    // 4. update quote with job_id
+    // 5. update quote with job_id
     mockAdmin.enqueue("update", { data: null, error: null });
-    // 5. next_invoice_number rpc
+    // 6. next_invoice_number rpc
     mockAdmin.enqueue("rpc", { data: "INV-0001", error: null });
-    // 6. insert invoice
+    // 7. insert invoice
     mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-1" }, error: null });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", "iphash");
@@ -251,6 +253,8 @@ describe("acceptQuoteByToken", () => {
       error: null,
     });
     mockAdmin.enqueue("update", { data: null, error: null });
+    // Phase G signatures insert
+    mockAdmin.enqueue("insert", { data: null, error: null });
     // No job-insert queued — variations skip auto-job creation.
     mockAdmin.enqueue("rpc", { data: "INV-0002", error: null });
     mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-2" }, error: null });

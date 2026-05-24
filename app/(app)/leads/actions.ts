@@ -161,6 +161,88 @@ export async function moveLeadStage(id: string, formData: FormData) {
   redirect(`/leads`);
 }
 
+/**
+ * Phase B — Owner acknowledgement of a lead.
+ *
+ * Records the action (call / message / archive) on
+ * lead_followup_state.acted_*, which the cron uses to stop firing
+ * reminders. Archive also moves the lead status to `archived`.
+ */
+const ACTED_KIND_SCHEMA = z.enum(["call", "message", "archive"]);
+
+export async function acknowledgeLead(id: string, formData: FormData) {
+  const { ctx, user } = await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
+
+  const parsed = ACTED_KIND_SCHEMA.safeParse(formData.get("kind") ?? "");
+  if (!parsed.success) redirect(`/leads/${id}?error=bad_kind`);
+
+  const { markLeadActed } = await import("@/server/services/lead-followups");
+  await markLeadActed({
+    lead_id: id,
+    org_id: ctx.org.id,
+    kind: parsed.success ? parsed.data : "call",
+    acted_by_user_id: user.id,
+  });
+
+  // Archive also moves the lead status so it drops out of pipeline view.
+  if (parsed.success && parsed.data === "archive") {
+    const supabase = await createClient();
+    await supabase
+      .from("leads")
+      .update({
+        status: "archived",
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+  } else {
+    // Otherwise just bump last_activity_at so recency sorts still work.
+    const supabase = await createClient();
+    await supabase
+      .from("leads")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", id);
+  }
+
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  redirect(`/leads/${id}?saved=acknowledged`);
+}
+
+/**
+ * Phase C — Regenerate the AI summary for a lead.
+ *
+ * Calls summariseLead() and persists the result to leads.ai_summary so
+ * the next page render shows it. Suggested action goes into the same
+ * field as a postfix (the leads table doesn't have a dedicated column).
+ */
+export async function regenerateLeadSummary(id: string) {
+  await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
+
+  const { summariseLead } = await import("@/server/services/lead-summary");
+  const result = await summariseLead(id);
+  if (!result) {
+    redirect(`/leads/${id}?error=summary_failed`);
+  }
+
+  const composed = result.suggested_action
+    ? `${result.summary}\n\nSuggested next step: ${result.suggested_action}.`
+    : result.summary;
+
+  const supabase = await createClient();
+  await supabase
+    .from("leads")
+    .update({
+      ai_summary: composed,
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  revalidatePath(`/leads/${id}`);
+  redirect(`/leads/${id}?saved=summary_regenerated`);
+}
+
 export async function deleteLead(id: string) {
   await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/leads");

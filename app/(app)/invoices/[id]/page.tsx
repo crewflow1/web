@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
 /**
  * Invoice detail view.
@@ -248,6 +249,8 @@ export default async function InvoiceDetailPage({
           </div>
         ) : null}
       </section>
+
+      <AttachmentsPanel targetTable="invoices" targetId={invoice.id} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Actions</h2>

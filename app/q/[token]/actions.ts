@@ -56,12 +56,14 @@ export async function publicAcceptQuote(token: string, formData: FormData) {
 
   const h = await headers();
   const ipHash = hashIp(getIpFromHeaders(h));
+  const userAgent = h.get("user-agent");
 
   const res = await acceptQuoteByToken(
     token,
     parsed.data.signer_name,
     ipHash,
     parsed.data.comment ?? null,
+    userAgent,
   );
   if (!res.ok) {
     redirect(`/q/${token}?error=${encodeURIComponent(res.error)}`);
