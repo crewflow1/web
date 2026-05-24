@@ -21,6 +21,7 @@ import {
   setTicketPriority,
   setTicketCategory,
 } from "../actions";
+import { SupportReplyForm } from "./_reply-form";
 
 type SP = Promise<{ saved?: string; error?: string }>;
 type Params = Promise<{ id: string }>;
@@ -147,40 +148,13 @@ export default async function HqSupportTicketDetailPage({
             ))
           )}
 
-          {/* Reply form */}
-          <form
+          {/* Reply form — confirms before sending customer-visible replies */}
+          <SupportReplyForm
             action={replyAsHq}
-            className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-          >
-            <input type="hidden" name="ticket_id" value={ticket.id} />
-            <p className="text-sm font-semibold text-slate-900">Reply</p>
-            <textarea
-              name="body"
-              required
-              minLength={1}
-              maxLength={10_000}
-              rows={5}
-              placeholder="Customer-visible reply, OR check 'Internal note' to leave a private HQ-only message…"
-              className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                <input
-                  type="checkbox"
-                  name="internal"
-                  value="true"
-                  className="h-4 w-4 rounded border-slate-300"
-                />
-                Internal note (HQ-only, not visible to customer)
-              </label>
-              <button
-                type="submit"
-                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-              >
-                Send
-              </button>
-            </div>
-          </form>
+            ticketId={ticket.id}
+            customerEmail={ticket.owner_email ?? ticket.org_email ?? null}
+          />
+
         </section>
 
         {/* Side panel: ticket controls + customer info (1/3) */}

@@ -10,6 +10,7 @@ import {
   endImpersonation,
   forceEndImpersonation,
 } from "./actions";
+import { ClientConfirmForm } from "../_client-confirm";
 
 /**
  * HQ Impersonation centre — /admin/impersonation (HQ-10).
@@ -127,7 +128,11 @@ export default async function HqImpersonationPage({
           <h2 className="text-sm font-semibold text-slate-900">
             Start a new impersonation
           </h2>
-          <form action={startImpersonation} className="mt-3 space-y-3">
+          <ClientConfirmForm
+            action={startImpersonation}
+            confirm="Start impersonating this customer? Your auth.uid will gain temporary RLS access to their data and the action is broadcast to HQ + audit-logged."
+            className="mt-3 space-y-3"
+          >
             <label className="block text-[11px] font-medium text-slate-700">
               Customer
               <select
@@ -161,7 +166,7 @@ export default async function HqImpersonationPage({
             >
               Start impersonating
             </button>
-          </form>
+          </ClientConfirmForm>
         </section>
       ) : null}
 
@@ -189,7 +194,10 @@ export default async function HqImpersonationPage({
                     {s.reason ? ` · ${s.reason}` : ""}
                   </p>
                 </div>
-                <form action={forceEndImpersonation}>
+                <ClientConfirmForm
+                  action={forceEndImpersonation}
+                  confirm={`Force-end ${s.admin_email}'s active impersonation? Their cross-tenant RLS access stops immediately.`}
+                >
                   <input type="hidden" name="session_id" value={s.id} />
                   <button
                     type="submit"
@@ -197,7 +205,7 @@ export default async function HqImpersonationPage({
                   >
                     Force end
                   </button>
-                </form>
+                </ClientConfirmForm>
               </li>
             ))}
           </ul>

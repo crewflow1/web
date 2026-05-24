@@ -58,6 +58,11 @@ const CUSTOMER_NEW = read("app/(app)/support/new/page.tsx");
 const CUSTOMER_DETAIL = read("app/(app)/support/[id]/page.tsx");
 const HQ_LIST = read("app/admin/support/page.tsx");
 const HQ_DETAIL = read("app/admin/support/[id]/page.tsx");
+// Reply form moved into a sibling client component during the
+// Phase 5 completion sweep so the customer-visible-send can be
+// gated behind a confirm. Tests that pinned reply-form internals
+// now read the dedicated file.
+const HQ_DETAIL_REPLY = read("app/admin/support/[id]/_reply-form.tsx");
 const SIDEBAR = read("app/(app)/_components/sidebar.tsx");
 const HQ_LAYOUT = read("app/admin/layout.tsx");
 
@@ -505,8 +510,11 @@ describe("HQ page wiring", () => {
   });
 
   it("detail page surfaces internal note checkbox", () => {
-    expect(HQ_DETAIL).toMatch(/name="internal"/);
-    expect(HQ_DETAIL).toMatch(/Internal note/);
+    // The reply UI is the sibling client component since Phase 5 —
+    // the page just embeds <SupportReplyForm/>.
+    expect(HQ_DETAIL).toMatch(/<SupportReplyForm/);
+    expect(HQ_DETAIL_REPLY).toMatch(/name="internal"/);
+    expect(HQ_DETAIL_REPLY).toMatch(/Internal note/);
   });
 
   it("detail page links back to /admin/customers/<org_id>", () => {
