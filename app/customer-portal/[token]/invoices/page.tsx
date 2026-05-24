@@ -2,6 +2,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { uploadPaymentProof } from "../../_upload-action";
+
+const UPLOAD_ERRORS: Record<string, string> = {
+  no_file: "Choose a file to upload first.",
+  file_too_large: "File is over 10 MB — please compress and try again.",
+  bad_file_type:
+    "Only PDF / JPG / PNG / HEIC / WebP files are accepted as payment proof.",
+  invoice_not_yours: "This invoice isn't on your portal.",
+  upload_failed: "Couldn't save the file. Try again, or email us if it keeps failing.",
+  record_failed: "Saved the file but couldn't record it — please email us.",
+  invalid_token: "Your portal link looks expired. Ask us for a fresh one.",
+  missing_fields: "Choose a file before submitting.",
+};
 
 /**
  * Customer-side invoices list.
@@ -37,10 +50,27 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default async function PortalInvoicesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
   const { token } = await params;
+  const sp = await searchParams;
+  const banner = (() => {
+    if (sp.saved === "uploaded")
+      return {
+        tone: "ok" as const,
+        msg: "Proof uploaded. We'll review and update the invoice when it's matched.",
+      };
+    if (sp.error)
+      return {
+        tone: "err" as const,
+        msg: UPLOAD_ERRORS[sp.error] ?? sp.error,
+      };
+    return null;
+  })();
+
   const loaded = await loadCustomerByPortalToken(token);
   if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
@@ -97,6 +127,14 @@ export default async function PortalInvoicesPage({
 
   return (
     <PortalShell customer={customer} org={org} token={token} active="invoices">
+      {banner ? (
+        <div
+          role="alert"
+          className={`rounded-md border px-3 py-2 text-sm ${banner.tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-900"}`}
+        >
+          {banner.msg}
+        </div>
+      ) : null}
       {invoices.length === 0 ? (
         <section className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
           <p className="text-sm font-medium text-slate-900">No invoices yet</p>
@@ -183,7 +221,7 @@ export default async function PortalInvoicesPage({
                     working days for the status to update.
                   </p>
                 )}
-                <div className="mt-3">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <a
                     href={`/customer-portal/${token}/invoices/${inv.id}/pdf`}
                     target="_blank"
@@ -193,6 +231,50 @@ export default async function PortalInvoicesPage({
                     <span aria-hidden>↓</span> Download invoice PDF
                   </a>
                 </div>
+
+                {/* Phase 3 — payment proof upload. Hidden on fully-paid
+                    invoices since there's nothing to prove. */}
+                {!isFullyPaid ? (
+                  <details
+                    id={`inv-${inv.id}`}
+                    className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3"
+                  >
+                    <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                      Upload payment proof
+                    </summary>
+                    <form
+                      action={uploadPaymentProof}
+                      encType="multipart/form-data"
+                      className="mt-3 space-y-2"
+                    >
+                      <input type="hidden" name="token" value={token} />
+                      <input type="hidden" name="invoice_id" value={inv.id} />
+                      <input
+                        type="file"
+                        name="file"
+                        accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,image/webp"
+                        required
+                        className="block w-full text-xs text-slate-700 file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-2 file:py-1 file:text-[11px] file:font-semibold file:text-white"
+                      />
+                      <input
+                        type="text"
+                        name="notes"
+                        placeholder="Optional note (e.g. reference number)"
+                        maxLength={500}
+                        className="block w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                      >
+                        Send proof
+                      </button>
+                      <p className="text-[10px] text-slate-500">
+                        Accepted: PDF / JPG / PNG / HEIC / WebP, max 10 MB.
+                      </p>
+                    </form>
+                  </details>
+                ) : null}
               </li>
             );
           })}
