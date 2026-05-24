@@ -219,9 +219,12 @@ describe("/admin/impersonation page", () => {
     expect(PAGE).toMatch(/action=\{forceEndImpersonation\}/);
   });
 
-  it("flags v1 limitation about RLS-scoped data view (no fake success)", () => {
-    expect(PAGE).toMatch(/RLS-scoped/);
-    expect(PAGE).toMatch(/HQ-10\.1/);
+  it("describes how cross-tenant access is enforced (current_org_ids)", () => {
+    // After HQ-10.1 the v1 limitation is gone — the page now explains
+    // the real mechanism instead.
+    expect(PAGE).toMatch(/current_org_ids/);
+    expect(PAGE).toMatch(/audit-logged/);
+    expect(PAGE).toMatch(/Sessions auto-expire after 24h/);
   });
 });
 
