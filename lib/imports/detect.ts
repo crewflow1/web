@@ -25,7 +25,10 @@ export type EntityType =
   | "lead"
   | "staff"
   | "cost"
-  | "supplier";
+  | "supplier"
+  | "job"
+  | "quote"
+  | "payment";
 
 export type ColumnMap = {
   // The canonical target field → source-header it came from.
@@ -114,6 +117,61 @@ const SUPPLIER_FIELDS: Record<string, string[]> = {
   notes: ["notes", "comments", "account"],
 };
 
+// ------------------------------------------------------------------
+// CEO Migration OS expansion (PR 2): jobs, quotes, payments.
+//
+// These extend the existing customer/invoice/lead/staff/cost catalog.
+// The destination tables (`jobs`, `quotes`, `invoice_payments`) all
+// require a parent record (customer / customer / invoice respectively).
+// insertOne() resolves those parents by name/number within the org;
+// rows that can't resolve are marked `skipped` with an error_message
+// — they DO NOT throw, matching the directive's "AI flags issues but
+// does not stop migration" rule.
+// ------------------------------------------------------------------
+
+const JOB_FIELDS: Record<string, string[]> = {
+  customer_name: ["customer name", "client name", "customer", "client", "for"],
+  title: ["job title", "title", "job", "scope", "work"],
+  status: ["job status", "status", "stage"],
+  scheduled_date: ["scheduled", "scheduled date", "date", "start date", "when"],
+  address: ["address", "address line 1", "address1", "street", "site"],
+  value: ["job value", "value", "amount", "price"],
+  notes: ["notes", "description", "details", "comments"],
+  assigned_email: [
+    "assigned to",
+    "assigned",
+    "engineer",
+    "tech",
+    "assigned email",
+  ],
+};
+
+const QUOTE_FIELDS: Record<string, string[]> = {
+  number: ["quote number", "quote no", "quote #", "quote ref", "ref", "number"],
+  customer_name: ["customer name", "client name", "customer", "client"],
+  total: ["total", "amount inc vat", "grand total", "amount"],
+  status: ["status", "quote status"],
+  valid_until: ["valid until", "expires", "expiry", "expires on", "expiry date"],
+  notes: ["notes", "comments"],
+};
+
+const PAYMENT_FIELDS: Record<string, string[]> = {
+  // Required pair: which invoice + how much.
+  invoice_number: [
+    "invoice number",
+    "invoice no",
+    "invoice #",
+    "inv no",
+    "inv #",
+    "invoice ref",
+  ],
+  amount: ["amount", "paid", "payment", "value", "total"],
+  paid_at: ["paid date", "paid at", "date paid", "payment date", "date"],
+  payment_method: ["payment method", "method", "type", "via"],
+  reference: ["reference", "ref", "transaction ref", "bank ref"],
+  notes: ["notes", "comments"],
+};
+
 const ENTITY_FIELDS: Record<EntityType, Record<string, string[]>> = {
   customer: CUSTOMER_FIELDS,
   invoice: INVOICE_FIELDS,
@@ -121,6 +179,9 @@ const ENTITY_FIELDS: Record<EntityType, Record<string, string[]>> = {
   staff: STAFF_FIELDS,
   cost: COST_FIELDS,
   supplier: SUPPLIER_FIELDS,
+  job: JOB_FIELDS,
+  quote: QUOTE_FIELDS,
+  payment: PAYMENT_FIELDS,
 };
 
 const REQUIRED_FIELDS: Record<EntityType, string[]> = {
@@ -130,6 +191,15 @@ const REQUIRED_FIELDS: Record<EntityType, string[]> = {
   staff: ["full_name"],
   cost: ["amount"],
   supplier: ["name"],
+  // Jobs absolutely need a customer to be linkable — the schema's
+  // customer_id is nullable but a job without a customer is useless
+  // operationally.
+  job: ["customer_name"],
+  // Quote needs both an identifier and a customer to resolve.
+  quote: ["number", "customer_name"],
+  // Payment needs an invoice reference + an amount; date is forced
+  // to today on commit if missing.
+  payment: ["invoice_number", "amount"],
 };
 
 // ---------------------------------------------------------------------------
@@ -181,14 +251,42 @@ function mapColumns(
 // ---------------------------------------------------------------------------
 
 export function detectEntityType(sheet: ParsedSheet): DetectedSheet {
-  // Supplier requires an explicit "supplier" / "vendor" keyword in at
-  // least one header, otherwise we'd grab every customer sheet.
+  // Discriminator keywords — entities that could otherwise be confused
+  // with a sibling (supplier vs customer, job vs customer, quote vs
+  // invoice, payment vs invoice) require an explicit signal in at
+  // least one header.
   const lowered = sheet.header.map((h) => h.toLowerCase());
-  const supplierSignal = lowered.some((h) => h.includes("supplier") || h.includes("vendor"));
+  const supplierSignal = lowered.some(
+    (h) => h.includes("supplier") || h.includes("vendor"),
+  );
+  // Jobs need either an explicit job-shape word OR a scheduled date —
+  // those are absent from customer sheets.
+  const jobSignal = lowered.some(
+    (h) =>
+      h.includes("job") ||
+      h.includes("scheduled") ||
+      h.includes("assigned") ||
+      h.includes("engineer"),
+  );
+  // Quotes specifically reference "quote" — invoices say "invoice".
+  const quoteSignal = lowered.some(
+    (h) => h.includes("quote") || h.includes("valid until") || h.includes("expir"),
+  );
+  // Payments either say "payment" / "paid" or are explicitly paired
+  // with an invoice number column.
+  const paymentSignal = lowered.some(
+    (h) =>
+      h.includes("payment") ||
+      h.includes("paid") ||
+      (h.includes("method") && lowered.some((x) => x.includes("invoice"))),
+  );
 
   let best: DetectedSheet | null = null;
   for (const entity of Object.keys(ENTITY_FIELDS) as EntityType[]) {
     if (entity === "supplier" && !supplierSignal) continue;
+    if (entity === "job" && !jobSignal) continue;
+    if (entity === "quote" && !quoteSignal) continue;
+    if (entity === "payment" && !paymentSignal) continue;
     const fields = ENTITY_FIELDS[entity];
     const { map, perField } = mapColumns(sheet.header, fields);
     const required = REQUIRED_FIELDS[entity];
@@ -281,7 +379,8 @@ function normaliseValue(
     field === "total" ||
     field === "vat_total" ||
     field === "hourly_pay" ||
-    field === "estimated_value"
+    field === "estimated_value" ||
+    field === "value"
   ) {
     const n = parseMoney(raw);
     if (n === null) {
@@ -290,7 +389,14 @@ function normaliseValue(
     }
     return n;
   }
-  if (field === "due_date" || field === "paid_at" || field === "start_date" || field === "created_at") {
+  if (
+    field === "due_date" ||
+    field === "paid_at" ||
+    field === "start_date" ||
+    field === "created_at" ||
+    field === "scheduled_date" ||
+    field === "valid_until"
+  ) {
     const d = normaliseDate(raw);
     if (!d) {
       warnings.push(`bad date in ${field}: ${String(raw)}`);
@@ -317,6 +423,29 @@ function normaliseValue(
     if (["sent", "issued"].includes(s)) return "sent";
     if (["draft"].includes(s)) return "draft";
     return "sent"; // safe default
+  }
+  if (field === "status" && entity === "job") {
+    // jobs.status check: 'new'|'in-progress'|'completed'|'blocked'
+    const s = String(raw).toLowerCase().trim();
+    if (["completed", "done", "finished", "closed"].includes(s)) return "completed";
+    if (["blocked", "on hold", "hold", "stuck"].includes(s)) return "blocked";
+    if (
+      s.includes("progress") ||
+      ["in-progress", "in progress", "wip", "active", "started"].includes(s)
+    ) {
+      return "in-progress";
+    }
+    return "new"; // safe default
+  }
+  if (field === "status" && entity === "quote") {
+    // quotes.status: draft / sent / viewed / accepted / declined / expired
+    const s = String(raw).toLowerCase().trim();
+    if (["accepted", "won", "approved"].includes(s)) return "accepted";
+    if (["declined", "lost", "rejected"].includes(s)) return "declined";
+    if (["expired", "stale"].includes(s)) return "expired";
+    if (["viewed", "opened"].includes(s)) return "viewed";
+    if (["sent", "issued", "out"].includes(s)) return "sent";
+    return "draft";
   }
   if (field === "urgency" && entity === "lead") {
     const s = String(raw).toLowerCase().trim();

@@ -62,14 +62,43 @@ export default async function ImportWizardPage({
       .order("confidence", { ascending: false }),
   ]);
 
-  // Summary by entity type.
-  const summary = new Map<string, { count: number; avgConfidence: number; duplicates: number }>();
+  // Summary by entity type — covers both the pre-commit detection
+  // view (counts + confidence) and the post-commit progress view
+  // (imported vs flagged, matching the CEO directive's "Jobs: 98
+  // imported, 2 flagged" example).
+  type EntitySummary = {
+    count: number;
+    avgConfidence: number;
+    duplicates: number;
+    imported: number;
+    flagged: number;
+  };
+  const summary = new Map<string, EntitySummary>();
   for (const r of rows ?? []) {
     const key = r.entity_type ?? "unknown";
-    const t = summary.get(key) ?? { count: 0, avgConfidence: 0, duplicates: 0 };
+    const t =
+      summary.get(key) ??
+      ({
+        count: 0,
+        avgConfidence: 0,
+        duplicates: 0,
+        imported: 0,
+        flagged: 0,
+      } as EntitySummary);
     t.count++;
     t.avgConfidence += r.confidence ?? 0;
     if (r.status === "duplicate") t.duplicates++;
+    if (r.status === "imported") t.imported++;
+    // "Flagged" = anything operator should look at: duplicates, errors,
+    // skipped-with-message, and any row carrying an explicit warning.
+    if (
+      r.status === "duplicate" ||
+      r.status === "error" ||
+      (r.status === "skipped" && r.error_message) ||
+      (r.error_message && r.status !== "imported")
+    ) {
+      t.flagged++;
+    }
     summary.set(key, t);
   }
   for (const [, v] of summary) {
@@ -323,8 +352,32 @@ export default async function ImportWizardPage({
           <ul className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
             {Array.from(summary.entries()).map(([entity, t]) => (
               <li key={entity} className="rounded-lg border border-slate-200 p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">{entity}</div>
-                <div className="mt-1 text-xl font-bold text-slate-900">{t.count}</div>
+                <div className="flex items-baseline justify-between">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">{entity}</div>
+                  <div className="text-[10px] text-slate-400">
+                    of {t.count}
+                  </div>
+                </div>
+                <div className="mt-1 flex items-baseline gap-3">
+                  <span>
+                    <span className="text-xl font-bold text-emerald-700">
+                      {t.imported}
+                    </span>
+                    <span className="ml-1 text-[10px] uppercase tracking-wide text-emerald-700">
+                      imported
+                    </span>
+                  </span>
+                  {t.flagged > 0 ? (
+                    <span>
+                      <span className="text-xl font-bold text-amber-700">
+                        {t.flagged}
+                      </span>
+                      <span className="ml-1 text-[10px] uppercase tracking-wide text-amber-700">
+                        flagged
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
@@ -446,6 +499,9 @@ function RowSummary({
     staff: ["full_name", "email", "hourly_pay"],
     cost: ["amount", "category", "notes"],
     supplier: ["name", "email"],
+    job: ["customer_name", "status", "scheduled_date"],
+    quote: ["number", "customer_name", "total"],
+    payment: ["invoice_number", "amount", "paid_at"],
   };
   const fields = order[entity ?? ""] ?? Object.keys(mapped).slice(0, 3);
   return (
@@ -454,7 +510,11 @@ function RowSummary({
         const v = mapped[f];
         if (v === undefined || v === null || v === "") return null;
         const display =
-          f === "total" || f === "amount" || f === "estimated_value" || f === "hourly_pay"
+          f === "total" ||
+          f === "amount" ||
+          f === "estimated_value" ||
+          f === "hourly_pay" ||
+          f === "value"
             ? GBP.format(Number(v))
             : String(v);
         return (
