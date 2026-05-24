@@ -8,6 +8,7 @@ import {
   customerFormSchema,
   type CustomerFormInput,
 } from "@/lib/customers/schema";
+import { generateCustomerPortalToken } from "@/lib/customers/portal-token";
 import {
   type FormState,
   formError,
@@ -118,7 +119,9 @@ export async function updateCustomer(
 export async function rotateCustomerPortalToken(id: string) {
   await requireOrgContext();
   const supabase = await createClient();
-  const token = crypto.randomUUID();
+  // Token shape is owned by lib/customers/portal-token.ts so the
+  // rotate action and any future code path stay in lockstep.
+  const token = generateCustomerPortalToken();
   const { error, count } = await supabase
     .from("customers")
     .update({ portal_token: token }, { count: "exact" })
