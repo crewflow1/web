@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { recomputeAllOrgs } from "@/server/services/hq-health-recompute";
+import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 /**
  * CrewFlow HQ — Nightly health-score recompute (HQ-6).
@@ -26,17 +27,12 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  try {
-    const summary = await recomputeAllOrgs("cron", null);
-    return NextResponse.json({ ok: true, summary });
-  } catch (e) {
-    console.error(
-      "[cron] health-recompute failed",
-      e instanceof Error ? e.message : String(e),
-    );
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "unknown" },
-      { status: 500 },
-    );
-  }
+  const { status, payload } = await withCronTelemetry(
+    "health-recompute",
+    async () => {
+      const summary = await recomputeAllOrgs("cron", null);
+      return { ok: true, summary };
+    },
+  );
+  return NextResponse.json(payload, { status });
 }

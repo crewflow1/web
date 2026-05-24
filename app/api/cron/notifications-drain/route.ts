@@ -4,6 +4,7 @@ import {
   drainNotificationEmailQueue,
   cleanupOldEmailRows,
 } from "@/lib/notifications/email";
+import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 /**
  * Phase 2 — Notification email drain.
@@ -28,32 +29,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  const url = new URL(request.url);
+  const skipCleanup = url.searchParams.get("skip_cleanup") === "1";
 
-  try {
-    const summary = await drainNotificationEmailQueue();
-
-    // Once a day cleanup. Cheap to call every run — the SQL DELETE
-    // is a no-op when there's nothing old enough to prune.
-    let pruned = 0;
-    const url = new URL(request.url);
-    const skipCleanup = url.searchParams.get("skip_cleanup") === "1";
-    if (!skipCleanup) {
-      pruned = await cleanupOldEmailRows();
-    }
-
-    return NextResponse.json({
-      ok: true,
-      summary,
-      pruned,
-    });
-  } catch (e) {
-    console.error(
-      "[cron/notifications-drain] failed",
-      e instanceof Error ? e.message : String(e),
-    );
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "unknown" },
-      { status: 500 },
-    );
-  }
+  const { status, payload } = await withCronTelemetry(
+    "notifications-drain",
+    async () => {
+      const summary = await drainNotificationEmailQueue();
+      const pruned = skipCleanup ? 0 : await cleanupOldEmailRows();
+      return { ok: true, summary, pruned };
+    },
+  );
+  return NextResponse.json(payload, { status });
 }
