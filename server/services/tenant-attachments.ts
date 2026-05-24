@@ -1,0 +1,177 @@
+import "server-only";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireOrgContext } from "@/server/auth/session";
+import { recordAdminActivity } from "@/server/services/hq-audit";
+
+/**
+ * Phase F — Universal tenant-side attachments.
+ *
+ * Polymorphic file attachments for tenant entities. Mirror of
+ * `portal_uploads` (customer-side) but the uploader is an
+ * authenticated tenant user.
+ *
+ * Allowed target_table values (CHECK on the column): customers,
+ * jobs, quotes, invoices, suppliers, memberships, leads.
+ *
+ * MIME whitelist: PDF, JPG, PNG, HEIC, HEIF, WebP, Excel, CSV.
+ * Size cap: 25 MB.
+ *
+ * Permissions:
+ *   - Upload: any member of the org (tenant client + RLS)
+ *   - Download: any member of the org
+ *   - Delete: owner/admin only (the table's RLS delete policy)
+ */
+
+export const ALLOWED_ATTACHMENT_MIME = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "image/webp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+export const ATTACHMENT_TARGET_TABLES = [
+  "customers",
+  "jobs",
+  "quotes",
+  "invoices",
+  "suppliers",
+  "memberships",
+  "leads",
+] as const;
+export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
+
+export type AttachmentRow = {
+  id: string;
+  filename: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string;
+};
+
+export type UploadResult =
+  | { ok: true; attachment_id: string }
+  | { ok: false; error: string };
+
+export async function uploadTenantAttachment(input: {
+  targetTable: AttachmentTargetTable;
+  targetId: string;
+  filename: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}): Promise<UploadResult> {
+  if (!ALLOWED_ATTACHMENT_MIME.has(input.mimeType)) {
+    return { ok: false, error: "bad_file_type" };
+  }
+  if (input.bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+    return { ok: false, error: "file_too_large" };
+  }
+
+  const { ctx, user } = await requireOrgContext();
+  const admin = createAdminClient();
+
+  const ext = mimeToExt(input.mimeType);
+  const id = crypto.randomUUID();
+  const storagePath = `${ctx.org.id}/${input.targetTable}/${input.targetId}/${id}.${ext}`;
+
+  const { error: uErr } = await admin.storage
+    .from("tenant-attachments")
+    .upload(storagePath, input.bytes, {
+      contentType: input.mimeType,
+      upsert: false,
+    });
+  if (uErr) {
+    console.error("[tenant-attachments] storage upload failed", uErr);
+    return { ok: false, error: "upload_failed" };
+  }
+
+  // Use the tenant JWT for the row insert so RLS scopes correctly.
+  const tenant = await createClient();
+  const { error: insErr } = await tenant.from("tenant_attachments" as never).insert({
+    id,
+    org_id: ctx.org.id,
+    target_table: input.targetTable,
+    target_id: input.targetId,
+    filename: input.filename,
+    storage_path: storagePath,
+    mime_type: input.mimeType,
+    size_bytes: input.bytes.byteLength,
+    uploaded_by: user.id,
+  } as never);
+  if (insErr) {
+    console.error("[tenant-attachments] db insert failed", insErr);
+    // Orphan cleanup.
+    await admin.storage
+      .from("tenant-attachments")
+      .remove([storagePath])
+      .catch(() => undefined);
+    return { ok: false, error: "record_failed" };
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "tenant_attachment.upload",
+    targetTable: input.targetTable,
+    targetId: input.targetId,
+    metadata: {
+      attachment_id: id,
+      filename: input.filename,
+      mime_type: input.mimeType,
+      size_bytes: input.bytes.byteLength,
+    },
+  });
+
+  return { ok: true, attachment_id: id };
+}
+
+export async function deleteTenantAttachment(id: string): Promise<UploadResult> {
+  const { ctx, user } = await requireOrgContext();
+  const tenant = await createClient();
+  const admin = createAdminClient();
+
+  // Tenant client honours the RLS delete policy (owner/admin only).
+  const { data, error } = await tenant
+    .from("tenant_attachments" as never)
+    .delete()
+    .eq("id", id)
+    .select("storage_path")
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  const path = (data as { storage_path?: string } | null)?.storage_path;
+  if (path) {
+    await admin.storage.from("tenant-attachments").remove([path]).catch(() => undefined);
+  }
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "tenant_attachment.delete",
+    targetTable: "tenant_attachments",
+    targetId: id,
+    metadata: { org_id: ctx.org.id },
+  });
+  return { ok: true, attachment_id: id };
+}
+
+function mimeToExt(mime: string): string {
+  if (mime === "application/pdf") return "pdf";
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/png") return "png";
+  if (mime === "image/heic") return "heic";
+  if (mime === "image/heif") return "heif";
+  if (mime === "image/webp") return "webp";
+  if (mime === "text/csv") return "csv";
+  if (mime.includes("spreadsheet") || mime.includes("excel")) return "xlsx";
+  if (mime.includes("wordprocessing") || mime.includes("msword")) return "docx";
+  return "bin";
+}
