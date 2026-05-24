@@ -30,7 +30,10 @@ const STATUS_STYLES: Record<QuoteStatus, string> = {
   expired: "bg-slate-200 text-slate-600",
 };
 
-type SP = Promise<{ status?: string; page?: string }>;
+type SP = Promise<{ status?: string; page?: string; customer?: string }>;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function QuotesPage({ searchParams }: { searchParams: SP }) {
   await requireOrgContext();
@@ -38,6 +41,11 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
   const status = sp.status;
+  // Optional customer filter — drives the "All quotes" link from the
+  // customer detail page. UUID-validated so a crafted URL can't smuggle
+  // arbitrary SQL into the eq() predicate. RLS still gates the read.
+  const customerFilter =
+    sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
 
   const supabase = await createClient();
   let q = supabase
@@ -52,10 +60,24 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
   if (status && (QUOTE_STATUSES as readonly string[]).includes(status)) {
     q = q.eq("status", status);
   }
+  if (customerFilter) {
+    q = q.eq("customer_id", customerFilter);
+  }
 
   const { data: rows, count } = await q;
   const totalCount = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  // For the filter banner — resolve the customer name once.
+  let filteredCustomerName: string | null = null;
+  if (customerFilter) {
+    const { data: c } = await supabase
+      .from("customers")
+      .select("name")
+      .eq("id", customerFilter)
+      .maybeSingle();
+    filteredCustomerName = (c as { name?: string } | null)?.name ?? null;
+  }
 
   return (
     <div className="space-y-6">
@@ -73,6 +95,28 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
           + New quote
         </Link>
       </header>
+
+      {customerFilter ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+          <span>
+            Filtered to{" "}
+            <strong>{filteredCustomerName ?? "customer"}</strong>{" "}
+            ·{" "}
+            <Link
+              href={`/customers/${customerFilter}`}
+              className="font-medium underline hover:text-indigo-800"
+            >
+              Back to customer
+            </Link>
+          </span>
+          <Link
+            href="/quotes"
+            className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
+          >
+            Clear customer filter
+          </Link>
+        </div>
+      ) : null}
 
       <form
         method="GET"
@@ -93,6 +137,9 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
             ))}
           </select>
         </div>
+        {customerFilter ? (
+          <input type="hidden" name="customer" value={customerFilter} />
+        ) : null}
         <button
           type="submit"
           className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"

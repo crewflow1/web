@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { CustomerForm } from "../_form";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
+import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
 
 /**
@@ -196,10 +197,10 @@ export default async function EditCustomerPage({
         />
       </section>
 
-      {/* Quotes */}
+      {/* Quotes — "View all" link scopes the /quotes list to this customer */}
       <SummaryCard
         title="Quotes"
-        href="/quotes"
+        href={`/quotes?customer=${id}`}
         empty="No quotes yet."
         items={((quotesRes.data ?? []) as Array<{ id: string; number: string; status: string; total: number | string | null }>).map((q) => ({
           id: q.id,
@@ -210,10 +211,10 @@ export default async function EditCustomerPage({
         }))}
       />
 
-      {/* Jobs */}
+      {/* Jobs — "View all" link scopes the /jobs list to this customer */}
       <SummaryCard
         title="Jobs"
-        href="/jobs"
+        href={`/jobs?customer=${id}`}
         empty="No jobs yet."
         items={((jobsRes.data ?? []) as Array<{ id: string; status: string; scheduled_date: string | null; created_at: string }>).map((j) => ({
           id: j.id,
@@ -224,10 +225,11 @@ export default async function EditCustomerPage({
         }))}
       />
 
-      {/* Invoices */}
+      {/* Invoices — "View all" link scopes /invoices to this customer
+          (joins through quotes.customer_id) */}
       <SummaryCard
         title="Invoices"
-        href="/invoices"
+        href={`/invoices?customer=${id}`}
         empty="No invoices yet."
         items={invoiceRows.map((i) => ({
           id: i.id,
@@ -238,7 +240,9 @@ export default async function EditCustomerPage({
         }))}
       />
 
-      {/* Payments */}
+      {/* Payments — list page is reconciliation-focused; the inline
+          rows here are the customer's payments. The "View all" link
+          falls through to the global /payments view. */}
       <SummaryCard
         title="Payments"
         href="/payments"
@@ -359,9 +363,10 @@ export default async function EditCustomerPage({
         )}
       </section>
 
-      <form
+      <ConfirmForm
         action={deleteAction}
-        className="rounded-xl border border-red-200 bg-red-50/50 p-4"
+        confirm={`Delete customer "${customer.name}"? Linked quotes/jobs keep their records but the link is cleared.`}
+        className="rounded-xl border border-red-200 bg-red-50/50 p-4 block"
       >
         <p className="text-sm font-medium text-red-900">Delete this customer</p>
         <p className="mt-1 text-xs text-red-700">
@@ -374,7 +379,7 @@ export default async function EditCustomerPage({
         >
           Delete customer
         </button>
-      </form>
+      </ConfirmForm>
     </div>
   );
 }

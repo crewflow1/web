@@ -12,7 +12,10 @@ import { EmptyState } from "../_components/empty-state";
 
 const PAGE_SIZE = 50;
 
-type SP = Promise<{ status?: string; page?: string }>;
+type SP = Promise<{ status?: string; page?: string; customer?: string }>;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -35,24 +38,69 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
   const status = sp.status;
+  // Invoices link to customers via their source quote (quotes.customer_id).
+  // The filter joins through quote:quotes!inner so the eq() applies to the
+  // join's customer_id without exposing it as a column on invoices itself.
+  const customerFilter =
+    sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
 
   const supabase = await createClient();
-  let q = supabase
-    .from("invoices")
-    .select(
-      "id, number, status, amount, vat_total, total, due_date, created_at",
-      { count: "exact" },
-    )
-    .order("created_at", { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1);
+  // The customer filter has to walk through quotes (invoices has no
+  // direct customer_id). Generated supabase types reject the
+  // `quote:quotes!inner (...)` join inside a typed .select(), so we
+  // cast past the typed client for this query only. RLS still scopes
+  // the read; cross-tenant rows are unreachable regardless of cast.
+  type UntypedQ = {
+    select: (cols: string, opts?: unknown) => UntypedQ;
+    eq: (k: string, v: unknown) => UntypedQ;
+    order: (k: string, opts: { ascending: boolean }) => UntypedQ;
+    range: (
+      from: number,
+      to: number,
+    ) => Promise<{
+      data: Array<{
+        id: string;
+        number: string;
+        status: InvoiceStatus;
+        amount: number | string | null;
+        vat_total: number | string | null;
+        total: number | string | null;
+        due_date: string | null;
+        created_at: string;
+      }> | null;
+      count: number | null;
+      error: { message: string } | null;
+    }>;
+  };
+  const cols = customerFilter
+    ? "id, number, status, amount, vat_total, total, due_date, created_at, quote:quotes!inner ( customer_id )"
+    : "id, number, status, amount, vat_total, total, due_date, created_at";
+  let q = (supabase.from("invoices" as never) as unknown as UntypedQ)
+    .select(cols, { count: "exact" })
+    .order("created_at", { ascending: false });
 
   if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
     q = q.eq("status", status as InvoiceStatus);
   }
+  if (customerFilter) {
+    q = q.eq("quote.customer_id", customerFilter);
+  }
 
-  const { data: rows, count } = await q;
+  const finalQuery = q.range(offset, offset + PAGE_SIZE - 1);
+
+  const { data: rows, count } = await finalQuery;
   const totalCount = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  let filteredCustomerName: string | null = null;
+  if (customerFilter) {
+    const { data: c } = await supabase
+      .from("customers")
+      .select("name")
+      .eq("id", customerFilter)
+      .maybeSingle();
+    filteredCustomerName = (c as { name?: string } | null)?.name ?? null;
+  }
 
   return (
     <div className="space-y-6">
@@ -99,6 +147,28 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
         </div>
       </header>
 
+      {customerFilter ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+          <span>
+            Filtered to{" "}
+            <strong>{filteredCustomerName ?? "customer"}</strong>{" "}
+            ·{" "}
+            <Link
+              href={`/customers/${customerFilter}`}
+              className="font-medium underline hover:text-indigo-800"
+            >
+              Back to customer
+            </Link>
+          </span>
+          <Link
+            href="/invoices"
+            className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
+          >
+            Clear customer filter
+          </Link>
+        </div>
+      ) : null}
+
       <form
         method="GET"
         className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
@@ -118,6 +188,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
             ))}
           </select>
         </div>
+        {customerFilter ? (
+          <input type="hidden" name="customer" value={customerFilter} />
+        ) : null}
         <button
           type="submit"
           className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
