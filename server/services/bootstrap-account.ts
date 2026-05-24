@@ -73,11 +73,21 @@ export async function createOrgWithOwner(input: {
     // approved_at landed in migration 20260603000000 and isn't in the
     // generated types yet — cast through unknown so tsc is happy until
     // the next `pnpm db:generate`.
+    //
+    // Demos can be approved via two surfaces today:
+    //   1. /admin/organizations (legacy) — writes status='approved'.
+    //   2. /admin/demos kanban (current) — writes status='won' (the
+    //      new lifecycle vocab from app/admin/demos/actions.ts).
+    //
+    // Accept BOTH so a customer approved via either surface gets
+    // their 14-day trial on first signup. Without this, anyone
+    // approved through the kanban hits /access-pending instead of
+    // their workspace.
     const { data: approvedRaw } = await supabase
       .from("demo_requests")
       .select("id, approved_at" as never)
       .eq("email", normalisedEmail)
-      .eq("status", "approved")
+      .in("status", ["approved", "won"])
       .order("approved_at", { ascending: false })
       .limit(1)
       .maybeSingle();

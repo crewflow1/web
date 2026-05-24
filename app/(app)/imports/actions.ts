@@ -200,13 +200,52 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
         });
       }
       // Insert in chunks of 500 to avoid hitting the row-size limit on huge files.
+      //
+      // Per-row failure handling matches the CEO directive's "AI flags
+      // issues but does not stop migration" rule. If a whole chunk hits
+      // a CHECK violation or similar (e.g. an entity_type the DB
+      // doesn't yet recognise — exactly the PR #90 regression that
+      // 20260617000000_widen_import_rows_entity_check.sql fixed), fall
+      // back to per-row inserts so the bad rows surface as `error` and
+      // the rest commit. Never throw out of the upload.
       const CHUNK = 500;
       for (let i = 0; i < inserts.length; i += CHUNK) {
         const slice = inserts.slice(i, i + CHUNK);
         const { error: rowErr } = await supabase.from("import_rows").insert(slice);
-        if (rowErr) {
-          console.error("[imports] row insert failed", rowErr);
-          redirect(`/imports/${importId}?error=row_insert_failed`);
+        if (!rowErr) continue;
+        console.error(
+          "[imports] bulk row insert failed, falling back to per-row",
+          rowErr,
+        );
+        for (const single of slice) {
+          const { error: oneErr } = await supabase
+            .from("import_rows")
+            .insert(single);
+          if (oneErr) {
+            // Best-effort: write a sentinel `error`-status row so the
+            // operator sees something in the preview rather than a
+            // silent gap. We deliberately use a minimal payload to
+            // avoid re-tripping the same constraint.
+            console.error(
+              "[imports] single row insert failed",
+              oneErr,
+              single.source_row_number,
+            );
+            await supabase
+              .from("import_rows")
+              .insert({
+                org_id: single.org_id,
+                import_id: single.import_id,
+                file_id: single.file_id,
+                source_row_number: single.source_row_number,
+                raw: single.raw,
+                entity_type: "unknown",
+                confidence: 0,
+                mapped: {},
+                status: "error",
+                error_message: `db rejected row: ${oneErr.message ?? "unknown"}`,
+              });
+          }
         }
       }
     }
