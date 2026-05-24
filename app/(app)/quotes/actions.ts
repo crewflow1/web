@@ -13,6 +13,7 @@ import {
 } from "@/lib/quotes/schema";
 import { computeTotals } from "@/lib/quotes/totals";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import type { Database } from "@/lib/supabase/types";
 import {
   type FormState,
@@ -621,6 +622,20 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       })
       .eq("id", quoteWithLead.lead_id);
   }
+
+  // Phase 4 — dispatch `quote.accepted` so the automation OS can
+  // run its rules (notification, audit, future actions). Idempotent
+  // via (rule_id, correlation_id) in automation_runs. Best-effort —
+  // never derails the accept flow.
+  await dispatchAutomation({
+    type: "quote.accepted",
+    org_id: quote.org_id,
+    source_table: "quotes",
+    source_id: quote.id,
+    payload: { signer: signerName, accepted_at: now },
+  }).catch((e) => {
+    console.error("[quotes] automation dispatch failed", e);
+  });
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
