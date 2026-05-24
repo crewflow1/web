@@ -333,7 +333,21 @@ export async function commitImport(importId: string) {
     (byEntity[k] = byEntity[k] ?? []).push(r);
   }
 
-  const ORDER: EntityType[] = ["customer", "supplier", "staff", "lead", "invoice", "cost"];
+  // Insert in dependency order: parents before children. Jobs and
+  // quotes need a customer to exist; payments need an invoice to
+  // exist. Costs and supplier-shaped customers slot in alongside
+  // their siblings.
+  const ORDER: EntityType[] = [
+    "customer",
+    "supplier",
+    "staff",
+    "lead",
+    "invoice",
+    "cost",
+    "quote",
+    "job",
+    "payment",
+  ];
   for (const entity of ORDER) {
     const list = byEntity[entity] ?? [];
     for (const r of list) {
@@ -414,7 +428,13 @@ export async function rollbackImport(importId: string) {
     arr.push(a.target_id);
     grouped.set(a.target_table, arr);
   }
+  // Reverse insertion order so children get removed before parents.
+  // Payments first (FK to invoices), then jobs/quotes (FK to customers),
+  // then invoices, then leads/memberships/finances, then customers.
   const REVERSE_ORDER = [
+    "invoice_payments",
+    "jobs",
+    "quotes",
     "invoices",
     "finances",
     "leads",
@@ -551,6 +571,12 @@ function tableFor(entity: EntityType): string {
       return "finances";
     case "supplier":
       return "customers"; // v1: suppliers live alongside customers
+    case "job":
+      return "jobs";
+    case "quote":
+      return "quotes";
+    case "payment":
+      return "invoice_payments";
   }
 }
 
@@ -659,7 +685,147 @@ async function insertOne(
       // Skip insertion; surface as 'skipped' with a note.
       return null;
     }
+    case "job": {
+      // Jobs need a customer to be useful. Resolve customer_name to
+      // an existing org customer (case-insensitive). If we can't,
+      // skip rather than blocking the rest of the migration.
+      const customerName = String(mapped.customer_name ?? "").trim();
+      if (!customerName) return null;
+      const customerId = await resolveCustomerByName(
+        admin,
+        orgId,
+        customerName,
+      );
+      if (!customerId) return null;
+      // Compose a notes field that preserves details the jobs table
+      // doesn't have first-class columns for (title / address /
+      // value), so nothing the migration extracted is lost.
+      const noteParts: string[] = [];
+      if (mapped.title) noteParts.push(`Title: ${mapped.title}`);
+      if (mapped.address) noteParts.push(`Address: ${mapped.address}`);
+      if (mapped.value != null && mapped.value !== "") {
+        noteParts.push(`Value: ${mapped.value}`);
+      }
+      if (mapped.notes) noteParts.push(String(mapped.notes));
+      const composedNotes = noteParts.join("\n") || null;
+      const { data, error } = await admin
+        .from("jobs")
+        .insert({
+          org_id: orgId,
+          customer_id: customerId,
+          status: (mapped.status as string) ?? "new",
+          scheduled_date: (mapped.scheduled_date as string) ?? null,
+          notes: composedNotes,
+        })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      return data?.id ?? null;
+    }
+    case "quote": {
+      // Quotes need both a number AND a resolvable customer.
+      const number = String(mapped.number ?? "").trim();
+      if (!number) return null;
+      const customerName = String(mapped.customer_name ?? "").trim();
+      if (!customerName) return null;
+      const customerId = await resolveCustomerByName(
+        admin,
+        orgId,
+        customerName,
+      );
+      if (!customerId) return null;
+      const total = Number(mapped.total ?? 0);
+      const { data, error } = await admin
+        .from("quotes")
+        .insert({
+          org_id: orgId,
+          customer_id: customerId,
+          number,
+          status: (mapped.status as string) ?? "draft",
+          // v1: we don't split subtotal/vat from imported totals —
+          // the operator can re-issue the quote in-app to recompute.
+          subtotal: total,
+          vat_total: 0,
+          total,
+          valid_until: (mapped.valid_until as string) ?? null,
+          notes: (mapped.notes as string) ?? null,
+        })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      return data?.id ?? null;
+    }
+    case "payment": {
+      // Payments need a positive amount + a resolvable invoice.
+      const amount = Number(mapped.amount ?? 0);
+      if (!(amount > 0)) return null;
+      const invoiceNumber = String(mapped.invoice_number ?? "").trim();
+      if (!invoiceNumber) return null;
+      const invoiceId = await resolveInvoiceByNumber(
+        admin,
+        orgId,
+        invoiceNumber,
+      );
+      if (!invoiceId) return null;
+      const paidAt =
+        (mapped.paid_at as string) ?? new Date().toISOString().slice(0, 10);
+      const noteParts: string[] = [];
+      if (mapped.payment_method) {
+        noteParts.push(`Method: ${mapped.payment_method}`);
+      }
+      if (mapped.notes) noteParts.push(String(mapped.notes));
+      const { data, error } = await admin
+        .from("invoice_payments")
+        .insert({
+          org_id: orgId,
+          invoice_id: invoiceId,
+          amount,
+          paid_at: paidAt,
+          reference: (mapped.reference as string) ?? null,
+          notes: noteParts.join(" · ") || null,
+          source: "manual",
+        })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      return data?.id ?? null;
+    }
   }
+}
+
+// ---------------------------------------------------------------------
+// Parent-record resolvers — needed by jobs / quotes / payments.
+// Service-role; gated upstream by isAdmin + RLS-scoped imports table.
+// ---------------------------------------------------------------------
+
+async function resolveCustomerByName(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  name: string,
+): Promise<string | null> {
+  const { data } = await admin
+    .from("customers")
+    .select("id")
+    .eq("org_id", orgId)
+    .ilike("name", name)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id?: string } | null)?.id ?? null;
+}
+
+async function resolveInvoiceByNumber(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  number: string,
+): Promise<string | null> {
+  const { data } = await admin
+    .from("invoices")
+    .select("id")
+    .eq("org_id", orgId)
+    .ilike("number", number)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id?: string } | null)?.id ?? null;
 }
 
 type InvoiceStatusEnum =
