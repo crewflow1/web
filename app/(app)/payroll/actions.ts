@@ -48,6 +48,50 @@ export async function createPayrollRun(
 
   const supabase = await createClient();
 
+  // -----------------------------------------------------------------
+  // Open-entry guard (CEO directive — any payroll mismatch is RED).
+  //
+  // The hour-sum query below filters `.not("ended_at", "is", null)`,
+  // which silently drops time_entries that were clocked-in but never
+  // clocked-out. Without this guard, a missed clock-out costs the
+  // worker the whole shift.
+  //
+  // We refuse to create the run when any open entries overlap the
+  // window. The owner has to either:
+  //   (a) ask the worker to clock out, or
+  //   (b) close the entry manually (future: an admin-side editor).
+  //
+  // Until that fix-up flow exists, surfacing the names is the
+  // safest behaviour — no silent data loss.
+  // -----------------------------------------------------------------
+  const windowEndIso = `${period_end}T23:59:59.999Z`;
+  const windowStartIso = `${period_start}T00:00:00Z`;
+  const { data: openEntries } = await supabase
+    .from("time_entries")
+    .select("id, user_id, started_at, user:users ( full_name, email )")
+    .eq("org_id", ctx.org.id)
+    .is("ended_at", null)
+    .lte("started_at", windowEndIso);
+  if (openEntries && openEntries.length > 0) {
+    type OpenRow = {
+      user: { full_name: string | null; email: string | null } | null;
+      started_at: string;
+    };
+    const names = Array.from(
+      new Set(
+        (openEntries as unknown as OpenRow[]).map(
+          (e) => e.user?.full_name ?? e.user?.email ?? "Unknown",
+        ),
+      ),
+    );
+    return formError(
+      `Some staff are still clocked in: ${names.slice(0, 3).join(", ")}${
+        names.length > 3 ? ` +${names.length - 3} more` : ""
+      }. Ask them to clock out first — otherwise their hours would be dropped from this run.`,
+      result.data as Record<string, unknown>,
+    );
+  }
+
   // Insert the run.
   const { data: run, error: runErr } = await supabase
     .from("payroll_runs")
@@ -73,10 +117,6 @@ export async function createPayrollRun(
     .from("memberships")
     .select("user_id, user:users ( id, full_name, hourly_pay )")
     .eq("org_id", ctx.org.id);
-
-  // Time entries inside the window (use ended_at < period_end+1d so half-open).
-  const windowEndIso = `${period_end}T23:59:59.999Z`;
-  const windowStartIso = `${period_start}T00:00:00Z`;
   const { data: entriesRaw } = await supabase
     .from("time_entries")
     .select("id, user_id, job_id, started_at, ended_at, breaks")
