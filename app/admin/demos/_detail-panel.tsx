@@ -395,13 +395,27 @@ function StatusButton({
   );
 }
 
+const LIFECYCLE_LABELS: Record<string, string> = {
+  "demo.created": "Demo request created",
+  "demo.note_added": "Note added",
+  "demo.scheduled": "Demo scheduled",
+  "demo.email_sent": "Email sent",
+  "demo.email_failed": "Email failed",
+  "demo.customer_created": "Customer user created",
+  "demo.org_created": "Customer org created",
+  "demo.membership_created": "Owner membership created",
+  "demo.invite_sent": "Magic-link invite sent",
+  "demo.invite_skipped": "Auth user already existed (re-used)",
+  "demo.invite_failed": "Magic-link invite failed",
+  "demo.onboarding_created": "Onboarding provisioned",
+};
+
 function prettyAction(action: string): string {
+  if (LIFECYCLE_LABELS[action]) return LIFECYCLE_LABELS[action]!;
   if (action.startsWith("demo.move_")) {
     const s = action.slice("demo.move_".length);
     return `Moved → ${DEMO_STATUS_LABELS[s as DemoLifecycleStatus] ?? s}`;
   }
-  if (action === "demo.note_added") return "Note added";
-  if (action === "demo.scheduled") return "Demo scheduled";
   if (action.startsWith("demo.contact_")) {
     return `Contacted by ${action.slice("demo.contact_".length)}`;
   }
@@ -422,6 +436,18 @@ function renderMetadata(meta: Record<string, unknown>): string {
   }
   if (typeof meta.reason === "string" && meta.reason) {
     out.push(`Reason: ${meta.reason}`);
+  }
+  if (typeof meta.step === "string") {
+    out.push(`Step: ${meta.step}`);
+  }
+  if (typeof meta.subject === "string") {
+    out.push(`Subject: ${meta.subject.slice(0, 60)}`);
+  }
+  if (typeof meta.org_id === "string") {
+    out.push(`Org: ${meta.org_id.slice(0, 8)}…`);
+  }
+  if (typeof meta.auth_user_id === "string") {
+    out.push(`User: ${meta.auth_user_id.slice(0, 8)}…`);
   }
   return out.join(" · ");
 }

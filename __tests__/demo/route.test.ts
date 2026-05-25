@@ -132,17 +132,19 @@ beforeEach(() => {
 });
 
 describe("POST /api/demo → owner email", () => {
-  it("inserts demo_requests AND calls sendEmail with notify@ From + hello@ To + reply-to prospect", async () => {
+  it("inserts demo_requests AND emails BOTH the prospect (confirmation) AND HQ (notification)", async () => {
     // Successful flow:
     //   - dedup check returns no row
     //   - demo_requests insert succeeds
-    //   - sendEmail succeeds → audit row updated with notification_email_id
+    //   - prospect confirmation email succeeds (onDemoCreated)
+    //   - HQ inbox email succeeds → audit row updated with notification_email_id
     mockAdmin.enqueue("maybeSingle", { data: null, error: null });
     mockAdmin.enqueue("insert", {
       data: { id: "demo-row-1" },
       error: null,
     });
-    sendEmailMock.mockResolvedValueOnce({ sent: true, id: "resend-id-1" });
+    // sendEmail is called twice — both succeed.
+    sendEmailMock.mockResolvedValue({ sent: true, id: "resend-id-1" });
 
     const { POST } = await loadRoute();
     const res = await POST(buildRequest({
@@ -166,22 +168,27 @@ describe("POST /api/demo → owner email", () => {
       employees: "2-5",
     });
 
-    // sendEmail called with the new From / explicit To / reply-to
-    expect(sendEmailMock).toHaveBeenCalledTimes(1);
-    const args = sendEmailMock.mock.calls[0]?.[0] as {
-      to: string;
-      from: string;
-      replyTo: string;
-      subject: string;
-    };
-    expect(args.to).toBe("hello@crewflow.uk");
-    expect(args.from.toLowerCase()).toContain("notify@crewflow.uk");
-    // From must NOT equal To — that was the loop-back root cause.
-    expect(args.from.toLowerCase()).not.toContain("hello@crewflow.uk");
-    expect(args.replyTo).toBe("ceo@acme.example");
-    expect(args.subject).toContain("Acme Roofing");
+    // sendEmail was called exactly twice — prospect confirmation + HQ notification.
+    expect(sendEmailMock).toHaveBeenCalledTimes(2);
+    const calls = sendEmailMock.mock.calls.map(
+      (c) => c[0] as { to: string; from?: string; subject: string; replyTo?: string },
+    );
 
-    // Audit columns updated with the Resend id.
+    // Prospect confirmation goes TO the prospect.
+    const prospect = calls.find((c) => c.to === "ceo@acme.example");
+    expect(prospect).toBeTruthy();
+    expect(prospect?.subject.toLowerCase()).toMatch(/demo request/i);
+
+    // HQ inbox notification goes TO hello@crewflow.uk with notify@ From + reply-to prospect.
+    const hq = calls.find((c) => c.to === "hello@crewflow.uk");
+    expect(hq).toBeTruthy();
+    expect(hq?.from?.toLowerCase()).toContain("notify@crewflow.uk");
+    expect(hq?.from?.toLowerCase()).not.toContain("hello@crewflow.uk");
+    expect(hq?.replyTo).toBe("ceo@acme.example");
+    expect(hq?.subject).toContain("Acme Roofing");
+
+    // Audit columns updated with the Resend id (from the HQ email — the
+    // prospect email goes through admin_activity_log instead).
     const auditUpdate = mockAdmin.updates.find(
       (u) =>
         u.table === "demo_requests" &&

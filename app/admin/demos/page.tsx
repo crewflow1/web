@@ -28,6 +28,8 @@ type SP = Promise<{
   demo?: string;
   error?: string;
   saved?: string;
+  done?: string;
+  failed?: string;
 }>;
 
 export default async function DemosPage({ searchParams }: { searchParams: SP }) {
@@ -77,9 +79,35 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
     ? await listAdminActivity("demo_requests", openDemo.id)
     : [];
 
+  // Surface lifecycle outcomes: every status move now also performs the
+  // real business operation (email, customer provisioning, etc). Done
+  // steps render in an emerald banner, failed steps in a red banner.
+  // The activity timeline still has the per-step audit trail.
   const banner = (() => {
     if (sp.error) return { tone: "err" as const, msg: decodeURIComponent(sp.error) };
-    if (sp.saved) return { tone: "ok" as const, msg: prettySaved(sp.saved) };
+    const fail = (sp.failed ?? "").trim();
+    if (fail) {
+      const lines = fail
+        .split("|")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      return {
+        tone: "err" as const,
+        msg: `Status moved but ${lines.length} step${lines.length === 1 ? "" : "s"} failed — open the demo timeline for details. ${lines.slice(0, 2).join(" · ")}${lines.length > 2 ? "…" : ""}`,
+      };
+    }
+    if (sp.saved) {
+      const done = (sp.done ?? "").trim();
+      const doneList = done ? done.split(",").filter(Boolean) : [];
+      const extra =
+        doneList.length > 0
+          ? ` (${doneList.map(prettyDoneStep).join(" · ")})`
+          : "";
+      return {
+        tone: "ok" as const,
+        msg: `${prettySaved(sp.saved)}${extra}`,
+      };
+    }
     return null;
   })();
 
@@ -124,4 +152,24 @@ function prettySaved(saved: string): string {
   if (s === "note") return "Note added.";
   if (s === "scheduled") return "Scheduled — demo moved to Booked.";
   return `Moved to ${s.replace(/_/g, " ")}.`;
+}
+
+const DONE_STEP_LABELS: Record<string, string> = {
+  audit_created: "audit logged",
+  email_confirmation: "confirmation email sent",
+  email_contacted: "contacted email sent",
+  email_approved: "approval email sent",
+  email_setup_payment: "payment email sent",
+  email_payment_received: "receipt email sent",
+  email_welcome: "welcome email sent",
+  invite_sent: "magic-link sent",
+  auth_user_already_existed: "auth user re-used",
+  public_user_created: "user row created",
+  org_created: "org created",
+  membership_created: "owner membership created",
+  demo_linked: "demo linked to org",
+  already_provisioned: "already provisioned (idempotent)",
+};
+function prettyDoneStep(step: string): string {
+  return DONE_STEP_LABELS[step] ?? step;
 }
