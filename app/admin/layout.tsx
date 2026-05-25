@@ -35,6 +35,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/demos", label: "Demos CRM" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },
+  { href: "/admin/ai-receptionist", label: "AI Receptionist setups" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue" },
   { href: "/admin/notifications", label: "Notifications" },
