@@ -9,6 +9,7 @@ import {
   type DemoRequestInput,
 } from "@/lib/demo/schema";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import { onDemoCreated } from "@/server/services/demo-lifecycle";
 
 /**
  * Public demo-request endpoint. Replaces the previous Server Action
@@ -135,39 +136,79 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     logStep("demo_request_inserted", { request_id: requestRow.id });
 
-    // Notify HQ of the new demo request. The internal CrewFlow org
-    // is the routing key (HQ-side notifications are org-scoped).
-    const internalOrgIdForNotif = process.env.CREWFLOW_INTERNAL_ORG_ID;
-    if (internalOrgIdForNotif) {
-      await emitNotifications(
-        notifyOnDemoRequested({
-          org_id: internalOrgIdForNotif,
-          demo_id: requestRow.id,
-          company: data.company,
-          contact_name: data.name,
-        }),
-      );
-    }
-
-    // Best-effort: internal CrewFlow org lead.
+    // -----------------------------------------------------------------
+    // Best-effort side effects, ALL IN PARALLEL.
+    //
+    // Previously these ran serially: HQ notify → internal lead → HQ
+    // email. On a cold lambda the cumulative latency was hitting the
+    // browser fetch timeout — first click looked like a network error
+    // even though the row was saved, and the user retried, which hit
+    // the 5-minute dedup and "succeeded" instantly.
+    //
+    // Promise.allSettled fans them out so the route returns as soon
+    // as the slowest step finishes (typically <2s warm, <4s cold).
+    // Every step has its own error handling and audit, so a failure
+    // in one doesn't drag down the others.
+    // -----------------------------------------------------------------
     const internalOrgId = process.env.CREWFLOW_INTERNAL_ORG_ID;
     let internalLeadId: string | null = null;
-    if (internalOrgId) {
-      try {
-        const { data: customer, error: custErr } = await admin
-          .from("customers")
-          .insert({
-            org_id: internalOrgId,
-            name: `${data.name} — ${data.company}`,
-            email: data.email,
-            phone: data.phone ?? null,
-            notes: buildLeadNotes(data),
-          })
-          .select("id")
-          .single();
-        if (custErr || !customer) {
-          console.error("[demo] internal customer insert failed", custErr);
-        } else {
+
+    const demoRow = {
+      id: requestRow.id,
+      name: data.name,
+      email: data.email,
+      company: data.company,
+      phone: data.phone ?? null,
+      status: "pending_demo",
+      linked_org_id: null,
+    };
+
+    await Promise.allSettled([
+      // (a) Customer confirmation email + demo.created audit + email_sent
+      // /email_failed audit. Best-effort inside onDemoCreated.
+      onDemoCreated({ demo: demoRow }).catch((e) => {
+        console.error("[demo] onDemoCreated threw", e);
+      }),
+
+      // (b) HQ notification fan-out.
+      (async () => {
+        if (!internalOrgId) {
+          logStep("internal_org_unconfigured");
+          return;
+        }
+        try {
+          await emitNotifications(
+            notifyOnDemoRequested({
+              org_id: internalOrgId,
+              demo_id: requestRow.id,
+              company: data.company,
+              contact_name: data.name,
+            }),
+          );
+        } catch (e) {
+          console.error("[demo] HQ notification fan-out failed", e);
+        }
+      })(),
+
+      // (c) Internal CrewFlow org lead (Customer + Lead row).
+      (async () => {
+        if (!internalOrgId) return;
+        try {
+          const { data: customer, error: custErr } = await admin
+            .from("customers")
+            .insert({
+              org_id: internalOrgId,
+              name: `${data.name} — ${data.company}`,
+              email: data.email,
+              phone: data.phone ?? null,
+              notes: buildLeadNotes(data),
+            })
+            .select("id")
+            .single();
+          if (custErr || !customer) {
+            console.error("[demo] internal customer insert failed", custErr);
+            return;
+          }
           const { data: lead, error: leadErr } = await admin
             .from("leads")
             .insert({
@@ -182,84 +223,72 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             .single();
           if (leadErr || !lead) {
             console.error("[demo] internal lead insert failed", leadErr);
-          } else {
-            internalLeadId = lead.id;
+            return;
+          }
+          internalLeadId = lead.id;
+          await admin
+            .from("demo_requests")
+            .update({ internal_lead_id: lead.id })
+            .eq("id", requestRow.id);
+          logStep("internal_lead_created", { lead_id: lead.id });
+        } catch (e) {
+          console.error("[demo] internal-org wiring failed", e);
+        }
+      })(),
+
+      // (d) HQ inbox email — "new demo request". Distinct from the
+      //     prospect's confirmation email which onDemoCreated handles.
+      (async () => {
+        try {
+          const notifyTo = process.env.DEMO_NOTIFY_EMAIL || "hello@crewflow.uk";
+          const notifyFrom =
+            process.env.RESEND_NOTIFICATIONS_FROM ||
+            "CrewFlow Notifications <notify@crewflow.uk>";
+          const emailResult = await sendEmail({
+            to: notifyTo,
+            from: notifyFrom,
+            subject: `New demo request — ${data.company}`,
+            html: renderEmail(data, internalLeadId),
+            text: renderTextEmail(data, internalLeadId),
+            replyTo: data.email,
+          });
+          if (emailResult.sent) {
             await admin
               .from("demo_requests")
-              .update({ internal_lead_id: lead.id })
+              .update({
+                notification_email_id: emailResult.id,
+                notification_sent_at: new Date().toISOString(),
+              })
               .eq("id", requestRow.id);
-            logStep("internal_lead_created", { lead_id: lead.id });
+            logStep("hq_email_sent", { resend_id: emailResult.id });
+          } else {
+            const reason =
+              emailResult.reason === "error"
+                ? `error: ${emailResult.error}`
+                : emailResult.reason === "self_loop"
+                  ? `self_loop: from=${emailResult.from} to=${emailResult.to}`
+                  : emailResult.reason;
+            await admin
+              .from("demo_requests")
+              .update({ notification_error: reason })
+              .eq("id", requestRow.id);
+            logStep("hq_email_skipped", { reason });
           }
+        } catch (e) {
+          const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+          console.error("[demo] HQ email step failed", e);
+          try {
+            await admin
+              .from("demo_requests")
+              .update({ notification_error: `exception: ${msg}` })
+              .eq("id", requestRow.id);
+          } catch (innerErr) {
+            console.error("[demo] notification_error update failed", innerErr);
+          }
+          logStep("hq_email_exception", { msg });
         }
-      } catch (e) {
-        console.error("[demo] internal-org wiring failed", e);
-      }
-    } else {
-      logStep("internal_org_unconfigured");
-    }
-
-    // Best-effort: Resend email + audit columns.
-    //
-    // From/To: notifications use a DEDICATED `notify@` address so the
-    // mail is From: notify@crewflow.uk → To: hello@crewflow.uk. Same
-    // domain (DKIM/SPF align) but distinct mailbox so Gmail/Workspace
-    // don't silently drop it as a self-loop. Verified domain is the
-    // only requirement on the Resend side.
-    //
-    // reply-to is the prospect's email so a one-click reply lands them
-    // back in the conversation.
-    try {
-      const notifyTo = process.env.DEMO_NOTIFY_EMAIL || "hello@crewflow.uk";
-      const notifyFrom =
-        process.env.RESEND_NOTIFICATIONS_FROM ||
-        "CrewFlow Notifications <notify@crewflow.uk>";
-      const emailResult = await sendEmail({
-        to: notifyTo,
-        from: notifyFrom,
-        subject: `New demo request — ${data.company}`,
-        html: renderEmail(data, internalLeadId),
-        text: renderTextEmail(data, internalLeadId),
-        replyTo: data.email,
-      });
-      if (emailResult.sent) {
-        await admin
-          .from("demo_requests")
-          .update({
-            notification_email_id: emailResult.id,
-            notification_sent_at: new Date().toISOString(),
-          })
-          .eq("id", requestRow.id);
-        logStep("email_sent", { resend_id: emailResult.id });
-      } else {
-        const reason =
-          emailResult.reason === "error"
-            ? `error: ${emailResult.error}`
-            : emailResult.reason === "self_loop"
-              ? `self_loop: from=${emailResult.from} to=${emailResult.to}`
-              : emailResult.reason;
-        await admin
-          .from("demo_requests")
-          .update({ notification_error: reason })
-          .eq("id", requestRow.id);
-        logStep("email_skipped", { reason });
-      }
-    } catch (e) {
-      // Even the catch path must leave a fingerprint — without this an
-      // unhandled exception (network, dynamic-import failure, anything)
-      // would silently produce a demo_requests row with all-null
-      // notification_* columns. We learned that the hard way.
-      const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      console.error("[demo] email step failed", e);
-      try {
-        await admin
-          .from("demo_requests")
-          .update({ notification_error: `exception: ${msg}` })
-          .eq("id", requestRow.id);
-      } catch (innerErr) {
-        console.error("[demo] notification_error update failed", innerErr);
-      }
-      logStep("email_exception", { msg });
-    }
+      })(),
+    ]);
 
     return NextResponse.json({ ok: true });
   } catch (e) {

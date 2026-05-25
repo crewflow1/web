@@ -11,6 +11,15 @@ import {
   DEMO_LIFECYCLE_STATUSES,
   isValidLifecycleStatus,
 } from "@/lib/hq/demo-lifecycle";
+import {
+  onDemoApproved,
+  onDemoContacted,
+  onPaymentReceived,
+  onSetupPaymentSent,
+  promoteDemoToCustomer,
+  type DemoRow,
+  type LifecycleResult,
+} from "@/server/services/demo-lifecycle";
 
 /**
  * Demos CRM (HQ-2) — server actions.
@@ -53,11 +62,13 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
   const supabase = createAdminClient();
   const now = new Date().toISOString();
 
-  const { data: row } = await supabase
+  // Pull the full row so the lifecycle service has every field it needs.
+  const { data: rowRaw } = await supabase
     .from("demo_requests")
-    .select("id, status, email, company")
+    .select("id, status, email, company, name, phone, linked_org_id" as never)
     .eq("id", parsed.data.demo_id)
     .maybeSingle();
+  const row = rowRaw as unknown as DemoRow | null;
   if (!row) redirect("/admin/demos?error=not_found");
 
   // Audit-friendly fields land on the row for fast filtering later.
@@ -103,8 +114,61 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
     },
   });
 
+  // -----------------------------------------------------------------
+  // Real lifecycle side-effects. Status flip alone isn't enough —
+  // each transition triggers the business operation behind it
+  // (email, customer-org provisioning, etc).
+  //
+  // The lifecycle helpers write their own audit + email_sent /
+  // email_failed entries to the timeline so the operator sees every
+  // step that succeeded or failed.
+  //
+  // Surface the result back to the UI via the redirect querystring so
+  // the toast can warn when something went wrong (e.g. RESEND_API_KEY
+  // not set, auth invite hit a rate limit, etc).
+  // -----------------------------------------------------------------
+  let result: LifecycleResult | null = null;
+  const refreshed = row!; // FK-safe shorthand for the lifecycle calls
+
+  switch (parsed.data.status) {
+    case "contacted":
+      result = await onDemoContacted({ demo: refreshed, actor: admin });
+      break;
+    case "won":
+      result = await onDemoApproved({ demo: refreshed, actor: admin });
+      break;
+    case "payment_sent":
+      result = await onSetupPaymentSent({ demo: refreshed, actor: admin });
+      break;
+    case "payment_received":
+      result = await onPaymentReceived({ demo: refreshed, actor: admin });
+      break;
+    case "active_onboarding":
+      result = await promoteDemoToCustomer({ demo: refreshed, actor: admin });
+      break;
+    default:
+      result = null; // no side-effects for lost / demo_booked / demo_done / active
+  }
+
   revalidatePath("/admin/demos");
-  redirect(`/admin/demos?saved=${encodeURIComponent(parsed.data.status)}`);
+  revalidatePath("/admin/customers");
+  revalidatePath("/admin/onboarding");
+
+  // Compose a redirect that surfaces the lifecycle outcome.
+  const params = new URLSearchParams({
+    saved: parsed.data.status,
+    demo: parsed.data.demo_id,
+  });
+  if (result) {
+    if (result.done.length > 0) params.set("done", result.done.join(","));
+    if (result.failed.length > 0) {
+      params.set(
+        "failed",
+        result.failed.map((f) => `${f.step}:${f.reason.slice(0, 80)}`).join("|"),
+      );
+    }
+  }
+  redirect(`/admin/demos?${params.toString()}`);
 }
 
 // --------------------------------------------------------------------
@@ -120,7 +184,7 @@ export async function moveDemoToStatusJson(
   demoId: string,
   status: string,
 ): Promise<
-  | { ok: true; status: string }
+  | { ok: true; status: string; done?: string[]; failed?: { step: string; reason: string }[] }
   | { ok: false; error: string }
 > {
   const user = await requireUser();
@@ -132,11 +196,12 @@ export async function moveDemoToStatusJson(
   }
 
   const supabase = createAdminClient();
-  const { data: row } = await supabase
+  const { data: rowRaw } = await supabase
     .from("demo_requests")
-    .select("id, status, email, company")
+    .select("id, status, email, company, name, phone, linked_org_id" as never)
     .eq("id", demoId)
     .maybeSingle();
+  const row = rowRaw as unknown as DemoRow | null;
   if (!row) return { ok: false, error: "Demo not found" };
 
   type Update = { status: string; reviewed_by?: string | null };
@@ -161,16 +226,48 @@ export async function moveDemoToStatusJson(
     targetTable: "demo_requests",
     targetId: demoId,
     metadata: {
-      from: row?.status ?? null,
+      from: row.status,
       to: status,
       source: "drag",
-      company: row?.company ?? null,
-      email: row?.email ?? null,
+      company: row.company,
+      email: row.email,
     },
   });
 
+  // Drag-drop also triggers the real lifecycle work — same code path as
+  // the explicit-button flow above. Caller gets back done/failed steps so
+  // the optimistic UI can warn if the email send failed or the
+  // promotion couldn't complete.
+  const actor = { id: user.id, email: user.email ?? "" };
+  let result: LifecycleResult | null = null;
+  switch (status) {
+    case "contacted":
+      result = await onDemoContacted({ demo: row, actor });
+      break;
+    case "won":
+      result = await onDemoApproved({ demo: row, actor });
+      break;
+    case "payment_sent":
+      result = await onSetupPaymentSent({ demo: row, actor });
+      break;
+    case "payment_received":
+      result = await onPaymentReceived({ demo: row, actor });
+      break;
+    case "active_onboarding":
+      result = await promoteDemoToCustomer({ demo: row, actor });
+      break;
+  }
+
   revalidatePath("/admin/demos");
-  return { ok: true, status };
+  revalidatePath("/admin/customers");
+  revalidatePath("/admin/onboarding");
+
+  return {
+    ok: true,
+    status,
+    done: result?.done,
+    failed: result?.failed,
+  };
 }
 
 // --------------------------------------------------------------------

@@ -38,8 +38,18 @@ export function DemosBoard({
     [params, router],
   );
 
+  // Layout: when a demo is open, reserve a 420px column for the side
+  // panel. When nothing's open, collapse to a single full-width column
+  // so the kanban gets the entire row — no dead "Open a demo" panel
+  // taking up workflow real estate.
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_420px]">
+    <div
+      className={
+        openDemo
+          ? "grid grid-cols-1 gap-4 xl:grid-cols-[1fr_420px]"
+          : "grid grid-cols-1 gap-4"
+      }
+    >
       <div className="min-w-0">
         <DemosKanban
           demos={demos}
@@ -53,15 +63,7 @@ export function DemosBoard({
           activity={openActivity}
           onClose={() => setOpen(null)}
         />
-      ) : (
-        <aside className="hidden xl:block rounded-xl border border-dashed border-slate-300 bg-white/50 p-6 text-center text-sm text-slate-500">
-          <p className="font-medium text-slate-700">Open a demo</p>
-          <p className="mt-1">
-            Click <strong>Open</strong> on any card to see contact actions,
-            notes, and the activity timeline here.
-          </p>
-        </aside>
-      )}
+      ) : null}
     </div>
   );
 }
