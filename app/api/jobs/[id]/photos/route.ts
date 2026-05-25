@@ -59,9 +59,12 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const paths = job.photos ?? [];
   if (paths.length === 0) return NextResponse.json({ photos: [] });
 
+  // Short TTL — the gallery refetches on render so 60s is enough. Matches
+  // compliance-docs + tenant-attachments. Lower window narrows the chance of
+  // a leaked URL letting an outsider grab a tenant's photos.
   const { data: signed, error: signErr } = await supabase.storage
     .from("job-photos")
-    .createSignedUrls(paths, 60 * 60); // 1 hour
+    .createSignedUrls(paths, 60);
   if (signErr) {
     console.error("[job photos] sign failed", signErr);
     return NextResponse.json({ error: "Failed to sign URLs" }, { status: 500 });
