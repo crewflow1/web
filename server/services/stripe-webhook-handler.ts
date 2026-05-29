@@ -14,6 +14,7 @@ import {
   isProcessedEvent,
   type CheckoutSessionMetadata,
 } from "@/lib/stripe/events";
+import { onDemoStripePaymentConfirmed } from "@/server/services/demo-lifecycle";
 
 /**
  * CrewFlow — Stripe webhook event processor.
@@ -176,6 +177,48 @@ async function handleCheckoutCompleted(
 ): Promise<string[]> {
   const session = event.data.object as Stripe.Checkout.Session;
   const meta = (session.metadata ?? {}) as Partial<CheckoutSessionMetadata>;
+
+  // --- DEMO flow: setup-fee paid BEFORE the org exists. -------------
+  // The Demos CRM "Send setup payment" action mints a Checkout Session
+  // keyed on demo_id (no org yet). On completion we flip the demo to
+  // payment_received + email the receipt — fully automatic, the operator
+  // never has to "mark payment received" by hand.
+  if (meta.demo_id) {
+    const paymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : (session.payment_intent?.id ?? null);
+    const res = await onDemoStripePaymentConfirmed({
+      demoId: meta.demo_id,
+      amountGbp:
+        typeof session.amount_total === "number"
+          ? session.amount_total / 100
+          : null,
+      stripeSessionId: session.id,
+    });
+    await recordAdminActivity({
+      actorId: null,
+      actorEmail: null,
+      action: "stripe.demo_setup_fee_paid",
+      targetTable: "demo_requests",
+      targetId: meta.demo_id,
+      metadata: {
+        stripe_session_id: session.id,
+        stripe_payment_intent_id: paymentIntentId,
+        amount_total: session.amount_total,
+        result_ok: res.ok,
+        already_handled: res.alreadyHandled ?? false,
+        done: res.done,
+        failed: res.failed,
+      },
+    });
+    return [
+      res.alreadyHandled
+        ? `demo_setup_fee_already_paid:${meta.demo_id}`
+        : `demo_setup_fee_paid:${meta.demo_id}`,
+    ];
+  }
+
   if (!meta.org_id) {
     return ["skipped:no_org_id_in_metadata"];
   }

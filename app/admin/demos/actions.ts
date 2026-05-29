@@ -71,6 +71,60 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
   const row = rowRaw as unknown as DemoRow | null;
   if (!row) redirect("/admin/demos?error=not_found");
 
+  const targetStatus = parsed.data.status;
+  let result: LifecycleResult | null = null;
+
+  // ------------------------------------------------------------------
+  // BLOCKER 2 — onboarding must be ATOMIC.
+  //
+  // Provisioning (auth user + org + membership + invite) runs BEFORE the
+  // status flip. If ANY step fails — e.g. createUser hits "Database
+  // error checking email" — we HALT: the demo is NOT moved to
+  // active_onboarding, the failure is surfaced, and the row stays put so
+  // HQ can retry. promoteDemoToCustomer is idempotent (re-uses an
+  // existing auth user and short-circuits on linked_org_id), so clicking
+  // "Move to onboarding" again after fixing the cause is safe.
+  //
+  // The old bug: status was flipped to active_onboarding FIRST, so a
+  // createUser failure still left the customer marked "Active
+  // (onboarding)" with no workspace behind it.
+  // ------------------------------------------------------------------
+  if (targetStatus === "active_onboarding") {
+    const promo = await promoteDemoToCustomer({ demo: row!, actor: admin });
+    if (!promo.ok) {
+      await recordAdminActivity({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "demo.onboarding_failed",
+        targetTable: "demo_requests",
+        targetId: parsed.data.demo_id,
+        metadata: {
+          from: row!.status,
+          attempted: "active_onboarding",
+          company: row!.company,
+          email: row!.email,
+          failed: promo.failed.map((f) => `${f.step}: ${f.reason.slice(0, 160)}`),
+        },
+      });
+      revalidatePath("/admin/demos");
+      revalidatePath("/admin/onboarding");
+      const fp = new URLSearchParams({
+        demo: parsed.data.demo_id,
+        onboarding_failed: "1",
+      });
+      if (promo.failed.length > 0) {
+        fp.set(
+          "failed",
+          promo.failed.map((f) => `${f.step}:${f.reason.slice(0, 80)}`).join("|"),
+        );
+      }
+      redirect(`/admin/demos?${fp.toString()}`);
+    }
+    // Provisioning succeeded — carry the result so the banner can show
+    // the steps that ran, then fall through to commit the status flip.
+    result = promo;
+  }
+
   // Audit-friendly fields land on the row for fast filtering later.
   type Update = {
     status: string;
@@ -78,15 +132,15 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
     approved_at?: string | null;
     rejection_reason?: string | null;
   };
-  const update: Update = { status: parsed.data.status };
-  if (parsed.data.status === "won") {
+  const update: Update = { status: targetStatus };
+  if (targetStatus === "won") {
     update.approved_at = now;
     update.reviewed_by = admin.id;
     update.rejection_reason = null;
-  } else if (parsed.data.status === "lost") {
+  } else if (targetStatus === "lost") {
     update.reviewed_by = admin.id;
     update.rejection_reason = parsed.data.reason ?? null;
-  } else if (parsed.data.status === "demo_booked") {
+  } else if (targetStatus === "demo_booked") {
     update.reviewed_by = admin.id;
   }
 
@@ -102,12 +156,12 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
   await recordAdminActivity({
     actorId: admin.id,
     actorEmail: admin.email,
-    action: `demo.move_${parsed.data.status}`,
+    action: `demo.move_${targetStatus}`,
     targetTable: "demo_requests",
     targetId: parsed.data.demo_id,
     metadata: {
       from: row?.status ?? null,
-      to: parsed.data.status,
+      to: targetStatus,
       reason: parsed.data.reason ?? null,
       company: row?.company ?? null,
       email: row?.email ?? null,
@@ -115,39 +169,32 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
   });
 
   // -----------------------------------------------------------------
-  // Real lifecycle side-effects. Status flip alone isn't enough —
-  // each transition triggers the business operation behind it
-  // (email, customer-org provisioning, etc).
+  // Non-provisioning lifecycle side-effects (emails). These are
+  // best-effort: a failed email is surfaced as a warning but the status
+  // move stands. Provisioning (active_onboarding) already ran above.
   //
   // The lifecycle helpers write their own audit + email_sent /
   // email_failed entries to the timeline so the operator sees every
   // step that succeeded or failed.
-  //
-  // Surface the result back to the UI via the redirect querystring so
-  // the toast can warn when something went wrong (e.g. RESEND_API_KEY
-  // not set, auth invite hit a rate limit, etc).
   // -----------------------------------------------------------------
-  let result: LifecycleResult | null = null;
-  const refreshed = row!; // FK-safe shorthand for the lifecycle calls
-
-  switch (parsed.data.status) {
-    case "contacted":
-      result = await onDemoContacted({ demo: refreshed, actor: admin });
-      break;
-    case "won":
-      result = await onDemoApproved({ demo: refreshed, actor: admin });
-      break;
-    case "payment_sent":
-      result = await onSetupPaymentSent({ demo: refreshed, actor: admin });
-      break;
-    case "payment_received":
-      result = await onPaymentReceived({ demo: refreshed, actor: admin });
-      break;
-    case "active_onboarding":
-      result = await promoteDemoToCustomer({ demo: refreshed, actor: admin });
-      break;
-    default:
-      result = null; // no side-effects for lost / demo_booked / demo_done / active
+  if (targetStatus !== "active_onboarding") {
+    const refreshed = row!; // FK-safe shorthand for the lifecycle calls
+    switch (targetStatus) {
+      case "contacted":
+        result = await onDemoContacted({ demo: refreshed, actor: admin });
+        break;
+      case "won":
+        result = await onDemoApproved({ demo: refreshed, actor: admin });
+        break;
+      case "payment_sent":
+        result = await onSetupPaymentSent({ demo: refreshed, actor: admin });
+        break;
+      case "payment_received":
+        result = await onPaymentReceived({ demo: refreshed, actor: admin });
+        break;
+      default:
+        result = null; // no side-effects for lost / demo_booked / demo_done / active
+    }
   }
 
   revalidatePath("/admin/demos");
@@ -156,7 +203,7 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
 
   // Compose a redirect that surfaces the lifecycle outcome.
   const params = new URLSearchParams({
-    saved: parsed.data.status,
+    saved: targetStatus,
     demo: parsed.data.demo_id,
   });
   if (result) {
@@ -204,6 +251,50 @@ export async function moveDemoToStatusJson(
   const row = rowRaw as unknown as DemoRow | null;
   if (!row) return { ok: false, error: "Demo not found" };
 
+  const actor = { id: user.id, email: user.email ?? "" };
+  let result: LifecycleResult | null = null;
+
+  // ------------------------------------------------------------------
+  // BLOCKER 2 — onboarding must be ATOMIC (drag-drop variant).
+  //
+  // Mirror of the gate in moveDemoToStatus: provisioning runs BEFORE the
+  // status flip. If promoteDemoToCustomer fails (e.g. createUser hits
+  // "Database error checking email"), we HALT — the row is NOT moved to
+  // active_onboarding, an onboarding_failed audit is written, and we
+  // return { ok: false } so the kanban rolls back its optimistic move and
+  // shows the failure. The promotion is idempotent, so re-dragging after
+  // fixing the cause is safe.
+  // ------------------------------------------------------------------
+  if (status === "active_onboarding") {
+    const promo = await promoteDemoToCustomer({ demo: row, actor });
+    if (!promo.ok) {
+      await recordAdminActivity({
+        actorId: user.id,
+        actorEmail: user.email ?? null,
+        action: "demo.onboarding_failed",
+        targetTable: "demo_requests",
+        targetId: demoId,
+        metadata: {
+          from: row.status,
+          attempted: "active_onboarding",
+          source: "drag",
+          company: row.company,
+          email: row.email,
+          failed: promo.failed.map((f) => `${f.step}: ${f.reason.slice(0, 160)}`),
+        },
+      });
+      revalidatePath("/admin/demos");
+      revalidatePath("/admin/onboarding");
+      const reason =
+        promo.failed[0]?.reason?.slice(0, 160) ?? "provisioning failed";
+      return {
+        ok: false,
+        error: `Onboarding failed: ${reason} — nothing was moved, fix and retry.`,
+      };
+    }
+    result = promo;
+  }
+
   type Update = { status: string; reviewed_by?: string | null };
   const update: Update = { status };
   if (status === "demo_booked" || status === "won" || status === "lost") {
@@ -236,10 +327,8 @@ export async function moveDemoToStatusJson(
 
   // Drag-drop also triggers the real lifecycle work — same code path as
   // the explicit-button flow above. Caller gets back done/failed steps so
-  // the optimistic UI can warn if the email send failed or the
-  // promotion couldn't complete.
-  const actor = { id: user.id, email: user.email ?? "" };
-  let result: LifecycleResult | null = null;
+  // the optimistic UI can warn if the email send failed. Provisioning
+  // (active_onboarding) already ran atomically above.
   switch (status) {
     case "contacted":
       result = await onDemoContacted({ demo: row, actor });
@@ -252,9 +341,6 @@ export async function moveDemoToStatusJson(
       break;
     case "payment_received":
       result = await onPaymentReceived({ demo: row, actor });
-      break;
-    case "active_onboarding":
-      result = await promoteDemoToCustomer({ demo: row, actor });
       break;
   }
 
