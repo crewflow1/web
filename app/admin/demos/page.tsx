@@ -30,6 +30,7 @@ type SP = Promise<{
   saved?: string;
   done?: string;
   failed?: string;
+  onboarding_failed?: string;
 }>;
 
 export default async function DemosPage({ searchParams }: { searchParams: SP }) {
@@ -85,6 +86,20 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
   // The activity timeline still has the per-step audit trail.
   const banner = (() => {
     if (sp.error) return { tone: "err" as const, msg: decodeURIComponent(sp.error) };
+    // Blocker 2: onboarding is atomic. When provisioning fails the demo is
+    // NOT moved — surface a distinct, actionable banner (the generic
+    // "moved but N steps failed" message would be misleading because
+    // nothing actually moved).
+    if (sp.onboarding_failed) {
+      const fail = (sp.failed ?? "").trim();
+      const detail = fail
+        ? ` ${fail.split("|").map((p) => p.trim()).filter(Boolean).slice(0, 2).join(" · ")}`
+        : "";
+      return {
+        tone: "err" as const,
+        msg: `Onboarding halted — the customer was NOT activated and no workspace was created. Fix the cause, then click “Move to onboarding” again (it's safe to retry).${detail}`,
+      };
+    }
     const fail = (sp.failed ?? "").trim();
     if (fail) {
       const lines = fail
@@ -163,7 +178,12 @@ const DONE_STEP_LABELS: Record<string, string> = {
   email_payment_received: "receipt email sent",
   email_welcome: "welcome email sent",
   invite_sent: "magic-link sent",
+  stripe_checkout_created: "Stripe checkout link created",
+  stripe_already_paid: "setup fee already paid (Stripe)",
+  payment_marked_paid: "setup fee marked paid",
   auth_user_already_existed: "auth user re-used",
+  auth_user_created: "auth user created",
+  magic_link_generated: "magic-link generated",
   public_user_created: "user row created",
   org_created: "org created",
   membership_created: "owner membership created",

@@ -37,10 +37,30 @@ export function isProcessedEvent(type: string): type is ProcessedStripeEvent {
 /**
  * Checkout Session metadata we attach when creating a session — drives
  * the webhook handler's branching once payment completes.
+ *
+ * Two distinct shapes share this type:
+ *
+ *   1. ORG flow (app/admin/customers/[id]/_stripe-actions.ts) — the org
+ *      already exists, so we key on `org_id`. Used for both the £1,000
+ *      setup fee and the £500/mo subscription.
+ *
+ *   2. DEMO flow (lib/stripe/demo-checkout.ts) — fired from the Demos
+ *      CRM "Send setup payment" action BEFORE any org exists. We key on
+ *      `demo_id` instead; the webhook flips the demo to payment_received
+ *      and emails the receipt. The customer org is provisioned later by
+ *      the operator's "Move to onboarding" action.
+ *
+ * Stripe metadata values are always strings on the wire, so every field
+ * is optional here and the handler branches on which key is present.
  */
 export type CheckoutSessionMetadata = {
-  org_id: string;
   kind: "setup_fee" | "subscription";
+  /** Present for the ORG flow (customer already provisioned). */
+  org_id?: string;
+  /** Present for the DEMO flow (pre-provisioning setup-fee payment). */
+  demo_id?: string;
+  /** Company name — carried on the demo flow for nicer audit/receipts. */
+  company?: string;
   actor_id?: string;
 };
 

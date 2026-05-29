@@ -408,6 +408,10 @@ const LIFECYCLE_LABELS: Record<string, string> = {
   "demo.invite_skipped": "Auth user already existed (re-used)",
   "demo.invite_failed": "Magic-link invite failed",
   "demo.onboarding_created": "Onboarding provisioned",
+  "demo.onboarding_failed": "Onboarding failed — halted, not activated",
+  "demo.payment_link_created": "Stripe payment link created",
+  "demo.payment_link_failed": "Stripe payment link failed",
+  "demo.payment_confirmed": "Setup fee paid (Stripe confirmed)",
 };
 
 function prettyAction(action: string): string {
@@ -427,6 +431,16 @@ function renderMetadata(meta: Record<string, unknown>): string {
   const out: string[] = [];
   if (typeof meta.from === "string" && typeof meta.to === "string") {
     out.push(`${meta.from} → ${meta.to}`);
+  } else if (typeof meta.from === "string" && typeof meta.attempted === "string") {
+    out.push(`${meta.from} ✗→ ${meta.attempted}`);
+  }
+  if (Array.isArray(meta.failed) && meta.failed.length > 0) {
+    out.push(
+      `Failed: ${meta.failed
+        .filter((f): f is string => typeof f === "string")
+        .slice(0, 2)
+        .join("; ")}`,
+    );
   }
   if (typeof meta.preview === "string") {
     out.push(`"${meta.preview}"`);

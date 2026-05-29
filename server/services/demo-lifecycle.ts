@@ -10,6 +10,7 @@ import {
   paymentReceivedEmail,
   setupPaymentEmail,
 } from "@/lib/email/demo-templates";
+import { createOrReuseDemoSetupCheckout } from "@/lib/stripe/demo-checkout";
 import { env } from "@/lib/env";
 
 /**
@@ -244,12 +245,52 @@ export async function onSetupPaymentSent(args: {
   const done: string[] = [];
   const failed: { step: string; reason: string }[] = [];
 
-  // Future: integrate Stripe payment_links here. For now (white-glove model)
-  // the email simply explains the setup fee and asks them to reply for
-  // instructions. This is consistent with the AI-receptionist white-glove
-  // pattern and avoids fake-success when Stripe isn't fully configured.
-  const paymentLinkUrl: string | null = null;
+  // -------------------------------------------------------------------
+  // 1. Generate (or reuse) a real Stripe Checkout link for the £1,000
+  //    one-off setup fee. The customer pays immediately — no manual
+  //    intervention — and the webhook flips the demo to payment_received.
+  //
+  //    Graceful degradation: if Stripe is unconfigured or the price
+  //    can't be resolved, we fall back to the white-glove "reply for
+  //    instructions" email (paymentLinkUrl = null) and record the Stripe
+  //    failure as a non-fatal step so HQ sees it in the banner/timeline.
+  // -------------------------------------------------------------------
+  let paymentLinkUrl: string | null = null;
+  const checkout = await createOrReuseDemoSetupCheckout({ demoId: args.demo.id });
+  if (checkout.ok && checkout.url) {
+    paymentLinkUrl = checkout.url;
+    done.push("stripe_checkout_created");
+    await recordAdminActivity({
+      actorId: args.actor.id,
+      actorEmail: args.actor.email,
+      action: "demo.payment_link_created",
+      targetTable: "demo_requests",
+      targetId: args.demo.id,
+      metadata: {
+        session_id: checkout.sessionId,
+        reused: checkout.reused,
+        amount_gbp: checkout.amountGbp,
+      },
+    });
+  } else if (checkout.ok && !checkout.url) {
+    // Already paid — surface it but still let the (idempotent) email send
+    // act as a gentle reminder/receipt path. No link to include.
+    done.push("stripe_already_paid");
+  } else {
+    const reason = checkout.ok ? "no_url" : checkout.reason;
+    failed.push({ step: "stripe_checkout", reason });
+    await recordAdminActivity({
+      actorId: args.actor.id,
+      actorEmail: args.actor.email,
+      action: "demo.payment_link_failed",
+      targetTable: "demo_requests",
+      targetId: args.demo.id,
+      metadata: { reason, fallback: "white_glove_reply_instructions" },
+    });
+  }
 
+  // 2. Send the payment email (with the Stripe CTA when we have a link,
+  //    otherwise the manual fallback the template already renders).
   const email = setupPaymentEmail({
     name: args.demo.name,
     company: args.demo.company,
@@ -267,8 +308,10 @@ export async function onSetupPaymentSent(args: {
   if (r.ok) done.push("email_setup_payment");
   else failed.push({ step: "email_setup_payment", reason: r.reason ?? "unknown" });
 
+  // The Stripe link failing back to white-glove is non-fatal: the email
+  // still went out. Only a failed EMAIL marks the step as failed-overall.
   return {
-    ok: failed.length === 0,
+    ok: !failed.some((f) => f.step === "email_setup_payment"),
     done,
     failed,
     meta: { payment_link: paymentLinkUrl },
@@ -303,6 +346,119 @@ export async function onPaymentReceived(args: {
   else failed.push({ step: "email_payment_received", reason: r.reason ?? "unknown" });
 
   return { ok: failed.length === 0, done, failed };
+}
+
+// ===========================================================================
+// 5b. Stripe payment confirmed — fired from the webhook, NOT an operator.
+//
+// When checkout.session.completed lands for a demo setup-fee session
+// (metadata.demo_id present), this runs automatically:
+//   - flips demo.stripe_payment_status -> 'paid' + stamps setup_fee_paid_at
+//   - advances demo.status -> 'payment_received' (unless already further
+//     along the pipeline — never downgrades active/onboarding rows)
+//   - audits demo.payment_confirmed (the money actually arriving)
+//   - emails the customer their receipt ("workspace coming")
+//
+// Idempotent: a duplicate webhook (or a manual "mark payment received"
+// race) is a no-op once stripe_payment_status === 'paid'. The billing_events
+// unique index is the first line of defence; this is the second.
+// ===========================================================================
+
+/** Statuses that sit BEFORE payment in the pipeline — safe to advance. */
+const PRE_PAYMENT_STATUSES = new Set([
+  "pending_demo",
+  "contacted",
+  "demo_booked",
+  "demo_done",
+  "won",
+  "payment_sent",
+  // legacy aliases that still map "before payment"
+  "new",
+  "qualified",
+  "approved",
+  "closed_won",
+]);
+
+export async function onDemoStripePaymentConfirmed(args: {
+  demoId: string;
+  /** From the Stripe session, in major units (£). Falls back to default. */
+  amountGbp?: number | null;
+  stripeSessionId?: string | null;
+}): Promise<LifecycleResult & { alreadyHandled?: boolean }> {
+  const done: string[] = [];
+  const failed: { step: string; reason: string }[] = [];
+  const admin = createAdminClient();
+
+  const { data: rowRaw, error: loadErr } = await admin
+    .from("demo_requests")
+    .select(
+      "id, name, email, company, phone, status, linked_org_id, stripe_payment_status" as never,
+    )
+    .eq("id", args.demoId)
+    .maybeSingle();
+  if (loadErr) {
+    return { ok: false, done, failed: [{ step: "load_demo", reason: loadErr.message }] };
+  }
+  const demo = rowRaw as unknown as (DemoRow & { stripe_payment_status: string | null }) | null;
+  if (!demo) {
+    return { ok: false, done, failed: [{ step: "load_demo", reason: "not_found" }] };
+  }
+
+  // Idempotency guard — already recorded as paid.
+  if (demo.stripe_payment_status === "paid") {
+    return { ok: true, done: ["already_paid"], failed: [], alreadyHandled: true };
+  }
+
+  // Build the update: always stamp paid; advance status only if behind.
+  const update: Record<string, unknown> = {
+    stripe_payment_status: "paid",
+    setup_fee_paid_at: new Date().toISOString(),
+  };
+  if (PRE_PAYMENT_STATUSES.has(demo.status)) {
+    update.status = "payment_received";
+  }
+
+  const { error: updErr } = await admin
+    .from("demo_requests")
+    .update(update as never)
+    .eq("id", demo.id);
+  if (updErr) {
+    return { ok: false, done, failed: [{ step: "mark_paid", reason: updErr.message }] };
+  }
+  done.push("payment_marked_paid");
+
+  await recordAdminActivity({
+    actorId: null,
+    actorEmail: null,
+    action: "demo.payment_confirmed",
+    targetTable: "demo_requests",
+    targetId: demo.id,
+    metadata: {
+      source: "stripe_webhook",
+      session_id: args.stripeSessionId ?? null,
+      amount_gbp: args.amountGbp ?? SETUP_FEE_GBP,
+      advanced_to: update.status ?? demo.status,
+    },
+  });
+
+  // Receipt email — system-sent (no operator actor).
+  const email = paymentReceivedEmail({
+    name: demo.name,
+    company: demo.company,
+    amountGbp: args.amountGbp ?? SETUP_FEE_GBP,
+  });
+  const r = await sendDemoEmail({
+    demo,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    step: "payment_received_stripe",
+    actor: { id: null, email: null },
+  });
+  if (r.ok) done.push("email_payment_received");
+  else failed.push({ step: "email_payment_received", reason: r.reason ?? "unknown" });
+
+  return { ok: true, done, failed };
 }
 
 // ===========================================================================

@@ -69,6 +69,7 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/terms") ||
     pathname.startsWith("/q/") || // public per-quote view
     pathname.startsWith("/customer-portal/") || // customer-scoped portal
+    pathname.startsWith("/payment/") || // Stripe Checkout success/cancel return (customer not yet logged in)
     pathname.startsWith("/auth/callback") ||
     pathname === "/api/health" ||
     pathname === "/api/waitlist" ||

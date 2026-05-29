@@ -38,6 +38,9 @@ describe("auto-trial — accepts both approved + won statuses", () => {
     // ever renames "won" to something else, this test fires so we
     // remember to update bootstrap-account.ts in lockstep.
     expect(DEMOS_ACTIONS).toMatch(/"won"/);
-    expect(DEMOS_ACTIONS).toMatch(/parsed\.data\.status === "won"/);
+    // The Blocker-2 refactor aliases parsed.data.status to a `targetStatus`
+    // local before the active_onboarding gate, so accept either spelling
+    // of the equality check — both mean "the kanban handles the 'won' vocab".
+    expect(DEMOS_ACTIONS).toMatch(/(parsed\.data\.status|targetStatus) === "won"/);
   });
 });
