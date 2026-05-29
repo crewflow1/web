@@ -83,9 +83,10 @@ describe("/auth/callback defaults super-admins to /admin/organizations", () => {
   });
 
   it("default landing is conditional on super-admin status", () => {
-    expect(AUTH_CALLBACK).toMatch(
-      /isSuperAdminEmail\(data\.user\.email \?\? null\)/,
-    );
+    // The callback now resolves the user via verifyOtp OR
+    // exchangeCodeForSession into `userPayload`. The role check then
+    // runs against userPayload.email.
+    expect(AUTH_CALLBACK).toMatch(/isSuperAdminEmail\(userPayload\.email\)/);
     expect(AUTH_CALLBACK).toMatch(/"\/admin\/organizations"/);
     expect(AUTH_CALLBACK).toMatch(/"\/dashboard"/);
   });

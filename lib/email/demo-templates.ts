@@ -219,36 +219,70 @@ You'll get a separate email with a magic-link to sign in shortly.
 }
 
 // ---------------------------------------------------------------------------
-// 6. Onboarding welcome — sent AFTER the magic-link invite goes out via
-//    Supabase. This is a friendly heads-up that the magic link is coming.
+// 6. Customer onboarding — sent FROM hello@crewflow.uk WITH the magic link
+//    embedded directly. Replaces the Supabase-default invite email that
+//    relied on PKCE and broke on desktop / incognito / cross-device.
+//
+//    The link goes to Supabase's verify endpoint and redirects back to
+//    /auth/callback with token_hash + type, which our callback exchanges
+//    via verifyOtp — no PKCE verifier required.
+//
+//    Even if the link expires or is consumed by an email pre-scanner,
+//    the user can:
+//      a) Sign in with Google (email is pre-confirmed in auth.users).
+//      b) Request a fresh magic-link from /login (their email is
+//         pre-populated when redirected here from a failed auth).
 // ---------------------------------------------------------------------------
 
-export function onboardingWelcomeEmail(input: {
+export function customerOnboardingEmail(input: {
   name: string | null;
   company: string;
+  /** Magic link URL from supabase.auth.admin.generateLink. May be null
+   *  if generation failed — we fall back to /login instructions then. */
+  magicLinkUrl: string | null;
 }) {
   const first = firstName(input.name);
-  const body = `
+  const loginUrl = `${APP_URL}/login?email=${encodeURIComponent("")}`;
+
+  const body = input.magicLinkUrl
+    ? `
 <p>Hi ${escapeText(first)},</p>
 <p>Your <strong>${escapeText(input.company)}</strong> workspace on ${escapeText(APP_NAME)} is now live.</p>
-<p>We&rsquo;ve emailed you a separate magic-link (subject line starts &ldquo;${escapeText(APP_NAME)}&rdquo; or &ldquo;Supabase&rdquo;) — click that to sign in. Once you&rsquo;re in, the onboarding checklist will walk you through adding your team, customers and first quote.</p>
-<p>If the magic-link doesn&rsquo;t arrive in 5 minutes, check spam, or reply here and we&rsquo;ll resend.</p>`;
+<p>Click the button below to sign in. It works on any device, in any browser — no password needed.</p>
+<p style="margin-top:8px;color:#475569;font-size:13px"><strong>Heads-up:</strong> this link is single-use. If it doesn&rsquo;t work first time (e.g. your email security scanner clicked it before you did), just go to <a href="${escapeAttr(APP_URL)}/login" style="color:#0f172a">${escapeText(APP_URL.replace(/^https?:\/\//, ""))}/login</a>, enter this email address, and we&rsquo;ll send you a fresh one. You can also sign in with <strong>Google</strong> if your Google account uses the same email.</p>`
+    : `
+<p>Hi ${escapeText(first)},</p>
+<p>Your <strong>${escapeText(input.company)}</strong> workspace on ${escapeText(APP_NAME)} is now live.</p>
+<p>Go to <a href="${escapeAttr(APP_URL)}/login" style="color:#0f172a"><strong>${escapeText(APP_URL.replace(/^https?:\/\//, ""))}/login</strong></a> and either:</p>
+<ul style="margin:8px 0;padding-left:20px;line-height:1.7">
+  <li>Click <strong>&ldquo;Continue with Google&rdquo;</strong> if your Google account uses this email, or</li>
+  <li>Enter <strong>${escapeText("this email address")}</strong> and we&rsquo;ll send you a magic link.</li>
+</ul>`;
+
   return {
-    subject: `Welcome to ${APP_NAME} — your workspace is live`,
+    subject: `Welcome to ${APP_NAME} — sign in to ${input.company}`,
     html: shell({
-      heading: `Workspace live.`,
+      heading: `Welcome to ${APP_NAME}.`,
       body,
-      cta: { href: `${APP_URL}/login`, label: `Sign in to ${APP_NAME}` },
+      cta: input.magicLinkUrl
+        ? { href: input.magicLinkUrl, label: `Sign in to ${APP_NAME}` }
+        : { href: loginUrl, label: `Sign in to ${APP_NAME}` },
     }),
-    text: `Hi ${first},
+    text: input.magicLinkUrl
+      ? `Hi ${first},
 
 Your ${input.company} workspace on ${APP_NAME} is now live.
 
-We've emailed you a separate magic-link — click that to sign in. Once you're in, the onboarding checklist will walk you through adding your team, customers and first quote.
+Sign in: ${input.magicLinkUrl}
 
-If the magic-link doesn't arrive in 5 minutes, check spam, or reply here and we'll resend.
+Heads-up: this link is single-use. If it doesn't work, go to ${APP_URL}/login, enter this email address, and we'll send you a fresh one. You can also sign in with Google if your Google account uses the same email.
 
-Sign in: ${APP_URL}/login
+— The ${APP_NAME} team`
+      : `Hi ${first},
+
+Your ${input.company} workspace on ${APP_NAME} is now live.
+
+Go to ${APP_URL}/login and either click "Continue with Google", or enter this email address to get a magic link.
 
 — The ${APP_NAME} team`,
   };

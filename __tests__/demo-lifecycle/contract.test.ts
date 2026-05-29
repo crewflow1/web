@@ -33,7 +33,9 @@ describe("Email templates", () => {
     expect(src).toMatch(/export function demoApprovedEmail/);
     expect(src).toMatch(/export function setupPaymentEmail/);
     expect(src).toMatch(/export function paymentReceivedEmail/);
-    expect(src).toMatch(/export function onboardingWelcomeEmail/);
+    // Renamed in the auth-fix sprint: was onboardingWelcomeEmail, now
+    // customerOnboardingEmail (carries the magic-link URL directly).
+    expect(src).toMatch(/export function customerOnboardingEmail/);
   });
 
   it("setup payment template renders a 'reply for instructions' fallback when no Stripe link", () => {

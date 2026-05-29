@@ -3,10 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail, type SendEmailResult } from "@/lib/email/send";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
+  customerOnboardingEmail,
   demoApprovedEmail,
   demoConfirmationEmail,
   demoContactedEmail,
-  onboardingWelcomeEmail,
   paymentReceivedEmail,
   setupPaymentEmail,
 } from "@/lib/email/demo-templates";
@@ -350,33 +350,54 @@ export async function promoteDemoToCustomer(args: {
   const admin = createAdminClient();
 
   // -------------------------------------------------------------------
-  // Step 1: create the auth user (sends magic-link automatically).
+  // Step 1: create the auth user with email pre-confirmed.
   //
-  // inviteUserByEmail is idempotent at the auth layer — if a user with
-  // that email already exists, the call returns the existing user. We
-  // attach metadata so /onboarding/join (or /auth/callback) can hydrate
-  // their profile.
+  // Why createUser instead of inviteUserByEmail:
+  //   - inviteUserByEmail sends Supabase's branded invite email, whose
+  //     verification link uses Supabase's PKCE flow. The PKCE code
+  //     exchange in /auth/callback requires a `code_verifier` cookie
+  //     that ONLY exists in the browser that initiated the request.
+  //     Since this invite is generated server-side from HQ, no
+  //     verifier cookie ever lands in the customer's browser →
+  //     clicking the link from desktop / incognito / cross-device
+  //     fails with "invalid code", which our login page surfaces as
+  //     "Sign-in link was invalid or already used." This is the
+  //     CEO-blocking bug.
+  //
+  // The new flow:
+  //   1. createUser({ email_confirm: true }) — verifies the email
+  //      without sending Supabase's email. The user can sign in via
+  //      Google immediately (provided their Google email matches).
+  //   2. generateLink({ type: "magiclink" }) — returns an action_link
+  //      URL we embed in our own branded Resend email. The URL is a
+  //      Supabase verify endpoint that redirects to /auth/callback
+  //      with `token_hash` + `type` query params, which we exchange
+  //      via verifyOtp — no PKCE verifier required.
+  //   3. We email the link from hello@crewflow.uk via Resend.
   // -------------------------------------------------------------------
   let authUserId: string | null = null;
-  try {
-    const appUrl = env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
-    const { data: inviteData, error: inviteErr } =
-      await admin.auth.admin.inviteUserByEmail(args.demo.email, {
-        data: {
-          source: "demo_lifecycle",
-          demo_id: args.demo.id,
-          company: args.demo.company,
-          invited_full_name: args.demo.name ?? null,
-          invited_phone: args.demo.phone ?? null,
-        },
-        redirectTo: `${appUrl}/auth/callback`,
-      });
+  const appUrl = env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
 
-    if (inviteErr) {
-      // If the user already exists, fetch them instead. Supabase returns a
-      // specific 422 with message "User already registered" or similar.
-      const msg = inviteErr.message ?? "";
-      if (/already (registered|exists|signed)/i.test(msg) || inviteErr.status === 422) {
+  try {
+    const { data: createData, error: createErr } = await admin.auth.admin.createUser({
+      email: args.demo.email,
+      email_confirm: true, // pre-verify → user can sign in immediately via Google or magic link
+      user_metadata: {
+        source: "demo_lifecycle",
+        demo_id: args.demo.id,
+        company: args.demo.company,
+        invited_full_name: args.demo.name ?? null,
+        invited_phone: args.demo.phone ?? null,
+      },
+    });
+
+    if (createErr) {
+      const msg = createErr.message ?? "";
+      // If the user already exists, fetch them instead (idempotent).
+      if (
+        /already (registered|exists|signed|been)/i.test(msg) ||
+        createErr.status === 422
+      ) {
         const { data: list } = await admin.auth.admin.listUsers();
         const existing = list?.users.find(
           (u) => u.email?.toLowerCase() === args.demo.email.toLowerCase(),
@@ -398,51 +419,82 @@ export async function promoteDemoToCustomer(args: {
         }
       }
       if (!authUserId) {
-        failed.push({ step: "auth_invite", reason: msg });
+        failed.push({ step: "auth_create_user", reason: msg });
         await recordAdminActivity({
           actorId: args.actor.id,
           actorEmail: args.actor.email,
           action: "demo.invite_failed",
           targetTable: "demo_requests",
           targetId: args.demo.id,
-          metadata: { reason: msg },
+          metadata: { reason: msg, step: "createUser" },
         });
         return { ok: false, done, failed, meta };
       }
-    } else if (inviteData?.user) {
-      authUserId = inviteData.user.id;
-      done.push("invite_sent");
-      await recordAdminActivity({
-        actorId: args.actor.id,
-        actorEmail: args.actor.email,
-        action: "demo.invite_sent",
-        targetTable: "demo_requests",
-        targetId: args.demo.id,
-        metadata: {
-          to: args.demo.email,
-          auth_user_id: authUserId,
-        },
-      });
+    } else if (createData?.user) {
+      authUserId = createData.user.id;
+      done.push("auth_user_created");
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    failed.push({ step: "auth_invite", reason: msg });
+    failed.push({ step: "auth_create_user", reason: msg });
     await recordAdminActivity({
       actorId: args.actor.id,
       actorEmail: args.actor.email,
       action: "demo.invite_failed",
       targetTable: "demo_requests",
       targetId: args.demo.id,
-      metadata: { reason: msg },
+      metadata: { reason: msg, step: "createUser" },
     });
     return { ok: false, done, failed, meta };
   }
 
   if (!authUserId) {
-    failed.push({ step: "auth_invite", reason: "no_user_id" });
+    failed.push({ step: "auth_create_user", reason: "no_user_id" });
     return { ok: false, done, failed, meta };
   }
   meta.auth_user_id = authUserId;
+
+  // -------------------------------------------------------------------
+  // Step 1b: generate the magic-link URL we'll embed in our email.
+  // -------------------------------------------------------------------
+  let magicLinkUrl: string | null = null;
+  try {
+    const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email: args.demo.email,
+      options: {
+        redirectTo: `${appUrl}/auth/callback`,
+      },
+    });
+    if (linkErr) {
+      // Non-fatal — user can still sign in via Google or via /login
+      // request-new-link. We log it for visibility.
+      const msg = linkErr.message ?? "";
+      failed.push({ step: "magic_link_generate", reason: msg });
+      await recordAdminActivity({
+        actorId: args.actor.id,
+        actorEmail: args.actor.email,
+        action: "demo.invite_failed",
+        targetTable: "demo_requests",
+        targetId: args.demo.id,
+        metadata: { reason: msg, step: "generateLink" },
+      });
+    } else if (linkData?.properties?.action_link) {
+      magicLinkUrl = linkData.properties.action_link;
+      done.push("magic_link_generated");
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    failed.push({ step: "magic_link_generate", reason: msg });
+    await recordAdminActivity({
+      actorId: args.actor.id,
+      actorEmail: args.actor.email,
+      action: "demo.invite_failed",
+      targetTable: "demo_requests",
+      targetId: args.demo.id,
+      metadata: { reason: msg, step: "generateLink" },
+    });
+  }
 
   // -------------------------------------------------------------------
   // Step 2: public.users mirror row.
@@ -566,11 +618,19 @@ export async function promoteDemoToCustomer(args: {
   }
 
   // -------------------------------------------------------------------
-  // Step 6: welcome email.
+  // Step 6: branded onboarding email FROM hello@crewflow.uk WITH the
+  // magic link we generated above. Reliable cross-browser sign-in via
+  // verifyOtp (no PKCE verifier required).
+  //
+  // If generateLink failed earlier (rare), magicLinkUrl is null and we
+  // fall back to instructing the user to sign in via /login. They can
+  // still sign in with Google (email is pre-confirmed) or request a
+  // fresh magic link from the form.
   // -------------------------------------------------------------------
-  const welcome = onboardingWelcomeEmail({
+  const welcome = customerOnboardingEmail({
     name: args.demo.name,
     company: args.demo.company,
+    magicLinkUrl,
   });
   const r = await sendDemoEmail({
     demo: args.demo,
@@ -580,8 +640,26 @@ export async function promoteDemoToCustomer(args: {
     step: "onboarding_welcome",
     actor: args.actor,
   });
-  if (r.ok) done.push("email_welcome");
-  else failed.push({ step: "email_welcome", reason: r.reason ?? "unknown" });
+  if (r.ok) {
+    done.push("email_welcome");
+    // Record explicit "invite_sent" so the timeline says "magic-link
+    // sent" even though we're sending via Resend rather than Supabase.
+    await recordAdminActivity({
+      actorId: args.actor.id,
+      actorEmail: args.actor.email,
+      action: "demo.invite_sent",
+      targetTable: "demo_requests",
+      targetId: args.demo.id,
+      metadata: {
+        to: args.demo.email,
+        auth_user_id: authUserId,
+        has_magic_link: magicLinkUrl != null,
+        sent_via: "resend",
+      },
+    });
+  } else {
+    failed.push({ step: "email_welcome", reason: r.reason ?? "unknown" });
+  }
 
   await recordAdminActivity({
     actorId: args.actor.id,
