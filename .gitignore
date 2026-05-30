@@ -56,3 +56,6 @@ yarn-error.log*
 # typescript build info
 *.tsbuildinfo
 .env*.local
+
+# Local DB backups/snapshots (never commit)
+.backups/

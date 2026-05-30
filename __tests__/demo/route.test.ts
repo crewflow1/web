@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { _resetForTests as resetRateLimiter } from "@/lib/security/rate-limit";
 
 /**
  * Demo submission → owner email contract.
@@ -129,6 +130,10 @@ beforeEach(() => {
   mockAdmin.inserts.length = 0;
   mockAdmin.updates.length = 0;
   sendEmailMock.mockReset();
+  // The rate limiter is in-memory module state shared across tests in
+  // this file; reset it so each test starts with a clean window and the
+  // demo_booking limit (5/IP/10min) can't leak across cases.
+  resetRateLimiter();
 });
 
 describe("POST /api/demo → owner email", () => {
@@ -269,6 +274,69 @@ describe("POST /api/demo → owner email", () => {
     }) as never);
 
     expect(res.status).toBe(400);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT dedup a DISTINCT submission from the same email (different company/name)", async () => {
+    // Regression guard for the silent lead-drop bug: a recent row exists for
+    // this email, but it's a different company AND contact — e.g. an agency
+    // booking a second client, or someone correcting what they typed. This
+    // MUST flow through to a real insert, not be discarded as a duplicate.
+    mockAdmin.enqueue("maybeSingle", {
+      data: { id: "prev-row", company: "Old Company Ltd", name: "Old Contact" },
+      error: null,
+    });
+    mockAdmin.enqueue("insert", { data: { id: "new-row" }, error: null });
+    sendEmailMock.mockResolvedValue({ sent: true, id: "resend-distinct" });
+
+    const { POST } = await loadRoute();
+    const res = await POST(buildRequest({
+      name: "New Contact",
+      company: "Brand New Roofing",
+      email: "shared@agency.example",
+      employees: "2-5",
+    }) as never);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Saved like any other lead — NOT flagged deduped.
+    expect(body).toEqual({ ok: true });
+    expect(body.deduped).toBeUndefined();
+
+    // The demo_requests insert actually happened with the new payload.
+    const insert = mockAdmin.inserts.find((i) => i.table === "demo_requests");
+    expect(insert).toBeTruthy();
+    expect(insert?.payload).toMatchObject({
+      company: "Brand New Roofing",
+      name: "New Contact",
+      email: "shared@agency.example",
+    });
+  });
+
+  it("DOES dedup a genuine duplicate (same email + company + name, case/space-insensitive): no insert, no email", async () => {
+    // Cold-lambda double-submit: an identical payload lands inside the 5-min
+    // window. Normalisation means trivial case/whitespace differences still
+    // count as the same submission. We enqueue NOTHING for insert — if the
+    // route tries to insert, pop() throws and this test fails loudly.
+    mockAdmin.enqueue("maybeSingle", {
+      data: { id: "prev-row", company: "acme  roofing", name: "test user" },
+      error: null,
+    });
+
+    const { POST } = await loadRoute();
+    const res = await POST(buildRequest({
+      name: "Test User",
+      company: "Acme Roofing",
+      email: "ceo@acme.example",
+      employees: "2-5",
+    }) as never);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, deduped: true });
+
+    // Pure short-circuit — no SoT write, no notification email.
+    expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendEmailMock).not.toHaveBeenCalled();
   });
 });
