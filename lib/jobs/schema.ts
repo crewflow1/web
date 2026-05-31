@@ -52,3 +52,15 @@ export const jobFormSchema = z.object({
 });
 
 export type JobFormInput = z.infer<typeof jobFormSchema>;
+
+/**
+ * Canonical builder for a job detail route.
+ *
+ * The job detail page resolves on the full job UUID (`.eq("id", id)`), so the
+ * href MUST use the complete id. Never truncate the id for the link target —
+ * a shortened id (e.g. the first 8 chars) produces a 404. Use a separate,
+ * human-friendly label for display instead of the raw URL.
+ */
+export function jobHref(jobId: string): string {
+  return `/jobs/${jobId}`;
+}

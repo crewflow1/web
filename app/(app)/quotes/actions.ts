@@ -12,6 +12,7 @@ import {
   type QuoteFormInput,
 } from "@/lib/quotes/schema";
 import { computeTotals } from "@/lib/quotes/totals";
+import { invoiceDueDate } from "@/lib/invoices/due-date";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import type { Database } from "@/lib/supabase/types";
@@ -558,12 +559,41 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       accept_signature: { name: signerName, signed_at: now, source: "owner" },
     })
     .eq("id", id)
-    .select("id, org_id, subtotal, vat_total, job_id, variation_number")
+    .select(
+      "id, org_id, subtotal, vat_total, job_id, variation_number, customer_id, number, notes",
+    )
     .single();
 
   if (error || !quote) {
     console.error("[quotes] accept failed", error);
     redirect(`/quotes/${id}?error=accept_failed`);
+  }
+
+  // Auto-create a job (status=new) from the accepted quote — mirrors the
+  // public-portal path so an owner-accepted quote produces the same
+  // job → invoice chain. Skipped for variations (they already carry the
+  // parent's job_id) and for quotes with no customer to attach the job to.
+  let jobId: string | null = quote.job_id;
+  if (!quote.job_id && quote.customer_id) {
+    const { data: newJob, error: jobErr } = await supabase
+      .from("jobs")
+      .insert({
+        org_id: quote.org_id,
+        customer_id: quote.customer_id,
+        status: "new",
+        notes: `Auto-created from accepted quote ${quote.number}.${
+          quote.notes ? `\n\nQuote notes:\n${quote.notes}` : ""
+        }`,
+      })
+      .select("id")
+      .single();
+    if (jobErr) {
+      console.error("[quotes] owner auto-job failed", jobErr);
+    } else if (newJob?.id) {
+      jobId = newJob.id;
+      // Backlink so the quote knows which job it spawned.
+      await supabase.from("quotes").update({ job_id: jobId }).eq("id", quote.id);
+    }
   }
 
   // Auto-create invoice using the next_invoice_number RPC (mirrors what
@@ -578,7 +608,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
   }
   // Pass job_id through so revenue from accepted quotes (including
-  // variations) rolls up on the dashboard.
+  // variations) rolls up on the dashboard. due_date defaults to net-14
+  // so the customer always sees a concrete payment deadline.
   const { data: newInvoice, error: invErr } = await supabase
     .from("invoices")
     .insert({
@@ -588,7 +619,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       amount: quote.subtotal,
       vat_total: quote.vat_total,
       status: "draft",
-      job_id: quote.job_id,
+      job_id: jobId,
+      due_date: invoiceDueDate(now),
     })
     .select("id")
     .single();
@@ -780,6 +812,7 @@ export async function acceptQuoteByToken(
         vat_total: quote.vat_total,
         status: "draft",
         job_id: newJobId,
+        due_date: invoiceDueDate(now),
       })
       .select("id")
       .single();

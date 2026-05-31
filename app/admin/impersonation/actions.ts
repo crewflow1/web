@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
@@ -115,6 +116,12 @@ export async function startImpersonation(formData: FormData): Promise<void> {
     }),
   );
 
+  // The tenant context just changed for EVERY app route. Purge the full
+  // route cache under the root layout so no previously-rendered page
+  // (dashboard, customers, quotes, jobs, invoices) leaks the operator's
+  // prior org — or a previously-impersonated org — after the switch.
+  revalidatePath("/", "layout");
+
   // Drop the operator into the customer workspace so they
   // immediately see the impersonation state.
   redirect(`/dashboard?impersonation=started`);
@@ -148,6 +155,9 @@ export async function endImpersonation(): Promise<void> {
     });
   }
 
+  // Returning to HQ also changes the tenant context — purge the cached
+  // customer-tenant pages so none of the impersonated org's data lingers.
+  revalidatePath("/", "layout");
   redirect("/admin/impersonation?saved=ended");
 }
 
@@ -177,5 +187,8 @@ export async function forceEndImpersonation(
     targetId: parsed.data.session_id,
     metadata: {},
   });
+  // Refresh HQ views (and any cached tenant pages) so the killed session
+  // disappears immediately.
+  revalidatePath("/", "layout");
   redirect("/admin/impersonation?saved=force_ended");
 }
