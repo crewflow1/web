@@ -464,7 +464,7 @@ export async function reviewQuote(id: string, formData: FormData) {
   const supabase = await createClient();
   const { data: current } = await supabase
     .from("quotes")
-    .select("status")
+    .select("status, created_by")
     .eq("id", id)
     .maybeSingle();
   if (!current) redirect(`/quotes/${id}?error=not_found`);
@@ -474,6 +474,37 @@ export async function reviewQuote(id: string, formData: FormData) {
         `Only quotes in 'pending_approval' can be reviewed. This one is '${current.status}'.`,
       )}`,
     );
+  }
+
+  // M2 — separation of duties on quote approval. The person who created a
+  // quote shouldn't rubber-stamp their own pricing when someone else could
+  // review it, so we BLOCK self-approval whenever another owner/admin
+  // exists in the org. For a sole owner/admin (the only eligible approver)
+  // we ALLOW it — a hard block would brick the workflow for one-person
+  // firms, which are common on CrewFlow — but we stamp it explicitly as a
+  // self-approval in the activity log so the audit trail is honest.
+  // Reject / request-changes by the creator are always fine; the control
+  // objective is specifically self-*approval*.
+  let selfApproved = false;
+  if (
+    action === "approve" &&
+    current.created_by &&
+    current.created_by === user.id
+  ) {
+    const { count: otherApprovers } = await supabase
+      .from("memberships")
+      .select("user_id", { count: "exact", head: true })
+      .eq("org_id", ctx.org.id)
+      .in("role", ["owner", "admin"])
+      .neq("user_id", user.id);
+    if ((otherApprovers ?? 0) > 0) {
+      redirect(
+        `/quotes/${id}?error=${encodeURIComponent(
+          "You created this quote, so another owner or admin needs to approve it.",
+        )}`,
+      );
+    }
+    selfApproved = true;
   }
 
   if (action === "request_changes") {
@@ -516,6 +547,24 @@ export async function reviewQuote(id: string, formData: FormData) {
   if (error) {
     console.error("[quotes] review failed", error);
     redirect(`/quotes/${id}?error=review_failed`);
+  }
+
+  // Audit trail for the sole-approver self-approval case (see M2 note
+  // above). Best-effort: a misconfigured service-role key must not fail an
+  // otherwise-successful approval, so we swallow errors here.
+  if (selfApproved) {
+    try {
+      const admin = createAdminClient();
+      await admin.rpc("_record_activity", {
+        p_org_id: ctx.org.id,
+        p_action: "quote.self_approved",
+        p_target_table: "quotes",
+        p_target_id: id,
+        p_metadata: { approver_id: user.id, sole_approver: true, comment },
+      } as never);
+    } catch (e) {
+      console.error("[quotes] self-approval audit log failed", e);
+    }
   }
 
   revalidatePath(`/quotes/${id}`);

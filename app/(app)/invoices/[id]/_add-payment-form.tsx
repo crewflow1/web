@@ -60,6 +60,7 @@ export function AddPaymentForm({
             min={0.01}
             step={0.01}
             defaultValue={pick("amount", defaultAmount)}
+            onFocus={(e) => e.currentTarget.select()}
             aria-invalid={fe.amount ? true : undefined}
             className={`mt-1 block w-full rounded-md border px-2 py-1.5 text-sm ${fe.amount ? "border-red-400" : "border-slate-300"}`}
           />

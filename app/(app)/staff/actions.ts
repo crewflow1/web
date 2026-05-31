@@ -203,6 +203,68 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   };
 }
 
+/**
+ * Re-send a pending staff invite (H2). Admin-gated. Only ever resends to
+ * an address that already has an UNCONFIRMED invite for THIS org — so an
+ * admin can't spray invites at arbitrary addresses, and we never re-mail
+ * someone who has already joined.
+ */
+export async function resendStaffInvite(email: string): Promise<InviteStaffResult> {
+  const { ctx } = await requireOrgContext();
+  await requireAdmin(ctx.org.id);
+
+  const parsedEmail = z.string().email().safeParse(email);
+  if (!parsedEmail.success) return { ok: false, error: "Invalid email address." };
+  const target = parsedEmail.data;
+
+  const admin = createAdminClient();
+  let users;
+  try {
+    const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (error || !data) throw error ?? new Error("no data");
+    users = data.users;
+  } catch (e) {
+    console.error("[staff] resend invite — listUsers failed", e);
+    return { ok: false, error: "Couldn't reach the invite service. Try again." };
+  }
+
+  const existing = users.find(
+    (u) => (u.email ?? "").trim().toLowerCase() === target.toLowerCase(),
+  );
+  const meta = (existing?.user_metadata ?? {}) as Record<string, unknown>;
+  if (!existing || meta.invited_org_id !== ctx.org.id || meta.source !== "staff_invite") {
+    return { ok: false, error: "No pending invite found for that email." };
+  }
+  if (existing.email_confirmed_at) {
+    return { ok: false, error: "That person has already joined this org." };
+  }
+
+  try {
+    // Re-use the original invite metadata so the accept flow hydrates the
+    // same profile pre-fill. inviteUserByEmail re-sends the email for an
+    // existing UNCONFIRMED user (the email_confirmed_at guard above means
+    // we never hit the "already registered" path for confirmed accounts).
+    await admin.auth.admin.inviteUserByEmail(target, {
+      data: meta,
+      redirectTo: process.env.NEXT_PUBLIC_APP_URL
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${
+            typeof meta.invited_role === "string" ? meta.invited_role : "staff"
+          }`
+        : undefined,
+    });
+  } catch (e) {
+    console.error("[staff] resend invite failed", e);
+    return { ok: false, error: "Couldn't resend the invite email. Try again." };
+  }
+
+  revalidatePath("/staff");
+  return {
+    ok: true,
+    outcome: "invite_sent",
+    message: `Invite re-sent to ${target}.`,
+  };
+}
+
 export async function updateStaffRole(userId: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
   await requireAdmin(ctx.org.id);

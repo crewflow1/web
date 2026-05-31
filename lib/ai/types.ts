@@ -45,7 +45,11 @@ export type QuoteFunnel = {
   viewed: number;
   accepted: number;
   declined: number;
-  /** accepted / (sent's denominator) as a 0-100 integer; null if zero sent */
+  /**
+   * Win rate among decided quotes: accepted / (accepted + declined), as a
+   * 0–100 integer. null when no quotes have been decided yet. Matches the
+   * dashboard's definition; bounded to ≤100 (L3).
+   */
   conversion_pct: number | null;
   /** Median seconds from viewed_at → accepted_at across decided quotes. */
   median_view_to_accept_sec: number | null;

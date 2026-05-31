@@ -280,7 +280,7 @@ export default async function DashboardPage() {
     }
   }
 
-  let revenueThisMonth = 0;
+  let invoicedThisMonth = 0;
   let outstandingCount = 0;
   let outstandingTotal = 0;
   let overdueCount = 0;
@@ -295,8 +295,14 @@ export default async function DashboardPage() {
   for (const inv of invoices) {
     const total = Number(inv.total ?? 0);
     const vat = Number(inv.vat_total ?? 0);
-    if (inv.status === "paid" && inv.paid_at && inv.paid_at >= monthStart) {
-      revenueThisMonth += total;
+    // M1: this tile is now an accrual ("invoiced") figure keyed off
+    // created_at, NOT an inv.status === "paid" sum. A mis-marked or
+    // synthetic invoice (status "paid" with no invoice_payments rows) used
+    // to inflate "Revenue this month" to figures that money-in never backs.
+    // Cash actually collected is tracked separately via cashInThisMonth,
+    // which sums invoice_payments — the only source of truth for money in.
+    if (inv.created_at && inv.created_at >= monthStart) {
+      invoicedThisMonth += total;
     }
     if (inv.status === "sent" || inv.status === "overdue") {
       outstandingCount++;
@@ -596,10 +602,10 @@ export default async function DashboardPage() {
           sub={`${jobs.length} total`}
         />
         <Kpi
-          label="Revenue this month"
-          value={GBP.format(revenueThisMonth)}
-          href="/invoices?status=paid"
-          sub="from paid invoices"
+          label="Invoiced this month"
+          value={GBP.format(invoicedThisMonth)}
+          href="/invoices"
+          sub="billed this month (accrual)"
         />
         <Kpi
           label="Outstanding"

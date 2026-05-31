@@ -72,7 +72,12 @@ export function JobForm({
       className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
     >
       <FormErrorBanner error={state.error} />
-      <FormSuccessBanner message={state.ok ? state.successMessage : null} />
+      {/* L2: suppress the banner when we're about to redirect (create flow)
+          so the save navigates straight to the detail page without a flash.
+          Edit flows have no redirectTo, so they keep the in-place banner. */}
+      <FormSuccessBanner
+        message={state.ok && !state.redirectTo ? state.successMessage : null}
+      />
 
       <SelectField
         name="customer_id"

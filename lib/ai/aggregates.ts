@@ -102,12 +102,23 @@ export async function computeActivitySummary(
     }
   }
 
+  // L3: conversion = win rate among DECIDED quotes (accepted vs
+  // accepted+declined), matching the dashboard's definition in
+  // app/(app)/dashboard/page.tsx. The previous formula divided accepted by
+  // `sent`, which (a) rendered "—" when quotes were accepted without a
+  // recorded sent_at, and (b) could exceed 100% (QA observed 133%) when more
+  // quotes were accepted than were marked sent. accepted ≤ accepted+declined
+  // by construction, so this is bounded to 0–100; Math.min is belt-and-braces.
+  const decided = accepted + declined;
   const quote_funnel: QuoteFunnel = {
     sent,
     viewed,
     accepted,
     declined,
-    conversion_pct: sent === 0 ? null : Math.round((accepted / sent) * 100),
+    conversion_pct:
+      decided === 0
+        ? null
+        : Math.min(100, Math.round((accepted / decided) * 100)),
     median_view_to_accept_sec: median(viewToAcceptSec),
     avg_sent_to_accept_sec: avg(sentToAcceptSec),
   };

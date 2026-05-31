@@ -91,7 +91,7 @@ export default async function EditQuotePage({
   const { id } = await params;
   const sp = await searchParams;
 
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
   // Role + quote in parallel.
@@ -104,7 +104,7 @@ export default async function EditQuotePage({
           id, number, status, currency, subtotal, vat_total, total,
           customer_id, property_id, lead_id, valid_until, notes, terms,
           public_token, sent_at, viewed_at, accepted_at, declined_at,
-          accept_signature, created_at, job_id,
+          accept_signature, created_at, created_by, job_id,
           approved_by, approved_at, approval_comment,
           approver:users!quotes_approved_by_fkey ( id, full_name, email )
         `,
@@ -184,6 +184,25 @@ export default async function EditQuotePage({
     : null;
 
   const isLocked = status === "accepted" || status === "declined" || status === "expired";
+
+  // M2 — separation-of-duties UI, mirroring the server gate in
+  // reviewQuote (../actions.ts). The quote's creator can't approve their
+  // own quote when another owner/admin is available to review it; for a
+  // sole approver we still allow it but flag that it'll be recorded as a
+  // self-approval. Only worth the extra query while awaiting approval.
+  const isCreator = !!quote.created_by && quote.created_by === user.id;
+  let blockSelfApproval = false;
+  let isSoleApprover = false;
+  if (isAdmin && isCreator && status === "pending_approval") {
+    const { count: otherApprovers } = await supabase
+      .from("memberships")
+      .select("user_id", { count: "exact", head: true })
+      .eq("org_id", ctx.org.id)
+      .in("role", ["owner", "admin"])
+      .neq("user_id", user.id);
+    if ((otherApprovers ?? 0) > 0) blockSelfApproval = true;
+    else isSoleApprover = true;
+  }
 
   // Bind the quote id into the update action for the builder's form prop.
   const updateAction = updateQuote.bind(null, id);
@@ -381,6 +400,18 @@ export default async function EditQuotePage({
           {/* Action form — admins only, only when pending_approval */}
           {isAdmin && status === "pending_approval" ? (
             <form action={reviewQuote.bind(null, id)} className="mt-4 space-y-2">
+              {blockSelfApproval ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  You created this quote, so another owner or admin needs to
+                  approve it. You can still request changes or reject it.
+                </p>
+              ) : isSoleApprover ? (
+                <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  You&apos;re the only approver in this org, so approving your
+                  own quote is allowed — it&apos;ll be recorded as a
+                  self-approval.
+                </p>
+              ) : null}
               <label className="block text-xs text-slate-600">
                 Comment
                 <textarea
@@ -391,14 +422,16 @@ export default async function EditQuotePage({
                 />
               </label>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="submit"
-                  name="action"
-                  value="approve"
-                  className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
-                >
-                  Approve
-                </button>
+                {blockSelfApproval ? null : (
+                  <button
+                    type="submit"
+                    name="action"
+                    value="approve"
+                    className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+                  >
+                    Approve
+                  </button>
+                )}
                 <button
                   type="submit"
                   name="action"

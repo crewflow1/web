@@ -28,23 +28,71 @@ export async function addInvoicePayment(
   _prevState: FormState<PaymentValues>,
   formData: FormData,
 ): Promise<FormState<PaymentValues>> {
-  const { ctx, user } = await requireOrgContext();
+  const { user } = await requireOrgContext();
   if (!uuid.safeParse(invoiceId).success) return formError("Invalid invoice id.");
 
   const result = validateFormData(formData, addPaymentSchema);
   if (!result.ok) return result.state as FormState<PaymentValues>;
 
   const supabase = await createClient();
-  const { data: inv } = await supabase
+  // Capture the lookup error explicitly: a transient SELECT failure used to
+  // fall through to the `!inv` branch below and report "Invoice not found",
+  // which is misleading (the invoice exists; the DB was briefly unreachable).
+  const { data: inv, error: invErr } = await supabase
     .from("invoices")
     .select("id, total, org_id")
     .eq("id", invoiceId)
     .maybeSingle();
-  if (!inv) {
+  if (invErr) {
+    console.error("[invoice-payment] invoice lookup failed", {
+      invoiceId,
+      code: invErr.code,
+      message: invErr.message,
+    });
     return formError(
-      "Invoice not found.",
+      "Couldn't load the invoice just now. Please try again.",
       result.data as PaymentValues,
     );
+  }
+  if (!inv) {
+    return formError("Invoice not found.", result.data as PaymentValues);
+  }
+
+  // Idempotency / double-submit guard.
+  // The submit button is disabled client-side while pending, but that does
+  // NOT stop a retried request (e.g. the browser re-POSTing after a transient
+  // network blip, or an impatient double click that races the disable) from
+  // recording the same money twice. Before inserting we look for an identical
+  // payment from the same user in the last few seconds; if one exists we treat
+  // this call as an idempotent no-op and report success rather than duplicating
+  // the payment. The match is tight enough (same invoice + amount + date +
+  // reference + user, within 10s) that two genuinely distinct payments can't
+  // collide in practice.
+  const DEDUPE_WINDOW_MS = 10_000;
+  const sinceIso = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
+  let dupQuery = supabase
+    .from("invoice_payments")
+    .select("id")
+    .eq("invoice_id", invoiceId)
+    .eq("amount", result.data.amount)
+    .eq("paid_at", result.data.paid_at)
+    .eq("created_by", user.id)
+    .gte("created_at", sinceIso)
+    .limit(1);
+  dupQuery = result.data.reference
+    ? dupQuery.eq("reference", result.data.reference)
+    : dupQuery.is("reference", null);
+  const { data: existing } = await dupQuery.maybeSingle();
+  if (existing) {
+    console.warn("[invoice-payment] duplicate submit suppressed", {
+      invoiceId,
+      orgId: inv.org_id,
+      paymentId: existing.id,
+    });
+    revalidatePath(`/invoices/${invoiceId}`);
+    revalidatePath("/invoices");
+    revalidatePath("/dashboard");
+    return formSuccess({ successMessage: "Payment recorded." });
   }
 
   const { error } = await supabase.from("invoice_payments").insert({
@@ -58,14 +106,26 @@ export async function addInvoicePayment(
     created_by: user.id,
   });
   if (error) {
-    console.error("[invoice-payment] insert failed", error);
+    // Log the full Postgres error shape (code/details/hint) so a recurrence
+    // is diagnosable from logs instead of guessable. The user still gets a
+    // safe generic message — and crucially we return formError, never a false
+    // success, so the UI cannot show "Payment recorded" on a failed write.
+    console.error("[invoice-payment] insert failed", {
+      invoiceId,
+      orgId: inv.org_id,
+      userId: user.id,
+      amount: result.data.amount,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     return formError(
       "Couldn't record payment. Try again.",
       result.data as PaymentValues,
     );
   }
 
-  void ctx;
   revalidatePath(`/invoices/${invoiceId}`);
   revalidatePath("/invoices");
   revalidatePath("/dashboard");

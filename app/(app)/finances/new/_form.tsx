@@ -111,6 +111,7 @@ export function NewFinanceForm({ jobId, jobLabel }: { jobId?: string; jobLabel?:
           required
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
           className="mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
         />
       </div>
