@@ -154,6 +154,12 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => mockAdmin.client),
 }));
 
+// acceptQuoteAsOwner dispatches a `quote.accepted` automation event — stub it
+// so the owner-path tests don't touch the real dispatcher.
+vi.mock("@/server/services/automation-dispatcher", () => ({
+  dispatchAutomation: vi.fn(async () => ({ ok: true })),
+}));
+
 // -- Imports under test (after mocks) ------------------------------------
 const actions = await import("@/app/(app)/quotes/actions");
 
@@ -225,6 +231,8 @@ describe("acceptQuoteByToken", () => {
       vat_total: SAMPLE_QUOTE.vat_total,
       status: "draft",
       job_id: "job-uuid-1",
+      // BUG-03: auto-created invoice carries a net-14 due date, not null.
+      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
 
     // Exactly one job INSERT was attempted
@@ -304,6 +312,102 @@ describe("acceptQuoteByToken", () => {
     expect(res).toEqual({ ok: false, error: "Quote already declined" });
     expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("acceptQuoteAsOwner", () => {
+  // Owner accepts "on the customer's behalf" (e.g. confirmed by phone).
+  // redirect() is mocked as a no-op so the action runs to completion and we
+  // can inspect the inserts/updates it performed.
+  const ownerFormData = {
+    get: (k: string) => (k === "signer_name" ? "Owner Test" : null),
+  } as unknown as FormData;
+
+  it("creates a job, links the invoice to it, and sets a net-14 due date (BUG-03 + BUG-04)", async () => {
+    // 1. update quote → accepted (returns the quote row via .select().single())
+    mockAdmin.enqueue("update", { data: SAMPLE_QUOTE, error: null });
+    // 2. insert job (auto-create, returns id via .select().single())
+    mockAdmin.enqueue("insert", { data: { id: "owner-job-1" }, error: null });
+    // 3. update quote with the new job_id (backlink)
+    mockAdmin.enqueue("update", { data: null, error: null });
+    // 4. next_invoice_number rpc
+    mockAdmin.enqueue("rpc", { data: "INV-0009", error: null });
+    // 5. insert invoice
+    mockAdmin.enqueue("insert", { data: { id: "owner-invoice-1" }, error: null });
+    // 6. lead lookup (no linked lead)
+    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+
+    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
+
+    // Exactly one job was created from the accepted quote.
+    const jobInserts = mockAdmin.inserts.filter(
+      (p): p is { org_id: string; customer_id: string; status: string } =>
+        typeof p === "object" &&
+        p !== null &&
+        "customer_id" in p &&
+        "status" in p &&
+        !("quote_id" in p),
+    );
+    expect(jobInserts).toHaveLength(1);
+    expect(jobInserts[0]).toMatchObject({
+      org_id: SAMPLE_QUOTE.org_id,
+      customer_id: SAMPLE_QUOTE.customer_id,
+      status: "new",
+    });
+
+    // Exactly one invoice, linked to that job, with a net-14 due date.
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { quote_id: string; job_id: string | null; due_date: string } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts).toHaveLength(1);
+    expect(invoiceInserts[0]).toMatchObject({
+      org_id: SAMPLE_QUOTE.org_id,
+      quote_id: SAMPLE_QUOTE.id,
+      number: "INV-0009",
+      amount: SAMPLE_QUOTE.subtotal,
+      vat_total: SAMPLE_QUOTE.vat_total,
+      status: "draft",
+      job_id: "owner-job-1",
+      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+
+    // Invoice email send was attempted against the new invoice.
+    expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(
+      mockAdmin.client,
+      "owner-invoice-1",
+    );
+  });
+
+  it("does NOT create a second job for a variation, but still links the invoice to the existing job", async () => {
+    mockAdmin.enqueue("update", {
+      data: { ...SAMPLE_QUOTE, job_id: "existing-job-9", variation_number: 2 },
+      error: null,
+    });
+    // No job insert queued — variations reuse the parent job.
+    mockAdmin.enqueue("rpc", { data: "INV-0010", error: null });
+    mockAdmin.enqueue("insert", { data: { id: "owner-invoice-2" }, error: null });
+    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+
+    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
+
+    const jobInserts = mockAdmin.inserts.filter(
+      (p): p is { status: string } =>
+        typeof p === "object" &&
+        p !== null &&
+        "status" in p &&
+        p.status === "new" &&
+        !("quote_id" in p),
+    );
+    expect(jobInserts).toHaveLength(0);
+
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { job_id: string | null } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts).toHaveLength(1);
+    expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-9" });
   });
 });
 

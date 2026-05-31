@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createInvoiceSchema, INVOICE_STATUSES } from "@/lib/invoices/schema";
+import { invoiceDueDate } from "@/lib/invoices/due-date";
 
 /**
  * Invoices list + create-from-quote.
@@ -108,7 +109,9 @@ export async function POST(request: NextRequest) {
       vat_total: Number(quote.vat_total ?? 0),
       // total is generated as amount + vat_total
       status: "draft",
-      due_date: parsed.data.due_date ?? null,
+      // Honour an explicit due date; otherwise default to net-14 so the
+      // invoice never goes out with a blank payment deadline.
+      due_date: parsed.data.due_date ?? invoiceDueDate(new Date().toISOString()),
       notes: parsed.data.notes ?? null,
     })
     .select("id, number, total")

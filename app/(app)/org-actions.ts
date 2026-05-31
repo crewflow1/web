@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/server/auth/session";
 
@@ -50,5 +51,10 @@ export async function setActiveOrg(formData: FormData) {
     path: "/",
     maxAge: 60 * 60 * 24 * 365, // 1 year
   });
+  // The tenant context just changed for EVERY route. A redirect alone only
+  // re-renders /dashboard — the client router cache would still serve the
+  // previous org's customers/quotes/jobs/invoices pages. Purge the whole
+  // route tree so every section reloads against the new org.
+  revalidatePath("/", "layout");
   redirect("/dashboard");
 }

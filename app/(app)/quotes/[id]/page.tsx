@@ -21,6 +21,7 @@ import type { LineItem } from "@/lib/quotes/schema";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { env } from "@/lib/env";
 
@@ -262,10 +263,10 @@ export default async function EditQuotePage({
             <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
               Linked job:{" "}
               <Link
-                href={`/jobs/${quote.job_id}`}
+                href={jobHref(quote.job_id)}
                 className="font-semibold underline hover:text-emerald-900"
               >
-                /jobs/{quote.job_id.slice(0, 8)}
+                View linked job &rarr;
               </Link>
             </div>
           ) : null}

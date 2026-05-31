@@ -185,6 +185,54 @@ describe("impersonation server actions", () => {
 });
 
 // =====================================================================
+// 4b. BUG-05 — tenant-switch cache purge (no stale/leaked tenant state)
+// =====================================================================
+
+/** Slice out a single exported action body for per-function assertions. */
+function actionBody(src: string, name: string): string {
+  const start = src.indexOf(`export async function ${name}`);
+  if (start === -1) return "";
+  const rest = src.slice(start + 1);
+  const nextRel = rest.indexOf("\nexport async function ");
+  return nextRel === -1 ? src.slice(start) : src.slice(start, start + 1 + nextRel);
+}
+
+describe("impersonation actions purge the full route cache on tenant switch (BUG-05)", () => {
+  it("imports revalidatePath from next/cache", () => {
+    expect(ACTIONS).toMatch(
+      /import \{ revalidatePath \} from "next\/cache"/,
+    );
+  });
+
+  it("starting impersonation purges the entire route tree (not just /dashboard)", () => {
+    // A full-tree purge is required so cached customers/quotes/jobs/invoices
+    // pages can't leak the operator's prior org after switching in.
+    expect(actionBody(ACTIONS, "startImpersonation")).toMatch(
+      /revalidatePath\("\/", "layout"\)/,
+    );
+  });
+
+  it("ending impersonation purges the entire route tree", () => {
+    // Returning to HQ must drop the impersonated org's cached pages too.
+    expect(actionBody(ACTIONS, "endImpersonation")).toMatch(
+      /revalidatePath\("\/", "layout"\)/,
+    );
+  });
+
+  it("force-ending a session purges cached views", () => {
+    expect(actionBody(ACTIONS, "forceEndImpersonation")).toMatch(
+      /revalidatePath\("\/", "layout"\)/,
+    );
+  });
+
+  it("the purge is the full-tree layout variant in every action (exactly 3)", () => {
+    const count = (ACTIONS.match(/revalidatePath\("\/", "layout"\)/g) ?? [])
+      .length;
+    expect(count).toBe(3);
+  });
+});
+
+// =====================================================================
 // 5. Session resolution hook
 // =====================================================================
 
