@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { approveExpenseDraftAction, rejectExpenseDraft } from "../actions";
+import { AmountInput } from "./_amount-input";
 
 /**
  * /expenses/[id] — approve / reject an AI-extracted expense draft.
@@ -170,10 +171,9 @@ export default async function ExpenseDraftPage({
               Amount (net, ex VAT)
               <span className="ml-0.5 text-red-500">*</span>
             </label>
-            <input
+            <AmountInput
               id="amount"
               name="amount"
-              type="number"
               step="0.01"
               min="0"
               required

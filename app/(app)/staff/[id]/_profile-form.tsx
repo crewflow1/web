@@ -182,6 +182,10 @@ function Pair({
         defaultValue={defaultValue}
         step={step}
         disabled={disabled}
+        // Select-on-focus for numeric fields only (e.g. Hourly pay), so the
+        // prefilled value is replaced rather than appended to (H1). Text
+        // fields like name/phone keep normal cursor-placement behaviour.
+        onFocus={type === "number" ? (e) => e.currentTarget.select() : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         className={`mt-1 block w-full rounded-md border px-2 py-1.5 text-sm disabled:opacity-60 ${

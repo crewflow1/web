@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import type { User } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
@@ -54,9 +55,42 @@ export async function updateSession(request: NextRequest) {
 
   // IMPORTANT: getUser() makes a network call to validate the JWT.
   // Don't switch to getSession() — that returns stale data.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  //
+  // This network call runs on EVERY matched request. If it threw (network
+  // blip / cold start) or came back as a 5xx from GoTrue, the middleware
+  // used to crash and Vercel surfaced the request as a 5xx (503) — which
+  // intermittently broke unrelated write POSTs (record payment, assign
+  // shift, payroll draft) AND the post-write router.refresh() RSC fetch
+  // (e.g. "Shift added" shown but the grid never updated).
+  //
+  // We now fail SAFE: a transient auth error lets the request through
+  // instead of 503-ing it. This is not a security regression — every
+  // protected page/server action re-validates auth server-side via
+  // requireUser()/requireOrgContext(), which remains the real gate. We
+  // only suppress the middleware-level redirect when auth is genuinely
+  // unreachable (so a logged-in user isn't bounced to /login on a blip);
+  // a clean "no user" (expired/absent session, status < 500) still
+  // redirects exactly as before.
+  let user: User | null = null;
+  let authUnavailable = false;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    user = data.user;
+    const status = (error as { status?: number } | null)?.status;
+    if (!user && typeof status === "number" && status >= 500) {
+      authUnavailable = true;
+      console.error(
+        "[middleware] auth.getUser returned a server error — passing request through",
+        { status, pathname: request.nextUrl.pathname },
+      );
+    }
+  } catch (e) {
+    authUnavailable = true;
+    console.error(
+      "[middleware] auth.getUser threw — passing request through",
+      e,
+    );
+  }
 
   const { pathname } = request.nextUrl;
 
@@ -110,7 +144,12 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Logged out and visiting anything else → send them to login.
-  if (!user && !isPublicRoute && !isAuthFlow) {
+  //
+  // The !authUnavailable guard is the load-bearing half of the fail-safe:
+  // when auth was genuinely unreachable we DON'T bounce to /login (the
+  // user may well be logged in; the page/server action re-validates and
+  // gates properly). A clean "no user" still redirects exactly as before.
+  if (!user && !authUnavailable && !isPublicRoute && !isAuthFlow) {
     const url = new URL("/login", request.url);
     if (pathname !== "/") url.searchParams.set("next", pathname);
     return redirectTo(url);

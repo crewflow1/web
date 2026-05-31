@@ -61,6 +61,13 @@ export function Field({
         placeholder={placeholder}
         autoComplete={autoComplete}
         inputMode={inputMode}
+        // Select-on-focus for numeric fields so a prefilled value (e.g. an
+        // edited lead's estimated value) is replaced rather than appended to
+        // — the H1 "21600.00"→"21600.0010000" defect. Left undefined for
+        // text/select types so this component stays server-renderable (no
+        // event handler is attached unless the field is numeric, and numeric
+        // Fields are only ever rendered inside client components).
+        onFocus={type === "number" ? (e) => e.currentTarget.select() : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         className={`mt-1.5 block w-full rounded-md border px-3 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-1 ${

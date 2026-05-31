@@ -40,6 +40,7 @@ export function NumericInput({
   max,
   allowDecimal = true,
   allowEmpty = true,
+  onFocus,
   ...rest
 }: {
   value: number;
@@ -74,6 +75,14 @@ export function NumericInput({
       inputMode={allowDecimal ? "decimal" : "numeric"}
       autoComplete="off"
       value={display}
+      onFocus={(e) => {
+        // Select-on-focus: the first keystroke replaces the prefilled value
+        // instead of being inserted next to it. Without this, focusing a
+        // field showing "1" and typing "1" produced "11", and a money field
+        // showing "21600.00" became "21600.0010000" — the H1 append defect.
+        e.currentTarget.select();
+        onFocus?.(e);
+      }}
       onChange={(e) => {
         const raw = e.target.value;
         // Whitelist: digits, one dot if decimals allowed, nothing else.

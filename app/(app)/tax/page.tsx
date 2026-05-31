@@ -130,7 +130,11 @@ export default async function TaxDashboardPage() {
         <strong className="font-semibold">Estimate only.</strong> These are
         ballpark numbers from your CrewFlow data — they aren&apos;t a tax
         return. Confirm everything with your accountant before filing with
-        HMRC.
+        HMRC. Each tile is tagged with its basis:{" "}
+        <strong className="font-semibold">VAT output</strong> is cash (money
+        actually received), while <strong className="font-semibold">
+        Corporation Tax</strong> is accrual (invoiced), so don&apos;t read the
+        two as like-for-like.
       </div>
 
       {/* VAT */}
@@ -153,25 +157,31 @@ export default async function TaxDashboardPage() {
           <Stat
             label="Output VAT"
             value={GBP.format(vat.output_vat)}
-            sub="VAT on invoices you've been paid"
+            basis="Paid · cash"
+            sub="VAT on invoices marked paid this quarter"
           />
           <Stat
             label="Input VAT"
             value={GBP.format(vat.input_vat)}
-            sub="VAT you've paid on expenses"
+            basis="Invoiced · accrual"
+            sub="VAT on expenses logged this quarter"
           />
           <Stat
             label="Net payable to HMRC"
             value={GBP.format(vat.net_payable)}
+            basis="Estimate"
             sub={vat.net_payable >= 0 ? "you owe" : "HMRC owes you"}
             emphasis
           />
         </dl>
         <p className="mt-3 text-xs text-slate-500">
-          Output VAT is summed from invoices marked paid in this calendar
-          quarter. Input VAT is summed from finance rows in the same window.
-          If you&apos;re on a VAT stagger or the cash accounting scheme this
-          will need a small adjustment — talk to your accountant.
+          Heads up — the two halves use different bases: output VAT counts
+          invoices <strong>marked paid</strong> this quarter (cash), while
+          input VAT counts expenses <strong>logged</strong> this quarter
+          (accrual), since logged costs carry no payment date. The net figure
+          is therefore an estimate. If you&apos;re on a VAT stagger or the cash
+          accounting scheme this needs a small adjustment — talk to your
+          accountant.
         </p>
       </section>
 
@@ -195,6 +205,7 @@ export default async function TaxDashboardPage() {
           <Stat
             label="Estimated profit"
             value={GBP.format(corp.estimated_profit)}
+            basis="Invoiced · accrual"
             sub="invoiced revenue (net) − finance costs (net)"
           />
           <Stat
@@ -211,6 +222,7 @@ export default async function TaxDashboardPage() {
           <Stat
             label="Estimated tax"
             value={GBP.format(corp.estimated_tax)}
+            basis="Estimate"
             sub="set this aside, don't spend it"
             emphasis
           />
@@ -241,6 +253,7 @@ export default async function TaxDashboardPage() {
           <Stat
             label="Estimate"
             value={GBP.format(paye.estimate)}
+            basis="Estimate"
             sub="awaiting upstream data"
           />
           <div className="sm:col-span-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600">
@@ -312,16 +325,31 @@ function Stat({
   label,
   value,
   sub,
+  basis,
   emphasis,
 }: {
   label: string;
   value: string;
   sub?: string;
+  /**
+   * M3 — accounting-basis tag (e.g. "Paid · cash", "Invoiced · accrual",
+   * "Estimate"). The tax tiles deliberately mix bases (VAT output is cash,
+   * Corporation Tax is accrual), so each figure states its basis to avoid
+   * the QA finding where the two looked comparable but weren't.
+   */
+  basis?: string;
   emphasis?: boolean;
 }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
+      <dt className="flex flex-wrap items-center gap-1.5 text-xs uppercase tracking-wide text-slate-500">
+        {label}
+        {basis ? (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-slate-600">
+            {basis}
+          </span>
+        ) : null}
+      </dt>
       <dd
         className={
           emphasis

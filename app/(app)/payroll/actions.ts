@@ -165,14 +165,33 @@ export async function createPayrollRun(
   if (lines.length > 0) {
     const { error: linesErr } = await supabase.from("payroll_lines").insert(lines);
     if (linesErr) {
-      console.error("[payroll] lines insert failed", linesErr);
-      // Parent row was saved — bounce to the run with a warning rather
-      // than losing the run.
-      return formSuccess({
-        successMessage:
-          "Run created, but some lines didn't save — open and re-generate.",
-        redirectTo: `/payroll/${run.id}?error=lines_failed`,
+      // supabase-js gives us no multi-statement transaction, so the run
+      // row and its lines aren't atomic. A half-written run (parent saved,
+      // zero lines) reads as a £0 payroll — and this branch USED to report
+      // it to the user as success, which is exactly the "payroll appeared
+      // to commit despite a failure" defect from the QA audit. Instead,
+      // roll the parent back so the action is all-or-nothing, then surface
+      // a real error so the owner can retry cleanly.
+      console.error("[payroll] lines insert failed — rolling back run", {
+        runId: run.id,
+        orgId: ctx.org.id,
+        lineCount: lines.length,
+        error: linesErr,
       });
+      const { error: rollbackErr } = await supabase
+        .from("payroll_runs")
+        .delete()
+        .eq("id", run.id);
+      if (rollbackErr) {
+        console.error(
+          "[payroll] rollback of orphaned run failed — manual cleanup may be needed",
+          { runId: run.id, error: rollbackErr },
+        );
+      }
+      return formError(
+        "Couldn't save the payroll lines, so the run was rolled back. Please try again.",
+        result.data as Record<string, unknown>,
+      );
     }
   }
 

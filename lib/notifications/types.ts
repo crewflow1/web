@@ -70,6 +70,46 @@ export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> =
     other: "Other",
   };
 
+/**
+ * L1 — derive a sensible display category from a notification's `type`
+ * when the stored category is the catch-all default ("other").
+ *
+ * Background: in-app invoice/payment notifications are written by the
+ * `_tg_activity_log_notify` DB trigger, which fans `activity_log` rows
+ * (type = e.g. "invoice.paid", "payment.recorded") into `notifications`
+ * but never sets `category` — so the column default 'other' sticks and
+ * the feed showed every invoice/payment event under "Other".
+ *
+ * We can't widen the DB `category` CHECK constraint without a migration
+ * (and migrations aren't applied by CI / previews are DB-less), so we map
+ * onto the existing categories at READ time instead of writing new values:
+ *   - money-received events  → "stripe"  (renders as "Payment")
+ *   - invoice-lifecycle events → "billing" (renders as "Billing")
+ * An explicitly-categorised notification (anything other than "other")
+ * always wins — this only fills the gap left by the trigger. Because the
+ * trigger writes audience='customer', this only affects the customer feed;
+ * real Stripe/billing rows are stored with their own category, untouched.
+ */
+export function notificationCategoryForType(
+  type: string,
+  stored: NotificationCategory,
+): NotificationCategory {
+  if (stored !== "other") return stored;
+  if (
+    type === "payment.recorded" ||
+    type === "invoice.paid" ||
+    type === "invoice.payment_failed" ||
+    type === "invoice.payment_action_required" ||
+    type.startsWith("bank.")
+  ) {
+    return "stripe"; // label: "Payment"
+  }
+  if (type.startsWith("invoice.")) {
+    return "billing"; // label: "Billing"
+  }
+  return stored;
+}
+
 export type NotificationRow = {
   id: string;
   org_id: string;

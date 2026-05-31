@@ -1,10 +1,11 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type {
-  NotificationRow,
-  NotificationCreate,
-  NotificationAudience,
+import {
+  notificationCategoryForType,
+  type NotificationRow,
+  type NotificationCreate,
+  type NotificationAudience,
 } from "@/lib/notifications/types";
 
 /**
@@ -313,13 +314,17 @@ export async function dismissNotification(
 
 function coerce(raw: unknown): NotificationRow {
   const r = raw as Record<string, unknown>;
+  const type = (r.type as string) ?? "";
+  const storedCategory = (r.category as NotificationRow["category"]) ?? "other";
   return {
     id: r.id as string,
     org_id: r.org_id as string,
     user_id: (r.user_id as string | null) ?? null,
     audience: (r.audience as NotificationRow["audience"]) ?? "customer",
-    type: (r.type as string) ?? "",
-    category: (r.category as NotificationRow["category"]) ?? "other",
+    type,
+    // L1 — backfill the category for trigger-written invoice/payment rows
+    // that defaulted to "other" (see notificationCategoryForType).
+    category: notificationCategoryForType(type, storedCategory),
     title: (r.title as string) ?? "",
     body: (r.body as string | null) ?? null,
     priority: (r.priority as NotificationRow["priority"]) ?? "medium",

@@ -191,6 +191,7 @@ function MoneyField({
         name={name}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
         min={0}
         step={0.01}
         className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
@@ -226,6 +227,7 @@ function NumField({
         name={name}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
         min={min}
         max={max}
         step={step}

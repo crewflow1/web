@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
+import { PendingInvites } from "./_pending-invites";
+import { listPendingInvites } from "./_invites";
 
 /**
  * Staff list page.
@@ -63,6 +65,19 @@ export default async function StaffPage({
 
   const members = (membersRaw ?? []) as MemberRow[];
 
+  // Pending invites (H2): invited-but-not-yet-accepted teammates. Only an
+  // admin can act on them (and the listing uses the service-role client),
+  // so we only load them for admins. Reconciled against current members so
+  // an accepted invite drops off automatically.
+  const memberEmails = new Set(
+    members
+      .map((m) => m.user?.email?.trim().toLowerCase())
+      .filter((e): e is string => !!e),
+  );
+  const pendingInvites = isAdmin
+    ? await listPendingInvites(ctx.org.id, memberEmails)
+    : [];
+
   const errorMessage = (() => {
     if (!sp.error) return null;
     switch (sp.error) {
@@ -99,7 +114,13 @@ export default async function StaffPage({
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {members.length} {members.length === 1 ? "member" : "members"} ·{" "}
+            {members.length} {members.length === 1 ? "member" : "members"}
+            {pendingInvites.length > 0 ? (
+              <span className="text-amber-700">
+                {" "}· {pendingInvites.length} pending
+              </span>
+            ) : null}{" "}
+            ·{" "}
             <Link href="/staff/rota" className="text-slate-700 underline hover:text-slate-900">
               Rota
             </Link>{" "}
@@ -195,6 +216,8 @@ export default async function StaffPage({
           </table>
         </div>
       </section>
+
+      {isAdmin ? <PendingInvites invites={pendingInvites} /> : null}
 
       {isAdmin ? <InviteStaffModal /> : null}
     </div>
