@@ -18,7 +18,12 @@ import {
   isOcrFile,
   OcrUnavailableError,
 } from "@/lib/imports/ocr";
-import { detectEntityType, mapRow, type EntityType } from "@/lib/imports/detect";
+import {
+  detectEntityType,
+  mapRow,
+  remapRawToEntity,
+  type EntityType,
+} from "@/lib/imports/detect";
 import { expandZips, type UploadItem } from "@/lib/imports/zip";
 import {
   findCustomerDuplicate,
@@ -33,6 +38,15 @@ import {
 } from "@/lib/forms/state";
 
 const uuid = z.string().uuid();
+
+/**
+ * Per-row confidence (0–100) at/above which we trust the automatic
+ * extraction enough to queue the row for direct commit. Below it — or
+ * when the entity type couldn't be detected at all — the row is parked
+ * as `needs_review` for the operator to confirm, re-classify, or skip.
+ * Shared by the upload router and the commit gate so the two never drift.
+ */
+const REVIEW_THRESHOLD = 50;
 
 /**
  * Create a new import session. Step 1 of the wizard.
@@ -215,6 +229,16 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
         const row = sheet.rows[i]!;
         const raw = rowToRecord(sheet, row);
         const mapped = mapRow(detected, row);
+        // Uncertain extraction → "needs_review", never silently dropped.
+        // commitImport only processes `pending` rows, so anything we're not
+        // confident about — an undetectable entity type, or a per-row
+        // confidence under the threshold — is parked for the operator to
+        // confirm / re-classify / skip in the wizard instead of vanishing
+        // from the import. This is the guided-migration contract: uncertain
+        // is "needs review", not "failed".
+        const uncertain =
+          detected.entity_type === "unknown" ||
+          mapped.confidence < REVIEW_THRESHOLD;
         inserts.push({
           org_id: ctx.org.id,
           import_id: importId,
@@ -224,7 +248,7 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
           entity_type: detected.entity_type === "unknown" ? "unknown" : mapped.entity_type,
           confidence: mapped.confidence,
           mapped: mapped.mapped as unknown as Json,
-          status: "pending",
+          status: uncertain ? "needs_review" : "pending",
           error_message: mapped.warnings.length > 0 ? mapped.warnings.join("; ") : null,
         });
       }
@@ -383,12 +407,17 @@ export async function commitImport(importId: string) {
     redirect(`/imports/${importId}?error=not_ready`);
   }
 
+  // Only `pending` rows commit. `needs_review` rows are deliberately
+  // excluded until the operator confirms them (which flips them to
+  // `pending` with verified confidence). The confidence floor is a
+  // belt-and-suspenders guard — uncertain rows never reach `pending` —
+  // but it also documents the contract in one place.
   const { data: rows } = await admin
     .from("import_rows")
     .select("id, entity_type, mapped, confidence, status")
     .eq("import_id", importId)
     .in("status", ["pending"])
-    .gte("confidence", 50);
+    .gte("confidence", REVIEW_THRESHOLD);
 
   let imported = 0;
   let skipped = 0;
@@ -553,6 +582,113 @@ export async function ignoreDuplicateRow(rowId: string) {
   void ctx;
   revalidatePath(`/imports/${row.import_id}`);
   redirect(`/imports/${row.import_id}?saved=duplicate_skipped`);
+}
+
+/**
+ * Entity types an operator may assign to a row during review. Mirrors the
+ * detector's EntityType union; kept as a runtime list so we can validate the
+ * <select> value from the wizard form.
+ */
+const REVIEWABLE_ENTITIES: EntityType[] = [
+  "customer",
+  "supplier",
+  "staff",
+  "lead",
+  "invoice",
+  "cost",
+  "quote",
+  "job",
+  "payment",
+];
+
+/**
+ * Resolve a single `needs_review` row from the wizard. This is the
+ * human-in-the-loop step that turns an uncertain extraction into an
+ * explicit decision — never a silent drop:
+ *
+ *   - confirm → accept the row, optionally re-classifying its entity type.
+ *               A re-classification re-derives the mapped fields from the
+ *               stored raw record (remapRawToEntity). The row flips to
+ *               `pending` with verified confidence so the next commit
+ *               imports it. An unknown row MUST be classified first —
+ *               otherwise commit's ORDER loop couldn't place it.
+ *   - skip    → exclude the row from this import (`skipped`).
+ */
+export async function resolveReviewRow(rowId: string, formData: FormData) {
+  const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
+  if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
+
+  const supabase = await createClient();
+  const { data: row } = await supabase
+    .from("import_rows")
+    .select("id, import_id, status, entity_type, mapped, raw")
+    .eq("id", rowId)
+    .maybeSingle();
+  if (!row) redirect("/imports?error=not_found");
+
+  const importId = row.import_id as string;
+  // Only act on rows actually awaiting review — ignore stale double-submits.
+  if (row.status !== "needs_review") {
+    redirect(`/imports/${importId}`);
+  }
+
+  const intent = String(formData.get("intent") ?? "");
+
+  if (intent === "skip") {
+    await supabase
+      .from("import_rows")
+      .update({ status: "skipped", error_message: "skipped in review" })
+      .eq("id", rowId);
+    revalidatePath(`/imports/${importId}`);
+    redirect(`/imports/${importId}?saved=review_skipped`);
+  }
+
+  if (intent === "confirm") {
+    const chosenRaw = String(formData.get("entity_type") ?? "").trim();
+    const chosen = REVIEWABLE_ENTITIES.find((e) => e === chosenRaw) ?? null;
+    const current = REVIEWABLE_ENTITIES.find((e) => e === row.entity_type) ?? null;
+    const finalEntity = chosen ?? current;
+
+    // A committed row must resolve to a real entity type, or the commit
+    // ORDER loop can't place it and it would silently never import. Force
+    // the operator to classify an unknown row before confirming.
+    if (!finalEntity) {
+      redirect(`/imports/${importId}?error=pick_entity_type`);
+    }
+
+    if (finalEntity !== current) {
+      // Re-classification → re-derive mapped fields for the chosen entity.
+      const raw = (row.raw ?? {}) as Record<string, unknown>;
+      const remapped = remapRawToEntity(raw, finalEntity);
+      await supabase
+        .from("import_rows")
+        .update({
+          status: "pending",
+          entity_type: finalEntity,
+          mapped: remapped.mapped as unknown as Json,
+          // Human-verified: trust it past the commit gate. Keep any
+          // missing-required warnings so the operator still sees them; the
+          // row is `pending`, so commit attempts it and reports back if a
+          // parent (customer/invoice) can't be resolved.
+          confidence: 100,
+          error_message:
+            remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
+        })
+        .eq("id", rowId);
+    } else {
+      // Confirm as-detected — keep the mapping, just trust it.
+      await supabase
+        .from("import_rows")
+        .update({ status: "pending", confidence: 100, error_message: null })
+        .eq("id", rowId);
+    }
+    revalidatePath(`/imports/${importId}`);
+    redirect(`/imports/${importId}?saved=review_confirmed`);
+  }
+
+  // Unrecognised intent — no-op back to the wizard.
+  redirect(`/imports/${importId}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -366,6 +366,57 @@ export function mapRow(detected: DetectedSheet, row: Cell[]): MappedRow {
   return { entity_type: entity, confidence: Math.round(rowConf), mapped, warnings };
 }
 
+/**
+ * Re-map a previously-extracted raw row to a *chosen* entity type.
+ *
+ * Used by the "Needs review" flow: when an operator re-classifies a row
+ * whose automatic detection was uncertain (or wrong), we re-derive the
+ * mapped fields against the target entity's column aliases. We rebuild a
+ * single-row ParsedSheet from the stored raw record (header → value) and
+ * run the SAME mapColumns + mapRow path the original upload used — so
+ * there's no bespoke mapping logic here to drift out of sync with the
+ * detector. The returned confidence mirrors detectEntityType's formula;
+ * callers that treat the re-classification as human-verified may override
+ * it (e.g. to 100).
+ */
+export function remapRawToEntity(
+  raw: Record<string, unknown>,
+  entity: EntityType,
+): MappedRow {
+  const header = Object.keys(raw);
+  const cells: Cell[] = header.map((h) => {
+    const v = raw[h];
+    if (v === null || v === undefined) return null;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      return v;
+    }
+    return String(v);
+  });
+  const sheet: ParsedSheet = { name: "review", header, rows: [cells] };
+  const { map, perField } = mapColumns(header, ENTITY_FIELDS[entity]);
+  // Same confidence formula detectEntityType uses, so a re-classified row
+  // carries a comparable score before the human override.
+  const allFields = Object.keys(ENTITY_FIELDS[entity]);
+  const required = REQUIRED_FIELDS[entity];
+  const avg =
+    allFields.length > 0
+      ? allFields.reduce((s, f) => s + (perField[f] ?? 0), 0) / allFields.length
+      : 0;
+  const requiredAvg =
+    required.length > 0
+      ? required.reduce((s, f) => s + (perField[f] ?? 0), 0) / required.length
+      : 0;
+  const confidence = Math.min(100, Math.round(avg * 0.6 + requiredAvg * 0.4));
+  const detected: DetectedSheet = {
+    sheet,
+    entity_type: entity,
+    confidence,
+    column_map: map,
+    field_confidence: perField,
+  };
+  return mapRow(detected, cells);
+}
+
 function normaliseValue(
   field: string,
   raw: Cell,
