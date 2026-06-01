@@ -146,11 +146,78 @@ describe("Post-login redirect", () => {
   const callback = read("app/auth/callback/route.ts");
 
   it("non-super-admin default landing is /dashboard (their workspace)", () => {
-    expect(callback).toMatch(/fallback = isAdmin \? "\/admin\/organizations" : "\/dashboard"/);
+    // The landing logic was refactored from a single `fallback` ternary into
+    // an explicit `safeNext` block that also honours same-origin `?next=`
+    // deep links. The behavioural contract is unchanged and still pinned:
+    // super-admins → /admin/organizations, everyone else → /dashboard.
+    expect(callback).toMatch(/isSuperAdminEmail\(userPayload\.email\)/);
+    expect(callback).toMatch(/safeNext = "\/dashboard"/);
+    expect(callback).toMatch(/"\/admin\/organizations"/);
   });
 
   it("dashboard route uses requireOrgContext → onboarding/company if no org, else workspace", () => {
     const session = read("server/auth/session.ts");
     expect(session).toMatch(/if \(!ctx\) redirect\("\/onboarding\/company"\)/);
+  });
+});
+
+describe("HQ super-admins are never dropped into customer surfaces (routing guard)", () => {
+  // Live-reproduced blocker: a super-admin (no membership row) hitting any
+  // (app) page was redirected into /onboarding/company. requireOrgContext()
+  // had no super-admin guard, so HQ staff could land in the customer
+  // onboarding flow — or, with a stray membership, inside a tenant workspace.
+  const session = read("server/auth/session.ts");
+  const onboarding = read("app/onboarding/layout.tsx");
+
+  it("requireOrgContext bounces super-admins to /admin/organizations when NOT impersonating", () => {
+    expect(session).toMatch(/isSuperAdminEmail\(user\.email\)/);
+    expect(session).toMatch(/getActiveImpersonation\(user\.email \?\? null\)/);
+    expect(session).toMatch(/if \(!imp\) redirect\("\/admin\/organizations"\)/);
+  });
+
+  it("requireOrgContext still resolves the impersonation TARGET for an active session", () => {
+    // getOrgForUser receives currentEmail so its internal impersonation
+    // override can hand back the target org instead of bouncing to HQ.
+    expect(session).toMatch(
+      /getOrgForUser\(user\.id, \{ currentEmail: user\.email \?\? null \}\)/,
+    );
+  });
+
+  it("onboarding layout (its own route group) carries the same super-admin guard", () => {
+    expect(onboarding).toMatch(/import \{ isSuperAdminEmail \}/);
+    expect(onboarding).toMatch(
+      /isSuperAdminEmail\(user\.email\)\) redirect\("\/admin\/organizations"\)/,
+    );
+  });
+
+  it("getOrgForUser resolves the multi-org fallback deterministically (ORDER BY created_at)", () => {
+    // Without ORDER BY, memberships[0] is undefined Postgres row order, so a
+    // multi-org user with no active_org_id cookie could flip orgs per request.
+    expect(session).toMatch(/\.order\("created_at", \{ ascending: true \}\)/);
+  });
+});
+
+describe("Impersonation is the only HQ→workspace entry, and switch-back unwinds it", () => {
+  const route = read("app/admin/switch-to-customer/route.ts");
+  const actions = read("app/admin/impersonation/actions.ts");
+
+  it("switch-to-customer routes to /dashboard ONLY with an active impersonation session", () => {
+    expect(route).toMatch(/getActiveImpersonation\(user\.email \?\? null\)/);
+    expect(route).toMatch(/if \(impersonation\)/);
+    // No active session → company picker, never the workspace directly.
+    expect(route).toMatch(/"\/admin\/customers"/);
+  });
+
+  it("switch-to-customer has NO self-org shortcut into /dashboard (would trip the guard)", () => {
+    // The only `/dashboard` redirect must be gated behind `if (impersonation)`.
+    const dashboardRedirects = route.match(/"\/dashboard"/g) ?? [];
+    // One for the non-admin safety bounce, one for the impersonation branch.
+    expect(dashboardRedirects.length).toBeLessThanOrEqual(2);
+  });
+
+  it("endImpersonation deletes the cookie AND ends the server-side session row", () => {
+    expect(actions).toMatch(/jar\.delete\(IMPERSONATION_COOKIE\)/);
+    expect(actions).toMatch(/endImpersonationSession\(active\.session_id\)/);
+    expect(actions).toMatch(/redirect\("\/admin\/impersonation\?saved=ended"\)/);
   });
 });

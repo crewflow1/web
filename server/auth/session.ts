@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
 
 export type OrgStatus =
   | "pending"
@@ -93,10 +94,17 @@ export async function getOrgForUser(
     }
   }
 
+  // Deterministic order: the fallback below picks memberships[0] when there's
+  // no (valid) active_org_id cookie. Without an explicit ORDER BY, Postgres row
+  // order is undefined, so a multi-org user could resolve to a *different* org
+  // between requests. Order by created_at (earliest-joined = their default org)
+  // with id as a stable tiebreaker.
   const { data: memberships, error: memErr } = await supabase
     .from("memberships")
     .select("org_id, role")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
 
   if (memErr || !memberships || memberships.length === 0) return null;
 
@@ -203,6 +211,22 @@ export async function requireOrgContext(): Promise<{
   ctx: OrgContext;
 }> {
   const user = await requireUser();
+
+  // HQ super-admins must NEVER be dropped into a customer workspace — or the
+  // customer onboarding flow — UNLESS they're actively impersonating a tenant.
+  // requireOrgContext() gates every (app) surface, so this is the single
+  // chokepoint that keeps HQ staff out of tenant UI even if they somehow hold
+  // a stray membership row. getActiveImpersonation re-validates server-side
+  // (super-admin check + admin_email match + 24h cap) so the impersonation
+  // cookie alone can never grant the bypass.
+  if (isSuperAdminEmail(user.email)) {
+    const { getActiveImpersonation } = await import(
+      "@/server/services/impersonation"
+    );
+    const imp = await getActiveImpersonation(user.email ?? null);
+    if (!imp) redirect("/admin/organizations");
+  }
+
   const ctx = await getOrgForUser(user.id, { currentEmail: user.email ?? null });
   if (!ctx) redirect("/onboarding/company");
   if (!orgHasActiveAccess(ctx.org.status)) {

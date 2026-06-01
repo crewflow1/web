@@ -216,10 +216,14 @@ export async function GET(request: NextRequest) {
 
   let safeNext: string;
   if (isAdmin) {
-    // HQ admin: honour an explicit /admin/* deep link, otherwise the HQ
-    // dashboard. Never a customer workspace.
+    // HQ admin: honour an explicit /admin/* deep link, otherwise CrewFlow HQ
+    // organizations (where pending-approval signups live — the CEO-directive
+    // landing). Never a customer workspace. Must stay "/admin/organizations"
+    // to match the middleware, /access-pending and demo-email call sites.
     safeNext =
-      safeExplicit && safeExplicit.startsWith("/admin") ? safeExplicit : "/admin";
+      safeExplicit && safeExplicit.startsWith("/admin")
+        ? safeExplicit
+        : "/admin/organizations";
   } else if (safeExplicit && !safeExplicit.startsWith("/admin")) {
     safeNext = safeExplicit;
   } else {
