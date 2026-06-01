@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { getActiveImpersonation } from "@/server/services/impersonation";
-import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -22,23 +21,19 @@ export const runtime = "nodejs";
  */
 export async function GET(request: NextRequest) {
   const user = await requireUser();
-  const toDashboard = NextResponse.redirect(new URL("/dashboard", request.url));
 
-  // A non-admin only ever has their own workspace.
-  if (!isSuperAdminEmail(user.email)) return toDashboard;
+  // HQ-only feature. A non-admin should never reach here (the link only
+  // renders in the HQ layout); if they do, send them to their own workspace.
+  if (!isSuperAdminEmail(user.email)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
 
-  // Already impersonating → the customer workspace is live at /dashboard.
+  // Active impersonation → that customer workspace is live at /dashboard.
   const impersonation = await getActiveImpersonation(user.email ?? null);
-  if (impersonation) return toDashboard;
+  if (impersonation) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
 
-  // Super-admin who also belongs to an org → that workspace.
-  const supabase = await createClient();
-  const { count } = await supabase
-    .from("memberships")
-    .select("org_id", { count: "exact", head: true })
-    .eq("user_id", user.id);
-  if ((count ?? 0) > 0) return toDashboard;
-
-  // Org-less HQ operator: choose a customer to view (impersonate).
+  // No active impersonation → open the company selector to pick one.
   return NextResponse.redirect(new URL("/admin/customers", request.url));
 }
