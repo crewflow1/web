@@ -200,27 +200,50 @@ export async function GET(request: NextRequest) {
     return bounceToLogin(origin, "bootstrap_failed", userPayload.email);
   }
 
-  // Choose default landing based on role.
+  // Choose default landing based on MEMBERSHIP, not just email allowlist.
   //
-  // For SUPER-ADMINS, the role-based fallback (/admin/organizations)
-  // ALWAYS wins unless an explicit `?next=/admin/...` deep-link is
-  // present. Defence-in-depth — a stale link with `?next=/dashboard`
-  // must never route the CEO into a contractor workspace.
+  // Root cause of the "onboarding email sends customer to HQ" bug: landing
+  // was decided solely by isSuperAdminEmail(). Any customer whose email
+  // happened to be in CREWFLOW_SUPERADMIN_EMAILS was forced into /admin,
+  // and superadmin status leaked into the default destination.
   //
-  // For everyone else, the explicit `?next=` deep link wins. If they
-  // were invited via promoteDemoToCustomer, they'll land on /dashboard
-  // which immediately resolves their tenant org context.
+  // Correct rule:
+  //   - A user who belongs to an org (e.g. invited via promoteDemoToCustomer,
+  //     which creates the org + membership before sending the email) lands in
+  //     their own workspace (/dashboard). Never HQ.
+  //   - A superadmin with NO org membership lands in /admin (pure HQ operator).
+  //   - Explicit ?next= deep links are honoured, but non-admins can never be
+  //     deep-linked into /admin/*.
   const isAdmin = isSuperAdminEmail(userPayload.email);
-  const fallback = isAdmin ? "/admin/organizations" : "/dashboard";
+
+  let hasOrgMembership = false;
+  try {
+    const { count } = await supabase
+      .from("memberships")
+      .select("org_id", { count: "exact", head: true })
+      .eq("user_id", userPayload.id);
+    hasOrgMembership = (count ?? 0) > 0;
+  } catch {
+    hasOrgMembership = false;
+  }
+
   const safeExplicit =
     explicitNext && explicitNext.startsWith("/") && !explicitNext.startsWith("//")
       ? explicitNext
       : null;
-  const safeNext = isAdmin
-    ? safeExplicit && safeExplicit.startsWith("/admin")
-      ? safeExplicit
-      : fallback
-    : (safeExplicit ?? fallback);
+
+  let safeNext: string;
+  if (safeExplicit) {
+    // Honour deep links — but a non-admin can never be sent into /admin.
+    safeNext =
+      !isAdmin && safeExplicit.startsWith("/admin") ? "/dashboard" : safeExplicit;
+  } else if (hasOrgMembership) {
+    safeNext = "/dashboard"; // customer/owner with a workspace — never HQ
+  } else if (isAdmin) {
+    safeNext = "/admin/organizations"; // pure HQ operator, no tenant org
+  } else {
+    safeNext = "/dashboard"; // new user — onboarding resolves there
+  }
 
   console.log(
     JSON.stringify({
@@ -228,6 +251,7 @@ export async function GET(request: NextRequest) {
       user_id: userPayload.id,
       email: userPayload.email,
       is_super_admin: isAdmin,
+      has_org_membership: hasOrgMembership,
       landing: safeNext,
     }),
   );
