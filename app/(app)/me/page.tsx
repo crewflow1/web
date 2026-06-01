@@ -11,6 +11,7 @@ import {
   type TimeEntry,
 } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
+import { formatTimeUK } from "@/lib/time/format";
 import { clockIn, clockOut, startBreak, endBreak } from "./actions";
 
 /**
@@ -167,7 +168,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
                 {openHours.toFixed(2)} h
               </div>
               <div className="text-xs text-slate-500">
-                started {new Date(open.started_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                started {formatTimeUK(open.started_at)}
                 {open.job_id ? " · on a job" : ""}
                 {onBreak ? " · on break" : ""}
               </div>
@@ -275,9 +276,9 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
               <li key={r.id} className="flex items-center justify-between py-1.5">
                 <div>
                   <div className="font-medium text-slate-900">
-                    {new Date(r.starts_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    {formatTimeUK(r.starts_at)}
                     {" – "}
-                    {new Date(r.ends_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    {formatTimeUK(r.ends_at)}
                   </div>
                   {r.notes ? <div className="text-xs text-slate-500">{r.notes}</div> : null}
                 </div>
