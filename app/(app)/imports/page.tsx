@@ -64,13 +64,16 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        id="start-import"
+        className="scroll-mt-20 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <h2 className="text-base font-semibold text-slate-900">Start a new import</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Supports <strong>CSV, Excel, PDF invoices/quotes, and photos
-          or screenshots</strong> (JPG, PNG, HEIC). Connectors for Sage,
-          Xero, QuickBooks and Buildertrend are coming — for now upload
-          their CSV/Excel exports here.
+          Supports <strong>CSV, Excel, PDF invoices/quotes, photos or
+          screenshots</strong> (JPG, PNG, HEIC) <strong>and ZIP archives</strong>{" "}
+          of any of these. Exporting from Sage, Xero, QuickBooks or
+          Buildertrend? Use the guided steps below, then upload here.
         </p>
         <CreateImportForm action={createImport} />
       </section>
@@ -112,9 +115,9 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
             Move from another system
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            Native API connectors are in build. For each system below you
-            can already upload its CSV/Excel export through the
-            &ldquo;Start a new import&rdquo; flow above.
+            Guided import for your current tool. Export CSV/Excel (or a ZIP of
+            several), then upload it — CrewFlow detects, maps and previews each
+            file before anything is committed.
           </p>
         </header>
         <ul className="grid grid-cols-1 gap-3 p-6 sm:grid-cols-2">
@@ -133,20 +136,33 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
                     Accepts: {c.exportHints.join(", ")}
                   </p>
                 </div>
-                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                  Coming soon
+                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
+                  Guided
                 </span>
               </div>
-              {c.docs ? (
+              <ol className="mt-3 list-decimal space-y-1 pl-4 text-[11px] text-slate-600">
+                {c.steps.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ol>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
                 <a
-                  href={c.docs}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 inline-block text-[11px] font-medium text-slate-600 hover:text-slate-900"
+                  href="#start-import"
+                  className="rounded-md bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800"
                 >
-                  How to export from {c.name} →
+                  Start {c.name} import →
                 </a>
-              ) : null}
+                {c.docs ? (
+                  <a
+                    href={c.docs}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    How to export from {c.name} →
+                  </a>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
