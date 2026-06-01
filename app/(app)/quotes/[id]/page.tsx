@@ -23,6 +23,7 @@ import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
+import { SendQuote } from "./_send-quote";
 import { env } from "@/lib/env";
 
 /**
@@ -106,7 +107,8 @@ export default async function EditQuotePage({
           public_token, sent_at, viewed_at, accepted_at, declined_at,
           accept_signature, created_at, created_by, job_id,
           approved_by, approved_at, approval_comment,
-          approver:users!quotes_approved_by_fkey ( id, full_name, email )
+          approver:users!quotes_approved_by_fkey ( id, full_name, email ),
+          customer:customers ( name, email )
         `,
       )
       .eq("id", id)
@@ -303,14 +305,14 @@ export default async function EditQuotePage({
               </form>
             ) : null}
 
-            {/* Approved → send to customer */}
+            {/* Approved → mark as sent (status only) */}
             {status === "approved" ? (
               <form action={sendQuote.bind(null, id)}>
                 <button
                   type="submit"
                   className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
                 >
-                  Send to customer
+                  Mark as sent
                 </button>
               </form>
             ) : null}
@@ -352,6 +354,18 @@ export default async function EditQuotePage({
               Download PDF
             </a>
           </div>
+
+          {(status === "approved" ||
+            status === "sent" ||
+            status === "viewed") ? (
+            <SendQuote
+              quoteId={id}
+              customerEmail={
+                (quote as { customer?: { email: string | null } | null })
+                  .customer?.email ?? null
+              }
+            />
+          ) : null}
         </div>
       </section>
 
