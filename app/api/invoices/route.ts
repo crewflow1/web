@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
   // need its totals).
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
-    .select("id, subtotal, vat_total, total, currency, org_id")
+    .select("id, subtotal, vat_total, total, currency, org_id, status")
     .eq("id", parsed.data.quote_id)
     .maybeSingle();
   if (qErr) {
@@ -84,6 +84,16 @@ export async function POST(request: NextRequest) {
   }
   if (!quote) {
     return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+  }
+  // Only accepted quotes are billable. The UI already scopes its dropdown to
+  // accepted, but a stale dropdown or a direct POST must not be able to bill a
+  // draft/sent/declined quote the customer never accepted. The auto-invoice
+  // path (quotes/actions.ts) inserts directly and is unaffected by this gate.
+  if (quote.status !== "accepted") {
+    return NextResponse.json(
+      { error: "Only accepted quotes can be invoiced." },
+      { status: 409 },
+    );
   }
 
   // Allocate the next per-org invoice number via the SECURITY DEFINER RPC.
