@@ -19,6 +19,7 @@ import {
   OcrUnavailableError,
 } from "@/lib/imports/ocr";
 import { detectEntityType, mapRow, type EntityType } from "@/lib/imports/detect";
+import { expandZips, type UploadItem } from "@/lib/imports/zip";
 import {
   findCustomerDuplicate,
   findInvoiceDuplicate,
@@ -90,7 +91,18 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
     redirect(`/imports/${importId}?error=already_committed`);
   }
 
-  const files = formData.getAll("file") as File[];
+  const rawFiles = formData.getAll("file") as File[];
+  if (rawFiles.length === 0) redirect(`/imports/${importId}?error=no_files`);
+
+  // Expand any ZIP archives into their supported inner files so the rest of
+  // the pipeline treats them like directly-uploaded files.
+  let files: UploadItem[] = [];
+  try {
+    files = await expandZips(rawFiles);
+  } catch (e) {
+    console.error("[imports] zip expansion failed", e);
+    redirect(`/imports/${importId}?error=zip_failed`);
+  }
   if (files.length === 0) redirect(`/imports/${importId}?error=no_files`);
 
   for (const file of files) {

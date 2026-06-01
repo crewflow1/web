@@ -6,6 +6,7 @@ import {
   describeActivity,
   type ActivityRow,
 } from "@/lib/activity/render";
+import { formatDateTimeUK } from "@/lib/time/format";
 
 /**
  * Dedicated activity log. Filter by date range, actor, action type
@@ -180,7 +181,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">
                     {r.target_table} · {r.target_id.slice(0, 8)} ·{" "}
-                    {new Date(r.created_at).toLocaleString("en-GB")}
+                    {formatDateTimeUK(r.created_at)}
                   </div>
                 </div>
               </li>

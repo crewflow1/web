@@ -200,27 +200,33 @@ export async function GET(request: NextRequest) {
     return bounceToLogin(origin, "bootstrap_failed", userPayload.email);
   }
 
-  // Choose default landing based on role.
-  //
-  // For SUPER-ADMINS, the role-based fallback (/admin/organizations)
-  // ALWAYS wins unless an explicit `?next=/admin/...` deep-link is
-  // present. Defence-in-depth — a stale link with `?next=/dashboard`
-  // must never route the CEO into a contractor workspace.
-  //
-  // For everyone else, the explicit `?next=` deep link wins. If they
-  // were invited via promoteDemoToCustomer, they'll land on /dashboard
-  // which immediately resolves their tenant org context.
+  // Default landing per the 3-user-type auth model (source of truth):
+  //   1. CrewFlow HQ admin (super-admin) -> HQ, ALWAYS. Never auto-lands in a
+  //      customer workspace, even if they also belong to an org.
+  //   2. Company owner / admin -> their company dashboard (/dashboard).
+  //   3. Staff -> staff dashboard. /dashboard already redirects role=staff to
+  //      /me, so non-admins resolve to the right place there.
+  // Non-admins can never be deep-linked into /admin/*.
   const isAdmin = isSuperAdminEmail(userPayload.email);
-  const fallback = isAdmin ? "/admin/organizations" : "/dashboard";
+
   const safeExplicit =
     explicitNext && explicitNext.startsWith("/") && !explicitNext.startsWith("//")
       ? explicitNext
       : null;
-  const safeNext = isAdmin
-    ? safeExplicit && safeExplicit.startsWith("/admin")
-      ? safeExplicit
-      : fallback
-    : (safeExplicit ?? fallback);
+
+  let safeNext: string;
+  if (isAdmin) {
+    // HQ admin: honour an explicit /admin/* deep link, otherwise the HQ
+    // dashboard. Never a customer workspace.
+    safeNext =
+      safeExplicit && safeExplicit.startsWith("/admin") ? safeExplicit : "/admin";
+  } else if (safeExplicit && !safeExplicit.startsWith("/admin")) {
+    safeNext = safeExplicit;
+  } else {
+    // Owner -> /dashboard; staff -> /me (handled by /dashboard); brand-new
+    // user with no org -> /onboarding/company (handled by requireOrgContext).
+    safeNext = "/dashboard";
+  }
 
   console.log(
     JSON.stringify({

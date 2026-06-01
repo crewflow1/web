@@ -350,6 +350,11 @@ export type Database = {
       }
       customers: {
         Row: {
+          address_line1: string | null
+          address_line2: string | null
+          city: string | null
+          country: string
+          county: string | null
           created_at: string
           email: string | null
           id: string
@@ -358,9 +363,15 @@ export type Database = {
           org_id: string
           phone: string | null
           portal_token: string | null
+          postcode: string | null
           updated_at: string
         }
         Insert: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          country?: string
+          county?: string | null
           created_at?: string
           email?: string | null
           id?: string
@@ -369,9 +380,15 @@ export type Database = {
           org_id: string
           phone?: string | null
           portal_token?: string | null
+          postcode?: string | null
           updated_at?: string
         }
         Update: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          country?: string
+          county?: string | null
           created_at?: string
           email?: string | null
           id?: string
@@ -380,6 +397,7 @@ export type Database = {
           org_id?: string
           phone?: string | null
           portal_token?: string | null
+          postcode?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -966,6 +984,12 @@ export type Database = {
           photos: string[]
           recurring: Json | null
           scheduled_date: string | null
+          site_address_line1: string | null
+          site_address_line2: string | null
+          site_city: string | null
+          site_country: string | null
+          site_county: string | null
+          site_postcode: string | null
           status: string
           updated_at: string
         }
@@ -980,6 +1004,12 @@ export type Database = {
           photos?: string[]
           recurring?: Json | null
           scheduled_date?: string | null
+          site_address_line1?: string | null
+          site_address_line2?: string | null
+          site_city?: string | null
+          site_country?: string | null
+          site_county?: string | null
+          site_postcode?: string | null
           status?: string
           updated_at?: string
         }
@@ -994,6 +1024,12 @@ export type Database = {
           photos?: string[]
           recurring?: Json | null
           scheduled_date?: string | null
+          site_address_line1?: string | null
+          site_address_line2?: string | null
+          site_city?: string | null
+          site_country?: string | null
+          site_county?: string | null
+          site_postcode?: string | null
           status?: string
           updated_at?: string
         }

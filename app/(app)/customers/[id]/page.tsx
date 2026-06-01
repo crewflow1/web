@@ -8,6 +8,8 @@ import { CustomerForm } from "../_form";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
+import { MapActions } from "@/components/maps/MapActions";
+import { formatAddressLines, hasAddress } from "@/lib/address";
 
 /**
  * Customer edit page.
@@ -30,7 +32,9 @@ export default async function EditCustomerPage({
   const supabase = await createClient();
   const { data: customer } = await supabase
     .from("customers")
-    .select("id, name, email, phone, notes, portal_token, created_at")
+    .select(
+      "id, name, email, phone, notes, portal_token, created_at, address_line1, address_line2, city, county, postcode, country",
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -310,6 +314,29 @@ export default async function EditCustomerPage({
         </div>
       ) : null}
 
+      {(() => {
+        const addr = {
+          line1: customer.address_line1,
+          line2: customer.address_line2,
+          city: customer.city,
+          county: customer.county,
+          postcode: customer.postcode,
+          country: customer.country,
+        };
+        if (!hasAddress(addr)) return null;
+        return (
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Address</h2>
+            <address className="mt-2 not-italic text-sm text-slate-600">
+              {formatAddressLines(addr).map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </address>
+            <MapActions address={addr} className="mt-3" />
+          </section>
+        );
+      })()}
+
       <CustomerForm
         action={updateAction}
         submitLabel="Save changes"
@@ -319,6 +346,12 @@ export default async function EditCustomerPage({
           email: customer.email ?? "",
           phone: customer.phone ?? "",
           notes: customer.notes ?? "",
+          address_line1: customer.address_line1 ?? "",
+          address_line2: customer.address_line2 ?? "",
+          city: customer.city ?? "",
+          county: customer.county ?? "",
+          postcode: customer.postcode ?? "",
+          country: customer.country ?? "United Kingdom",
         }}
       />
 

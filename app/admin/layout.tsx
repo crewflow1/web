@@ -99,12 +99,12 @@ export default async function AdminLayout({
               ))}
             </nav>
             <div className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
-              <Link
-                href="/dashboard"
+              <a
+                href="/admin/switch-to-customer"
                 className="block hover:text-slate-900"
               >
                 ↩ Switch to customer view
-              </Link>
+              </a>
             </div>
           </div>
         </aside>

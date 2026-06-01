@@ -19,6 +19,10 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import {
+  notifyOwnersOfLeaveRequest,
+  notifyStaffOfLeaveDecision,
+} from "@/lib/email/send-leave";
 
 /**
  * Staff CRUD + rota + leave server actions.
@@ -528,6 +532,19 @@ export async function createLeaveRequest(
     );
   }
 
+  // Email owners/admins (in-app notification is handled by DB triggers).
+  await notifyOwnersOfLeaveRequest({
+    orgId: ctx.org.id,
+    orgName: ctx.org.name ?? "",
+    requesterId: user.id,
+    leave: {
+      type: result.data.type,
+      starts_at: result.data.starts_at,
+      ends_at: result.data.ends_at,
+      reason: result.data.reason ?? null,
+    },
+  });
+
   revalidatePath("/staff/leave");
   return formSuccess({ successMessage: "Leave request submitted." });
 }
@@ -547,7 +564,7 @@ export async function reviewLeaveRequest(
   const note = String(formData.get("review_note") ?? "").trim() || null;
 
   const supabase = await createClient();
-  const { error, count } = await supabase
+  const { data: updated, error, count } = await supabase
     .from("leave_requests")
     .update(
       {
@@ -560,14 +577,29 @@ export async function reviewLeaveRequest(
     )
     .eq("id", requestId)
     .eq("org_id", ctx.org.id)
-    .eq("status", "pending"); // only review pending
+    .eq("status", "pending") // only review pending
+    .select("user_id, type, starts_at, ends_at")
+    .maybeSingle();
   if (error) {
     console.error("[leave] review failed", error);
     redirect(`/staff/leave/${requestId}?error=review_failed`);
   }
-  if (count === 0) {
+  if (count === 0 || !updated) {
     redirect(`/staff/leave/${requestId}?error=already_reviewed`);
   }
+
+  // Email the requester (in-app notification handled by DB triggers).
+  await notifyStaffOfLeaveDecision({
+    requesterId: updated.user_id,
+    orgName: ctx.org.name ?? "",
+    decision,
+    leave: {
+      type: updated.type,
+      starts_at: updated.starts_at,
+      ends_at: updated.ends_at,
+    },
+    note,
+  });
 
   revalidatePath("/staff/leave");
   revalidatePath(`/staff/leave/${requestId}`);

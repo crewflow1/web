@@ -7,6 +7,7 @@ import {
   cancelLeaveRequest,
 } from "../actions";
 import { CreateLeaveForm } from "./_create-form";
+import { formatDateUK } from "@/lib/time/format";
 
 /**
  * Leave requests — submit, review (approve/reject), cancel.
@@ -87,6 +88,20 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
     memberById.set(m.user_id, m.user?.full_name ?? m.user?.email ?? "—");
   }
 
+  // Leave calendar: org-wide upcoming approved + pending leave.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const { data: upcomingRaw } = await supabase
+    .from("leave_requests")
+    .select("id, user_id, type, starts_at, ends_at, status")
+    .eq("org_id", ctx.org.id)
+    .in("status", ["approved", "pending"])
+    .gte("ends_at", todayIso)
+    .order("starts_at", { ascending: true });
+  const upcoming = (upcomingRaw ?? []) as Pick<
+    LeaveRow,
+    "id" | "user_id" | "type" | "starts_at" | "ends_at" | "status"
+  >[];
+
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
   const savedMessage = sp.saved
     ? sp.saved === "requested"
@@ -133,6 +148,34 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
         <CreateLeaveForm action={createLeaveRequest} />
       </section>
 
+      {/* Leave calendar — org-wide upcoming approved + pending leave. */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-900">Leave calendar</h2>
+        <p className="mt-0.5 text-xs text-slate-500">Upcoming approved and pending leave across the team.</p>
+        {upcoming.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-500">No upcoming leave.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {upcoming.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`inline-flex h-2.5 w-2.5 rounded-full ${r.status === "approved" ? "bg-green-500" : "bg-amber-400"}`}
+                    aria-hidden
+                  />
+                  <span className="font-medium text-slate-900">{memberById.get(r.user_id) ?? "—"}</span>
+                  <span className="text-slate-500">· {TYPE_LABEL[r.type] ?? r.type}</span>
+                </div>
+                <div className="text-right text-slate-600">
+                  {formatDateUK(r.starts_at)} – {formatDateUK(r.ends_at)}
+                  <span className="ml-2 text-[11px] text-slate-400">{r.status}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -156,7 +199,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
                   <tr key={r.id}>
                     <td className="px-4 py-2 text-slate-900">{memberById.get(r.user_id) ?? "—"}</td>
                     <td className="px-4 py-2 text-slate-700">{TYPE_LABEL[r.type] ?? r.type}</td>
-                    <td className="px-4 py-2 text-slate-700">{r.starts_at} → {r.ends_at}</td>
+                    <td className="px-4 py-2 text-slate-700">{formatDateUK(r.starts_at)} → {formatDateUK(r.ends_at)}</td>
                     <td className="px-4 py-2 text-slate-600">{r.reason ?? "—"}</td>
                     <td className="px-4 py-2">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[r.status] ?? STATUS_STYLES.pending}`}>

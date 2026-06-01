@@ -7,10 +7,12 @@ import {
   isOnBreak,
   isOpen,
   startOfWeekIso,
+  startOfMonthIso,
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
+import { formatTimeUK, formatDateUK } from "@/lib/time/format";
 import { clockIn, clockOut, startBreak, endBreak } from "./actions";
 
 /**
@@ -62,8 +64,9 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const todayIso = now.toISOString().slice(0, 10);
   const weekStartIso = startOfWeekIso(now);
   const weekEndIso = addDaysIso(weekStartIso, 6);
+  const monthStartIso = startOfMonthIso(now);
 
-  const [profileRes, openRes, weekRes, rotaRes, leavesRes, jobsRes] =
+  const [profileRes, openRes, weekRes, rotaRes, leavesRes, jobsRes, monthRes] =
     await Promise.all([
       supabase
         .from("users")
@@ -105,6 +108,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .neq("status", "completed")
         .order("scheduled_date", { ascending: true })
         .limit(20),
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("user_id", user.id)
+        .gte("started_at", `${monthStartIso}T00:00:00Z`)
+        .order("started_at", { ascending: false }),
     ]);
 
   const profile = profileRes.data;
@@ -120,6 +129,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const todayEnd = new Date(`${addDaysIso(todayIso, 1)}T00:00:00Z`);
   const hoursToday = hoursInWindow(weekEntries, todayStart, todayEnd, now);
   const hoursWeek = hoursInWindow(weekEntries, weekStart, weekEnd, now);
+
+  const monthEntries = (monthRes.data ?? []) as TimeEntry[];
+  const monthStart = new Date(`${monthStartIso}T00:00:00Z`);
+  const hoursMonth = hoursInWindow(monthEntries, monthStart, now, now);
+  // Completed shifts only for the history list (open shift shown separately).
+  const historyEntries = monthEntries.filter((e) => e.ended_at);
   const openHours = open ? entryHours(open, now) : 0;
   const onBreak = open ? isOnBreak(open) : false;
   const clockedIn = open ? isOpen(open) : false;
@@ -167,7 +182,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
                 {openHours.toFixed(2)} h
               </div>
               <div className="text-xs text-slate-500">
-                started {new Date(open.started_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                started {formatTimeUK(open.started_at)}
                 {open.job_id ? " · on a job" : ""}
                 {onBreak ? " · on break" : ""}
               </div>
@@ -264,6 +279,53 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         />
       </section>
 
+      {/* Timesheet history — daily/weekly/monthly + clock in/out history */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">My timesheet</h2>
+          <div className="text-xs text-slate-500">
+            Today {hoursToday.toFixed(2)}h · Week {hoursWeek.toFixed(2)}h · Month{" "}
+            {hoursMonth.toFixed(2)}h
+          </div>
+        </div>
+        {historyEntries.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-500">
+            No completed shifts this month yet.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100 text-sm">
+            {historyEntries.map((e) => {
+              const breaks = Array.isArray(e.breaks) ? e.breaks.length : 0;
+              return (
+                <li
+                  key={e.id}
+                  className="flex items-center justify-between gap-3 py-2"
+                >
+                  <div>
+                    <div className="font-medium text-slate-900">
+                      {formatDateUK(e.started_at)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {formatTimeUK(e.started_at)} – {formatTimeUK(e.ended_at)}
+                      {breaks > 0
+                        ? ` · ${breaks} break${breaks > 1 ? "s" : ""}`
+                        : ""}
+                      {e.job_id ? " · on a job" : ""}
+                    </div>
+                  </div>
+                  <div className="text-right font-semibold text-slate-900">
+                    {entryHours(e, now).toFixed(2)} h
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-3 text-[11px] text-slate-500">
+          Showing this month. Times shown in UK time (BST/GMT).
+        </p>
+      </section>
+
       {/* Today's rota */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Today&apos;s rota</h2>
@@ -275,9 +337,9 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
               <li key={r.id} className="flex items-center justify-between py-1.5">
                 <div>
                   <div className="font-medium text-slate-900">
-                    {new Date(r.starts_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    {formatTimeUK(r.starts_at)}
                     {" – "}
-                    {new Date(r.ends_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    {formatTimeUK(r.ends_at)}
                   </div>
                   {r.notes ? <div className="text-xs text-slate-500">{r.notes}</div> : null}
                 </div>

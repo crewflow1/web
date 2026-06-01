@@ -10,6 +10,7 @@ import {
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
+import { formatDateUK, formatTimeUK } from "@/lib/time/format";
 
 /**
  * Owner / admin view of one staff member's hours.
@@ -169,10 +170,10 @@ export default async function TimesheetPage({
                 return (
                   <tr key={e.id}>
                     <td className="px-4 py-2 text-slate-700 text-xs">
-                      {started.toLocaleDateString("en-GB")} {started.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      {formatDateUK(started)} {formatTimeUK(started)}
                     </td>
                     <td className="px-4 py-2 text-slate-700 text-xs">
-                      {ended ? `${ended.toLocaleDateString("en-GB")} ${ended.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "—"}
+                      {ended ? `${formatDateUK(ended)} ${formatTimeUK(ended)}` : "—"}
                     </td>
                     <td className="px-4 py-2 text-right font-medium text-slate-900">
                       {h.toFixed(2)}
