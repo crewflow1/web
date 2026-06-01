@@ -85,13 +85,13 @@ export function HqNavMobile({
               ))}
             </div>
             <div className="mt-4 border-t border-slate-200 pt-3 text-[11px] text-slate-500">
-              <Link
-                href="/dashboard"
+              <a
+                href="/admin/switch-to-customer"
                 onClick={() => setOpen(false)}
                 className="block hover:text-slate-900"
               >
                 ↩ Switch to customer view
-              </Link>
+              </a>
             </div>
           </nav>
         </div>
