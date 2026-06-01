@@ -103,6 +103,67 @@ export function CustomerForm({
         defaultValue={v.phone ?? defaults?.phone ?? ""}
         error={state.fieldErrors?.phone}
       />
+      <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-700">
+          Address
+        </legend>
+        <Field
+          name="address_line1"
+          label="Address line 1"
+          optional
+          placeholder="12 Shankill Road"
+          autoComplete="address-line1"
+          defaultValue={v.address_line1 ?? defaults?.address_line1 ?? ""}
+          error={state.fieldErrors?.address_line1}
+        />
+        <Field
+          name="address_line2"
+          label="Address line 2"
+          optional
+          autoComplete="address-line2"
+          defaultValue={v.address_line2 ?? defaults?.address_line2 ?? ""}
+          error={state.fieldErrors?.address_line2}
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            name="city"
+            label="City / Town"
+            optional
+            placeholder="Belfast"
+            autoComplete="address-level2"
+            defaultValue={v.city ?? defaults?.city ?? ""}
+            error={state.fieldErrors?.city}
+          />
+          <Field
+            name="county"
+            label="County"
+            optional
+            placeholder="Antrim"
+            autoComplete="address-level1"
+            defaultValue={v.county ?? defaults?.county ?? ""}
+            error={state.fieldErrors?.county}
+          />
+          <Field
+            name="postcode"
+            label="Postcode"
+            optional
+            placeholder="BT13 2AB"
+            autoComplete="postal-code"
+            defaultValue={v.postcode ?? defaults?.postcode ?? ""}
+            error={state.fieldErrors?.postcode}
+          />
+          <Field
+            name="country"
+            label="Country"
+            optional
+            placeholder="United Kingdom"
+            autoComplete="country-name"
+            defaultValue={v.country ?? defaults?.country ?? "United Kingdom"}
+            error={state.fieldErrors?.country}
+          />
+        </div>
+      </fieldset>
+
       <TextareaField
         name="notes"
         label="Notes"

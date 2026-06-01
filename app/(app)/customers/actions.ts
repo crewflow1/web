@@ -47,6 +47,12 @@ export async function createCustomer(
       email: result.data.email ?? null,
       phone: result.data.phone ?? null,
       notes: result.data.notes ?? null,
+      address_line1: result.data.address_line1 ?? null,
+      address_line2: result.data.address_line2 ?? null,
+      city: result.data.city ?? null,
+      county: result.data.county ?? null,
+      postcode: result.data.postcode ?? null,
+      country: result.data.country ?? "United Kingdom",
     })
     .select("id")
     .single();
@@ -84,6 +90,12 @@ export async function updateCustomer(
         email: result.data.email ?? null,
         phone: result.data.phone ?? null,
         notes: result.data.notes ?? null,
+        address_line1: result.data.address_line1 ?? null,
+        address_line2: result.data.address_line2 ?? null,
+        city: result.data.city ?? null,
+        county: result.data.county ?? null,
+        postcode: result.data.postcode ?? null,
+        country: result.data.country ?? "United Kingdom",
       },
       { count: "exact" },
     )

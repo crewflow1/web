@@ -49,7 +49,24 @@ export const jobFormSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
     .or(z.literal("").transform(() => undefined))
     .optional(),
+  // Optional site-address override. When all blank, the job inherits the
+  // linked customer's address (see resolveJobAddress in lib/address.ts).
+  site_address_line1: optionalText(200),
+  site_address_line2: optionalText(200),
+  site_city: optionalText(100),
+  site_county: optionalText(100),
+  site_postcode: optionalText(20),
+  site_country: optionalText(100),
 });
+
+function optionalText(max: number) {
+  return z
+    .string()
+    .trim()
+    .max(max)
+    .optional()
+    .or(z.literal("").transform(() => undefined));
+}
 
 export type JobFormInput = z.infer<typeof jobFormSchema>;
 

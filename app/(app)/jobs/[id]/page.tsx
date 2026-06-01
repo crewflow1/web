@@ -43,6 +43,7 @@ export default async function EditJobPage({
     .select(
       `
         id, status, scheduled_date, notes, customer_id, assigned_to, recurring,
+        site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
         customer:customers ( id, name )
       `,
     )
@@ -178,6 +179,12 @@ export default async function EditJobPage({
               recurring_pattern: recurring?.pattern ?? "",
               recurring_end_date: recurring?.end_date ?? "",
               notes: job.notes ?? "",
+              site_address_line1: job.site_address_line1 ?? "",
+              site_address_line2: job.site_address_line2 ?? "",
+              site_city: job.site_city ?? "",
+              site_county: job.site_county ?? "",
+              site_postcode: job.site_postcode ?? "",
+              site_country: job.site_country ?? "",
             }}
           />
         );

@@ -155,6 +155,62 @@ export function JobForm({
           error={fe.recurring_end_date}
         />
       </div>
+      <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-700">
+          Site address (optional)
+        </legend>
+        <p className="text-xs text-slate-500">
+          Leave blank to use the customer&apos;s address. Fill in only when the
+          work is at a different site.
+        </p>
+        <Field
+          name="site_address_line1"
+          label="Address line 1"
+          optional
+          autoComplete="address-line1"
+          defaultValue={pick("site_address_line1")}
+          error={fe.site_address_line1}
+        />
+        <Field
+          name="site_address_line2"
+          label="Address line 2"
+          optional
+          autoComplete="address-line2"
+          defaultValue={pick("site_address_line2")}
+          error={fe.site_address_line2}
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            name="site_city"
+            label="City / Town"
+            optional
+            defaultValue={pick("site_city")}
+            error={fe.site_city}
+          />
+          <Field
+            name="site_county"
+            label="County"
+            optional
+            defaultValue={pick("site_county")}
+            error={fe.site_county}
+          />
+          <Field
+            name="site_postcode"
+            label="Postcode"
+            optional
+            defaultValue={pick("site_postcode")}
+            error={fe.site_postcode}
+          />
+          <Field
+            name="site_country"
+            label="Country"
+            optional
+            defaultValue={pick("site_country")}
+            error={fe.site_country}
+          />
+        </div>
+      </fieldset>
+
       <TextareaField
         name="notes"
         label="Notes"

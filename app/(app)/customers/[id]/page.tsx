@@ -30,7 +30,9 @@ export default async function EditCustomerPage({
   const supabase = await createClient();
   const { data: customer } = await supabase
     .from("customers")
-    .select("id, name, email, phone, notes, portal_token, created_at")
+    .select(
+      "id, name, email, phone, notes, portal_token, created_at, address_line1, address_line2, city, county, postcode, country",
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -319,6 +321,12 @@ export default async function EditCustomerPage({
           email: customer.email ?? "",
           phone: customer.phone ?? "",
           notes: customer.notes ?? "",
+          address_line1: customer.address_line1 ?? "",
+          address_line2: customer.address_line2 ?? "",
+          city: customer.city ?? "",
+          county: customer.county ?? "",
+          postcode: customer.postcode ?? "",
+          country: customer.country ?? "United Kingdom",
         }}
       />
 

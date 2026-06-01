@@ -61,6 +61,12 @@ export async function createJob(
       scheduled_date: result.data.scheduled_date ?? null,
       notes: result.data.notes ?? null,
       recurring,
+      site_address_line1: result.data.site_address_line1 ?? null,
+      site_address_line2: result.data.site_address_line2 ?? null,
+      site_city: result.data.site_city ?? null,
+      site_county: result.data.site_county ?? null,
+      site_postcode: result.data.site_postcode ?? null,
+      site_country: result.data.site_country ?? null,
     })
     .select("id")
     .single();
@@ -101,6 +107,12 @@ export async function updateJob(
         scheduled_date: result.data.scheduled_date ?? null,
         notes: result.data.notes ?? null,
         recurring,
+        site_address_line1: result.data.site_address_line1 ?? null,
+        site_address_line2: result.data.site_address_line2 ?? null,
+        site_city: result.data.site_city ?? null,
+        site_county: result.data.site_county ?? null,
+        site_postcode: result.data.site_postcode ?? null,
+        site_country: result.data.site_country ?? null,
       },
       { count: "exact" },
     )
