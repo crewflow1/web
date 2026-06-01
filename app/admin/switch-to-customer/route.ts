@@ -15,9 +15,15 @@ export const runtime = "nodejs";
  *
  * Resolve a real destination instead:
  *   1. Active impersonation session  → /dashboard (renders that customer).
- *   2. Admin has their own org        → /dashboard (their workspace).
- *   3. Otherwise                      → /admin/customers to pick a customer
+ *   2. Otherwise                      → /admin/customers to pick a customer
  *      to impersonate (the actual entry point into a customer workspace).
+ *
+ * NOTE: there is deliberately no "admin has their own org → /dashboard" path.
+ * requireOrgContext() now bounces any super-admin out of the (app) group
+ * unless they're actively impersonating, so impersonation is the ONLY way an
+ * HQ operator reaches a customer workspace. Do not add a self-org shortcut
+ * here — it would land an HQ user in tenant UI and immediately get redirected
+ * back to /admin/organizations anyway.
  */
 export async function GET(request: NextRequest) {
   const user = await requireUser();

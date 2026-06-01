@@ -84,7 +84,9 @@ describe("Migration OS connector catalogue", () => {
     for (const c of CONNECTORS as readonly Connector[]) {
       expect(c.name.length).toBeGreaterThan(0);
       expect(c.blurb.length).toBeGreaterThan(0);
-      expect(["available", "coming_soon"]).toContain(c.status);
+      // Connector model moved from "coming_soon" placeholders to a working
+      // "guided" export→upload flow for every brand (see connectors.ts header).
+      expect(["available", "guided"]).toContain(c.status);
       expect(c.exportHints.length).toBeGreaterThan(0);
     }
   });
@@ -119,6 +121,8 @@ describe("Upload UI accepts the new file types", () => {
 
   it("the list page advertises Sage/Xero/QuickBooks/Buildertrend", () => {
     expect(IMPORTS_PAGE).toMatch(/CONNECTORS/);
-    expect(IMPORTS_PAGE).toMatch(/Coming soon/);
+    // Cards now show a "Guided" badge (working export→upload flow), replacing
+    // the old "Coming soon" placeholder label.
+    expect(IMPORTS_PAGE).toMatch(/Guided/);
   });
 });
