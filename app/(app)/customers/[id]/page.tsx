@@ -8,6 +8,8 @@ import { CustomerForm } from "../_form";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
+import { MapActions } from "@/components/maps/MapActions";
+import { formatAddressLines, hasAddress } from "@/lib/address";
 
 /**
  * Customer edit page.
@@ -311,6 +313,29 @@ export default async function EditCustomerPage({
           Portal link generated. Share the URL below with the customer.
         </div>
       ) : null}
+
+      {(() => {
+        const addr = {
+          line1: customer.address_line1,
+          line2: customer.address_line2,
+          city: customer.city,
+          county: customer.county,
+          postcode: customer.postcode,
+          country: customer.country,
+        };
+        if (!hasAddress(addr)) return null;
+        return (
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Address</h2>
+            <address className="mt-2 not-italic text-sm text-slate-600">
+              {formatAddressLines(addr).map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </address>
+            <MapActions address={addr} className="mt-3" />
+          </section>
+        );
+      })()}
 
       <CustomerForm
         action={updateAction}

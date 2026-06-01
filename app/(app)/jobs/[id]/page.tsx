@@ -12,6 +12,8 @@ import {
   computeJobProfitability,
   marginPillClass,
 } from "@/lib/profitability/compute";
+import { resolveJobAddress, formatAddressLines } from "@/lib/address";
+import { MapActions } from "@/components/maps/MapActions";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -44,7 +46,7 @@ export default async function EditJobPage({
       `
         id, status, scheduled_date, notes, customer_id, assigned_to, recurring,
         site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
-        customer:customers ( id, name )
+        customer:customers ( id, name, address_line1, address_line2, city, county, postcode, country )
       `,
     )
     .eq("id", id)
@@ -159,6 +161,26 @@ export default async function EditJobPage({
           {errorMessage}
         </div>
       ) : null}
+
+      {(() => {
+        const jobAddress = resolveJobAddress(
+          job,
+          Array.isArray(job.customer) ? job.customer[0] : job.customer,
+        );
+        if (!jobAddress) return null;
+        const lines = formatAddressLines(jobAddress);
+        return (
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Site address</h2>
+            <address className="mt-2 not-italic text-sm text-slate-600">
+              {lines.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </address>
+            <MapActions address={jobAddress} className="mt-3" />
+          </section>
+        );
+      })()}
 
       {(() => {
         const recurring =
