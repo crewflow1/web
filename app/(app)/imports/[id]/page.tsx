@@ -7,6 +7,7 @@ import {
   commitImport,
   rollbackImport,
   ignoreDuplicateRow,
+  resolveReviewRow,
   sendStaffInvitesFromImport,
 } from "../actions";
 
@@ -94,6 +95,7 @@ export default async function ImportWizardPage({
     if (
       r.status === "duplicate" ||
       r.status === "error" ||
+      r.status === "needs_review" ||
       (r.status === "skipped" && r.error_message) ||
       (r.error_message && r.status !== "imported")
     ) {
@@ -105,7 +107,14 @@ export default async function ImportWizardPage({
     v.avgConfidence = v.count > 0 ? Math.round(v.avgConfidence / v.count) : 0;
   }
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error
+    ? sp.error === "pick_entity_type"
+      ? "Pick an entity type before confirming this row."
+      : decodeURIComponent(sp.error)
+    : null;
+  // Rows we couldn't classify confidently — surfaced for the operator to
+  // confirm / re-classify / skip. Never silently dropped from the import.
+  const reviewRows = (rows ?? []).filter((r) => r.status === "needs_review");
   const savedMessage = sp.saved
     ? sp.saved === "uploaded"
       ? "Files parsed. Review what we detected, then commit."
@@ -117,7 +126,11 @@ export default async function ImportWizardPage({
             ? "Duplicate skipped — existing record kept."
             : sp.saved === "invites_sent"
               ? `Sent ${sp.count ?? 0} staff invite${sp.count === "1" ? "" : "s"}.`
-              : null
+              : sp.saved === "review_confirmed"
+                ? "Row confirmed — it'll be included on the next commit."
+                : sp.saved === "review_skipped"
+                  ? "Row skipped — it won't be imported."
+                  : null
     : null;
 
   return (
@@ -263,6 +276,94 @@ export default async function ImportWizardPage({
             </ul>
           </section>
 
+          {reviewRows.length > 0 ? (
+            <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 shadow-sm">
+              <h2 className="text-base font-semibold text-amber-900">
+                Needs review
+                <span className="ml-2 inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                  {reviewRows.length}
+                </span>
+              </h2>
+              <p className="mt-1 text-xs text-amber-800">
+                We weren&apos;t confident enough to auto-import these rows — the
+                entity type was unclear or required fields were missing. Nothing
+                here is lost or failed. Confirm a row (correcting its type if
+                needed) to include it on commit, or skip it. Rows left in review
+                are simply not imported.
+              </p>
+              <div className="mt-4 space-y-3">
+                {reviewRows.slice(0, 50).map((r) => {
+                  const mapped = (r.mapped ?? {}) as Record<string, unknown>;
+                  const current = r.entity_type ?? "";
+                  const selectDefault = REVIEW_ENTITY_OPTIONS.includes(current)
+                    ? current
+                    : "";
+                  return (
+                    <form
+                      key={r.id}
+                      action={resolveReviewRow.bind(null, r.id)}
+                      className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-white p-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs text-slate-700">
+                          <RowSummary mapped={mapped} entity={r.entity_type} />
+                        </div>
+                        {r.error_message ? (
+                          <div className="mt-1 text-[11px] text-amber-700">
+                            {r.error_message}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            detected: {r.entity_type ?? "unknown"} · confidence{" "}
+                            {r.confidence ?? 0}%
+                          </div>
+                        )}
+                      </div>
+                      <label className="text-[11px] text-slate-600">
+                        Import as{" "}
+                        <select
+                          name="entity_type"
+                          defaultValue={selectDefault}
+                          className="ml-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                        >
+                          <option value="">— pick type —</option>
+                          {REVIEW_ENTITY_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          name="intent"
+                          value="confirm"
+                          className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
+                        >
+                          Confirm &amp; include
+                        </button>
+                        <button
+                          type="submit"
+                          name="intent"
+                          value="skip"
+                          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          Skip
+                        </button>
+                      </div>
+                    </form>
+                  );
+                })}
+              </div>
+              {reviewRows.length > 50 ? (
+                <p className="mt-3 text-xs text-amber-700">
+                  Showing first 50 of {reviewRows.length} rows needing review.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">
               3. Sandbox preview
@@ -327,10 +428,12 @@ export default async function ImportWizardPage({
           <section className="rounded-xl border border-slate-200 bg-slate-50 p-6">
             <h2 className="text-base font-semibold text-slate-900">4. Approve + import</h2>
             <p className="mt-1 text-xs text-slate-600">
-              Rows below 50% confidence are skipped automatically. Duplicates
-              you haven&apos;t addressed are also skipped. Everything else is
-              inserted into your live tables and recorded in the audit log
-              so you can roll back in one click.
+              Rows we couldn&apos;t classify confidently are held in{" "}
+              <strong>Needs review</strong> above — confirm or skip each one;
+              they aren&apos;t imported until you do. Duplicates you
+              haven&apos;t addressed are skipped. Everything else is inserted
+              into your live tables and recorded in the audit log so you can
+              roll back in one click.
             </p>
             <form action={commitImport.bind(null, imp.id)} className="mt-4">
               <button
@@ -427,6 +530,21 @@ export default async function ImportWizardPage({
     </div>
   );
 }
+
+// Entity types an operator can assign to a row in the Needs-review queue.
+// Mirrors the detector's EntityType union. (Can't import the runtime list
+// from actions.ts — a "use server" module may only export async functions.)
+const REVIEW_ENTITY_OPTIONS: readonly string[] = [
+  "customer",
+  "supplier",
+  "staff",
+  "lead",
+  "invoice",
+  "cost",
+  "quote",
+  "job",
+  "payment",
+];
 
 const STEPS = [
   { key: "upload", label: "Upload" },
