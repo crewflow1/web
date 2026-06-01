@@ -110,16 +110,28 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
     const buffer = await file.arrayBuffer();
     const lower = (file.name ?? "").toLowerCase();
     let sheets: ParsedSheet[] = [];
+    // Spreadsheet/workbook formats SheetJS reads natively (covers every common
+    // accounting export): Excel, OpenDocument, Apple Numbers, SYLK, DIF, etc.
+    const isSpreadsheet =
+      /\.(xlsx|xlsm|xlsb|xls|xlt|xltx|xltm|ods|fods|numbers|dif|prn|slk|dbf)$/i.test(lower) ||
+      file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      file.type === "application/vnd.ms-excel" ||
+      file.type === "application/vnd.oasis.opendocument.spreadsheet";
+    // Plain-text delimited formats — comma, tab, semicolon, pipe. SheetJS
+    // sniffs the delimiter, which is more robust than assuming commas.
+    const isDelimited =
+      /\.(csv|tsv|tab|txt|psv)$/i.test(lower) ||
+      file.type === "text/csv" ||
+      file.type === "application/csv" ||
+      file.type === "text/tab-separated-values" ||
+      file.type === "text/plain";
     try {
       if (lower.endsWith(".csv") || file.type === "text/csv" || file.type === "application/csv") {
         const text = new TextDecoder().decode(new Uint8Array(buffer));
         sheets = [parseCsvFile(text, file.name)];
-      } else if (
-        lower.endsWith(".xlsx") ||
-        lower.endsWith(".xls") ||
-        file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-        file.type === "application/vnd.ms-excel"
-      ) {
+      } else if (isSpreadsheet || isDelimited) {
+        // SheetJS handles xlsx/xls/ods/numbers AND delimited text (tsv/txt/…)
+        // with automatic delimiter detection.
         sheets = parseXlsxBuffer(new Uint8Array(buffer));
       } else if (isOcrFile({ type: file.type, name: file.name })) {
         // Migration OS v2 — PDF / photo / screenshot OCR via Claude vision.
@@ -132,9 +144,14 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
         });
         sheets = [sheet];
       } else {
-        // Treat as CSV best-effort.
-        const text = new TextDecoder().decode(new Uint8Array(buffer));
-        sheets = [parseCsvFile(text, file.name)];
+        // Unknown extension — try the workbook parser (it sniffs many formats),
+        // then fall back to CSV best-effort. Accept anything; never hard-reject.
+        try {
+          sheets = parseXlsxBuffer(new Uint8Array(buffer));
+        } catch {
+          const text = new TextDecoder().decode(new Uint8Array(buffer));
+          sheets = [parseCsvFile(text, file.name)];
+        }
       }
     } catch (e) {
       if (e instanceof OcrUnavailableError) {

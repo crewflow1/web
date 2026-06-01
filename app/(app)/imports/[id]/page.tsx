@@ -192,15 +192,17 @@ export default async function ImportWizardPage({
               type="file"
               name="file"
               multiple
-              accept=".csv,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,application/zip,application/x-zip-compressed"
+              accept=".csv,.tsv,.tab,.txt,.psv,.xlsx,.xlsm,.xlsb,.xls,.xlt,.xltx,.ods,.fods,.numbers,.dif,.prn,.slk,.dbf,.pdf,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.zip,text/csv,application/csv,text/tab-separated-values,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/pdf,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/zip,application/x-zip-compressed"
               required
               className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
             />
             <p className="text-xs text-slate-500">
-              Supports CSV, Excel, PDF invoices/quotes, photos or
-              screenshots (JPG / PNG / HEIC), and ZIP archives of any of
-              these. PDFs and images are read by an LLM — every extracted
-              row is reviewable before commit.
+              Accepts every common export format — CSV, TSV/TXT, Excel
+              (xlsx/xlsm/xlsb/xls), OpenDocument (ODS), Apple Numbers, PDF
+              invoices/quotes, photos/screenshots (JPG / PNG / GIF / WEBP /
+              HEIC), and ZIP archives of any of these. Spreadsheets/text are
+              parsed directly; PDFs and images are read by an LLM. Every
+              extracted row is reviewable before commit.
             </p>
             <button
               type="submit"

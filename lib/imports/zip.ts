@@ -21,9 +21,10 @@ const ZIP_MIME = new Set([
   "multipart/x-zip",
 ]);
 
-// Files we can actually parse downstream (CSV/Excel/PDF/images).
+// Files we can parse downstream: delimited text, every common spreadsheet
+// format SheetJS reads, PDF, and OCR-able images.
 const SUPPORTED_INNER =
-  /\.(csv|xlsx|xls|pdf|png|jpe?g|heic|webp)$/i;
+  /\.(csv|tsv|tab|txt|psv|xlsx|xlsm|xlsb|xls|ods|fods|numbers|dif|prn|slk|pdf|png|jpe?g|gif|heic|heif|webp)$/i;
 
 function isZip(item: { name: string; type: string }): boolean {
   return ZIP_EXT.test(item.name) || ZIP_MIME.has(item.type);
@@ -32,14 +33,21 @@ function isZip(item: { name: string; type: string }): boolean {
 function guessMime(name: string): string {
   const n = name.toLowerCase();
   if (n.endsWith(".csv")) return "text/csv";
-  if (n.endsWith(".xlsx"))
+  if (n.endsWith(".tsv") || n.endsWith(".tab")) return "text/tab-separated-values";
+  if (n.endsWith(".txt") || n.endsWith(".psv")) return "text/plain";
+  if (n.endsWith(".xlsx") || n.endsWith(".xlsm") || n.endsWith(".xlsb"))
     return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (n.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (n.endsWith(".ods") || n.endsWith(".fods"))
+    return "application/vnd.oasis.opendocument.spreadsheet";
   if (n.endsWith(".pdf")) return "application/pdf";
   if (n.endsWith(".png")) return "image/png";
   if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+  if (n.endsWith(".gif")) return "image/gif";
   if (n.endsWith(".heic")) return "image/heic";
+  if (n.endsWith(".heif")) return "image/heif";
   if (n.endsWith(".webp")) return "image/webp";
+  // numbers, dif, prn, slk, dbf etc. — routed by extension downstream.
   return "application/octet-stream";
 }
 

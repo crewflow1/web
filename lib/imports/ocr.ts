@@ -33,6 +33,7 @@ export const OCR_SUPPORTED_MIME = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/gif",
   "image/heic",
   "image/heif",
 ]);
@@ -46,6 +47,7 @@ export function isOcrFile(file: { type?: string; name?: string }): boolean {
     lower.endsWith(".jpeg") ||
     lower.endsWith(".png") ||
     lower.endsWith(".webp") ||
+    lower.endsWith(".gif") ||
     lower.endsWith(".heic") ||
     lower.endsWith(".heif")
   );
