@@ -600,6 +600,25 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 
   const supabase = await createClient();
   const now = new Date().toISOString();
+
+  // IDEMPOTENCY: re-accepting an already-accepted quote must NOT post a
+  // second invoice (or re-create the job). This button is double-submittable,
+  // and an owner may "confirm by phone" a quote the customer already accepted
+  // via the public portal. acceptQuoteByToken guards this with a status
+  // precondition (see below) — mirror it here: read first, and short-circuit
+  // as an idempotent success when the quote is already accepted. RLS scopes
+  // this read to the caller's org; a wrong-org/unknown id returns null and
+  // falls through to the UPDATE, which no-ops and redirects accept_failed
+  // exactly as before.
+  const { data: preExisting } = await supabase
+    .from("quotes")
+    .select("status")
+    .eq("id", id)
+    .maybeSingle();
+  if (preExisting?.status === "accepted") {
+    redirect(`/quotes/${id}?saved=accepted`);
+  }
+
   const { data: quote, error } = await supabase
     .from("quotes")
     .update({
@@ -648,43 +667,70 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // Auto-create invoice using the next_invoice_number RPC (mirrors what
   // /api/invoices POST does — duplicated here so the owner gets one
   // round trip).
-  const { data: invNumber, error: numErr } = await supabase.rpc(
-    "next_invoice_number",
-    { target_org: quote.org_id },
-  );
-  if (numErr || !invNumber) {
-    console.error("[quotes] invoice number alloc failed", numErr);
-    redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
-  }
-  // Pass job_id through so revenue from accepted quotes (including
-  // variations) rolls up on the dashboard. due_date defaults to net-14
-  // so the customer always sees a concrete payment deadline.
-  const { data: newInvoice, error: invErr } = await supabase
+  //
+  // IDEMPOTENCY: reuse any invoice already linked to this quote instead of
+  // posting a second one. The status precondition above stops the common
+  // double-submit before we reach here; this is the belt-and-braces guard
+  // for the degenerate "accepted-but-no-invoice retried" / concurrent-submit
+  // race, and is the in-code half of the partial unique index on
+  // invoices(quote_id). Without it a re-run allocates a fresh number and
+  // INSERTs a duplicate draft invoice for the same quote, double-billing the
+  // customer. limit(1) keeps maybeSingle safe even if pre-fix duplicates
+  // already exist.
+  const { data: existingInvoice } = await supabase
     .from("invoices")
-    .insert({
-      org_id: quote.org_id,
-      quote_id: quote.id,
-      number: invNumber as unknown as string,
-      amount: quote.subtotal,
-      vat_total: quote.vat_total,
-      status: "draft",
-      job_id: jobId,
-      due_date: invoiceDueDate(now),
-    })
     .select("id")
-    .single();
-  if (invErr || !newInvoice) {
-    console.error("[quotes] auto-invoice failed", invErr);
-    redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
+    .eq("quote_id", quote.id)
+    .limit(1)
+    .maybeSingle();
+
+  let invoiceId: string | null = existingInvoice?.id ?? null;
+  let createdInvoice = false;
+  if (!invoiceId) {
+    const { data: invNumber, error: numErr } = await supabase.rpc(
+      "next_invoice_number",
+      { target_org: quote.org_id },
+    );
+    if (numErr || !invNumber) {
+      console.error("[quotes] invoice number alloc failed", numErr);
+      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
+    }
+    // Pass job_id through so revenue from accepted quotes (including
+    // variations) rolls up on the dashboard. due_date defaults to net-14
+    // so the customer always sees a concrete payment deadline.
+    const { data: newInvoice, error: invErr } = await supabase
+      .from("invoices")
+      .insert({
+        org_id: quote.org_id,
+        quote_id: quote.id,
+        number: invNumber as unknown as string,
+        amount: quote.subtotal,
+        vat_total: quote.vat_total,
+        status: "draft",
+        job_id: jobId,
+        due_date: invoiceDueDate(now),
+      })
+      .select("id")
+      .single();
+    if (invErr || !newInvoice) {
+      console.error("[quotes] auto-invoice failed", invErr);
+      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
+    }
+    invoiceId = newInvoice.id;
+    createdInvoice = true;
   }
 
   // Auto-email the invoice PDF to the customer. Best-effort: a send
   // failure (missing key, customer has no email, Resend rejection) does
   // NOT block the accept response — the invoice still exists and the
-  // owner can manually re-send from /invoices/[id].
-  const emailRes = await sendInvoiceEmail(supabase, newInvoice.id);
-  if (!emailRes.sent) {
-    console.warn("[quotes] auto-email after accept skipped", emailRes);
+  // owner can manually re-send from /invoices/[id]. Only email a freshly
+  // created invoice — reusing an existing one means the customer was
+  // already sent it on the first accept.
+  if (createdInvoice && invoiceId) {
+    const emailRes = await sendInvoiceEmail(supabase, invoiceId);
+    if (!emailRes.sent) {
+      console.warn("[quotes] auto-email after accept skipped", emailRes);
+    }
   }
 
   // Pipeline integration: if the quote was linked to a lead, advance
