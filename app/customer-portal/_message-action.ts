@@ -72,15 +72,17 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
   )
     .insert({
       org_id: customer.org_id,
+      customer_id: customer.id,
       subject,
       status: "open",
       priority: "normal",
       category: "other",
       created_by: null,
-      // Convention: portal-originated tickets carry the customer_id in
-      // a notes-prefix so HQ ops can correlate. The schema doesn't
-      // have a `source` column on support_tickets yet — adding one is
-      // a future migration. For now we tag in the first message.
+      // customer_id scopes this ticket to the portal customer so the portal
+      // messages page can show them their own threads without exposing other
+      // customers' tickets (see migration 20260706000000_support_tickets_
+      // customer_scope.sql). The first message's author_kind also records
+      // that this originated from the customer.
     })
     .select("id")
     .single();
