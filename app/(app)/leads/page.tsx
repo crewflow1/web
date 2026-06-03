@@ -11,6 +11,7 @@ import {
   type LeadStage,
 } from "@/lib/leads/schema";
 import { LeadCard, type PipelineLead } from "./_card";
+import { ilikeOrFilter, LEAD_SEARCH_COLUMNS } from "@/lib/search/filters";
 
 /**
  * /leads — kanban pipeline.
@@ -65,10 +66,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (sp.assigned) {
     query = query.eq("assigned_to", sp.assigned);
   }
-  // q applies to service or postcode (cheap LIKE)
+  // q is sanitised then searched across the lead's own columns — service,
+  // source, postcode + the enquirer's contact name/email (LEAD_SEARCH_COLUMNS).
+  // Address-first: a postcode or area matches here; discovery of a lead via a
+  // linked customer's full structured address is handled by the global Cmd/K
+  // search. ilikeOrFilter strips PostgREST structural/wildcard chars, so the
+  // term can no longer inject OR-branches or break the filter grammar — the
+  // previous implementation interpolated the raw term straight into .or().
   const q = sp.q?.trim();
-  if (q) {
-    query = query.or(`service.ilike.%${q}%,postcode.ilike.%${q}%`);
+  const leadOr = ilikeOrFilter(q, LEAD_SEARCH_COLUMNS);
+  if (leadOr) {
+    query = query.or(leadOr);
   }
 
   const { data: raw } = await query;
@@ -171,7 +179,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           <input
             name="q"
             defaultValue={q ?? ""}
-            placeholder="service or postcode"
+            placeholder="Postcode, name, or service"
             className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>

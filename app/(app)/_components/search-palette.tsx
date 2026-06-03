@@ -158,7 +158,7 @@ export function SearchPalette() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder="Search customers, invoices, jobs, quotes, staff…"
+                placeholder="Search by address, postcode, customer, job, invoice…"
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
               />
               {loading ? <span className="text-xs text-slate-400">…</span> : null}
@@ -174,8 +174,9 @@ export function SearchPalette() {
             <div className="max-h-96 overflow-y-auto">
               {q.trim().length < 2 ? (
                 <p className="px-3 py-6 text-center text-xs text-slate-500">
-                  Type at least 2 characters. Search spans customers, jobs,
-                  quotes, invoices, leads, staff + invoice numbers.
+                  Type at least 2 characters. Search by address, postcode, site
+                  or customer — spans customers, jobs, quotes, invoices, leads,
+                  staff + invoice numbers.
                 </p>
               ) : hits.length === 0 && !loading ? (
                 <p className="px-3 py-6 text-center text-xs text-slate-500">

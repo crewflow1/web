@@ -50,6 +50,23 @@ type CustomerAddressCols = {
   country: string | null;
 };
 
+/**
+ * Map a customer row's `address_*` columns onto the generic {@link Address}
+ * shape, so the customer list / search hits can reuse formatAddressOneLine.
+ */
+export function customerToAddress(
+  c: Partial<CustomerAddressCols> | null | undefined,
+): Address {
+  return {
+    line1: c?.address_line1,
+    line2: c?.address_line2,
+    city: c?.city,
+    county: c?.county,
+    postcode: c?.postcode,
+    country: c?.country,
+  };
+}
+
 type JobAddressCols = {
   site_address_line1: string | null;
   site_address_line2: string | null;

@@ -3,6 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
+import {
+  ilikeOrFilter,
+  inIdsBranch,
+  combineOr,
+  CUSTOMER_SEARCH_COLUMNS,
+  JOB_SEARCH_COLUMNS,
+} from "@/lib/search/filters";
 import { MapActions } from "@/components/maps/MapActions";
 
 /**
@@ -27,7 +34,7 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: "bg-red-100 text-red-700",
 };
 
-type SP = Promise<{ customer?: string }>;
+type SP = Promise<{ customer?: string; q?: string }>;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,9 +44,36 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const customerFilter =
     sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
+  const term = (sp.q ?? "").trim();
 
   const supabase = await createClient();
-  let q = supabase
+
+  // Address-first job search. A job matches when its OWN site address matches
+  // the term OR when its linked customer matches (customer name OR the
+  // customer's structured address). Jobs with no site-address override inherit
+  // the customer's address, so the customer match is essential — it is resolved
+  // in a first pass (collect matching customer ids) and folded into the jobs
+  // query as a `customer_id.in.(…)` OR-branch. All filtering stays in SQL,
+  // applied BEFORE the row cap — never a capped fetch filtered in JS.
+  const siteBranch = ilikeOrFilter(term, JOB_SEARCH_COLUMNS);
+  let customerIdBranch: string | null = null;
+  if (term) {
+    const custOr = ilikeOrFilter(term, CUSTOMER_SEARCH_COLUMNS);
+    if (custOr) {
+      const { data: matchCustomers } = await supabase
+        .from("customers")
+        .select("id")
+        .or(custOr)
+        .limit(200);
+      customerIdBranch = inIdsBranch(
+        "customer_id",
+        (matchCustomers ?? []).map((c) => c.id),
+      );
+    }
+  }
+  const searchOr = combineOr(siteBranch, customerIdBranch);
+
+  let query = supabase
     .from("jobs")
     .select(
       `
@@ -57,10 +91,14 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
     .limit(200);
 
   if (customerFilter) {
-    q = q.eq("customer_id", customerFilter);
+    query = query.eq("customer_id", customerFilter);
+  }
+  // Applied BEFORE .limit(200) ⇒ the whole table is searched, then capped.
+  if (searchOr) {
+    query = query.or(searchOr);
   }
 
-  const { data: jobs, error } = await q;
+  const { data: jobs, error } = await query;
 
   if (error) {
     console.error("[jobs] list failed", error);
@@ -85,7 +123,9 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {rows.length} {rows.length === 1 ? "job" : "jobs"}
+            {term
+              ? `${rows.length} matching “${term}”`
+              : `${rows.length} ${rows.length === 1 ? "job" : "jobs"}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -103,6 +143,51 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
           </Link>
         </div>
       </header>
+
+      {/* Address-first search runs server-side across ALL jobs (site address)
+          + the linked customer (name + address), not just the rows on screen. */}
+      <form
+        method="GET"
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        {customerFilter ? (
+          <input type="hidden" name="customer" value={customerFilter} />
+        ) : null}
+        <div className="min-w-[12rem] flex-1">
+          <label
+            htmlFor="job-search"
+            className="block text-xs font-medium text-slate-700"
+          >
+            Search
+          </label>
+          <input
+            id="job-search"
+            type="search"
+            name="q"
+            defaultValue={term}
+            placeholder="Site address, postcode, town, or customer"
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+        >
+          Search
+        </button>
+        {term ? (
+          <Link
+            href={
+              customerFilter
+                ? { pathname: "/jobs", query: { customer: customerFilter } }
+                : "/jobs"
+            }
+            className="text-sm font-medium text-slate-600 hover:text-slate-900"
+          >
+            Clear
+          </Link>
+        ) : null}
+      </form>
 
       {customerFilter ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
@@ -126,7 +211,21 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         </div>
       ) : null}
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && term ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
+          <p>No jobs match “{term}”.</p>
+          <Link
+            href={
+              customerFilter
+                ? { pathname: "/jobs", query: { customer: customerFilter } }
+                : "/jobs"
+            }
+            className="mt-2 inline-block font-medium text-slate-700 underline hover:text-slate-900"
+          >
+            Clear search
+          </Link>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="🔧"
@@ -145,6 +244,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
                 <tr>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Address</th>
                   <th className="px-4 py-3">Assigned</th>
                   <th className="px-4 py-3">Scheduled</th>
                   <th className="px-4 py-3" />
@@ -162,6 +262,11 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {j.customer?.name ?? <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {formatAddressOneLine(resolveJobAddress(j, j.customer)) || (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {j.assigned?.full_name ?? j.assigned?.email ?? (
