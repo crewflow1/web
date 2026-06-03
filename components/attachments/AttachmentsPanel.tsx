@@ -30,7 +30,12 @@ export async function AttachmentsPanel({
   targetTable: AttachmentTargetTable;
   targetId: string;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
+  // SECURITY (P2 audit M-5): deleting an attachment is owner/admin-only (RLS +
+  // in-code gate in deleteTenantAttachment). Only surface the Delete control to
+  // those roles so members aren't shown an action the server will refuse.
+  const canDelete =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
 
   const { data } = await (
@@ -81,6 +86,7 @@ export async function AttachmentsPanel({
               attachment={row}
               targetTable={targetTable}
               targetId={targetId}
+              canDelete={canDelete}
             />
           ))}
         </ul>

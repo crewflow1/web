@@ -73,10 +73,16 @@ export function AttachmentsUploadForm({
   );
 }
 
+const DELETE_ERROR_MAP: Record<string, string> = {
+  forbidden: "Only an owner or admin can delete attachments.",
+  not_deleted: "That file is already gone. Refresh to see the latest list.",
+};
+
 export function AttachmentRow({
   attachment,
   targetTable,
   targetId,
+  canDelete,
 }: {
   attachment: {
     id: string;
@@ -87,6 +93,7 @@ export function AttachmentRow({
   };
   targetTable: AttachmentTargetTable;
   targetId: string;
+  canDelete: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -110,7 +117,7 @@ export function AttachmentRow({
     startTransition(async () => {
       const result = await removeAttachment(attachment.id, targetTable, targetId);
       if (!result.ok) {
-        setError(result.error);
+        setError(DELETE_ERROR_MAP[result.error] ?? result.error);
         return;
       }
       router.refresh();
@@ -140,14 +147,16 @@ export function AttachmentRow({
           </p>
         ) : null}
       </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        disabled={pending}
-        className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait"
-      >
-        Delete
-      </button>
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={pending}
+          className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait"
+        >
+          Delete
+        </button>
+      ) : null}
     </li>
   );
 }
