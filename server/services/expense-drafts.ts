@@ -87,8 +87,9 @@ export async function createExpenseDraftFromUpload(input: {
 }
 
 /** Owner/admin approves a draft. Creates a `finances` row + stamps
- *  the draft. RLS-scoped via user JWT (the `expense_drafts.update`
- *  policy gates by `is_org_admin`). */
+ *  the draft. The stamp uses the service-role admin client (RLS
+ *  bypassed), so the owner/admin gate and org-scoping are enforced in
+ *  code below — see the SECURITY notes. */
 export async function approveExpenseDraft(input: z.infer<typeof expenseDraftApproveSchema>): Promise<{
   ok: true;
   finance_id: string;
@@ -97,6 +98,55 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
   const parsed = expenseDraftApproveSchema.parse(input);
   const supabase = await createClient();
   const admin = createAdminClient();
+
+  // SECURITY: owner/admin only. The `expense_drafts` UPDATE RLS policy is
+  // `is_org_admin(org_id)`, but step 2 stamps the draft with the service-role
+  // admin client, which BYPASSES RLS — so the role gate has to be enforced
+  // here in code. Without it any member could approve a draft and post to
+  // `finances`, defeating the admin-only approval intent. Same idiom as the
+  // settings/payments/quotes server actions.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    return { ok: false, error: "forbidden" };
+  }
+
+  // SECURITY: confirm the draft belongs to the caller's org BEFORE writing
+  // anything. Read on the tenant client (RLS-scoped) with an explicit org
+  // filter — a member of org B passing org A's draft_id finds no row and we
+  // bail. Without this, the org-scoped UPDATE in step 2 would correctly no-op,
+  // but the finances INSERT in step 1 would already have written a bogus row.
+  const { data: draft } = await (
+    supabase.from("expense_drafts" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { id: string; status: string | null; finance_id: string | null } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, status, finance_id")
+    .eq("id", parsed.draft_id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (!draft) {
+    return { ok: false, error: "draft_not_found" };
+  }
+
+  // IDEMPOTENCY: bail BEFORE the finances INSERT if this draft was already
+  // approved — a double-submit of the approval form (or re-approving a stamped
+  // draft) would otherwise post a SECOND `finances` row and re-stamp the draft,
+  // duplicating the expense on the books. Same class of bug as the quote-accept
+  // double-invoicing guard in acceptQuoteByToken. Return the already-stamped
+  // finance_id as an idempotent success; only the degenerate approved-without-
+  // finance_id state falls through to the error contract.
+  if (draft.status === "approved" || draft.finance_id) {
+    return draft.finance_id
+      ? { ok: true, finance_id: draft.finance_id }
+      : { ok: false, error: "already_approved" };
+  }
 
   // 1. INSERT into finances (RLS scoped to org via the tenant client).
   const { data: finance, error: finErr } = await supabase
@@ -117,9 +167,18 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
   const financeId = (finance as { id: string }).id;
 
   // 2. Stamp the draft.
+  //
+  // SECURITY: this uses the service-role admin client (RLS bypassed), so the
+  // update MUST be scoped to the caller's org explicitly. Without the
+  // `.eq("org_id", ...)` guard, any authenticated member could pass another
+  // org's draft_id and flip that tenant's draft to `approved` (the
+  // expense_drafts UPDATE RLS policy `is_org_admin(org_id)` never runs on the
+  // admin client). Mirrors the org-scoping rejectExpenseDraft already applies.
   await (admin.from("expense_drafts" as never) as unknown as {
     update: (row: unknown) => {
-      eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      eq: (k: string, v: unknown) => {
+        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      };
     };
   })
     .update({
@@ -132,7 +191,8 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
       vat_rate: parsed.vat_rate,
       category: parsed.category ?? null,
     })
-    .eq("id", parsed.draft_id);
+    .eq("id", parsed.draft_id)
+    .eq("org_id", ctx.org.id);
 
   await recordAdminActivity({
     actorId: user.id,
