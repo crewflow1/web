@@ -51,32 +51,50 @@ export default async function PortalOverviewPage({
 
   const admin = createAdminClient();
 
-  const [quotesRes, invoicesRes] = await Promise.all([
-    admin
-      .from("quotes")
-      .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
-      .eq("org_id", customer.org_id)
-      .eq("customer_id", customer.id)
-      .order("created_at", { ascending: false })
-      .limit(50),
-    admin
+  // Quotes are customer-scoped at the DB (org_id + customer_id).
+  //
+  // SECURITY (P2 audit M-1): invoices carry no customer_id column — they
+  // link to a customer only via their parent quote. The overview previously
+  // read the org's most-recent invoices scoped ONLY by org_id and then
+  // narrowed to this customer in JS. On the service-role client (which
+  // BYPASSES RLS) that over-reads other customers' invoice rows, and the
+  // org-wide `.limit(50)` can exclude this customer's own invoices entirely
+  // (wrong "outstanding" total / missing recent invoice on a busy org).
+  // Scope the invoices read to THIS customer's quote ids in the query
+  // instead — the same per-customer scoping the invoices list page uses.
+  const { data: quotesData } = await admin
+    .from("quotes")
+    .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
+    .eq("org_id", customer.org_id)
+    .eq("customer_id", customer.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const allQuotes = quotesData ?? [];
+  const quoteIds = allQuotes.map((q) => q.id);
+
+  let invoices: Array<{
+    id: string;
+    number: string;
+    status: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    total: number | string | null;
+    due_date: string | null;
+    sent_at: string | null;
+    paid_at: string | null;
+  }> = [];
+  if (quoteIds.length > 0) {
+    const { data: invoicesData } = await admin
       .from("invoices")
       .select(
-        "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, quote_id",
+        "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
       )
       .eq("org_id", customer.org_id)
+      .in("quote_id", quoteIds)
       .order("created_at", { ascending: false })
-      .limit(50),
-  ]);
-
-  const allQuotes = quotesRes.data ?? [];
-  const quoteIds = new Set(allQuotes.map((q) => q.id));
-  // Invoices for this customer = invoices whose quote_id is one of our
-  // listed quotes. Done this way because the invoices table doesn't
-  // carry customer_id directly; the link is via quote.
-  const invoices = (invoicesRes.data ?? []).filter(
-    (inv) => inv.quote_id && quoteIds.has(inv.quote_id),
-  );
+      .limit(50);
+    invoices = invoicesData ?? [];
+  }
 
   const openQuotes = allQuotes.filter(
     (q) => q.status === "draft" || q.status === "sent" || q.status === "viewed",
