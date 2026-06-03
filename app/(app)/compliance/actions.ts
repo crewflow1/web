@@ -140,38 +140,67 @@ export async function deleteComplianceDocument(id: string): Promise<void> {
   const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/compliance?error=bad_id");
 
+  // SECURITY (P2 audit M-4): deletion is destructive and admin-only — the
+  // compliance_documents DELETE policy is `is_org_admin(org_id)` (migration
+  // 20260623000000). The storage-object removal below runs on the SERVICE-ROLE
+  // admin client, which BYPASSES RLS, so without an in-code role gate a plain
+  // member (whose row SELECT succeeds but whose DB delete RLS-no-ops) could
+  // still reach admin.storage.remove() and wipe the file, orphaning the row.
+  // Re-enforce owner/admin here, matching the documented intent above.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect("/compliance?error=forbidden");
+  }
+
   const tenant = await createClient();
   const admin = createAdminClient();
 
-  // Fetch row first so we know what to delete from storage.
+  // Capture storage_path BEFORE deleting the row (org-scoped read).
   const { data: row } = await (
     tenant.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{
-            data: { storage_path: string | null; title: string | null } | null;
-          }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { storage_path: string | null; title: string | null } | null;
+            }>;
+          };
         };
       };
     }
   )
     .select("storage_path, title")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
-  const { error } = await (
+  // Delete with an exact count + explicit org filter. The count is the GATE
+  // for the storage removal: only a row that ACTUALLY deleted (count > 0) gets
+  // its blob removed, so a no-op delete (foreign/nonexistent id, or an
+  // RLS-blocked one) can never orphan a file or report a false success.
+  const { error, count } = await (
     tenant.from("compliance_documents" as never) as unknown as {
-      delete: () => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      delete: (opts?: { count?: string }) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{
+            error: { message: string } | null;
+            count: number | null;
+          }>;
+        };
       };
     }
   )
-    .delete()
-    .eq("id", id);
+    .delete({ count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[compliance] delete failed", error);
     redirect(`/compliance?error=delete_failed`);
+  }
+  if (!count) {
+    // Nothing deleted (already gone, or not in this org). Do NOT touch storage
+    // and do NOT claim success.
+    redirect(`/compliance?error=not_found`);
   }
 
   if (row?.storage_path) {
