@@ -287,3 +287,76 @@ Go to ${APP_URL}/login and either click "Continue with Google", or enter this em
 — The ${APP_NAME} team`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 7. Staff invite — a teammate is invited into an existing org. Sent FROM
+//    hello@crewflow.uk WITH the magic link embedded directly, exactly like
+//    customerOnboardingEmail. Replaces Supabase's PKCE-locked invite email
+//    that broke on desktop / incognito / cross-device — the same blocker a
+//    construction worker hits opening the invite on a different device than
+//    the admin who sent it.
+//
+//    The link goes to Supabase's verify endpoint and redirects back to
+//    /auth/callback with token_hash + type, which our callback exchanges
+//    via verifyOtp — no PKCE verifier required. After sign-in the invited
+//    metadata (invited_org_id, source:"staff_invite") routes them through
+//    /onboarding/join to accept the invite.
+//
+//    Fallbacks if the link expires / is consumed by an email pre-scanner:
+//      a) Request a fresh magic-link from /login (their email pre-fills).
+//      b) Sign in with Google if their Google account uses the same email
+//         (their email is confirmed the moment they verify the link).
+// ---------------------------------------------------------------------------
+
+export function staffInviteEmail(input: {
+  name: string | null;
+  orgName: string;
+  /** Magic link URL from supabase.auth.admin.generateLink. May be null if
+   *  generation failed — we fall back to /login instructions then. */
+  magicLinkUrl: string | null;
+}) {
+  const first = firstName(input.name);
+
+  const body = input.magicLinkUrl
+    ? `
+<p>Hi ${escapeText(first)},</p>
+<p>You&rsquo;ve been invited to join <strong>${escapeText(input.orgName)}</strong> on ${escapeText(APP_NAME)} — the operating system for UK construction teams.</p>
+<p>Click the button below to set up your account. It works on any device, in any browser — no password needed.</p>
+<p style="margin-top:8px;color:#475569;font-size:13px"><strong>Heads-up:</strong> this link is single-use. If it doesn&rsquo;t work first time (e.g. your email security scanner clicked it before you did), just go to <a href="${escapeAttr(APP_URL)}/login" style="color:#0f172a">${escapeText(APP_URL.replace(/^https?:\/\//, ""))}/login</a>, enter this email address, and we&rsquo;ll send you a fresh one. You can also sign in with <strong>Google</strong> if your Google account uses the same email.</p>`
+    : `
+<p>Hi ${escapeText(first)},</p>
+<p>You&rsquo;ve been invited to join <strong>${escapeText(input.orgName)}</strong> on ${escapeText(APP_NAME)}.</p>
+<p>Go to <a href="${escapeAttr(APP_URL)}/login" style="color:#0f172a"><strong>${escapeText(APP_URL.replace(/^https?:\/\//, ""))}/login</strong></a> and either:</p>
+<ul style="margin:8px 0;padding-left:20px;line-height:1.7">
+  <li>Click <strong>&ldquo;Continue with Google&rdquo;</strong> if your Google account uses this email, or</li>
+  <li>Enter <strong>this email address</strong> and we&rsquo;ll send you a magic link.</li>
+</ul>`;
+
+  return {
+    subject: `You're invited to join ${input.orgName} on ${APP_NAME}`,
+    html: shell({
+      heading: `Join ${escapeText(input.orgName)} on ${escapeText(APP_NAME)}.`,
+      body,
+      cta: input.magicLinkUrl
+        ? { href: input.magicLinkUrl, label: `Accept invite & sign in` }
+        : { href: `${APP_URL}/login`, label: `Sign in to ${APP_NAME}` },
+    }),
+    text: input.magicLinkUrl
+      ? `Hi ${first},
+
+You've been invited to join ${input.orgName} on ${APP_NAME} — the operating system for UK construction teams.
+
+Accept your invite & sign in: ${input.magicLinkUrl}
+
+Heads-up: this link is single-use. If it doesn't work, go to ${APP_URL}/login, enter this email address, and we'll send you a fresh one. You can also sign in with Google if your Google account uses the same email.
+
+— The ${APP_NAME} team`
+      : `Hi ${first},
+
+You've been invited to join ${input.orgName} on ${APP_NAME}.
+
+Go to ${APP_URL}/login and either click "Continue with Google", or enter this email address to get a magic link.
+
+— The ${APP_NAME} team`,
+  };
+}
