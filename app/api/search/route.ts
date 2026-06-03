@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 
 export const runtime = "nodejs";
 
@@ -30,7 +31,17 @@ export async function GET(req: NextRequest) {
   if (q.length < 2) {
     return NextResponse.json({ hits: [] satisfies Hit[] });
   }
-  const like = `%${q.replace(/[%_]/g, "")}%`;
+  // Neutralise control + PostgREST structural/wildcard chars (% _ , ( ) *)
+  // before building the .or() filter — otherwise a crafted term like
+  // `x,email.ilike.*` injects extra OR branches or breaks the filter grammar
+  // (broadened matches / 400s). RLS keeps results intra-org, but the
+  // over-matching is still a defect. Shared with the customers list via
+  // lib/search/sanitize.ts (sanitizeSearchTerm).
+  const safe = sanitizeSearchTerm(q);
+  if (safe.length === 0) {
+    return NextResponse.json({ hits: [] satisfies Hit[] });
+  }
+  const like = `%${safe}%`;
 
   // Fire all queries in parallel under RLS.
   const [customers, jobs, quotes, invoices, leads, memberships] = await Promise.all([

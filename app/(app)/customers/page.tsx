@@ -2,6 +2,13 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import {
+  PAGE_SIZE,
+  parsePage,
+  offsetForPage,
+  pageWindow,
+  customerSearchOr,
+} from "@/lib/customers/list";
 
 /**
  * Customers list.
@@ -10,24 +17,61 @@ import { EmptyState } from "../_components/empty-state";
  * caller's org automatically. We still call requireOrgContext() so the
  * page redirects to /onboarding if the user has no org yet.
  *
- * Renders a card list on mobile (<sm:) and a four-column table on
- * tablet/desktop. The earlier table-only version horizontally scrolled
- * on phones, which made it impossible to tap the "Edit" affordance.
+ * Paginated server-side (`.range()` + an EXACT count) so an org with
+ * hundreds of customers shows the true total and every row is reachable.
+ * The earlier 200-row fetch cap limited BOTH the list and the headline count,
+ * so a 598-customer org rendered "200 customers" with rows 201–598 unreachable.
+ * Search runs server-side across the whole table (name/email/phone), not just
+ * the rows on the current page — a match on row 550 is found from page 1.
+ *
+ * Renders a card list on mobile (<sm:) and a table on tablet/desktop.
  */
-export default async function CustomersPage() {
+
+type SP = Promise<{ page?: string; q?: string }>;
+
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: SP;
+}) {
   await requireOrgContext();
+  const sp = await searchParams;
+  const page = parsePage(sp.page);
+  const offset = offsetForPage(page);
+  const term = (sp.q ?? "").trim();
 
   const supabase = await createClient();
-  const { data: customers, error } = await supabase
+  let query = supabase
     .from("customers")
-    .select("id, name, email, phone, created_at")
+    .select("id, name, email, phone, created_at", { count: "exact" })
+    // Secondary `id` sort is a STABLE tiebreaker: a bulk import can insert many
+    // rows with identical created_at, and without a deterministic tiebreaker
+    // PostgREST may order ties differently between page requests — duplicating
+    // or skipping rows across page boundaries. id is unique, so paging is exact.
     .order("created_at", { ascending: false })
-    .limit(200);
+    .order("id", { ascending: false });
+
+  const orFilter = customerSearchOr(term);
+  if (orFilter) {
+    // Applied BEFORE .range() ⇒ searches every customer, then paginates the
+    // matches. The exact count below reflects matches, not the whole table.
+    query = query.or(orFilter);
+  }
+
+  const { data: customers, count, error } = await query.range(
+    offset,
+    offset + PAGE_SIZE - 1,
+  );
 
   if (error) {
     console.error("[customers] list failed", error);
   }
   const rows = customers ?? [];
+  const totalCount = count ?? 0;
+  const { totalPages, from, to } = pageWindow(totalCount, offset, rows.length);
+
+  // Preserve the active search across pagination links.
+  const baseQuery: Record<string, string> = term ? { q: term } : {};
 
   return (
     <div className="space-y-6">
@@ -35,7 +79,9 @@ export default async function CustomersPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {rows.length} {rows.length === 1 ? "customer" : "customers"}
+            {term
+              ? `${totalCount} matching “${term}”`
+              : `${totalCount} ${totalCount === 1 ? "customer" : "customers"}`}
           </p>
         </div>
         <Link
@@ -46,7 +92,44 @@ export default async function CustomersPage() {
         </Link>
       </header>
 
-      {rows.length === 0 ? (
+      {/* Search runs server-side across ALL customers, not just this page. */}
+      <form
+        method="GET"
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div className="min-w-[12rem] flex-1">
+          <label
+            htmlFor="customer-search"
+            className="block text-xs font-medium text-slate-700"
+          >
+            Search
+          </label>
+          <input
+            id="customer-search"
+            type="search"
+            name="q"
+            defaultValue={term}
+            placeholder="Name, email, or phone"
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+        >
+          Search
+        </button>
+        {term ? (
+          <Link
+            href="/customers"
+            className="text-sm font-medium text-slate-600 hover:text-slate-900"
+          >
+            Clear
+          </Link>
+        ) : null}
+      </form>
+
+      {totalCount === 0 && !term ? (
         <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="👥"
@@ -54,6 +137,20 @@ export default async function CustomersPage() {
             body="Capture the people you do work for. You can link jobs, quotes, and invoices to customers later."
             primary={{ href: "/customers/new", label: "Add first customer" }}
           />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
+          {term ? (
+            <p>No customers match “{term}”.</p>
+          ) : (
+            <p>No customers on this page.</p>
+          )}
+          <Link
+            href="/customers"
+            className="mt-2 inline-block font-medium text-slate-700 underline hover:text-slate-900"
+          >
+            {term ? "Clear search" : "Back to start"}
+          </Link>
         </div>
       ) : (
         <>
@@ -132,6 +229,42 @@ export default async function CustomersPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination — "Showing A–B of N" makes the 200-per-page cap explicit. */}
+          <nav className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+            <span>
+              Showing {from}–{to} of {totalCount}
+            </span>
+            {totalPages > 1 ? (
+              <div className="flex items-center gap-2">
+                {page > 1 ? (
+                  <Link
+                    href={{
+                      pathname: "/customers",
+                      query: { ...baseQuery, page: page - 1 },
+                    }}
+                    className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+                  >
+                    ← Previous
+                  </Link>
+                ) : null}
+                <span>
+                  Page {page} of {totalPages}
+                </span>
+                {page < totalPages ? (
+                  <Link
+                    href={{
+                      pathname: "/customers",
+                      query: { ...baseQuery, page: page + 1 },
+                    }}
+                    className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+                  >
+                    Next →
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
+          </nav>
         </>
       )}
     </div>
