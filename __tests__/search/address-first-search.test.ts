@@ -23,8 +23,8 @@ function sqlOnly(sql: string): string {
     .join("\n");
 }
 
-describe("migration 20260706000000_address_search_trgm.sql", () => {
-  const raw = read("supabase/migrations/20260706000000_address_search_trgm.sql");
+describe("migration 20260706120000_address_search_trgm.sql", () => {
+  const raw = read("supabase/migrations/20260706120000_address_search_trgm.sql");
   const sql = sqlOnly(raw);
 
   it("enables pg_trgm idempotently", () => {
