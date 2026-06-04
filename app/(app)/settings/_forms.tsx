@@ -99,7 +99,6 @@ type OrgDefaults = {
   address_line1: string;
   address_city: string;
   address_postcode: string;
-  logo_url: string;
   default_terms: string;
   bank_name: string;
   bank_sort_code: string;
@@ -190,19 +189,10 @@ export function OrganizationForm({
             Branding &amp; payment details
           </h3>
           <p className="mt-1 text-xs text-slate-500">
-            Shown on quote and invoice PDFs sent to customers.
+            Shown on quote and invoice PDFs sent to customers. Upload your logo
+            in the Logo section above.
           </p>
           <div className="mt-4 space-y-4">
-            <Field
-              name="logo_url"
-              label="Logo URL"
-              type="url"
-              optional
-              placeholder="https://yourbrand.com/logo.png"
-              defaultValue={pickFrom(state, defaults, "logo_url")}
-              error={fe.logo_url}
-              help="A publicly accessible image URL. Square or wide PNG/JPEG works best."
-            />
             <div>
               <label
                 htmlFor="default_terms"

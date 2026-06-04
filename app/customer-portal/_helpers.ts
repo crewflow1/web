@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 /**
  * Server-only loader for the customer portal.
@@ -23,6 +24,11 @@ export type PortalOrg = {
   id: string;
   name: string;
   phone: string | null;
+  /**
+   * A ready-to-render logo `src`: a signed URL for an uploaded logo, a legacy
+   * external URL, or null. Already resolved by the loader — consumers (the
+   * portal shell) render it directly without touching storage.
+   */
   logo_url: string | null;
   address: {
     line1?: string;
@@ -46,7 +52,7 @@ export async function loadCustomerByPortalToken(
     .select(
       `
         id, org_id, name, email, phone,
-        org:organizations ( id, name, phone, logo_url, address )
+        org:organizations ( id, name, phone, logo_path, logo_url, address )
       `,
     )
     .eq("portal_token", token)
@@ -70,7 +76,10 @@ export async function loadCustomerByPortalToken(
       id: data.org.id,
       name: data.org.name,
       phone: data.org.phone ?? null,
-      logo_url: data.org.logo_url ?? null,
+      logo_url: await resolveOrgLogoSrc(
+        { logo_path: data.org.logo_path, logo_url: data.org.logo_url },
+        admin,
+      ),
       address:
         (data.org.address as PortalOrg["address"]) ?? null,
     },

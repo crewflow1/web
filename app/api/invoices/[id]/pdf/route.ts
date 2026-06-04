@@ -3,6 +3,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 // PDF rendering is Node.js only — opt out of edge runtime.
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
         id, number, status, amount, vat_total, total, due_date, paid_at,
         notes, quote_id,
         quote:quotes ( customer:customers ( name ) ),
-        org:organizations ( name, phone, vat_number, logo_url, address, bank_details )
+        org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
     .eq("id", id)
@@ -65,7 +66,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     org_name: invoice.org?.name ?? "",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,
-    org_logo_url: invoice.org?.logo_url ?? null,
+    org_logo_url: await resolveOrgLogoSrc(invoice.org),
     org_address:
       (invoice.org?.address as InvoicePdfInput["org_address"]) ?? null,
     org_bank_details:

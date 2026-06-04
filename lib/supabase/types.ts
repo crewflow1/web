@@ -1429,6 +1429,7 @@ export type Database = {
           default_terms: string | null
           email: string | null
           id: string
+          logo_path: string | null
           logo_url: string | null
           name: string
           onboarding_state: Json
@@ -1448,6 +1449,7 @@ export type Database = {
           default_terms?: string | null
           email?: string | null
           id?: string
+          logo_path?: string | null
           logo_url?: string | null
           name: string
           onboarding_state?: Json
@@ -1467,6 +1469,7 @@ export type Database = {
           default_terms?: string | null
           email?: string | null
           id?: string
+          logo_path?: string | null
           logo_url?: string | null
           name?: string
           onboarding_state?: Json

@@ -1,6 +1,7 @@
 import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 /**
  * Shared helper for cron + on-demand send paths: builds the invoice PDF
@@ -23,6 +24,7 @@ type JoinedInvoice = {
     name: string | null;
     phone: string | null;
     vat_number: string | null;
+    logo_path: string | null;
     logo_url: string | null;
     address: unknown;
     bank_details: unknown;
@@ -54,7 +56,7 @@ export async function renderInvoicePdf(
     org_name: invoice.org?.name ?? "CrewFlow",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,
-    org_logo_url: invoice.org?.logo_url ?? null,
+    org_logo_url: await resolveOrgLogoSrc(invoice.org),
     org_address:
       (invoice.org?.address as InvoicePdfInput["org_address"]) ?? null,
     org_bank_details:

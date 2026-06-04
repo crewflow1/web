@@ -60,14 +60,10 @@ const orgSchema = z.object({
   address_line1: optional(200),
   address_city: optional(100),
   address_postcode: optional(20),
-  // PDF branding (added in 4B / quotes module)
-  logo_url: z
-    .string()
-    .trim()
-    .url("Logo URL must be a full https://… URL")
-    .max(500)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
+  // NOTE: the logo is no longer a free-text URL on this form — it's uploaded
+  // as an image file via the LogoUpload control (see logo-actions.ts), which
+  // writes organizations.logo_path. We deliberately do NOT accept logo_url
+  // here so no arbitrary external URL can be set going forward.
   default_terms: optional(20000),
   bank_name: optional(200),
   bank_sort_code: optional(20),
@@ -148,7 +144,10 @@ export async function updateOrganization(
         email: result.data.org_email ?? null,
         vat_number: result.data.vat_number ?? null,
         address,
-        logo_url: result.data.logo_url ?? null,
+        // logo_url intentionally NOT written here. The logo is managed by the
+        // LogoUpload control (logo-actions.ts → company-logo service), which
+        // sets organizations.logo_path and clears logo_url. Omitting it here
+        // preserves any legacy value and prevents new arbitrary URL entry.
         default_terms: result.data.default_terms ?? null,
         bank_details,
       },
