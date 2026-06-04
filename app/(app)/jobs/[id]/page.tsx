@@ -8,6 +8,7 @@ import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { JobDocumentsPanel } from "./_job-documents";
 import {
   computeJobProfitability,
   marginPillClass,
@@ -38,7 +39,12 @@ export default async function EditJobPage({
   const { id } = await params;
   const { error } = await searchParams;
 
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
+  // Private job documents are owner/admin only. We compute this here and pass
+  // it down so the panel can gate the private-area FETCH (not just the render),
+  // keeping private rows out of a staff member's RSC payload.
+  const canViewPrivate =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
   const { data: job } = await supabase
     .from("jobs")
@@ -420,6 +426,8 @@ export default async function EditJobPage({
           </div>
         )}
       </section>
+
+      <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
