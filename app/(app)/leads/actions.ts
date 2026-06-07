@@ -42,7 +42,7 @@ export async function createLead(
   const now = new Date().toISOString();
   const supabase = await createClient();
   // contact_name/email/phone columns landed in migration
-  // 20260601000000_leads_contact_fields and aren't yet in the generated
+  // 20260601000100_leads_contact_fields and aren't yet in the generated
   // Supabase types — the `as never` keeps the typed client happy until
   // `pnpm db:generate` next runs.
   const { data, error } = await supabase
