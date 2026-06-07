@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
+import type { OnboardingSnapshot } from "@/lib/onboarding/checklist";
 import type {
   MilestoneId,
   NudgeId,
@@ -29,6 +30,16 @@ const DISMISSED_NUDGES_KEY = "dismissed_nudges" as const;
 
 export async function buildRetentionSnapshot(
   orgId: string,
+  opts?: {
+    /**
+     * Pre-built onboarding snapshot (or its in-flight promise) to reuse
+     * instead of building a fresh one. The dashboard already builds this
+     * for its SetupChecklist card, so passing it in avoids a duplicate
+     * org-row fetch + 5 count round-trips per page load. When omitted
+     * (e.g. the AI-question path) we build our own as before.
+     */
+    onboarding?: OnboardingSnapshot | Promise<OnboardingSnapshot>;
+  },
 ): Promise<RetentionSignals> {
   const supabase = await createClient();
   const nowMs = Date.now();
@@ -36,8 +47,9 @@ export async function buildRetentionSnapshot(
   const sevenDaysAgo = new Date(nowMs - SEVEN_DAYS_MS).toISOString();
 
   // Reuse the onboarding snapshot wholesale — gives us org + counts +
-  // dismissed + timestamps in one call.
-  const onboarding = await buildOnboardingSnapshot(orgId);
+  // dismissed + timestamps in one call. Awaiting a passed-in promise is
+  // safe: promises memoise, so a shared promise runs the work only once.
+  const onboarding = await (opts?.onboarding ?? buildOnboardingSnapshot(orgId));
 
   // ------------------------------------------------------------------
   // Parallel batched reads. All RLS-scoped via user JWT.

@@ -226,13 +226,19 @@ export default async function DashboardPage() {
   // when ANTHROPIC_API_KEY / OPENAI_API_KEY is added to Vercel.
   //
   // The onboarding snapshot is fetched alongside so the SetupChecklist
-  // card has live data without an extra round-trip waterfall.
+  // card has live data without an extra round-trip waterfall. We build it
+  // ONCE and hand the in-flight promise to the retention snapshot, which
+  // also needs it — that de-dupes an org-row fetch + 5 count queries that
+  // were previously run twice per dashboard load.
+  const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id);
   const [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot] =
     await Promise.all([
       computeActivitySummary(ctx.org.id, 7),
       computeLeadInsights(ctx.org.id, 30),
-      buildOnboardingSnapshot(ctx.org.id),
-      buildRetentionSnapshot(ctx.org.id),
+      onboardingSnapshotPromise,
+      buildRetentionSnapshot(ctx.org.id, {
+        onboarding: onboardingSnapshotPromise,
+      }),
     ]);
 
   // Phase 2 — fire the milestone notification + audit-log side
