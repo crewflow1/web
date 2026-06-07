@@ -2266,6 +2266,11 @@ export type Database = {
       next_invoice_number: { Args: { target_org: string }; Returns: string }
       next_quote_number: { Args: { target_org: string }; Returns: string }
       next_variation_number: { Args: { target_job: string }; Returns: number }
+      rate_limit_hit: {
+        Args: { p_key: string; p_limit: number; p_window_seconds: number }
+        Returns: { allowed: boolean; remaining: number; reset_at: string }[]
+      }
+      rate_limit_sweep: { Args: never; Returns: undefined }
       remove_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined

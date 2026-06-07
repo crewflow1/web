@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 /**
  * Phase 3 — Portal payment-proof upload.
@@ -50,6 +51,13 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
   if (!token || !invoiceId) {
     redirect(`/customer-portal/${token}/invoices?error=missing_fields`);
   }
+
+  // Throttle portal uploads per token to block upload spam / storage abuse.
+  const rl = await consume("portal_write", token, DEFAULT_LIMITS.portal_write);
+  if (!rl.allowed) {
+    backTo(token, invoiceId, "Too many uploads. Please wait a moment and try again.");
+  }
+
   if (!file || typeof file.size !== "number" || file.size === 0) {
     backTo(token, invoiceId, "no_file");
   }
