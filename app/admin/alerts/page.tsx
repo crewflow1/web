@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { whatsAppHref } from "@/lib/phone";
 import {
   buildAlertsSnapshot,
   getOwnerContactsForOrgs,
@@ -344,6 +345,7 @@ function AlertCard({
 }) {
   const phone = (contact?.phone ?? "").replace(PHONE_DIGITS_RE, "");
   const email = contact?.email ?? "";
+  const waHref = whatsAppHref(contact?.phone ?? null);
 
   return (
     <li
@@ -440,9 +442,9 @@ function AlertCard({
                 Email
               </a>
             ) : null}
-            {phone ? (
+            {waHref ? (
               <a
-                href={`https://wa.me/${phone.replace(/[^\d]/g, "")}`}
+                href={waHref}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100"

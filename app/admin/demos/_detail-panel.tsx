@@ -10,6 +10,7 @@ import {
   type DemoLifecycleStatus,
 } from "@/lib/hq/demo-lifecycle";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
+import { whatsAppHref } from "@/lib/phone";
 import {
   moveDemoToStatus,
   addDemoNote,
@@ -41,15 +42,6 @@ import type { AdminActivityRow } from "@/server/services/hq-audit";
  * here beyond the React 19 useTransition for pending-button styling.
  */
 
-const PHONE_DIGITS_RE = /[^\d+]/g;
-
-function whatsappHref(phone: string | null): string | null {
-  if (!phone) return null;
-  const cleaned = phone.replace(PHONE_DIGITS_RE, "").replace(/^\+/, "");
-  if (!cleaned) return null;
-  return `https://wa.me/${cleaned}`;
-}
-
 export function DemoDetailPanel({
   demo,
   activity,
@@ -67,7 +59,7 @@ export function DemoDetailPanel({
   const mailHref = `mailto:${demo.email}?subject=${encodeURIComponent(
     `Re: CrewFlow demo — ${demo.company}`,
   )}`;
-  const waHref = whatsappHref(demo.phone);
+  const waHref = whatsAppHref(demo.phone);
 
   function recordContact(channel: "call" | "email" | "whatsapp") {
     startContact(async () => {
