@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { CookieConsent } from "@/app/_components/cookie-consent";
 
 // Boot-time env validation — throws if anything required is missing.
 import "@/lib/env";
@@ -68,6 +69,7 @@ export default function RootLayout({
     <html lang="en-GB" className={inter.variable}>
       <body className="min-h-screen bg-white font-sans text-slate-900 antialiased">
         {children}
+        <CookieConsent />
       </body>
     </html>
   );
