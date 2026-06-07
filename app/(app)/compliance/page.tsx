@@ -40,6 +40,8 @@ const KIND_STYLES: Record<string, string> = {
 const ERROR_MAP: Record<string, string> = {
   bad_id: "Invalid document.",
   delete_failed: "Couldn't delete the document.",
+  forbidden: "Only an owner or admin can delete compliance documents.",
+  not_found: "That document no longer exists.",
 };
 
 const SAVED_MAP: Record<string, string> = {
