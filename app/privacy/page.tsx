@@ -54,9 +54,12 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Operational telemetry</strong> — error reports and
-          performance traces via Sentry, and aggregate product analytics via
-          PostHog. These are used to keep the product reliable and to
-          improve it. We don&apos;t use them for advertising.
+          performance traces via Sentry, used to keep the product reliable.
+          These contain technical diagnostics (stack traces, timings), not
+          your business records, and we never use them for advertising. We do
+          not currently run product-analytics tracking; if we introduce it, it
+          will be optional and stays off until you opt in (see{" "}
+          <a href="#cookies">Cookies</a> below).
         </li>
       </ul>
 
@@ -80,8 +83,7 @@ export default function PrivacyPage() {
         Primary storage is Supabase (PostgreSQL), hosted in the European
         Union. Backups are encrypted at rest. File uploads (receipts,
         photos) live in Supabase Storage with the same regional scope.
-        Operational telemetry goes to Sentry and PostHog under their
-        respective DPAs.
+        Operational telemetry (Sentry) is processed under its DPA.
       </p>
 
       <h2>Who can see your data</h2>
@@ -99,9 +101,10 @@ export default function PrivacyPage() {
         business data unless you ask us to (e.g. to debug an issue).
       </p>
 
-      <h2>Cookies</h2>
+      <h2 id="cookies">Cookies</h2>
       <p>
-        We use a small number of essential cookies:
+        We use a small number of essential cookies, and nothing else by
+        default:
       </p>
       <ul>
         <li>
@@ -109,13 +112,22 @@ export default function PrivacyPage() {
           necessary; cannot be disabled while using the product.
         </li>
         <li>
-          A PostHog session ID for product analytics. You can opt out via
-          your browser&apos;s do-not-track setting, which we honour.
+          A cookie remembering your active workspace (and, for our staff, a
+          short-lived support-access cookie). Strictly necessary to run the
+          app.
         </li>
       </ul>
       <p>
-        The customer portal and public quote pages do not set tracking
-        cookies for end customers.
+        We do not set analytics or advertising cookies by default. If we
+        introduce optional product analytics, we&apos;ll ask for your consent
+        first with a banner that lets you <strong>accept or reject</strong>.
+        Reject keeps only the essential cookies above, and nothing
+        analytics-related loads unless and until you accept. You can change
+        your mind later by clearing the consent cookie.
+      </p>
+      <p>
+        The customer portal and public quote pages never set analytics or
+        tracking cookies for end customers.
       </p>
 
       <h2>Your rights under UK GDPR</h2>
