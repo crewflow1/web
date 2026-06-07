@@ -217,11 +217,15 @@ export async function acknowledgeLead(id: string, formData: FormData) {
  * field as a postfix (the leads table doesn't have a dedicated column).
  */
 export async function regenerateLeadSummary(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
+  // SECURITY (P2 audit H-1): summariseLead reads via the service-role admin
+  // client (RLS bypassed), so it MUST be scoped to the caller's org. Pass
+  // ctx.org.id; a foreign-org lead returns null and we redirect below
+  // without sending PII to the LLM or persisting anything.
   const { summariseLead } = await import("@/server/services/lead-summary");
-  const result = await summariseLead(id);
+  const result = await summariseLead(id, ctx.org.id);
   if (!result) {
     redirect(`/leads/${id}?error=summary_failed`);
   }

@@ -17,6 +17,13 @@ import { isAiConfigured } from "@/lib/ai/safety";
  * When ANTHROPIC_API_KEY is unset, deterministic fallback assembles
  * the summary from the lead's structured fields. Same shape, same
  * return type — UI never branches on "AI is on".
+ *
+ * SECURITY (P2 audit H-1): this runs under the service-role admin client,
+ * which BYPASSES RLS. The caller MUST pass its authenticated org id, and
+ * every read here is filtered by `org_id`. A lead belonging to another
+ * tenant therefore resolves to null and we return early — before any
+ * cross-tenant PII reaches the LLM, and before the caller can persist a
+ * summary. `orgId` is required (not optional) so it cannot be omitted.
  */
 
 export type LeadSummary = {
@@ -25,7 +32,10 @@ export type LeadSummary = {
   generated_by: "anthropic" | "openai" | "deterministic";
 };
 
-export async function summariseLead(leadId: string): Promise<LeadSummary | null> {
+export async function summariseLead(
+  leadId: string,
+  orgId: string,
+): Promise<LeadSummary | null> {
   const admin = createAdminClient();
   type Row = {
     id: string;
@@ -51,23 +61,32 @@ export async function summariseLead(leadId: string): Promise<LeadSummary | null>
       `,
     )
     .eq("id", leadId)
+    .eq("org_id", orgId)
     .maybeSingle();
   const lead = row as unknown as Row | null;
+  // Returns null for a missing lead OR a lead in another org (the org_id
+  // filter above makes those indistinguishable, by design — no existence
+  // oracle across tenants).
   if (!lead) return null;
 
   // Photo count for this lead — uses tenant_attachments polymorphic.
+  // Also org-scoped: the admin client bypasses RLS, so we filter org_id
+  // explicitly rather than trusting target_id alone.
   const { count: photoCount } = await (
     admin.from("tenant_attachments" as never) as unknown as {
       select: (cols: string, opts?: { count?: string; head?: boolean }) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => Promise<{ count: number | null }>;
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => Promise<{ count: number | null }>;
+          };
         };
       };
     }
   )
     .select("id" as never, { count: "exact", head: true })
     .eq("target_table", "leads")
-    .eq("target_id", leadId);
+    .eq("target_id", leadId)
+    .eq("org_id", orgId);
 
   if (!isAiConfigured()) {
     return deterministicSummary(lead, photoCount ?? 0);
