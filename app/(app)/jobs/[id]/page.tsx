@@ -431,7 +431,7 @@ export default async function EditJobPage({
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
-      {job.status === "done" && job.customer_id ? (
+      {job.status === "completed" && job.customer_id ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
           <p className="text-sm font-medium text-emerald-900">
             Job&rsquo;s done — ask for a review

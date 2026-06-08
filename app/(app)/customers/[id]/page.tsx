@@ -149,11 +149,13 @@ export default async function EditCustomerPage({
   const errorMessage = error
     ? error === "delete_failed"
       ? "Couldn't delete. Only admins/owners can delete customers."
-      : error === "portal_token_failed"
-        ? "Couldn't generate the portal link. Try again."
-        : error === "not_allowed"
-          ? "You don't have permission for that action."
-          : decodeURIComponent(error)
+      : error === "customer_has_records"
+        ? "Can't delete this customer yet — they still have linked quotes, jobs, or invoices. Remove or reassign those first, then try again."
+        : error === "portal_token_failed"
+          ? "Couldn't generate the portal link. Try again."
+          : error === "not_allowed"
+            ? "You don't have permission for that action."
+            : decodeURIComponent(error)
     : null;
 
   const portalSaved = saved === "portal_link";
