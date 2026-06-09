@@ -71,7 +71,10 @@ describe("Server panel — private-area fetch gate", () => {
     const src = read(PANEL);
     expect(src).toMatch(/from\s+["']@\/server\/services\/job-documents["']/);
     expect(src).toMatch(/\blistJobDocuments\b/);
-    expect(src).toMatch(/\blistJobDocumentVersions\b/);
+    // F-6: versions load via the BATCHED fetch (one .in() query for all docs),
+    // not a per-document call inside a map (the old N+1).
+    expect(src).toMatch(/\blistJobDocumentVersionsForDocuments\b/);
+    expect(src).not.toMatch(/await\s+listJobDocumentVersions\(/);
   });
 
   it("always loads the staff area", () => {
