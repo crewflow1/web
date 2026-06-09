@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
@@ -41,11 +42,21 @@ import { computePayrollLine } from "@/lib/payroll/compute";
  * user-context Supabase client). No mock data.
  *
  * Query approach — we fetch the underlying rows once per entity and
- * compute aggregations in TypeScript. With <1000 rows per org per
- * entity (the MVP-target volume) this stays well under 100 ms and
- * keeps the code easy to follow. When any org crosses ~5000 rows on
- * jobs / invoices / finances, swap the per-section fetches for
- * dedicated SQL counts (`{ count: 'exact', head: true }`) or RPC views.
+ * compute aggregations in TypeScript, so the code stays easy to follow.
+ *
+ * F-1 fix: the per-entity reads go through `fetchAllRows`, which pages
+ * under the PostgREST max-rows cap (1000 by default). A bare `.select()`
+ * with no `.range()` is SILENTLY TRUNCATED once an org crosses that many
+ * rows, so every KPI here (counts, money sums, profitability, pipeline)
+ * would have under-reported with no error. Paging the reads keeps the
+ * aggregation arithmetic identical while making the inputs complete and
+ * volume-independent. Each paged read uses a stable `created_at desc + id`
+ * ordering so rows can't shift across page boundaries.
+ *
+ * Later-horizon note: once a single org carries tens of thousands of rows
+ * (well past the 200-company target), move these per-entity reads to
+ * DB-side SQL aggregates / RPC views. Paging is the correct, low-risk fix
+ * for launch; SQL aggregates are the deliberate next step beyond it.
  *
  * Time windows:
  *   - "this week" = last 7 days rolling
@@ -120,22 +131,35 @@ export default async function DashboardPage() {
   const ACTIVITY_PAGE_SIZE = 25;
   const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes] =
     await Promise.all([
-      supabase
-        .from("jobs")
-        .select(
-          "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
-        )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("invoices")
-        .select(
-          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
-        )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("finances")
-        .select("id, amount, vat_total, created_at, category, job_id")
-        .gte("created_at", sixMonthsAgoIso),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("jobs")
+          .select(
+            "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("invoices")
+          .select(
+            "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("finances")
+          .select("id, amount, vat_total, created_at, category, job_id")
+          .gte("created_at", sixMonthsAgoIso)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       supabase
         .from("leads")
         .select(
@@ -146,12 +170,22 @@ export default async function DashboardPage() {
       supabase
         .from("memberships")
         .select("user_id, role, user:users ( id, full_name, email )"),
-      supabase
-        .from("quotes")
-        .select("id, status, total, accepted_at, created_at, approved_at"),
-      supabase
-        .from("leads")
-        .select("id, status, source, estimated_value, created_at"),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("quotes")
+          .select("id, status, total, accepted_at, created_at, approved_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("leads")
+          .select("id, status, source, estimated_value, created_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       supabase
         .from("activity_log")
         .select(
@@ -179,10 +213,15 @@ export default async function DashboardPage() {
   // for "this week" + "this month" tiles).
   const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: timeEntriesRaw }, { data: payableMembers }] = await Promise.all([
-    supabase
-      .from("time_entries")
-      .select("id, user_id, job_id, started_at, ended_at, breaks")
-      .gte("started_at", thirtyDaysAgoIso),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .gte("started_at", thirtyDaysAgoIso)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     supabase
       .from("memberships")
       .select("user_id, role, user:users ( id, hourly_pay )"),

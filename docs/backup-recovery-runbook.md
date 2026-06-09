@@ -1,152 +1,122 @@
-# CrewFlow — Backup & Recovery Runbook
+# Backup & disaster-recovery runbook (F-3)
 
-_Supabase project ref: `jzntbskdqdopzwdqwvkp` · region: West EU (Ireland) · single production project, no staging._
+CrewFlow runs on a single managed Supabase Postgres (project ref
+`jzntbskdqdopzwdqwvkp`, prod `crewflow.uk`). There is **no second
+environment** — prod is the only database — so a clean, tested recovery
+story is the difference between a bad afternoon and losing every customer's
+jobs, quotes and invoices. This runbook covers what protection exists today,
+what to turn on before scaling to 200 paying companies, and the exact restore
+procedure.
 
-This runbook documents what backup coverage exists today, the resulting
-RPO/RTO, the exact restore procedure, and how to verify backups. It was
-produced as part of launch hardening.
+> **Scope / authority.** Enabling the PITR add-on and restoring a project are
+> **paid, account-Owner actions in the Supabase dashboard**. They are out of
+> scope for autonomous execution and are documented here for a human operator
+> with Owner + billing access to perform.
 
----
+## What's verified in production today
 
-## 1. Current backup status (VERIFIED 2026-06-08)
+Read-only checks against prod (`pg_stat_archiver`, `pg_settings`):
 
-Verified with the Supabase CLI against the linked project:
-
-```
-$ supabase backups list
- REGION            | WALG | PITR  | EARLIEST TIMESTAMP | LATEST TIMESTAMP
- ------------------|------|-------|--------------------|------------------
- West EU (Ireland) | true | false | 0                  | 0
-```
-
-| Capability | Status | Meaning |
+| Signal | Value | Meaning |
 |---|---|---|
-| Daily physical backups (WAL-G) | **ENABLED** | A full physical backup is taken on Supabase's daily schedule. |
-| Point-in-Time Recovery (PITR) | **NOT ENABLED** | No continuous WAL archiving; the `0` timestamps confirm there is no PITR window. |
-| Database branching | **NOT ENABLED** | `supabase branches list` returns no branches; no isolated clone is available via CLI. |
+| `archive_mode` | `on` | WAL archiving is active — the substrate for backups & PITR. |
+| `wal_level` | `logical` | Full WAL detail is being written. |
+| `pg_stat_archiver.archived_count` | 3805, **0 failed**, last archived minutes ago | Archiving is healthy and current. |
+| `max_connections` | 60 | Smallest compute tier (Nano/Micro). |
+| `pg_database_size` | ~25 MB, 98 user tables | Pre-launch data volume. |
 
-> **Action item (billing/dashboard, not code):** Enable PITR for this project.
-> It is a paid Supabase add-on and can only be turned on from the dashboard
-> (Project → Database → Backups → enable PITR) or via the Management API with an
-> account that has billing rights. This cannot be done from read-only DB tooling.
+**What this means:** the platform is continuously shipping WAL, so the raw
+material for point-in-time recovery exists. **What SQL cannot tell us:**
+whether the paid **PITR add-on** (which sets the recovery-window retention and
+exposes the restore-to-timestamp UI) is actually purchased. The `max_connections=60`
+compute tier strongly suggests the project is **not** yet on a plan + add-on
+that includes PITR. **This must be confirmed in the dashboard** (see below) —
+do not assume PITR is available just because WAL archiving is on.
 
----
+## Recovery objectives (target before launch)
 
-## 2. RPO / RTO
-
-| Metric | Today (daily backup only) | After enabling PITR (recommended) |
+| Metric | Daily backups only | With PITR add-on |
 |---|---|---|
-| **RPO** (max data loss) | **Up to ~24 h** — worst case is a failure immediately before the next daily snapshot. | **~2 min** (Supabase PITR WAL granularity). |
-| **RTO** (time to restore) | Realistic end-to-end **~1–2 h**: detect → decide → trigger restore → verify → re-point. The restore mechanic itself is minutes on a DB this small. | Similar; PITR restore lets you pick an exact timestamp just before the incident. |
+| **RPO** (max data loss) | up to ~24h (last nightly) | ≤ 2 minutes |
+| **RTO** (time to restore) | minutes–hours (size dependent) | minutes–hours |
+| Granularity | one snapshot/day | any second within the retention window |
 
-For a financial product (invoices, payments, quotes), a 24 h RPO is the single
-biggest gap. Enabling PITR closes it to minutes.
+At 200 paying companies, a 24h RPO means a bad day could erase a full day of
+every customer's jobs/quotes/invoices with no way back. **PITR is the
+launch-blocking requirement here.**
 
----
+## Step 1 — Confirm current backup posture (dashboard, ~2 min)
 
-## 3. Restore procedure
+1. Supabase dashboard → project `jzntbskdqdopzwdqwvkp`.
+2. **Database → Backups**. Note whether you see:
+   - only a list of **daily** backups (→ daily-only, no PITR), or
+   - a **"Restore to a point in time"** / **Physical backups** panel with a
+     time slider (→ PITR add-on active).
+3. **Settings → Add-ons** (or **Settings → Billing**): check for a
+   **Point-in-Time Recovery** add-on line item and its retention (7 / 14 / 28 days).
 
-> ⚠️ A daily-backup restore is a **destructive, full-project** operation — it
-> overwrites current state. It is **not** something to run casually and must
-> never be run autonomously. It requires dashboard/owner access.
+Record the finding. If PITR is absent, proceed to Step 2.
 
-### 3a. Restore from the latest daily backup (available today)
+## Step 2 — Enable PITR (paid; Owner + billing required)
 
-1. **Stop writes** if feasible: put the app into maintenance (or accept that
-   writes after the chosen backup point will be lost).
-2. Supabase Dashboard → **Project → Database → Backups**.
-3. Pick the most recent daily backup and click **Restore**. Confirm the
-   project ref is `jzntbskdqdopzwdqwvkp`.
-4. Wait for the restore to complete (minutes for the current DB size).
-5. Run the verification queries in §4 against the restored DB.
-6. Redeploy / confirm the app (`crewflow.uk`) connects and core flows work
-   (login, dashboard, create invoice, record payment).
+> This is the action that requires more than dashboard access — it needs
+> **account Owner / billing permission** and incurs cost.
 
-### 3b. Restore to a point in time (only after PITR is enabled)
+PITR requires the project to be on **Pro plan or higher** and then the
+**PITR add-on** enabled on top:
 
-```
-# Lists the available PITR window first:
-supabase backups list
-# Restores the linked project to a timestamp inside that window:
-supabase backups restore --help    # confirm exact flag, then run with the target ts
-```
+1. **Settings → Billing** → ensure the org is on **Pro** (or Team/Enterprise).
+   PITR is not available on Free.
+2. **Settings → Add-ons → Point-in-Time Recovery** → enable. Choose a
+   retention window (start at **7 days**; raise to 14/28 if audit policy
+   requires). Enabling PITR may also bump the compute add-on — expect a
+   monthly cost increase.
+3. Wait for the first physical backup to complete (dashboard shows status).
+   Until it finishes, only daily logical backups exist.
 
-Same verification (§4) and redeploy steps follow.
+What's needed beyond plain dashboard access: **Owner/billing role** to add a
+paid add-on, and acceptance of the recurring cost. An engineer with only
+project (developer) access cannot enable it.
 
-### 3c. Test restore to an isolated environment (recommended rehearsal)
+## Step 3 — Restore procedure (rehearse before you need it)
 
-A safe rehearsal that does **not** touch production requires one of:
+**Supabase restore is in-place and destructive to current state** — it rolls
+the project back to the chosen timestamp. There is no "restore into a copy"
+within a single project, so treat any real restore as an incident with
+comms. Practise it on a throwaway project first.
 
-- **Enable database branching** (`supabase branches create <name>`), which
-  provisions an isolated Postgres with the schema (and optionally data), or
-- Restore a `supabase db dump` into a throwaway project / local Postgres:
+1. Dashboard → **Database → Backups → Restore**.
+2. **PITR:** pick the exact timestamp (UTC) just before the bad event. The
+   slider is bounded by the retention window. **Daily-only:** pick the nightly
+   snapshot.
+3. Confirm. The project goes read-only/unavailable during restore (minutes to
+   hours depending on size; trivial at today's 25 MB, longer at scale).
+4. Post-restore verification (run read-only):
+   - `select max(created_at) from public.activity_log;` — newest row ≈ target time.
+   - Spot-check row counts on `jobs`, `quotes`, `invoices`, `finances`,
+     `customers`, `memberships`.
+   - Confirm auth still works (a test login) and RLS is intact.
+5. Comms: notify affected orgs of the recovery point; anything written between
+   the restore target and the incident is gone.
 
-```
-supabase db dump --linked -f /tmp/cf-prod-dump.sql      # schema + data dump
-# then load into a scratch DB and run the §4 checks there
-```
+## Step 4 — Pre-launch DR checklist
 
-> **Status of the launch-hardening test restore:** A true point-in-time test
-> restore could **not** be executed from available tooling because PITR is off
-> and no branch/clone environment exists; the only restore path today (3a) is a
-> destructive full-project operation on the single prod project, which is out of
-> bounds for an autonomous action. The procedure above is the rehearsal to run
-> by hand once PITR and/or branching is enabled. A logical `supabase db dump`
-> into a scratch DB is the lowest-risk way to rehearse before launch.
+- [ ] PITR add-on enabled, retention ≥ 7 days (Step 2). **Launch blocker.**
+- [ ] One **rehearsed** restore on a scratch project, RTO measured and recorded.
+- [ ] `pg_stat_archiver.failed_count` alerting — a rising value means WAL
+      archiving is broken and backups are silently degrading. Add to the
+      `/admin/ops` health surface or external monitoring.
+- [ ] A periodic **logical export** (`pg_dump` / `supabase db dump`) stored
+      off-Supabase (e.g. object storage) as defence against project-level loss
+      (account compromise, accidental project deletion) that PITR can't cover.
+- [ ] Documented owner + escalation path for invoking a restore.
 
----
+## Notes
 
-## 4. Post-restore verification queries
-
-Run these against the restored database; all should return sane, non-zero
-counts and the lifecycle should reconcile:
-
-```sql
--- Core tables populated
-select 'orgs' t, count(*) from public.organizations
-union all select 'customers', count(*) from public.customers
-union all select 'quotes', count(*) from public.quotes
-union all select 'invoices', count(*) from public.invoices
-union all select 'payments', count(*) from public.invoice_payments;
-
--- Money reconciles: paid invoices should have payments summing to >= total
-select i.id, i.total, coalesce(sum(p.amount),0) paid, i.status
-from public.invoices i
-left join public.invoice_payments p on p.invoice_id = i.id
-group by i.id
-having i.status = 'paid' and coalesce(sum(p.amount),0) < i.total;
--- ^ expect ZERO rows
-
--- RLS helpers still present (multi-tenant isolation intact)
-select proname from pg_proc where proname in ('current_org_ids','is_org_admin');
--- ^ expect both rows
-
--- Payment-sync trigger present
-select tgname from pg_trigger where tgname like '%invoice_payments%';
-```
-
-`scripts/e2e-lifecycle.sql` (full lifecycle, self-cleaning) can also be run as a
-heavier smoke test after a restore.
-
----
-
-## 5. Where backups are verified
-
-- **Existence/cadence:** `supabase backups list` (shown in §1) — run weekly; the
-  daily-backup row must show `WALG: true`. Once PITR is enabled, confirm the
-  EARLIEST/LATEST window is non-zero and advancing.
-- **Restorability:** the §3c rehearsal — the only way to *prove* a backup
-  restores is to restore it. Rehearse before launch and after any major schema
-  change.
-- **Dashboard:** Project → Database → Backups shows the daily backup list and
-  (once enabled) the PITR window.
-
----
-
-## 6. Summary
-
-- ✅ Daily physical backups are on.
-- ❌ PITR is **off** → RPO is up to 24 h. **Enable PITR** to reach ~2 min RPO
-  (paid dashboard action — cannot be done from code/CLI without billing rights).
-- ❌ No rehearsed restore yet → run the §3c dump-to-scratch rehearsal before
-  onboarding paying customers.
+- Restores are **in-place and irreversible** — never trigger one to "take a
+  look." Use a scratch project for drills.
+- PITR protects against data corruption *within* the project. It does **not**
+  protect against losing the whole project/account — keep an independent
+  logical dump for that tier of failure.
+- This runbook is documentation only; it executes nothing and changes no
+  setting.
