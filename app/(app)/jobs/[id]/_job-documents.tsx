@@ -1,6 +1,6 @@
 import {
   listJobDocuments,
-  listJobDocumentVersions,
+  listJobDocumentVersionsForDocuments,
   JOB_DOC_TYPES,
   JOB_DOC_ALLOWED_MIME,
   JOB_DOC_MAX_BYTES,
@@ -44,12 +44,16 @@ async function loadArea(
   area: "staff" | "private",
 ): Promise<DocWithVersions[]> {
   const docs = await listJobDocuments(jobId, area);
-  return Promise.all(
-    docs.map(async (doc) => ({
-      doc,
-      versions: await listJobDocumentVersions(doc.id),
-    })),
+  if (docs.length === 0) return [];
+  // One batched query for every document's versions instead of one query per
+  // document (the old N+1, which also re-ran requireOrgContext each time).
+  const versionsByDoc = await listJobDocumentVersionsForDocuments(
+    docs.map((d) => d.id),
   );
+  return docs.map((doc) => ({
+    doc,
+    versions: versionsByDoc.get(doc.id) ?? [],
+  }));
 }
 
 export async function JobDocumentsPanel({
