@@ -22,8 +22,6 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
-  DATABASE_URL: z.string().min(1).optional(),
-  DIRECT_URL: z.string().min(1).optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
