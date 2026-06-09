@@ -10,16 +10,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *   3. unpaid invoice at day_14 window with no prior reminder → fires day_14
  *      (escalation works even without earlier stages)
  *   4. unpaid invoice at day_7 window with an existing day_7 row → skipped
- *      (duplicate prevented)
+ *      (duplicate prevented — via the BATCHED existence check, not an N+1)
+ *   5. insert losing the unique-index race (23505) → counted as already-sent,
+ *      never a hard failure
+ *   6. a stage with mixed candidates → already-sent ones are partitioned out
+ *      before any send; only the fresh one is emailed + inserted
+ *
+ * The existence check is one query per stage (select invoice_id ... in
+ * (...candidate ids)), so the mock returns a *row list* for the
+ * `existing` queue, not a count.
  */
 
 // -- Mock factory --------------------------------------------------------
 
-type QueueEntry = { data?: unknown; error?: unknown; count?: number };
+type QueueEntry = { data?: unknown; error?: unknown };
 type Queues = {
-  // Per-stage candidate query (returns invoices to consider for a stage)
+  // Per-stage candidate query (invoices to consider for a stage)
   candidates: QueueEntry[];
-  // Per-candidate "does this stage already exist?" check (returns count)
+  // Per-stage batched "which of these already have a row?" query.
+  // data = array of { invoice_id } already recorded for the stage.
   existing: QueueEntry[];
   // The reminder-row insert
   insertReminder: QueueEntry[];
@@ -35,9 +44,6 @@ function makeMockSupabase() {
     return entry;
   }
 
-  // Each .from(table)... chain — we track whether the current chain is
-  // a "candidates select" (terminates in `.limit().then`) or an
-  // "existing select" (terminates in `.head=true` count) or an "insert".
   const passthrough = new Set([
     "select",
     "eq",
@@ -55,29 +61,23 @@ function makeMockSupabase() {
 
   function makeChain(table: string): Record<string, unknown> {
     const chain: Record<string, unknown> = {};
-    let isCountQuery = false;
 
-    chain.select = (_cols: string, opts?: { count?: string; head?: boolean }) => {
-      if (opts?.head && opts?.count === "exact") isCountQuery = true;
-      return chain;
-    };
     for (const m of passthrough) {
-      if (m === "select") continue;
       chain[m] = () => chain;
     }
     chain.limit = () => chain;
 
-    // .then handler — for candidates queries
+    // Awaiting a select chain. Discriminate purely by table:
+    //   invoices           → the per-stage candidate list
+    //   invoice_reminders  → the batched existence query (row list)
     Object.defineProperty(chain, "then", {
       value: (resolve: (v: QueueEntry) => unknown) => {
-        if (isCountQuery) {
-          // count query against invoice_reminders
-          const entry = pop("existing");
-          return resolve({ count: entry.count ?? 0, data: null, error: entry.error ?? null });
-        }
-        // candidates select on invoices (or anything else)
         if (table === "invoices") {
           return resolve(pop("candidates"));
+        }
+        if (table === "invoice_reminders") {
+          const entry = pop("existing");
+          return resolve({ data: entry.data ?? [], error: entry.error ?? null });
         }
         return resolve({ data: [], error: null });
       },
@@ -145,9 +145,13 @@ const { GET } = await import("@/app/api/cron/invoice-reminders/route");
 
 // -- Test fixtures + helpers ---------------------------------------------
 
-function makeInvoice(opts: { sent_at: string; status?: string } = { sent_at: "2026-05-17T09:00:00Z" }) {
+function makeInvoice(
+  opts: { sent_at: string; status?: string; id?: string; email?: string | null } = {
+    sent_at: "2026-05-17T09:00:00Z",
+  },
+) {
   return {
-    id: "invoice-uuid-1",
+    id: opts.id ?? "invoice-uuid-1",
     org_id: "org-uuid-1",
     number: "INV-0001",
     status: opts.status ?? "sent",
@@ -159,7 +163,7 @@ function makeInvoice(opts: { sent_at: string; status?: string } = { sent_at: "20
     paid_at: null,
     notes: null,
     quote_id: "quote-uuid-1",
-    quote: { customer: { email: "customer@example.com" } },
+    quote: { customer: { email: opts.email === undefined ? "customer@example.com" : opts.email } },
   };
 }
 
@@ -181,7 +185,8 @@ describe("invoice-reminders cron", () => {
   it("paid invoices are filtered out by the status query and no reminder is triggered", async () => {
     // The cron makes 4 candidate queries (one per stage). For paid
     // invoices to be excluded, each query returns an empty list — the
-    // .neq('status', 'paid') filter is doing the work.
+    // .neq('status', 'paid') filter is doing the work. No existence
+    // query fires because the candidate set is empty.
     for (let i = 0; i < 4; i++) {
       mockAdmin.enqueue("candidates", { data: [], error: null });
     }
@@ -197,11 +202,9 @@ describe("invoice-reminders cron", () => {
   });
 
   it("unpaid invoice sent 3 days ago → fires day_3 stage exactly once", async () => {
-    // 3-days-ago invoice surfaces in the day_3 candidate query;
-    // empty for day_7 / day_14 / day_21
     const inv = makeInvoice({ sent_at: new Date(Date.now() - 3 * 86_400_000).toISOString() });
     mockAdmin.enqueue("candidates", { data: [inv], error: null }); // day_3
-    mockAdmin.enqueue("existing", { count: 0 }); // no prior day_3 row
+    mockAdmin.enqueue("existing", { data: [] }); // no prior day_3 row
     mockAdmin.enqueue("insertReminder", { data: null, error: null });
     mockAdmin.enqueue("candidates", { data: [], error: null }); // day_7
     mockAdmin.enqueue("candidates", { data: [], error: null }); // day_14
@@ -234,7 +237,7 @@ describe("invoice-reminders cron", () => {
     mockAdmin.enqueue("candidates", { data: [], error: null });
     // day_14 hits.
     mockAdmin.enqueue("candidates", { data: [inv], error: null });
-    mockAdmin.enqueue("existing", { count: 0 });
+    mockAdmin.enqueue("existing", { data: [] });
     mockAdmin.enqueue("insertReminder", { data: null, error: null });
     // day_21 empty
     mockAdmin.enqueue("candidates", { data: [], error: null });
@@ -256,8 +259,8 @@ describe("invoice-reminders cron", () => {
     const inv = makeInvoice({ sent_at: new Date(Date.now() - 7 * 86_400_000).toISOString() });
     mockAdmin.enqueue("candidates", { data: [], error: null }); // day_3
     mockAdmin.enqueue("candidates", { data: [inv], error: null }); // day_7
-    // Existing row found (count=1) → skip
-    mockAdmin.enqueue("existing", { count: 1 });
+    // Batched existence check returns this invoice → skip.
+    mockAdmin.enqueue("existing", { data: [{ invoice_id: inv.id }] });
     mockAdmin.enqueue("candidates", { data: [], error: null }); // day_14
     mockAdmin.enqueue("candidates", { data: [], error: null }); // day_21
 
@@ -268,5 +271,59 @@ describe("invoice-reminders cron", () => {
     expect(body.skipped_already_sent).toBe(1);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
     expect(mockAdmin.reminderInserts).toHaveLength(0);
+  });
+
+  it("insert losing the unique-index race (23505) is treated as already-sent, not a failure", async () => {
+    const inv = makeInvoice({ sent_at: new Date(Date.now() - 3 * 86_400_000).toISOString() });
+    mockAdmin.enqueue("candidates", { data: [inv], error: null }); // day_3
+    mockAdmin.enqueue("existing", { data: [] }); // batch check says fresh
+    // ...but the insert hits the partial unique index (another run beat us).
+    mockAdmin.enqueue("insertReminder", { data: null, error: { code: "23505" } });
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_7
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_14
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_21
+
+    const res = await GET(fakeRequest);
+    const body = await res.json();
+
+    expect(body.ok).toBe(true);
+    expect(body.failed).toBe(0);
+    expect(body.sent).toBe(0);
+    expect(body.skipped_already_sent).toBe(1);
+    // The email DID go out before the insert — the unique index only
+    // guards the row, not the network call.
+    expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("mixed stage: already-sent candidate is partitioned out before any send", async () => {
+    const done = makeInvoice({
+      id: "invoice-done",
+      sent_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    });
+    const fresh = makeInvoice({
+      id: "invoice-fresh",
+      sent_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    });
+    mockAdmin.enqueue("candidates", { data: [done, fresh], error: null }); // day_3
+    mockAdmin.enqueue("existing", { data: [{ invoice_id: done.id }] }); // done already recorded
+    mockAdmin.enqueue("insertReminder", { data: null, error: null }); // for fresh
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_7
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_14
+    mockAdmin.enqueue("candidates", { data: [], error: null }); // day_21
+
+    const res = await GET(fakeRequest);
+    const body = await res.json();
+
+    expect(body.scanned).toBe(2);
+    expect(body.skipped_already_sent).toBe(1);
+    expect(body.sent).toBe(1);
+    expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(
+      mockAdmin.client,
+      fresh.id,
+      { kind: "reminder", reminder_stage: "day_3" },
+    );
+    expect(mockAdmin.reminderInserts).toHaveLength(1);
+    expect(mockAdmin.reminderInserts[0]).toMatchObject({ invoice_id: fresh.id });
   });
 });
