@@ -14,7 +14,7 @@
  *     malformed/`javascript:` logo_url left in old data can't render.
  */
 
-/** Storage bucket id (created in 20260707000000_company_logo_storage.sql). */
+/** Storage bucket id (created in 20260712000000_company_logo_storage.sql). */
 export const LOGO_BUCKET = "company-logos";
 
 /** Accepted upload formats. WebP included for modern, small logos. */

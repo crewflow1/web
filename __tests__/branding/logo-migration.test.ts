@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 
 const root = resolve(__dirname, "../..");
 const mig = readFileSync(
-  resolve(root, "supabase/migrations/20260707000000_company_logo_storage.sql"),
+  resolve(root, "supabase/migrations/20260712000000_company_logo_storage.sql"),
   "utf-8",
 );
 
