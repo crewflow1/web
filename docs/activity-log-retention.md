@@ -7,7 +7,7 @@ writes. **Nothing prunes it.** At ~200 active orgs each doing dozens of
 mutations a day it accrues millions of rows a year, steadily inflating
 storage, backup/PITR size, autovacuum cost and index depth.
 
-Migration `20260709000000_activity_log_retention.sql` adds the **mechanism**
+Migration `20260710000000_activity_log_retention.sql` adds the **mechanism**
 to trim the feed. It does **not** delete anything on apply — see *Safety*.
 
 ## TL;DR

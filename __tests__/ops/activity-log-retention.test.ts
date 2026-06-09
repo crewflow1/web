@@ -7,7 +7,7 @@ import { resolve } from "node:path";
  *
  * public.activity_log is an append-only audit/feed table written only by the
  * SECURITY DEFINER `_tg_*_activity` triggers; nothing prunes it, so it is the
- * fastest-growing relation in the schema. Migration 20260709000000 adds the
+ * fastest-growing relation in the schema. Migration 20260710000000 adds the
  * MECHANISM to trim it — a supporting (created_at) index, a batched
  * purge_activity_log() function locked to the service role, and a COMMENTED
  * pg_cron schedule block — but it must delete NOTHING when applied.
@@ -35,7 +35,7 @@ const sqlOnly = (src: string) =>
     .join("\n");
 
 const MIG_REL =
-  "supabase/migrations/20260709000000_activity_log_retention.sql";
+  "supabase/migrations/20260710000000_activity_log_retention.sql";
 const mig = read(MIG_REL);
 const exec = sqlOnly(mig);
 
@@ -57,7 +57,7 @@ function functionBody(src: string): string {
 describe("F-8 retention — migration ships", () => {
   it("the retention migration is present", () => {
     const found = readdirSync(resolve(ROOT, "supabase/migrations")).includes(
-      "20260709000000_activity_log_retention.sql",
+      "20260710000000_activity_log_retention.sql",
     );
     expect(found).toBe(true);
   });
