@@ -38,9 +38,12 @@ describe("Sprint A item 1 — landing positioning (CEO directive 2026-05-22)", (
   });
 
   it("landing leads with 'Book demo' as the primary CTA", () => {
-    // Two BookDemoButton usages: nav + hero.
-    const matches = LANDING.match(/BookDemoButton/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(3); // import + nav + hero
+    // The dark redesign routes every primary CTA through <BookDemoCta>,
+    // which dispatches the same `crewflow:open-book-demo` event the shared
+    // <BookDemoModal> listens for (nav + hero + final CTA + footer). This
+    // preserves the exact demo funnel; only the styled trigger changed.
+    const matches = LANDING.match(/BookDemoCta/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(3); // import + nav + hero (+ more)
   });
 
   it("landing copy reflects premium £1k/£500-mo positioning", () => {
