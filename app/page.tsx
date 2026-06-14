@@ -9,7 +9,7 @@ import { MotionProvider, Reveal, CountUp } from "./_marketing/motion";
 import "./_marketing/marketing.css";
 
 /**
- * CrewFlow marketing homepage — premium dark theme.
+ * CrewFlow marketing homepage. Premium dark theme.
  *
  * SAFETY / CONTRACTS PRESERVED:
  * - Demo funnel: <BookDemoCta> dispatches the exact `crewflow:open-book-demo`
@@ -245,7 +245,7 @@ const PAIN = [
   {
     icon: <IconClock />,
     title: "£9,500 retention nobody’s chasing",
-    body: "Money you’ve already earned, held back on jobs you finished months ago — and forgotten.",
+    body: "Money you’ve already earned, held back on jobs you finished months ago, and forgotten.",
   },
 ];
 
@@ -255,7 +255,7 @@ const SUNDAY_NOTIS = [
     icon: <IconPhoneMissed />,
     app: "Phone",
     time: "now",
-    msg: "3 missed calls — new enquiry, Ballymena",
+    msg: "3 missed calls, new enquiry in Ballymena",
   },
   {
     tone: "mkt-gn",
@@ -269,7 +269,7 @@ const SUNDAY_NOTIS = [
     icon: <IconFile />,
     app: "Reminder",
     time: "7:00pm",
-    msg: "2 quotes still not sent — Doyle, Quinn",
+    msg: "2 quotes still not sent: Doyle, Quinn",
   },
   {
     tone: "mkt-bl",
@@ -283,7 +283,7 @@ const SUNDAY_NOTIS = [
     icon: <IconFileLines />,
     app: "HMRC",
     time: "2 days",
-    msg: "VAT return due — £6,820 to confirm",
+    msg: "VAT return due: £6,820 to confirm",
   },
 ];
 
@@ -314,7 +314,7 @@ const OS_ITEMS = [
     on: false,
     icon: <IconPhone />,
     title: "Leads & enquiries",
-    body: "Every call, form and referral captured — so nothing slips while you’re on site.",
+    body: "Every call, form and referral captured, so nothing slips while you’re on site.",
   },
   {
     on: false,
@@ -326,7 +326,7 @@ const OS_ITEMS = [
     on: false,
     icon: <IconUsers />,
     title: "Staff & rota",
-    body: "Who’s where, this week and next — with clashes flagged before they happen.",
+    body: "Who’s where, this week and next, with clashes flagged before they happen.",
   },
   {
     on: false,
@@ -354,10 +354,10 @@ const MONEY_KPIS = [
 ];
 
 const PROFIT_ROWS = [
-  { job: "Loft — Patel", quoted: "£25,980", costs: "£16,900", margin: "35%", pill: "mkt-pill-em" },
-  { job: "Extension — Doyle", quoted: "£38,200", costs: "£27,500", margin: "28%", pill: "mkt-pill-em" },
-  { job: "Refurb — Newry", quoted: "£12,400", costs: "£10,900", margin: "12%", pill: "mkt-pill-red" },
-  { job: "Patio — Quinn", quoted: "£6,400", costs: "£4,100", margin: "36%", pill: "mkt-pill-em" },
+  { job: "Loft · Patel", quoted: "£25,980", costs: "£16,900", margin: "35%", pill: "mkt-pill-em" },
+  { job: "Extension · Doyle", quoted: "£38,200", costs: "£27,500", margin: "28%", pill: "mkt-pill-em" },
+  { job: "Refurb · Newry", quoted: "£12,400", costs: "£10,900", margin: "12%", pill: "mkt-pill-red" },
+  { job: "Patio · Quinn", quoted: "£6,400", costs: "£4,100", margin: "36%", pill: "mkt-pill-em" },
 ];
 
 const CASHFLOW = [
@@ -374,28 +374,28 @@ const AI_ROWS = [
     icon: <IconFile size={16} />,
     tone: "",
     title: "Patel quote unopened for 4 days",
-    body: "QUO-1042 · £25,980 — worth a follow-up call.",
+    body: "QUO-1042 · £25,980. Worth a follow-up call.",
     act: "Remind",
   },
   {
     icon: <IconPound size={16} />,
     tone: "mkt-rd",
     title: "INV-088 is 21 days overdue",
-    body: "£4,200 · M. Hughes — second reminder ready to send.",
+    body: "£4,200 · M. Hughes. Second reminder ready to send.",
     act: "Chase",
   },
   {
     icon: <IconTrendingDown size={16} />,
     tone: "mkt-rd",
     title: "Newry job margin below 15%",
-    body: "Costs are running ahead of the quote — take a look before it slips further.",
+    body: "Costs are running ahead of the quote. Take a look before it slips further.",
     act: "Review",
   },
   {
     icon: <IconClock size={16} />,
     tone: "",
     title: "£2,500 retention due to release",
-    body: "Defects period ended on the Hughes refurb — invoice it.",
+    body: "Defects period ended on the Hughes refurb. Invoice it.",
     act: "Invoice",
   },
 ];
@@ -404,7 +404,7 @@ const PORTAL_FEATS = [
   {
     icon: <IconCheck />,
     title: "Approve quotes online",
-    body: "Customers accept and sign off in a click — no chasing paperwork.",
+    body: "Customers accept and sign off in a click. No chasing paperwork.",
   },
   {
     icon: <IconJobs />,
@@ -414,7 +414,7 @@ const PORTAL_FEATS = [
   {
     icon: <IconPound />,
     title: "Pay invoices by card",
-    body: "One tap to pay — money lands faster, with less chasing.",
+    body: "One tap to pay. Money lands faster, with less chasing.",
   },
 ];
 
@@ -473,7 +473,7 @@ export default function HomePage() {
         </main>
         <SiteFooter />
       </MotionProvider>
-      {/* Unchanged demo funnel — listens for crewflow:open-book-demo */}
+      {/* Unchanged demo funnel: listens for crewflow:open-book-demo */}
       <BookDemoModal />
     </div>
   );
@@ -531,9 +531,9 @@ function Hero() {
             <span className="mkt-hero-accent">from one place.</span>
           </h1>
           <p className="mkt-lead">
-            Quotes, jobs, staff, invoices, payroll and VAT — in one system built
-            for builders. Win more work, cut the admin, and know exactly where
-            your money is.
+            Quotes, jobs, staff, invoices, payroll and VAT, all in one system
+            built for builders. Win more work, cut the admin, and know exactly
+            where your money is.
           </p>
           <div className="mkt-hero-cta">
             <BookDemoCta className="mkt-btn mkt-btn-gold">Book a demo</BookDemoCta>
@@ -568,7 +568,7 @@ function HeroDashboard() {
       <div className="mkt-glasswrap">
         <Image
           src={HERO_IMAGE_SRC}
-          alt="CrewFlow dashboard — pipeline, cash in, outstanding and active jobs."
+          alt="CrewFlow dashboard showing pipeline, cash in, outstanding and active jobs."
           width={1600}
           height={1000}
           priority
@@ -775,14 +775,14 @@ function SundayNight() {
               doing admin.
             </h2>
             <p className="mkt-lead">
-              Every missed call, unsent quote and half-finished spreadsheet —
-              still waiting for you, on the one night you wanted off.
+              Every missed call, unsent quote and half-finished spreadsheet,
+              still waiting for you on the one night you wanted off.
             </p>
             <div className="mkt-sunday-turn">
               <IconCheckCircle size={20} />
               <span>
                 <b>That&apos;s the bit CrewFlow takes off your plate.</b> The
-                follow-ups, the chasing and the sums run in the background — so
+                follow-ups, the chasing and the sums run in the background, so
                 Sunday night can go back to being Sunday night.
               </span>
             </div>
@@ -829,7 +829,7 @@ function Transformation() {
         <Reveal>
           <div className="mkt-section-head mkt-center">
             <span className="mkt-eyebrow">The shift</span>
-            <h2>From scattered and guessing — to one clear system.</h2>
+            <h2>From scattered and guessing to one clear system.</h2>
           </div>
         </Reveal>
         <Reveal>
@@ -884,7 +884,7 @@ function ProductOS() {
             <h2>One system. Every part of the job.</h2>
             <p className="mkt-lead">
               From the first enquiry to the final payment, every step lives in
-              CrewFlow — and they all talk to each other.
+              CrewFlow, and they all talk to each other.
             </p>
           </div>
         </Reveal>
@@ -916,17 +916,17 @@ function ProductOS() {
               <div className="mkt-os-panel-body">
                 <div className="mkt-quote-head">
                   <div>
-                    <div className="mkt-t">Loft conversion — Lisburn</div>
+                    <div className="mkt-t">Loft conversion · Lisburn</div>
                     <div className="mkt-s">Quote QUO-1042 · valid 30 days</div>
                   </div>
                   <span className="mkt-pill mkt-pill-blue">Sent · opened 2×</span>
                 </div>
                 <div className="mkt-qline">
-                  <span>Labour — 18 days @ crew rate</span>
+                  <span>Labour: 18 days @ crew rate</span>
                   <span>£10,800</span>
                 </div>
                 <div className="mkt-qline">
-                  <span>Materials — timber, insulation, plaster</span>
+                  <span>Materials: timber, insulation, plaster</span>
                   <span>£7,420</span>
                 </div>
                 <div className="mkt-qline">
@@ -1050,7 +1050,7 @@ function PayrollStaff() {
             <h2>Run the team and payroll without the Friday panic.</h2>
             <p className="mkt-lead">
               Plan the week, see clashes before they cost you, and turn clocked
-              hours into payslips — without the spreadsheet gymnastics.
+              hours into payslips, without the spreadsheet gymnastics.
             </p>
           </div>
         </Reveal>
@@ -1058,7 +1058,7 @@ function PayrollStaff() {
           <div className="mkt-pay">
             <div className="mkt-panel">
               <h4>
-                This week&apos;s rota <span className="mkt-mut">Mon–Fri</span>
+                This week&apos;s rota <span className="mkt-mut">Mon to Fri</span>
               </h4>
               <div className="mkt-rota">
                 <div className="mkt-h" />
@@ -1091,7 +1091,7 @@ function PayrollStaff() {
               </div>
               <div className="mkt-clash-flag">
                 <IconAlert size={14} />
-                Conor is double-booked Tuesday — Extension &amp; Patio
+                Conor is double-booked Tuesday: Extension &amp; Patio
               </div>
             </div>
             <div className="mkt-panel mkt-payrun">
@@ -1118,7 +1118,7 @@ function PayrollStaff() {
                 <span>Net to pay · 6 staff</span>
                 <span>£6,290.00</span>
               </div>
-              {/* Decorative (illustrative product UI) — not an interactive CTA */}
+              {/* Decorative (illustrative product UI), not an interactive CTA */}
               <span
                 className="mkt-btn mkt-btn-gold mkt-btn-sm mkt-btn-block"
                 aria-hidden
@@ -1147,7 +1147,7 @@ function AiWatch() {
             <h2>It keeps an eye on the things that slip.</h2>
             <p className="mkt-lead">
               CrewFlow watches the numbers so you don&apos;t have to remember
-              everything. It flags what needs a look — you make the call.
+              everything. It flags what needs a look. You make the call.
             </p>
           </div>
         </Reveal>
@@ -1166,7 +1166,7 @@ function AiWatch() {
               ))}
             </div>
             <p className="mkt-ai-foot">
-              Assisted by AI. It flags things and drafts the follow-up — you
+              Assisted by AI. It flags things and drafts the follow-up. You
               always decide what&apos;s sent.
             </p>
           </div>
@@ -1192,7 +1192,7 @@ function Portal() {
             </h2>
             <p className="mkt-lead" style={{ marginTop: 16 }}>
               They see the quote, where the job&apos;s up to, and what&apos;s left
-              to pay — in one tidy link. You get fewer &ldquo;any update?&rdquo;
+              to pay, all in one tidy link. You get fewer &ldquo;any update?&rdquo;
               texts.
             </p>
             <div className="mkt-portal-feats">
@@ -1210,7 +1210,7 @@ function Portal() {
           <Reveal delay={0.1}>
             <div className="mkt-portal-card">
               <div className="mkt-pc-head">
-                <div className="mkt-t">Loft conversion — Lisburn</div>
+                <div className="mkt-t">Loft conversion · Lisburn</div>
                 <span className="mkt-pill mkt-pill-gold">In progress</span>
               </div>
               <div className="mkt-pc-stage">
@@ -1242,7 +1242,7 @@ function Portal() {
                   £10,392 · due on completion
                 </span>
               </div>
-              {/* Decorative (illustrative product UI) — not an interactive CTA */}
+              {/* Decorative (illustrative product UI), not an interactive CTA */}
               <span
                 className="mkt-btn mkt-btn-ghost mkt-btn-sm mkt-btn-block"
                 aria-hidden
