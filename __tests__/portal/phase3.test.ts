@@ -26,6 +26,9 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const MIGRATION = read(
   "supabase/migrations/20260620000000_portal_uploads.sql",
 );
+const PORTAL_BUCKET_LIMITS = read(
+  "supabase/migrations/20260711000000_portal_uploads_bucket_limits.sql",
+);
 const JOBS_PAGE = read("app/customer-portal/[token]/jobs/page.tsx");
 const MSG_PAGE = read("app/customer-portal/[token]/messages/page.tsx");
 const INV_PAGE = read("app/customer-portal/[token]/invoices/page.tsx");
@@ -86,6 +89,42 @@ describe("Phase 3 — portal_uploads table + bucket", () => {
     expect(MIGRATION).toMatch(/insert into storage\.buckets/);
     expect(MIGRATION).toMatch(/'portal-uploads'/);
     expect(MIGRATION).toMatch(/on conflict \(id\) do nothing/);
+  });
+
+  it("bucket carries storage-layer limits matching the app layer", () => {
+    // Hardening migration must exist and target the same bucket.
+    expect(
+      existsSync(
+        resolve(
+          ROOT,
+          "supabase/migrations/20260711000000_portal_uploads_bucket_limits.sql",
+        ),
+      ),
+    ).toBe(true);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/insert into storage\.buckets/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/'portal-uploads'/);
+    // 10 MB, mirroring MAX_BYTES (10 * 1024 * 1024) in _upload-action.ts.
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/file_size_limit/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/10485760/);
+    // Allowlist must mirror ALLOWED_MIME exactly — including image/webp, which
+    // the runtime Set admits even though the action's prose comment omits it.
+    for (const mime of [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/heic",
+      "image/heif",
+      "image/webp",
+    ]) {
+      expect(PORTAL_BUCKET_LIMITS).toContain(`'${mime}'`);
+    }
+  });
+
+  it("bucket-limits migration is an idempotent upsert", () => {
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/on conflict \(id\) do update set/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(
+      /allowed_mime_types = excluded\.allowed_mime_types/,
+    );
   });
 });
 

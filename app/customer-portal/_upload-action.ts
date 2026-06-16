@@ -22,8 +22,12 @@ import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
  *
  * File type + size validation:
  *   - Allowed MIME types: application/pdf, image/jpeg, image/png,
- *     image/heic, image/heif
- *   - Max size: 10 MB (storage bucket policy enforces server-side)
+ *     image/heic, image/heif, image/webp
+ *   - Max size: 10 MB
+ * Both checks run here AND at the storage layer: the portal-uploads
+ * bucket carries a matching file_size_limit + allowed_mime_types
+ * (20260711000000_portal_uploads_bucket_limits.sql), so the same
+ * limits hold even for an upload that bypasses this action.
  */
 
 const ALLOWED_MIME = new Set([
