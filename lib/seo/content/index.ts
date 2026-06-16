@@ -14,6 +14,7 @@ import { COMPARISONS, COMPARISON_BY_SLUG, getComparison } from "./comparisons";
 import { INDUSTRIES, INDUSTRY_BY_SLUG, getIndustry } from "./industries";
 import { LOCATIONS, LOCATION_BY_SLUG, getLocation } from "./locations";
 import { POSTS, POST_BY_SLUG, getPost } from "./blog";
+import { TOOLS, TOOL_BY_SLUG, getTool } from "./tools";
 
 export * from "./types";
 export {
@@ -32,7 +33,11 @@ export {
   POSTS,
   POST_BY_SLUG,
   getPost,
+  TOOLS,
+  TOOL_BY_SLUG,
+  getTool,
 };
+export type { ToolPage } from "./tools";
 
 export type LinkItem = { label: string; href: string };
 
@@ -52,6 +57,8 @@ export const paths = {
   pricing: () => "/pricing",
   blog: () => "/blog",
   post: (slug: string) => `/blog/${slug}`,
+  tools: () => "/tools",
+  tool: (slug: string) => `/tools/${slug}`,
 };
 
 /* -------------------------------------------------------------------------- */
@@ -93,6 +100,13 @@ export function getPostLinks(slugs: string[] = []): LinkItem[] {
     .map((p) => ({ label: p.title, href: paths.post(p.slug) }));
 }
 
+export function getToolLinks(slugs: string[] = []): LinkItem[] {
+  return slugs
+    .map((s) => TOOL_BY_SLUG.get(s))
+    .filter((t): t is NonNullable<typeof t> => Boolean(t))
+    .map((t) => ({ label: t.name, href: paths.tool(t.slug) }));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Sitemap source                                                             */
 /* -------------------------------------------------------------------------- */
@@ -114,6 +128,7 @@ export function marketingSitemapEntries(): Entry[] {
     { path: paths.locations(), priority: 0.7, changeFrequency: "weekly" },
     { path: paths.pricing(), priority: 0.9, changeFrequency: "monthly" },
     { path: paths.blog(), priority: 0.7, changeFrequency: "weekly" },
+    { path: paths.tools(), priority: 0.7, changeFrequency: "monthly" },
     { path: "/privacy", priority: 0.3, changeFrequency: "yearly" },
     { path: "/terms", priority: 0.3, changeFrequency: "yearly" },
   ];
@@ -138,6 +153,9 @@ export function marketingSitemapEntries(): Entry[] {
       lastModified: p.dateModified ?? p.datePublished,
     });
   }
+  for (const t of TOOLS) {
+    entries.push({ path: paths.tool(t.slug), priority: 0.6, changeFrequency: "monthly" });
+  }
 
   return entries;
 }
@@ -149,7 +167,10 @@ export const CONTENT_COUNTS = {
   industries: INDUSTRIES.length,
   locations: LOCATIONS.length,
   posts: POSTS.length,
+  tools: TOOLS.length,
   get total() {
-    return this.features + this.comparisons + this.industries + this.locations + this.posts;
+    return (
+      this.features + this.comparisons + this.industries + this.locations + this.posts + this.tools
+    );
   },
 };

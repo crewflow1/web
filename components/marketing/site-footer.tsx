@@ -7,6 +7,7 @@ import {
   COMPARISONS,
   LOCATIONS,
   POSTS,
+  TOOLS,
   paths,
 } from "@/lib/seo/content";
 
@@ -125,6 +126,11 @@ export function SiteFooter() {
             heading="Guides"
             headingHref={paths.blog()}
             links={POSTS.map((p) => ({ label: p.title, href: paths.post(p.slug) }))}
+          />
+          <Col
+            heading="Free tools"
+            headingHref={paths.tools()}
+            links={TOOLS.map((t) => ({ label: t.navLabel, href: paths.tool(t.slug) }))}
           />
           <Col
             heading="Company"
