@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { clashDisplay, satoshi } from "./_marketing/fonts";
-import { MotionProvider, Reveal } from "./_marketing/motion";
+import { MotionProvider, Reveal, CountUp } from "./_marketing/motion";
 import { BookDemoCta } from "./_marketing/cta";
 import { BookDemoModal } from "./(public)/_book-demo-modal";
 
@@ -27,9 +27,9 @@ import "./_marketing/marketing.css";
  */
 
 export const metadata: Metadata = {
-  title: "CrewFlow — The operating system for UK construction companies",
+  title: "CrewFlow. The operating system for UK construction companies.",
   description:
-    "Win more jobs, cut the admin and know where every pound goes. Quotes, jobs, staff, payroll, VAT and invoices — one system built for UK builders.",
+    "Win more jobs, cut the admin and know where every pound goes. Quotes, jobs, staff, payroll, VAT and invoices, all in one system built for UK builders.",
 };
 
 /* Browser chrome for the framed product shots. */
@@ -41,6 +41,26 @@ function Chrome({ url }: { url: string }) {
       <span className="mkt-d" style={{ background: "#28c840" }} />
       <span className="mkt-url">{url}</span>
     </div>
+  );
+}
+
+/* CrewFlow brand mark: three descending bars on a navy tile. One logo
+   across the whole product — geometry and colours match the favicon. */
+function LogoMark({ size = 30 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect width="100" height="100" rx="23" fill="#16213e" />
+      <rect x="27" y="29.5" width="52" height="11" rx="5.5" fill="#f9a826" />
+      <rect x="27" y="44.5" width="44" height="11" rx="5.5" fill="#f9a826" />
+      <rect x="27" y="59.5" width="33" height="11" rx="5.5" fill="#f9a826" />
+    </svg>
   );
 }
 
@@ -66,7 +86,10 @@ export default function HomePage() {
           <header className="mkt-nav">
             <div className="mkt-wrap mkt-navrow">
               <div className="mkt-brand">
-                <span className="mkt-logo">C</span> CrewFlow
+                <span className="mkt-logo">
+                  <LogoMark size={30} />
+                </span>{" "}
+                CrewFlow
               </div>
               <nav className="mkt-navlinks">
                 <a href="#product">Product</a>
@@ -98,7 +121,7 @@ export default function HomePage() {
               </h1>
               <p className="mkt-lead">
                 Win more jobs, cut the admin, and know where every pound goes.
-                Quotes, jobs, staff, payroll, VAT and invoices — all in one
+                Quotes, jobs, staff, payroll, VAT and invoices, all in one
                 system built for builders.
               </p>
               <div className="mkt-hero-cta">
@@ -129,7 +152,10 @@ export default function HomePage() {
                 <div className="mkt-app">
                   <aside className="mkt-side">
                     <div className="mkt-sb">
-                      <span className="mkt-logo">C</span> CrewFlow
+                      <span className="mkt-logo">
+                        <LogoMark size={22} />
+                      </span>{" "}
+                      CrewFlow
                     </div>
                     <a className="mkt-on">
                       <span className="mkt-gi" /> Dashboard
@@ -180,23 +206,33 @@ export default function HomePage() {
                     </div>
                     <div className="mkt-kgrid">
                       <div className="mkt-kc">
-                        <div className="mkt-v">12</div>
+                        <div className="mkt-v">
+                          <CountUp value={12} duration={1.1} />
+                        </div>
                         <div className="mkt-l">Leads</div>
                       </div>
                       <div className="mkt-kc">
-                        <div className="mkt-v">8</div>
+                        <div className="mkt-v">
+                          <CountUp value={8} duration={1.1} />
+                        </div>
                         <div className="mkt-l">Quotes out</div>
                       </div>
                       <div className="mkt-kc">
-                        <div className="mkt-v">5</div>
+                        <div className="mkt-v">
+                          <CountUp value={5} duration={1.1} />
+                        </div>
                         <div className="mkt-l">Live jobs</div>
                       </div>
                       <div className="mkt-kc">
-                        <div className="mkt-v mkt-g">£42,180</div>
+                        <div className="mkt-v mkt-g">
+                          <CountUp value={42180} prefix="£" duration={1.6} />
+                        </div>
                         <div className="mkt-l">Outstanding</div>
                       </div>
                       <div className="mkt-kc">
-                        <div className="mkt-v mkt-e">31%</div>
+                        <div className="mkt-v mkt-e">
+                          <CountUp value={31} suffix="%" duration={1.4} />
+                        </div>
                         <div className="mkt-l">Net margin</div>
                         <div className="mkt-dl">▲ 4% vs last mo</div>
                       </div>
@@ -334,7 +370,7 @@ export default function HomePage() {
                             style={{ background: "var(--gold)" }}
                           />
                           <div>
-                            <b>Doyle quote unopened for 4 days</b> — QUO-1042 ·
+                            <b>Doyle quote unopened for 4 days.</b> QUO-1042 ·
                             £25,980. Worth a follow-up call.
                           </div>
                         </div>
@@ -344,7 +380,7 @@ export default function HomePage() {
                             style={{ background: "var(--red)" }}
                           />
                           <div>
-                            <b>INV-088 is 21 days overdue</b> — £4,200 · M.
+                            <b>INV-088 is 21 days overdue.</b> £4,200 · M.
                             Hughes. Second reminder ready to send.
                           </div>
                         </div>
@@ -354,7 +390,7 @@ export default function HomePage() {
                             style={{ background: "var(--red)" }}
                           />
                           <div>
-                            <b>VAT due Monday</b> — £6,820 set aside, figure
+                            <b>VAT due Monday.</b> £6,820 set aside, figure
                             ready for your accountant.
                           </div>
                         </div>
@@ -364,8 +400,8 @@ export default function HomePage() {
                             style={{ background: "#7fb2e6" }}
                           />
                           <div>
-                            <b>Public liability cert expires in 21 days</b> —
-                            renew before it lapses.
+                            <b>Public liability cert expires in 21 days.</b>{" "}
+                            Renew before it lapses.
                           </div>
                         </div>
                       </div>
@@ -455,7 +491,7 @@ export default function HomePage() {
                     <span className="mkt-from">New enquiry, Ballymena</span>
                     <span className="mkt-arr">→</span>
                     <span className="mkt-to">
-                      <span className="mkt-tick">✓</span> Logged as a lead — and
+                      <span className="mkt-tick">✓</span> Logged as a lead, and
                       it won’t be forgotten
                     </span>
                   </div>
@@ -505,7 +541,7 @@ export default function HomePage() {
                   <h2>While you’re on the tools, CrewFlow keeps watch.</h2>
                   <p className="mkt-lead" style={{ marginTop: 14 }}>
                     It doesn’t just store your information. It keeps an eye on
-                    the things that quietly cost you money when they’re missed —
+                    the things that quietly cost you money when they’re missed,
                     and flags them before they do.
                   </p>
                 </div>
@@ -530,8 +566,8 @@ export default function HomePage() {
                     <span className="mkt-wt">Invoices slipping overdue</span>
                   </div>
                   <p className="mkt-wb">
-                    Reminders go out on day 3, 7, 14 and 21 on their own — so you
-                    stop being the one who has to chase the money.
+                    Reminders go out on day 3, 7, 14 and 21 on their own, so you
+                    stop being the one who chases the money.
                   </p>
                 </div>
                 <div className="mkt-watch">
@@ -590,7 +626,7 @@ export default function HomePage() {
                   <h2>One system. Every part of the job.</h2>
                   <p className="mkt-lead" style={{ marginTop: 14 }}>
                     From the first enquiry to the final payment, every step lives
-                    in CrewFlow — and they all talk to each other.
+                    in CrewFlow, and they all talk to each other.
                   </p>
                 </div>
               </Reveal>
@@ -611,8 +647,8 @@ export default function HomePage() {
                         <div>
                           <div className="mkt-tt">Every channel, one list</div>
                           <div className="mkt-bb">
-                            Phone, website, WhatsApp and referrals — every
-                            enquiry logged in the same place.
+                            Phone, website, WhatsApp and referrals. Every
+                            enquiry lands in the same place.
                           </div>
                         </div>
                       </div>
@@ -712,7 +748,7 @@ export default function HomePage() {
                         <table className="mkt-tbl">
                           <tbody>
                             <tr>
-                              <td>Labour — 18 days @ crew rate</td>
+                              <td>Labour · 18 days @ crew rate</td>
                               <td
                                 className="mkt-mono"
                                 style={{ textAlign: "right" }}
@@ -721,7 +757,7 @@ export default function HomePage() {
                               </td>
                             </tr>
                             <tr>
-                              <td>Materials — timber, insulation, plaster</td>
+                              <td>Materials · timber, insulation, plaster</td>
                               <td
                                 className="mkt-mono"
                                 style={{ textAlign: "right" }}
@@ -801,7 +837,7 @@ export default function HomePage() {
                     <h3>Win more work with quotes that look the part.</h3>
                     <p className="mkt-lead">
                       Build a professional quote in minutes, send it, and see
-                      when it’s opened — then turn it into a job the second it’s
+                      when it’s opened. Then turn it into a job the second it’s
                       accepted.
                     </p>
                     <div className="mkt-flist">
@@ -819,7 +855,7 @@ export default function HomePage() {
                         <div>
                           <div className="mkt-tt">Accepted online</div>
                           <div className="mkt-bb">
-                            Customers sign off by name in a click — no chasing
+                            Customers sign off by name in a click. No chasing
                             paperwork.
                           </div>
                         </div>
@@ -840,7 +876,7 @@ export default function HomePage() {
                     <h3>Every job, on track and on margin.</h3>
                     <p className="mkt-lead">
                       See live stages, costs against the quote, and who’s on
-                      site — so a job never quietly slips into the red.
+                      site, so a job never quietly slips into the red.
                     </p>
                     <div className="mkt-flist">
                       <div className="mkt-fi">
@@ -1012,7 +1048,7 @@ export default function HomePage() {
                 </div>
                 <div className="mkt-flow-foot">
                   <span>
-                    Every step flows into the next — one enquiry becomes a
+                    Every step flows into the next. One enquiry becomes a
                     tracked job, an invoice, and a clear{" "}
                     <b>£13,100 profit at 38% margin</b>. No re-typing, nothing
                     lost between the van and the office.
@@ -1031,7 +1067,7 @@ export default function HomePage() {
                   <h2>Run the team and payroll without the Friday panic.</h2>
                   <p className="mkt-lead" style={{ marginTop: 14 }}>
                     Plan the week, see clashes before they cost you, and turn
-                    clocked hours into payslips — without the spreadsheet
+                    clocked hours into payslips, without the spreadsheet
                     gymnastics.
                   </p>
                 </div>
@@ -1214,7 +1250,7 @@ export default function HomePage() {
                   <h3>Give customers clarity, without more phone calls.</h3>
                   <p className="mkt-lead">
                     They see the quote, where the job’s up to, and what’s left to
-                    pay — all in one tidy link. You get far fewer “any update?”
+                    pay, all in one tidy link. You’ll get far fewer “any update?”
                     texts.
                   </p>
                   <div className="mkt-flist">
@@ -1315,7 +1351,7 @@ export default function HomePage() {
                         color: "var(--faint)",
                       }}
                     >
-                      Invoices are settled by bank transfer — no card fees.
+                      Invoices are settled by bank transfer. No card fees.
                     </div>
                   </div>
                 </div>
@@ -1332,7 +1368,7 @@ export default function HomePage() {
                   <h2>Know where every pound goes, to the penny.</h2>
                   <p className="mkt-lead" style={{ marginTop: 14 }}>
                     Profit by job, cashflow, and your VAT, PAYE and Corporation
-                    Tax figures ready before HMRC asks — the reports an
+                    Tax figures ready before HMRC asks. The reports an
                     accountant actually wants.
                   </p>
                 </div>
@@ -1534,7 +1570,7 @@ export default function HomePage() {
               <Reveal>
                 <p className="mkt-note">
                   CrewFlow isn’t an HMRC filing tool, and there’s no live sync to
-                  set up or break — it keeps your numbers straight and hands them
+                  set up or break. It keeps your numbers straight and hands them
                   over clean, so you and your accountant stay in control.
                 </p>
               </Reveal>
@@ -1548,7 +1584,7 @@ export default function HomePage() {
                 <span className="mkt-eyebrow">Why it works</span>
                 <h2>Less admin. Faster payment. Nothing lost.</h2>
                 <p className="mkt-lead" style={{ marginTop: 14 }}>
-                  No invented numbers — just the things CrewFlow does, on every
+                  No invented numbers. Just the things CrewFlow does on every
                   job, without being asked.
                 </p>
               </Reveal>
@@ -1556,7 +1592,7 @@ export default function HomePage() {
                 <div className="mkt-stat">
                   <div className="mkt-v">3 · 7 · 14 · 21</div>
                   <div className="mkt-l">
-                    The days overdue invoices get chased — automatically, so you
+                    The days overdue invoices get chased automatically, so you
                     stop having the awkward money conversation.
                   </div>
                 </div>
@@ -1570,7 +1606,7 @@ export default function HomePage() {
                 <div className="mkt-stat">
                   <div className="mkt-v">One link</div>
                   <div className="mkt-l">
-                    Quote, job progress and what’s left to pay — your customer
+                    Quote, job progress and what’s left to pay. Your customer
                     sees it all, so the “any update?” texts stop.
                   </div>
                 </div>
@@ -1638,11 +1674,8 @@ export default function HomePage() {
           <footer className="mkt-foot">
             <div className="mkt-wrap mkt-frow">
               <div className="mkt-brand" style={{ fontSize: 16 }}>
-                <span
-                  className="mkt-logo"
-                  style={{ width: 24, height: 24, fontSize: 13 }}
-                >
-                  C
+                <span className="mkt-logo">
+                  <LogoMark size={22} />
                 </span>{" "}
                 CrewFlow
               </div>
@@ -1670,19 +1703,19 @@ export default function HomePage() {
 const FAQ_ITEMS: { q: string; a: string }[] = [
   {
     q: "How long does setup take?",
-    a: "Most companies are live in 2–3 days. We import your existing customers, invoices and finances from a CSV or Excel export. Anything that needs review, you see in a preview before we commit — with one-click rollback if anything looks wrong.",
+    a: "Most companies are live in 2–3 days. We import your existing customers, invoices and finances from a CSV or Excel export. Anything that needs review, you see in a preview before we commit, with one-click rollback if anything looks wrong.",
   },
   {
     q: "We already use Xero. Do we have to ditch it?",
-    a: "No. Many of our customers run CrewFlow alongside Xero. CrewFlow is the operations layer — quotes, jobs, hours, invoices — while Xero stays as the accountant’s tool. Your numbers export cleanly to Xero and Sage when it’s time to file.",
+    a: "No. Many of our customers run CrewFlow alongside Xero. CrewFlow is the operations layer for quotes, jobs, hours and invoices, while Xero stays the accountant’s tool. Your numbers export cleanly to Xero and Sage when it’s time to file.",
   },
   {
     q: "Does CrewFlow take card payments?",
-    a: "No. UK construction runs on bank transfer, so CrewFlow tracks payments rather than processing them. You keep 100% of every invoice — no card-processor skim, no gateway fee. Match your bank transactions to invoices and reconcile in one place.",
+    a: "No. UK construction runs on bank transfer, so CrewFlow tracks payments rather than processing them. You keep 100% of every invoice. No card-processor skim, no gateway fee. Match your bank transactions to invoices and reconcile in one place.",
   },
   {
     q: "My lads only have phones on site. Does that work?",
-    a: "Yes. The staff view is mobile-first in the browser — big tap targets, clock-in, today’s rota and expected take-home pay. Built for someone standing in a van, not a CFO at a desk.",
+    a: "Yes. The staff view is mobile-first in the browser, with big tap targets, clock-in, today’s rota and expected take-home pay. Built for someone standing in a van, not a CFO at a desk.",
   },
   {
     q: "Is my data safe?",
@@ -1690,10 +1723,10 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "What does it cost?",
-    a: "£500 a month, plus a one-time £1,000 for setup and onboarding — where we migrate your data and get you live. No per-seat fees and no surprises. Book a demo and we’ll show you the system on your own numbers first.",
+    a: "£500 a month, plus a one-time £1,000 for setup and onboarding, where we migrate your data and get you live. No per-seat fees and no surprises. Book a demo and we’ll show you the system on your own numbers first.",
   },
   {
     q: "Can I leave whenever I want?",
-    a: "Yes. Full data export to CSV any time. No lock-in and no early-termination fees — your data is yours; we just take care of it while you use us.",
+    a: "Yes. Full data export to CSV any time. No lock-in and no early-termination fees. Your data is yours; we just take care of it while you use us.",
   },
 ];
