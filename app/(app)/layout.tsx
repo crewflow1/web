@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NOINDEX_METADATA } from "@/lib/seo/metadata";
 import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { signOut } from "@/app/(auth)/actions";
 import { createClient } from "@/lib/supabase/server";
@@ -9,6 +10,9 @@ import { OrgSwitcher } from "./_components/org-switcher";
 import { BottomNav } from "./_components/bottom-nav";
 import { NotificationsBell, type Notification } from "./_components/notifications";
 import { SearchPalette } from "./_components/search-palette";
+
+// Authenticated product — never index (defence in depth on robots.txt + auth).
+export const metadata = NOINDEX_METADATA;
 
 export default async function AppLayout({
   children,

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { NOINDEX_METADATA } from "@/lib/seo/metadata";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
@@ -49,6 +50,9 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/launch-checklist", label: "Launch checklist" },
   { href: "/admin/settings", label: "Settings" },
 ];
+
+// Internal HQ — never index.
+export const metadata = NOINDEX_METADATA;
 
 export default async function AdminLayout({
   children,
