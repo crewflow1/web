@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Privacy policy",
   description:
     "How CrewFlow collects, uses, and protects your data. Built for UK construction companies and governed by UK GDPR.",
+  alternates: { canonical: "/privacy" },
 };
 
 /**
