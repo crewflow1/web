@@ -61,7 +61,15 @@ export function Reveal({
   const cls = ["mkt-reveal", className].filter(Boolean).join(" ");
   const MComp = m[as] as typeof m.div;
 
-  if (reduce) {
+  // The server can't read the reduced-motion media query, so it always renders
+  // the motion path. Switching to the plain element on the client's first render
+  // would therefore mismatch the server HTML and trip a hydration error for
+  // anyone with reduced motion enabled. Defer the swap until after mount so the
+  // first client render matches the server, then drop to the static element.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (mounted && reduce) {
     const Plain = as as "div";
     return (
       <Plain ref={ref as never} className={cls}>

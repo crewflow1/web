@@ -195,6 +195,12 @@ html:has(.marketing-root) {
     0 16px 38px -10px rgba(234, 178, 60, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
+.mkt-btn-gold:active {
+  transform: translateY(1px);
+  box-shadow:
+    0 6px 16px -10px rgba(234, 178, 60, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
 .mkt-btn-ghost {
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
@@ -202,6 +208,10 @@ html:has(.marketing-root) {
 }
 .mkt-btn-ghost:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+.mkt-btn-ghost:active {
+  transform: translateY(1px);
+  background: rgba(255, 255, 255, 0.06);
 }
 .mkt-btn-sm {
   padding: 9px 15px;
@@ -248,17 +258,11 @@ html:has(.marketing-root) {
   font-size: 19px;
 }
 .mkt-logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: linear-gradient(150deg, var(--gold-2), var(--gold));
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #2a1c02;
-  font-weight: 700;
-  font-size: 16px;
   flex: 0 0 auto;
+  line-height: 0;
 }
 .mkt-navlinks {
   display: flex;
@@ -397,12 +401,6 @@ html:has(.marketing-root) {
   font-weight: 600;
   font-size: 15px;
   padding: 6px 8px 14px;
-}
-.mkt-side .mkt-sb .mkt-logo {
-  width: 24px;
-  height: 24px;
-  font-size: 13px;
-  border-radius: 6px;
 }
 .mkt-side a {
   display: flex;
@@ -987,6 +985,11 @@ html:has(.marketing-root) {
   border-radius: 14px;
   padding: 20px;
   position: relative;
+  transition:
+    transform 0.24s ease,
+    border-color 0.24s ease,
+    background 0.24s ease,
+    box-shadow 0.24s ease;
 }
 .mkt-watch .mkt-wh {
   display: flex;
@@ -1023,6 +1026,23 @@ html:has(.marketing-root) {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 26px;
+  transition:
+    transform 0.24s ease,
+    border-color 0.24s ease,
+    background 0.24s ease,
+    box-shadow 0.24s ease;
+}
+
+/* Subtle hover-lift on the feature cards. Pointer devices only, so a tap on a
+   touchscreen never leaves a card stuck in the raised state. */
+@media (hover: hover) {
+  .mkt-watch:hover,
+  .mkt-tcard:hover {
+    transform: translateY(-3px);
+    border-color: rgba(234, 178, 60, 0.35);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 18px 40px -22px rgba(0, 0, 0, 0.7);
+  }
 }
 .mkt-tcard h3 {
   font-size: 21px;
@@ -1229,6 +1249,22 @@ html:has(.marketing-root) {
 }
 
 /* ============ MOBILE ============ */
+/* Tablet (<= 900px): the alternating feature rows split 1fr / 1.15fr, and below
+   roughly 900px the mockup column gets too narrow (< ~395px) and clips the
+   mockup's inner content (e.g. the third KPI column). Stack each row to a single
+   column so the mockup takes the full content width. Covers common tablet
+   portrait widths (768/810/820/834); landscape (1024+) keeps the two-up layout. */
+@media (max-width: 900px) {
+  .mkt-feat,
+  .mkt-feat.mkt-rev {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .mkt-feat.mkt-rev .mkt-copy {
+    order: 0;
+  }
+}
+
 @media (max-width: 680px) {
   .mkt-section {
     padding: 64px 0;
