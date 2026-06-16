@@ -8,12 +8,16 @@ lives, and exactly what to do next. Read this first.
 ## What this is
 
 A founder-level SEO takeover of CrewFlow: a full technical-SEO foundation, a
-scalable content engine, **55+ production-ready marketing pages**, and the
-off-site strategy to make CrewFlow the dominant UK construction-software brand —
-the result people *and* Google reach for first.
+scalable content engine, **60+ production-ready marketing pages** (incl. free
+calculators), and the off-site strategy to make CrewFlow the dominant UK
+construction-software brand — the result people *and* Google reach for first.
 
-All code is built, typechecks clean, and **passes a production build** (55 pages
-prerendered, schema/canonicals/sitemap verified in the rendered HTML).
+**Status:** all SEO work is integrated onto current `main` on the branch
+**`seo/phase-2-authority`** (prepared in the `../web-seo` worktree). It typechecks
+clean and **passes a full production build** (63-URL sitemap; all marketing pages
++ tools prerender). It is **not yet pushed/deployed** — see
+[07-deployment-and-search-console.md](07-deployment-and-search-console.md) for the
+exact deploy steps and why deploy is a deliberate human action.
 
 ---
 
@@ -24,17 +28,21 @@ prerendered, schema/canonicals/sitemap verified in the rendered HTML).
 - `app/api/og/route.tsx` — dynamic per-page OpenGraph images
 - `lib/seo/` — `site.ts` (single source of truth), `metadata.ts` (`buildMetadata`), `schema.ts` (JSON-LD)
 - `components/seo/json-ld.tsx`
-- Site-wide **Organization + WebSite + SoftwareApplication** schema in the root layout
+- Site-wide **Organization + WebSite + SoftwareApplication** schema injected in
+  the `(marketing)` layout (homepage keeps its own copy from #161 → zero
+  duplication on any page)
 - `app`/`admin` set to `noindex` (+ robots Disallow)
 
 **Content engine + pages** (`lib/seo/content/*` → `app/(marketing)/*`)
-- 13 feature pages, 8 comparison pages, 10 industry pages, 14 location pages, 4 guides
-- 5 hub pages + a pricing page
-- Shared marketing chrome (`components/marketing/*`) wired into the homepage too
+- 13 feature, 8 comparison, 10 industry, 14 location pages, 4 guides
+- **4 free calculators** (markup/margin, VAT, concrete, brick) at `/tools`
+- 6 hub pages + a pricing page
 - Every page: SEO title, meta, slug, H1/H2/H3, FAQs+schema, breadcrumbs, internal links, CTA, OG image
 
-**Homepage** now uses the shared header/footer (real internal links), has a
-self-canonical, and emits FAQ schema.
+**Homepage** is `main`'s premium redesign (untouched); its footer now links to
+the new hub pages for internal linking. Visual harmonisation of the marketing
+pages to the homepage's `mkt-*` theme is the one tracked design follow-up
+(needs preview QA — see doc 07).
 
 ---
 
@@ -48,15 +56,19 @@ self-canonical, and emits FAQ schema.
 | [04-competitor-analysis.md](04-competitor-analysis.md) | Phase 13 — competitor profiles, gaps, opportunities |
 | [05-offsite-pr-backlinks-social.md](05-offsite-pr-backlinks-social.md) | Phases 7–11 — brand SERP, PR, 100 backlinks, GBP, social |
 | [06-programmatic-and-internal-linking.md](06-programmatic-and-internal-linking.md) | Phases 6, 12 — scalable architecture + linking |
+| [07-deployment-and-search-console.md](07-deployment-and-search-console.md) | Phase 1–2, 9 — deploy steps, GSC/Bing readiness, verification, performance/CWV |
+| [08-backlinks-250.md](08-backlinks-250.md) | Phase 6 — 250 link targets, outreach templates, guest posts, digital-PR campaigns |
 
 ---
 
 ## Do this next (prioritised)
 
 ### This week — light the fuse (you/ops only; can't be done in code)
-1. **Deploy this branch.** Then in **Google Search Console**: verify
-   `crewflow.uk`, submit `https://crewflow.uk/sitemap.xml`, set UK targeting.
-   Repeat in **Bing Webmaster Tools**.
+1. **Deploy `seo/phase-2-authority`** following the exact steps in
+   [07-deployment-and-search-console.md](07-deployment-and-search-console.md)
+   (push → PR → review preview → merge → verify). Then in **Google Search
+   Console**: verify `crewflow.uk`, submit `https://crewflow.uk/sitemap.xml`, set
+   UK targeting. Repeat in **Bing Webmaster Tools**.
 2. **Confirm `www → apex` 301** (host/Vercel). The app only emits apex URLs.
 3. **Claim the social/profile handles** in `05` §"Claim these EXACT handles" —
    exactly as listed so the schema `sameAs` resolves.
