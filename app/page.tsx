@@ -30,6 +30,41 @@ export const metadata: Metadata = {
   title: "CrewFlow. The operating system for UK construction companies.",
   description:
     "Win more jobs, cut the admin and know where every pound goes. Quotes, jobs, staff, payroll, VAT and invoices, all in one system built for UK builders.",
+  alternates: { canonical: "/" },
+};
+
+/* Structured data (JSON-LD) for search engines: Organization + WebSite +
+   SoftwareApplication. Static and server-rendered. Claims here are kept
+   deliberately generic and true — no pricing/offer is asserted. */
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://crewflow.uk/#organization",
+      name: "CrewFlow",
+      url: "https://crewflow.uk",
+      description: "The operating system for UK construction companies.",
+      areaServed: "GB",
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://crewflow.uk/#website",
+      url: "https://crewflow.uk",
+      name: "CrewFlow",
+      inLanguage: "en-GB",
+      publisher: { "@id": "https://crewflow.uk/#organization" },
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "CrewFlow",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      url: "https://crewflow.uk",
+      description:
+        "Quotes, jobs, staff, payroll, VAT and invoices in one system built for UK construction companies.",
+    },
+  ],
 };
 
 /* Browser chrome for the framed product shots. */
@@ -71,6 +106,10 @@ const RD = "var(--red)";
 export default function HomePage() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+      />
       <div
         className={`${clashDisplay.variable} ${satoshi.variable} mkt-page marketing-root`}
       >
@@ -134,7 +173,7 @@ export default function HomePage() {
               </div>
               <div className="mkt-trust">
                 <span>
-                  <i className="mkt-dotg" /> VAT &amp; PAYE figures ready
+                  <i className="mkt-dotg" /> VAT figures worked out for you
                 </span>
                 <span>
                   <i className="mkt-dotg" /> Built in the UK
@@ -1367,9 +1406,9 @@ export default function HomePage() {
                   <span className="mkt-eyebrow">The money</span>
                   <h2>Know where every pound goes, to the penny.</h2>
                   <p className="mkt-lead" style={{ marginTop: 14 }}>
-                    Profit by job, cashflow, and your VAT, PAYE and Corporation
-                    Tax figures ready before HMRC asks. The reports an
-                    accountant actually wants.
+                    Profit by job, cashflow, and your VAT and Corporation Tax
+                    figures ready before HMRC asks. The reports an accountant
+                    actually wants.
                   </p>
                 </div>
               </Reveal>
@@ -1551,7 +1590,8 @@ export default function HomePage() {
                       <div>
                         <div className="mkt-tt">Tax figures, calculated as you go</div>
                         <div className="mkt-tb">
-                          VAT, PAYE and Corporation Tax figures ready as a PDF.
+                          VAT and Corporation Tax worked out as you go, with a
+                          VAT PDF to hand over.
                         </div>
                       </div>
                     </div>

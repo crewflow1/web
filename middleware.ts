@@ -14,6 +14,13 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // Skip Next internals, static files, and routes that authenticate via
   // their own mechanism rather than the Supabase session cookie:
+  //   - favicon.ico / robots.txt / sitemap.xml / opengraph-image
+  //                        → public files & SEO metadata routes. These MUST
+  //                          be served to anonymous crawlers; without the
+  //                          exclusion the auth middleware 307-redirects them
+  //                          to /login, so search engines can't read the
+  //                          robots rules, find the sitemap, or fetch the
+  //                          social share image.
   //   - api/health         → public liveness probe
   //   - api/cron           → CRON_SECRET bearer (lib/cron/auth.ts)
   //   - api/demo           → public lead-capture form
@@ -27,6 +34,6 @@ export const config = {
   // verification never gets a chance to run and the webhook delivery fails
   // with 307.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|api/cron|api/demo|api/webhooks|api/receptionist).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|opengraph-image|api/health|api/cron|api/demo|api/webhooks|api/receptionist).*)",
   ],
 };
