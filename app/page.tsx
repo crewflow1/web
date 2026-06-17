@@ -1723,6 +1723,14 @@ export default function HomePage() {
                 The operating system for UK construction companies. Built in the
                 UK.
               </div>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                <Link href="/features">Features</Link>
+                <Link href="/compare">Compare</Link>
+                <Link href="/industries">Industries</Link>
+                <Link href="/pricing">Pricing</Link>
+                <Link href="/blog">Blog</Link>
+                <Link href="/construction-software">Locations</Link>
+              </div>
               <div style={{ display: "flex", gap: 18 }}>
                 <Link href="/privacy">Privacy</Link>
                 <Link href="/terms">Terms</Link>
