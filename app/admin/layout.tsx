@@ -32,6 +32,7 @@ type NavItem = {
 
 export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/overview", label: "Overview" },
+  { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
   { href: "/admin/demos", label: "Demos CRM" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },
