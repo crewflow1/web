@@ -963,6 +963,103 @@ export type SalesCompanyDetail = {
 };
 
 // ---------------------------------------------------------------------
+// AI Calling Centre row types (Directive 004, Phase 6). Enum-style columns
+// stay `string` (matching SalesCompany / SalesAiTask); lib/sales/calling.ts
+// owns the typed vocabulary + roll-up maths. search_tsv is never selected.
+// ---------------------------------------------------------------------
+
+/** A reusable call-script template from hq_sales_call_scripts. */
+export type SalesCallScript = {
+  id: string;
+  name: string;
+  category: string;
+  status: string;
+  version: number;
+  summary: string;
+  opening: string;
+  body: string;
+  talking_points: string[];
+  questions: string[];
+  target_persona: string | null;
+  target_status: string | null;
+  estimated_duration_seconds: number | null;
+  tags: string[];
+  usage_count: number;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** An objection → recommended-response play from hq_sales_objections. */
+export type SalesObjection = {
+  id: string;
+  objection: string;
+  category: string;
+  response: string;
+  supporting_points: string[];
+  follow_up: string;
+  tags: string[];
+  confidence: number | null;
+  win_rate: number | null;
+  times_used: number;
+  status: string;
+  memory_id: string | null;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A per-call record + queue row from hq_sales_calls. */
+export type SalesCall = {
+  id: string;
+  company_id: string;
+  contact_id: string | null;
+  script_id: string | null;
+  ai_task_id: string | null;
+  direction: string;
+  status: string;
+  priority: string;
+  priority_rank: number;
+  outcome: string;
+  objective: string;
+  scheduled_at: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  recording_url: string | null;
+  transcript: string;
+  summary: string;
+  notes: string;
+  sentiment: string;
+  sentiment_score: number | null;
+  objections_raised: string[];
+  follow_up_at: string | null;
+  follow_up_notes: string;
+  follow_up_done: boolean;
+  tags: string[];
+  memory_id: string | null;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  source: string;
+  created_by_email: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A call joined with its company name, for the global calling feed. */
+export type SalesCallItem = SalesCall & {
+  company_name: string | null;
+};
+
+// ---------------------------------------------------------------------
 // Funnel maths (pure). Conversion is modelled on current pipeline
 // position: a company currently at stage N has "reached" stages 1..N,
 // and won counts as having reached the final stage. Lost / disqualified
