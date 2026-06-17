@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import { buildSecurityHeaders } from "./lib/security/headers";
 
 const config: NextConfig = {
   reactStrictMode: true,
@@ -8,6 +9,14 @@ const config: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "*.supabase.co" },
     ],
+  },
+  /**
+   * Baseline security response headers on every route. The policy (incl. the
+   * Report-Only CSP) lives in lib/security/headers.ts so it can be unit-tested
+   * without booting this config. See that module for the full rationale.
+   */
+  async headers() {
+    return [{ source: "/:path*", headers: buildSecurityHeaders() }];
   },
 };
 
