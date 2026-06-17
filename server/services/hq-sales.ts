@@ -819,6 +819,29 @@ export async function getLearningEngine(
   return { stats, learnings };
 }
 
+export type LearningCounts = {
+  total: number;
+  active: number;
+  promoted: number;
+};
+
+/**
+ * Three cheap COUNT(head) reads over the learnings table — total, active
+ * (live patterns) and promoted (bridged into Shared Memory). Used by the CEO
+ * board's Learning department scorecard, which never needs the full feed.
+ */
+export async function getLearningCounts(): Promise<LearningCounts> {
+  const admin = createAdminClient();
+  const [total, active, promoted] = await Promise.all([
+    countTable(admin, "hq_sales_learnings", (q) => q),
+    countTable(admin, "hq_sales_learnings", (q) => q.eq("status", "active")),
+    countTable(admin, "hq_sales_learnings", (q) =>
+      q.not("memory_id", "is", null),
+    ),
+  ]);
+  return { total, active, promoted };
+}
+
 // ---------------------------------------------------------------------
 // AI Task Queue — the global view. listAiTasks returns a bounded, queue-
 // ordered window joined with company names; getAiTaskCounts gives exact

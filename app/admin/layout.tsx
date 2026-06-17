@@ -33,6 +33,7 @@ type NavItem = {
 
 export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/command-centre", label: "⚡ Command Centre" },
+  { href: "/admin/ceo", label: "👑 CEO Dashboard" },
   { href: "/admin/overview", label: "Overview" },
   { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
   { href: "/admin/memory", label: "📚 Shared Memory" },

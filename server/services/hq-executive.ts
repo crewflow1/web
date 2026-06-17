@@ -129,8 +129,15 @@ export type ExecutiveDashboard = {
   generatedAt: string;
 };
 
-export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
-  const admin = createAdminClient();
+/**
+ * Gather every raw figure the executive view derives from, in one parallel
+ * batch. Shared by `getExecutiveDashboard` (Phase 2) and the CEO board
+ * (Phase 8) so both dashboards read the company / revenue / outreach numbers
+ * from a single source of truth instead of duplicating the query plan.
+ */
+export async function gatherExecutiveInput(
+  admin: AdminClient,
+): Promise<ExecutiveInput> {
   const now = Date.now();
   const monthAgoIso = new Date(now - 30 * 86_400_000).toISOString();
   const todayStartIso = `${new Date(now).toISOString().slice(0, 10)}T00:00:00.000Z`;
@@ -190,7 +197,7 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
   const newCustomersThisMonth =
     growth.length >= 1 ? growth[growth.length - 1]?.count ?? 0 : 0;
 
-  const input: ExecutiveInput = {
+  return {
     mrrGbp: metrics.mrrGbp,
     mrrPrevGbp: prevMrr,
     revenueThisMonthGbp: lastRev,
@@ -216,6 +223,11 @@ export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
     companiesRejected: agg.rejected,
     companiesEnriched,
   };
+}
+
+export async function getExecutiveDashboard(): Promise<ExecutiveDashboard> {
+  const admin = createAdminClient();
+  const input = await gatherExecutiveInput(admin);
 
   return {
     sections: assembleExecutiveSections(input),
