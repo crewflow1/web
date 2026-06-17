@@ -38,6 +38,7 @@ import {
   type StatusCounts,
   type TaskStatusCounts,
 } from "@/lib/sales/model";
+import { COMM_EVENT_TYPES } from "@/lib/sales/comms";
 
 /**
  * CrewFlow HQ — Sales AI Platform data access (CEO Directive 003).
@@ -435,6 +436,54 @@ export async function listActivityFeed(
     .limit(limit);
   if (error) {
     console.error("[hq-sales] listActivityFeed failed", error);
+    return [];
+  }
+  const events = (data ?? []) as SalesTimelineEvent[];
+  if (events.length === 0) return [];
+
+  const companyIds = [...new Set(events.map((e) => e.company_id))];
+  const { data: companies } = await table<{ id: string; name: string }>(
+    admin,
+    "hq_sales_companies",
+  )
+    .select("id, name")
+    .in("id", companyIds);
+  const nameById = new Map(
+    ((companies ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]),
+  );
+
+  return events.map((e) => ({
+    ...e,
+    company_name: nameById.get(e.company_id) ?? null,
+  }));
+}
+
+/**
+ * Communication Centre window (Directive 004, Phase 5) — a bounded,
+ * newest-first read of every messaging touch (email / phone / linkedin /
+ * instagram / whatsapp / sms / facebook) across ALL companies, joined with
+ * company names. The page buckets this per channel in-app (lib/sales/comms).
+ * Optional full-text search keeps "everything searchable" honest. Mirrors
+ * listActivityFeed's bounded-read + name-join shape; the
+ * ai_employee_tasks-style scale story is identical.
+ */
+export async function listCommunicationWindow(
+  limit = 200,
+  search?: string,
+): Promise<SalesFeedItem[]> {
+  const admin = createAdminClient();
+  let q = table<SalesTimelineEvent>(admin, "hq_sales_timeline_events")
+    .select(TIMELINE_COLUMNS)
+    .in("event_type", COMM_EVENT_TYPES);
+  const term = search?.trim();
+  if (term) {
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+  const { data, error } = await q
+    .order("occurred_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listCommunicationWindow failed", error);
     return [];
   }
   const events = (data ?? []) as SalesTimelineEvent[];
