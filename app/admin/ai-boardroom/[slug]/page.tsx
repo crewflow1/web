@@ -17,6 +17,7 @@ import {
   taskStatusLabel,
   relativeTime,
 } from "@/lib/ai-employees/model";
+import { computeEmployeeStats, formatRate } from "@/lib/ai-employees/stats";
 import { statusStyle, taskStatusPill, accentClasses } from "../_styles";
 import { EmployeeIcon } from "../_icon";
 import {
@@ -62,6 +63,10 @@ export default async function AiEmployeeDetailPage({
   const accent = accentClasses(e.accent);
   const pulse = (STATUS_PULSE as Record<string, boolean>)[e.status] ?? false;
   const st = statusStyle(e.status);
+
+  // Workforce telemetry — derived from the task + memory history already
+  // loaded above (no extra query). Architecture only: read + derive.
+  const stats = computeEmployeeStats(tasks, memory);
 
   // Read-only shared-memory feed (CEO Directive 002). Permission-aware
   // slice this employee may READ; it never writes. Best-effort — failures
@@ -168,6 +173,45 @@ export default async function AiEmployeeDetailPage({
           />
           <Tile label="Execution" value="Locked" locked />
         </div>
+
+        {/* Workforce telemetry (CEO Directive 004, Phase 3) */}
+        <Section
+          title="Workforce telemetry"
+          subtitle="Derived live from this employee's task & memory history. Architecture only — no autonomous execution."
+        >
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Tile
+              label="Tasks today"
+              value={String(stats.tasksToday)}
+              sub={`${stats.tasksTotal} recent`}
+            />
+            <Tile
+              label="Success rate"
+              value={formatRate(stats.successRatePct)}
+              sub={`${stats.completed} done · ${stats.failed} failed`}
+            />
+            <Tile
+              label="Avg completion"
+              value={stats.avgCompletionLabel}
+              sub="per completed task"
+            />
+            <Tile
+              label="Last completed"
+              value={stats.lastCompletedTitle ?? "—"}
+              sub={relativeTime(stats.lastCompletedAt)}
+            />
+            <Tile
+              label="Knowledge"
+              value={`v${stats.knowledgeVersion}`}
+              sub={`${stats.memoryEntries} entries`}
+            />
+            <Tile
+              label="Memory usage"
+              value={stats.memoryUsageLabel}
+              sub={`${stats.memoryChars.toLocaleString("en-GB")} chars`}
+            />
+          </div>
+        </Section>
 
         {/* Current task + description */}
         <Section title="Profile">
