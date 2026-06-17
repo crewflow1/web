@@ -145,6 +145,7 @@ export function seniorityLabel(s: string): string {
 // ---------------------------------------------------------------------
 
 export const TIMELINE_EVENT_TYPES = [
+  // Interactions (human-loggable touches).
   "email",
   "call",
   "linkedin",
@@ -155,11 +156,33 @@ export const TIMELINE_EVENT_TYPES = [
   "demo",
   "quote",
   "follow_up",
+  // Lifecycle markers (engine-emitted milestones).
   "created",
   "research",
   "recommendation",
   "status_change",
   "system",
+  // AI actions — the autonomous sales engine's permanent, searchable
+  // footprint (Directive 003: "every AI action must become part of the
+  // permanent timeline"). No worker emits these yet; the vocabulary and
+  // the audit trail exist so future autonomous work is traceable.
+  "enriched",
+  "scored",
+  "email_generated",
+  "email_sent",
+  "linkedin_generated",
+  "linkedin_sent",
+  "call_completed",
+  "objection_handled",
+  "demo_booked",
+  "demo_completed",
+  "follow_up_created",
+  "proposal_generated",
+  // AI task-queue lifecycle.
+  "task_scheduled",
+  "task_started",
+  "task_completed",
+  "task_failed",
 ] as const;
 export type TimelineEventType = (typeof TIMELINE_EVENT_TYPES)[number];
 
@@ -179,6 +202,22 @@ export const EVENT_LABELS: Record<TimelineEventType, string> = {
   recommendation: "AI recommendation",
   status_change: "Status changed",
   system: "System",
+  enriched: "AI enrichment",
+  scored: "AI scored",
+  email_generated: "Email drafted",
+  email_sent: "Email sent",
+  linkedin_generated: "LinkedIn drafted",
+  linkedin_sent: "LinkedIn sent",
+  call_completed: "Call completed",
+  objection_handled: "Objection handled",
+  demo_booked: "Demo booked",
+  demo_completed: "Demo completed",
+  follow_up_created: "Follow-up created",
+  proposal_generated: "Proposal generated",
+  task_scheduled: "Task scheduled",
+  task_started: "Task started",
+  task_completed: "Task completed",
+  task_failed: "Task failed",
 };
 
 /** Interaction types a human (or AI) logs against a company. */
@@ -195,14 +234,63 @@ export const INTERACTION_EVENT_TYPES: readonly TimelineEventType[] = [
   "follow_up",
 ];
 
+/**
+ * AI-action timeline types — emitted by the autonomous engine, never the
+ * human "log interaction" form. They carry the AI footprint on the
+ * timeline and the global feed.
+ */
+export const AI_ACTION_EVENT_TYPES: readonly TimelineEventType[] = [
+  "enriched",
+  "scored",
+  "email_generated",
+  "email_sent",
+  "linkedin_generated",
+  "linkedin_sent",
+  "call_completed",
+  "objection_handled",
+  "demo_booked",
+  "demo_completed",
+  "follow_up_created",
+  "proposal_generated",
+  "task_scheduled",
+  "task_started",
+  "task_completed",
+  "task_failed",
+];
+
+/**
+ * Timeline events that capture reusable sales knowledge — a handled
+ * objection, a completed cold call, a completed demo. The detail page
+ * offers to promote these into the Shared Memory Engine (Directive 002)
+ * so every AI employee can learn from a real outcome.
+ */
+export const PROMOTABLE_EVENT_TYPES: readonly string[] = [
+  "objection_handled",
+  "call_completed",
+  "demo_completed",
+  "call",
+  "demo",
+  "meeting",
+];
+
+export function isPromotableOutcome(t: string): boolean {
+  return PROMOTABLE_EVENT_TYPES.includes(t);
+}
+
 export function eventLabel(t: string): string {
   return EVENT_LABELS[t as TimelineEventType] ?? t.replace(/_/g, " ");
 }
 
-export function eventCategory(t: string): "interaction" | "lifecycle" {
-  return (INTERACTION_EVENT_TYPES as readonly string[]).includes(t)
-    ? "interaction"
-    : "lifecycle";
+export function eventCategory(
+  t: string,
+): "interaction" | "lifecycle" | "ai_action" {
+  if ((INTERACTION_EVENT_TYPES as readonly string[]).includes(t)) {
+    return "interaction";
+  }
+  if ((AI_ACTION_EVENT_TYPES as readonly string[]).includes(t)) {
+    return "ai_action";
+  }
+  return "lifecycle";
 }
 
 export const EVENT_DIRECTIONS = ["inbound", "outbound", "internal"] as const;
@@ -268,6 +356,124 @@ export function riskLabel(r: string): string {
 
 export const GENERATED_BY = ["ai", "human"] as const;
 export type GeneratedBy = (typeof GENERATED_BY)[number];
+
+// ---------------------------------------------------------------------
+// AI Task Queue — the foundation every future autonomous worker polls,
+// claims, and updates. No worker runs yet; this is the vocabulary the
+// queue table, the service, and the /admin/sales/tasks page all share.
+// ---------------------------------------------------------------------
+
+export const AI_TASK_STATUSES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export type AiTaskStatus = (typeof AI_TASK_STATUSES)[number];
+
+export const AI_TASK_STATUS_LABELS: Record<AiTaskStatus, string> = {
+  pending: "Pending",
+  running: "Running",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+export function aiTaskStatusLabel(s: string): string {
+  return AI_TASK_STATUS_LABELS[s as AiTaskStatus] ?? s;
+}
+
+/** Tasks that are still live (not yet terminal). */
+export const OPEN_TASK_STATUSES: readonly AiTaskStatus[] = ["pending", "running"];
+
+export function isOpenTaskStatus(s: string): boolean {
+  return (OPEN_TASK_STATUSES as readonly string[]).includes(s);
+}
+
+/** Priorities, highest urgency first (display + select order). */
+export const AI_TASK_PRIORITIES = ["urgent", "high", "normal", "low"] as const;
+export type AiTaskPriority = (typeof AI_TASK_PRIORITIES)[number];
+
+export const AI_TASK_PRIORITY_LABELS: Record<AiTaskPriority, string> = {
+  urgent: "Urgent",
+  high: "High",
+  normal: "Normal",
+  low: "Low",
+};
+
+export function aiTaskPriorityLabel(p: string): string {
+  return AI_TASK_PRIORITY_LABELS[p as AiTaskPriority] ?? p;
+}
+
+/** Mirror of the DB `priority_rank` generated column (urgent = 0 = first). */
+export function priorityRank(p: string): number {
+  switch (p) {
+    case "urgent":
+      return 0;
+    case "high":
+      return 1;
+    case "normal":
+      return 2;
+    case "low":
+      return 3;
+    default:
+      return 2;
+  }
+}
+
+export type TaskStatusCounts = Record<AiTaskStatus, number>;
+
+export function emptyTaskStatusCounts(): TaskStatusCounts {
+  return { pending: 0, running: 0, completed: 0, failed: 0, cancelled: 0 };
+}
+
+export function tallyTaskStatuses(
+  rows: ReadonlyArray<{ status: string }>,
+): TaskStatusCounts {
+  const counts = emptyTaskStatusCounts();
+  for (const r of rows) {
+    if ((r.status as AiTaskStatus) in counts) {
+      counts[r.status as AiTaskStatus] += 1;
+    }
+  }
+  return counts;
+}
+
+// ---------------------------------------------------------------------
+// Channels — the polymorphic "multiple of everything" vocabulary
+// (multiple phones, emails, LinkedIn profiles, social accounts). The
+// concrete channel types are DATA (hq_sales_channel_types); these are the
+// coarse categories the UI groups by.
+// ---------------------------------------------------------------------
+
+export const CHANNEL_CATEGORIES = [
+  "phone",
+  "email",
+  "linkedin",
+  "social",
+  "web",
+  "messaging",
+  "other",
+] as const;
+export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number];
+
+export const CHANNEL_CATEGORY_LABELS: Record<ChannelCategory, string> = {
+  phone: "Phone",
+  email: "Email",
+  linkedin: "LinkedIn",
+  social: "Social",
+  web: "Web",
+  messaging: "Messaging",
+  other: "Other",
+};
+
+export function channelCategoryLabel(c: string): string {
+  return CHANNEL_CATEGORY_LABELS[c as ChannelCategory] ?? c;
+}
+
+export const CHANNEL_STATUSES = ["active", "inactive", "invalid"] as const;
+export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
 
 // ---------------------------------------------------------------------
 // Scoring — CRM score + AI qualification score share one 0–100 banding.
@@ -471,6 +677,20 @@ export type SalesCompany = {
   assigned_to_email: string | null;
   tags: string[];
   last_researched_at: string | null;
+  // Company Intelligence — reserved, nullable signals filled in by future
+  // enrichment. Null everywhere today (Directive 003: "reserve schema").
+  revenue_estimate_gbp: number | null;
+  growth_score: number | null;
+  construction_sector: string | null;
+  software_used: string[];
+  estimated_software_spend_gbp: number | null;
+  fleet_size: number | null;
+  staff_size: number | null;
+  website_quality_score: number | null;
+  marketing_quality_score: number | null;
+  hiring_activity_score: number | null;
+  digital_maturity_score: number | null;
+  enrichment: Record<string, unknown> | null;
   created_by_id: string | null;
   created_by_email: string | null;
   created_at: string;
@@ -479,9 +699,44 @@ export type SalesCompany = {
 
 /**
  * List/search projection — every column EXCEPT the (potentially long)
- * `summary`, so cards and search results stay lightweight.
+ * `summary` and the heavier Company Intelligence signals, so cards and
+ * search results stay lightweight at scale.
  */
-export type SalesCompanyListItem = Omit<SalesCompany, "summary">;
+export type SalesCompanyListItem = Omit<
+  SalesCompany,
+  | "summary"
+  | "revenue_estimate_gbp"
+  | "growth_score"
+  | "construction_sector"
+  | "software_used"
+  | "estimated_software_spend_gbp"
+  | "fleet_size"
+  | "staff_size"
+  | "website_quality_score"
+  | "marketing_quality_score"
+  | "hiring_activity_score"
+  | "digital_maturity_score"
+  | "enrichment"
+>;
+
+/** The Company Intelligence 0–100 score signals (reuse scoreBand colours). */
+export type IntelligenceScoreKey =
+  | "growth_score"
+  | "website_quality_score"
+  | "marketing_quality_score"
+  | "hiring_activity_score"
+  | "digital_maturity_score";
+
+export const INTELLIGENCE_SCORE_FIELDS: ReadonlyArray<{
+  key: IntelligenceScoreKey;
+  label: string;
+}> = [
+  { key: "growth_score", label: "Growth" },
+  { key: "website_quality_score", label: "Website quality" },
+  { key: "marketing_quality_score", label: "Marketing quality" },
+  { key: "hiring_activity_score", label: "Hiring activity" },
+  { key: "digital_maturity_score", label: "Digital maturity" },
+];
 
 export type SalesContact = {
   id: string;
@@ -569,12 +824,142 @@ export type SalesFeedItem = SalesTimelineEvent & {
   company_name: string | null;
 };
 
+/** Row from the extensible hq_sales_channel_types lookup. */
+export type SalesChannelType = {
+  slug: string;
+  label: string;
+  category: ChannelCategory;
+  is_active: boolean;
+  sort_order: number;
+};
+
+/** Row from the extensible hq_sales_task_types lookup. */
+export type SalesTaskType = {
+  slug: string;
+  label: string;
+  category: "research" | "outreach" | "call" | "meeting" | "admin" | "memory" | "other";
+  is_active: boolean;
+  sort_order: number;
+};
+
+/** Row from the hq_sales_integrations lookup (future connectors). */
+export type SalesIntegration = {
+  slug: string;
+  label: string;
+  category: "social" | "comms" | "registry" | "maps" | "crawler" | "other";
+  status: "planned" | "connected" | "disabled";
+  is_active: boolean;
+  sort_order: number;
+};
+
+/** A physical location for a company (multiple per company). */
+export type SalesLocation = {
+  id: string;
+  company_id: string;
+  label: string | null;
+  is_primary: boolean;
+  is_headquarters: boolean;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  county: string | null;
+  region: string | null;
+  postcode: string | null;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  phone: string | null;
+  notes: string;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  created_by_email: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * A polymorphic contact channel — one row per phone / email / LinkedIn /
+ * social account, anchored to a company and optionally a contact or
+ * location. This is the directive's "multiple of everything".
+ */
+export type SalesChannel = {
+  id: string;
+  company_id: string;
+  contact_id: string | null;
+  location_id: string | null;
+  channel_type: string;
+  value: string;
+  label: string | null;
+  is_primary: boolean;
+  is_verified: boolean;
+  status: string;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  created_by_email: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A row in the AI Task Queue (foundation — no worker executes it yet). */
+export type SalesAiTask = {
+  id: string;
+  company_id: string | null;
+  contact_id: string | null;
+  task_type: string;
+  status: string;
+  priority: string;
+  priority_rank: number;
+  retry_count: number;
+  max_retries: number;
+  assigned_ai_employee_id: string | null;
+  scheduled_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  payload: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  dedupe_key: string | null;
+  source: string;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** An AI task joined with its company name, for the global tasks page. */
+export type SalesTaskItem = SalesAiTask & {
+  company_name: string | null;
+};
+
+/** A future-integration link + snapshot, joined back to a company. */
+export type SalesExternalRecord = {
+  id: string;
+  integration: string;
+  company_id: string | null;
+  contact_id: string | null;
+  location_id: string | null;
+  external_id: string | null;
+  external_url: string | null;
+  status: string;
+  payload: Record<string, unknown> | null;
+  synced_at: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SalesCompanyDetail = {
   company: SalesCompany;
   contacts: SalesContact[];
+  locations: SalesLocation[];
+  channels: SalesChannel[];
   research: SalesResearchReport[];
   recommendations: SalesRecommendation[];
   timeline: SalesTimelineEvent[];
+  tasks: SalesAiTask[];
 };
 
 // ---------------------------------------------------------------------

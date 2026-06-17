@@ -72,10 +72,13 @@ export function riskPill(r: string): string {
 }
 
 /** Accent colour token for a timeline event dot, by event category. */
-export function eventDotClass(category: "interaction" | "lifecycle"): string {
-  return category === "interaction"
-    ? "bg-sky-400/80 ring-sky-400/30"
-    : "bg-indigo-400/80 ring-indigo-400/30";
+export function eventDotClass(
+  category: "interaction" | "lifecycle" | "ai_action",
+): string {
+  if (category === "interaction") return "bg-sky-400/80 ring-sky-400/30";
+  if (category === "ai_action")
+    return "bg-fuchsia-400/80 ring-fuchsia-400/30";
+  return "bg-indigo-400/80 ring-indigo-400/30";
 }
 
 /** Shared form input/select/textarea classes (dark). */

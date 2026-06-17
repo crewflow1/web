@@ -8,12 +8,18 @@ import {
   closeRate,
   deriveDomain,
   EMPLOYEE_BANDS,
+  eventLabel,
+  isPromotableOutcome,
   likelihoodBandFromScore,
   pipelineValue,
   summariseActivity,
   tallyStatuses,
+  tallyTaskStatuses,
   winRate,
   type AiProductivity,
+  type SalesAiTask,
+  type SalesChannel,
+  type SalesChannelType,
   type SalesCompany,
   type SalesCompanyDetail,
   type SalesCompanyListItem,
@@ -21,11 +27,16 @@ import {
   type SalesDashboard,
   type SalesFacets,
   type SalesFeedItem,
+  type SalesIntegration,
+  type SalesLocation,
   type SalesRecommendation,
   type SalesResearchReport,
   type SalesSource,
+  type SalesTaskItem,
+  type SalesTaskType,
   type SalesTimelineEvent,
   type StatusCounts,
+  type TaskStatusCounts,
 } from "@/lib/sales/model";
 
 /**
@@ -110,10 +121,28 @@ const COMPANY_LIST_COLUMNS = [
   "created_at", "updated_at",
 ].join(", ");
 
-const COMPANY_DETAIL_COLUMNS = `${COMPANY_LIST_COLUMNS}, summary`;
+// Company Intelligence — reserved signals, loaded only on the detail page
+// (kept out of list/search projections so cards stay lightweight at scale).
+const COMPANY_INTELLIGENCE_COLUMNS = [
+  "revenue_estimate_gbp", "growth_score", "construction_sector",
+  "software_used", "estimated_software_spend_gbp", "fleet_size",
+  "staff_size", "website_quality_score", "marketing_quality_score",
+  "hiring_activity_score", "digital_maturity_score", "enrichment",
+].join(", ");
+
+const COMPANY_DETAIL_COLUMNS = `${COMPANY_LIST_COLUMNS}, summary, ${COMPANY_INTELLIGENCE_COLUMNS}`;
 
 const CONTACT_COLUMNS =
   "id, company_id, full_name, title, seniority, email, phone, linkedin_url, is_primary, is_decision_maker, notes, created_by_email, created_at, updated_at";
+
+const LOCATION_COLUMNS =
+  "id, company_id, label, is_primary, is_headquarters, address_line1, address_line2, city, county, region, postcode, country, latitude, longitude, phone, notes, generated_by, model, ai_employee_id, created_by_email, metadata, created_at, updated_at";
+
+const CHANNEL_COLUMNS =
+  "id, company_id, contact_id, location_id, channel_type, value, label, is_primary, is_verified, status, generated_by, model, ai_employee_id, created_by_email, metadata, created_at, updated_at";
+
+const TASK_COLUMNS =
+  "id, company_id, contact_id, task_type, status, priority, priority_rank, retry_count, max_retries, assigned_ai_employee_id, scheduled_at, started_at, finished_at, error_message, payload, result, dedupe_key, source, created_by_email, created_at, updated_at";
 
 const RESEARCH_COLUMNS =
   "id, company_id, summary, pain_points, likelihood_score, likelihood_band, estimated_software_spend_gbp, estimated_spend_note, best_angle, opening_line, recommended_follow_up, risk_assessment, risk_level, generated_by, model, ai_employee_id, authored_by_email, status, memory_id, created_at, updated_at";
@@ -153,6 +182,57 @@ export async function listSalesSources(
 async function sourceLabelMap(): Promise<Record<string, string>> {
   const sources = await listSalesSources();
   return Object.fromEntries(sources.map((s) => [s.slug, s.label]));
+}
+
+/** Channel kinds (phone/email/linkedin/social/…) — extensible DATA. */
+export async function listChannelTypes(
+  activeOnly = true,
+): Promise<SalesChannelType[]> {
+  const admin = createAdminClient();
+  let q = table<SalesChannelType>(admin, "hq_sales_channel_types").select(
+    "slug, label, category, is_active, sort_order",
+  );
+  if (activeOnly) q = q.eq("is_active", true);
+  const { data, error } = await q.order("sort_order", { ascending: true });
+  if (error) {
+    console.error("[hq-sales] listChannelTypes failed", error);
+    return [];
+  }
+  return (data ?? []) as SalesChannelType[];
+}
+
+/** Task kinds an AI employee can be assigned — extensible DATA. */
+export async function listTaskTypes(
+  activeOnly = true,
+): Promise<SalesTaskType[]> {
+  const admin = createAdminClient();
+  let q = table<SalesTaskType>(admin, "hq_sales_task_types").select(
+    "slug, label, category, is_active, sort_order",
+  );
+  if (activeOnly) q = q.eq("is_active", true);
+  const { data, error } = await q.order("sort_order", { ascending: true });
+  if (error) {
+    console.error("[hq-sales] listTaskTypes failed", error);
+    return [];
+  }
+  return (data ?? []) as SalesTaskType[];
+}
+
+/** Future integration connectors (planned/connected/disabled) — DATA. */
+export async function listIntegrations(
+  activeOnly = false,
+): Promise<SalesIntegration[]> {
+  const admin = createAdminClient();
+  let q = table<SalesIntegration>(admin, "hq_sales_integrations").select(
+    "slug, label, category, status, is_active, sort_order",
+  );
+  if (activeOnly) q = q.eq("is_active", true);
+  const { data, error } = await q.order("sort_order", { ascending: true });
+  if (error) {
+    console.error("[hq-sales] listIntegrations failed", error);
+    return [];
+  }
+  return (data ?? []) as SalesIntegration[];
 }
 
 // ---------------------------------------------------------------------
@@ -282,33 +362,52 @@ export async function loadCompanyDetail(
   const company = await getCompany(id);
   if (!company) return null;
 
-  const [contacts, research, recommendations, timeline] = await Promise.all([
-    table<SalesContact>(admin, "hq_sales_contacts")
-      .select(CONTACT_COLUMNS)
-      .eq("company_id", id)
-      .order("is_primary", { ascending: false })
-      .order("created_at", { ascending: true }),
-    table<SalesResearchReport>(admin, "hq_sales_research_reports")
-      .select(RESEARCH_COLUMNS)
-      .eq("company_id", id)
-      .order("created_at", { ascending: false }),
-    table<SalesRecommendation>(admin, "hq_sales_recommendations")
-      .select(RECO_COLUMNS)
-      .eq("company_id", id)
-      .order("created_at", { ascending: false }),
-    table<SalesTimelineEvent>(admin, "hq_sales_timeline_events")
-      .select(TIMELINE_COLUMNS)
-      .eq("company_id", id)
-      .order("occurred_at", { ascending: false })
-      .limit(200),
-  ]);
+  const [contacts, locations, channels, research, recommendations, timeline, tasks] =
+    await Promise.all([
+      table<SalesContact>(admin, "hq_sales_contacts")
+        .select(CONTACT_COLUMNS)
+        .eq("company_id", id)
+        .order("is_primary", { ascending: false })
+        .order("created_at", { ascending: true }),
+      table<SalesLocation>(admin, "hq_sales_locations")
+        .select(LOCATION_COLUMNS)
+        .eq("company_id", id)
+        .order("is_primary", { ascending: false })
+        .order("created_at", { ascending: true }),
+      table<SalesChannel>(admin, "hq_sales_channels")
+        .select(CHANNEL_COLUMNS)
+        .eq("company_id", id)
+        .order("is_primary", { ascending: false })
+        .order("created_at", { ascending: true }),
+      table<SalesResearchReport>(admin, "hq_sales_research_reports")
+        .select(RESEARCH_COLUMNS)
+        .eq("company_id", id)
+        .order("created_at", { ascending: false }),
+      table<SalesRecommendation>(admin, "hq_sales_recommendations")
+        .select(RECO_COLUMNS)
+        .eq("company_id", id)
+        .order("created_at", { ascending: false }),
+      table<SalesTimelineEvent>(admin, "hq_sales_timeline_events")
+        .select(TIMELINE_COLUMNS)
+        .eq("company_id", id)
+        .order("occurred_at", { ascending: false })
+        .limit(200),
+      table<SalesAiTask>(admin, "hq_sales_ai_tasks")
+        .select(TASK_COLUMNS)
+        .eq("company_id", id)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
 
   return {
     company,
     contacts: (contacts.data ?? []) as SalesContact[],
+    locations: (locations.data ?? []) as SalesLocation[],
+    channels: (channels.data ?? []) as SalesChannel[],
     research: (research.data ?? []) as SalesResearchReport[],
     recommendations: (recommendations.data ?? []) as SalesRecommendation[],
     timeline: (timeline.data ?? []) as SalesTimelineEvent[],
+    tasks: (tasks.data ?? []) as SalesAiTask[],
   };
 }
 
@@ -317,13 +416,21 @@ export async function loadCompanyDetail(
 // with company name. Powers the global feed + dashboard "recent".
 // ---------------------------------------------------------------------
 
-export async function listActivityFeed(limit = 40): Promise<SalesFeedItem[]> {
+export async function listActivityFeed(
+  limit = 40,
+  search?: string,
+): Promise<SalesFeedItem[]> {
   const admin = createAdminClient();
-  const { data, error } = await table<SalesTimelineEvent>(
+  let q = table<SalesTimelineEvent>(
     admin,
     "hq_sales_timeline_events",
-  )
-    .select(TIMELINE_COLUMNS)
+  ).select(TIMELINE_COLUMNS);
+  const term = search?.trim();
+  if (term) {
+    // Full-text over subject/body/outcome/event_type — "everything searchable".
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+  const { data, error } = await q
     .order("occurred_at", { ascending: false })
     .limit(limit);
   if (error) {
@@ -348,6 +455,82 @@ export async function listActivityFeed(limit = 40): Promise<SalesFeedItem[]> {
     ...e,
     company_name: nameById.get(e.company_id) ?? null,
   }));
+}
+
+// ---------------------------------------------------------------------
+// AI Task Queue — the global view. listAiTasks returns a bounded, queue-
+// ordered window joined with company names; getAiTaskCounts gives exact
+// status counts. No worker executes anything — this is the foundation.
+// ---------------------------------------------------------------------
+
+export type AiTaskFilter = {
+  status?: string;
+  taskType?: string;
+  limit?: number;
+};
+
+export async function listAiTasks(
+  filter: AiTaskFilter = {},
+): Promise<SalesTaskItem[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(500, Math.max(1, Math.floor(filter.limit ?? 100)));
+  let q = table<SalesAiTask>(admin, "hq_sales_ai_tasks").select(TASK_COLUMNS);
+  if (filter.status) q = q.eq("status", filter.status);
+  if (filter.taskType) q = q.eq("task_type", filter.taskType);
+  // Queue order: highest priority first, then oldest scheduled / created.
+  const { data, error } = await q
+    .order("priority_rank", { ascending: true })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listAiTasks failed", error);
+    return [];
+  }
+  const tasks = (data ?? []) as SalesAiTask[];
+  if (tasks.length === 0) return [];
+
+  const companyIds = [
+    ...new Set(
+      tasks
+        .map((t) => t.company_id)
+        .filter((x): x is string => typeof x === "string"),
+    ),
+  ];
+  let nameById = new Map<string, string>();
+  if (companyIds.length > 0) {
+    const { data: companies } = await table<{ id: string; name: string }>(
+      admin,
+      "hq_sales_companies",
+    )
+      .select("id, name")
+      .in("id", companyIds);
+    nameById = new Map(
+      ((companies ?? []) as { id: string; name: string }[]).map((c) => [
+        c.id,
+        c.name,
+      ]),
+    );
+  }
+
+  return tasks.map((t) => ({
+    ...t,
+    company_name: t.company_id ? nameById.get(t.company_id) ?? null : null,
+  }));
+}
+
+export async function getAiTaskCounts(): Promise<TaskStatusCounts> {
+  const admin = createAdminClient();
+  const { data, error } = await table<{ status: string }>(
+    admin,
+    "hq_sales_ai_tasks",
+  )
+    .select("status")
+    .limit(100000);
+  if (error) {
+    console.error("[hq-sales] getAiTaskCounts failed", error);
+    return tallyTaskStatuses([]);
+  }
+  return tallyTaskStatuses((data ?? []) as { status: string }[]);
 }
 
 // ---------------------------------------------------------------------
@@ -608,6 +791,18 @@ export type CompanyWriteInput = {
   source: string;
   assignedToEmail: string | null;
   tags: string[];
+  // Company Intelligence — reserved, nullable signals (Directive 003).
+  revenueEstimateGbp: number | null;
+  growthScore: number | null;
+  constructionSector: string | null;
+  softwareUsed: string[];
+  estimatedSoftwareSpendGbp: number | null;
+  fleetSize: number | null;
+  staffSize: number | null;
+  websiteQualityScore: number | null;
+  marketingQualityScore: number | null;
+  hiringActivityScore: number | null;
+  digitalMaturityScore: number | null;
 };
 
 function companyPayload(input: CompanyWriteInput) {
@@ -638,6 +833,17 @@ function companyPayload(input: CompanyWriteInput) {
     source: input.source,
     assigned_to_email: input.assignedToEmail,
     tags: input.tags,
+    revenue_estimate_gbp: input.revenueEstimateGbp,
+    growth_score: input.growthScore,
+    construction_sector: input.constructionSector,
+    software_used: input.softwareUsed,
+    estimated_software_spend_gbp: input.estimatedSoftwareSpendGbp,
+    fleet_size: input.fleetSize,
+    staff_size: input.staffSize,
+    website_quality_score: input.websiteQualityScore,
+    marketing_quality_score: input.marketingQualityScore,
+    hiring_activity_score: input.hiringActivityScore,
+    digital_maturity_score: input.digitalMaturityScore,
   };
 }
 
@@ -992,6 +1198,213 @@ export async function logInteraction(
   return { ok: true, id };
 }
 
+// --- Locations (multiple per company) -------------------------------
+
+export type LocationWriteInput = {
+  label: string | null;
+  isPrimary: boolean;
+  isHeadquarters: boolean;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  county: string | null;
+  region: string | null;
+  postcode: string | null;
+  country: string;
+  phone: string | null;
+  notes: string;
+  generatedBy: string;
+  model: string | null;
+  aiEmployeeId: string | null;
+};
+
+function locationPayload(companyId: string, input: LocationWriteInput) {
+  const isAi = input.generatedBy === "ai";
+  return {
+    company_id: companyId,
+    label: input.label,
+    is_primary: input.isPrimary,
+    is_headquarters: input.isHeadquarters,
+    address_line1: input.addressLine1,
+    address_line2: input.addressLine2,
+    city: input.city,
+    county: input.county,
+    region: input.region,
+    postcode: input.postcode,
+    country: input.country || "United Kingdom",
+    phone: input.phone,
+    notes: input.notes,
+    generated_by: input.generatedBy,
+    model: isAi ? input.model : null,
+    ai_employee_id: isAi ? input.aiEmployeeId : null,
+  };
+}
+
+export async function addLocation(
+  companyId: string,
+  input: LocationWriteInput,
+  actor: Actor,
+): Promise<WriteResult> {
+  const admin = createAdminClient();
+  const { data, error } = await table<{ id: string }>(admin, "hq_sales_locations")
+    .insert({ ...locationPayload(companyId, input), created_by_email: actor.email })
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    console.error("[hq-sales] addLocation failed", error);
+    return { ok: false, error: error?.message ?? "Insert failed" };
+  }
+  const where = [input.label, input.city, input.postcode].filter(Boolean).join(", ");
+  await insertTimelineEvent(admin, {
+    company_id: companyId,
+    event_type: "note",
+    actor_email: input.generatedBy === "human" ? actor.email : null,
+    ai_employee_id: input.generatedBy === "ai" ? input.aiEmployeeId : null,
+    body: `Added location${where ? `: ${where}` : ""}.`,
+  });
+  return { ok: true, id: data.id };
+}
+
+// --- Channels (multiple phones / emails / LinkedIn / socials) -------
+
+export type ChannelWriteInput = {
+  channelType: string;
+  value: string;
+  label: string | null;
+  contactId: string | null;
+  locationId: string | null;
+  isPrimary: boolean;
+  isVerified: boolean;
+  status: string;
+  generatedBy: string;
+  model: string | null;
+  aiEmployeeId: string | null;
+};
+
+function channelPayload(companyId: string, input: ChannelWriteInput) {
+  const isAi = input.generatedBy === "ai";
+  return {
+    company_id: companyId,
+    contact_id: input.contactId,
+    location_id: input.locationId,
+    channel_type: input.channelType,
+    value: input.value,
+    label: input.label,
+    is_primary: input.isPrimary,
+    is_verified: input.isVerified,
+    status: input.status,
+    generated_by: input.generatedBy,
+    model: isAi ? input.model : null,
+    ai_employee_id: isAi ? input.aiEmployeeId : null,
+  };
+}
+
+export async function addChannel(
+  companyId: string,
+  input: ChannelWriteInput,
+  actor: Actor,
+): Promise<WriteResult> {
+  const admin = createAdminClient();
+  const { data, error } = await table<{ id: string }>(admin, "hq_sales_channels")
+    .insert({ ...channelPayload(companyId, input), created_by_email: actor.email })
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    const msg = error?.message ?? "Insert failed";
+    console.error("[hq-sales] addChannel failed", error);
+    if (/duplicate key|unique/i.test(msg)) {
+      return { ok: false, error: "That channel already exists for this company." };
+    }
+    return { ok: false, error: msg };
+  }
+  await insertTimelineEvent(admin, {
+    company_id: companyId,
+    contact_id: input.contactId,
+    event_type: "note",
+    actor_email: input.generatedBy === "human" ? actor.email : null,
+    ai_employee_id: input.generatedBy === "ai" ? input.aiEmployeeId : null,
+    body: `Added ${input.channelType}: ${input.value}.`,
+  });
+  return { ok: true, id: data.id };
+}
+
+export async function deleteChannel(
+  id: string,
+  actor: Actor,
+): Promise<WriteResult> {
+  const admin = createAdminClient();
+  const { error } = await table<SalesChannel>(admin, "hq_sales_channels")
+    .delete()
+    .eq("id", id);
+  if (error) {
+    console.error("[hq-sales] deleteChannel failed", error);
+    return { ok: false, error: error.message };
+  }
+  void actor;
+  return { ok: true, id };
+}
+
+// --- AI Task Queue (foundation — enqueue only, no execution) --------
+
+export type AiTaskWriteInput = {
+  companyId: string | null;
+  contactId: string | null;
+  taskType: string;
+  priority: string;
+  scheduledAt: string | null;
+  maxRetries: number;
+  assignedAiEmployeeId: string | null;
+  payload: Record<string, unknown> | null;
+  dedupeKey: string | null;
+};
+
+export async function enqueueAiTask(
+  input: AiTaskWriteInput,
+  actor: Actor,
+): Promise<WriteResult> {
+  const admin = createAdminClient();
+  const { data, error } = await table<{ id: string }>(admin, "hq_sales_ai_tasks")
+    .insert({
+      company_id: input.companyId,
+      contact_id: input.contactId,
+      task_type: input.taskType,
+      status: "pending",
+      priority: input.priority,
+      retry_count: 0,
+      max_retries: input.maxRetries,
+      assigned_ai_employee_id: input.assignedAiEmployeeId,
+      scheduled_at: input.scheduledAt,
+      payload: input.payload,
+      dedupe_key: input.dedupeKey,
+      source: "manual",
+      created_by_email: actor.email,
+    })
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    const msg = error?.message ?? "Insert failed";
+    console.error("[hq-sales] enqueueAiTask failed", error);
+    if (/duplicate key|unique/i.test(msg)) {
+      return { ok: false, error: "A live task with that dedupe key already exists." };
+    }
+    return { ok: false, error: msg };
+  }
+  // A company-scoped task gets a timeline marker so the AI footprint is
+  // visible on the company. Global tasks (no company) have no timeline.
+  if (input.companyId) {
+    await insertTimelineEvent(admin, {
+      company_id: input.companyId,
+      contact_id: input.contactId,
+      event_type: "task_scheduled",
+      actor_email: actor.email,
+      ai_employee_id: input.assignedAiEmployeeId,
+      body: `AI task scheduled: ${input.taskType}.`,
+      metadata: { task_id: data.id, priority: input.priority },
+    });
+  }
+  return { ok: true, id: data.id };
+}
+
 // ---------------------------------------------------------------------
 // Shared Memory bridge (Directive 002 integration). Promote a research
 // report into the company-wide Shared Memory Engine so its findings
@@ -1095,6 +1508,92 @@ export async function promoteResearchToMemory(
     event_type: "system",
     actor_email: actor.email,
     body: `Research promoted to Shared Memory.`,
+    memory_id: result.id,
+  });
+
+  return { ok: true, id: result.id };
+}
+
+/**
+ * Promote a winning OUTCOME (a handled objection, a completed cold call, a
+ * completed demo) into the Shared Memory Engine, so every AI employee can
+ * learn from a real result. Directive 003: "Every successful objection /
+ * cold call / demo / close should become reusable knowledge." Opt-in,
+ * idempotent (re-promoting returns the existing memory), and audited.
+ */
+export async function promoteOutcomeToMemory(
+  eventId: string,
+  actor: Actor,
+): Promise<WriteResult> {
+  const admin = createAdminClient();
+  const { data: event } = await table<SalesTimelineEvent>(
+    admin,
+    "hq_sales_timeline_events",
+  )
+    .select(TIMELINE_COLUMNS)
+    .eq("id", eventId)
+    .maybeSingle();
+  if (!event) return { ok: false, error: "Timeline event not found" };
+  if (event.memory_id) return { ok: true, id: event.memory_id };
+  if (!isPromotableOutcome(event.event_type)) {
+    return { ok: false, error: "This event cannot be promoted to memory" };
+  }
+
+  const company = await getCompany(event.company_id);
+  if (!company) return { ok: false, error: "Company not found" };
+
+  const memoryType = await pickMemoryType();
+  if (!memoryType) {
+    return { ok: false, error: "No Shared Memory types configured" };
+  }
+  const source = await pickMemorySource();
+
+  const label = eventLabel(event.event_type);
+  const bodyParts: string[] = [];
+  if (event.subject) bodyParts.push(`## ${event.subject}`);
+  if (event.body) bodyParts.push(event.body);
+  if (event.outcome) bodyParts.push(`**Outcome:** ${event.outcome}`);
+
+  const result = await createMemory(
+    {
+      title: `${label} — ${company.name}`,
+      summary: event.subject || `${label} outcome for ${company.name}.`,
+      body: bodyParts.join("\n\n") || `${label} for ${company.name}.`,
+      memoryType,
+      department: "sales",
+      importance: "normal",
+      visibility: "public_hq",
+      source,
+      status: "active",
+      confidence: 75,
+      pinned: false,
+      tags: [...new Set(["sales", "outcome", event.event_type, ...company.tags])],
+      organisationName: company.name,
+      relationships: [
+        {
+          entityType: "organisation",
+          entityId: company.id,
+          entityLabel: company.name,
+          relation: "about",
+        },
+      ],
+      employeeIds: [],
+      grantDepartments: [],
+    },
+    actor,
+  );
+
+  if (!result.ok) return result;
+
+  await table<SalesTimelineEvent>(admin, "hq_sales_timeline_events")
+    .update({ memory_id: result.id })
+    .eq("id", eventId);
+
+  await insertTimelineEvent(admin, {
+    company_id: company.id,
+    event_type: "system",
+    actor_email: actor.email,
+    body: `${label} promoted to Shared Memory.`,
     memory_id: result.id,
   });
 

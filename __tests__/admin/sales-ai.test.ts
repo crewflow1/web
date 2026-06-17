@@ -1,23 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   aggregateSalesFacets,
+  aiTaskPriorityLabel,
+  aiTaskStatusLabel,
   buildFunnel,
+  channelCategoryLabel,
   clampScore,
   closeRate,
   deriveDomain,
   emptyStatusCounts,
+  emptyTaskStatusCounts,
   employeeBand,
   employeeBandLabel,
   eventCategory,
   formatGbp,
+  isOpenTaskStatus,
+  isPromotableOutcome,
   likelihoodBandFromScore,
   normalizeList,
   normalizeTags,
   pct,
   pipelineValue,
+  priorityRank,
   scoreBand,
   summariseActivity,
   tallyStatuses,
+  tallyTaskStatuses,
   winRate,
 } from "@/lib/sales/model";
 
@@ -210,6 +218,8 @@ function makeFormData(fields: Record<string, string>): FormData {
 const CID = "11111111-1111-4111-8111-111111111111";
 const RID = "22222222-2222-4222-8222-222222222222";
 const CONTACT_ID = "33333333-3333-4333-8333-333333333333";
+const CHANNEL_ID = "44444444-4444-4444-8444-444444444444";
+const EVENT_ID = "55555555-5555-4555-8555-555555555555";
 
 function companyForm(): FormData {
   return makeFormData({
@@ -278,6 +288,41 @@ function interactionForm(): FormData {
 function promoteForm(): FormData {
   return makeFormData({ report_id: RID, company_id: CID });
 }
+function locationForm(): FormData {
+  return makeFormData({
+    company_id: CID,
+    generated_by: "human",
+    label: "North depot",
+    address_line1: "12 Trade Park",
+    city: "Manchester",
+    postcode: "M1 2AB",
+  });
+}
+function channelForm(): FormData {
+  return makeFormData({
+    company_id: CID,
+    channel_type: "work_email",
+    value: "ops@northwind.co.uk",
+    generated_by: "human",
+    status: "active",
+  });
+}
+function deleteChannelForm(): FormData {
+  return makeFormData({ id: CHANNEL_ID, company_id: CID });
+}
+function taskForm(): FormData {
+  return makeFormData({
+    company_id: CID,
+    task_type: "company_research",
+    priority: "high",
+  });
+}
+function globalTaskForm(): FormData {
+  return makeFormData({ task_type: "lead_discovery", priority: "normal" });
+}
+function promoteOutcomeForm(): FormData {
+  return makeFormData({ event_id: EVENT_ID, company_id: CID });
+}
 
 /** Every mutating action paired with a valid form, for boundary sweeps. */
 const ALL_ACTIONS: Array<[keyof SalesActions, FormData]> = [
@@ -290,6 +335,11 @@ const ALL_ACTIONS: Array<[keyof SalesActions, FormData]> = [
   ["addRecommendationAction", recoForm()],
   ["logInteractionAction", interactionForm()],
   ["promoteResearchAction", promoteForm()],
+  ["addLocationAction", locationForm()],
+  ["addChannelAction", channelForm()],
+  ["deleteChannelAction", deleteChannelForm()],
+  ["enqueueAiTaskAction", taskForm()],
+  ["promoteOutcomeAction", promoteOutcomeForm()],
 ];
 
 function callAction(mod: SalesActions, name: keyof SalesActions, fd: FormData) {
@@ -559,6 +609,157 @@ describe("authorization — HQ super-admin is allowed and every write is audited
     expect(audit?.action).toBe("hq_sales.interaction_logged");
     expect((audit?.metadata as { event_type?: string }).event_type).toBe("call");
   });
+
+  it("addLocationAction inserts a location and audits location_added", async () => {
+    mockAdmin.enqueueInsert({ data: { id: "location1" }, error: null });
+    const mod = await loadActions();
+    await expect(callAction(mod, "addLocationAction", locationForm())).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?saved=location`),
+    );
+
+    const row = findInsert("hq_sales_locations");
+    expect(row?.company_id).toBe(CID);
+    expect(row?.label).toBe("North depot");
+    expect(row?.city).toBe("Manchester");
+    expect(row?.postcode).toBe("M1 2AB");
+    // Country defaults to the UK when blank.
+    expect(row?.country).toBe("United Kingdom");
+    expect(row?.generated_by).toBe("human");
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.location_added");
+    expect(audit?.target_table).toBe("hq_sales_locations");
+    expect(audit?.target_id).toBe("location1");
+  });
+
+  it("addChannelAction inserts a channel and audits channel_added", async () => {
+    mockAdmin.enqueueInsert({ data: { id: "channel1" }, error: null });
+    const mod = await loadActions();
+    await expect(callAction(mod, "addChannelAction", channelForm())).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?saved=channel`),
+    );
+
+    const row = findInsert("hq_sales_channels");
+    expect(row?.company_id).toBe(CID);
+    expect(row?.channel_type).toBe("work_email");
+    expect(row?.value).toBe("ops@northwind.co.uk");
+    expect(row?.status).toBe("active");
+    expect(row?.generated_by).toBe("human");
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.channel_added");
+    expect(audit?.target_id).toBe("channel1");
+    expect((audit?.metadata as { channel_type?: string }).channel_type).toBe(
+      "work_email",
+    );
+  });
+
+  it("deleteChannelAction deletes the channel and audits channel_deleted", async () => {
+    const mod = await loadActions();
+    await expect(
+      callAction(mod, "deleteChannelAction", deleteChannelForm()),
+    ).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?saved=channel_removed`),
+    );
+
+    const del = mockAdmin.deletes.find((d) => d.table === "hq_sales_channels");
+    expect(del?.where).toEqual({ id: CHANNEL_ID });
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.channel_deleted");
+    expect(audit?.target_id).toBe(CHANNEL_ID);
+  });
+
+  it("enqueueAiTaskAction (company-scoped) queues a pending task and audits task_enqueued", async () => {
+    mockAdmin.enqueueInsert({ data: { id: "task1" }, error: null });
+    const mod = await loadActions();
+    await expect(callAction(mod, "enqueueAiTaskAction", taskForm())).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?saved=task`),
+    );
+
+    const row = findInsert("hq_sales_ai_tasks");
+    expect(row?.company_id).toBe(CID);
+    expect(row?.task_type).toBe("company_research");
+    expect(row?.priority).toBe("high");
+    // The foundation row is durable + queue-ordered; no worker runs yet.
+    expect(row?.status).toBe("pending");
+    expect(row?.source).toBe("manual");
+    expect(row?.retry_count).toBe(0);
+    expect(row?.max_retries).toBe(3);
+
+    // A company-scoped task leaves a timeline marker (the AI footprint).
+    const evt = findInsert("hq_sales_timeline_events");
+    expect((evt as { event_type?: string })?.event_type).toBe("task_scheduled");
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.task_enqueued");
+    expect(audit?.target_id).toBe("task1");
+  });
+
+  it("enqueueAiTaskAction (global) queues a database-wide task with no timeline event", async () => {
+    mockAdmin.enqueueInsert({ data: { id: "task2" }, error: null });
+    const mod = await loadActions();
+    await expect(
+      callAction(mod, "enqueueAiTaskAction", globalTaskForm()),
+    ).rejects.toThrow(/REDIRECT:\/admin\/sales\/tasks\?saved=task/);
+
+    const row = findInsert("hq_sales_ai_tasks");
+    expect(row?.company_id).toBeNull();
+    expect(row?.task_type).toBe("lead_discovery");
+    expect(row?.priority).toBe("normal");
+
+    // No company → no per-company timeline marker.
+    expect(findInsert("hq_sales_timeline_events")).toBeUndefined();
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.task_enqueued");
+    expect(audit?.target_id).toBe("task2");
+  });
+
+  it("promoteOutcomeAction is idempotent for an already-promoted event and audits outcome_promoted", async () => {
+    // The timeline event already carries a memory_id, so the service returns
+    // it without creating a second memory (idempotent). The action still
+    // records the audit and redirects to the company.
+    mockAdmin.enqueueMaybeSingle({
+      data: {
+        id: EVENT_ID,
+        event_type: "objection_handled",
+        memory_id: "mem-existing",
+        company_id: CID,
+      },
+      error: null,
+    });
+    const mod = await loadActions();
+    await expect(
+      callAction(mod, "promoteOutcomeAction", promoteOutcomeForm()),
+    ).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?saved=promoted`),
+    );
+
+    const audit = findAudit();
+    expect(audit?.action).toBe("hq_sales.outcome_promoted");
+    expect(audit?.target_table).toBe("hq_sales_timeline_events");
+    expect(audit?.target_id).toBe(EVENT_ID);
+    expect((audit?.metadata as { memory_id?: string }).memory_id).toBe(
+      "mem-existing",
+    );
+  });
+
+  it("promoteOutcomeAction refuses a non-promotable event and writes nothing", async () => {
+    // A plain note is not a winning outcome — the service rejects it and the
+    // action fails out before any write lands.
+    mockAdmin.enqueueMaybeSingle({
+      data: { id: EVENT_ID, event_type: "note", memory_id: null, company_id: CID },
+      error: null,
+    });
+    const mod = await loadActions();
+    await expect(
+      callAction(mod, "promoteOutcomeAction", promoteOutcomeForm()),
+    ).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?error=`),
+    );
+    expectNoWrites();
+  });
 });
 
 // ---------- 4. Input validation (rejects before any write) -----------
@@ -623,6 +824,46 @@ describe("validation — malformed input is rejected before any write", () => {
     const mod = await loadActions();
     await expect(callAction(mod, "logInteractionAction", fd)).rejects.toThrow(
       new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?error=`),
+    );
+    expectNoWrites();
+  });
+
+  it("addLocationAction rejects a location with no locating fields", async () => {
+    // company_id + generated_by parse fine, but an empty row is refused.
+    const fd = makeFormData({ company_id: CID, generated_by: "human" });
+    const mod = await loadActions();
+    await expect(callAction(mod, "addLocationAction", fd)).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?error=`),
+    );
+    expectNoWrites();
+  });
+
+  it("addChannelAction rejects an empty channel value", async () => {
+    const fd = channelForm();
+    fd.set("value", "");
+    const mod = await loadActions();
+    await expect(callAction(mod, "addChannelAction", fd)).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?error=`),
+    );
+    expectNoWrites();
+  });
+
+  it("enqueueAiTaskAction rejects an out-of-range priority", async () => {
+    const fd = taskForm();
+    fd.set("priority", "supercritical");
+    const mod = await loadActions();
+    await expect(callAction(mod, "enqueueAiTaskAction", fd)).rejects.toThrow(
+      new RegExp(`REDIRECT:/admin/sales/companies/${CID}\\?error=`),
+    );
+    expectNoWrites();
+  });
+
+  it("promoteOutcomeAction rejects a non-UUID event id", async () => {
+    const fd = promoteOutcomeForm();
+    fd.set("event_id", "not-a-uuid");
+    const mod = await loadActions();
+    await expect(callAction(mod, "promoteOutcomeAction", fd)).rejects.toThrow(
+      /REDIRECT:\/admin\/sales\/companies\?error=/,
     );
     expectNoWrites();
   });
@@ -793,11 +1034,80 @@ describe("model — formatting + parsing helpers", () => {
     expect(normalizeList(null)).toEqual([]);
   });
 
-  it("eventCategory separates interactions from lifecycle markers", () => {
+  it("eventCategory separates interactions, lifecycle markers, and AI actions", () => {
     expect(eventCategory("email")).toBe("interaction");
     expect(eventCategory("call")).toBe("interaction");
     expect(eventCategory("created")).toBe("lifecycle");
     expect(eventCategory("research")).toBe("lifecycle");
     expect(eventCategory("status_change")).toBe("lifecycle");
+    // AI-action types carry the autonomous engine's footprint.
+    expect(eventCategory("email_sent")).toBe("ai_action");
+    expect(eventCategory("objection_handled")).toBe("ai_action");
+    expect(eventCategory("task_scheduled")).toBe("ai_action");
+  });
+});
+
+describe("model — AI task queue vocabulary", () => {
+  it("priorityRank mirrors the DB generated column (urgent first; unknown = normal)", () => {
+    expect(priorityRank("urgent")).toBe(0);
+    expect(priorityRank("high")).toBe(1);
+    expect(priorityRank("normal")).toBe(2);
+    expect(priorityRank("low")).toBe(3);
+    // An unknown priority sorts with 'normal' so junk never jumps the queue.
+    expect(priorityRank("bogus")).toBe(2);
+  });
+
+  it("tallyTaskStatuses counts known statuses over a zeroed baseline", () => {
+    const t = tallyTaskStatuses([
+      { status: "pending" },
+      { status: "pending" },
+      { status: "running" },
+      { status: "completed" },
+      { status: "not-a-status" },
+    ]);
+    expect(t.pending).toBe(2);
+    expect(t.running).toBe(1);
+    expect(t.completed).toBe(1);
+    expect(t.failed).toBe(0);
+    expect(t.cancelled).toBe(0);
+    expect(emptyTaskStatusCounts()).toEqual({
+      pending: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    });
+  });
+
+  it("isOpenTaskStatus is true only for pending/running", () => {
+    expect(isOpenTaskStatus("pending")).toBe(true);
+    expect(isOpenTaskStatus("running")).toBe(true);
+    expect(isOpenTaskStatus("completed")).toBe(false);
+    expect(isOpenTaskStatus("failed")).toBe(false);
+    expect(isOpenTaskStatus("cancelled")).toBe(false);
+  });
+
+  it("task + priority labels fall back to the raw slug when unknown", () => {
+    expect(aiTaskStatusLabel("running")).toBe("Running");
+    expect(aiTaskStatusLabel("mystery")).toBe("mystery");
+    expect(aiTaskPriorityLabel("urgent")).toBe("Urgent");
+    expect(aiTaskPriorityLabel("mystery")).toBe("mystery");
+  });
+});
+
+describe("model — channel vocabulary + promotable outcomes", () => {
+  it("channelCategoryLabel maps coarse categories and passes unknowns through", () => {
+    expect(channelCategoryLabel("email")).toBe("Email");
+    expect(channelCategoryLabel("linkedin")).toBe("LinkedIn");
+    expect(channelCategoryLabel("messaging")).toBe("Messaging");
+    expect(channelCategoryLabel("carrier_pigeon")).toBe("carrier_pigeon");
+  });
+
+  it("isPromotableOutcome recognises winning outcomes only", () => {
+    expect(isPromotableOutcome("objection_handled")).toBe(true);
+    expect(isPromotableOutcome("call_completed")).toBe(true);
+    expect(isPromotableOutcome("demo_completed")).toBe(true);
+    expect(isPromotableOutcome("note")).toBe(false);
+    expect(isPromotableOutcome("created")).toBe(false);
   });
 });

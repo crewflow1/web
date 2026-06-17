@@ -6,23 +6,35 @@ import {
   CalendarClock,
   ExternalLink,
   Facebook,
+  Gauge,
   Instagram,
   Landmark,
   Lightbulb,
   Linkedin,
+  ListChecks,
   Mail,
+  MapPin,
   Pencil,
   Phone,
   Plus,
+  Share2,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { loadCompanyDetail } from "@/server/services/hq-sales";
+import {
+  listChannelTypes,
+  listTaskTypes,
+  loadCompanyDetail,
+} from "@/server/services/hq-sales";
 import { listAiEmployees } from "@/server/services/ai-employees";
 import type { AiEmployee } from "@/lib/ai-employees/model";
 import {
+  AI_TASK_PRIORITIES,
+  AI_TASK_PRIORITY_LABELS,
+  CHANNEL_STATUSES,
   EVENT_DIRECTIONS,
   GENERATED_BY,
+  INTELLIGENCE_SCORE_FIELDS,
   INTERACTION_EVENT_TYPES,
   PIPELINE_STATUSES,
   RISK_LEVELS,
@@ -32,18 +44,26 @@ import {
   STATUS_LABELS,
   DIRECTION_LABELS,
   EVENT_LABELS,
+  aiTaskPriorityLabel,
   departmentLabel,
   employeeBandLabel,
   formatGbp,
+  isPromotableOutcome,
   likelihoodLabel,
   relativeTime,
   riskLabel,
   seniorityLabel,
+  type SalesAiTask,
+  type SalesChannel,
+  type SalesChannelType,
   type SalesContact,
+  type SalesLocation,
   type SalesRecommendation,
   type SalesResearchReport,
+  type SalesTaskType,
 } from "@/lib/sales/model";
 import {
+  AiTaskStatusPill,
   Banner,
   Chip,
   EmptyState,
@@ -64,11 +84,16 @@ import {
   textareaCls,
 } from "../../_styles";
 import {
+  addChannelAction,
   addContactAction,
+  addLocationAction,
   addRecommendationAction,
   addResearchAction,
+  deleteChannelAction,
   deleteContactAction,
+  enqueueAiTaskAction,
   logInteractionAction,
+  promoteOutcomeAction,
   promoteResearchAction,
   setCompanyStatusAction,
 } from "../../actions";
@@ -101,8 +126,22 @@ export default async function CompanyDetailPage({
   const detail = await loadCompanyDetail(id);
   if (!detail) notFound();
 
-  const { company: c, contacts, research, recommendations, timeline } = detail;
-  const employees = await listAiEmployees();
+  const {
+    company: c,
+    contacts,
+    locations,
+    channels,
+    research,
+    recommendations,
+    timeline,
+    tasks,
+  } = detail;
+  const [employees, channelTypes, taskTypes] = await Promise.all([
+    listAiEmployees(),
+    listChannelTypes(),
+    listTaskTypes(),
+  ]);
+  const channelTypeBySlug = new Map(channelTypes.map((t) => [t.slug, t]));
 
   const saved = sp.saved ? prettySaved(sp.saved) : null;
   const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
@@ -237,6 +276,66 @@ export default async function CompanyDetailPage({
               )}
               <AddContactForm companyId={c.id} />
             </Section>
+
+            {/* Locations */}
+            <Section
+              title="Locations"
+              subtitle={`${locations.length} ${locations.length === 1 ? "site" : "sites"} — multiple offices, depots, sites.`}
+              action={
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                  <MapPin className="h-3.5 w-3.5" aria-hidden />
+                  {locations.length}
+                </span>
+              }
+            >
+              {locations.length === 0 ? (
+                <p className="text-sm text-slate-500">No locations yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {locations.map((loc) => (
+                    <LocationRow key={loc.id} location={loc} />
+                  ))}
+                </ul>
+              )}
+              <AddLocationForm companyId={c.id} employees={employees} />
+            </Section>
+
+            {/* Channels — multiple phones / emails / LinkedIn / socials */}
+            <Section
+              title="Contact channels"
+              subtitle={`${channels.length} ${channels.length === 1 ? "channel" : "channels"} — every phone, email, LinkedIn and social account.`}
+              action={
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                  <Share2 className="h-3.5 w-3.5" aria-hidden />
+                  {channels.length}
+                </span>
+              }
+            >
+              {channels.length === 0 ? (
+                <p className="text-sm text-slate-500">No channels yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {channels.map((ch) => (
+                    <ChannelRow
+                      key={ch.id}
+                      channel={ch}
+                      companyId={c.id}
+                      typeLabel={
+                        channelTypeBySlug.get(ch.channel_type)?.label ??
+                        ch.channel_type
+                      }
+                    />
+                  ))}
+                </ul>
+              )}
+              <AddChannelForm
+                companyId={c.id}
+                channelTypes={channelTypes}
+                contacts={contacts}
+                locations={locations}
+                employees={employees}
+              />
+            </Section>
           </div>
 
           {/* Intelligence KV */}
@@ -338,6 +437,67 @@ export default async function CompanyDetailPage({
           </Section>
         </div>
 
+        {/* Company Intelligence — reserved signals (Directive 003) */}
+        <Section
+          title="Company intelligence signals"
+          subtitle="Reserved enrichment signals — populated automatically by future autonomous research. Nothing is invented; empty means not yet enriched."
+          action={
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+              <Gauge className="h-3.5 w-3.5" aria-hidden />
+              Intelligence
+            </span>
+          }
+        >
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Tile label="Revenue est." value={formatGbp(c.revenue_estimate_gbp)} />
+            <Tile
+              label="Software spend est."
+              value={formatGbp(c.estimated_software_spend_gbp)}
+            />
+            <Tile
+              label="Fleet size"
+              value={c.fleet_size != null ? c.fleet_size.toLocaleString() : "—"}
+            />
+            <Tile
+              label="Staff size"
+              value={c.staff_size != null ? c.staff_size.toLocaleString() : "—"}
+            />
+            <Tile
+              label="Construction sector"
+              value={c.construction_sector ?? "—"}
+            />
+            <Tile
+              label="AI qualification"
+              value={c.ai_qualification_score != null ? c.ai_qualification_score : "—"}
+              accent
+            />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {INTELLIGENCE_SCORE_FIELDS.map((f) => (
+              <span key={f.key} className="inline-flex items-center gap-1.5">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                  {f.label}
+                </span>
+                <ScorePill score={c[f.key]} />
+              </span>
+            ))}
+          </div>
+
+          {c.software_used.length > 0 ? (
+            <div className="mt-3 border-t border-slate-800 pt-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                Software in use
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {c.software_used.map((s) => (
+                  <Chip key={s}>{s}</Chip>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </Section>
+
         {/* Research */}
         <Section
           title="AI research reports"
@@ -405,10 +565,41 @@ export default async function CompanyDetailPage({
           <AddRecommendationForm companyId={c.id} employees={employees} />
         </Section>
 
+        {/* AI task queue — foundation for autonomous workers */}
+        <Section
+          title="AI task queue"
+          subtitle="Work scheduled for the autonomous sales engine. No worker runs yet — this is the durable, audited foundation."
+          action={
+            <Link
+              href="/admin/sales/tasks"
+              className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30 transition hover:bg-indigo-500/20"
+            >
+              <ListChecks className="h-3.5 w-3.5" aria-hidden />
+              {tasks.length} · Open queue
+            </Link>
+          }
+        >
+          {tasks.length === 0 ? (
+            <p className="text-sm text-slate-500">No tasks scheduled.</p>
+          ) : (
+            <ul className="space-y-2">
+              {tasks.map((t) => (
+                <TaskRow key={t.id} task={t} />
+              ))}
+            </ul>
+          )}
+          <EnqueueTaskForm
+            companyId={c.id}
+            taskTypes={taskTypes}
+            contacts={contacts}
+            employees={employees}
+          />
+        </Section>
+
         {/* Timeline */}
         <Section
           title="Contact timeline"
-          subtitle="Every interaction, AI action, and lifecycle marker — newest first."
+          subtitle="Every interaction, AI action, and lifecycle marker — newest first. Winning outcomes can be promoted into Shared Memory."
         >
           <LogInteractionForm companyId={c.id} contacts={contacts} />
           {timeline.length === 0 ? (
@@ -416,7 +607,35 @@ export default async function CompanyDetailPage({
           ) : (
             <ul className="relative mt-4">
               {timeline.map((e) => (
-                <TimelineItem key={e.id} event={e} />
+                <TimelineItem
+                  key={e.id}
+                  event={e}
+                  promoteSlot={
+                    isPromotableOutcome(e.event_type) ? (
+                      e.memory_id ? (
+                        <Link
+                          href={`/admin/memory/${e.memory_id}`}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 hover:text-emerald-200"
+                        >
+                          <Brain className="h-3.5 w-3.5" aria-hidden />
+                          In Shared Memory
+                        </Link>
+                      ) : (
+                        <form action={promoteOutcomeAction}>
+                          <input type="hidden" name="event_id" value={e.id} />
+                          <input type="hidden" name="company_id" value={c.id} />
+                          <button
+                            type="submit"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800"
+                          >
+                            <Brain className="h-3.5 w-3.5" aria-hidden />
+                            Promote to Shared Memory
+                          </button>
+                        </form>
+                      )
+                    ) : null
+                  }
+                />
               ))}
             </ul>
           )}
@@ -548,6 +767,132 @@ function ContactRow({
           <Trash2 className="h-3.5 w-3.5" aria-hidden />
         </button>
       </form>
+    </li>
+  );
+}
+
+function LocationRow({ location: loc }: { location: SalesLocation }) {
+  const line = [
+    loc.address_line1,
+    loc.address_line2,
+    loc.city,
+    loc.county ?? loc.region,
+    loc.postcode,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    <li className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <MapPin className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+        <span className="font-medium text-slate-200">
+          {loc.label ?? loc.city ?? "Location"}
+        </span>
+        {loc.is_headquarters ? (
+          <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+            HQ
+          </Pill>
+        ) : null}
+        {loc.is_primary && !loc.is_headquarters ? <Chip>Primary</Chip> : null}
+      </div>
+      {line ? (
+        <p className="mt-1 text-xs text-slate-400">
+          {line}
+          {loc.country && loc.country !== "United Kingdom" ? `, ${loc.country}` : ""}
+        </p>
+      ) : null}
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        {loc.phone ? (
+          <span className="inline-flex items-center gap-1">
+            <Phone className="h-3 w-3" aria-hidden /> {loc.phone}
+          </span>
+        ) : null}
+        {loc.latitude != null && loc.longitude != null ? (
+          <span className="tabular-nums">
+            {loc.latitude.toFixed(4)}, {loc.longitude.toFixed(4)}
+          </span>
+        ) : null}
+      </div>
+      {loc.notes ? (
+        <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-400">{loc.notes}</p>
+      ) : null}
+    </li>
+  );
+}
+
+function ChannelRow({
+  channel: ch,
+  companyId,
+  typeLabel,
+}: {
+  channel: SalesChannel;
+  companyId: string;
+  typeLabel: string;
+}) {
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Chip>{typeLabel}</Chip>
+          <span className="break-all font-medium text-slate-200">{ch.value}</span>
+          {ch.is_primary ? (
+            <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+              Primary
+            </Pill>
+          ) : null}
+          {ch.is_verified ? (
+            <Pill className="bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+              Verified
+            </Pill>
+          ) : null}
+          {ch.status !== "active" ? <Chip>{ch.status}</Chip> : null}
+        </div>
+        {ch.label ? (
+          <p className="mt-0.5 text-xs text-slate-400">{ch.label}</p>
+        ) : null}
+      </div>
+      <form action={deleteChannelAction}>
+        <input type="hidden" name="id" value={ch.id} />
+        <input type="hidden" name="company_id" value={companyId} />
+        <button
+          type="submit"
+          aria-label={`Remove ${ch.value}`}
+          className="rounded-md border border-slate-800 p-1.5 text-slate-500 transition hover:border-red-500/40 hover:text-red-300"
+        >
+          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </form>
+    </li>
+  );
+}
+
+function TaskRow({ task: t }: { task: SalesAiTask }) {
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium text-slate-200">
+            {t.task_type.replace(/_/g, " ")}
+          </span>
+          <AiTaskStatusPill status={t.status} />
+          <Chip>{aiTaskPriorityLabel(t.priority)}</Chip>
+          {t.retry_count > 0 ? (
+            <Chip>
+              retry {t.retry_count}/{t.max_retries}
+            </Chip>
+          ) : null}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+          {t.scheduled_at ? (
+            <span>Scheduled {relativeTime(t.scheduled_at)}</span>
+          ) : (
+            <span>Queued {relativeTime(t.created_at)}</span>
+          )}
+          {t.error_message ? (
+            <span className="text-red-300">{t.error_message}</span>
+          ) : null}
+        </div>
+      </div>
     </li>
   );
 }
@@ -1028,6 +1373,256 @@ function LogInteractionForm({
   );
 }
 
+function AuthorshipFields({ employees }: { employees: AiEmployee[] }) {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <Field label="Authored by">
+        <select name="generated_by" defaultValue="human" className={selectCls}>
+          {GENERATED_BY.map((g) => (
+            <option key={g} value={g}>
+              {g === "ai" ? "AI" : "Human"}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Model" hint="for AI">
+        <input name="model" type="text" maxLength={120} placeholder="claude-…" className={inputCls} />
+      </Field>
+      <EmployeeSelect employees={employees} />
+    </div>
+  );
+}
+
+function AddLocationForm({
+  companyId,
+  employees,
+}: {
+  companyId: string;
+  employees: AiEmployee[];
+}) {
+  return (
+    <Disclosure label="Add location">
+      <form action={addLocationAction} className="space-y-3">
+        <input type="hidden" name="company_id" value={companyId} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Label" hint="e.g. Head office, North depot">
+            <input name="label" type="text" maxLength={120} className={inputCls} />
+          </Field>
+          <Field label="Phone">
+            <input name="phone" type="text" maxLength={60} className={inputCls} />
+          </Field>
+          <Field label="Address line 1">
+            <input name="address_line1" type="text" maxLength={300} className={inputCls} />
+          </Field>
+          <Field label="Address line 2">
+            <input name="address_line2" type="text" maxLength={300} className={inputCls} />
+          </Field>
+          <Field label="Town / city">
+            <input name="city" type="text" maxLength={160} className={inputCls} />
+          </Field>
+          <Field label="County">
+            <input name="county" type="text" maxLength={160} className={inputCls} />
+          </Field>
+          <Field label="Region">
+            <input name="region" type="text" maxLength={160} className={inputCls} />
+          </Field>
+          <Field label="Postcode">
+            <input name="postcode" type="text" maxLength={32} className={inputCls} />
+          </Field>
+          <Field label="Country">
+            <input name="country" type="text" maxLength={120} defaultValue="United Kingdom" className={inputCls} />
+          </Field>
+        </div>
+        <Field label="Notes">
+          <textarea name="notes" rows={2} maxLength={4000} className={textareaCls} />
+        </Field>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" name="is_primary" className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-indigo-500 focus:ring-indigo-500" />
+            Primary site
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" name="is_headquarters" className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-indigo-500 focus:ring-indigo-500" />
+            Headquarters
+          </label>
+        </div>
+        <AuthorshipFields employees={employees} />
+        <button
+          type="submit"
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+        >
+          Add location
+        </button>
+      </form>
+    </Disclosure>
+  );
+}
+
+function AddChannelForm({
+  companyId,
+  channelTypes,
+  contacts,
+  locations,
+  employees,
+}: {
+  companyId: string;
+  channelTypes: SalesChannelType[];
+  contacts: SalesContact[];
+  locations: SalesLocation[];
+  employees: AiEmployee[];
+}) {
+  return (
+    <Disclosure label="Add channel">
+      <form action={addChannelAction} className="space-y-3">
+        <input type="hidden" name="company_id" value={companyId} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Channel type">
+            <select name="channel_type" defaultValue={channelTypes[0]?.slug ?? ""} className={selectCls}>
+              {channelTypes.map((t) => (
+                <option key={t.slug} value={t.slug}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Value" hint="number / email / URL">
+            <input name="value" type="text" required maxLength={500} className={inputCls} />
+          </Field>
+          <Field label="Label" hint="optional">
+            <input name="label" type="text" maxLength={120} className={inputCls} />
+          </Field>
+          <Field label="Status">
+            <select name="status" defaultValue="active" className={selectCls}>
+              {CHANNEL_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Linked contact" hint="optional">
+            <select name="contact_id" defaultValue="" className={selectCls}>
+              <option value="">— None —</option>
+              {contacts.map((ct) => (
+                <option key={ct.id} value={ct.id}>
+                  {ct.full_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Linked location" hint="optional">
+            <select name="location_id" defaultValue="" className={selectCls}>
+              <option value="">— None —</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.label ?? loc.city ?? loc.postcode ?? "Location"}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" name="is_primary" className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-indigo-500 focus:ring-indigo-500" />
+            Primary
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" name="is_verified" className="h-4 w-4 rounded border-slate-600 bg-slate-950 text-indigo-500 focus:ring-indigo-500" />
+            Verified
+          </label>
+        </div>
+        <AuthorshipFields employees={employees} />
+        <button
+          type="submit"
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+        >
+          Add channel
+        </button>
+      </form>
+    </Disclosure>
+  );
+}
+
+function EnqueueTaskForm({
+  companyId,
+  taskTypes,
+  contacts,
+  employees,
+}: {
+  companyId: string;
+  taskTypes: SalesTaskType[];
+  contacts: SalesContact[];
+  employees: AiEmployee[];
+}) {
+  return (
+    <Disclosure label="Schedule AI task">
+      <form action={enqueueAiTaskAction} className="space-y-3">
+        <input type="hidden" name="company_id" value={companyId} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Task type">
+            <select name="task_type" defaultValue={taskTypes[0]?.slug ?? ""} className={selectCls}>
+              {taskTypes.map((t) => (
+                <option key={t.slug} value={t.slug}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Priority">
+            <select name="priority" defaultValue="normal" className={selectCls}>
+              {AI_TASK_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {AI_TASK_PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Scheduled for" hint="optional">
+            <input name="scheduled_at" type="datetime-local" className={inputCls} />
+          </Field>
+          <Field label="Max retries" hint="0–10">
+            <input name="max_retries" type="number" min={0} max={10} defaultValue={3} className={inputCls} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="For contact" hint="optional">
+            <select name="contact_id" defaultValue="" className={selectCls}>
+              <option value="">— None —</option>
+              {contacts.map((ct) => (
+                <option key={ct.id} value={ct.id}>
+                  {ct.full_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Assign AI employee" hint="optional">
+            <select name="assigned_ai_employee_id" defaultValue="" className={selectCls}>
+              <option value="">— Unassigned —</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} ({departmentLabel(e.department)})
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Dedupe key" hint="optional — prevents duplicates">
+            <input name="dedupe_key" type="text" maxLength={200} className={inputCls} />
+          </Field>
+        </div>
+        <button
+          type="submit"
+          className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+        >
+          <ListChecks className="h-3.5 w-3.5" aria-hidden />
+          Schedule task
+        </button>
+      </form>
+    </Disclosure>
+  );
+}
+
 function prettySaved(saved: string): string {
   switch (saved) {
     case "created":
@@ -1040,6 +1635,14 @@ function prettySaved(saved: string): string {
       return "Contact added.";
     case "contact_removed":
       return "Contact removed.";
+    case "location":
+      return "Location added.";
+    case "channel":
+      return "Channel added.";
+    case "channel_removed":
+      return "Channel removed.";
+    case "task":
+      return "AI task scheduled.";
     case "research":
       return "Research report saved.";
     case "recommendation":
@@ -1047,7 +1650,7 @@ function prettySaved(saved: string): string {
     case "logged":
       return "Interaction logged.";
     case "promoted":
-      return "Research promoted to Shared Memory.";
+      return "Promoted to Shared Memory.";
     default:
       return "Saved.";
   }

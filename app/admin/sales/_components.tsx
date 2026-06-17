@@ -16,13 +16,29 @@ import {
   Lightbulb,
   GitCommitHorizontal,
   Settings2,
+  Wand2,
+  Gauge,
+  PenLine,
+  Send,
+  PhoneCall,
+  ShieldCheck,
+  CalendarCheck,
+  CalendarPlus,
+  BadgeCheck,
+  FileSignature,
+  ListChecks,
+  Play,
+  CheckCircle2,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 import {
+  aiTaskStatusLabel,
   eventCategory,
   eventLabel,
   employeeBandLabel,
   formatGbp,
+  isOpenTaskStatus,
   relativeTime,
   scoreBand,
   scoreBandLabel,
@@ -143,6 +159,18 @@ export function Field({
 
 export function StatusPill({ status }: { status: string }) {
   return <Pill className={statusPill(status)}>{statusLabel(status)}</Pill>;
+}
+
+/** Status pill for an AI task-queue row (open / completed / failed / other). */
+export function AiTaskStatusPill({ status }: { status: string }) {
+  const cls = isOpenTaskStatus(status)
+    ? "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30"
+    : status === "completed"
+      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30"
+      : status === "failed"
+        ? "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30"
+        : "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40";
+  return <Pill className={cls}>{aiTaskStatusLabel(status)}</Pill>;
 }
 
 export function ScorePill({
@@ -364,6 +392,24 @@ const EVENT_ICONS: Record<string, LucideIcon> = {
   recommendation: Lightbulb,
   status_change: GitCommitHorizontal,
   system: Settings2,
+  // AI actions — the autonomous engine's permanent footprint.
+  enriched: Wand2,
+  scored: Gauge,
+  email_generated: PenLine,
+  email_sent: Send,
+  linkedin_generated: PenLine,
+  linkedin_sent: Send,
+  call_completed: PhoneCall,
+  objection_handled: ShieldCheck,
+  demo_booked: CalendarCheck,
+  demo_completed: BadgeCheck,
+  follow_up_created: CalendarPlus,
+  proposal_generated: FileSignature,
+  // AI task-queue lifecycle.
+  task_scheduled: ListChecks,
+  task_started: Play,
+  task_completed: CheckCircle2,
+  task_failed: AlertTriangle,
 };
 
 export function EventIcon({
@@ -380,9 +426,12 @@ export function EventIcon({
 export function TimelineItem({
   event,
   showCompany,
+  promoteSlot,
 }: {
   event: SalesTimelineEvent | SalesFeedItem;
   showCompany?: boolean;
+  /** Optional inline affordance (e.g. "Promote outcome to Shared Memory"). */
+  promoteSlot?: ReactNode;
 }) {
   const category = eventCategory(event.event_type);
   const companyName =
@@ -430,6 +479,7 @@ export function TimelineItem({
             {event.outcome}
           </span>
         ) : null}
+        {promoteSlot ? <div className="mt-1.5">{promoteSlot}</div> : null}
       </div>
     </li>
   );

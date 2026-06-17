@@ -315,6 +315,123 @@ export function CompanyForm({
         </div>
       </Section>
 
+      <Section
+        title="Company intelligence signals"
+        subtitle="Reserved enrichment signals — normally filled in automatically by future autonomous research. Optional; leave blank where unknown. Scores are 0–100."
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Revenue estimate" hint="£">
+            <input
+              name="revenue_estimate_gbp"
+              type="number"
+              min={0}
+              defaultValue={num(c?.revenue_estimate_gbp)}
+              placeholder="2400000"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Est. software spend" hint="£/yr">
+            <input
+              name="estimated_software_spend_gbp"
+              type="number"
+              min={0}
+              defaultValue={num(c?.estimated_software_spend_gbp)}
+              placeholder="18000"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Construction sector">
+            <input
+              name="construction_sector"
+              type="text"
+              maxLength={160}
+              defaultValue={c?.construction_sector ?? ""}
+              placeholder="e.g. Groundworks"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Fleet size" hint="vehicles">
+            <input
+              name="fleet_size"
+              type="number"
+              min={0}
+              defaultValue={num(c?.fleet_size)}
+              placeholder="12"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Staff size" hint="headcount">
+            <input
+              name="staff_size"
+              type="number"
+              min={0}
+              defaultValue={num(c?.staff_size)}
+              placeholder="40"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Software in use" hint="comma separated">
+            <input
+              name="software_used"
+              type="text"
+              defaultValue={(c?.software_used ?? []).join(", ")}
+              placeholder="Xero, Fergus, WhatsApp"
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Growth score" hint="0–100">
+            <input
+              name="growth_score"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={num(c?.growth_score)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Website quality" hint="0–100">
+            <input
+              name="website_quality_score"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={num(c?.website_quality_score)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Marketing quality" hint="0–100">
+            <input
+              name="marketing_quality_score"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={num(c?.marketing_quality_score)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Hiring activity" hint="0–100">
+            <input
+              name="hiring_activity_score"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={num(c?.hiring_activity_score)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Digital maturity" hint="0–100">
+            <input
+              name="digital_maturity_score"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={num(c?.digital_maturity_score)}
+              className={inputCls}
+            />
+          </Field>
+        </div>
+      </Section>
+
       <div className="flex items-center gap-3">
         <button
           type="submit"

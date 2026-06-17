@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   Briefcase,
+  ListChecks,
   Plus,
   Search,
   ShieldCheck,
@@ -93,6 +94,13 @@ export default async function SalesDashboardPage() {
             >
               <Activity className="h-3.5 w-3.5" aria-hidden />
               Activity
+            </Link>
+            <Link
+              href="/admin/sales/tasks"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              <ListChecks className="h-3.5 w-3.5" aria-hidden />
+              Tasks
             </Link>
             <Link
               href="/admin/sales/companies"

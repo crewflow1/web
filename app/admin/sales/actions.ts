@@ -7,22 +7,32 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
+  addChannel,
   addContact,
+  addLocation,
   addRecommendation,
   addResearchReport,
   createCompany,
+  deleteChannel,
   deleteContact,
+  enqueueAiTask,
   logInteraction,
+  promoteOutcomeToMemory,
   promoteResearchToMemory,
   setCompanyStatus,
   updateCompany,
+  type AiTaskWriteInput,
+  type ChannelWriteInput,
   type CompanyWriteInput,
   type ContactWriteInput,
+  type LocationWriteInput,
   type RecommendationWriteInput,
   type ResearchWriteInput,
   type TimelineWriteInput,
 } from "@/server/services/hq-sales";
 import {
+  AI_TASK_PRIORITIES,
+  CHANNEL_STATUSES,
   EVENT_DIRECTIONS,
   GENERATED_BY,
   INTERACTION_EVENT_TYPES,
@@ -99,12 +109,16 @@ function bool(formData: FormData, key: string): boolean {
   return v === "on" || v === "true" || v === "1";
 }
 
-/** A `datetime-local` value → ISO string, or null when blank/invalid. */
-function parseOccurredAt(formData: FormData): string | null {
-  const v = str(formData, "occurred_at");
+/** A `datetime-local` value at `key` → ISO string, or null when blank/invalid. */
+function dateTimeOrNull(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
   if (!v) return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function parseOccurredAt(formData: FormData): string | null {
+  return dateTimeOrNull(formData, "occurred_at");
 }
 
 function fail(path: string, message: string): never {
@@ -162,6 +176,18 @@ function buildCompanyInput(
       source: d.source,
       assignedToEmail: nullableStr(formData, "assigned_to_email", 320),
       tags: normalizeTags(str(formData, "tags")),
+      // Company Intelligence — reserved, nullable signals.
+      revenueEstimateGbp: nullableInt(formData, "revenue_estimate_gbp"),
+      growthScore: clampScore(formData.get("growth_score")),
+      constructionSector: nullableStr(formData, "construction_sector", 160),
+      softwareUsed: normalizeList(str(formData, "software_used")),
+      estimatedSoftwareSpendGbp: nullableInt(formData, "estimated_software_spend_gbp"),
+      fleetSize: nullableInt(formData, "fleet_size"),
+      staffSize: nullableInt(formData, "staff_size"),
+      websiteQualityScore: clampScore(formData.get("website_quality_score")),
+      marketingQualityScore: clampScore(formData.get("marketing_quality_score")),
+      hiringActivityScore: clampScore(formData.get("hiring_activity_score")),
+      digitalMaturityScore: clampScore(formData.get("digital_maturity_score")),
     },
   };
 }
@@ -592,6 +618,286 @@ export async function promoteResearchAction(formData: FormData): Promise<void> {
     action: "hq_sales.research_promoted",
     targetTable: "hq_sales_research_reports",
     targetId: parsed.data.report_id,
+    metadata: { company_id: parsed.data.company_id, memory_id: result.id },
+  });
+
+  revalidatePath(`/admin/sales/companies/${parsed.data.company_id}`);
+  redirect(`/admin/sales/companies/${parsed.data.company_id}?saved=promoted`);
+}
+
+// ---------------------------------------------------------------------
+// Locations — multiple physical sites per company.
+// ---------------------------------------------------------------------
+
+const locationCore = z.object({
+  company_id: z.string().uuid(),
+  generated_by: z.enum(GENERATED_BY),
+});
+
+export async function addLocationAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = locationCore.safeParse({
+    company_id: formData.get("company_id"),
+    generated_by: formData.get("generated_by") ?? "human",
+  });
+  if (!parsed.success) {
+    const cid = str(formData, "company_id");
+    fail(
+      UUID_RE.test(cid) ? `/admin/sales/companies/${cid}` : "/admin/sales/companies",
+      "Couldn't add location — check the form.",
+    );
+  }
+
+  const ai = parsed.data.generated_by === "ai";
+  const input: LocationWriteInput = {
+    label: nullableStr(formData, "label", 120),
+    isPrimary: bool(formData, "is_primary"),
+    isHeadquarters: bool(formData, "is_headquarters"),
+    addressLine1: nullableStr(formData, "address_line1", 300),
+    addressLine2: nullableStr(formData, "address_line2", 300),
+    city: nullableStr(formData, "city", 160),
+    county: nullableStr(formData, "county", 160),
+    region: nullableStr(formData, "region", 160),
+    postcode: nullableStr(formData, "postcode", 32),
+    country: nullableStr(formData, "country", 120) ?? "United Kingdom",
+    phone: nullableStr(formData, "phone", 60),
+    notes: clip(formData, "notes", 4000),
+    generatedBy: parsed.data.generated_by,
+    model: ai ? nullableStr(formData, "model", 120) : null,
+    aiEmployeeId: ai ? uuidOrNull(formData, "ai_employee_id") : null,
+  };
+
+  // Don't create empty rows — require at least one locating field.
+  if (!input.label && !input.addressLine1 && !input.city && !input.postcode) {
+    fail(
+      `/admin/sales/companies/${parsed.data.company_id}`,
+      "Add a label, address, town or postcode for the location.",
+    );
+  }
+
+  const result = await addLocation(parsed.data.company_id, input, {
+    id: admin.id,
+    email: admin.email,
+  });
+  if (!result.ok) {
+    fail(`/admin/sales/companies/${parsed.data.company_id}`, result.error || "Couldn't add location.");
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "hq_sales.location_added",
+    targetTable: "hq_sales_locations",
+    targetId: result.id,
+    metadata: { company_id: parsed.data.company_id },
+  });
+
+  revalidatePath(`/admin/sales/companies/${parsed.data.company_id}`);
+  redirect(`/admin/sales/companies/${parsed.data.company_id}?saved=location`);
+}
+
+// ---------------------------------------------------------------------
+// Channels — multiple phones / emails / LinkedIn / social accounts.
+// ---------------------------------------------------------------------
+
+const channelCore = z.object({
+  company_id: z.string().uuid(),
+  channel_type: z.string().regex(SLUG_RE),
+  value: z.string().trim().min(1).max(500),
+  generated_by: z.enum(GENERATED_BY),
+});
+
+export async function addChannelAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = channelCore.safeParse({
+    company_id: formData.get("company_id"),
+    channel_type: formData.get("channel_type"),
+    value: formData.get("value"),
+    generated_by: formData.get("generated_by") ?? "human",
+  });
+  if (!parsed.success) {
+    const cid = str(formData, "company_id");
+    fail(
+      UUID_RE.test(cid) ? `/admin/sales/companies/${cid}` : "/admin/sales/companies",
+      "A channel type and value are required.",
+    );
+  }
+
+  const ai = parsed.data.generated_by === "ai";
+  const statusRaw = str(formData, "status");
+  const status = (CHANNEL_STATUSES as readonly string[]).includes(statusRaw)
+    ? statusRaw
+    : "active";
+  const input: ChannelWriteInput = {
+    channelType: parsed.data.channel_type,
+    value: parsed.data.value,
+    label: nullableStr(formData, "label", 120),
+    contactId: uuidOrNull(formData, "contact_id"),
+    locationId: uuidOrNull(formData, "location_id"),
+    isPrimary: bool(formData, "is_primary"),
+    isVerified: bool(formData, "is_verified"),
+    status,
+    generatedBy: parsed.data.generated_by,
+    model: ai ? nullableStr(formData, "model", 120) : null,
+    aiEmployeeId: ai ? uuidOrNull(formData, "ai_employee_id") : null,
+  };
+
+  const result = await addChannel(parsed.data.company_id, input, {
+    id: admin.id,
+    email: admin.email,
+  });
+  if (!result.ok) {
+    fail(`/admin/sales/companies/${parsed.data.company_id}`, result.error || "Couldn't add channel.");
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "hq_sales.channel_added",
+    targetTable: "hq_sales_channels",
+    targetId: result.id,
+    metadata: {
+      company_id: parsed.data.company_id,
+      channel_type: input.channelType,
+    },
+  });
+
+  revalidatePath(`/admin/sales/companies/${parsed.data.company_id}`);
+  redirect(`/admin/sales/companies/${parsed.data.company_id}?saved=channel`);
+}
+
+const deleteChannelSchema = z.object({
+  id: z.string().uuid(),
+  company_id: z.string().uuid(),
+});
+
+export async function deleteChannelAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = deleteChannelSchema.safeParse({
+    id: formData.get("id"),
+    company_id: formData.get("company_id"),
+  });
+  if (!parsed.success) {
+    fail("/admin/sales/companies", "Invalid channel request");
+  }
+
+  const result = await deleteChannel(parsed.data.id, {
+    id: admin.id,
+    email: admin.email,
+  });
+  if (!result.ok) {
+    fail(`/admin/sales/companies/${parsed.data.company_id}`, result.error || "Couldn't remove channel.");
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "hq_sales.channel_deleted",
+    targetTable: "hq_sales_channels",
+    targetId: parsed.data.id,
+    metadata: { company_id: parsed.data.company_id },
+  });
+
+  revalidatePath(`/admin/sales/companies/${parsed.data.company_id}`);
+  redirect(`/admin/sales/companies/${parsed.data.company_id}?saved=channel_removed`);
+}
+
+// ---------------------------------------------------------------------
+// AI Task Queue — enqueue a task for a future autonomous worker. No
+// execution happens here; the row is the durable foundation + audit.
+// ---------------------------------------------------------------------
+
+const taskCore = z.object({
+  task_type: z.string().regex(SLUG_RE),
+  priority: z.enum(AI_TASK_PRIORITIES),
+});
+
+export async function enqueueAiTaskAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const companyId = uuidOrNull(formData, "company_id");
+  // Company-scoped tasks return to the company; global tasks to the queue.
+  const back = companyId
+    ? `/admin/sales/companies/${companyId}`
+    : "/admin/sales/tasks";
+
+  const parsed = taskCore.safeParse({
+    task_type: formData.get("task_type"),
+    priority: formData.get("priority") ?? "normal",
+  });
+  if (!parsed.success) {
+    fail(back, "Choose a task type and priority.");
+  }
+
+  const maxRetriesRaw = nullableInt(formData, "max_retries");
+  const input: AiTaskWriteInput = {
+    companyId,
+    contactId: uuidOrNull(formData, "contact_id"),
+    taskType: parsed.data.task_type,
+    priority: parsed.data.priority,
+    scheduledAt: dateTimeOrNull(formData, "scheduled_at"),
+    maxRetries: maxRetriesRaw == null ? 3 : Math.min(10, maxRetriesRaw),
+    assignedAiEmployeeId: uuidOrNull(formData, "assigned_ai_employee_id"),
+    payload: null,
+    dedupeKey: nullableStr(formData, "dedupe_key", 200),
+  };
+
+  const result = await enqueueAiTask(input, { id: admin.id, email: admin.email });
+  if (!result.ok) {
+    fail(back, result.error || "Couldn't schedule task.");
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "hq_sales.task_enqueued",
+    targetTable: "hq_sales_ai_tasks",
+    targetId: result.id,
+    metadata: {
+      company_id: companyId,
+      task_type: input.taskType,
+      priority: input.priority,
+    },
+  });
+
+  revalidatePath("/admin/sales/tasks");
+  if (companyId) revalidatePath(`/admin/sales/companies/${companyId}`);
+  redirect(`${back}?saved=task`);
+}
+
+// ---------------------------------------------------------------------
+// Promote a winning OUTCOME (objection / cold call / demo) into the
+// Shared Memory Engine. Opt-in, audited, idempotent (Directive 002+003).
+// ---------------------------------------------------------------------
+
+const promoteOutcomeSchema = z.object({
+  event_id: z.string().uuid(),
+  company_id: z.string().uuid(),
+});
+
+export async function promoteOutcomeAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = promoteOutcomeSchema.safeParse({
+    event_id: formData.get("event_id"),
+    company_id: formData.get("company_id"),
+  });
+  if (!parsed.success) {
+    fail("/admin/sales/companies", "Invalid promotion request");
+  }
+
+  const result = await promoteOutcomeToMemory(parsed.data.event_id, {
+    id: admin.id,
+    email: admin.email,
+  });
+  if (!result.ok) {
+    fail(`/admin/sales/companies/${parsed.data.company_id}`, result.error || "Couldn't promote to Shared Memory.");
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "hq_sales.outcome_promoted",
+    targetTable: "hq_sales_timeline_events",
+    targetId: parsed.data.event_id,
     metadata: { company_id: parsed.data.company_id, memory_id: result.id },
   });
 

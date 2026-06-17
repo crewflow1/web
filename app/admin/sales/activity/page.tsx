@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Activity as ActivityIcon } from "lucide-react";
+import { Activity as ActivityIcon, Search, X } from "lucide-react";
 import { listActivityFeed } from "@/server/services/hq-sales";
 import { eventCategory } from "@/lib/sales/model";
 import { EmptyState, Section, TimelineItem, Tile } from "../_components";
+import { inputCls } from "../_styles";
 
 /**
  * Sales AI — global Activity Feed (CEO Directive 003, Phase 1).
@@ -17,7 +18,7 @@ import { EmptyState, Section, TimelineItem, Tile } from "../_components";
 
 export const dynamic = "force-dynamic";
 
-type SP = Promise<{ show?: string }>;
+type SP = Promise<{ show?: string; q?: string }>;
 
 const WINDOWS = [60, 120, 240] as const;
 const MAX_WINDOW = WINDOWS[WINDOWS.length - 1] ?? 240;
@@ -50,8 +51,9 @@ export default async function SalesActivityPage({
   const limit = WINDOWS.includes(requested as (typeof WINDOWS)[number])
     ? requested
     : 60;
+  const query = sp.q?.trim() ?? "";
 
-  const feed = await listActivityFeed(limit);
+  const feed = await listActivityFeed(limit, query || undefined);
   const now = new Date();
 
   const interactions = feed.filter(
@@ -94,6 +96,50 @@ export default async function SalesActivityPage({
           </div>
         </div>
 
+        {/* Full-text search — "everything must be searchable" */}
+        <form method="get" className="flex flex-wrap items-center gap-2">
+          {limit !== 60 ? (
+            <input type="hidden" name="show" value={limit} />
+          ) : null}
+          <div className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+              aria-hidden
+            />
+            <input
+              type="search"
+              name="q"
+              defaultValue={query}
+              placeholder="Search every event — subject, notes, outcome, type…"
+              aria-label="Search activity"
+              className={`${inputCls} mt-0 pl-9`}
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+          >
+            Search
+          </button>
+          {query ? (
+            <Link
+              href={limit === 60 ? "/admin/sales/activity" : `/admin/sales/activity?show=${limit}`}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+              Clear
+            </Link>
+          ) : null}
+        </form>
+
+        {query ? (
+          <p className="text-xs text-slate-500">
+            {feed.length === 0
+              ? `No events match “${query}”.`
+              : `Showing ${feed.length} event${feed.length === 1 ? "" : "s"} matching “${query}”.`}
+          </p>
+        ) : null}
+
         {/* Window summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile label="Events shown" value={feed.length.toLocaleString()} accent />
@@ -134,14 +180,14 @@ export default async function SalesActivityPage({
           <span className="text-[11px] text-slate-500">Show latest</span>
           {WINDOWS.map((w) => {
             const active = w === limit;
+            const params = new URLSearchParams();
+            if (w !== 60) params.set("show", String(w));
+            if (query) params.set("q", query);
+            const qs = params.toString();
             return (
               <Link
                 key={w}
-                href={
-                  w === 60
-                    ? "/admin/sales/activity"
-                    : `/admin/sales/activity?show=${w}`
-                }
+                href={qs ? `/admin/sales/activity?${qs}` : "/admin/sales/activity"}
                 aria-current={active ? "page" : undefined}
                 className={`rounded-md border px-3 py-1.5 text-xs font-medium transition ${
                   active
