@@ -24,6 +24,11 @@ import {
   addAiEmployeeTask,
   addAiEmployeeMemory,
 } from "../actions";
+import {
+  getEmployeeMemoryFeed,
+  listMemoryTypes,
+} from "@/server/services/hq-memory";
+import { MemoryCard, buildTypeMap } from "../../memory/_components";
 
 /**
  * AI Boardroom — employee detail (CEO Directive 001, Phase 1).
@@ -57,6 +62,22 @@ export default async function AiEmployeeDetailPage({
   const accent = accentClasses(e.accent);
   const pulse = (STATUS_PULSE as Record<string, boolean>)[e.status] ?? false;
   const st = statusStyle(e.status);
+
+  // Read-only shared-memory feed (CEO Directive 002). Permission-aware
+  // slice this employee may READ; it never writes. Best-effort — failures
+  // degrade to an empty feed rather than breaking the profile.
+  const [memoryFeed, memoryTypes] = await Promise.all([
+    getEmployeeMemoryFeed({ id: e.id, department: e.department }),
+    listMemoryTypes(),
+  ]);
+  const memoryTypeMap = buildTypeMap(memoryTypes);
+  const feedGroups = [
+    { label: "Pinned", items: memoryFeed.pinned },
+    { label: "Relevant", items: memoryFeed.relevant },
+    { label: `${departmentLabel(e.department)} department`, items: memoryFeed.department },
+    { label: "Recently added", items: memoryFeed.recent },
+  ];
+  const hasFeed = feedGroups.some((g) => g.items.length > 0);
 
   const saved = sp.saved ? prettySaved(sp.saved) : null;
   const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
@@ -502,6 +523,43 @@ export default async function AiEmployeeDetailPage({
               Add memory
             </button>
           </form>
+        </Section>
+
+        {/* Shared memory feed (read-only) — CEO Directive 002 */}
+        <Section
+          title="Shared memory"
+          subtitle="Permission-aware slice from the company knowledge engine. Read-only — this employee reads memory; it never writes."
+        >
+          {!hasFeed ? (
+            <p className="text-sm text-slate-500">
+              No shared memory is visible to this employee yet.{" "}
+              <Link
+                href="/admin/memory"
+                className="font-medium text-indigo-400 hover:text-indigo-300"
+              >
+                Open Shared Memory →
+              </Link>
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {feedGroups.map((group) =>
+                group.items.length === 0 ? null : (
+                  <div key={group.label}>
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {group.label}
+                    </p>
+                    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {group.items.map((mItem) => (
+                        <li key={mItem.id}>
+                          <MemoryCard memory={mItem} typeMap={memoryTypeMap} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
         </Section>
 
         {/* Activity / audit log */}
