@@ -31,6 +31,8 @@ import {
   type SalesFacets,
   type SalesFeedItem,
   type SalesIntegration,
+  type SalesLearning,
+  type SalesLearningItem,
   type SalesLocation,
   type SalesObjection,
   type SalesRecommendation,
@@ -49,6 +51,11 @@ import {
   type CallStats,
   type CallSummaryInput,
 } from "@/lib/sales/calling";
+import {
+  summariseLearnings,
+  type LearningStats,
+  type LearningSummaryInput,
+} from "@/lib/sales/learning";
 
 /**
  * CrewFlow HQ — Sales AI Platform data access (CEO Directive 003).
@@ -187,6 +194,16 @@ const CALL_SCRIPT_COLUMNS =
 
 const OBJECTION_COLUMNS =
   "id, objection, category, response, supporting_points, follow_up, tags, confidence, win_rate, times_used, status, memory_id, generated_by, model, ai_employee_id, created_by_email, created_at, updated_at";
+
+// Learning Engine (Phase 7). `search_tsv` is excluded from list reads; every
+// other column is bounded (prompt/context/result ≤ 8k) so the feed stays
+// light. The minimal stats read powers the honest headline roll-up.
+const LEARNING_COLUMNS =
+  "id, title, pattern_type, channel, status, summary, prompt, context, result, supporting_points, tags, metrics, confidence, times_used, times_won, win_rate, last_used_at, company_id, source_call_id, source_event_id, source_objection_id, memory_id, generated_by, model, ai_employee_id, source, created_by_email, created_at, updated_at";
+
+const LEARNING_STATS_COLUMNS =
+  "status, pattern_type, confidence, times_used, times_won, memory_id, updated_at";
+const LEARNING_STATS_WINDOW = 5000;
 
 // ---------------------------------------------------------------------
 // Lookups (extensible — "new lead sources are data, not code").
@@ -693,6 +710,113 @@ export async function getCallingCentre(
   const stats = summariseCalls((statsRes.data ?? []) as CallSummaryInput[]);
 
   return { stats, queue, recent, scripts, objections, integrations };
+}
+
+// ---------------------------------------------------------------------
+// Sales Learning Engine (Directive 004, Phase 7). The distilled, reusable
+// winning-pattern library — bounded, indexed reads of the hq_sales_learnings
+// table, ranked "best plays first" (highest win-rate, then most-used, then
+// newest — the rank index order). FOUNDATION ONLY: nothing here captures,
+// scores, or applies a learning; it reads the permanent, audited table.
+// ---------------------------------------------------------------------
+
+export type LearningFilter = {
+  pattern_type?: string;
+  status?: string;
+  search?: string;
+  limit?: number;
+};
+
+/**
+ * A bounded, source-company-name-joined window of learnings, ranked
+ * best-first (highest win-rate, then most-used, then newest — the rank
+ * index order). Optional full-text search keeps the playbook searchable
+ * (title / summary / prompt / context / result). company_id is optional on
+ * a learning (a hand-authored starter play has none), so the join is
+ * skipped when no row carries one.
+ */
+export async function listLearnings(
+  filter: LearningFilter = {},
+): Promise<SalesLearningItem[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(500, Math.max(1, Math.floor(filter.limit ?? 100)));
+  let q = table<SalesLearning>(admin, "hq_sales_learnings").select(
+    LEARNING_COLUMNS,
+  );
+
+  if (filter.status) q = q.eq("status", filter.status);
+  if (filter.pattern_type) q = q.eq("pattern_type", filter.pattern_type);
+  const term = filter.search?.trim();
+  if (term) {
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+
+  const { data, error } = await q
+    .order("win_rate", { ascending: false, nullsFirst: false })
+    .order("times_used", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listLearnings failed", error);
+    return [];
+  }
+  const learnings = (data ?? []) as SalesLearning[];
+  if (learnings.length === 0) return [];
+
+  const companyIds = [
+    ...new Set(
+      learnings
+        .map((l) => l.company_id)
+        .filter((id): id is string => id != null),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (companyIds.length > 0) {
+    const { data: companies } = await table<{ id: string; name: string }>(
+      admin,
+      "hq_sales_companies",
+    )
+      .select("id, name")
+      .in("id", companyIds);
+    for (const c of (companies ?? []) as { id: string; name: string }[]) {
+      nameById.set(c.id, c.name);
+    }
+  }
+
+  return learnings.map((l) => ({
+    ...l,
+    company_name: l.company_id ? nameById.get(l.company_id) ?? null : null,
+  }));
+}
+
+export type LearningEngine = {
+  stats: LearningStats;
+  learnings: SalesLearningItem[];
+};
+
+/**
+ * The Learning Engine payload. Stats roll up over a bounded stats window (a
+ * lightweight status / type / confidence / usage read) so the headline is
+ * honest beyond the visible page; the ranked feed is a separate, richer,
+ * bounded read. `search` scopes only the feed — the stats stay complete.
+ */
+export async function getLearningEngine(
+  opts: { search?: string; limit?: number } = {},
+): Promise<LearningEngine> {
+  const admin = createAdminClient();
+  const [statsRes, learnings] = await Promise.all([
+    table<LearningSummaryInput>(admin, "hq_sales_learnings")
+      .select(LEARNING_STATS_COLUMNS)
+      .order("created_at", { ascending: false })
+      .limit(LEARNING_STATS_WINDOW),
+    listLearnings({ search: opts.search, limit: opts.limit ?? 60 }),
+  ]);
+
+  const stats = summariseLearnings(
+    (statsRes.data ?? []) as LearningSummaryInput[],
+  );
+
+  return { stats, learnings };
 }
 
 // ---------------------------------------------------------------------

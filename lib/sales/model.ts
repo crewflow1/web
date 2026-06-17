@@ -1059,6 +1059,50 @@ export type SalesCallItem = SalesCall & {
   company_name: string | null;
 };
 
+/**
+ * A distilled, reusable winning pattern — the Learning Engine record
+ * (Directive 004, Phase 7). The directive's reusable-knowledge shape
+ * (prompt / context / result / metrics / tags / confidence) maps to
+ * explicit columns; `search_tsv` is never selected. Enums stay `string`
+ * (the bounded vocabularies live in lib/sales/learning.ts).
+ */
+export type SalesLearning = {
+  id: string;
+  title: string;
+  pattern_type: string;
+  channel: string | null;
+  status: string;
+  summary: string;
+  prompt: string;
+  context: string;
+  result: string;
+  supporting_points: string[];
+  tags: string[];
+  metrics: Record<string, unknown> | null;
+  confidence: number | null;
+  times_used: number;
+  times_won: number;
+  win_rate: number | null;
+  last_used_at: string | null;
+  company_id: string | null;
+  source_call_id: string | null;
+  source_event_id: string | null;
+  source_objection_id: string | null;
+  memory_id: string | null;
+  generated_by: string;
+  model: string | null;
+  ai_employee_id: string | null;
+  source: string;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A learning joined with its source company name, for the engine feed. */
+export type SalesLearningItem = SalesLearning & {
+  company_name: string | null;
+};
+
 // ---------------------------------------------------------------------
 // Funnel maths (pure). Conversion is modelled on current pipeline
 // position: a company currently at stage N has "reached" stages 1..N,
