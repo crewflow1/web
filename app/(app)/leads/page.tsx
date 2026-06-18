@@ -12,6 +12,7 @@ import {
 } from "@/lib/leads/schema";
 import { LeadCard, type PipelineLead } from "./_card";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * /leads — kanban pipeline.
@@ -241,7 +242,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
 
       {/* Pipeline columns. Horizontally scrollable on every viewport. */}
       <div className="-mx-2 overflow-x-auto pb-2">
-        <ol className="flex min-w-fit items-stretch gap-3 px-2">
+        <Stagger className="flex min-w-fit items-stretch gap-3 px-2">
           {LEAD_STAGES.map((stage) => {
             const cards = byStage[stage];
             const stageValue = cards.reduce(
@@ -249,7 +250,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
               0,
             );
             return (
-              <li
+              <StaggerItem
                 key={stage}
                 className="flex w-72 shrink-0 flex-col rounded-xl border border-slate-200 bg-slate-50/60"
               >
@@ -277,10 +278,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
                     cards.map((c) => <LeadCard key={c.id} lead={c} />)
                   )}
                 </ul>
-              </li>
+              </StaggerItem>
             );
           })}
-        </ol>
+        </Stagger>
       </div>
     </div>
   );

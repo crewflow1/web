@@ -5,6 +5,7 @@ import { EmptyState } from "../_components/empty-state";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
 import { PAGE_SIZE, parsePage, offsetForPage, pageWindow } from "@/lib/jobs/list";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Jobs list.
@@ -184,7 +185,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
+          <FadeIn className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
@@ -228,7 +229,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </FadeIn>
 
           {/* Mobile: Today's Jobs first, then everything else */}
           <div className="space-y-5 md:hidden">
@@ -244,11 +245,11 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
                   No jobs scheduled for today.
                 </p>
               ) : (
-                <ul className="space-y-2">
+                <Stagger className="space-y-2">
                   {todayRows.map((j) => (
                     <MobileJobCard key={j.id} job={j} />
                   ))}
-                </ul>
+                </Stagger>
               )}
             </section>
 
@@ -256,11 +257,11 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
               <h2 className="mb-2 text-sm font-semibold text-slate-900">
                 All jobs
               </h2>
-              <ul className="space-y-2">
+              <Stagger className="space-y-2">
                 {rows.map((j) => (
                   <MobileJobCard key={j.id} job={j} />
                 ))}
-              </ul>
+              </Stagger>
             </section>
           </div>
         </>
@@ -335,7 +336,7 @@ function MobileJobCard({ job }: { job: JobRow }) {
   const address = resolveJobAddress(job, job.customer);
   const phone = job.customer?.phone ?? null;
   return (
-    <li className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <StaggerItem className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <Link href={`/jobs/${job.id}`} className="min-w-0 flex-1">
           <div className="truncate font-semibold text-slate-900">
@@ -374,6 +375,6 @@ function MobileJobCard({ job }: { job: JobRow }) {
         ) : null}
         <MapActions address={address} />
       </div>
-    </li>
+    </StaggerItem>
   );
 }

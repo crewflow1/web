@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /suppliers — list suppliers for the org.
@@ -63,7 +64,7 @@ export default async function SuppliersPage() {
           primary={{ href: "/suppliers/new", label: "Add a supplier" }}
         />
       ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <FadeIn className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
@@ -97,7 +98,7 @@ export default async function SuppliersPage() {
               ))}
             </tbody>
           </table>
-        </section>
+        </FadeIn>
       )}
     </div>
   );

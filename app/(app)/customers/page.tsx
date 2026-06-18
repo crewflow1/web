@@ -9,6 +9,7 @@ import {
   pageWindow,
   customerSearchOr,
 } from "@/lib/customers/list";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customers list.
@@ -155,9 +156,9 @@ export default async function CustomersPage({
       ) : (
         <>
           {/* Mobile: stacked card list */}
-          <ul className="space-y-2 sm:hidden">
+          <Stagger className="space-y-2 sm:hidden">
             {rows.map((c) => (
-              <li
+              <StaggerItem
                 key={c.id}
                 className="rounded-lg border border-slate-200 bg-white shadow-sm"
               >
@@ -189,12 +190,12 @@ export default async function CustomersPage({
                     </span>
                   </div>
                 </Link>
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
 
           {/* Tablet + desktop: table */}
-          <div className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:block">
+          <FadeIn className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:block">
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
@@ -228,7 +229,7 @@ export default async function CustomersPage({
                 ))}
               </tbody>
             </table>
-          </div>
+          </FadeIn>
 
           {/* Pagination — "Showing A–B of N" makes the 200-per-page cap explicit. */}
           <nav className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
