@@ -38,6 +38,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
   { href: "/admin/memory", label: "📚 Shared Memory" },
   { href: "/admin/sales", label: "💼 Sales AI" },
+  { href: "/admin/research", label: "🔬 Research AI" },
   { href: "/admin/demos", label: "Demos CRM" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },

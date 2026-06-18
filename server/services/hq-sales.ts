@@ -1150,6 +1150,33 @@ async function insertTimelineEvent(
   return data?.id ?? null;
 }
 
+/**
+ * Public timeline writer — lets the Research AI runner
+ * (server/services/hq-research.ts) log granular, audit-trail step events
+ * (website analysed, technologies detected, score calculated, …) through the
+ * exact same column mapping the rest of Sales AI uses, so the permanent
+ * timeline stays one consistent vocabulary (Directive 005, Phase 9). Returns
+ * the new event id, or null on failure (never throws — a timeline write must
+ * never break a run).
+ */
+export async function recordTimelineEvent(row: {
+  company_id: string;
+  contact_id?: string | null;
+  event_type: string;
+  direction?: string;
+  subject?: string | null;
+  body?: string;
+  outcome?: string | null;
+  occurred_at?: string;
+  actor_email?: string | null;
+  ai_employee_id?: string | null;
+  source?: string;
+  metadata?: Record<string, unknown> | null;
+  memory_id?: string | null;
+}): Promise<string | null> {
+  return insertTimelineEvent(createAdminClient(), row);
+}
+
 export type CompanyWriteInput = {
   name: string;
   summary: string;
