@@ -8,35 +8,21 @@
  * just the same surface chrome the real page renders so the layout
  * doesn't visibly jump on resolve.
  */
+import { Shimmer, ShimmerStatRow, ShimmerPanel } from "@/components/ui";
+
 export default function HqLoading() {
   return (
     <div className="space-y-6">
       <header className="space-y-2">
-        <div className="h-7 w-48 animate-pulse rounded-md bg-slate-200" />
-        <div className="h-4 w-72 animate-pulse rounded-md bg-slate-100" />
+        <Shimmer className="h-7 w-48" />
+        <Shimmer className="h-4 w-72" />
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="h-24 animate-pulse rounded-xl border border-slate-200 bg-white shadow-sm"
-          />
-        ))}
-      </section>
+      <ShimmerStatRow count={4} />
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="space-y-3">
-          <div className="h-5 w-40 animate-pulse rounded-md bg-slate-200" />
-          <div className="h-4 w-full animate-pulse rounded-md bg-slate-100" />
-          <div className="h-4 w-5/6 animate-pulse rounded-md bg-slate-100" />
-          <div className="h-4 w-3/4 animate-pulse rounded-md bg-slate-100" />
-        </div>
-      </section>
+      <ShimmerPanel lines={4} />
 
-      <p className="text-center text-[11px] text-slate-400">
-        Loading HQ…
-      </p>
+      <p className="text-center text-[11px] text-slate-500">Loading HQ…</p>
     </div>
   );
 }

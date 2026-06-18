@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Badge, ButtonLink, GlowHeader, Panel, Surface } from "@/components/ui";
 
 /**
  * Stub for HQ sections that haven't yet shipped a dedicated page.
@@ -23,36 +23,28 @@ export function ComingSoonStub({
   primaryLabel?: string;
 }) {
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          CrewFlow HQ ·{" "}
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
-            Ships in {sprint}
-          </span>
-        </p>
-      </header>
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title={title}
+        actions={<Badge accent="amber">Ships in {sprint}</Badge>}
+      />
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm text-slate-700">{body}</p>
-        <div className="mt-5 flex flex-wrap gap-2">
-          {primaryHref ? (
-            <Link
-              href={primaryHref}
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-            >
-              {primaryLabel ?? "Use the legacy view"}
-            </Link>
-          ) : null}
-          <Link
-            href="/admin/overview"
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Back to overview
-          </Link>
-        </div>
-      </section>
-    </div>
+      <div className="p-5 sm:p-7">
+        <Panel>
+          <p className="text-sm text-slate-300">{body}</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {primaryHref ? (
+              <ButtonLink href={primaryHref} variant="accent">
+                {primaryLabel ?? "Use the legacy view"}
+              </ButtonLink>
+            ) : null}
+            <ButtonLink href="/admin/overview" variant="glass">
+              Back to overview
+            </ButtonLink>
+          </div>
+        </Panel>
+      </div>
+    </Surface>
   );
 }

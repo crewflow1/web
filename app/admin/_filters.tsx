@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
+import { Input, Select } from "@/components/ui";
 
 /**
  * URL-bound search + status filter for the admin panel.
@@ -54,47 +55,47 @@ export function AdminFilters({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[1fr_180px_220px]">
-      <label className="block text-xs font-medium text-slate-600">
+    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 sm:grid-cols-[1fr_180px_220px]">
+      <label className="block text-xs font-medium text-slate-400">
         Search
-        <input
+        <Input
           type="search"
           name="q"
           defaultValue={defaultQuery}
           placeholder="Company, owner, email…"
           onChange={(e) => setParam("q", e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="mt-1"
         />
       </label>
-      <label className="block text-xs font-medium text-slate-600">
+      <label className="block text-xs font-medium text-slate-400">
         Status
-        <select
+        <Select
           name="status"
           defaultValue={defaultStatus}
           onChange={(e) => setParam("status", e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="mt-1"
         >
           {STATUS_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
-      <label className="block text-xs font-medium text-slate-600">
+      <label className="block text-xs font-medium text-slate-400">
         Sort
-        <select
+        <Select
           name="sort"
           defaultValue={defaultSort}
           onChange={(e) => setParam("sort", e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="mt-1"
         >
           {SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {pending ? (
         <p className="text-[11px] text-slate-500 sm:col-span-3">Filtering…</p>

@@ -24,7 +24,8 @@ export type ButtonVariant =
   | "destructive"
   | "accent"
   | "glass"
-  | "subtle";
+  | "subtle"
+  | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
 const BASE =
@@ -45,6 +46,10 @@ const VARIANT: Record<ButtonVariant, string> = {
     "border border-slate-700 bg-slate-900 text-slate-200 shadow-none hover:bg-slate-800 focus-visible:ring-slate-500 focus-visible:ring-offset-slate-950",
   subtle:
     "bg-slate-800/70 text-slate-200 shadow-none hover:bg-slate-800 focus-visible:ring-slate-500 focus-visible:ring-offset-slate-950",
+  // The dark destructive primary — solid rose for high-emphasis confirms on the
+  // HQ canvas (the light `destructive` reads as a white button on slate-950).
+  danger:
+    "bg-rose-600 text-white shadow-lg shadow-rose-900/30 hover:bg-rose-500 focus-visible:ring-rose-500/50 focus-visible:ring-offset-slate-950",
 };
 
 const SIZE: Record<ButtonSize, string> = {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
+import { Button, ButtonLink } from "@/components/ui";
 
 /**
  * /admin/* error boundary — catches runtime errors thrown inside HQ
@@ -34,50 +34,40 @@ export default function HqError({
   return (
     <div className="mx-auto max-w-2xl space-y-6 py-10">
       <header>
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-red-600">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">
           HQ error
         </p>
-        <h1 className="mt-1 text-2xl font-bold text-slate-900">
+        <h1 className="mt-1 text-2xl font-bold text-white">
           Something went wrong in HQ.
         </h1>
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-2 text-sm text-slate-400">
           The page hit a runtime error. Auth, RLS, and the audit log
           are unaffected. Try the page again, or jump back to overview.
         </p>
       </header>
 
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-        <p className="text-xs font-semibold text-red-900">Error</p>
-        <p className="mt-1 break-all font-mono text-xs text-red-800">
+      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+        <p className="text-xs font-semibold text-rose-200">Error</p>
+        <p className="mt-1 break-all font-mono text-xs text-rose-200/90">
           {error.message || "Unknown error"}
         </p>
         {error.digest ? (
-          <p className="mt-2 font-mono text-[10px] text-red-700">
+          <p className="mt-2 font-mono text-[10px] text-rose-300/80">
             digest: {error.digest}
           </p>
         ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => reset()}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-        >
+        <Button type="button" variant="accent" onClick={() => reset()}>
           Try again
-        </button>
-        <Link
-          href="/admin/overview"
-          className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
+        </Button>
+        <ButtonLink href="/admin/overview" variant="glass">
           Back to overview
-        </Link>
-        <Link
-          href="/admin/support"
-          className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
+        </ButtonLink>
+        <ButtonLink href="/admin/support" variant="glass">
           Open support queue
-        </Link>
+        </ButtonLink>
       </div>
     </div>
   );

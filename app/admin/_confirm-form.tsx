@@ -41,19 +41,19 @@ export function ConfirmForm({
 
   const buttonClass =
     buttonVariant === "primary"
-      ? "rounded-md bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800"
+      ? "rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm shadow-emerald-900/30 hover:bg-emerald-500"
       : buttonVariant === "danger"
-        ? "rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+        ? "rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-500/20"
         : buttonVariant === "warning"
-          ? "rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-50"
-          : "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50";
+          ? "rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
+          : "rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200 hover:bg-slate-800";
 
   const confirmClass =
     buttonVariant === "danger"
-      ? "rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-800"
+      ? "rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-rose-900/30 hover:bg-rose-500"
       : buttonVariant === "warning"
-        ? "rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-800"
-        : "rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800";
+        ? "rounded-md bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-amber-900/30 hover:bg-amber-500"
+        : "rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-900/30 hover:bg-emerald-500";
 
   return (
     <>
@@ -69,14 +69,14 @@ export function ConfirmForm({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 px-4 py-6 sm:items-center"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm sm:items-center"
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
-              <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
+            <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3">
+              <h2 className="text-base font-semibold text-white">{title}</h2>
             </div>
             <form
               action={(fd) => {
@@ -85,7 +85,7 @@ export function ConfirmForm({
                   setOpen(false);
                 });
               }}
-              className="space-y-4 px-5 py-4 text-sm text-slate-700"
+              className="space-y-4 px-5 py-4 text-sm text-slate-300"
             >
               <p>{body}</p>
               {children}
@@ -94,7 +94,7 @@ export function ConfirmForm({
                   type="button"
                   onClick={() => setOpen(false)}
                   disabled={pending}
-                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  className="rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-60"
                 >
                   Cancel
                 </button>
