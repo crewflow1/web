@@ -6,10 +6,25 @@ import { notFound } from "next/navigation";
 import {
   AI_RECEPTIONIST_STATUSES,
   AI_RECEPTIONIST_STATUS_LABELS,
-  AI_RECEPTIONIST_STATUS_STYLES,
   TEST_CHECKLIST_ITEMS,
   type AiReceptionistStatus,
 } from "@/lib/ai-receptionist/schema";
+import {
+  Badge,
+  EmptyState,
+  GlowHeader,
+  Panel,
+  Surface,
+  type Accent,
+} from "@/components/ui";
+
+/** Dark-surface accent per setup status (mirrors the legacy light styles). */
+const STATUS_ACCENT: Record<AiReceptionistStatus, Accent> = {
+  not_started: "slate",
+  in_progress: "sky",
+  testing: "amber",
+  live: "emerald",
+};
 
 /**
  * /admin/ai-receptionist — HQ queue for white-glove AI Receptionist
@@ -101,106 +116,109 @@ export default async function HqAiReceptionistPage({
   }
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">
-          AI Receptionist setups
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          White-glove onboarding queue. Customers enable on
-          /settings/ai-receptionist — work them through the lifecycle here.
-        </p>
-      </header>
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="AI Receptionist setups"
+        subtitle={
+          <>
+            White-glove onboarding queue. Customers enable on{" "}
+            <code className="rounded bg-slate-800/80 px-1 font-mono text-[0.9em] text-slate-300 ring-1 ring-inset ring-slate-700">
+              /settings/ai-receptionist
+            </code>{" "}
+            — work them through the lifecycle here.
+          </>
+        }
+      />
 
-      <nav aria-label="Status" className="flex flex-wrap gap-2 text-xs">
-        <FilterPill current={filter ?? "all"} value="all" label={`All (${rows.length})`} />
-        {AI_RECEPTIONIST_STATUSES.map((s) => (
-          <FilterPill
-            key={s}
-            current={filter ?? "all"}
-            value={s}
-            label={`${AI_RECEPTIONIST_STATUS_LABELS[s]} (${counts[s]})`}
-          />
-        ))}
-      </nav>
+      <div className="space-y-6 p-5 sm:p-7">
+        <nav aria-label="Status" className="flex flex-wrap gap-2 text-xs">
+          <FilterPill current={filter ?? "all"} value="all" label={`All (${rows.length})`} />
+          {AI_RECEPTIONIST_STATUSES.map((s) => (
+            <FilterPill
+              key={s}
+              current={filter ?? "all"}
+              value={s}
+              label={`${AI_RECEPTIONIST_STATUS_LABELS[s]} (${counts[s]})`}
+            />
+          ))}
+        </nav>
 
-      {rows.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-600">
-          No matching setups.
-        </div>
-      ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Company</th>
-                <th className="px-4 py-3">Phone</th>
-                <th className="px-4 py-3 hidden md:table-cell">Channels</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Checklist</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Updated</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((row) => {
-                const ticks = TEST_CHECKLIST_ITEMS.filter(
-                  (item) => row[item.key] != null,
-                ).length;
-                const channels: string[] = [];
-                if (row.business_phone) channels.push("Call/SMS");
-                if (row.whatsapp_number) channels.push("WA");
-                if (row.facebook_page) channels.push("FB");
-                if (row.instagram_handle) channels.push("IG");
+        {rows.length === 0 ? (
+          <EmptyState title="No matching setups." />
+        ) : (
+          <Panel bodyClassName="overflow-x-auto" className="p-0">
+            <table className="min-w-full divide-y divide-slate-800 text-sm">
+              <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Company</th>
+                  <th className="px-3 py-2">Phone</th>
+                  <th className="px-3 py-2 hidden md:table-cell">Channels</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Checklist</th>
+                  <th className="px-3 py-2 hidden lg:table-cell">Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {rows.map((row) => {
+                  const ticks = TEST_CHECKLIST_ITEMS.filter(
+                    (item) => row[item.key] != null,
+                  ).length;
+                  const channels: string[] = [];
+                  if (row.business_phone) channels.push("Call/SMS");
+                  if (row.whatsapp_number) channels.push("WA");
+                  if (row.facebook_page) channels.push("FB");
+                  if (row.instagram_handle) channels.push("IG");
 
-                return (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/admin/ai-receptionist/${row.id}`}
-                        className="font-medium text-slate-900 hover:text-slate-700"
-                      >
-                        {row.org?.name ?? "Unknown"}
-                      </Link>
-                      <p className="text-xs text-slate-500">{row.org?.slug}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">
-                      {row.business_phone ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 hidden md:table-cell">
-                      {channels.length === 0 ? "—" : channels.join(", ")}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                          AI_RECEPTIONIST_STATUS_STYLES[
+                  return (
+                    <tr key={row.id} className="hover:bg-slate-900/50">
+                      <td className="px-3 py-2">
+                        <Link
+                          href={`/admin/ai-receptionist/${row.id}`}
+                          className="font-medium text-indigo-300 hover:text-indigo-200"
+                        >
+                          {row.org?.name ?? "Unknown"}
+                        </Link>
+                        <p className="text-xs text-slate-500">{row.org?.slug}</p>
+                      </td>
+                      <td className="px-3 py-2 text-slate-300">
+                        {row.business_phone ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400 hidden md:table-cell">
+                        {channels.length === 0 ? "—" : channels.join(", ")}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge
+                          accent={
+                            STATUS_ACCENT[row.status as AiReceptionistStatus] ??
+                            "slate"
+                          }
+                        >
+                          {AI_RECEPTIONIST_STATUS_LABELS[
                             row.status as AiReceptionistStatus
-                          ] ?? "bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        {AI_RECEPTIONIST_STATUS_LABELS[
-                          row.status as AiReceptionistStatus
-                        ] ?? row.status}
-                      </span>
-                      {!row.enabled ? (
-                        <span className="ml-1 text-[10px] text-slate-500">
-                          (off)
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-700">
-                      {ticks}/{TEST_CHECKLIST_ITEMS.length}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-500 hidden lg:table-cell">
-                      {row.updated_at.slice(0, 10)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      )}
-    </div>
+                          ] ?? row.status}
+                        </Badge>
+                        {!row.enabled ? (
+                          <span className="ml-1 text-[10px] text-slate-500">
+                            (off)
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-300">
+                        {ticks}/{TEST_CHECKLIST_ITEMS.length}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-500 hidden lg:table-cell">
+                        {row.updated_at.slice(0, 10)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Panel>
+        )}
+      </div>
+    </Surface>
   );
 }
 
@@ -224,8 +242,8 @@ function FilterPill({
       aria-current={isActive ? "page" : undefined}
       className={
         isActive
-          ? "rounded-full bg-slate-900 px-3 py-1 font-medium text-white"
-          : "rounded-full border border-slate-300 bg-white px-3 py-1 font-medium text-slate-700 hover:bg-slate-50"
+          ? "rounded-full bg-indigo-600 px-3 py-1 font-medium text-white"
+          : "rounded-full border border-slate-700 bg-slate-900 px-3 py-1 font-medium text-slate-300 hover:bg-slate-800"
       }
     >
       {label}

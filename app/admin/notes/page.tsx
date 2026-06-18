@@ -3,10 +3,8 @@ import { listAllInternalNotesForHQ } from "@/server/services/hq-internal-notes";
 import {
   INTERNAL_NOTE_CATEGORIES,
   INTERNAL_NOTE_CATEGORY_LABEL,
-  INTERNAL_NOTE_CATEGORY_PILL,
   INTERNAL_NOTE_PRIORITIES,
   INTERNAL_NOTE_PRIORITY_LABEL,
-  INTERNAL_NOTE_PRIORITY_PILL,
   INTERNAL_NOTE_SORTS,
   INTERNAL_NOTE_SORT_LABEL,
   filterNotes,
@@ -22,6 +20,42 @@ import {
   unarchiveNoteAction,
 } from "./actions";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  Alert,
+  AnimatedNumber,
+  Badge,
+  Button,
+  ButtonLink,
+  EmptyState,
+  GlowHeader,
+  Input,
+  Panel,
+  Select,
+  StatTile,
+  Surface,
+  Textarea,
+  type Accent,
+} from "@/components/ui";
+
+/** Dark-surface accents per note category (mirrors the legacy light pills). */
+const CATEGORY_ACCENT: Record<InternalNoteCategory, Accent> = {
+  general: "slate",
+  sales: "emerald",
+  onboarding: "indigo",
+  billing: "amber",
+  support: "sky",
+  risk: "rose",
+  technical: "slate",
+  success: "emerald",
+};
+
+/** Dark-surface accents per note priority. */
+const PRIORITY_ACCENT: Record<InternalNotePriority, Accent> = {
+  low: "slate",
+  normal: "sky",
+  high: "amber",
+  urgent: "rose",
+};
 
 /**
  * HQ Internal Notes — /admin/notes (HQ-9).
@@ -121,371 +155,318 @@ export default async function HqNotesPage({
   })();
 
   return (
-    <div className="space-y-5 p-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            HQ · Internal notes
-          </p>
-          <h1 className="text-2xl font-bold text-slate-900">
-            Customer context library
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Sales nuance, onboarding observations, risk flags, billing
-            decisions. Never visible to customers — internal only.
-          </p>
-        </div>
-        <Link
-          href="/admin/overview"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          ← HQ overview
-        </Link>
-      </header>
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Customer context library"
+        subtitle="Sales nuance, onboarding observations, risk flags, billing decisions. Never visible to customers — internal only."
+        actions={
+          <ButtonLink href="/admin/overview" variant="glass" size="sm">
+            ← HQ overview
+          </ButtonLink>
+        }
+      />
 
-      {banner ? (
-        <div
-          className={`rounded-md border px-3 py-2 text-sm ${
-            banner.tone === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-red-200 bg-red-50 text-red-800"
-          }`}
-        >
-          {banner.msg}
-        </div>
-      ) : null}
+      <div className="space-y-5 p-5 sm:p-7">
+        {banner ? (
+          <Alert tone={banner.tone === "ok" ? "success" : "danger"}>
+            {banner.msg}
+          </Alert>
+        ) : null}
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Active notes" value={String(active.length)} tone="slate" />
-        <Kpi label="Urgent" value={String(urgentActive)} tone="red" />
-        <Kpi label="Pinned" value={String(pinnedActive)} tone="amber" />
-        <Kpi label="Last 24h" value={String(today24h)} tone="blue" />
-      </section>
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile
+            label="Active notes"
+            value={<AnimatedNumber value={active.length} />}
+          />
+          <StatTile
+            label="Urgent"
+            value={<AnimatedNumber value={urgentActive} />}
+            accent={urgentActive > 0 ? "rose" : "slate"}
+          />
+          <StatTile
+            label="Pinned"
+            value={<AnimatedNumber value={pinnedActive} />}
+            accent={pinnedActive > 0 ? "amber" : "slate"}
+          />
+          <StatTile
+            label="Last 24h"
+            value={<AnimatedNumber value={today24h} />}
+            accent="indigo"
+          />
+        </section>
 
-      {/* New note form */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">New note</h2>
-        <form action={createNoteAction} className="mt-3 space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-[11px] font-medium text-slate-700">
-              Customer
-              <select
-                name="org_id"
+        {/* New note form */}
+        <Panel title="New note">
+          <form action={createNoteAction} className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-[11px] font-medium text-slate-400">
+                Customer
+                <Select
+                  name="org_id"
+                  required
+                  defaultValue={orgId}
+                  className="mt-1"
+                >
+                  <option value="">Pick a customer…</option>
+                  {orgsForForm.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                      {o.status ? ` · ${o.status}` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="block text-[11px] font-medium text-slate-400">
+                Title (optional)
+                <Input
+                  name="title"
+                  type="text"
+                  maxLength={200}
+                  placeholder="e.g. Renewal call — next Tuesday"
+                  className="mt-1"
+                />
+              </label>
+            </div>
+            <label className="block text-[11px] font-medium text-slate-400">
+              Body
+              <Textarea
+                name="body"
                 required
-                defaultValue={orgId}
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Pick a customer…</option>
-                {orgsForForm.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                    {o.status ? ` · ${o.status}` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-[11px] font-medium text-slate-700">
-              Title (optional)
-              <input
-                name="title"
-                type="text"
-                maxLength={200}
-                placeholder="e.g. Renewal call — next Tuesday"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                minLength={1}
+                maxLength={20_000}
+                rows={4}
+                placeholder="Markdown allowed…"
+                className="mt-1"
               />
             </label>
-          </div>
-          <label className="block text-[11px] font-medium text-slate-700">
-            Body
-            <textarea
-              name="body"
-              required
-              minLength={1}
-              maxLength={20_000}
-              rows={4}
-              placeholder="Markdown allowed…"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block text-[11px] font-medium text-slate-400">
+                Category
+                <Select name="category" defaultValue="general" className="mt-1">
+                  {INTERNAL_NOTE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {INTERNAL_NOTE_CATEGORY_LABEL[c]}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="block text-[11px] font-medium text-slate-400">
+                Priority
+                <Select name="priority" defaultValue="normal" className="mt-1">
+                  {INTERNAL_NOTE_PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {INTERNAL_NOTE_PRIORITY_LABEL[p]}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="flex items-end gap-2 pb-1 text-[11px] font-medium text-slate-400">
+                <input
+                  type="checkbox"
+                  name="pinned"
+                  value="true"
+                  className="h-4 w-4 rounded border-slate-700 bg-slate-900/80 text-indigo-500 focus:ring-indigo-500/30"
+                />
+                Pin to top
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" variant="accent">
+                Save note
+              </Button>
+            </div>
+          </form>
+        </Panel>
+
+        {/* Filter bar */}
+        <form
+          method="get"
+          action="/admin/notes"
+          className="flex flex-wrap items-end gap-2 rounded-2xl border border-slate-800 bg-slate-900/40 p-3"
+        >
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Search
+            <Input
+              type="text"
+              name="q"
+              defaultValue={q}
+              placeholder="title, body, author"
+              className="mt-1 w-56"
             />
           </label>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="block text-[11px] font-medium text-slate-700">
-              Category
-              <select
-                name="category"
-                defaultValue="general"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                {INTERNAL_NOTE_CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {INTERNAL_NOTE_CATEGORY_LABEL[c]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-[11px] font-medium text-slate-700">
-              Priority
-              <select
-                name="priority"
-                defaultValue="normal"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              >
-                {INTERNAL_NOTE_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {INTERNAL_NOTE_PRIORITY_LABEL[p]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-end gap-2 pb-1 text-[11px] font-medium text-slate-700">
-              <input
-                type="checkbox"
-                name="pinned"
-                value="true"
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              Pin to top
-            </label>
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Save note
-            </button>
-          </div>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Customer
+            <Select name="org_id" defaultValue={orgId} className="mt-1">
+              <option value="">All</option>
+              {orgOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name ?? id.slice(0, 8)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Category
+            <Select name="category" defaultValue={category} className="mt-1">
+              <option value="all">All</option>
+              {INTERNAL_NOTE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {INTERNAL_NOTE_CATEGORY_LABEL[c]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Priority
+            <Select name="priority" defaultValue={priority} className="mt-1">
+              <option value="all">All</option>
+              {INTERNAL_NOTE_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {INTERNAL_NOTE_PRIORITY_LABEL[p]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Sort
+            <Select name="sort" defaultValue={sort} className="mt-1">
+              {INTERNAL_NOTE_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {INTERNAL_NOTE_SORT_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
+            <input
+              type="checkbox"
+              name="pinned_only"
+              value="1"
+              defaultChecked={pinnedOnly}
+              className="h-4 w-4 rounded border-slate-700 bg-slate-900/80 text-indigo-500 focus:ring-indigo-500/30"
+            />
+            Pinned only
+          </label>
+          <label className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
+            <input
+              type="checkbox"
+              name="show_archived"
+              value="1"
+              defaultChecked={showArchived}
+              className="h-4 w-4 rounded border-slate-700 bg-slate-900/80 text-indigo-500 focus:ring-indigo-500/30"
+            />
+            Show archived
+          </label>
+          <Button type="submit" variant="accent" size="sm">
+            Apply
+          </Button>
+          <ButtonLink href="/admin/notes" variant="glass" size="sm">
+            Reset
+          </ButtonLink>
         </form>
-      </section>
 
-      {/* Filter bar */}
-      <form
-        method="get"
-        action="/admin/notes"
-        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
-      >
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Search
-          <input
-            type="text"
-            name="q"
-            defaultValue={q}
-            placeholder="title, body, author"
-            className="mt-1 w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+        {sorted.length === 0 ? (
+          <EmptyState
+            title="No notes match these filters."
+            description="Add one above."
           />
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Customer
-          <select
-            name="org_id"
-            defaultValue={orgId}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="">All</option>
-            {orgOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name ?? id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Category
-          <select
-            name="category"
-            defaultValue={category}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="all">All</option>
-            {INTERNAL_NOTE_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {INTERNAL_NOTE_CATEGORY_LABEL[c]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Priority
-          <select
-            name="priority"
-            defaultValue={priority}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="all">All</option>
-            {INTERNAL_NOTE_PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {INTERNAL_NOTE_PRIORITY_LABEL[p]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Sort
-          <select
-            name="sort"
-            defaultValue={sort}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            {INTERNAL_NOTE_SORTS.map((s) => (
-              <option key={s} value={s}>
-                {INTERNAL_NOTE_SORT_LABEL[s]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
-          <input
-            type="checkbox"
-            name="pinned_only"
-            value="1"
-            defaultChecked={pinnedOnly}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          Pinned only
-        </label>
-        <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
-          <input
-            type="checkbox"
-            name="show_archived"
-            value="1"
-            defaultChecked={showArchived}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          Show archived
-        </label>
-        <button
-          type="submit"
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-        >
-          Apply
-        </button>
-        <Link
-          href="/admin/notes"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Reset
-        </Link>
-      </form>
-
-      {sorted.length === 0 ? (
-        <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
-          No notes match these filters. Add one above.
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {sorted.map((n) => (
-            <li
-              key={n.id}
-              className={`rounded-xl border bg-white p-4 shadow-sm ${
-                n.archived_at !== null ? "opacity-60" : ""
-              }`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {n.pinned ? (
-                      <span className="rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
-                        Pinned
-                      </span>
+        ) : (
+          <ul className="space-y-3">
+            {sorted.map((n) => (
+              <li
+                key={n.id}
+                className={`rounded-2xl border border-slate-800 bg-slate-900/40 p-4 ${
+                  n.archived_at !== null ? "opacity-60" : ""
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {n.pinned ? (
+                        <Badge accent="amber">Pinned</Badge>
+                      ) : null}
+                      <Badge
+                        accent={
+                          CATEGORY_ACCENT[n.category as InternalNoteCategory] ??
+                          "slate"
+                        }
+                      >
+                        {INTERNAL_NOTE_CATEGORY_LABEL[n.category as InternalNoteCategory] ?? n.category}
+                      </Badge>
+                      <Badge
+                        accent={
+                          PRIORITY_ACCENT[n.priority as InternalNotePriority] ??
+                          "slate"
+                        }
+                      >
+                        {INTERNAL_NOTE_PRIORITY_LABEL[n.priority as InternalNotePriority] ?? n.priority}
+                      </Badge>
+                      <Link
+                        href={`/admin/customers/${n.org_id}`}
+                        className="text-[11px] font-medium text-indigo-300 hover:text-indigo-200"
+                      >
+                        {n.org_name ?? n.org_id.slice(0, 8)} →
+                      </Link>
+                      {n.archived_at ? (
+                        <span className="text-[10px] font-medium text-slate-500">
+                          Archived {n.archived_at.slice(0, 10)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {n.title ? (
+                      <h3 className="mt-2 text-sm font-semibold text-white">
+                        {n.title}
+                      </h3>
                     ) : null}
-                    <span
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${INTERNAL_NOTE_CATEGORY_PILL[n.category as InternalNoteCategory] ?? "bg-slate-100 text-slate-700 border-slate-200"}`}
-                    >
-                      {INTERNAL_NOTE_CATEGORY_LABEL[n.category as InternalNoteCategory] ?? n.category}
-                    </span>
-                    <span
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${INTERNAL_NOTE_PRIORITY_PILL[n.priority as InternalNotePriority] ?? "bg-slate-100 text-slate-700 border-slate-200"}`}
-                    >
-                      {INTERNAL_NOTE_PRIORITY_LABEL[n.priority as InternalNotePriority] ?? n.priority}
-                    </span>
-                    <Link
-                      href={`/admin/customers/${n.org_id}`}
-                      className="text-[11px] font-medium text-indigo-700 hover:underline"
-                    >
-                      {n.org_name ?? n.org_id.slice(0, 8)} →
-                    </Link>
-                    {n.archived_at ? (
-                      <span className="text-[10px] font-medium text-slate-500">
-                        Archived {n.archived_at.slice(0, 10)}
-                      </span>
-                    ) : null}
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-300">
+                      {n.body}
+                    </p>
+                    <p className="mt-2 text-[10px] text-slate-500">
+                      {n.author_email} · {n.created_at.slice(0, 16).replace("T", " ")} UTC
+                      {n.updated_at !== n.created_at
+                        ? ` · edited ${n.updated_at.slice(0, 10)}`
+                        : ""}
+                    </p>
                   </div>
-                  {n.title ? (
-                    <h3 className="mt-2 text-sm font-semibold text-slate-900">
-                      {n.title}
-                    </h3>
-                  ) : null}
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
-                    {n.body}
-                  </p>
-                  <p className="mt-2 text-[10px] text-slate-400">
-                    {n.author_email} · {n.created_at.slice(0, 16).replace("T", " ")} UTC
-                    {n.updated_at !== n.created_at
-                      ? ` · edited ${n.updated_at.slice(0, 10)}`
-                      : ""}
-                  </p>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <form action={togglePinNoteAction}>
-                    <input type="hidden" name="id" value={n.id} />
-                    <button
-                      type="submit"
-                      className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
-                    >
-                      {n.pinned ? "Unpin" : "Pin"}
-                    </button>
-                  </form>
-                  {n.archived_at === null ? (
-                    <form action={archiveNoteAction}>
+                  <div className="flex flex-col gap-1">
+                    <form action={togglePinNoteAction}>
                       <input type="hidden" name="id" value={n.id} />
                       <button
                         type="submit"
-                        className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
+                        className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
                       >
-                        Archive
+                        {n.pinned ? "Unpin" : "Pin"}
                       </button>
                     </form>
-                  ) : (
-                    <form action={unarchiveNoteAction}>
-                      <input type="hidden" name="id" value={n.id} />
-                      <button
-                        type="submit"
-                        className="text-[11px] font-medium text-slate-500 hover:text-slate-900 hover:underline"
-                      >
-                        Unarchive
-                      </button>
-                    </form>
-                  )}
+                    {n.archived_at === null ? (
+                      <form action={archiveNoteAction}>
+                        <input type="hidden" name="id" value={n.id} />
+                        <button
+                          type="submit"
+                          className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                        >
+                          Archive
+                        </button>
+                      </form>
+                    ) : (
+                      <form action={unarchiveNoteAction}>
+                        <input type="hidden" name="id" value={n.id} />
+                        <button
+                          type="submit"
+                          className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                        >
+                          Unarchive
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "red" | "amber" | "blue" | "slate";
-}) {
-  const t: Record<typeof tone, string> = {
-    red: "bg-red-50 border-red-200 text-red-900",
-    amber: "bg-amber-50 border-amber-200 text-amber-900",
-    blue: "bg-blue-50 border-blue-200 text-blue-900",
-    slate: "bg-white border-slate-200 text-slate-900",
-  };
-  return (
-    <div className={`rounded-xl border p-3 shadow-sm ${t[tone]}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide opacity-75">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
-    </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Surface>
   );
 }

@@ -10,6 +10,14 @@ import {
   type HqSettings,
 } from "@/lib/hq/settings";
 import { saveSection } from "./actions";
+import {
+  Alert,
+  Button,
+  GlowHeader,
+  Input,
+  Surface,
+  Textarea,
+} from "@/components/ui";
 
 /**
  * /admin/settings — Phase 4.
@@ -45,56 +53,61 @@ export default async function HqSettingsPage({
   const settings = await getSettings();
 
   return (
-    <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="text-sm text-slate-600">
-          Platform configuration. Every change is logged to the
-          activity audit (admin_activity_log) with a before/after diff.
-        </p>
-      </header>
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Settings"
+        subtitle={
+          <>
+            Platform configuration. Every change is logged to the activity audit
+            (
+            <code className="rounded bg-slate-800/80 px-1 font-mono text-[0.9em] text-slate-300 ring-1 ring-inset ring-slate-700">
+              admin_activity_log
+            </code>
+            ) with a before/after diff.
+          </>
+        }
+      />
 
-      {sp.saved ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          {sp.saved === "nothing"
-            ? "No changes — values were already up to date."
-            : `Saved ${sp.saved} field${Number(sp.saved) === 1 ? "" : "s"}.`}
-        </div>
-      ) : null}
+      <div className="space-y-6 p-5 sm:p-7">
+        {sp.saved ? (
+          <Alert tone="success">
+            {sp.saved === "nothing"
+              ? "No changes — values were already up to date."
+              : `Saved ${sp.saved} field${Number(sp.saved) === 1 ? "" : "s"}.`}
+          </Alert>
+        ) : null}
 
-      {sp.error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-          {sp.error}
-        </div>
-      ) : null}
+        {sp.error ? <Alert tone="danger">{sp.error}</Alert> : null}
 
-      <nav className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
-        <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          Jump to
-        </p>
-        <ul className="flex flex-wrap gap-1">
-          {SECTION_IDS.map((id) => (
-            <li key={id}>
-              <a
-                href={`#${id}`}
-                className="rounded-md px-2 py-1 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-              >
-                {SECTION_LABEL[id]}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
+        <nav className="rounded-2xl border border-slate-800 bg-slate-900/40 p-3 text-sm">
+          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Jump to
+          </p>
+          <ul className="flex flex-wrap gap-1">
+            {SECTION_IDS.map((id) => (
+              <li key={id}>
+                <a
+                  href={`#${id}`}
+                  className="rounded-md px-2 py-1 text-slate-300 hover:bg-slate-800/70 hover:text-white"
+                >
+                  {SECTION_LABEL[id]}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
-      <SectionGeneral settings={settings} />
-      <SectionNotifications settings={settings} />
-      <SectionAlerts settings={settings} />
-      <SectionBilling settings={settings} />
-      <SectionBranding settings={settings} />
-      <SectionSupport settings={settings} />
-      <SectionIntegrations settings={settings} />
-      <SectionFeatureFlags settings={settings} />
-    </div>
+        <SectionGeneral settings={settings} />
+        <SectionNotifications settings={settings} />
+        <SectionAlerts settings={settings} />
+        <SectionBilling settings={settings} />
+        <SectionBranding settings={settings} />
+        <SectionSupport settings={settings} />
+        <SectionIntegrations settings={settings} />
+        <SectionFeatureFlags settings={settings} />
+      </div>
+    </Surface>
   );
 }
 
@@ -112,10 +125,10 @@ function SectionShell({
   return (
     <section
       id={id}
-      className="scroll-mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      className="scroll-mt-6 rounded-2xl border border-slate-800 bg-slate-900/40 p-6"
     >
       <header className="mb-4">
-        <h2 className="text-lg font-semibold text-slate-900">
+        <h2 className="text-lg font-semibold text-white">
           {SECTION_LABEL[id]}
         </h2>
         <p className="mt-1 text-xs text-slate-500">
@@ -124,13 +137,10 @@ function SectionShell({
       </header>
       <form action={saveSection.bind(null, id)} className="space-y-4">
         {children}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-          >
+        <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-4">
+          <Button type="submit" variant="accent">
             Save {SECTION_LABEL[id].toLowerCase()}
-          </button>
+          </Button>
         </div>
       </form>
     </section>
@@ -148,7 +158,7 @@ function Field({
 }) {
   return (
     <label className="block text-sm">
-      <span className="block font-medium text-slate-800">{label}</span>
+      <span className="block font-medium text-slate-300">{label}</span>
       {hint ? (
         <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>
       ) : null}
@@ -156,10 +166,6 @@ function Field({
     </label>
   );
 }
-
-const inputCls =
-  "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
-const textareaCls = inputCls + " min-h-[80px] resize-y";
 
 function Toggle({
   name,
@@ -171,12 +177,12 @@ function Toggle({
   label: string;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-slate-800">
+    <label className="flex items-center gap-2 text-sm text-slate-300">
       <input
         type="checkbox"
         name={name}
         defaultChecked={defaultChecked}
-        className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+        className="h-4 w-4 rounded border-slate-700 bg-slate-900/80 text-indigo-500 focus:ring-indigo-500/30"
       />
       <span>{label}</span>
     </label>
@@ -193,36 +199,32 @@ function SectionGeneral({ settings }: { settings: HqSettings }) {
     <SectionShell id="general">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Platform name" hint="Shown in HQ headers and emails.">
-          <input
+          <Input
             type="text"
             name="platform_name"
             defaultValue={s.platform_name}
-            className={inputCls}
           />
         </Field>
         <Field label="Support email" hint="Customer support inbox.">
-          <input
+          <Input
             type="email"
             name="support_email"
             defaultValue={s.support_email}
-            className={inputCls}
           />
         </Field>
         <Field label="Ops Slack URL" hint="Optional — leave blank to disable.">
-          <input
+          <Input
             type="url"
             name="ops_slack_url"
             defaultValue={s.ops_slack_url}
             placeholder="https://hooks.slack.com/..."
-            className={inputCls}
           />
         </Field>
         <Field label="Timezone" hint="IANA name, e.g. Europe/London.">
-          <input
+          <Input
             type="text"
             name="timezone"
             defaultValue={s.timezone}
-            className={inputCls}
           />
         </Field>
       </div>
@@ -238,28 +240,26 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
         label="HQ email recipients"
         hint="Comma-separated. Every HQ notification email goes to these addresses."
       >
-        <textarea
+        <Textarea
           name="hq_email_recipients"
           defaultValue={s.hq_email_recipients}
-          className={textareaCls}
+          className="min-h-[80px]"
           placeholder="ops@crewflow.uk, support@crewflow.uk"
         />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Quiet hours start" hint="HH:MM (24h)">
-          <input
+          <Input
             type="text"
             name="quiet_hours_start"
             defaultValue={s.quiet_hours_start}
-            className={inputCls}
           />
         </Field>
         <Field label="Quiet hours end" hint="HH:MM (24h)">
-          <input
+          <Input
             type="text"
             name="quiet_hours_end"
             defaultValue={s.quiet_hours_end}
-            className={inputCls}
           />
         </Field>
       </div>
@@ -288,37 +288,34 @@ function SectionAlerts({ settings }: { settings: HqSettings }) {
           label="Cooldown (hours)"
           hint="Minimum gap between re-firing the same alert after resolution."
         >
-          <input
+          <Input
             type="number"
             name="cooldown_hours"
             min={0}
             max={168}
             defaultValue={s.cooldown_hours}
-            className={inputCls}
           />
         </Field>
         <Field
           label="Default snooze (hours)"
           hint="Used by the snooze button on /admin/alerts."
         >
-          <input
+          <Input
             type="number"
             name="default_snooze_hours"
             min={1}
             max={168}
             defaultValue={s.default_snooze_hours}
-            className={inputCls}
           />
         </Field>
         <Field
           label="Critical CC email"
           hint="Optional — CC'd on every critical-severity alert."
         >
-          <input
+          <Input
             type="email"
             name="critical_cc_email"
             defaultValue={s.critical_cc_email}
-            className={inputCls}
           />
         </Field>
       </div>
@@ -335,35 +332,33 @@ function SectionBilling({ settings }: { settings: HqSettings }) {
           label="Default invoice due (days)"
           hint="Net N applied to new invoices."
         >
-          <input
+          <Input
             type="number"
             name="default_invoice_due_days"
             min={0}
             max={180}
             defaultValue={s.default_invoice_due_days}
-            className={inputCls}
           />
         </Field>
         <Field
           label="Default setup fee (GBP)"
           hint="Pre-fills the one-time setup fee for new customers."
         >
-          <input
+          <Input
             type="number"
             name="default_setup_fee_gbp"
             min={0}
             max={100000}
             step={1}
             defaultValue={s.default_setup_fee_gbp}
-            className={inputCls}
           />
         </Field>
       </div>
       <Field label="Default invoice footer">
-        <textarea
+        <Textarea
           name="default_invoice_footer"
           defaultValue={s.default_invoice_footer}
-          className={textareaCls}
+          className="min-h-[80px]"
         />
       </Field>
     </SectionShell>
@@ -376,28 +371,26 @@ function SectionBranding({ settings }: { settings: HqSettings }) {
     <SectionShell id="branding">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Logo URL" hint="Public URL — used on PDFs and public quote pages.">
-          <input
+          <Input
             type="url"
             name="logo_url"
             defaultValue={s.logo_url}
             placeholder="https://crewflow.uk/logo.png"
-            className={inputCls}
           />
         </Field>
         <Field label="Primary brand colour" hint="Hex, e.g. #0f172a">
-          <input
+          <Input
             type="text"
             name="primary_color"
             defaultValue={s.primary_color}
-            className={inputCls}
           />
         </Field>
       </div>
       <Field label="PDF footer" hint="Optional small print under invoices and quotes.">
-        <textarea
+        <Textarea
           name="pdf_footer"
           defaultValue={s.pdf_footer}
-          className={textareaCls}
+          className="min-h-[80px]"
         />
       </Field>
     </SectionShell>
@@ -409,10 +402,10 @@ function SectionSupport({ settings }: { settings: HqSettings }) {
   return (
     <SectionShell id="support">
       <Field label="Default reply signature">
-        <textarea
+        <Textarea
           name="default_reply_signature"
           defaultValue={s.default_reply_signature}
-          className={textareaCls}
+          className="min-h-[80px]"
         />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -420,24 +413,22 @@ function SectionSupport({ settings }: { settings: HqSettings }) {
           label="Auto-close (days)"
           hint="Resolved tickets auto-close after N days. 0 disables."
         >
-          <input
+          <Input
             type="number"
             name="auto_close_days"
             min={0}
             max={180}
             defaultValue={s.auto_close_days}
-            className={inputCls}
           />
         </Field>
         <Field
           label="Escalation email"
           hint="Operator escalation contact. Optional."
         >
-          <input
+          <Input
             type="email"
             name="escalation_email"
             defaultValue={s.escalation_email}
-            className={inputCls}
           />
         </Field>
       </div>
@@ -449,7 +440,7 @@ function SectionIntegrations({ settings }: { settings: HqSettings }) {
   const s = settings.integrations;
   return (
     <SectionShell id="integrations">
-      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+      <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
         These toggles record what HQ has wired up. The actual API
         credentials live in Vercel env vars — flipping a toggle here
         does NOT connect or disconnect the provider.
@@ -472,10 +463,10 @@ function SectionIntegrations({ settings }: { settings: HqSettings }) {
         />
       </div>
       <Field label="Notes">
-        <textarea
+        <Textarea
           name="notes"
           defaultValue={s.notes}
-          className={textareaCls}
+          className="min-h-[80px]"
           placeholder="Free-form notes on the current integration state."
         />
       </Field>
@@ -487,7 +478,7 @@ function SectionFeatureFlags({ settings }: { settings: HqSettings }) {
   const s = settings.feature_flags;
   return (
     <SectionShell id="feature_flags">
-      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+      <p className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
         Operator-only flags. Customer plan / role flags live elsewhere.
       </p>
       <div className="space-y-2">

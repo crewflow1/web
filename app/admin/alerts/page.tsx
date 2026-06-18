@@ -15,7 +15,6 @@ import {
   ALERT_SORTS,
   ALERT_SORT_LABELS,
   SEVERITY_LABEL,
-  SEVERITY_PILL,
   THRESHOLDS,
   type Alert,
   type AlertSeverity,
@@ -29,6 +28,27 @@ import {
   reopenAlert,
 } from "./actions";
 import { ClientConfirmForm } from "../_client-confirm";
+import {
+  Alert as AlertBanner,
+  AnimatedNumber,
+  Badge,
+  Button,
+  ButtonLink,
+  EmptyState,
+  GlowHeader,
+  Input,
+  Select,
+  StatTile,
+  Surface,
+  type Accent,
+} from "@/components/ui";
+
+/** Dark-surface accent per severity (mirrors the legacy light pill map). */
+const SEVERITY_ACCENT: Record<AlertSeverity, Accent> = {
+  critical: "rose",
+  warning: "amber",
+  info: "sky",
+};
 
 /**
  * Alerts + AI COO — HQ-5.
@@ -130,141 +150,134 @@ export default async function HqAlertsPage({
   })();
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            HQ · Alerts
-          </p>
-          <h1 className="text-2xl font-bold text-slate-900">Action centre</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Action centre"
+        subtitle={
+          <>
             Deterministic rules engine across every customer. Critical first.
-            Resolved alerts auto-archive — toggle &ldquo;Show resolved&rdquo; to bring them back.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/admin/overview"
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
+            Resolved alerts auto-archive — toggle &ldquo;Show resolved&rdquo; to
+            bring them back.
+          </>
+        }
+        actions={
+          <ButtonLink href="/admin/overview" variant="glass" size="sm">
             ← HQ overview
-          </Link>
-        </div>
-      </header>
+          </ButtonLink>
+        }
+      />
 
-      {banner ? (
-        <div
-          className={`rounded-md border px-3 py-2 text-sm ${
-            banner.tone === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-red-200 bg-red-50 text-red-800"
-          }`}
-        >
-          {banner.msg}
-        </div>
-      ) : null}
+      <div className="space-y-6 p-5 sm:p-7">
+        {banner ? (
+          <AlertBanner tone={banner.tone === "ok" ? "success" : "danger"}>
+            {banner.msg}
+          </AlertBanner>
+        ) : null}
 
-      {/* AI COO PANEL ------------------------------------------------- */}
-      <CooPanel alerts={actionCentre} />
+        {/* AI COO PANEL ------------------------------------------------- */}
+        <CooPanel alerts={actionCentre} />
 
-      {/* KPI tiles --------------------------------------------------- */}
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Open critical" value={String(openCritical)} tone="red" />
-        <Kpi label="Open warning" value={String(openWarning)} tone="amber" />
-        <Kpi label="Unread" value={String(unread)} tone="blue" />
-        <Kpi
-          label="Resolved this week"
-          value={String(recentlyResolved)}
-          tone="emerald"
-        />
-      </section>
-
-      {/* Filter bar -------------------------------------------------- */}
-      <form
-        method="get"
-        action="/admin/alerts"
-        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
-      >
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Search customer / reason
-          <input
-            type="text"
-            name="q"
-            defaultValue={q}
-            placeholder="e.g. Adams Roofing or migration"
-            className="mt-1 w-64 rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        {/* KPI tiles --------------------------------------------------- */}
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile
+            label="Open critical"
+            value={<AnimatedNumber value={openCritical} />}
+            accent={openCritical > 0 ? "rose" : "slate"}
           />
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Severity
-          <select
-            name="severity"
-            defaultValue={severity}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="all">All</option>
-            {ALERT_SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {SEVERITY_LABEL[s]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Sort by
-          <select
-            name="sort"
-            defaultValue={sort}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            {ALERT_SORTS.map((s) => (
-              <option key={s} value={s}>
-                {ALERT_SORT_LABELS[s]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
-          <input
-            type="checkbox"
-            name="show"
-            value="resolved"
-            defaultChecked={showResolved}
+          <StatTile
+            label="Open warning"
+            value={<AnimatedNumber value={openWarning} />}
+            accent={openWarning > 0 ? "amber" : "slate"}
           />
-          Show resolved + snoozed
-        </label>
-        <button
-          type="submit"
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-        >
-          Apply
-        </button>
-        <Link
-          href="/admin/alerts"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Reset
-        </Link>
-      </form>
+          <StatTile
+            label="Unread"
+            value={<AnimatedNumber value={unread} />}
+            accent={unread > 0 ? "indigo" : "slate"}
+          />
+          <StatTile
+            label="Resolved this week"
+            value={<AnimatedNumber value={recentlyResolved} />}
+            accent="emerald"
+          />
+        </section>
 
-      {/* Alert list -------------------------------------------------- */}
-      {sorted.length === 0 ? (
-        <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
-          No alerts match these filters.{" "}
-          {!showResolved
-            ? "Resolved alerts are hidden — toggle 'Show resolved' to bring them back."
-            : ""}
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {sorted.map((a) => (
-            <AlertCard key={a.key} alert={a} contact={contacts.get(a.orgId)} />
-          ))}
-        </ul>
-      )}
+        {/* Filter bar -------------------------------------------------- */}
+        <form
+          method="get"
+          action="/admin/alerts"
+          className="flex flex-wrap items-end gap-2 rounded-2xl border border-slate-800 bg-slate-900/40 p-3"
+        >
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Search customer / reason
+            <Input
+              type="text"
+              name="q"
+              defaultValue={q}
+              placeholder="e.g. Adams Roofing or migration"
+              className="mt-1 w-64"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Severity
+            <Select name="severity" defaultValue={severity} className="mt-1">
+              <option value="all">All</option>
+              {ALERT_SEVERITIES.map((s) => (
+                <option key={s} value={s}>
+                  {SEVERITY_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Sort by
+            <Select name="sort" defaultValue={sort} className="mt-1">
+              {ALERT_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {ALERT_SORT_LABELS[s]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex items-center gap-2 text-[11px] font-medium text-slate-400">
+            <input
+              type="checkbox"
+              name="show"
+              value="resolved"
+              defaultChecked={showResolved}
+              className="h-4 w-4 rounded border-slate-700 bg-slate-900/80 text-indigo-500 focus:ring-indigo-500/30"
+            />
+            Show resolved + snoozed
+          </label>
+          <Button type="submit" variant="accent" size="sm">
+            Apply
+          </Button>
+          <ButtonLink href="/admin/alerts" variant="glass" size="sm">
+            Reset
+          </ButtonLink>
+        </form>
 
-      <FooterMeta count={sorted.length} totalRules={withState.length} />
-    </div>
+        {/* Alert list -------------------------------------------------- */}
+        {sorted.length === 0 ? (
+          <EmptyState
+            title="No alerts match these filters."
+            description={
+              !showResolved
+                ? "Resolved alerts are hidden — toggle 'Show resolved' to bring them back."
+                : undefined
+            }
+          />
+        ) : (
+          <ul className="space-y-3">
+            {sorted.map((a) => (
+              <AlertCard key={a.key} alert={a} contact={contacts.get(a.orgId)} />
+            ))}
+          </ul>
+        )}
+
+        <FooterMeta count={sorted.length} totalRules={withState.length} />
+      </div>
+    </Surface>
   );
 }
 
@@ -274,26 +287,26 @@ export default async function HqAlertsPage({
 
 function CooPanel({ alerts }: { alerts: ReadonlyArray<AlertWithState> }) {
   return (
-    <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-5 shadow-sm">
+    <section className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5">
       <div className="flex items-baseline justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300">
             AI COO · Today needs attention
           </p>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-400">
             Top {THRESHOLDS.cooPanelLimit} from the rules engine. Deterministic
             today, LLM rerank lands later — same shape.
           </p>
         </div>
         <Link
           href="/admin/alerts?show=resolved"
-          className="text-xs font-medium text-indigo-700 hover:underline"
+          className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
         >
           See archive →
         </Link>
       </div>
       {alerts.length === 0 ? (
-        <p className="mt-4 rounded-md border border-dashed border-indigo-200 bg-white px-3 py-4 text-center text-sm text-slate-500">
+        <p className="mt-4 rounded-xl border border-dashed border-indigo-500/30 bg-slate-900/60 px-3 py-4 text-center text-sm text-slate-400">
           Nothing on fire. Enjoy your morning.
         </p>
       ) : (
@@ -301,27 +314,29 @@ function CooPanel({ alerts }: { alerts: ReadonlyArray<AlertWithState> }) {
           {alerts.map((a, i) => (
             <li
               key={a.key}
-              className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+              className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"
             >
               <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                 #{i + 1} · {SEVERITY_LABEL[a.severity]}
               </p>
-              <p className="mt-1 text-base font-semibold text-slate-900">
+              <p className="mt-1 text-base font-semibold text-white">
                 {a.orgName}
               </p>
-              <p className="text-xs text-slate-700">
+              <p className="text-xs text-slate-300">
                 £{a.mrr.toLocaleString("en-GB")} MRR
                 {a.health !== null ? ` · Health ${a.health}` : ""}
               </p>
-              <p className="mt-2 text-xs italic text-slate-600">
+              <p className="mt-2 text-xs italic text-slate-400">
                 {a.suggestion}
               </p>
-              <Link
+              <ButtonLink
                 href={`/admin/customers/${a.orgId}`}
-                className="mt-3 inline-block rounded-md bg-indigo-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-800"
+                variant="accent"
+                size="sm"
+                className="mt-3"
               >
                 Open customer →
-              </Link>
+              </ButtonLink>
             </li>
           ))}
         </ol>
@@ -349,49 +364,45 @@ function AlertCard({
 
   return (
     <li
-      className={`rounded-xl border bg-white p-4 shadow-sm ${
+      className={`rounded-2xl border bg-slate-900/40 p-4 ${
         alert.resolved
-          ? "border-emerald-200 opacity-75"
+          ? "border-emerald-500/30 opacity-75"
           : alert.snoozed
-            ? "border-slate-200 opacity-75"
+            ? "border-slate-800 opacity-75"
             : alert.unread
-              ? "border-slate-300 ring-1 ring-slate-200"
-              : "border-slate-200"
+              ? "border-slate-700 ring-1 ring-slate-700/60"
+              : "border-slate-800"
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         {/* Left: identity */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${SEVERITY_PILL[alert.severity]}`}
-            >
+            <Badge accent={SEVERITY_ACCENT[alert.severity]}>
               {SEVERITY_LABEL[alert.severity]}
-            </span>
+            </Badge>
             <span className="text-[11px] font-medium text-slate-500">
               {alert.ruleLabel}
             </span>
             {alert.unread ? (
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-900">
-                Unread
-              </span>
+              <Badge accent="indigo">Unread</Badge>
             ) : null}
             {alert.snoozed ? (
-              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+              <Badge accent="slate">
                 Snoozed until{" "}
                 {alert.state?.snoozed_until?.slice(0, 10) ?? "—"}
-              </span>
+              </Badge>
             ) : null}
             {alert.resolved ? (
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900">
+              <Badge accent="emerald">
                 Resolved {alert.state?.resolved_at?.slice(0, 10) ?? "—"}
-              </span>
+              </Badge>
             ) : null}
           </div>
-          <h2 className="mt-1 text-base font-bold text-slate-900">
+          <h2 className="mt-1 text-base font-bold text-white">
             {alert.orgName}
           </h2>
-          <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-700 sm:grid-cols-3">
+          <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-300 sm:grid-cols-3">
             <Field
               label="MRR"
               value={`£${alert.mrr.toLocaleString("en-GB")}`}
@@ -406,7 +417,7 @@ function AlertCard({
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Reason
             </p>
-            <ul className="mt-1 list-disc pl-5 text-sm text-slate-800">
+            <ul className="mt-1 list-disc pl-5 text-sm text-slate-300">
               {alert.reason.map((r, idx) => (
                 <li key={idx}>{r}</li>
               ))}
@@ -417,7 +428,7 @@ function AlertCard({
               Suggested action
             </span>
             <br />
-            <span className="font-medium text-slate-900">
+            <span className="font-medium text-white">
               {alert.suggestion}
             </span>
           </p>
@@ -427,37 +438,39 @@ function AlertCard({
         <div className="flex w-full flex-col gap-3 sm:w-auto">
           <div className="flex flex-wrap items-center gap-2">
             {phone ? (
-              <a
-                href={`tel:${phone}`}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
+              <ButtonLink href={`tel:${phone}`} external variant="glass" size="sm">
                 Call
-              </a>
+              </ButtonLink>
             ) : null}
             {email ? (
-              <a
+              <ButtonLink
                 href={`mailto:${email}`}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                external
+                variant="glass"
+                size="sm"
               >
                 Email
-              </a>
+              </ButtonLink>
             ) : null}
             {waHref ? (
-              <a
+              <ButtonLink
                 href={waHref}
+                external
                 target="_blank"
                 rel="noreferrer noopener"
-                className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
+                size="sm"
+                className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
               >
                 WhatsApp
-              </a>
+              </ButtonLink>
             ) : null}
-            <Link
+            <ButtonLink
               href={`/admin/customers/${alert.orgId}`}
-              className="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-900 hover:bg-indigo-100"
+              variant="glass"
+              size="sm"
             >
               Open customer
-            </Link>
+            </ButtonLink>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {alert.resolved ? (
@@ -467,12 +480,9 @@ function AlertCard({
               >
                 <input type="hidden" name="rule_id" value={alert.ruleId} />
                 <input type="hidden" name="org_id" value={alert.orgId} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
+                <Button type="submit" variant="glass" size="sm">
                   Reopen
-                </button>
+                </Button>
               </ClientConfirmForm>
             ) : (
               <>
@@ -482,12 +492,9 @@ function AlertCard({
                   <form action={markAlertRead}>
                     <input type="hidden" name="rule_id" value={alert.ruleId} />
                     <input type="hidden" name="org_id" value={alert.orgId} />
-                    <button
-                      type="submit"
-                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                    >
+                    <Button type="submit" variant="glass" size="sm">
                       Mark read
-                    </button>
+                    </Button>
                   </form>
                 ) : null}
               </>
@@ -508,19 +515,20 @@ function ResolveForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
     >
       <input type="hidden" name="rule_id" value={ruleId} />
       <input type="hidden" name="org_id" value={orgId} />
-      <input
+      <Input
         type="text"
         name="resolution_note"
         placeholder="Note (optional)"
         maxLength={2000}
-        className="w-40 rounded-md border border-slate-300 px-2 py-1 text-xs shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        className="w-40 px-2 py-1.5 text-xs"
       />
-      <button
+      <Button
         type="submit"
-        className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+        size="sm"
+        className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
       >
         Mark resolved
-      </button>
+      </Button>
     </ClientConfirmForm>
   );
 }
@@ -534,22 +542,15 @@ function SnoozeForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
     >
       <input type="hidden" name="rule_id" value={ruleId} />
       <input type="hidden" name="org_id" value={orgId} />
-      <select
-        name="preset"
-        defaultValue="3d"
-        className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-      >
+      <Select name="preset" defaultValue="3d" className="px-2 py-1.5 text-xs">
         <option value="1d">1 day</option>
         <option value="3d">3 days</option>
         <option value="7d">7 days</option>
         <option value="30d">30 days</option>
-      </select>
-      <button
-        type="submit"
-        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-      >
+      </Select>
+      <Button type="submit" variant="glass" size="sm">
         Snooze
-      </button>
+      </Button>
     </ClientConfirmForm>
   );
 }
@@ -558,38 +559,13 @@ function SnoozeForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
 // Bits
 // =====================================================================
 
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "red" | "amber" | "blue" | "emerald";
-}) {
-  const colourise: Record<typeof tone, string> = {
-    red: "bg-red-50 border-red-200 text-red-900",
-    amber: "bg-amber-50 border-amber-200 text-amber-900",
-    blue: "bg-blue-50 border-blue-200 text-blue-900",
-    emerald: "bg-emerald-50 border-emerald-200 text-emerald-900",
-  };
-  return (
-    <div className={`rounded-xl border p-3 shadow-sm ${colourise[tone]}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide opacity-75">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
-    </div>
-  );
-}
-
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
         {label}
       </p>
-      <p className="text-sm font-medium text-slate-900">{value}</p>
+      <p className="text-sm font-medium text-white">{value}</p>
     </div>
   );
 }
@@ -602,7 +578,7 @@ function FooterMeta({
   totalRules: number;
 }) {
   return (
-    <footer className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
+    <footer className="border-t border-slate-800 pt-3 text-[11px] text-slate-500">
       Showing {count} of {totalRules} alerts. Engine is deterministic — re-runs
       on every page load. LLM rerank lands later without changing this surface.
     </footer>
