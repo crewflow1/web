@@ -14,6 +14,7 @@ import {
 import { computePayrollLine } from "@/lib/payroll/compute";
 import { formatTimeUK, formatDateUK } from "@/lib/time/format";
 import { clockIn, clockOut, startBreak, endBreak } from "./actions";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Staff mobile dashboard ("My day").
@@ -264,20 +265,28 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
       </section>
 
       {/* Today + week tiles */}
-      <section className="grid grid-cols-2 gap-3">
-        <Tile label="Today" value={`${hoursToday.toFixed(2)} h`} sub={clockedIn ? "live" : "logged"} />
-        <Tile label="This week" value={`${hoursWeek.toFixed(2)} h`} sub={`${weekStartIso} → ${weekEndIso}`} />
-        <Tile
-          label="Expected gross"
-          value={GBP.format(expected.gross_pay)}
-          sub={hourlyPay > 0 ? `${GBP.format(hourlyPay)}/h` : "no hourly rate set"}
-        />
-        <Tile
-          label="Expected take-home"
-          value={GBP.format(expected.net_pay)}
-          sub={`PAYE ${GBP.format(expected.paye_estimate)} · NI ${GBP.format(expected.ni_estimate)}`}
-        />
-      </section>
+      <Stagger className="grid grid-cols-2 gap-3">
+        <StaggerItem className="h-full">
+          <Tile label="Today" value={`${hoursToday.toFixed(2)} h`} sub={clockedIn ? "live" : "logged"} />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile label="This week" value={`${hoursWeek.toFixed(2)} h`} sub={`${weekStartIso} → ${weekEndIso}`} />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile
+            label="Expected gross"
+            value={GBP.format(expected.gross_pay)}
+            sub={hourlyPay > 0 ? `${GBP.format(hourlyPay)}/h` : "no hourly rate set"}
+          />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile
+            label="Expected take-home"
+            value={GBP.format(expected.net_pay)}
+            sub={`PAYE ${GBP.format(expected.paye_estimate)} · NI ${GBP.format(expected.ni_estimate)}`}
+          />
+        </StaggerItem>
+      </Stagger>
 
       {/* Timesheet history — daily/weekly/monthly + clock in/out history */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -420,7 +429,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
 
 function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 text-xl font-bold text-slate-900">{value}</div>
       <div className="mt-0.5 text-xs text-slate-500">{sub}</div>

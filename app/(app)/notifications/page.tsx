@@ -15,6 +15,7 @@ import {
   groupByDate,
 } from "@/lib/notifications/sort";
 import { markRead, markAllRead, dismiss } from "./actions";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer notifications centre (HQ-8).
@@ -182,11 +183,11 @@ export default async function CustomerNotificationsPage({
               <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 {g.label}
               </p>
-              <ul className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white shadow-sm">
+              <Stagger className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white shadow-sm">
                 {g.rows.map((n) => {
                   const isUnread = n.read_at === null && n.dismissed_at === null;
                   return (
-                    <li
+                    <StaggerItem
                       key={n.id}
                       className={`px-4 py-3 ${isUnread ? "" : "opacity-70"}`}
                     >
@@ -251,10 +252,10 @@ export default async function CustomerNotificationsPage({
                           ) : null}
                         </div>
                       </div>
-                    </li>
+                    </StaggerItem>
                   );
                 })}
-              </ul>
+              </Stagger>
             </section>
           ))}
         </div>

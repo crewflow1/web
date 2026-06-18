@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { markEnquiryStatus } from "./actions";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * /inbox — every inbound enquiry the AI receptionist captured.
@@ -138,9 +139,9 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
           body="When customers call, message or DM you, the AI receptionist will capture them here."
         />
       ) : (
-        <ul className="space-y-3">
+        <Stagger className="space-y-3">
           {rows.map((row) => (
-            <li
+            <StaggerItem
               key={row.id}
               className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
             >
@@ -235,9 +236,9 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
                   </>
                 ) : null}
               </div>
-            </li>
+            </StaggerItem>
           ))}
-        </ul>
+        </Stagger>
       )}
     </div>
   );

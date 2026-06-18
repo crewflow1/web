@@ -7,6 +7,7 @@ import {
   type ActivityRow,
 } from "@/lib/activity/render";
 import { formatDateTimeUK } from "@/lib/time/format";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Dedicated activity log. Filter by date range, actor, action type
@@ -170,9 +171,9 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
         {(rows ?? []).length === 0 ? (
           <p className="p-6 text-sm text-slate-500">No activity matches these filters.</p>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <Stagger className="divide-y divide-slate-100">
             {((rows ?? []) as unknown as ActivityRow[]).map((r) => (
-              <li key={r.id} className="flex items-start gap-3 px-4 py-3">
+              <StaggerItem key={r.id} className="flex items-start gap-3 px-4 py-3">
                 <span aria-hidden className="text-lg">{actionIcon(r.action)}</span>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-slate-900">
@@ -184,9 +185,9 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
                     {formatDateTimeUK(r.created_at)}
                   </div>
                 </div>
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
         )}
       </section>
 
