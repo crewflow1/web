@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createImport } from "./actions";
 import { CONNECTORS } from "@/lib/imports/connectors";
 import { CreateImportForm } from "./_create-form";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Migration OS entry point. Admins only.
@@ -78,16 +79,16 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
         <CreateImportForm action={createImport} />
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="border-b border-slate-200 px-6 py-3">
           <h2 className="text-base font-semibold text-slate-900">Past imports</h2>
         </header>
         {(imports ?? []).length === 0 ? (
           <p className="p-6 text-sm text-slate-500">No imports yet.</p>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <Stagger className="divide-y divide-slate-100">
             {(imports ?? []).map((im) => (
-              <li key={im.id} className="flex items-center justify-between px-6 py-3 text-sm">
+              <StaggerItem key={im.id} className="flex items-center justify-between px-6 py-3 text-sm">
                 <div className="min-w-0">
                   <Link
                     href={`/imports/${im.id}`}
@@ -102,14 +103,14 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
                   </div>
                 </div>
                 <StatusPill status={im.status} />
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
         )}
-      </section>
+      </FadeIn>
 
       {/* Connector catalogue — v2 placeholders, file-export upload now */}
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="border-b border-slate-200 px-6 py-3">
           <h2 className="text-base font-semibold text-slate-900">
             Move from another system
@@ -166,7 +167,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
             </li>
           ))}
         </ul>
-      </section>
+      </FadeIn>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -110,7 +111,7 @@ export default async function SettingsPage() {
       </header>
 
       {/* Profile ------------------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Profile</h2>
         <p className="mt-1 text-sm text-slate-600">
           How you appear in CrewFlow to teammates.
@@ -124,10 +125,10 @@ export default async function SettingsPage() {
             phone: profile?.phone ?? "",
           }}
         />
-      </section>
+      </FadeIn>
 
       {/* Organisation -------------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Organisation</h2>
@@ -161,10 +162,10 @@ export default async function SettingsPage() {
             bank_reference: bank.reference ?? "",
           }}
         />
-      </section>
+      </FadeIn>
 
       {/* AI Receptionist ----------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
@@ -194,10 +195,10 @@ export default async function SettingsPage() {
                 : "View setup status"}
           </Link>
         </div>
-      </section>
+      </FadeIn>
 
       {/* Plan & billing ----------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900">
             Plan &amp; billing
@@ -255,10 +256,10 @@ export default async function SettingsPage() {
             Self-serve upgrade / downgrade lands in a future release.
           </p>
         </div>
-      </section>
+      </FadeIn>
 
       {/* Members ------------------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900">Members</h2>
           <span className="text-xs text-slate-500">
@@ -303,7 +304,7 @@ export default async function SettingsPage() {
           have them sign in once with Google or magic link and message us to
           attach them to this org.
         </p>
-      </section>
+      </FadeIn>
     </div>
   );
 }

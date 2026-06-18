@@ -14,6 +14,7 @@ import {
   type SupportStatus,
   type SupportSort,
 } from "@/lib/hq/support";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer-side support tickets list.
@@ -172,9 +173,9 @@ export default async function CustomerSupportPage({
           </p>
         </div>
       ) : (
-        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white shadow-sm">
+        <Stagger className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white shadow-sm">
           {sorted.map((t) => (
-            <li key={t.id} className="px-4 py-3 hover:bg-slate-50">
+            <StaggerItem key={t.id} className="px-4 py-3 hover:bg-slate-50">
               <Link
                 href={`/support/${t.id}`}
                 className="flex flex-wrap items-baseline justify-between gap-2"
@@ -210,9 +211,9 @@ export default async function CustomerSupportPage({
                     : `Created ${t.created_at.slice(0, 10)}`}
                 </p>
               </Link>
-            </li>
+            </StaggerItem>
           ))}
-        </ul>
+        </Stagger>
       )}
     </div>
   );

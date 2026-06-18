@@ -7,6 +7,7 @@ import {
 import { InsightsSection } from "../dashboard/_insights";
 import { QuestionBox } from "./_question-box";
 import { isAiConfigured } from "@/lib/ai/safety";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /insights — AI Analysis (tenant-side).
@@ -58,7 +59,7 @@ export default async function InsightsPage() {
         </p>
       </header>
 
-      <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm text-amber-900">
+      <FadeIn className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-sm text-amber-900">
         <p className="font-medium">Read-only by design.</p>
         <p className="mt-1 text-xs">
           We treat AI as a second pair of eyes, not a co-pilot at the
@@ -67,13 +68,13 @@ export default async function InsightsPage() {
           guardrails). Your business data is the source of truth — not
           the model.
         </p>
-      </section>
+      </FadeIn>
 
       <QuestionBox aiConfigured={isAiConfigured()} />
 
       <InsightsSection activity={activity} leads={leads} />
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
           What gets surfaced here?
         </h2>
@@ -99,7 +100,7 @@ export default async function InsightsPage() {
             stay one source.
           </li>
         </ul>
-      </section>
+      </FadeIn>
     </div>
   );
 }

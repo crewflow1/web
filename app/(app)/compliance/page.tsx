@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { deleteComplianceDocument } from "./actions";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * /compliance — library of insurance, certificates, permits, contracts.
@@ -147,7 +148,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
           primary={{ href: "/compliance/new", label: "Add a document" }}
         />
       ) : (
-        <ul className="space-y-3">
+        <Stagger className="space-y-3">
           {rows.map((row) => {
             const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
             const expiresInDays = expiresAt
@@ -162,7 +163,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
               expiresInDays != null && expiresInDays > 7 && expiresInDays <= 30;
 
             return (
-              <li
+              <StaggerItem
                 key={row.id}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
@@ -223,10 +224,10 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
                     </form>
                   </div>
                 </div>
-              </li>
+              </StaggerItem>
             );
           })}
-        </ul>
+        </Stagger>
       )}
 
       <p className="text-xs text-slate-500">

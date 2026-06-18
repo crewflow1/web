@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { defaultPeriod } from "@/lib/payroll/compute";
 import { createPayrollRun } from "./actions";
 import { CreateRunForm } from "./_create-run-form";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Payroll overview — admins only.
@@ -114,18 +115,18 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
         />
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="border-b border-slate-200 px-6 py-3">
           <h2 className="text-base font-semibold text-slate-900">Run history</h2>
         </header>
         {(runs ?? []).length === 0 ? (
           <p className="p-6 text-sm text-slate-500">No payroll runs yet.</p>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <Stagger className="divide-y divide-slate-100">
             {(runs ?? []).map((r) => {
               const t = totalsByRun.get(r.id) ?? { gross: 0, net: 0, count: 0 };
               return (
-                <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 text-sm">
+                <StaggerItem key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 text-sm">
                   <div>
                     <Link
                       href={`/payroll/${r.id}`}
@@ -147,12 +148,12 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
                   >
                     {r.status}
                   </span>
-                </li>
+                </StaggerItem>
               );
             })}
-          </ul>
+          </Stagger>
         )}
-      </section>
+      </FadeIn>
     </div>
   );
 }

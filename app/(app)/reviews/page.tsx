@@ -7,6 +7,7 @@ import {
   emailReviewRequestNow,
   markReviewCompletedAction,
 } from "./actions";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * /reviews — list of every review request the operator has scheduled.
@@ -155,9 +156,9 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
           primary={{ href: "/reviews/new", label: "Request a review" }}
         />
       ) : (
-        <ul className="space-y-3">
+        <Stagger className="space-y-3">
           {rows.map((row) => (
-            <li
+            <StaggerItem
               key={row.id}
               className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
             >
@@ -251,9 +252,9 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
                   </form>
                 ) : null}
               </div>
-            </li>
+            </StaggerItem>
           ))}
-        </ul>
+        </Stagger>
       )}
     </div>
   );

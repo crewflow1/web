@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
 import { PendingInvites } from "./_pending-invites";
 import { listPendingInvites } from "./_invites";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Staff list page.
@@ -149,7 +150,7 @@ export default async function StaffPage({
       ) : null}
 
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -215,7 +216,7 @@ export default async function StaffPage({
             </tbody>
           </table>
         </div>
-      </section>
+      </FadeIn>
 
       {isAdmin ? <PendingInvites invites={pendingInvites} /> : null}
 
