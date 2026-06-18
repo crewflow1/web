@@ -18,6 +18,9 @@ import {
   winRate,
   type AiProductivity,
   type SalesAiTask,
+  type SalesCall,
+  type SalesCallItem,
+  type SalesCallScript,
   type SalesChannel,
   type SalesChannelType,
   type SalesCompany,
@@ -28,7 +31,10 @@ import {
   type SalesFacets,
   type SalesFeedItem,
   type SalesIntegration,
+  type SalesLearning,
+  type SalesLearningItem,
   type SalesLocation,
+  type SalesObjection,
   type SalesRecommendation,
   type SalesResearchReport,
   type SalesSource,
@@ -38,6 +44,18 @@ import {
   type StatusCounts,
   type TaskStatusCounts,
 } from "@/lib/sales/model";
+import { COMM_EVENT_TYPES } from "@/lib/sales/comms";
+import {
+  OPEN_CALL_STATUSES,
+  summariseCalls,
+  type CallStats,
+  type CallSummaryInput,
+} from "@/lib/sales/calling";
+import {
+  summariseLearnings,
+  type LearningStats,
+  type LearningSummaryInput,
+} from "@/lib/sales/learning";
 
 /**
  * CrewFlow HQ — Sales AI Platform data access (CEO Directive 003).
@@ -158,6 +176,34 @@ const FACET_COLUMNS =
 
 const FACET_WINDOW = 5000; // bounded sample for facets + pipeline value
 const ACTIVITY_WINDOW = 1000; // bounded sample for activity series
+
+// Calling Centre (Phase 6). `transcript` (up to 200k chars) and `search_tsv`
+// are excluded from list reads so the queue + feed stay light at scale; the
+// transcript is only ever loaded on a single-call view.
+const CALL_COLUMNS =
+  "id, company_id, contact_id, script_id, ai_task_id, direction, status, priority, priority_rank, outcome, objective, scheduled_at, started_at, ended_at, duration_seconds, recording_url, summary, notes, sentiment, sentiment_score, objections_raised, follow_up_at, follow_up_notes, follow_up_done, tags, memory_id, generated_by, model, ai_employee_id, source, created_by_email, metadata, created_at, updated_at";
+
+// The minimal column set feeding lib/sales/calling.summariseCalls — read over
+// a larger window so the headline stats are honest beyond the visible page.
+const CALL_STATS_COLUMNS =
+  "status, outcome, sentiment, duration_seconds, ended_at, follow_up_at, follow_up_done";
+const CALL_STATS_WINDOW = 5000;
+
+const CALL_SCRIPT_COLUMNS =
+  "id, name, category, status, version, summary, opening, body, talking_points, questions, target_persona, target_status, estimated_duration_seconds, tags, usage_count, generated_by, model, ai_employee_id, created_by_email, created_at, updated_at";
+
+const OBJECTION_COLUMNS =
+  "id, objection, category, response, supporting_points, follow_up, tags, confidence, win_rate, times_used, status, memory_id, generated_by, model, ai_employee_id, created_by_email, created_at, updated_at";
+
+// Learning Engine (Phase 7). `search_tsv` is excluded from list reads; every
+// other column is bounded (prompt/context/result ≤ 8k) so the feed stays
+// light. The minimal stats read powers the honest headline roll-up.
+const LEARNING_COLUMNS =
+  "id, title, pattern_type, channel, status, summary, prompt, context, result, supporting_points, tags, metrics, confidence, times_used, times_won, win_rate, last_used_at, company_id, source_call_id, source_event_id, source_objection_id, memory_id, generated_by, model, ai_employee_id, source, created_by_email, created_at, updated_at";
+
+const LEARNING_STATS_COLUMNS =
+  "status, pattern_type, confidence, times_used, times_won, memory_id, updated_at";
+const LEARNING_STATS_WINDOW = 5000;
 
 // ---------------------------------------------------------------------
 // Lookups (extensible — "new lead sources are data, not code").
@@ -455,6 +501,345 @@ export async function listActivityFeed(
     ...e,
     company_name: nameById.get(e.company_id) ?? null,
   }));
+}
+
+/**
+ * Communication Centre window (Directive 004, Phase 5) — a bounded,
+ * newest-first read of every messaging touch (email / phone / linkedin /
+ * instagram / whatsapp / sms / facebook) across ALL companies, joined with
+ * company names. The page buckets this per channel in-app (lib/sales/comms).
+ * Optional full-text search keeps "everything searchable" honest. Mirrors
+ * listActivityFeed's bounded-read + name-join shape; the
+ * ai_employee_tasks-style scale story is identical.
+ */
+export async function listCommunicationWindow(
+  limit = 200,
+  search?: string,
+): Promise<SalesFeedItem[]> {
+  const admin = createAdminClient();
+  let q = table<SalesTimelineEvent>(admin, "hq_sales_timeline_events")
+    .select(TIMELINE_COLUMNS)
+    .in("event_type", COMM_EVENT_TYPES);
+  const term = search?.trim();
+  if (term) {
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+  const { data, error } = await q
+    .order("occurred_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listCommunicationWindow failed", error);
+    return [];
+  }
+  const events = (data ?? []) as SalesTimelineEvent[];
+  if (events.length === 0) return [];
+
+  const companyIds = [...new Set(events.map((e) => e.company_id))];
+  const { data: companies } = await table<{ id: string; name: string }>(
+    admin,
+    "hq_sales_companies",
+  )
+    .select("id, name")
+    .in("id", companyIds);
+  const nameById = new Map(
+    ((companies ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]),
+  );
+
+  return events.map((e) => ({
+    ...e,
+    company_name: nameById.get(e.company_id) ?? null,
+  }));
+}
+
+// ---------------------------------------------------------------------
+// AI Calling Centre (Directive 004, Phase 6). The reusable script library,
+// the objection playbook, and the per-call record + queue. FOUNDATION ONLY
+// — no telephony provider is wired; these are bounded, indexed reads of the
+// hq_sales_call_scripts / _objections / _calls tables. The "call queue" is
+// simply calls in an open status, ordered by the indexed priority_rank
+// (mirroring listAiTasks).
+// ---------------------------------------------------------------------
+
+export async function listCallScripts(
+  opts: { status?: string; category?: string; limit?: number } = {},
+): Promise<SalesCallScript[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 100)));
+  let q = table<SalesCallScript>(admin, "hq_sales_call_scripts").select(
+    CALL_SCRIPT_COLUMNS,
+  );
+  if (opts.status) q = q.eq("status", opts.status);
+  if (opts.category) q = q.eq("category", opts.category);
+  const { data, error } = await q
+    .order("category", { ascending: true })
+    .order("name", { ascending: true })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listCallScripts failed", error);
+    return [];
+  }
+  return (data ?? []) as SalesCallScript[];
+}
+
+export async function listObjections(
+  opts: { status?: string; category?: string; limit?: number } = {},
+): Promise<SalesObjection[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 100)));
+  let q = table<SalesObjection>(admin, "hq_sales_objections").select(
+    OBJECTION_COLUMNS,
+  );
+  if (opts.status) q = q.eq("status", opts.status);
+  if (opts.category) q = q.eq("category", opts.category);
+  const { data, error } = await q
+    .order("category", { ascending: true })
+    .order("confidence", { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listObjections failed", error);
+    return [];
+  }
+  return (data ?? []) as SalesObjection[];
+}
+
+export type CallFilter = {
+  status?: string;
+  outcome?: string;
+  sentiment?: string;
+  /** When true, restrict to open calls and order as the dequeue index does. */
+  queue?: boolean;
+  search?: string;
+  limit?: number;
+};
+
+/**
+ * A bounded, company-name-joined window of calls. In queue mode it returns
+ * only open calls in dequeue order (priority, then earliest scheduled, then
+ * oldest); otherwise newest-first for the activity feed. Optional full-text
+ * search keeps "everything searchable" honest (summary / transcript / notes).
+ */
+export async function listCalls(
+  filter: CallFilter = {},
+): Promise<SalesCallItem[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(500, Math.max(1, Math.floor(filter.limit ?? 100)));
+  let q = table<SalesCall>(admin, "hq_sales_calls").select(CALL_COLUMNS);
+
+  if (filter.queue) {
+    q = q.in("status", OPEN_CALL_STATUSES);
+  } else if (filter.status) {
+    q = q.eq("status", filter.status);
+  }
+  if (filter.outcome) q = q.eq("outcome", filter.outcome);
+  if (filter.sentiment) q = q.eq("sentiment", filter.sentiment);
+  const term = filter.search?.trim();
+  if (term) {
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+
+  if (filter.queue) {
+    q = q
+      .order("priority_rank", { ascending: true })
+      .order("scheduled_at", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true });
+  } else {
+    q = q.order("created_at", { ascending: false });
+  }
+
+  const { data, error } = await q.limit(limit);
+  if (error) {
+    console.error("[hq-sales] listCalls failed", error);
+    return [];
+  }
+  const calls = (data ?? []) as SalesCall[];
+  if (calls.length === 0) return [];
+
+  const companyIds = [...new Set(calls.map((c) => c.company_id))];
+  const { data: companies } = await table<{ id: string; name: string }>(
+    admin,
+    "hq_sales_companies",
+  )
+    .select("id, name")
+    .in("id", companyIds);
+  const nameById = new Map(
+    ((companies ?? []) as { id: string; name: string }[]).map((c) => [
+      c.id,
+      c.name,
+    ]),
+  );
+
+  return calls.map((c) => ({
+    ...c,
+    company_name: nameById.get(c.company_id) ?? null,
+  }));
+}
+
+export type CallingCentre = {
+  stats: CallStats;
+  queue: SalesCallItem[];
+  recent: SalesCallItem[];
+  scripts: SalesCallScript[];
+  objections: SalesObjection[];
+  integrations: SalesIntegration[];
+};
+
+/**
+ * The Calling Centre payload. Stats roll up over a bounded stats window (a
+ * lightweight status/outcome/sentiment read); the queue + recent feed are
+ * separate, richer, bounded reads; the script library + objection playbook
+ * are the seeded, immediately-useful sales assets. `search` scopes only the
+ * recent feed — the queue + stats stay complete.
+ */
+export async function getCallingCentre(
+  opts: { search?: string; recentLimit?: number; queueLimit?: number } = {},
+): Promise<CallingCentre> {
+  const admin = createAdminClient();
+  const [statsRes, queue, recent, scripts, objections, integrations] =
+    await Promise.all([
+      table<CallSummaryInput>(admin, "hq_sales_calls")
+        .select(CALL_STATS_COLUMNS)
+        .order("created_at", { ascending: false })
+        .limit(CALL_STATS_WINDOW),
+      listCalls({ queue: true, limit: opts.queueLimit ?? 40 }),
+      listCalls({ search: opts.search, limit: opts.recentLimit ?? 60 }),
+      listCallScripts({ limit: 100 }),
+      listObjections({ limit: 100 }),
+      listIntegrations(),
+    ]);
+
+  const stats = summariseCalls((statsRes.data ?? []) as CallSummaryInput[]);
+
+  return { stats, queue, recent, scripts, objections, integrations };
+}
+
+// ---------------------------------------------------------------------
+// Sales Learning Engine (Directive 004, Phase 7). The distilled, reusable
+// winning-pattern library — bounded, indexed reads of the hq_sales_learnings
+// table, ranked "best plays first" (highest win-rate, then most-used, then
+// newest — the rank index order). FOUNDATION ONLY: nothing here captures,
+// scores, or applies a learning; it reads the permanent, audited table.
+// ---------------------------------------------------------------------
+
+export type LearningFilter = {
+  pattern_type?: string;
+  status?: string;
+  search?: string;
+  limit?: number;
+};
+
+/**
+ * A bounded, source-company-name-joined window of learnings, ranked
+ * best-first (highest win-rate, then most-used, then newest — the rank
+ * index order). Optional full-text search keeps the playbook searchable
+ * (title / summary / prompt / context / result). company_id is optional on
+ * a learning (a hand-authored starter play has none), so the join is
+ * skipped when no row carries one.
+ */
+export async function listLearnings(
+  filter: LearningFilter = {},
+): Promise<SalesLearningItem[]> {
+  const admin = createAdminClient();
+  const limit = Math.min(500, Math.max(1, Math.floor(filter.limit ?? 100)));
+  let q = table<SalesLearning>(admin, "hq_sales_learnings").select(
+    LEARNING_COLUMNS,
+  );
+
+  if (filter.status) q = q.eq("status", filter.status);
+  if (filter.pattern_type) q = q.eq("pattern_type", filter.pattern_type);
+  const term = filter.search?.trim();
+  if (term) {
+    q = q.textSearch("search_tsv", term, { type: "websearch", config: "english" });
+  }
+
+  const { data, error } = await q
+    .order("win_rate", { ascending: false, nullsFirst: false })
+    .order("times_used", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("[hq-sales] listLearnings failed", error);
+    return [];
+  }
+  const learnings = (data ?? []) as SalesLearning[];
+  if (learnings.length === 0) return [];
+
+  const companyIds = [
+    ...new Set(
+      learnings
+        .map((l) => l.company_id)
+        .filter((id): id is string => id != null),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (companyIds.length > 0) {
+    const { data: companies } = await table<{ id: string; name: string }>(
+      admin,
+      "hq_sales_companies",
+    )
+      .select("id, name")
+      .in("id", companyIds);
+    for (const c of (companies ?? []) as { id: string; name: string }[]) {
+      nameById.set(c.id, c.name);
+    }
+  }
+
+  return learnings.map((l) => ({
+    ...l,
+    company_name: l.company_id ? nameById.get(l.company_id) ?? null : null,
+  }));
+}
+
+export type LearningEngine = {
+  stats: LearningStats;
+  learnings: SalesLearningItem[];
+};
+
+/**
+ * The Learning Engine payload. Stats roll up over a bounded stats window (a
+ * lightweight status / type / confidence / usage read) so the headline is
+ * honest beyond the visible page; the ranked feed is a separate, richer,
+ * bounded read. `search` scopes only the feed — the stats stay complete.
+ */
+export async function getLearningEngine(
+  opts: { search?: string; limit?: number } = {},
+): Promise<LearningEngine> {
+  const admin = createAdminClient();
+  const [statsRes, learnings] = await Promise.all([
+    table<LearningSummaryInput>(admin, "hq_sales_learnings")
+      .select(LEARNING_STATS_COLUMNS)
+      .order("created_at", { ascending: false })
+      .limit(LEARNING_STATS_WINDOW),
+    listLearnings({ search: opts.search, limit: opts.limit ?? 60 }),
+  ]);
+
+  const stats = summariseLearnings(
+    (statsRes.data ?? []) as LearningSummaryInput[],
+  );
+
+  return { stats, learnings };
+}
+
+export type LearningCounts = {
+  total: number;
+  active: number;
+  promoted: number;
+};
+
+/**
+ * Three cheap COUNT(head) reads over the learnings table — total, active
+ * (live patterns) and promoted (bridged into Shared Memory). Used by the CEO
+ * board's Learning department scorecard, which never needs the full feed.
+ */
+export async function getLearningCounts(): Promise<LearningCounts> {
+  const admin = createAdminClient();
+  const [total, active, promoted] = await Promise.all([
+    countTable(admin, "hq_sales_learnings", (q) => q),
+    countTable(admin, "hq_sales_learnings", (q) => q.eq("status", "active")),
+    countTable(admin, "hq_sales_learnings", (q) =>
+      q.not("memory_id", "is", null),
+    ),
+  ]);
+  return { total, active, promoted };
 }
 
 // ---------------------------------------------------------------------

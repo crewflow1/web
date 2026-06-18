@@ -4,6 +4,7 @@ import type {
   RiskLevel,
   ScoreBand,
 } from "@/lib/sales/model";
+import type { CallStatus, CallTone } from "@/lib/sales/calling";
 
 /**
  * Sales AI Platform — dark-theme presentation classes (CEO Directive 003,
@@ -69,6 +70,43 @@ export const RISK_PILL: Record<RiskLevel, string> = {
 
 export function riskPill(r: string): string {
   return RISK_PILL[r as RiskLevel] ?? RISK_PILL.unknown;
+}
+
+/**
+ * Calling Centre (Phase 6) — pill classes for call statuses + a generic
+ * positive/neutral/negative tone the outcome + sentiment pills share
+ * (lib/sales/calling owns the value → tone mapping; the literal Tailwind
+ * classes live here so the JIT scanner emits them).
+ */
+export const CALL_STATUS_PILL: Record<CallStatus, string> = {
+  queued: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+  scheduled:
+    "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
+  in_progress:
+    "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  completed:
+    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  no_answer: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+  voicemail: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  busy: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+  cancelled:
+    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+};
+
+export function callStatusPill(s: string): string {
+  return CALL_STATUS_PILL[s as CallStatus] ?? CALL_STATUS_PILL.queued;
+}
+
+export const CALL_TONE_PILL: Record<CallTone, string> = {
+  positive:
+    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  neutral: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+  negative: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+};
+
+export function tonerPill(tone: CallTone): string {
+  return CALL_TONE_PILL[tone] ?? CALL_TONE_PILL.neutral;
 }
 
 /** Accent colour token for a timeline event dot, by event category. */

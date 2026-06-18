@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Facebook,
   Gauge,
+  HeartHandshake,
   Instagram,
   Landmark,
   Lightbulb,
@@ -19,6 +20,7 @@ import {
   Plus,
   Share2,
   Sparkles,
+  Target,
   Trash2,
 } from "lucide-react";
 import {
@@ -62,6 +64,14 @@ import {
   type SalesResearchReport,
   type SalesTaskType,
 } from "@/lib/sales/model";
+import {
+  buildIntelligenceProfile,
+  relationshipBandLabel,
+  type IntelligenceFactor,
+  type LikelihoodToBuy,
+  type RelationshipBand,
+  type RelationshipScore,
+} from "@/lib/sales/intelligence";
 import {
   AiTaskStatusPill,
   Banner,
@@ -148,6 +158,11 @@ export default async function CompanyDetailPage({
   const activeReco = recommendations.find((r) => r.status === "active") ?? null;
   const pastRecos = recommendations.filter((r) => r.id !== activeReco?.id);
 
+  // Derived AI Company Intelligence (Directive 004, Phase 4) — relationship
+  // score, likelihood-to-buy composite + reasoning, profile completeness.
+  // Pure read of already-loaded data: no extra query, no schema change.
+  const profile = buildIntelligenceProfile({ company: c, timeline });
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <div className="space-y-5 p-5 sm:p-7">
@@ -180,6 +195,12 @@ export default async function CompanyDetailPage({
                   {c.crm_score != null ? (
                     <ScorePill score={c.crm_score} prefix="CRM" />
                   ) : null}
+                  <Pill className={likelihoodPill(profile.likelihood.band)}>
+                    {profile.likelihood.score != null
+                      ? `${profile.likelihood.score} · `
+                      : ""}
+                    {likelihoodLabel(profile.likelihood.band)} to buy
+                  </Pill>
                 </div>
                 <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">
                   {c.name}
@@ -246,6 +267,76 @@ export default async function CompanyDetailPage({
           <Tile label="Source" value={c.source.replace(/_/g, " ")} />
           <Tile label="Last researched" value={c.last_researched_at ? relativeTime(c.last_researched_at) : "Never"} />
         </div>
+
+        {/* AI intelligence profile — derived synthesis (Directive 004, Phase 4) */}
+        <Section
+          title="AI intelligence profile"
+          subtitle="Synthesised from the AI qualification score, the enrichment signals and the full contact history. Explainable — every contributing factor is shown, and nothing is invented."
+          action={
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+              <Brain className="h-3.5 w-3.5" aria-hidden />
+              Intelligence
+            </span>
+          }
+        >
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <IntelGauge
+              icon={<Target className="h-3.5 w-3.5" aria-hidden />}
+              title="Likelihood to buy"
+              value={profile.likelihood.score}
+              arc={likelihoodArc(profile.likelihood.band)}
+              pill={
+                <Pill className={likelihoodPill(profile.likelihood.band)}>
+                  {likelihoodLabel(profile.likelihood.band)}
+                </Pill>
+              }
+              caption="Composite of fit, engagement and momentum"
+            />
+            <IntelGauge
+              icon={<HeartHandshake className="h-3.5 w-3.5" aria-hidden />}
+              title="Relationship"
+              value={profile.relationship.score}
+              arc={relationshipArc(profile.relationship.band)}
+              pill={
+                <Pill className={relationshipPillClass(profile.relationship.band)}>
+                  {relationshipBandLabel(profile.relationship.score)}
+                </Pill>
+              }
+              caption={relationshipCaption(profile.relationship)}
+            />
+            <IntelGauge
+              icon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
+              title="Profile completeness"
+              value={profile.completeness.pct}
+              unit="%"
+              arc="rgb(129,140,248)"
+              pill={
+                <Pill className="bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                  {profile.completeness.present}/{profile.completeness.total} signals
+                </Pill>
+              }
+              caption={
+                profile.completeness.missing.length === 0
+                  ? "Fully enriched"
+                  : `Missing: ${profile.completeness.missing.slice(0, 3).join(", ")}${
+                      profile.completeness.missing.length > 3 ? "…" : ""
+                    }`
+              }
+            />
+          </div>
+
+          {/* AI reasoning — the ordered factors behind the composite. */}
+          <div className="mt-4 border-t border-slate-800 pt-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              AI reasoning
+            </p>
+            <ul className="mt-2.5 space-y-2.5">
+              {profile.likelihood.factors.map((f) => (
+                <FactorRow key={f.key} factor={f} />
+              ))}
+            </ul>
+          </div>
+        </Section>
 
         {/* Summary + intelligence panel */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -658,6 +749,150 @@ export default async function CompanyDetailPage({
 
 function employeeById(employees: AiEmployee[], id: string): AiEmployee | null {
   return employees.find((e) => e.id === id) ?? null;
+}
+
+// ---------------------------------------------------------------------
+// AI intelligence profile — gauges + reasoning (Directive 004, Phase 4).
+// Server components, no client JS: the rings are pure conic-gradient CSS.
+// ---------------------------------------------------------------------
+
+function IntelGauge({
+  icon,
+  title,
+  value,
+  arc,
+  pill,
+  caption,
+  unit,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  value: number | null;
+  arc: string;
+  pill: React.ReactNode;
+  caption: string;
+  unit?: string;
+}) {
+  const pctVal = value == null ? 0 : Math.max(0, Math.min(100, value));
+  const deg = (pctVal / 100) * 360;
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-center">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {icon}
+        {title}
+      </div>
+      <div
+        className="relative flex items-center justify-center rounded-full"
+        style={{
+          width: 112,
+          height: 112,
+          background: `conic-gradient(${arc} ${deg}deg, rgba(148,163,184,0.14) ${deg}deg 360deg)`,
+        }}
+      >
+        <div
+          className="flex flex-col items-center justify-center rounded-full bg-slate-950"
+          style={{ width: 84, height: 84 }}
+        >
+          <span className="text-2xl font-bold tabular-nums text-white">
+            {value == null ? "—" : value}
+            {value != null && unit ? (
+              <span className="text-sm text-slate-400">{unit}</span>
+            ) : null}
+          </span>
+        </div>
+      </div>
+      {pill}
+      <p className="text-[11px] leading-snug text-slate-500">{caption}</p>
+    </div>
+  );
+}
+
+function FactorRow({ factor }: { factor: IntelligenceFactor }) {
+  const dot =
+    factor.tone === "positive"
+      ? "bg-emerald-400"
+      : factor.tone === "negative"
+        ? "bg-red-400"
+        : "bg-amber-400";
+  const valCls =
+    factor.tone === "positive"
+      ? "text-emerald-300"
+      : factor.tone === "negative"
+        ? "text-red-300"
+        : "text-amber-300";
+  return (
+    <li className="flex items-center gap-3">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-slate-200">
+            {factor.label}
+          </span>
+          <span className={`text-xs font-bold tabular-nums ${valCls}`}>
+            {factor.value}
+          </span>
+        </div>
+        <p className="truncate text-[11px] text-slate-500">{factor.detail}</p>
+      </div>
+      <div className="hidden w-24 shrink-0 sm:block">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-indigo-500/70 to-emerald-500/70"
+            style={{ width: `${Math.max(0, Math.min(100, factor.value))}%` }}
+          />
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function likelihoodArc(band: LikelihoodToBuy["band"]): string {
+  switch (band) {
+    case "very_high":
+      return "rgb(52,211,153)";
+    case "high":
+      return "rgb(56,189,248)";
+    case "medium":
+      return "rgb(251,191,36)";
+    default:
+      return "rgb(148,163,184)";
+  }
+}
+
+function relationshipArc(band: RelationshipBand): string {
+  switch (band) {
+    case "strong":
+      return "rgb(52,211,153)";
+    case "engaged":
+      return "rgb(56,189,248)";
+    case "warming":
+      return "rgb(251,191,36)";
+    default:
+      return "rgb(148,163,184)";
+  }
+}
+
+function relationshipPillClass(band: RelationshipBand): string {
+  switch (band) {
+    case "strong":
+      return "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30";
+    case "engaged":
+      return "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30";
+    case "warming":
+      return "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30";
+    default:
+      return "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40";
+  }
+}
+
+function relationshipCaption(rel: RelationshipScore): string {
+  if (rel.touches === 0) return "No contact logged yet";
+  const parts = [
+    `${rel.touches} ${rel.touches === 1 ? "touch" : "touches"}`,
+    rel.twoWay ? "two-way" : "one-way",
+  ];
+  if (rel.lastTouchAt) parts.push(`last ${relativeTime(rel.lastTouchAt)}`);
+  return parts.join(" · ");
 }
 
 function SocialLink({

@@ -1,6 +1,18 @@
 import Link from "next/link";
-import { BrainCircuit, Search, ShieldOff } from "lucide-react";
+import {
+  Activity,
+  BrainCircuit,
+  CheckCircle2,
+  Search,
+  ShieldOff,
+  Timer,
+  Users,
+} from "lucide-react";
 import { listAiEmployees } from "@/server/services/ai-employees";
+import {
+  getAiWorkforceStats,
+  statsForEmployee,
+} from "@/server/services/ai-employee-stats";
 import {
   AI_EMPLOYEE_STATUSES,
   STATUS_LABELS,
@@ -9,10 +21,13 @@ import {
   DEPARTMENT_LABELS,
   departmentLabel,
   statusLabel,
-  memoryScopeLabel,
   countByStatus,
-  relativeTime,
 } from "@/lib/ai-employees/model";
+import {
+  aggregateWorkforce,
+  formatRate,
+  type WorkforceSummary,
+} from "@/lib/ai-employees/stats";
 import { statusStyle, accentClasses } from "./_styles";
 import { EmployeeIcon } from "./_icon";
 
@@ -45,13 +60,20 @@ export default async function AiBoardroomPage({
   searchParams: SP;
 }) {
   const sp = await searchParams;
-  const employees = await listAiEmployees();
+  const [employees, workforce] = await Promise.all([
+    listAiEmployees(),
+    getAiWorkforceStats(),
+  ]);
 
   const q = (sp.q ?? "").trim().toLowerCase();
   const dept = (sp.dept ?? "").trim();
   const status = (sp.status ?? "").trim();
 
   const counts = countByStatus(employees);
+  const summary = aggregateWorkforce(
+    employees,
+    employees.map((e) => statsForEmployee(workforce, e.id)),
+  );
 
   const filtered = employees.filter(
     (e) =>
@@ -101,6 +123,9 @@ export default async function AiBoardroomPage({
       </div>
 
       <div className="space-y-5 p-5 sm:p-7">
+        {/* Workforce telemetry — headline KPIs across the whole roster */}
+        <WorkforceStrip summary={summary} />
+
         {/* Status summary cards (also act as quick status filters) */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           {AI_EMPLOYEE_STATUSES.map((s) => {
@@ -210,6 +235,7 @@ export default async function AiBoardroomPage({
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filtered.map((e) => {
               const accent = accentClasses(e.accent);
+              const stats = statsForEmployee(workforce, e.id);
               return (
                 <li key={e.id}>
                   <Link
@@ -239,6 +265,25 @@ export default async function AiBoardroomPage({
                       {e.description}
                     </p>
 
+                    {/* Live workforce telemetry */}
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <CardStat
+                        label="Today"
+                        value={String(stats.tasksToday)}
+                        accent={accent.text}
+                      />
+                      <CardStat
+                        label="Success"
+                        value={formatRate(stats.successRatePct)}
+                        accent={accent.text}
+                      />
+                      <CardStat
+                        label="Avg time"
+                        value={stats.avgCompletionLabel}
+                        accent={accent.text}
+                      />
+                    </div>
+
                     <dl className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
                       <div className="min-w-0">
                         <dt className="text-slate-500">Current task</dt>
@@ -247,9 +292,9 @@ export default async function AiBoardroomPage({
                         </dd>
                       </div>
                       <div className="min-w-0">
-                        <dt className="text-slate-500">Last activity</dt>
-                        <dd className="text-slate-300">
-                          {relativeTime(e.last_activity_at)}
+                        <dt className="text-slate-500">Last completed</dt>
+                        <dd className="truncate text-slate-300">
+                          {stats.lastCompletedTitle ?? "—"}
                         </dd>
                       </div>
                     </dl>
@@ -259,7 +304,7 @@ export default async function AiBoardroomPage({
                         {departmentLabel(e.department)}
                         <span className="text-slate-700">·</span>
                         <span className="normal-case text-slate-500">
-                          {memoryScopeLabel(e.memory_scope)} memory
+                          v{stats.knowledgeVersion} · {stats.memoryUsageLabel}
                         </span>
                       </span>
                       <span className="text-xs font-medium text-slate-400 transition group-hover:text-white">
@@ -298,5 +343,109 @@ function StatusPill({ status }: { status: string }) {
       </span>
       {statusLabel(status)}
     </span>
+  );
+}
+
+/** Headline workforce KPIs across the whole roster (CEO Directive 004, P3). */
+function WorkforceStrip({ summary }: { summary: WorkforceSummary }) {
+  const tiles: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    icon: typeof Users;
+    chip: string;
+    value_cls: string;
+  }> = [
+    {
+      label: "Active now",
+      value: String(summary.activeWorkers),
+      sub: `of ${summary.totalEmployees} employees`,
+      icon: Users,
+      chip: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
+      value_cls: "text-emerald-300",
+    },
+    {
+      label: "Tasks today",
+      value: String(summary.tasksToday),
+      sub: `${summary.tasksInProgress} in progress`,
+      icon: Activity,
+      chip: "bg-sky-500/15 text-sky-300 ring-sky-400/30",
+      value_cls: "text-sky-300",
+    },
+    {
+      label: "Success rate",
+      value: formatRate(summary.successRatePct),
+      sub: `${summary.completedTotal} done · ${summary.failedTotal} failed`,
+      icon: CheckCircle2,
+      chip: "bg-indigo-500/15 text-indigo-300 ring-indigo-400/30",
+      value_cls: "text-indigo-300",
+    },
+    {
+      label: "Avg completion",
+      value: summary.avgCompletionLabel,
+      sub: `${summary.totalMemoryEntries} memories · ${summary.memoryUsageLabel}`,
+      icon: Timer,
+      chip: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
+      value_cls: "text-amber-300",
+    },
+  ];
+  return (
+    <section>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        AI workforce
+      </p>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {tiles.map((t) => {
+          const Icon = t.icon;
+          return (
+            <div
+              key={t.label}
+              className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg ring-1 ring-inset ring-white/5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  {t.label}
+                </p>
+                <span
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset ${t.chip}`}
+                >
+                  <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                </span>
+              </div>
+              <p
+                className={`mt-2 text-2xl font-bold tabular-nums ${t.value_cls}`}
+              >
+                {t.value}
+              </p>
+              <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                {t.sub}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** Compact per-employee telemetry cell used inside a roster card. */
+function CardStat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-1.5">
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className={`mt-0.5 truncate text-sm font-bold tabular-nums ${accent}`}>
+        {value}
+      </p>
+    </div>
   );
 }

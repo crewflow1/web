@@ -2,8 +2,11 @@ import Link from "next/link";
 import {
   Activity,
   BarChart3,
+  Brain,
   Briefcase,
   ListChecks,
+  MessagesSquare,
+  PhoneCall,
   Plus,
   Search,
   ShieldCheck,
@@ -94,6 +97,27 @@ export default async function SalesDashboardPage() {
             >
               <Activity className="h-3.5 w-3.5" aria-hidden />
               Activity
+            </Link>
+            <Link
+              href="/admin/sales/communications"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              <MessagesSquare className="h-3.5 w-3.5" aria-hidden />
+              Comms
+            </Link>
+            <Link
+              href="/admin/sales/calling"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              <PhoneCall className="h-3.5 w-3.5" aria-hidden />
+              Calling
+            </Link>
+            <Link
+              href="/admin/sales/learning"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+            >
+              <Brain className="h-3.5 w-3.5" aria-hidden />
+              Learning
             </Link>
             <Link
               href="/admin/sales/tasks"
