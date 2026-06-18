@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   DEMO_LIFECYCLE_STATUSES,
   DEMO_STATUS_LABELS,
-  DEMO_STATUS_PILL,
   toLifecycleStatus,
   type DemoLifecycleStatus,
 } from "@/lib/hq/demo-lifecycle";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { whatsAppHref } from "@/lib/phone";
+import { Button, Input, Textarea, accent, type Accent } from "@/components/ui";
 import {
   moveDemoToStatus,
   addDemoNote,
@@ -19,6 +19,23 @@ import {
 } from "./actions";
 import type { DemoRow } from "./_card";
 import type { AdminActivityRow } from "@/server/services/hq-audit";
+
+/**
+ * Dark-token accent per lifecycle status — presentation only, mirrors the
+ * kanban column mapping so the same status reads the same colour everywhere.
+ */
+const STATUS_ACCENT: Record<DemoLifecycleStatus, Accent> = {
+  pending_demo: "indigo",
+  contacted: "sky",
+  demo_booked: "violet",
+  demo_done: "violet",
+  won: "emerald",
+  lost: "rose",
+  payment_sent: "amber",
+  payment_received: "emerald",
+  active_onboarding: "cyan",
+  active: "emerald",
+};
 
 /**
  * Side panel rendered when the operator clicks a kanban card.
@@ -69,25 +86,25 @@ export function DemoDetailPanel({
   }
 
   return (
-    <aside className="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <aside className="rounded-2xl border border-slate-800 bg-slate-900/40">
       {/* Header */}
-      <header className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+      <header className="flex items-start justify-between gap-3 border-b border-slate-800 px-5 py-4">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
             Demo · {demo.created_at.slice(0, 10)}
           </p>
-          <h2 className="mt-0.5 truncate text-lg font-bold text-slate-900">
+          <h2 className="mt-0.5 truncate text-lg font-bold text-white">
             {demo.company}
           </h2>
-          <p className="truncate text-sm text-slate-600">
+          <p className="truncate text-sm text-slate-300">
             {demo.name} ·{" "}
-            <a href={mailHref} className="hover:text-slate-900">
+            <a href={mailHref} className="transition hover:text-white">
               {demo.email}
             </a>
             {demo.phone ? (
               <>
                 {" · "}
-                <a href={phoneHref ?? "#"} className="hover:text-slate-900">
+                <a href={phoneHref ?? "#"} className="transition hover:text-white">
                   {demo.phone}
                 </a>
               </>
@@ -96,7 +113,7 @@ export function DemoDetailPanel({
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${DEMO_STATUS_PILL[status]}`}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${accent(STATUS_ACCENT[status]).chip}`}
           >
             {DEMO_STATUS_LABELS[status]}
           </span>
@@ -104,7 +121,7 @@ export function DemoDetailPanel({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-md p-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
           >
             ✕
           </button>
@@ -112,7 +129,7 @@ export function DemoDetailPanel({
       </header>
 
       {/* Quick contact */}
-      <section className="border-b border-slate-200 px-5 py-3">
+      <section className="border-b border-slate-800 px-5 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           Contact
         </p>
@@ -136,13 +153,13 @@ export function DemoDetailPanel({
             disabled={!waHref || pendingContact}
             target="_blank"
             rel="noopener noreferrer"
-            className="border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+            className="border-emerald-400/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
           />
         </div>
       </section>
 
       {/* Demo info */}
-      <section className="grid grid-cols-1 gap-2 border-b border-slate-200 px-5 py-3 text-sm sm:grid-cols-2">
+      <section className="grid grid-cols-1 gap-2 border-b border-slate-800 px-5 py-3 text-sm sm:grid-cols-2">
         <Field label="Employees" value={demo.employees} />
         <Field
           label="Turnover"
@@ -164,7 +181,7 @@ export function DemoDetailPanel({
       </section>
 
       {/* Status actions */}
-      <section className="border-b border-slate-200 px-5 py-3">
+      <section className="border-b border-slate-800 px-5 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           Move status
         </p>
@@ -186,7 +203,7 @@ export function DemoDetailPanel({
       </section>
 
       {/* Schedule */}
-      <section className="border-b border-slate-200 px-5 py-3">
+      <section className="border-b border-slate-800 px-5 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           Schedule demo
         </p>
@@ -195,31 +212,28 @@ export function DemoDetailPanel({
           className="mt-2 flex flex-wrap items-center gap-2"
         >
           <input type="hidden" name="demo_id" value={demo.id} />
-          <input
+          <Input
             type="text"
             name="preferred_demo_time"
             defaultValue={demo.preferred_demo_time ?? ""}
             placeholder="e.g. Wed 14:00 BST"
-            className="min-w-[200px] flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+            className="min-w-[200px] flex-1"
             required
             maxLength={200}
           />
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-          >
+          <Button type="submit" variant="accent" size="sm">
             Set + move to Booked
-          </button>
+          </Button>
         </form>
       </section>
 
       {/* Notes */}
-      <section className="border-b border-slate-200 px-5 py-3">
+      <section className="border-b border-slate-800 px-5 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           Notes
         </p>
         {demo.notes ? (
-          <pre className="mt-2 max-h-44 overflow-y-auto whitespace-pre-wrap rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          <pre className="mt-2 max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
             {demo.notes}
           </pre>
         ) : (
@@ -227,20 +241,16 @@ export function DemoDetailPanel({
         )}
         <form action={addDemoNote} className="mt-2 space-y-2">
           <input type="hidden" name="demo_id" value={demo.id} />
-          <textarea
+          <Textarea
             name="note"
             rows={2}
             required
             maxLength={4000}
             placeholder="Add a note — gets stamped with your email + the timestamp"
-            className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-          >
+          <Button type="submit" variant="accent" size="sm">
             Add note
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -258,17 +268,17 @@ export function DemoDetailPanel({
             {activity.map((a) => (
               <li
                 key={a.id}
-                className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2"
+                className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-800">
+                  <span className="font-semibold text-slate-100">
                     {prettyAction(a.action)}
                   </span>
                   <span className="text-[10px] text-slate-500">
                     {a.created_at.slice(0, 16).replace("T", " ")}
                   </span>
                 </div>
-                <p className="mt-0.5 text-slate-600">
+                <p className="mt-0.5 text-slate-400">
                   {a.actor_email ?? "—"}
                 </p>
                 {a.metadata && Object.keys(a.metadata).length > 0 ? (
@@ -301,7 +311,7 @@ function Field({
       <p className="text-[11px] uppercase tracking-wide text-slate-500">
         {label}
       </p>
-      <p className="mt-0.5 text-sm text-slate-800">{value ?? "—"}</p>
+      <p className="mt-0.5 text-sm text-slate-200">{value ?? "—"}</p>
     </div>
   );
 }
@@ -325,7 +335,7 @@ function ContactLink({
 }) {
   if (!href || disabled) {
     return (
-      <span className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-400">
+      <span className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-slate-800 bg-slate-900/40 px-3 py-1 text-xs font-medium text-slate-600">
         {label}
       </span>
     );
@@ -337,7 +347,7 @@ function ContactLink({
       target={target}
       rel={rel}
       className={`inline-flex items-center gap-1 rounded-md border px-3 py-1 text-xs font-medium transition ${
-        className ?? "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+        className ?? "border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
       }`}
     >
       {label}
@@ -362,15 +372,15 @@ function StatusButton({
   const cls = (() => {
     switch (tone) {
       case "emerald":
-        return "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
+        return "border-emerald-400/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25";
       case "red":
-        return "border-red-300 bg-white text-red-700 hover:bg-red-50";
+        return "border-rose-400/30 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25";
       case "amber":
-        return "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100";
+        return "border-amber-400/30 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25";
       case "cyan":
-        return "border-cyan-300 bg-cyan-50 text-cyan-900 hover:bg-cyan-100";
+        return "border-cyan-400/30 bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25";
       default:
-        return "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
+        return "border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800";
     }
   })();
   return (
@@ -379,7 +389,7 @@ function StatusButton({
       <input type="hidden" name="status" value={status} />
       <button
         type="submit"
-        className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${cls}`}
+        className={`rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${cls}`}
       >
         {label}
       </button>

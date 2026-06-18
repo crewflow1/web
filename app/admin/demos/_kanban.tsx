@@ -19,12 +19,30 @@ import {
 import {
   DEMO_LIFECYCLE_STATUSES,
   DEMO_STATUS_LABELS,
-  DEMO_STATUS_PILL,
   type DemoLifecycleStatus,
   toLifecycleStatus,
 } from "@/lib/hq/demo-lifecycle";
+import { Alert, accent, type Accent } from "@/components/ui";
 import { moveDemoToStatusJson } from "./actions";
 import { DemoCard, type DemoRow } from "./_card";
+
+/**
+ * Dark-token accent per lifecycle status — presentation only. Keeps the
+ * same status→meaning mapping the original light pills used, just moved
+ * onto the unified dark accent set.
+ */
+const STATUS_ACCENT: Record<DemoLifecycleStatus, Accent> = {
+  pending_demo: "indigo",
+  contacted: "sky",
+  demo_booked: "violet",
+  demo_done: "violet",
+  won: "emerald",
+  lost: "rose",
+  payment_sent: "amber",
+  payment_received: "emerald",
+  active_onboarding: "cyan",
+  active: "emerald",
+};
 
 /**
  * Demos CRM kanban.
@@ -107,14 +125,7 @@ export function DemosKanban({ demos, onOpen, openId }: KanbanProps) {
 
   return (
     <div className="space-y-3">
-      {errorMsg ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {errorMsg}
-        </div>
-      ) : null}
+      {errorMsg ? <Alert tone="danger">{errorMsg}</Alert> : null}
 
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div
@@ -168,22 +179,23 @@ function Column({
   children: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${status}` });
+  const a = accent(STATUS_ACCENT[status]);
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-72 shrink-0 flex-col rounded-xl border bg-slate-50 transition ${
+      className={`flex w-72 shrink-0 flex-col rounded-2xl border bg-slate-900/40 transition ${
         isOver
-          ? "border-slate-900 ring-2 ring-slate-900/10"
-          : "border-slate-200"
+          ? "border-indigo-400/40 bg-indigo-500/5 ring-2 ring-inset ring-indigo-400/40"
+          : "border-slate-800"
       }`}
       aria-label={`${DEMO_STATUS_LABELS[status]} column`}
     >
-      <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+      <header className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
         <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${DEMO_STATUS_PILL[status]}`}
+          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${a.chip}`}
         >
           {DEMO_STATUS_LABELS[status]}
-          <span className="rounded-sm bg-white/60 px-1 text-[10px] font-bold">
+          <span className="rounded-sm bg-slate-950/40 px-1 text-[10px] font-bold">
             {count}
           </span>
         </span>
@@ -215,7 +227,7 @@ function DraggableCard({
     transform: transform
       ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
       : undefined,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.6 : 1,
     cursor: "grab",
     touchAction: "none",
   };
@@ -229,8 +241,11 @@ function DraggableCard({
 
 function EmptySlot({ status }: { status: DemoLifecycleStatus }) {
   return (
-    <p className="rounded-md border border-dashed border-slate-300 bg-white/40 px-3 py-6 text-center text-[11px] text-slate-500">
-      Drop a demo here to mark <strong>{DEMO_STATUS_LABELS[status]}</strong>
+    <p className="rounded-xl border border-dashed border-slate-800 bg-slate-900/30 px-3 py-6 text-center text-[11px] text-slate-500">
+      Drop a demo here to mark{" "}
+      <strong className="font-semibold text-slate-300">
+        {DEMO_STATUS_LABELS[status]}
+      </strong>
     </p>
   );
 }

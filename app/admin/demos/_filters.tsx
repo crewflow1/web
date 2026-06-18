@@ -7,6 +7,7 @@ import {
   DEMO_STATUS_LABELS,
   type DemoLifecycleStatus,
 } from "@/lib/hq/demo-lifecycle";
+import { Input, Select } from "@/components/ui";
 
 /**
  * Toolbar above the kanban — search, status filter, sort.
@@ -50,23 +51,23 @@ export function DemosFilters({ initialCount }: { initialCount: number }) {
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <label className="flex-1 min-w-[200px] text-[11px] font-medium text-slate-600">
+    <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3">
+      <label className="flex-1 min-w-[200px] text-[11px] font-medium text-slate-400">
         Search
-        <input
+        <Input
           type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Company, name, email…"
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          className="mt-1"
         />
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Status
-        <select
+        <Select
           value={status}
           onChange={(e) => setParam("status", e.target.value || null)}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          className="mt-1"
         >
           <option value="">All statuses</option>
           {DEMO_LIFECYCLE_STATUSES.map((s) => (
@@ -74,19 +75,19 @@ export function DemosFilters({ initialCount }: { initialCount: number }) {
               {DEMO_STATUS_LABELS[s]}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Sort
-        <select
+        <Select
           value={sort}
           onChange={(e) => setParam("sort", e.target.value)}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          className="mt-1"
         >
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
           <option value="company">Company A→Z</option>
-        </select>
+        </Select>
       </label>
       <div className="text-[11px] text-slate-500">
         {pending ? "Filtering…" : `${initialCount} demos`}
