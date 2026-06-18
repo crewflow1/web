@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { env } from "@/lib/env";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Public Stripe Checkout success landing.
@@ -29,7 +30,7 @@ export default async function PaymentSuccessPage({
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-16">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <FadeIn className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
           <svg
             className="h-7 w-7 text-emerald-600"
@@ -68,7 +69,7 @@ export default async function PaymentSuccessPage({
         >
           Back to {appName}
         </Link>
-      </div>
+      </FadeIn>
     </main>
   );
 }

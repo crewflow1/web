@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { requireUser, getOrgForUser, orgHasActiveAccess } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { RefreshStatusButton } from "./_refresh-button";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Lock screen for orgs that aren't active yet.
@@ -85,7 +86,7 @@ export default async function AccessPendingPage() {
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-12">
       <div className="mx-auto max-w-lg space-y-6">
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <FadeIn className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
               {ctx.org.status === "rejected"
@@ -145,7 +146,7 @@ export default async function AccessPendingPage() {
               </Link>
             </div>
           </div>
-        </div>
+        </FadeIn>
 
         <p className="text-center text-xs text-slate-400">
           Powered by CrewFlow · For contractors who&apos;d rather be on

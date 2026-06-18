@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { type ReactNode } from "react";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Shared shell for /privacy and /terms — keeps both pages visually
@@ -35,17 +36,21 @@ export function LegalShell({
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-12">
-        <header className="border-b border-slate-200 pb-6">
-          <h1 className="text-3xl font-bold text-slate-900">{title}</h1>
-          {intro ? (
-            <p className="mt-2 text-sm text-slate-600">{intro}</p>
-          ) : null}
-          <p className="mt-2 text-xs text-slate-500">Last updated: {lastUpdated}</p>
-        </header>
+        <FadeIn>
+          <header className="border-b border-slate-200 pb-6">
+            <h1 className="text-3xl font-bold text-slate-900">{title}</h1>
+            {intro ? (
+              <p className="mt-2 text-sm text-slate-600">{intro}</p>
+            ) : null}
+            <p className="mt-2 text-xs text-slate-500">Last updated: {lastUpdated}</p>
+          </header>
+        </FadeIn>
 
-        <article className="legal-prose mt-8 text-sm leading-6 text-slate-700">
-          {children}
-        </article>
+        <FadeIn delay={0.08}>
+          <article className="legal-prose mt-8 text-sm leading-6 text-slate-700">
+            {children}
+          </article>
+        </FadeIn>
 
         <footer className="mt-12 border-t border-slate-200 pt-6 text-xs text-slate-500">
           Questions about this page? Email{" "}

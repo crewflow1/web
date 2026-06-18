@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publicAcceptQuote, publicDeclineQuote } from "./actions";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { Stagger, StaggerItem, AnimatedNumber } from "@/components/ui";
 
 /**
  * Public customer-facing quote view.
@@ -132,9 +133,9 @@ export default async function PublicQuotePage({
 
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8">
-      <div className="mx-auto max-w-3xl space-y-6">
+      <Stagger className="mx-auto max-w-3xl space-y-6">
         {/* Header / brand */}
-        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <StaggerItem className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -193,11 +194,15 @@ export default async function PublicQuotePage({
             <div>
               <dt className="text-xs text-slate-500">Total</dt>
               <dd className="font-semibold text-slate-900">
-                {GBP.format(Number(quote.total ?? 0))}
+                <AnimatedNumber
+                  value={Number(quote.total ?? 0)}
+                  format="currency"
+                  decimals={2}
+                />
               </dd>
             </div>
           </dl>
-        </header>
+        </StaggerItem>
 
         {/* Alerts */}
         {errorMessage ? (
@@ -228,7 +233,7 @@ export default async function PublicQuotePage({
         ) : null}
 
         {/* Line items */}
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <StaggerItem className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -278,16 +283,20 @@ export default async function PublicQuotePage({
               <div className="flex justify-between border-t border-slate-200 pt-1">
                 <dt className="font-medium text-slate-900">Total</dt>
                 <dd className="font-bold text-slate-900">
-                  {GBP.format(Number(quote.total ?? 0))}
+                  <AnimatedNumber
+                    value={Number(quote.total ?? 0)}
+                    format="currency"
+                    decimals={2}
+                  />
                 </dd>
               </div>
             </dl>
           </div>
-        </section>
+        </StaggerItem>
 
         {/* Notes + terms */}
         {quote.notes || quote.terms ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4 text-sm text-slate-700">
+          <StaggerItem className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4 text-sm text-slate-700">
             {quote.notes ? (
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -304,12 +313,12 @@ export default async function PublicQuotePage({
                 <p className="mt-1 whitespace-pre-wrap">{quote.terms}</p>
               </div>
             ) : null}
-          </section>
+          </StaggerItem>
         ) : null}
 
         {/* Bank details (only shown after acceptance) */}
         {quote.status === "accepted" && orgBank ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <StaggerItem className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">
               How to pay
             </h2>
@@ -337,12 +346,12 @@ export default async function PublicQuotePage({
                 </dd>
               </div>
             </dl>
-          </section>
+          </StaggerItem>
         ) : null}
 
         {/* Accept / decline */}
         {!isLocked ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <StaggerItem className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">
               {isVariation ? "Approve this variation" : "Accept this quote"}
             </h2>
@@ -420,13 +429,13 @@ export default async function PublicQuotePage({
                 </button>
               </form>
             </details>
-          </section>
+          </StaggerItem>
         ) : null}
 
         <footer className="pt-4 text-center text-xs text-slate-400">
           Powered by CrewFlow
         </footer>
-      </div>
+      </Stagger>
     </div>
   );
 }
