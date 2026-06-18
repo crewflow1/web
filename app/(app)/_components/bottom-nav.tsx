@@ -52,7 +52,7 @@ export function BottomNav({ role = "owner" }: { role?: string }) {
                 className={
                   active
                     ? "flex flex-col items-center gap-0.5 py-2 text-xs font-medium text-slate-900"
-                    : "flex flex-col items-center gap-0.5 py-2 text-xs font-medium text-slate-500 hover:text-slate-900"
+                    : "flex flex-col items-center gap-0.5 py-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
                 }
               >
                 <span aria-hidden className="text-base leading-none">{l.icon}</span>

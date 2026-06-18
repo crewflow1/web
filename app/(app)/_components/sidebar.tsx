@@ -68,8 +68,8 @@ export function Sidebar({ role = "owner" }: { role?: string }) {
                 aria-current={isActive ? "page" : undefined}
                 className={
                   isActive
-                    ? "block rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white"
-                    : "block rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                    ? "block rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white transition-colors"
+                    : "block rounded-md px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
                 }
               >
                 {link.label}
