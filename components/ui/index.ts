@@ -17,6 +17,7 @@ export { ACCENT, ACCENTS, accent, type Accent, type AccentClasses } from "./toke
 export { Surface, Panel, GlowHeader, SectionHeading } from "./surface";
 export { Card } from "./card";
 export { StatTile, Fact } from "./stat-tile";
+export { Table, THead, TBody, TR, TH, TD } from "./table";
 
 // Atoms
 export { Badge, TrendBadge, Chip, ChipList, Dot, LiveDot, type Trend } from "./badge";
@@ -44,6 +45,10 @@ export {
   ShimmerPanel,
 } from "./skeleton";
 
+// Overlays (client)
+export { Modal, ModalFooter } from "./modal";
+export { Tooltip } from "./tooltip";
+
 // Motion (client)
 export {
   FadeIn,
@@ -53,3 +58,4 @@ export {
   AnimatedNumber,
   type NumberFormat,
 } from "./motion";
+export { PageTransition } from "./page-transition";

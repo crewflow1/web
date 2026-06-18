@@ -90,6 +90,8 @@ type ButtonLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   external?: boolean;
+  /** Forwarded to the Next <Link>; pass false to keep scroll position on nav. */
+  scroll?: boolean;
 };
 
 export function ButtonLink({
@@ -98,11 +100,12 @@ export function ButtonLink({
   size = "md",
   className,
   external,
+  scroll,
   ...rest
 }: ButtonLinkProps) {
   const cls = buttonClass(variant, size, className);
   if (external) {
     return <a href={href} className={cls} {...rest} />;
   }
-  return <Link href={href} className={cls} {...rest} />;
+  return <Link href={href} className={cls} scroll={scroll} {...rest} />;
 }
