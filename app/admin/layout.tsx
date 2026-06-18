@@ -78,7 +78,7 @@ export default async function AdminLayout({
   const notifBadge = notifBadgeText(unreadNotifs);
 
   return (
-    <div className="relative min-h-screen bg-slate-950 text-slate-100">
+    <div className="dark [color-scheme:dark] relative min-h-screen bg-slate-950 text-slate-100">
       {/* Ambient glow — the subtle navy/indigo gradient that anchors the
           whole HQ in the premium dark design language. */}
       <div

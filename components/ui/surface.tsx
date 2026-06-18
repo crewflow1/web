@@ -3,11 +3,12 @@ import { cn } from "@/lib/utils";
 import { accent, type Accent } from "./tokens";
 
 /**
- * Structural surfaces — the dark glass canvas the whole HQ is built on.
+ * Structural surfaces — the glass canvas the whole platform is built on.
  *
- * Pure server components (no client JS): safe to render anywhere. Every class
- * string is lifted verbatim from the live Command Centre + Research surfaces so
- * adopting these changes nothing visually — it only removes the duplication.
+ * Theme-aware: light by default (the customer product) and dark under a
+ * `.dark` ancestor. HQ roots itself in `.dark`, so every dark class below is
+ * the exact string it shipped with and HQ renders unchanged. Pure server
+ * components (no client JS): safe to render anywhere.
  */
 
 /** The outermost page shell: a deep slate-950 card with a hairline border. */
@@ -21,7 +22,7 @@ export function Surface({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl",
+        "overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:shadow-xl",
         className,
       )}
     >
@@ -55,7 +56,7 @@ export function Panel({
   return (
     <section
       className={cn(
-        "rounded-2xl border border-slate-800 bg-slate-900/40 p-5",
+        "rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900/40",
         className,
       )}
     >
@@ -74,7 +75,7 @@ export function Panel({
             ) : null}
             <div>
               {title ? (
-                <h2 className="text-sm font-semibold text-white">{title}</h2>
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h2>
               ) : null}
               {subtitle ? (
                 <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
@@ -115,7 +116,7 @@ export function GlowHeader({
   return (
     <div
       className={cn(
-        "relative overflow-hidden border-b border-slate-800 px-5 py-6 sm:px-7",
+        "relative overflow-hidden border-b border-slate-200 px-5 py-6 sm:px-7 dark:border-slate-800",
         className,
       )}
     >
@@ -145,11 +146,11 @@ export function GlowHeader({
                 {eyebrow}
               </div>
             ) : null}
-            <h1 className="text-xl font-bold tracking-tight text-white">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
               {title}
             </h1>
             {subtitle ? (
-              <p className="mt-0.5 max-w-xl text-sm text-slate-400">{subtitle}</p>
+              <p className="mt-0.5 max-w-xl text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
             ) : null}
           </div>
         </div>
@@ -176,7 +177,7 @@ export function SectionHeading({
   return (
     <div className={cn("mb-3 flex items-end justify-between gap-3", className)}>
       <div>
-        <h2 className="text-sm font-semibold text-white">{title}</h2>
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h2>
         {subtitle ? (
           <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
         ) : null}

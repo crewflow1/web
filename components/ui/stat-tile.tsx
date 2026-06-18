@@ -66,9 +66,9 @@ export function Fact({
 }) {
   if (value === null || value === undefined || value === "") return null;
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-slate-800/70 py-2 last:border-0">
+    <div className="flex items-baseline justify-between gap-4 border-b border-slate-200 py-2 last:border-0 dark:border-slate-800/70">
       <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className="text-right text-sm font-medium text-slate-200">{value}</dd>
+      <dd className="text-right text-sm font-medium text-slate-700 dark:text-slate-200">{value}</dd>
     </div>
   );
 }

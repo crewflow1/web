@@ -27,9 +27,9 @@ export function Card({
   return (
     <div
       className={cn(
-        "group relative flex h-full flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg ring-1 ring-inset ring-white/5",
+        "group relative flex h-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm ring-1 ring-inset ring-slate-900/5 dark:border-slate-800 dark:bg-slate-900/60 dark:shadow-lg dark:ring-white/5",
         hover &&
-          "transition duration-200 hover:-translate-y-0.5 hover:bg-slate-900 hover:shadow-xl",
+          "transition duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-md dark:hover:bg-slate-900 dark:hover:shadow-xl",
         className,
       )}
     >
