@@ -49,8 +49,8 @@ export function TrendBadge({ trend }: { trend: Trend }) {
       className={cn(
         "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset",
         up
-          ? "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30"
-          : "bg-rose-500/15 text-rose-300 ring-rose-400/30",
+          ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+          : "bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30",
       )}
     >
       <span aria-hidden>{up ? "▲" : "▼"}</span>

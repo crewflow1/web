@@ -57,7 +57,7 @@ export function THead({
   return (
     <thead
       className={cn(
-        "border-b border-slate-800 text-[10px] font-medium uppercase tracking-wider text-slate-500",
+        "border-b border-slate-200 text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:border-slate-800",
         className,
       )}
     >
@@ -74,7 +74,7 @@ export function TBody({
   children: ReactNode;
 }) {
   return (
-    <tbody className={cn("divide-y divide-slate-800", className)}>
+    <tbody className={cn("divide-y divide-slate-200 dark:divide-slate-800", className)}>
       {children}
     </tbody>
   );
@@ -93,7 +93,7 @@ export function TR({
   return (
     <tr
       className={cn(
-        hover && "transition-colors hover:bg-slate-900/50",
+        hover && "transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/50",
         className,
       )}
     >
@@ -139,8 +139,8 @@ export function TD({
       className={cn(
         "px-4 py-3",
         numeric
-          ? "text-right tabular-nums text-white"
-          : "text-slate-300",
+          ? "text-right tabular-nums text-slate-900 dark:text-white"
+          : "text-slate-700 dark:text-slate-300",
         className,
       )}
     >

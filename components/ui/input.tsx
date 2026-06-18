@@ -2,14 +2,14 @@ import { forwardRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Form primitives for the dark HQ surfaces — Input, Textarea, Select, Label and
- * a Field wrapper that pairs a label, an optional leading icon and an inline
- * error. Class strings are lifted from the live Research launcher so forms look
- * identical everywhere.
+ * Form primitives — Input, Textarea, Select, Label and a Field wrapper that
+ * pairs a label, an optional leading icon and an inline error. Theme-aware:
+ * light by default for the customer product, dark under HQ's `.dark` root (the
+ * dark classes are the live Research launcher strings, so HQ is unchanged).
  */
 
 const CONTROL =
-  "w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60";
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900/80 dark:text-white dark:placeholder:text-slate-600";
 
 export const Input = forwardRef<
   HTMLInputElement,
@@ -49,7 +49,10 @@ export function Label({
 }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label
-      className={cn("mb-1 block text-xs font-medium text-slate-400", className)}
+      className={cn(
+        "mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400",
+        className,
+      )}
       {...rest}
     >
       {children}
@@ -79,7 +82,9 @@ export function Field({
     <div className={cn("block", className)}>
       <Label htmlFor={htmlFor}>
         {label}
-        {hint ? <span className="ml-1 text-slate-600">{hint}</span> : null}
+        {hint ? (
+          <span className="ml-1 text-slate-400 dark:text-slate-600">{hint}</span>
+        ) : null}
       </Label>
       <div className="relative">
         {icon ? (
@@ -95,7 +100,7 @@ export function Field({
         </div>
       </div>
       {error ? (
-        <p role="alert" className="mt-1 text-xs text-red-300">
+        <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-300">
           {error}
         </p>
       ) : null}

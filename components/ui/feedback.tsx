@@ -11,10 +11,13 @@ import { accent, type Accent } from "./tokens";
 export type AlertTone = "info" | "success" | "warning" | "danger";
 
 const ALERT: Record<AlertTone, string> = {
-  info: "border-sky-500/30 bg-sky-500/10 text-sky-200",
-  success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-  warning: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  danger: "border-red-500/30 bg-red-500/10 text-red-200",
+  info: "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
+  success:
+    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200",
+  warning:
+    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200",
+  danger:
+    "border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200",
 };
 
 /** A coloured status banner. Use `danger` for the inline form-error pattern. */
@@ -72,19 +75,19 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 px-6 py-12 text-center",
+        "flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center dark:border-slate-800 dark:bg-slate-900/30",
         className,
       )}
     >
       {icon ? (
         <span
-          className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-800/60 text-slate-400 ring-1 ring-inset ring-slate-700 [&>svg]:h-6 [&>svg]:w-6"
+          className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200 [&>svg]:h-6 [&>svg]:w-6 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-slate-700"
           aria-hidden
         >
           {icon}
         </span>
       ) : null}
-      <p className="text-sm font-semibold text-slate-200">{title}</p>
+      <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</p>
       {description ? (
         <p className="mt-1 max-w-sm text-xs text-slate-500">{description}</p>
       ) : null}
@@ -113,7 +116,7 @@ export function Meter({
   return (
     <div
       className={cn(
-        "h-1.5 w-full overflow-hidden rounded-full bg-slate-800",
+        "h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800",
         className,
       )}
       role="progressbar"
