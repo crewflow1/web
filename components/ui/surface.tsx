@@ -42,7 +42,7 @@ export function Panel({
   children,
 }: {
   title?: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   action?: ReactNode;
   icon?: ReactNode;
   accent?: Accent;
@@ -107,7 +107,7 @@ export function GlowHeader({
   accent?: Accent;
   eyebrow?: ReactNode;
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   actions?: ReactNode;
   className?: string;
 }) {
@@ -169,7 +169,7 @@ export function SectionHeading({
   className,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   action?: ReactNode;
   className?: string;
 }) {

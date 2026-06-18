@@ -4,6 +4,7 @@ import { DemosBoard } from "./_board";
 import { DemosFilters } from "./_filters";
 import type { DemoRow } from "./_card";
 import { toLifecycleStatus } from "@/lib/hq/demo-lifecycle";
+import { Alert, GlowHeader, Surface } from "@/components/ui";
 
 /**
  * Demos CRM — HQ-2.
@@ -127,38 +128,38 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
   })();
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Demos CRM</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Drag a card between columns to move the demo through the pipeline.
-          Click <strong>Open</strong> on any card for contact actions, notes,
-          and the full audit timeline.
-        </p>
-      </header>
-
-      <DemosFilters initialCount={filtered.length} />
-
-      {banner ? (
-        <div
-          role={banner.tone === "err" ? "alert" : "status"}
-          className={
-            banner.tone === "err"
-              ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-              : "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-          }
-        >
-          {banner.msg}
-        </div>
-      ) : null}
-
-      <DemosBoard
-        demos={sorted}
-        openId={openId}
-        openDemo={openDemo}
-        openActivity={openActivity}
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Demos CRM"
+        subtitle={
+          <>
+            {
+              "Drag a card between columns to move the demo through the pipeline. Click "
+            }
+            <strong className="font-semibold text-slate-300">Open</strong>
+            {" on any card for contact actions, notes, and the full audit timeline."}
+          </>
+        }
       />
-    </div>
+
+      <div className="space-y-4 p-5 sm:p-7">
+        <DemosFilters initialCount={filtered.length} />
+
+        {banner ? (
+          <Alert tone={banner.tone === "err" ? "danger" : "success"}>
+            {banner.msg}
+          </Alert>
+        ) : null}
+
+        <DemosBoard
+          demos={sorted}
+          openId={openId}
+          openDemo={openDemo}
+          openActivity={openActivity}
+        />
+      </div>
+    </Surface>
   );
 }
 
