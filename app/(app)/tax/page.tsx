@@ -8,6 +8,7 @@ import {
   startOfQuarterIso,
   startOfTaxYearIso,
 } from "@/lib/tax/compute";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Tax dashboard — VAT, PAYE (placeholder), Corporation Tax estimates.
@@ -138,7 +139,7 @@ export default async function TaxDashboardPage() {
       </div>
 
       {/* VAT */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
@@ -183,10 +184,10 @@ export default async function TaxDashboardPage() {
           accounting scheme this needs a small adjustment — talk to your
           accountant.
         </p>
-      </section>
+      </FadeIn>
 
       {/* Corp Tax */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
@@ -233,10 +234,10 @@ export default async function TaxDashboardPage() {
           director&apos;s salary, capital allowances and a dozen other
           adjustments your accountant handles at year end.
         </p>
-      </section>
+      </FadeIn>
 
       {/* PAYE — placeholder */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
@@ -260,10 +261,10 @@ export default async function TaxDashboardPage() {
             {paye.note}
           </div>
         </dl>
-      </section>
+      </FadeIn>
 
       {/* Upcoming liabilities */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
           Upcoming liabilities
         </h2>
@@ -287,7 +288,7 @@ export default async function TaxDashboardPage() {
             note="Available once payroll lands (Wave 4)"
           />
         </ul>
-      </section>
+      </FadeIn>
 
       {/* Footer actions */}
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">

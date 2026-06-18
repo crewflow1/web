@@ -6,6 +6,7 @@ import {
   FINANCE_VAT_RATES,
 } from "@/lib/finances/schema";
 import { EmptyState } from "../_components/empty-state";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Finances list — server component.
@@ -173,11 +174,11 @@ export default async function FinancesPage({
 
       {/* Monthly summary */}
       {monthlySorted.length > 0 ? (
-        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {monthlySorted.map(([month, agg]) => (
-            <div
+            <StaggerItem
               key={month}
-              className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+              className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
             >
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
                 {month}
@@ -204,9 +205,9 @@ export default async function FinancesPage({
                   Total {fmt(agg.net + agg.vat)}
                 </span>
               </div>
-            </div>
+            </StaggerItem>
           ))}
-        </section>
+        </Stagger>
       ) : null}
 
       {/* Filters */}
@@ -276,7 +277,7 @@ export default async function FinancesPage({
         </Link>
       </form>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         {!rows || rows.length === 0 ? (
           <EmptyState
             icon="🧾"
@@ -334,7 +335,7 @@ export default async function FinancesPage({
             </tbody>
           </table>
         )}
-      </div>
+      </FadeIn>
 
       {totalPages > 1 ? (
         <nav

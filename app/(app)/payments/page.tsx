@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -127,7 +128,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
         </section>
       ) : null}
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="border-b border-slate-200 px-6 py-3">
           <h2 className="text-base font-semibold text-slate-900">
             Statement history
@@ -138,9 +139,9 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             No statements uploaded yet.
           </p>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <Stagger className="divide-y divide-slate-100">
             {(statements ?? []).map((s) => (
-              <li key={s.id} className="flex items-center justify-between px-6 py-3 text-sm">
+              <StaggerItem key={s.id} className="flex items-center justify-between px-6 py-3 text-sm">
                 <div className="min-w-0">
                   <Link
                     href={`/payments/reconcile/${s.id}`}
@@ -155,11 +156,11 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
                 <span className="text-xs text-slate-600">
                   {s.matched_count}/{s.line_count} matched
                 </span>
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
         )}
-      </section>
+      </FadeIn>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /expenses — expense drafts queue.
@@ -128,7 +129,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
           }
         />
       ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <FadeIn className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
@@ -170,7 +171,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
               ))}
             </tbody>
           </table>
-        </section>
+        </FadeIn>
       )}
     </div>
   );

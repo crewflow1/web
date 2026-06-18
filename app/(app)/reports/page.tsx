@@ -5,6 +5,7 @@ import {
   topCustomersByRevenue,
 } from "@/lib/reports/aggregates";
 import { requireOrgContext } from "@/server/auth/session";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * /reports — owner-facing time-series aggregates.
@@ -70,10 +71,10 @@ export default async function ReportsPage() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <Stagger className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Jobs per week ----------------------------------------------- */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <header className="flex items-baseline justify-between">
+        <StaggerItem className="h-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <header className="flex items-baseline justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">
                 Jobs per week
@@ -88,11 +89,11 @@ export default async function ReportsPage() {
             </div>
           </header>
           <JobsBars data={jobs} />
-        </section>
+        </StaggerItem>
 
         {/* Revenue per month ------------------------------------------- */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <header className="flex items-baseline justify-between">
+        <StaggerItem className="h-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <header className="flex items-baseline justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">
                 Revenue per month
@@ -109,11 +110,11 @@ export default async function ReportsPage() {
             </div>
           </header>
           <RevenueBars data={revenue} />
-        </section>
+        </StaggerItem>
 
         {/* VAT per quarter --------------------------------------------- */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <header className="flex items-baseline justify-between">
+        <StaggerItem className="h-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <header className="flex items-baseline justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">
                 VAT per quarter
@@ -130,11 +131,11 @@ export default async function ReportsPage() {
             </div>
           </header>
           <VatBars data={vat} />
-        </section>
+        </StaggerItem>
 
         {/* Top customers ----------------------------------------------- */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <header className="flex items-baseline justify-between">
+        <StaggerItem className="h-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <header className="flex items-baseline justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">
                 Top customers
@@ -151,8 +152,8 @@ export default async function ReportsPage() {
             </div>
           </header>
           <TopCustomersList data={top} />
-        </section>
-      </div>
+        </StaggerItem>
+      </Stagger>
 
       <p className="text-xs text-slate-500">
         All aggregates run under your user JWT — same RLS rules as the

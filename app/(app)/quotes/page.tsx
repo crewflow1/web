@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Quotes list page.
@@ -167,7 +168,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
+          <FadeIn className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
@@ -209,12 +210,12 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
                 ))}
               </tbody>
             </table>
-          </div>
+          </FadeIn>
 
           {/* Mobile cards */}
-          <ul className="space-y-2 md:hidden">
+          <Stagger className="space-y-2 md:hidden">
             {rows.map((q) => (
-              <li key={q.id}>
+              <StaggerItem key={q.id}>
                 <Link
                   href={`/quotes/${q.id}`}
                   className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
@@ -239,9 +240,9 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
                     </div>
                   </div>
                 </Link>
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
         </>
       )}
 
