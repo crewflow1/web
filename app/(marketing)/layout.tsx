@@ -7,6 +7,7 @@ import {
   websiteSchema,
   softwareApplicationSchema,
 } from "@/lib/seo/schema";
+import { MotionProvider } from "@/app/_marketing/motion";
 
 /**
  * Shared chrome for the whole public marketing surface. The BookDemoModal is
@@ -27,8 +28,15 @@ export default function MarketingLayout({
       <JsonLd
         data={[organizationSchema(), websiteSchema(), softwareApplicationSchema()]}
       />
+      {/* No-JS / pre-hydration safety: framer renders reveal wrappers with
+          inline opacity:0; force them visible if scripts never run. */}
+      <noscript>
+        <style>{`.mkt-reveal{opacity:1!important;transform:none!important;filter:none!important}`}</style>
+      </noscript>
       <SiteHeader />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1">
+        <MotionProvider>{children}</MotionProvider>
+      </main>
       <SiteFooter />
       <BookDemoModal />
     </div>

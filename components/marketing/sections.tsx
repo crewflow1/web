@@ -3,6 +3,7 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { JsonLd } from "@/components/seo/json-ld";
 import { faqSchema } from "@/lib/seo/schema";
 import type { Faq } from "@/lib/seo/content";
+import { Reveal } from "@/app/_marketing/motion";
 
 /* -------------------------------------------------------------------------- */
 /* Layout primitives                                                          */
@@ -185,13 +186,13 @@ export function ContentSections({
     <Section bg="white">
       <div className="mx-auto max-w-3xl space-y-12">
         {sections.map((s, i) => (
-          <div key={i}>
+          <Reveal as="div" key={i} delay={Math.min(i * 0.06, 0.3)}>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
               {s.h2}
             </h2>
             <p className="mt-4 text-lg leading-relaxed text-slate-600">{s.body}</p>
             {s.bullets ? <CheckList items={s.bullets} className="mt-6" /> : null}
-          </div>
+          </Reveal>
         ))}
       </div>
     </Section>
@@ -207,8 +208,10 @@ export function OutcomeCards({
     <Section bg="muted">
       <div className="grid gap-4 md:grid-cols-3">
         {items.map((o, i) => (
-          <div
+          <Reveal
+            as="div"
             key={i}
+            delay={Math.min(i * 0.08, 0.4)}
             className="rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm"
           >
             {o.stat ? (
@@ -218,7 +221,7 @@ export function OutcomeCards({
               {o.label}
             </div>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">{o.body}</p>
-          </div>
+          </Reveal>
         ))}
       </div>
     </Section>
@@ -245,19 +248,18 @@ export function FaqSection({
           {title}
         </h2>
         <div className="mt-10 space-y-3">
-          {items.map((q) => (
-            <details
-              key={q.q}
-              className="group rounded-xl border border-slate-200 bg-slate-50/40 px-5 py-4 open:bg-white open:shadow-sm"
-            >
-              <summary className="flex cursor-pointer items-center justify-between text-base font-semibold text-slate-900 marker:hidden [&::-webkit-details-marker]:hidden">
-                {q.q}
-                <span aria-hidden className="ml-4 text-slate-400 transition group-open:rotate-45">
-                  +
-                </span>
-              </summary>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600">{q.a}</p>
-            </details>
+          {items.map((q, i) => (
+            <Reveal as="div" key={q.q} delay={Math.min(i * 0.05, 0.3)}>
+              <details className="group rounded-xl border border-slate-200 bg-slate-50/40 px-5 py-4 open:bg-white open:shadow-sm">
+                <summary className="flex cursor-pointer items-center justify-between text-base font-semibold text-slate-900 marker:hidden [&::-webkit-details-marker]:hidden">
+                  {q.q}
+                  <span aria-hidden className="ml-4 text-slate-400 transition group-open:rotate-45">
+                    +
+                  </span>
+                </summary>
+                <p className="mt-3 text-sm leading-relaxed text-slate-600">{q.a}</p>
+              </details>
+            </Reveal>
           ))}
         </div>
       </div>
@@ -279,8 +281,8 @@ export function RelatedLinks({
   return (
     <Section bg="muted">
       <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-        {visible.map((g) => (
-          <div key={g.title}>
+        {visible.map((g, i) => (
+          <Reveal as="div" key={g.title} delay={Math.min(i * 0.06, 0.3)}>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               {g.title}
             </h3>
@@ -293,7 +295,7 @@ export function RelatedLinks({
                 </li>
               ))}
             </ul>
-          </div>
+          </Reveal>
         ))}
       </div>
     </Section>
@@ -313,7 +315,7 @@ export function ComparisonTable({
 }) {
   return (
     <Section bg="white">
-      <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+      <Reveal as="div" className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-slate-900 text-white">
@@ -334,7 +336,7 @@ export function ComparisonTable({
             ))}
           </tbody>
         </table>
-      </div>
+      </Reveal>
     </Section>
   );
 }
@@ -355,11 +357,11 @@ export function VersusColumns({
   return (
     <Section bg="muted">
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-7">
+        <Reveal as="div" className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-7">
           <h3 className="text-lg font-semibold text-emerald-900">Where CrewFlow is the better fit</h3>
           <CheckList items={crewflowWins} className="mt-5" />
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-7">
+        </Reveal>
+        <Reveal as="div" delay={0.1} className="rounded-2xl border border-slate-200 bg-white p-7">
           <h3 className="text-lg font-semibold text-slate-900">
             Where {competitorName} is the better fit
           </h3>
@@ -376,7 +378,7 @@ export function VersusColumns({
               </li>
             ))}
           </ul>
-        </div>
+        </Reveal>
       </div>
     </Section>
   );
@@ -396,7 +398,7 @@ export function CtaSection({
   return (
     <section className="bg-white">
       <div className="container py-16 sm:py-20">
-        <div className="relative overflow-hidden rounded-3xl bg-slate-900 px-8 py-16 text-center shadow-2xl sm:px-16">
+        <Reveal as="div" className="relative overflow-hidden rounded-3xl bg-slate-900 px-8 py-16 text-center shadow-2xl sm:px-16">
           <div
             aria-hidden
             className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_60%)]"
@@ -408,7 +410,7 @@ export function CtaSection({
               <BookDemoButton size="lg">Book demo</BookDemoButton>
             </div>
           </div>
-        </div>
+        </Reveal>
       </div>
     </section>
   );
@@ -426,25 +428,31 @@ export function CardGrid({
   return (
     <Section bg="muted">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map((c) => (
-          <Link
+        {cards.map((c, i) => (
+          <Reveal
+            as="div"
             key={c.href}
-            href={c.href}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-amber-300 hover:shadow-md"
+            delay={Math.min(i * 0.06, 0.3)}
+            className="h-full"
           >
-            {c.tag ? (
-              <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                {c.tag}
+            <Link
+              href={c.href}
+              className="group block h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-amber-300 hover:shadow-md"
+            >
+              {c.tag ? (
+                <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                  {c.tag}
+                </span>
+              ) : null}
+              <h3 className="mt-1 text-lg font-semibold text-slate-900 group-hover:text-amber-800">
+                {c.title}
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">{c.body}</p>
+              <span className="mt-4 inline-block text-sm font-semibold text-amber-700">
+                Learn more →
               </span>
-            ) : null}
-            <h3 className="mt-1 text-lg font-semibold text-slate-900 group-hover:text-amber-800">
-              {c.title}
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">{c.body}</p>
-            <span className="mt-4 inline-block text-sm font-semibold text-amber-700">
-              Learn more →
-            </span>
-          </Link>
+            </Link>
+          </Reveal>
         ))}
       </div>
     </Section>
