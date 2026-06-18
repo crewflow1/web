@@ -330,7 +330,7 @@ export function assembleCeoBoard(i: CeoInput): CeoBoard {
       key: "research",
       title: "Research",
       blurb: "How the AI qualifies the market before a human spends a minute.",
-      href: "/admin/sales/companies",
+      href: "/admin/research",
       icon: "microscope",
       accent: "violet",
       headline: {
