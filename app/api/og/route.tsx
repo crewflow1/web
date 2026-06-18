@@ -34,7 +34,7 @@ export function GET(request: Request) {
           justifyContent: "space-between",
           backgroundColor: "#0F172A",
           backgroundImage:
-            "radial-gradient(circle at 78% 8%, rgba(251,191,36,0.22), transparent 46%)",
+            "radial-gradient(circle at 78% 8%, rgba(99,102,241,0.24), transparent 46%)",
           padding: "72px 80px",
           fontFamily: "sans-serif",
         }}
@@ -47,15 +47,16 @@ export function GET(request: Request) {
               width: 64,
               height: 64,
               borderRadius: 16,
-              backgroundColor: "#fbbf24",
+              backgroundColor: "#0F172A",
+              border: "1px solid rgba(255,255,255,0.10)",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ width: 30, height: 4, borderRadius: 4, background: "#0F172A" }} />
-              <div style={{ width: 22, height: 4, borderRadius: 4, background: "#0F172A" }} />
-              <div style={{ width: 14, height: 4, borderRadius: 4, background: "#0F172A" }} />
+              <div style={{ width: 32, height: 5, borderRadius: 4, background: "#FFFFFF" }} />
+              <div style={{ width: 24, height: 5, borderRadius: 4, background: "#FFFFFF" }} />
+              <div style={{ width: 16, height: 5, borderRadius: 4, background: "#FFFFFF" }} />
             </div>
           </div>
           <div style={{ fontSize: 38, fontWeight: 700, color: "white", letterSpacing: -1 }}>
@@ -72,7 +73,7 @@ export function GET(request: Request) {
                 fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: 4,
-                color: "#fbbf24",
+                color: "#818cf8",
                 marginBottom: 24,
               }}
             >

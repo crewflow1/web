@@ -1,25 +1,6 @@
 /**
- * CrewFlow logo mark. Shared across the marketing chrome and kept identical
- * to the homepage mark + app/icon.svg so the brand presents one consistent
- * symbol everywhere (favicon, OG image, header, footer).
+ * CrewFlow logo mark — re-exported from the design system so the marketing
+ * chrome (header, footer) shares the single source of truth in
+ * components/ui/logo. One symbol everywhere; nothing is defined twice.
  */
-export function Logo({ size = 28 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <rect width="32" height="32" rx="8" fill="#0F172A" />
-      <path
-        d="M8 11h16M8 16h12M8 21h8"
-        stroke="#fbbf24"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
+export { Logo, Wordmark } from "@/components/ui/logo";

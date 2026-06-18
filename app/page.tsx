@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Logo } from "@/components/ui/logo";
 import { clashDisplay, satoshi } from "./_marketing/fonts";
 import { MotionProvider, Reveal, CountUp } from "./_marketing/motion";
 import { BookDemoCta } from "./_marketing/cta";
@@ -81,22 +82,9 @@ function Chrome({ url }: { url: string }) {
 
 /* CrewFlow brand mark: three descending bars on a navy tile. One logo
    across the whole product — geometry and colours match the favicon. */
+/** Homepage mark — delegates to the shared design-system logo (one symbol). */
 function LogoMark({ size = 30 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 100 100"
-      fill="none"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <rect width="100" height="100" rx="23" fill="#16213e" />
-      <rect x="27" y="29.5" width="52" height="11" rx="5.5" fill="#f9a826" />
-      <rect x="27" y="44.5" width="44" height="11" rx="5.5" fill="#f9a826" />
-      <rect x="27" y="59.5" width="33" height="11" rx="5.5" fill="#f9a826" />
-    </svg>
-  );
+  return <Logo size={size} />;
 }
 
 const EM = "var(--emerald-2)";

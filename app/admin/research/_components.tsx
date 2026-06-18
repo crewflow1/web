@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ResearchProvenance } from "@/lib/research/model";
 import type { ResearchScoreFactor } from "@/lib/research/score";
+import { ChipList as UIChipList } from "@/components/ui";
 import {
   FACTOR_BAR,
   FACTOR_TONE,
@@ -16,7 +17,12 @@ import {
  * No "use client", no server-only imports: safe to render from the server
  * pages AND the client live view. Every figure shown here is one the runner
  * actually produced — unknowns render as honest "—", never invented.
+ *
+ * The generic surfaces (Panel, Fact, chip styling) now come from the shared
+ * design system (CEO Directive 006) so Research reuses the exact same atoms as
+ * the rest of HQ — one source of truth, no duplicated class strings.
  */
+export { Panel, Fact } from "@/components/ui";
 
 export function Tile({
   label,
@@ -127,33 +133,11 @@ export function FactorRow({ factor }: { factor: ResearchScoreFactor }) {
   );
 }
 
-/** A titled dark card section. */
-export function Panel({
-  title,
-  subtitle,
-  action,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
-          {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
-        </div>
-        {action ?? null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/** A simple labelled chip list for services / pain points / signals. */
+/**
+ * A labelled chip list for services / pain points / signals. Thin adapter over
+ * the shared <ChipList> — keeps Research's `tone` prop while the styling itself
+ * lives once in the design system.
+ */
 export function ChipList({
   items,
   tone = "slate",
@@ -163,38 +147,7 @@ export function ChipList({
   tone?: "slate" | "emerald" | "amber" | "indigo";
   empty?: string;
 }) {
-  if (!items.length) return <p className="text-xs text-slate-500">{empty}</p>;
-  const toneClass =
-    tone === "emerald"
-      ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/20"
-      : tone === "amber"
-        ? "bg-amber-500/10 text-amber-300 ring-amber-400/20"
-        : tone === "indigo"
-          ? "bg-indigo-500/10 text-indigo-300 ring-indigo-400/20"
-          : "bg-slate-800/80 text-slate-300 ring-slate-700";
-  return (
-    <ul className="flex flex-wrap gap-1.5">
-      {items.map((it, i) => (
-        <li
-          key={`${it}-${i}`}
-          className={`rounded-full px-2.5 py-1 text-xs ring-1 ring-inset ${toneClass}`}
-        >
-          {it}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** A key/value definition row that hides itself when the value is unknown. */
-export function Fact({ label, value }: { label: string; value: string | null }) {
-  if (!value) return null;
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-slate-800/70 py-2 last:border-0">
-      <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className="text-right text-sm font-medium text-slate-200">{value}</dd>
-    </div>
-  );
+  return <UIChipList items={items} accent={tone} empty={empty} />;
 }
 
 export function BackToResearch() {

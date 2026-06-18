@@ -1,9 +1,12 @@
 /**
  * Skeleton primitives for loading.tsx files.
  *
- * Uses Tailwind `animate-pulse` to indicate work-in-progress. Pure
- * presentation — no client component needed.
+ * The light `Skeleton*` set serves the customer product's light surfaces; the
+ * dark `Shimmer*` set below serves the HQ dark surfaces with a premium sweeping
+ * highlight. Both are pure presentation — no client component needed.
  */
+
+import { cn } from "@/lib/utils";
 
 export function Skeleton({ className = "" }: { className?: string }) {
   return (
@@ -81,6 +84,79 @@ export function SkeletonHeader() {
     <div>
       <Skeleton className="h-7 w-48" />
       <Skeleton className="mt-2 h-4 w-72" />
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dark HQ loaders — premium shimmer on the slate-900 canvas.                 */
+/* -------------------------------------------------------------------------- */
+
+/** A single shimmering block — the dark-surface loading primitive. */
+export function Shimmer({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-md bg-slate-800/80",
+        className,
+      )}
+      aria-hidden
+    >
+      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+    </div>
+  );
+}
+
+/** N shimmering text lines, the last one short. */
+export function ShimmerLines({
+  lines = 3,
+  className,
+}: {
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-2", className)} aria-hidden>
+      {Array.from({ length: lines }).map((_, i) => (
+        <Shimmer
+          key={i}
+          className={cn("h-3", i === lines - 1 ? "w-2/3" : "w-full")}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** A dark glass stat-tile loader. */
+export function ShimmerStat() {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <Shimmer className="h-3 w-16" />
+      <Shimmer className="mt-3 h-7 w-24" />
+      <Shimmer className="mt-2 h-3 w-20" />
+    </div>
+  );
+}
+
+/** A responsive row of dark stat-tile loaders. */
+export function ShimmerStatRow({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {Array.from({ length: count }).map((_, i) => (
+        <ShimmerStat key={i} />
+      ))}
+    </div>
+  );
+}
+
+/** A dark panel loader — header line plus body lines. */
+export function ShimmerPanel({ lines = 4 }: { lines?: number }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+      <Shimmer className="h-4 w-40" />
+      <div className="mt-4">
+        <ShimmerLines lines={lines} />
+      </div>
     </div>
   );
 }
