@@ -7,6 +7,13 @@ import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
 import { ConfirmForm } from "../_confirm-form";
 import { AdminFilters } from "../_filters";
+import {
+  AnimatedNumber,
+  GlowHeader,
+  Panel,
+  StatTile,
+  Surface,
+} from "@/components/ui";
 
 /**
  * CrewFlow CEO approval dashboard.
@@ -70,15 +77,15 @@ type DemoRow = {
 };
 
 const STATUS_PILL: Record<string, string> = {
-  pending_demo: "bg-amber-100 text-amber-800",
-  demo_booked: "bg-indigo-100 text-indigo-800",
-  approved: "bg-emerald-100 text-emerald-800",
-  pending: "bg-amber-100 text-amber-800",
-  trial: "bg-blue-100 text-blue-800",
-  active: "bg-emerald-100 text-emerald-800",
-  suspended: "bg-red-100 text-red-700",
-  rejected: "bg-slate-200 text-slate-600",
-  cancelled: "bg-slate-200 text-slate-600",
+  pending_demo: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  demo_booked: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
+  approved: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  trial: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  suspended: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+  rejected: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+  cancelled: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -240,143 +247,115 @@ export default async function AdminOrganizationsPage({
     : null;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Companies</h1>
-          <p className="mt-1 text-sm text-slate-600">
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Companies"
+        subtitle={
+          <>
             Approve, trial, suspend. Signed in as <strong>{user.email}</strong>.
+          </>
+        }
+        actions={
+          <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-300 ring-1 ring-inset ring-amber-400/30">
+            {totalPendingForCeo} awaiting your review
+          </span>
+        }
+      />
+
+      <div className="mx-auto max-w-6xl space-y-6 p-5 sm:p-7">
+        {errorMessage ? (
+          <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {errorMessage}
+          </div>
+        ) : null}
+        {savedMessage ? (
+          <div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            {savedMessage}
+          </div>
+        ) : null}
+
+        {/* Metrics tiles */}
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="Pending demos" value={<AnimatedNumber value={pendingDemoCount} />} sub="ready to review" />
+          <StatTile label="Demos booked" value={<AnimatedNumber value={demoBookedCount} />} sub="scheduled" />
+          <StatTile label="Trial orgs" value={<AnimatedNumber value={trialOrgCount} />} sub="14-day window" />
+          <StatTile label="Active orgs" value={<AnimatedNumber value={activeOrgCount} />} sub="paying" />
+          <StatTile
+            accent="emerald"
+            label="MRR"
+            value={<AnimatedNumber value={mrr} format="currency" />}
+            sub="active × £500"
+          />
+          <StatTile
+            label="Projected MRR"
+            value={<AnimatedNumber value={projectedMrr} format="currency" />}
+            sub="active + trial"
+          />
+        </section>
+        {suspendedCount > 0 ? (
+          <p className="text-xs text-slate-500">
+            {suspendedCount} suspended org{suspendedCount === 1 ? "" : "s"} not shown
+            in the totals above — filter by status to see them.
           </p>
-        </div>
-        <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
-          {totalPendingForCeo} awaiting your review
-        </span>
-      </header>
+        ) : null}
 
-      {errorMessage ? (
-        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {errorMessage}
-        </div>
-      ) : null}
-      {savedMessage ? (
-        <div role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-          {savedMessage}
-        </div>
-      ) : null}
+        {/* Filters */}
+        <AdminFilters defaultQuery={q} defaultStatus={statusFilter} defaultSort={sort} />
 
-      {/* Metrics tiles */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricTile label="Pending demos" value={pendingDemoCount} sub="ready to review" />
-        <MetricTile label="Demos booked" value={demoBookedCount} sub="scheduled" />
-        <MetricTile label="Trial orgs" value={trialOrgCount} sub="14-day window" />
-        <MetricTile label="Active orgs" value={activeOrgCount} sub="paying" />
-        <MetricTile label="MRR" value={`£${mrr.toLocaleString()}`} sub="active × £500" emphasis />
-        <MetricTile
-          label="Projected MRR"
-          value={`£${projectedMrr.toLocaleString()}`}
-          sub="active + trial"
-        />
-      </section>
-      {suspendedCount > 0 ? (
-        <p className="text-xs text-slate-500">
-          {suspendedCount} suspended org{suspendedCount === 1 ? "" : "s"} not shown
-          in the totals above — filter by status to see them.
+        {/* Demo requests */}
+        <Panel
+          title={`Demo requests (${sortDemos.length})`}
+          action={<span className="text-[11px] text-slate-500">Pre-signup intake</span>}
+          bodyClassName="-mx-5 -mb-5"
+        >
+          {sortDemos.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-slate-500">
+              {q || statusFilter
+                ? "No demo requests match the current filter."
+                : "No demo requests yet."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-800">
+              {sortDemos.map((d) => (
+                <DemoRowItem key={d.id} demo={d} />
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        {/* Organisations */}
+        <Panel
+          title={`Organisations (${sortOrgs.length})`}
+          action={<span className="text-[11px] text-slate-500">Signed-up companies</span>}
+          bodyClassName="-mx-5 -mb-5"
+        >
+          {sortOrgs.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-slate-500">
+              {q || statusFilter
+                ? "No organisations match the current filter."
+                : "No organisations yet."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-800">
+              {sortOrgs.map((org) => (
+                <OrgRowItem
+                  key={org.id}
+                  org={org}
+                  owner={ownerByOrg.get(org.id) ?? null}
+                />
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        <p className="text-center text-xs text-slate-500">
+          <Link href="/dashboard" className="transition hover:text-slate-300">
+            ← Back to CrewFlow
+          </Link>
         </p>
-      ) : null}
-
-      {/* Filters */}
-      <AdminFilters defaultQuery={q} defaultStatus={statusFilter} defaultSort={sort} />
-
-      {/* Demo requests */}
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Demo requests{" "}
-            <span className="ml-1 text-xs font-normal text-slate-500">
-              ({sortDemos.length})
-            </span>
-          </h2>
-          <span className="text-[11px] text-slate-500">Pre-signup intake</span>
-        </header>
-        {sortDemos.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-slate-500">
-            {q || statusFilter
-              ? "No demo requests match the current filter."
-              : "No demo requests yet."}
-          </p>
-        ) : (
-          <ul className="divide-y divide-slate-100">
-            {sortDemos.map((d) => (
-              <DemoRowItem key={d.id} demo={d} />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Organisations */}
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Organisations{" "}
-            <span className="ml-1 text-xs font-normal text-slate-500">
-              ({sortOrgs.length})
-            </span>
-          </h2>
-          <span className="text-[11px] text-slate-500">Signed-up companies</span>
-        </header>
-        {sortOrgs.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-slate-500">
-            {q || statusFilter
-              ? "No organisations match the current filter."
-              : "No organisations yet."}
-          </p>
-        ) : (
-          <ul className="divide-y divide-slate-100">
-            {sortOrgs.map((org) => (
-              <OrgRowItem
-                key={org.id}
-                org={org}
-                owner={ownerByOrg.get(org.id) ?? null}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <p className="text-center text-xs text-slate-400">
-        <Link href="/dashboard" className="hover:text-slate-700">
-          ← Back to CrewFlow
-        </Link>
-      </p>
-    </div>
-  );
-}
-
-function MetricTile({
-  label,
-  value,
-  sub,
-  emphasis,
-}: {
-  label: string;
-  value: number | string;
-  sub?: string;
-  emphasis?: boolean;
-}) {
-  return (
-    <div
-      className={
-        emphasis
-          ? "rounded-xl border border-emerald-200 bg-emerald-50 p-3 shadow-sm"
-          : "rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
-      }
-    >
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-        {label}
       </div>
-      <div className="mt-0.5 text-xl font-bold text-slate-900">{value}</div>
-      {sub ? <div className="text-[11px] text-slate-500">{sub}</div> : null}
-    </div>
+    </Surface>
   );
 }
 
@@ -388,24 +367,24 @@ function DemoRowItem({ demo }: { demo: DemoRow }) {
       : demo.turnover_range ?? "—";
 
   return (
-    <li className="px-4 py-4 sm:px-6">
+    <li className="px-5 py-4 hover:bg-slate-900/50">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-slate-900">
+            <p className="text-sm font-semibold text-white">
               {demo.company}
             </p>
             <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[demo.status] ?? "bg-slate-100 text-slate-700"}`}
+              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[demo.status] ?? "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40"}`}
             >
               {STATUS_LABEL[demo.status] ?? demo.status}
             </span>
           </div>
-          <p className="mt-0.5 text-xs text-slate-600">
+          <p className="mt-0.5 text-xs text-slate-400">
             {demo.name} · {demo.email}
             {demo.phone ? ` · ${demo.phone}` : ""}
           </p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-3">
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 sm:grid-cols-3">
             <Field label="Created" value={demo.created_at.slice(0, 10)} />
             <Field label="Staff" value={demo.employees ?? "—"} />
             <Field label="Revenue" value={turnoverLabel} />
@@ -425,7 +404,7 @@ function DemoRowItem({ demo }: { demo: DemoRow }) {
             />
           </dl>
           {demo.rejection_reason ? (
-            <p className="mt-2 text-[11px] text-red-700">
+            <p className="mt-2 text-[11px] text-rose-300">
               Rejection note: {demo.rejection_reason}
             </p>
           ) : null}
@@ -468,13 +447,13 @@ function DemoRowItem({ demo }: { demo: DemoRow }) {
             >
               <input type="hidden" name="demo_id" value={demo.id} />
               <input type="hidden" name="status" value="rejected" />
-              <label className="block text-xs text-slate-600">
+              <label className="block text-xs text-slate-400">
                 Optional note (sent to the prospect — keep it brief)
                 <input
                   type="text"
                   name="reason"
                   maxLength={2000}
-                  className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                  className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
                 />
               </label>
             </ConfirmForm>
@@ -504,13 +483,13 @@ function OrgRowItem({
       : null;
 
   return (
-    <li className="px-4 py-4 sm:px-6">
+    <li className="px-5 py-4 hover:bg-slate-900/50">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-slate-900">{org.name}</p>
+            <p className="text-sm font-semibold text-white">{org.name}</p>
             <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[org.status] ?? "bg-slate-100 text-slate-700"}`}
+              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[org.status] ?? "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40"}`}
             >
               {STATUS_LABEL[org.status] ?? org.status}
               {org.status === "trial" && trialDaysLeft !== null
@@ -518,7 +497,7 @@ function OrgRowItem({
                 : ""}
             </span>
           </div>
-          <p className="mt-0.5 text-xs text-slate-600">
+          <p className="mt-0.5 text-xs text-slate-400">
             {owner ? `${owner.full_name ?? "—"} · ${owner.email}` : "no owner row"}
             {org.phone ? ` · ${org.phone}` : ""}
             {" · created "}
@@ -527,17 +506,17 @@ function OrgRowItem({
             <strong>{org.plan}</strong>
           </p>
           {org.rejection_reason ? (
-            <p className="mt-1 text-[11px] text-red-700">
+            <p className="mt-1 text-[11px] text-rose-300">
               Rejection note: {org.rejection_reason}
             </p>
           ) : null}
           {org.suspended_at ? (
-            <p className="mt-1 text-[11px] text-amber-700">
+            <p className="mt-1 text-[11px] text-amber-300">
               Suspended at {org.suspended_at.slice(0, 16).replace("T", " ")}
             </p>
           ) : null}
           {org.cancelled_at ? (
-            <p className="mt-1 text-[11px] text-slate-600">
+            <p className="mt-1 text-[11px] text-slate-400">
               Cancelled at {org.cancelled_at.slice(0, 16).replace("T", " ")}
             </p>
           ) : null}
@@ -619,13 +598,13 @@ function OrgRowItem({
             >
               <input type="hidden" name="org_id" value={org.id} />
               <input type="hidden" name="status" value="rejected" />
-              <label className="block text-xs text-slate-600">
+              <label className="block text-xs text-slate-400">
                 Optional note (sent to the owner)
                 <input
                   type="text"
                   name="reason"
                   maxLength={2000}
-                  className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                  className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
                 />
               </label>
             </ConfirmForm>
@@ -650,7 +629,7 @@ function Field({
       <dt className="font-medium uppercase tracking-wide text-slate-500">
         {label}
       </dt>
-      <dd className="text-slate-700">{value}</dd>
+      <dd className="text-slate-300">{value}</dd>
     </div>
   );
 }

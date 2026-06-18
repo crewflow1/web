@@ -5,6 +5,17 @@ import {
   type OnboardingRow,
   type OnboardingImportRow,
 } from "@/server/services/hq-onboarding-snapshot";
+import {
+  AnimatedNumber,
+  Button,
+  ButtonLink,
+  GlowHeader,
+  Meter,
+  Panel,
+  Select,
+  StatTile,
+  Surface,
+} from "@/components/ui";
 
 /**
  * Onboarding & migration — HQ-4.
@@ -87,58 +98,61 @@ export default async function HqOnboardingPage({
     : [];
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">
-          Onboarding &amp; migration
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Where every customer is in their migration. Edit migration %,
-          stage, and ETA in <strong>/admin/customers/&lt;id&gt;</strong>;
-          this view is for triage — sorted to put stalled customers first.
-        </p>
-      </header>
-
-      {/* KPI tiles */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Tile label="Customers (filtered)" value={String(sorted.length)} />
-        <Tile label="Imports in flight" value={String(totals.inProgress)} />
-        <Tile label="Files uploaded" value={String(totals.files)} />
-        <Tile
-          label="Failed rows"
-          value={String(totals.rowsFailed)}
-          tone={totals.rowsFailed > 0 ? "danger" : undefined}
-        />
-      </section>
-
-      <Filters
-        q={q}
-        status={statusFilter}
-        stalled={stalledOnly}
-        sort={sort}
-        count={filtered.length}
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Onboarding & migration"
+        subtitle={
+          <>
+            Where every customer is in their migration. Edit migration %,
+            stage, and ETA in <strong>/admin/customers/&lt;id&gt;</strong>;
+            this view is for triage — sorted to put stalled customers first.
+          </>
+        }
       />
 
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        {sorted.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-slate-500">
-            No customers match the current filters.
-          </p>
-        ) : (
-          <ul className="divide-y divide-slate-100">
-            {sorted.map((r) => (
-              <OnboardingRowView
-                key={r.org_id}
-                row={r}
-                open={openOrg === r.org_id}
-                imports={openOrg === r.org_id ? openImports : []}
-                qs={buildQs(sp)}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
+      <div className="space-y-6 p-5 sm:p-7">
+        {/* KPI tiles */}
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatTile label="Customers (filtered)" value={<AnimatedNumber value={sorted.length} />} />
+          <StatTile label="Imports in flight" value={<AnimatedNumber value={totals.inProgress} />} />
+          <StatTile label="Files uploaded" value={<AnimatedNumber value={totals.files} />} />
+          <StatTile
+            label="Failed rows"
+            value={<AnimatedNumber value={totals.rowsFailed} />}
+            accent={totals.rowsFailed > 0 ? "rose" : "slate"}
+          />
+        </section>
+
+        <Filters
+          q={q}
+          status={statusFilter}
+          stalled={stalledOnly}
+          sort={sort}
+          count={filtered.length}
+        />
+
+        <Panel bodyClassName="-mx-5 -mb-5">
+          {sorted.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-500">
+              No customers match the current filters.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-800">
+              {sorted.map((r) => (
+                <OnboardingRowView
+                  key={r.org_id}
+                  row={r}
+                  open={openOrg === r.org_id}
+                  imports={openOrg === r.org_id ? openImports : []}
+                  qs={buildQs(sp)}
+                />
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+    </Surface>
   );
 }
 
@@ -163,12 +177,12 @@ function OnboardingRowView({
   const danger = row.rows_failed > 0 || row.imports_rolled_back > 0;
 
   return (
-    <li className="px-4 py-3">
+    <li className="px-5 py-3 hover:bg-slate-900/50">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <Link
             href={`/admin/customers/${row.org_id}`}
-            className="text-sm font-semibold text-slate-900 hover:text-slate-700"
+            className="text-sm font-semibold text-white hover:text-slate-300"
           >
             {row.org_name}
           </Link>
@@ -179,7 +193,7 @@ function OnboardingRowView({
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           {danger ? (
-            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-800">
+            <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-400/30">
               {row.rows_failed > 0 ? `${row.rows_failed} failed rows` : null}
               {row.rows_failed > 0 && row.imports_rolled_back > 0 ? " · " : ""}
               {row.imports_rolled_back > 0
@@ -188,12 +202,12 @@ function OnboardingRowView({
             </span>
           ) : null}
           {stalled ? (
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-900">
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300 ring-1 ring-inset ring-amber-400/30">
               {row.imports_in_progress} in flight
             </span>
           ) : null}
           {row.migration_percent === 100 ? (
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-900">
+            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
               Migration complete
             </span>
           ) : null}
@@ -229,26 +243,27 @@ function OnboardingRowView({
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Link
           href={`/admin/customers/${row.org_id}`}
-          className="text-xs font-medium text-slate-600 hover:text-slate-900"
+          className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
         >
           Edit progress →
         </Link>
         {open ? (
           <Link
             href={`/admin/onboarding?${collapseQs.toString()}`}
-            className="text-xs font-medium text-slate-600 hover:text-slate-900"
+            className="text-xs font-medium text-slate-400 hover:text-slate-200"
             scroll={false}
           >
             Collapse
           </Link>
         ) : (
-          <Link
+          <ButtonLink
             href={`/admin/onboarding?${expandQs.toString()}`}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+            variant="glass"
+            size="sm"
             scroll={false}
           >
             Open files
-          </Link>
+          </ButtonLink>
         )}
       </div>
 
@@ -260,9 +275,9 @@ function OnboardingRowView({
 function ImportsDetail({ imports }: { imports: OnboardingImportRow[] }) {
   if (imports.length === 0) {
     return (
-      <p className="mt-3 rounded-md border border-dashed border-slate-300 bg-slate-50/60 px-3 py-4 text-center text-xs text-slate-500">
+      <p className="mt-3 rounded-xl border border-dashed border-slate-800 bg-slate-900/60 px-3 py-4 text-center text-xs text-slate-500">
         No imports started yet. The customer can start one at{" "}
-        <code>/imports</code> on their workspace.
+        <code className="rounded bg-slate-800/80 px-1 font-mono text-[0.9em] text-slate-300 ring-1 ring-inset ring-slate-700">/imports</code> on their workspace.
       </p>
     );
   }
@@ -271,11 +286,11 @@ function ImportsDetail({ imports }: { imports: OnboardingImportRow[] }) {
       {imports.map((imp) => (
         <li
           key={imp.id}
-          className="rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2"
+          className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900">{imp.name}</p>
+              <p className="text-sm font-medium text-slate-100">{imp.name}</p>
               <p className="text-[11px] text-slate-500">
                 {imp.created_at.slice(0, 16).replace("T", " ")}
                 {imp.committed_at
@@ -286,7 +301,7 @@ function ImportsDetail({ imports }: { imports: OnboardingImportRow[] }) {
               </p>
             </div>
             <span
-              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${importPill(imp.status, imp.committed_at, imp.rolled_back_at)}`}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${importPill(imp.status, imp.committed_at, imp.rolled_back_at)}`}
             >
               {imp.rolled_back_at
                 ? "rolled back"
@@ -296,11 +311,11 @@ function ImportsDetail({ imports }: { imports: OnboardingImportRow[] }) {
             </span>
           </div>
           {imp.files.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-[11px] text-slate-700">
+            <ul className="mt-2 space-y-1 text-[11px] text-slate-300">
               {imp.files.map((f) => (
                 <li
                   key={f.id}
-                  className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-2 py-1"
+                  className="flex items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950 px-2 py-1"
                 >
                   <span className="truncate font-medium">{f.filename}</span>
                   <span className="shrink-0 text-slate-500">
@@ -324,13 +339,13 @@ function importPill(
   committed: string | null,
   rolledBack: string | null,
 ): string {
-  if (rolledBack) return "border-red-200 bg-red-50 text-red-800";
-  if (committed) return "border-emerald-200 bg-emerald-50 text-emerald-900";
-  if (status === "failed") return "border-red-200 bg-red-50 text-red-800";
+  if (rolledBack) return "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30";
+  if (committed) return "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30";
+  if (status === "failed") return "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30";
   if (status === "detected" || status === "uploaded") {
-    return "border-amber-200 bg-amber-50 text-amber-900";
+    return "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30";
   }
-  return "border-slate-200 bg-slate-50 text-slate-700";
+  return "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40";
 }
 
 function ProgressBar({
@@ -346,11 +361,8 @@ function ProgressBar({
       <div className="flex items-center justify-between text-[10px] text-slate-500">
         <span>{label}</span>
       </div>
-      <div className="mt-0.5 h-1.5 w-full rounded-full bg-slate-100">
-        <div
-          className={`h-1.5 rounded-full ${safe === 100 ? "bg-emerald-600" : "bg-slate-900"}`}
-          style={{ width: `${safe}%` }}
-        />
+      <div className="mt-0.5">
+        <Meter value={safe} accent={safe === 100 ? "emerald" : "indigo"} />
       </div>
     </div>
   );
@@ -373,34 +385,30 @@ function Filters({
     <form
       method="GET"
       action="/admin/onboarding"
-      className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+      className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3"
     >
-      <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-600">
+      <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-400">
         Search
         <input
           type="search"
           name="q"
           defaultValue={q}
           placeholder="Company, owner email…"
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm"
+          className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-sm text-white placeholder:text-slate-600 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
         />
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Status
-        <select
-          name="status"
-          defaultValue={status}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
+        <Select name="status" defaultValue={status} className="mt-1">
           <option value="">All</option>
           <option value="pending">Pending</option>
           <option value="trial">Trial</option>
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
           <option value="cancelled">Cancelled</option>
-        </select>
+        </Select>
       </label>
-      <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-700">
+      <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300">
         <input
           type="checkbox"
           name="stalled"
@@ -409,51 +417,21 @@ function Filters({
         />
         Stalled only
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Sort
-        <select
-          name="sort"
-          defaultValue={sort}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
+        <Select name="sort" defaultValue={sort} className="mt-1">
           <option value="stalled">Stalled first (lowest %)</option>
           <option value="errors">Most failed rows ↓</option>
           <option value="percent_asc">Migration % ↑</option>
           <option value="newest">Most recent upload</option>
           <option value="name">Name A→Z</option>
-        </select>
+        </Select>
       </label>
-      <button
-        type="submit"
-        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-      >
+      <Button type="submit" variant="accent" size="sm">
         Apply
-      </button>
+      </Button>
       <p className="text-[11px] text-slate-500">{count} customers</p>
     </form>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "danger";
-}) {
-  const cls =
-    tone === "danger"
-      ? "border-red-200 bg-red-50"
-      : "border-slate-200 bg-white";
-  return (
-    <div className={`rounded-xl border p-3 shadow-sm ${cls}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1 text-lg font-bold text-slate-900">{value}</p>
-    </div>
   );
 }
 
@@ -466,7 +444,7 @@ function Field({
   value: string;
   tone?: "danger";
 }) {
-  const cls = tone === "danger" ? "text-red-700" : "text-slate-900";
+  const cls = tone === "danger" ? "text-rose-300" : "text-slate-100";
   return (
     <div>
       <dt className="text-slate-500">{label}</dt>

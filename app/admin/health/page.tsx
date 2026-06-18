@@ -1,12 +1,22 @@
 import Link from "next/link";
+import {
+  AnimatedNumber,
+  Button,
+  ButtonLink,
+  GlowHeader,
+  Input,
+  Select,
+  StatTile,
+  Surface,
+} from "@/components/ui";
 import { listHealthDeepDive } from "@/server/services/hq-health-deep-dive";
 import {
   bandFromScore,
   HEALTH_BAND_LABEL,
-  HEALTH_BAND_PILL,
   applyHealthFilter,
   recommendForRow,
   HEALTH_FILTER_LABEL,
+  type HealthBand,
   type HealthDeepDiveFilter,
 } from "@/lib/hq/health-deep-dive";
 
@@ -30,6 +40,15 @@ import {
 type SP = Promise<{ filter?: string; q?: string }>;
 
 export const dynamic = "force-dynamic";
+
+// Dark band pills — mirror the light HEALTH_BAND_PILL shape from
+// lib/hq/health-deep-dive on the dark canvas.
+const BAND_PILL: Record<HealthBand, string> = {
+  red: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+  yellow: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  green: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  unknown: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+};
 
 export default async function HqHealthPage({
   searchParams,
@@ -69,229 +88,195 @@ export default async function HqHealthPage({
   });
 
   return (
-    <div className="space-y-5 p-6">
-      <header>
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-          HQ · Customer health
-        </p>
-        <h1 className="text-2xl font-bold text-slate-900">
-          Churn + upsell control room
-        </h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Per-customer health with deterministic next-best-action. Critical
-          (&lt;40) first. Filters narrow by band or operator queue.
-          Recommendations are pure rules — no LLM.
-        </p>
-      </header>
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Churn + upsell control room"
+        subtitle={
+          <>
+            Per-customer health with deterministic next-best-action. Critical
+            (&lt;40) first. Filters narrow by band or operator queue.
+            Recommendations are pure rules — no LLM.
+          </>
+        }
+      />
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Critical" value={String(red)} tone="red" />
-        <Kpi label="At risk" value={String(yellow)} tone="amber" />
-        <Kpi label="Healthy" value={String(green)} tone="emerald" />
-        <Kpi label="Unscored" value={String(unscored)} tone="slate" />
-      </section>
+      <div className="space-y-5 p-5 sm:p-7">
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Critical" value={<AnimatedNumber value={red} />} accent="rose" />
+          <StatTile label="At risk" value={<AnimatedNumber value={yellow} />} accent="amber" />
+          <StatTile label="Healthy" value={<AnimatedNumber value={green} />} accent="emerald" />
+          <StatTile label="Unscored" value={<AnimatedNumber value={unscored} />} accent="slate" />
+        </section>
 
-      <form
-        method="get"
-        action="/admin/health"
-        className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
-      >
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Filter
-          <select
-            name="filter"
-            defaultValue={filter}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            {(Object.keys(HEALTH_FILTER_LABEL) as HealthDeepDiveFilter[]).map(
-              (k) => (
-                <option key={k} value={k}>
-                  {HEALTH_FILTER_LABEL[k]}
-                </option>
-              ),
-            )}
-          </select>
-        </label>
-        <label className="flex flex-col text-[11px] font-medium text-slate-700">
-          Search
-          <input
-            type="text"
-            name="q"
-            defaultValue={q}
-            placeholder="customer name"
-            className="mt-1 w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-          />
-        </label>
-        <button
-          type="submit"
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+        <form
+          method="get"
+          action="/admin/health"
+          className="flex flex-wrap items-end gap-2 rounded-2xl border border-slate-800 bg-slate-900/40 p-3"
         >
-          Apply
-        </button>
-        <Link
-          href="/admin/health"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Reset
-        </Link>
-      </form>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Filter
+            <Select name="filter" defaultValue={filter} className="mt-1">
+              {(Object.keys(HEALTH_FILTER_LABEL) as HealthDeepDiveFilter[]).map(
+                (k) => (
+                  <option key={k} value={k}>
+                    {HEALTH_FILTER_LABEL[k]}
+                  </option>
+                ),
+              )}
+            </Select>
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-400">
+            Search
+            <Input
+              type="text"
+              name="q"
+              defaultValue={q}
+              placeholder="customer name"
+              className="mt-1 w-56"
+            />
+          </label>
+          <Button type="submit" variant="accent" size="sm">
+            Apply
+          </Button>
+          <ButtonLink href="/admin/health" variant="glass" size="sm">
+            Reset
+          </ButtonLink>
+        </form>
 
-      {recs.length === 0 ? (
-        <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
-          No customers match this filter.
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {recs.map(({ row, rec }) => {
-            const band = bandFromScore(row.health_score);
-            return (
-              <li
-                key={row.org_id}
-                className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${HEALTH_BAND_PILL[band]}`}
-                      >
-                        {HEALTH_BAND_LABEL[band]}
-                      </span>
-                      <Link
-                        href={`/admin/customers/${row.org_id}`}
-                        className="text-sm font-bold text-slate-900 hover:underline"
-                      >
-                        {row.org_name}
-                      </Link>
-                      <span className="text-[11px] text-slate-500">
-                        {row.status}
-                      </span>
-                    </div>
-                    <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-700 sm:grid-cols-4">
-                      <Stat
-                        label="Health"
-                        value={
-                          row.health_score !== null
-                            ? `${row.health_score}/100`
-                            : "—"
-                        }
-                      />
-                      <Stat
-                        label="MRR"
-                        value={`£${Math.round(row.mrr_gbp).toLocaleString("en-GB")}`}
-                      />
-                      <Stat label="Setup fee" value={row.setup_fee_status} />
-                      <Stat
-                        label="Outstanding"
-                        value={
-                          row.outstanding_gbp > 0
-                            ? `£${Math.round(row.outstanding_gbp).toLocaleString("en-GB")}`
-                            : "—"
-                        }
-                      />
-                      <Stat
-                        label="Last login"
-                        value={
-                          row.days_since_login === null
-                            ? "Never"
-                            : row.days_since_login === 0
-                              ? "Today"
-                              : `${row.days_since_login}d ago`
-                        }
-                      />
-                      <Stat
-                        label="Onboarded"
-                        value={`${row.onboarding_percent}%`}
-                      />
-                      <Stat
-                        label="Migration"
-                        value={`${row.migration_percent}%`}
-                      />
-                      <Stat
-                        label="Active tickets"
-                        value={
-                          row.active_support_tickets === 0
-                            ? "0"
-                            : `${row.active_support_tickets}${row.urgent_support_tickets > 0 ? ` (${row.urgent_support_tickets} urgent)` : ""}`
-                        }
-                      />
-                    </dl>
-                    {row.trend.length > 1 ? (
-                      <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
-                        <span>Trend:</span>
-                        {row.trend.map((t, i) => (
-                          <span
-                            key={i}
-                            className={
-                              t.score < 40
-                                ? "text-red-700"
-                                : t.score < 70
-                                  ? "text-amber-700"
-                                  : "text-emerald-700"
-                            }
-                          >
-                            {t.score}
-                            {i < row.trend.length - 1 ? " →" : ""}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="flex w-full flex-col items-end gap-1 sm:w-auto">
-                    {rec ? (
-                      <>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                          Recommended
-                        </p>
-                        <Link
-                          href={rec.action_url}
-                          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+        {recs.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 px-4 py-6 text-center text-sm text-slate-500">
+            No customers match this filter.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {recs.map(({ row, rec }) => {
+              const band = bandFromScore(row.health_score);
+              return (
+                <li
+                  key={row.org_id}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${BAND_PILL[band]}`}
                         >
-                          {rec.label} →
+                          {HEALTH_BAND_LABEL[band]}
+                        </span>
+                        <Link
+                          href={`/admin/customers/${row.org_id}`}
+                          className="text-sm font-bold text-white hover:text-slate-300"
+                        >
+                          {row.org_name}
                         </Link>
-                        <p className="text-[10px] text-slate-500">
-                          {rec.detail}
-                        </p>
-                      </>
-                    ) : (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900">
-                        No action needed
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
+                        <span className="text-[11px] text-slate-500">
+                          {row.status}
+                        </span>
+                      </div>
+                      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-300 sm:grid-cols-4">
+                        <Stat
+                          label="Health"
+                          value={
+                            row.health_score !== null
+                              ? `${row.health_score}/100`
+                              : "—"
+                          }
+                        />
+                        <Stat
+                          label="MRR"
+                          value={`£${Math.round(row.mrr_gbp).toLocaleString("en-GB")}`}
+                        />
+                        <Stat label="Setup fee" value={row.setup_fee_status} />
+                        <Stat
+                          label="Outstanding"
+                          value={
+                            row.outstanding_gbp > 0
+                              ? `£${Math.round(row.outstanding_gbp).toLocaleString("en-GB")}`
+                              : "—"
+                          }
+                        />
+                        <Stat
+                          label="Last login"
+                          value={
+                            row.days_since_login === null
+                              ? "Never"
+                              : row.days_since_login === 0
+                                ? "Today"
+                                : `${row.days_since_login}d ago`
+                          }
+                        />
+                        <Stat
+                          label="Onboarded"
+                          value={`${row.onboarding_percent}%`}
+                        />
+                        <Stat
+                          label="Migration"
+                          value={`${row.migration_percent}%`}
+                        />
+                        <Stat
+                          label="Active tickets"
+                          value={
+                            row.active_support_tickets === 0
+                              ? "0"
+                              : `${row.active_support_tickets}${row.urgent_support_tickets > 0 ? ` (${row.urgent_support_tickets} urgent)` : ""}`
+                          }
+                        />
+                      </dl>
+                      {row.trend.length > 1 ? (
+                        <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
+                          <span>Trend:</span>
+                          {row.trend.map((t, i) => (
+                            <span
+                              key={i}
+                              className={
+                                t.score < 40
+                                  ? "text-rose-300"
+                                  : t.score < 70
+                                    ? "text-amber-300"
+                                    : "text-emerald-300"
+                              }
+                            >
+                              {t.score}
+                              {i < row.trend.length - 1 ? " →" : ""}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
 
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "red" | "amber" | "emerald" | "slate";
-}) {
-  const t: Record<typeof tone, string> = {
-    red: "bg-red-50 border-red-200 text-red-900",
-    amber: "bg-amber-50 border-amber-200 text-amber-900",
-    emerald: "bg-emerald-50 border-emerald-200 text-emerald-900",
-    slate: "bg-white border-slate-200 text-slate-900",
-  };
-  return (
-    <div className={`rounded-xl border p-3 shadow-sm ${t[tone]}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide opacity-75">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
-    </div>
+                    <div className="flex w-full flex-col items-end gap-1 sm:w-auto">
+                      {rec ? (
+                        <>
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            Recommended
+                          </p>
+                          <ButtonLink
+                            href={rec.action_url}
+                            variant="accent"
+                            size="sm"
+                          >
+                            {rec.label} →
+                          </ButtonLink>
+                          <p className="text-[10px] text-slate-500">
+                            {rec.detail}
+                          </p>
+                        </>
+                      ) : (
+                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+                          No action needed
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </Surface>
   );
 }
 
@@ -301,7 +286,7 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-[9px] uppercase tracking-wide text-slate-500">
         {label}
       </p>
-      <p className="text-[11px] font-medium text-slate-900">{value}</p>
+      <p className="text-[11px] font-medium text-slate-100">{value}</p>
     </div>
   );
 }

@@ -8,15 +8,15 @@ import {
   BILLING_INVOICE_KINDS,
   BILLING_KIND_LABELS,
   BILLING_STATUS_LABELS,
-  BILLING_STATUS_PILL,
   formatGbp,
   formatRenewal,
   type BillingInvoiceRow,
+  type BillingInvoiceStatus,
 } from "@/lib/hq/billing";
 import {
-  SUBSCRIPTION_PILL,
   SETUP_FEE_LABELS,
-  SETUP_FEE_PILL,
+  type SetupFeeStatus,
+  type SubscriptionStatus,
 } from "@/lib/hq/customer-financials";
 import {
   createBillingInvoice,
@@ -24,6 +24,18 @@ import {
   setNextRenewal,
 } from "./actions";
 import { ClientConfirmForm } from "../_client-confirm";
+import {
+  AnimatedNumber,
+  Button,
+  ButtonLink,
+  GlowHeader,
+  Input,
+  Label,
+  Panel,
+  Select,
+  StatTile,
+  Surface,
+} from "@/components/ui";
 
 /**
  * Billing OS — HQ-4.
@@ -52,6 +64,34 @@ type SP = Promise<{
   saved?: string;
   error?: string;
 }>;
+
+// Dark status pills — mirror the light maps in lib/hq/billing +
+// lib/hq/customer-financials on the dark canvas (presentation only).
+const SUBSCRIPTION_PILL_DARK: Record<SubscriptionStatus, string> = {
+  trial: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  past_due: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  suspended: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+  cancelled: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+};
+
+const SETUP_FEE_PILL_DARK: Record<SetupFeeStatus, string> = {
+  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  sent: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  paid: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  waived: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+  refunded: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+};
+
+const BILLING_STATUS_PILL_DARK: Record<BillingInvoiceStatus, string> = {
+  draft: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+  sent: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  paid: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+  failed: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+  refunded: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  void: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+};
 
 const SUBSCRIPTION_OPTIONS: ReadonlyArray<string> = [
   "trial",
@@ -130,77 +170,82 @@ export default async function HqBillingPage({
     : [];
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Billing OS</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Every customer&apos;s subscription, setup fee, outstanding balance
-          and failed-payment count in one place. Click <strong>Open</strong>{" "}
-          on any row to record invoices, flip statuses, or set the next
-          renewal date.
-        </p>
-      </header>
-
-      {/* KPI tiles (filter-aware) */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Tile label="MRR (filtered)" value={formatGbp(totals.mrr)} />
-        <Tile
-          label="Outstanding"
-          value={formatGbp(totals.outstanding)}
-          tone={totals.outstanding > 0 ? "warn" : undefined}
-        />
-        <Tile label="Paid total" value={formatGbp(totals.paid)} />
-        <Tile
-          label="Failed payments"
-          value={String(totals.failed)}
-          tone={totals.failed > 0 ? "danger" : undefined}
-        />
-      </section>
-
-      {/* Filter toolbar */}
-      <Filters
-        q={q}
-        status={statusFilter}
-        setup={setupFilter}
-        outstanding={outstandingOnly}
-        sort={sort}
-        count={filtered.length}
+    <Surface>
+      <GlowHeader
+        eyebrow="CrewFlow HQ"
+        title="Billing OS"
+        subtitle={
+          <>
+            Every customer&apos;s subscription, setup fee, outstanding balance
+            and failed-payment count in one place. Click <strong>Open</strong>{" "}
+            on any row to record invoices, flip statuses, or set the next
+            renewal date.
+          </>
+        }
       />
 
-      {banner ? (
-        <div
-          role={banner.tone === "err" ? "alert" : "status"}
-          className={
-            banner.tone === "err"
-              ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-              : "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-          }
-        >
-          {banner.msg}
-        </div>
-      ) : null}
+      <div className="space-y-4 p-5 sm:p-7">
+        {/* KPI tiles (filter-aware) */}
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatTile label="MRR (filtered)" value={<AnimatedNumber value={totals.mrr} format="currency" />} />
+          <StatTile
+            label="Outstanding"
+            value={<AnimatedNumber value={totals.outstanding} format="currency" />}
+            accent={totals.outstanding > 0 ? "amber" : "slate"}
+          />
+          <StatTile label="Paid total" value={<AnimatedNumber value={totals.paid} format="currency" />} />
+          <StatTile
+            label="Failed payments"
+            value={<AnimatedNumber value={totals.failed} />}
+            accent={totals.failed > 0 ? "rose" : "slate"}
+          />
+        </section>
 
-      {/* Customer rows */}
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        {sorted.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-slate-500">
-            No customers match the current filters.
-          </p>
-        ) : (
-          <ul className="divide-y divide-slate-100">
-            {sorted.map((r) => (
-              <CustomerBillingRowView
-                key={r.org_id}
-                row={r}
-                open={openOrg === r.org_id}
-                invoices={openOrg === r.org_id ? openInvoices : []}
-                qs={buildQs(sp)}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
+        {/* Filter toolbar */}
+        <Filters
+          q={q}
+          status={statusFilter}
+          setup={setupFilter}
+          outstanding={outstandingOnly}
+          sort={sort}
+          count={filtered.length}
+        />
+
+        {banner ? (
+          <div
+            role={banner.tone === "err" ? "alert" : "status"}
+            className={
+              banner.tone === "err"
+                ? "rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"
+                : "rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"
+            }
+          >
+            {banner.msg}
+          </div>
+        ) : null}
+
+        {/* Customer rows */}
+        <Panel bodyClassName="-mx-5 -mb-5">
+          {sorted.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-500">
+              No customers match the current filters.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-800">
+              {sorted.map((r) => (
+                <CustomerBillingRowView
+                  key={r.org_id}
+                  row={r}
+                  open={openOrg === r.org_id}
+                  invoices={openOrg === r.org_id ? openInvoices : []}
+                  qs={buildQs(sp)}
+                />
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+    </Surface>
   );
 }
 
@@ -215,8 +260,8 @@ function CustomerBillingRowView({
   invoices: BillingInvoiceRow[];
   qs: URLSearchParams;
 }) {
-  const subscriptionPill = SUBSCRIPTION_PILL[row.subscription];
-  const setupPill = SETUP_FEE_PILL[row.setup_fee_status];
+  const subscriptionPill = SUBSCRIPTION_PILL_DARK[row.subscription];
+  const setupPill = SETUP_FEE_PILL_DARK[row.setup_fee_status];
 
   // Build expand/collapse hrefs — preserve filter state in the URL.
   const expandQs = new URLSearchParams(qs);
@@ -225,12 +270,12 @@ function CustomerBillingRowView({
   collapseQs.delete("org");
 
   return (
-    <li className="px-4 py-3">
+    <li className="px-5 py-3 hover:bg-slate-900/50">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <Link
             href={`/admin/customers/${row.org_id}`}
-            className="text-sm font-semibold text-slate-900 hover:text-slate-700"
+            className="text-sm font-semibold text-white hover:text-slate-300"
           >
             {row.org_name}
           </Link>
@@ -239,14 +284,14 @@ function CustomerBillingRowView({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <span className={`rounded-full border px-2 py-0.5 ${subscriptionPill}`}>
+          <span className={`rounded-full px-2 py-0.5 ${subscriptionPill}`}>
             {row.subscription}
           </span>
-          <span className={`rounded-full border px-2 py-0.5 ${setupPill}`}>
+          <span className={`rounded-full px-2 py-0.5 ${setupPill}`}>
             Setup: {SETUP_FEE_LABELS[row.setup_fee_status]}
           </span>
           {row.summary.failedCount > 0 ? (
-            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-800">
+            <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-400/30">
               {row.summary.failedCount} failed
             </span>
           ) : null}
@@ -275,33 +320,34 @@ function CustomerBillingRowView({
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Link
           href={`/admin/customers/${row.org_id}`}
-          className="text-xs font-medium text-slate-600 hover:text-slate-900"
+          className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
         >
           Open customer →
         </Link>
         {open ? (
           <Link
             href={`/admin/billing?${collapseQs.toString()}`}
-            className="text-xs font-medium text-slate-600 hover:text-slate-900"
+            className="text-xs font-medium text-slate-400 hover:text-slate-200"
             scroll={false}
           >
             Collapse
           </Link>
         ) : (
-          <Link
+          <ButtonLink
             href={`/admin/billing?${expandQs.toString()}`}
-            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+            variant="glass"
+            size="sm"
             scroll={false}
           >
             Open billing
-          </Link>
+          </ButtonLink>
         )}
         {row.stripe_customer_id ? (
           <span className="text-[10px] text-slate-500">
-            Stripe: <code>{row.stripe_customer_id}</code>
+            Stripe: <code className="rounded bg-slate-800/80 px-1 font-mono text-[0.9em] text-slate-300 ring-1 ring-inset ring-slate-700">{row.stripe_customer_id}</code>
           </span>
         ) : (
-          <span className="text-[10px] text-slate-400">Stripe not linked</span>
+          <span className="text-[10px] text-slate-600">Stripe not linked</span>
         )}
       </div>
 
@@ -323,11 +369,11 @@ function ExpandedBilling({
     ? row.next_renewal_at.slice(0, 10)
     : "";
   return (
-    <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-3 lg:grid-cols-[1fr_320px]">
+    <div className="mt-3 grid grid-cols-1 gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-3 lg:grid-cols-[1fr_320px]">
       {/* Invoices list */}
-      <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
         <header className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">
+          <h3 className="text-sm font-semibold text-white">
             Invoices ({invoices.length})
           </h3>
         </header>
@@ -337,7 +383,7 @@ function ExpandedBilling({
             you send a setup or subscription invoice.
           </p>
         ) : (
-          <ul className="mt-2 divide-y divide-slate-100">
+          <ul className="mt-2 divide-y divide-slate-800">
             {invoices.map((inv) => (
               <InvoiceRow key={inv.id} row={inv} />
             ))}
@@ -347,8 +393,8 @@ function ExpandedBilling({
 
       {/* Side: create invoice + set renewal */}
       <div className="space-y-3">
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <h3 className="text-sm font-semibold text-slate-900">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+          <h3 className="text-sm font-semibold text-white">
             Record invoice
           </h3>
           <p className="mt-1 text-[11px] text-slate-500">
@@ -358,91 +404,73 @@ function ExpandedBilling({
           </p>
           <form action={createBillingInvoice} className="mt-2 space-y-2 text-[11px]">
             <input type="hidden" name="org_id" value={row.org_id} />
-            <label className="block text-slate-700">
+            <Label className="block text-slate-300">
               Kind
-              <select
-                name="kind"
-                defaultValue="subscription"
-                className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              >
+              <Select name="kind" defaultValue="subscription" className="mt-1">
                 {BILLING_INVOICE_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {BILLING_KIND_LABELS[k]}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="block text-slate-700">
+              </Select>
+            </Label>
+            <Label className="block text-slate-300">
               Amount (£)
-              <input
+              <Input
                 name="amount_gbp"
                 type="number"
                 step={1}
                 min={0}
                 required
                 defaultValue={500}
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                className="mt-1"
               />
-            </label>
-            <label className="block text-slate-700">
+            </Label>
+            <Label className="block text-slate-300">
               Status on save
-              <select
-                name="status"
-                defaultValue="sent"
-                className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              >
+              <Select name="status" defaultValue="sent" className="mt-1">
                 <option value="sent">Sent</option>
                 <option value="paid">Paid</option>
                 <option value="draft">Draft</option>
-              </select>
-            </label>
-            <label className="block text-slate-700">
+              </Select>
+            </Label>
+            <Label className="block text-slate-300">
               Due date
-              <input
-                name="due_date"
-                type="date"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-              />
-            </label>
-            <label className="block text-slate-700">
-              Notes <span className="text-slate-400">optional</span>
-              <input
+              <Input name="due_date" type="date" className="mt-1" />
+            </Label>
+            <Label className="block text-slate-300">
+              Notes <span className="text-slate-600">optional</span>
+              <Input
                 name="notes"
                 type="text"
                 maxLength={2000}
                 placeholder="e.g. May subscription"
-                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                className="mt-1"
               />
-            </label>
-            <button
-              type="submit"
-              className="w-full rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-            >
+            </Label>
+            <Button type="submit" variant="accent" size="sm" className="w-full">
               Save invoice
-            </button>
+            </Button>
           </form>
         </div>
 
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <h3 className="text-sm font-semibold text-slate-900">Next renewal</h3>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+          <h3 className="text-sm font-semibold text-white">Next renewal</h3>
           <p className="mt-1 text-[11px] text-slate-500">
             When the next monthly bill is due. Stripe will manage this
             once webhooks are wired up.
           </p>
           <form action={setNextRenewal} className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
             <input type="hidden" name="org_id" value={row.org_id} />
-            <input
+            <Input
               name="next_renewal_at"
               type="date"
               defaultValue={renewalIso}
-              className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              className="flex-1"
             />
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-            >
+            <Button type="submit" variant="accent" size="sm">
               Save
-            </button>
+            </Button>
           </form>
         </div>
       </div>
@@ -451,15 +479,15 @@ function ExpandedBilling({
 }
 
 function InvoiceRow({ row }: { row: BillingInvoiceRow }) {
-  const pill = BILLING_STATUS_PILL[row.status];
+  const pill = BILLING_STATUS_PILL_DARK[row.status];
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-slate-900">
+          <span className="font-semibold text-slate-100">
             {BILLING_KIND_LABELS[row.kind]}
           </span>
-          <span className={`rounded-full border px-1.5 py-0.5 text-[10px] ${pill}`}>
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${pill}`}>
             {BILLING_STATUS_LABELS[row.status]}
           </span>
         </div>
@@ -471,7 +499,7 @@ function InvoiceRow({ row }: { row: BillingInvoiceRow }) {
           {row.failure_reason ? ` · ${row.failure_reason}` : ""}
         </p>
         {row.notes ? (
-          <p className="mt-0.5 text-[10px] text-slate-400">{row.notes}</p>
+          <p className="mt-0.5 text-[10px] text-slate-600">{row.notes}</p>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -505,12 +533,12 @@ function FlipButton({
 }) {
   const cls =
     tone === "emerald"
-      ? "border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+      ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
       : tone === "red"
-        ? "border-red-300 bg-white text-red-700 hover:bg-red-50"
+        ? "border-rose-400/30 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25"
         : tone === "amber"
-          ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
+          ? "border-amber-400/30 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+          : "border-slate-600/40 bg-slate-700/40 text-slate-300 hover:bg-slate-700/60";
 
   // "Mark paid" is recoverable and routine — no confirm step.
   // Failed / Refunded / Void all affect customer-visible state or
@@ -569,49 +597,41 @@ function Filters({
     <form
       method="GET"
       action="/admin/billing"
-      className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+      className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3"
     >
-      <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-600">
+      <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-400">
         Search
-        <input
+        <Input
           type="search"
           name="q"
           defaultValue={q}
           placeholder="Company, owner email…"
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm"
+          className="mt-1"
         />
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Subscription
-        <select
-          name="status"
-          defaultValue={status}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
+        <Select name="status" defaultValue={status} className="mt-1">
           <option value="">All</option>
           {SUBSCRIPTION_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Setup fee
-        <select
-          name="setup"
-          defaultValue={setup}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
+        <Select name="setup" defaultValue={setup} className="mt-1">
           <option value="">All</option>
           <option value="pending">Pending</option>
           <option value="sent">Sent</option>
           <option value="paid">Paid</option>
           <option value="waived">Waived</option>
           <option value="refunded">Refunded</option>
-        </select>
+        </Select>
       </label>
-      <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-700">
+      <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300">
         <input
           type="checkbox"
           name="outstanding"
@@ -620,13 +640,9 @@ function Filters({
         />
         Outstanding only
       </label>
-      <label className="text-[11px] font-medium text-slate-600">
+      <label className="text-[11px] font-medium text-slate-400">
         Sort
-        <select
-          name="sort"
-          defaultValue={sort}
-          className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-        >
+        <Select name="sort" defaultValue={sort} className="mt-1">
           <option value="outstanding">Outstanding ↓ (chase first)</option>
           <option value="failed">Failed payments ↓</option>
           <option value="mrr">MRR ↓</option>
@@ -634,41 +650,13 @@ function Filters({
           <option value="renewal">Next renewal ↑</option>
           <option value="name">Name A→Z</option>
           <option value="newest">Newest</option>
-        </select>
+        </Select>
       </label>
-      <button
-        type="submit"
-        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-      >
+      <Button type="submit" variant="accent" size="sm">
         Apply
-      </button>
+      </Button>
       <p className="text-[11px] text-slate-500">{count} customers</p>
     </form>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "warn" | "danger";
-}) {
-  const cls =
-    tone === "danger"
-      ? "border-red-200 bg-red-50"
-      : tone === "warn"
-        ? "border-amber-200 bg-amber-50"
-        : "border-slate-200 bg-white";
-  return (
-    <div className={`rounded-xl border p-3 shadow-sm ${cls}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1 text-lg font-bold text-slate-900">{value}</p>
-    </div>
   );
 }
 
@@ -681,7 +669,7 @@ function Field({
   value: string;
   tone?: "warn";
 }) {
-  const cls = tone === "warn" ? "text-amber-800" : "text-slate-900";
+  const cls = tone === "warn" ? "text-amber-300" : "text-slate-100";
   return (
     <div>
       <dt className="text-slate-500">{label}</dt>
