@@ -112,7 +112,7 @@ export default async function HqImpersonationPage({
                 Open customer workspace →
               </ButtonLink>
               <form action={endImpersonation}>
-                <Button type="submit" variant="destructive" size="sm">
+                <Button type="submit" variant="danger" size="sm">
                   Exit impersonation
                 </Button>
               </form>
@@ -150,7 +150,7 @@ export default async function HqImpersonationPage({
                   className="mt-1"
                 />
               </label>
-              <Button type="submit" variant="destructive">
+              <Button type="submit" variant="danger">
                 Start impersonating
               </Button>
             </ClientConfirmForm>
