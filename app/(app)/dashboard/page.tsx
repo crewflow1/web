@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FadeIn } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
@@ -994,45 +995,47 @@ export default async function DashboardPage() {
           href="/leads"
           sub="sum of open lead values"
         />
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Top sources
+        <FadeIn className="h-full">
+          <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Top sources
+              </div>
+              <Link
+                href="/leads"
+                className="text-xs font-medium text-slate-500 hover:text-slate-900"
+              >
+                View all →
+              </Link>
             </div>
-            <Link
-              href="/leads"
-              className="text-xs font-medium text-slate-500 hover:text-slate-900"
-            >
-              View all →
-            </Link>
+            {topSources.length === 0 ? (
+              <div className="mt-2 text-sm text-slate-500">
+                No leads yet. <Link href="/leads/new" className="text-slate-700 underline">Add one</Link>
+              </div>
+            ) : (
+              <ul className="mt-2 space-y-1 text-sm">
+                {topSources.map(([src, agg]) => (
+                  <li key={src} className="flex items-center justify-between">
+                    <Link
+                      href={`/leads?source=${encodeURIComponent(src)}`}
+                      className="text-slate-700 hover:text-slate-900 hover:underline"
+                    >
+                      {src}
+                    </Link>
+                    <span className="text-xs text-slate-500">
+                      {agg.count}
+                      {agg.won > 0 ? (
+                        <span className="ml-1 font-medium text-green-700">
+                          · {agg.won} won
+                        </span>
+                      ) : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {topSources.length === 0 ? (
-            <div className="mt-2 text-sm text-slate-500">
-              No leads yet. <Link href="/leads/new" className="text-slate-700 underline">Add one</Link>
-            </div>
-          ) : (
-            <ul className="mt-2 space-y-1 text-sm">
-              {topSources.map(([src, agg]) => (
-                <li key={src} className="flex items-center justify-between">
-                  <Link
-                    href={`/leads?source=${encodeURIComponent(src)}`}
-                    className="text-slate-700 hover:text-slate-900 hover:underline"
-                  >
-                    {src}
-                  </Link>
-                  <span className="text-xs text-slate-500">
-                    {agg.count}
-                    {agg.won > 0 ? (
-                      <span className="ml-1 font-medium text-green-700">
-                        · {agg.won} won
-                      </span>
-                    ) : null}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        </FadeIn>
       </section>
 
       {/* Status + photos + staff */}
@@ -1193,18 +1196,20 @@ function Kpi({
   href?: string;
 }) {
   const body = (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-        {label}
+    <FadeIn className="h-full">
+      <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          {label}
+        </div>
+        <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
+        {sub ? (
+          <div className="mt-1 text-xs text-slate-500 truncate">{sub}</div>
+        ) : null}
       </div>
-      <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
-      {sub ? (
-        <div className="mt-1 text-xs text-slate-500 truncate">{sub}</div>
-      ) : null}
-    </div>
+    </FadeIn>
   );
   return href ? (
-    <Link href={href} className="block">
+    <Link href={href} className="block h-full">
       {body}
     </Link>
   ) : (
@@ -1222,20 +1227,22 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-        {href ? (
-          <Link
-            href={href}
-            className="text-xs font-medium text-slate-500 hover:text-slate-900"
-          >
-            View all →
-          </Link>
-        ) : null}
+    <FadeIn className="h-full">
+      <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+          {href ? (
+            <Link
+              href={href}
+              className="text-xs font-medium text-slate-500 hover:text-slate-900"
+            >
+              View all →
+            </Link>
+          ) : null}
+        </div>
+        {children}
       </div>
-      {children}
-    </div>
+    </FadeIn>
   );
 }
 
@@ -1247,10 +1254,12 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
-      {children}
-    </div>
+    <FadeIn className="h-full">
+      <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
+        {children}
+      </div>
+    </FadeIn>
   );
 }
 
@@ -1264,42 +1273,44 @@ function ProfitTable({
   jobNameById: Map<string, string>;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
-      {rows.length === 0 ? (
-        <p className="text-xs text-slate-500">No jobs with revenue yet.</p>
-      ) : (
-        <ul className="divide-y divide-slate-100">
-          {rows.map((r) => {
-            const name = jobNameById.get(r.job_id) ?? r.job_id.slice(0, 8);
-            const band = marginBand(r.margin_pct);
-            return (
-              <li key={r.job_id} className="flex items-center gap-3 py-2">
-                <Link
-                  href={`/jobs/${r.job_id}`}
-                  className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 hover:underline"
-                >
-                  {name}
-                </Link>
-                <div className="text-right text-xs text-slate-600">
-                  <div className="text-sm font-semibold text-slate-900">
-                    {GBP.format(r.gross_profit)}
+    <FadeIn className="h-full">
+      <div className="h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>
+        {rows.length === 0 ? (
+          <p className="text-xs text-slate-500">No jobs with revenue yet.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {rows.map((r) => {
+              const name = jobNameById.get(r.job_id) ?? r.job_id.slice(0, 8);
+              const band = marginBand(r.margin_pct);
+              return (
+                <li key={r.job_id} className="flex items-center gap-3 py-2">
+                  <Link
+                    href={`/jobs/${r.job_id}`}
+                    className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 hover:underline"
+                  >
+                    {name}
+                  </Link>
+                  <div className="text-right text-xs text-slate-600">
+                    <div className="text-sm font-semibold text-slate-900">
+                      {GBP.format(r.gross_profit)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      rev {GBP.format(r.revenue)} · cost {GBP.format(r.costs_total)}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    rev {GBP.format(r.revenue)} · cost {GBP.format(r.costs_total)}
-                  </div>
-                </div>
-                <span
-                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${marginPillClass(band)}`}
-                >
-                  {r.margin_pct === null ? "—" : `${r.margin_pct}%`}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${marginPillClass(band)}`}
+                  >
+                    {r.margin_pct === null ? "—" : `${r.margin_pct}%`}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </FadeIn>
   );
 }
 
