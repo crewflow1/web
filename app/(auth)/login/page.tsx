@@ -1,4 +1,5 @@
 import { signInWithGoogle, signInWithMagicLink } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 type SearchParams = Promise<{
   error?: string;
@@ -67,7 +68,7 @@ export default async function LoginPage({
   const emailHint = sp.email ?? "";
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Sign in</h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -136,7 +137,7 @@ export default async function LoginPage({
       <p className="text-center text-xs text-slate-500">
         By continuing you agree to CrewFlow&apos;s Terms and acknowledge our Privacy Policy.
       </p>
-    </div>
+    </FadeIn>
   );
 }
 

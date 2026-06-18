@@ -3,6 +3,7 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { sendPortalMessage } from "../../_message-action";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer portal — Messages.
@@ -162,14 +163,14 @@ export default async function PortalMessagesPage({
             No messages yet. Send your first one above.
           </p>
         ) : (
-          <ul className="space-y-2">
+          <Stagger className="space-y-2">
             {tickets.map((t) => {
               // Last visible (non-internal) message for the preview line.
               const lastVisible = (t.last_message ?? []).find(
                 (m) => !m.internal,
               );
               return (
-                <li
+                <StaggerItem
                   key={t.id}
                   className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
                 >
@@ -191,10 +192,10 @@ export default async function PortalMessagesPage({
                       {lastVisible.body}
                     </p>
                   ) : null}
-                </li>
+                </StaggerItem>
               );
             })}
-          </ul>
+          </Stagger>
         )}
       </section>
     </PortalShell>

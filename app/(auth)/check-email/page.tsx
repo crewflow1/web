@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { signInWithMagicLink } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 type SearchParams = Promise<{ email?: string }>;
 
@@ -18,7 +19,7 @@ export default async function CheckEmailPage({
 }) {
   const { email } = await searchParams;
   return (
-    <div className="space-y-4 text-center">
+    <FadeIn className="space-y-4 text-center">
       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -77,6 +78,6 @@ export default async function CheckEmailPage({
           </Link>
         </p>
       )}
-    </div>
+    </FadeIn>
   );
 }

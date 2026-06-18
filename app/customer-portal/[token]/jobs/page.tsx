@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer portal — Job progress.
@@ -86,9 +87,9 @@ export default async function PortalJobsPage({
           </p>
         </section>
       ) : (
-        <ul className="space-y-3">
+        <Stagger className="space-y-3">
           {jobs.map((j) => (
-            <li
+            <StaggerItem
               key={j.id}
               className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
             >
@@ -124,9 +125,9 @@ export default async function PortalJobsPage({
                   </p>
                 </div>
               </div>
-            </li>
+            </StaggerItem>
           ))}
-        </ul>
+        </Stagger>
       )}
     </PortalShell>
   );

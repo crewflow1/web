@@ -3,6 +3,7 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { uploadPaymentProof } from "../../_upload-action";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 const UPLOAD_ERRORS: Record<string, string> = {
   no_file: "Choose a file to upload first.",
@@ -144,14 +145,14 @@ export default async function PortalInvoicesPage({
           </p>
         </section>
       ) : (
-        <ol className="space-y-3">
+        <Stagger className="space-y-3">
           {invoices.map((inv) => {
             const total = Number(inv.total ?? 0);
             const paid = paidByInvoice.get(inv.id) ?? 0;
             const outstanding = Math.max(0, total - paid);
             const isFullyPaid = inv.status === "paid" || outstanding === 0;
             return (
-              <li
+              <StaggerItem
                 key={inv.id}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
@@ -275,10 +276,10 @@ export default async function PortalInvoicesPage({
                     </form>
                   </details>
                 ) : null}
-              </li>
+              </StaggerItem>
             );
           })}
-        </ol>
+        </Stagger>
       )}
     </PortalShell>
   );

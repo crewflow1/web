@@ -4,6 +4,7 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer-side quotes list.
@@ -116,12 +117,12 @@ export default async function PortalQuotesPage({
           </p>
         </section>
       ) : (
-        <ol className="space-y-3">
+        <Stagger className="space-y-3">
           {rows.map((q) => {
             const status = (q.status as QuoteStatus) ?? "draft";
             const canAct = status === "draft" || status === "sent" || status === "viewed";
             return (
-              <li
+              <StaggerItem
                 key={q.id}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
@@ -175,10 +176,10 @@ export default async function PortalQuotesPage({
                     PDF
                   </a>
                 </div>
-              </li>
+              </StaggerItem>
             );
           })}
-        </ol>
+        </Stagger>
       )}
     </PortalShell>
   );

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../_helpers";
 import { PortalShell } from "./_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer portal overview.
@@ -113,7 +114,7 @@ export default async function PortalOverviewPage({
   return (
     <PortalShell customer={customer} org={org} token={token} active="overview">
       {/* Headline KPIs — mobile-stack-then-row */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <SummaryCard label="Open quotes" value={openQuotes.length.toString()} />
         <SummaryCard label="Accepted quotes" value={acceptedQuotes.length.toString()} />
         <SummaryCard
@@ -121,11 +122,11 @@ export default async function PortalOverviewPage({
           value={GBP.format(outstandingTotal)}
           sub={`${outstandingInvoices.length} ${outstandingInvoices.length === 1 ? "invoice" : "invoices"}`}
         />
-      </section>
+      </Stagger>
 
       {/* Most recent quote */}
       {recentQuote ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <FadeIn className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -176,12 +177,12 @@ export default async function PortalOverviewPage({
               All quotes →
             </Link>
           </div>
-        </section>
+        </FadeIn>
       ) : null}
 
       {/* Most recent invoice */}
       {recentInvoice ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <FadeIn className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -215,7 +216,7 @@ export default async function PortalOverviewPage({
               All invoices →
             </Link>
           </div>
-        </section>
+        </FadeIn>
       ) : null}
 
       {/* Empty state */}
@@ -242,12 +243,12 @@ function SummaryCard({
   sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <StaggerItem className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </div>
       <div className="mt-1 text-xl font-bold text-slate-900">{value}</div>
       {sub ? <div className="mt-0.5 text-xs text-slate-500">{sub}</div> : null}
-    </div>
+    </StaggerItem>
   );
 }
