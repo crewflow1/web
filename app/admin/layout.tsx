@@ -6,6 +6,7 @@ import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snaps
 import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
 import { badgeText as notifBadgeText } from "@/lib/notifications/sort";
+import { PageTransition } from "@/components/ui";
 import { HqNavMobile } from "./_nav-mobile";
 import { NavLink } from "./_nav-link";
 
@@ -128,7 +129,9 @@ export default async function AdminLayout({
         </aside>
 
         {/* Main content */}
-        <main className="min-w-0 flex-1 pb-12">{children}</main>
+        <main className="min-w-0 flex-1 pb-12">
+          <PageTransition>{children}</PageTransition>
+        </main>
       </div>
     </div>
   );

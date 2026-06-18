@@ -5,7 +5,7 @@ import { signOut } from "@/app/(auth)/actions";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
-import { buttonClass, Wordmark } from "@/components/ui";
+import { buttonClass, PageTransition, Wordmark } from "@/components/ui";
 import { Sidebar } from "./_components/sidebar";
 import { OrgSwitcher } from "./_components/org-switcher";
 import { BottomNav } from "./_components/bottom-nav";
@@ -98,7 +98,7 @@ export default async function AppLayout({
         <Sidebar role={ctx.membership.role} />
         {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
         <main className="container flex-1 py-6 pb-24 sm:py-10 md:pb-10">
-          {children}
+          <PageTransition>{children}</PageTransition>
         </main>
       </div>
       <BottomNav role={ctx.membership.role} />
