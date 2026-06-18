@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
@@ -8,6 +7,7 @@ import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
 import { badgeText as notifBadgeText } from "@/lib/notifications/sort";
 import { HqNavMobile } from "./_nav-mobile";
+import { NavLink } from "./_nav-link";
 
 /**
  * CrewFlow HQ — internal operating system for the team running CrewFlow.
@@ -78,16 +78,23 @@ export default async function AdminLayout({
   const notifBadge = notifBadgeText(unreadNotifs);
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="relative min-h-screen bg-slate-950 text-slate-100">
+      {/* Ambient glow — the subtle navy/indigo gradient that anchors the
+          whole HQ in the premium dark design language. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 z-0 h-80 bg-[radial-gradient(60%_120%_at_50%_0%,rgba(79,70,229,0.14),transparent_70%)]"
+      />
+
       {/* Mobile top bar with hamburger */}
       <HqNavMobile email={user.email ?? ""} items={HQ_NAV} />
 
-      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:gap-8">
+      <div className="relative z-10 mx-auto flex max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:gap-8">
         {/* Sidebar — hidden on mobile, fixed-ish column on lg */}
         <aside className="hidden w-56 shrink-0 lg:block">
           <div className="sticky top-6 space-y-4">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <div className="px-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 CrewFlow HQ
               </p>
               <p className="mt-0.5 truncate text-xs text-slate-500">
@@ -109,10 +116,10 @@ export default async function AdminLayout({
                 />
               ))}
             </nav>
-            <div className="border-t border-slate-200 pt-3 text-[11px] text-slate-500">
+            <div className="border-t border-slate-800 px-3 pt-3 text-[11px] text-slate-500">
               <a
                 href="/admin/switch-to-customer"
-                className="block hover:text-slate-900"
+                className="block transition hover:text-slate-200"
               >
                 ↩ Switch to customer view
               </a>
@@ -127,28 +134,3 @@ export default async function AdminLayout({
   );
 }
 
-function NavLink({
-  item,
-  badge,
-}: {
-  item: NavItem;
-  badge?: string | null;
-}) {
-  return (
-    <Link
-      href={item.href}
-      className="group flex items-center justify-between rounded-md px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-white hover:text-slate-900 aria-[current=page]:bg-slate-900 aria-[current=page]:text-white"
-    >
-      <span>{item.label}</span>
-      {item.shipsIn ? (
-        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800 group-aria-[current=page]:bg-amber-200">
-          {item.shipsIn}
-        </span>
-      ) : badge ? (
-        <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white group-aria-[current=page]:bg-red-500">
-          {badge}
-        </span>
-      ) : null}
-    </Link>
-  );
-}
