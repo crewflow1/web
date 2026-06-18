@@ -21,6 +21,7 @@ import {
 } from "../actions";
 import { LeadForm } from "../_form";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Lead detail.
@@ -254,6 +255,7 @@ export default async function LeadDetailPage({
       ) : null}
 
       {/* Phase B — Follow-up state + acknowledge actions */}
+      <FadeIn>
       <section
         aria-labelledby="followup-heading"
         className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -338,8 +340,10 @@ export default async function LeadDetailPage({
           </div>
         ) : null}
       </section>
+      </FadeIn>
 
       {/* Phase C — AI summary panel */}
+      <FadeIn>
       <section
         aria-labelledby="ai-summary-heading"
         className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -369,8 +373,10 @@ export default async function LeadDetailPage({
           </p>
         )}
       </section>
+      </FadeIn>
 
       {/* Linked quote */}
+      <FadeIn>
       {quotes.length > 0 ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">Linked quote</h2>
@@ -409,10 +415,11 @@ export default async function LeadDetailPage({
           </Link>
         </section>
       )}
+      </FadeIn>
 
       {/* Linked calls / AI transcripts */}
       {calls.length > 0 ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <FadeIn className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">Calls</h2>
           <ul className="mt-2 space-y-3">
             {calls.map((c) => (
@@ -446,7 +453,7 @@ export default async function LeadDetailPage({
               </li>
             ))}
           </ul>
-        </section>
+        </FadeIn>
       ) : null}
 
       {/* Edit form */}

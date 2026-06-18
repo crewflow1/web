@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { SupplierForm } from "../_form";
 import { updateSupplier, deleteSupplier } from "../actions";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 type SupplierRow = {
   id: string;
@@ -116,7 +117,7 @@ export default async function SupplierDetailPage({
         />
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">
           Linked expenses ({finances.length})
         </h2>
@@ -129,9 +130,9 @@ export default async function SupplierDetailPage({
             to attach one.
           </p>
         ) : (
-          <ul className="mt-2 divide-y divide-slate-100">
+          <Stagger className="mt-2 divide-y divide-slate-100">
             {finances.map((f) => (
-              <li
+              <StaggerItem
                 key={f.id}
                 className="flex items-center justify-between py-2 text-sm"
               >
@@ -139,11 +140,11 @@ export default async function SupplierDetailPage({
                 <span className="text-slate-500">
                   {f.amount != null ? GBP.format(Number(f.amount)) : "—"}
                 </span>
-              </li>
+              </StaggerItem>
             ))}
-          </ul>
+          </Stagger>
         )}
-      </section>
+      </FadeIn>
 
       <AttachmentsPanel targetTable="suppliers" targetId={id} />
 

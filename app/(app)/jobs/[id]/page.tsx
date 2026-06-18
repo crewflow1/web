@@ -15,6 +15,7 @@ import {
 } from "@/lib/profitability/compute";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
+import { FadeIn } from "@/components/ui";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -176,7 +177,7 @@ export default async function EditJobPage({
         if (!jobAddress) return null;
         const lines = formatAddressLines(jobAddress);
         return (
-          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-base font-semibold text-slate-900">Site address</h2>
             <address className="mt-2 not-italic text-sm text-slate-600">
               {lines.map((l, i) => (
@@ -184,7 +185,7 @@ export default async function EditJobPage({
               ))}
             </address>
             <MapActions address={jobAddress} className="mt-3" />
-          </section>
+          </FadeIn>
         );
       })()}
 
@@ -222,7 +223,7 @@ export default async function EditJobPage({
 
       {/* Original / Variations / Total breakdown — the CEO-asked tile */}
       {(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold text-slate-900">
               Job value
@@ -316,11 +317,11 @@ export default async function EditJobPage({
               </ul>
             </div>
           ) : null}
-        </section>
+        </FadeIn>
       ) : null}
 
       {!(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
-        <section className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+        <FadeIn className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
           <div className="flex items-center justify-between gap-3">
             <p>
               No invoices linked yet. Once you link an invoice to this job
@@ -334,10 +335,10 @@ export default async function EditJobPage({
               + Add variation
             </Link>
           </div>
-        </section>
+        </FadeIn>
       ) : null}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-slate-900">Profitability</h2>
           <div className="flex flex-wrap items-center gap-2">
@@ -425,14 +426,14 @@ export default async function EditJobPage({
             </p>
           </div>
         )}
-      </section>
+      </FadeIn>
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
       {job.status === "completed" && job.customer_id ? (
-        <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+        <FadeIn className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
           <p className="text-sm font-medium text-emerald-900">
             Job&rsquo;s done — ask for a review
           </p>
@@ -446,7 +447,7 @@ export default async function EditJobPage({
           >
             Request a review
           </Link>
-        </section>
+        </FadeIn>
       ) : null}
 
       <ConfirmForm

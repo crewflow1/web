@@ -10,6 +10,7 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
 import { MapActions } from "@/components/maps/MapActions";
 import { formatAddressLines, hasAddress } from "@/lib/address";
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui";
 
 /**
  * Customer edit page.
@@ -192,17 +193,25 @@ export default async function EditCustomerPage({
       </header>
 
       {/* Rollup tiles */}
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Lifetime revenue" value={GBP.format(lifetimeRevenue)} sub="paid invoices" />
-        <Tile label="Total invoiced" value={GBP.format(totalInvoiced)} sub={`${invoiceRows.length} invoice${invoiceRows.length === 1 ? "" : "s"}`} />
-        <Tile label="Total paid" value={GBP.format(totalPaid)} sub={`${paymentRows.length} payment${paymentRows.length === 1 ? "" : "s"}`} />
-        <Tile
-          label="Outstanding"
-          value={GBP.format(outstanding)}
-          sub={outstanding === 0 ? "fully paid" : "still owed"}
-          emphasis={outstanding > 0}
-        />
-      </section>
+      <Stagger className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StaggerItem className="h-full">
+          <Tile label="Lifetime revenue" value={GBP.format(lifetimeRevenue)} sub="paid invoices" />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile label="Total invoiced" value={GBP.format(totalInvoiced)} sub={`${invoiceRows.length} invoice${invoiceRows.length === 1 ? "" : "s"}`} />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile label="Total paid" value={GBP.format(totalPaid)} sub={`${paymentRows.length} payment${paymentRows.length === 1 ? "" : "s"}`} />
+        </StaggerItem>
+        <StaggerItem className="h-full">
+          <Tile
+            label="Outstanding"
+            value={GBP.format(outstanding)}
+            sub={outstanding === 0 ? "fully paid" : "still owed"}
+            emphasis={outstanding > 0}
+          />
+        </StaggerItem>
+      </Stagger>
 
       {/* Quotes — "View all" link scopes the /quotes list to this customer */}
       <SummaryCard
@@ -266,7 +275,7 @@ export default async function EditCustomerPage({
       />
 
       {/* Timeline */}
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <header className="border-b border-slate-200 px-6 py-3">
           <h2 className="text-base font-semibold text-slate-900">Timeline</h2>
           <p className="text-xs text-slate-500">Everything that&apos;s happened with this customer, newest first.</p>
@@ -293,7 +302,7 @@ export default async function EditCustomerPage({
             ))}
           </ol>
         )}
-      </section>
+      </FadeIn>
 
       <header>
         <h2 className="text-base font-semibold text-slate-900">Edit details</h2>
@@ -437,8 +446,8 @@ function Tile({
     <div
       className={
         emphasis
-          ? "rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
-          : "rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+          ? "h-full rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
+          : "h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
       }
     >
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
@@ -460,7 +469,7 @@ function SummaryCard({
   empty: string;
 }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <FadeIn className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <header className="flex items-center justify-between border-b border-slate-200 px-6 py-3">
         <h2 className="text-base font-semibold text-slate-900">{title}</h2>
         <Link href={href} className="text-xs font-medium text-slate-500 hover:text-slate-900">
@@ -482,6 +491,6 @@ function SummaryCard({
           ))}
         </ul>
       )}
-    </section>
+    </FadeIn>
   );
 }
