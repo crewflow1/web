@@ -148,9 +148,6 @@ export function formatRenewal(next: string | null): string {
   return `${-days} days overdue · ${day}`;
 }
 
-export function formatGbp(n: number | string | null | undefined): string {
-  if (n === null || n === undefined || n === "") return "—";
-  const v = typeof n === "string" ? Number(n) : n;
-  if (!Number.isFinite(v)) return "—";
-  return `£${Math.round(v).toLocaleString("en-GB")}`;
-}
+// Whole-pound money formatting lives once in customer-financials; re-exported
+// here so billing's callers keep importing it from @/lib/hq/billing.
+export { formatGbp } from "@/lib/hq/customer-financials";

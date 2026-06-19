@@ -259,6 +259,17 @@ export function computeHealthScore(input: HealthInput): HealthResult {
   return { score, risk, reasons };
 }
 
-export function formatGbp(n: number): string {
-  return `£${Math.round(n).toLocaleString("en-GB")}`;
+/**
+ * Canonical HQ whole-pound formatter — `£1,234` with `en-GB` separators,
+ * `—` for null / blank / non-finite. The single home for the
+ * `£${Math.round(x).toLocaleString("en-GB")}` shape that billing, the
+ * notification events, and the analytics PDF each used to re-implement.
+ * (The abbreviated variants — executive's `formatGbpCompact` and the sales
+ * model's `£1.2M`/`£450k` — are deliberately separate: different output.)
+ */
+export function formatGbp(n: number | string | null | undefined): string {
+  if (n === null || n === undefined || n === "") return "—";
+  const v = typeof n === "string" ? Number(n) : n;
+  if (!Number.isFinite(v)) return "—";
+  return `£${Math.round(v).toLocaleString("en-GB")}`;
 }

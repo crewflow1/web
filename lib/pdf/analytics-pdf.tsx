@@ -11,6 +11,7 @@ import type {
   Benchmarks,
   Insight,
 } from "@/lib/hq/analytics";
+import { formatGbp } from "@/lib/hq/customer-financials";
 
 /**
  * CrewFlow HQ — Executive analytics PDF (HQ-6).
@@ -128,11 +129,6 @@ const insightColours: Record<Insight["kind"], string> = {
   negative: "#b91c1c",
 };
 
-function gbp(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return `£${Math.round(n).toLocaleString("en-GB")}`;
-}
-
 function pct(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return `${n.toFixed(1)}%`;
@@ -167,15 +163,15 @@ export function AnalyticsPdf({ data }: { data: AnalyticsPdfInput }) {
         <Text style={styles.sectionTitle}>Revenue</Text>
         <View style={styles.kpiGrid}>
           {[
-            ["MRR", gbp(data.revenue.mrrGbp)],
-            ["ARR", gbp(data.revenue.arrGbp)],
+            ["MRR", formatGbp(data.revenue.mrrGbp)],
+            ["ARR", formatGbp(data.revenue.arrGbp)],
             ["Growth % MoM", pct(data.revenue.growthPct)],
             ["Churn % 30d", pct(data.revenue.churnPct)],
-            ["Forecast 90d", gbp(data.revenue.forecast90dGbp)],
-            ["Avg cust. value", gbp(data.revenue.avgCustomerValueGbp)],
-            ["Outstanding", gbp(data.revenue.outstandingGbp)],
-            ["Paid", gbp(data.revenue.paidGbp)],
-            ["Lost revenue", gbp(data.revenue.lostRevenueGbp)],
+            ["Forecast 90d", formatGbp(data.revenue.forecast90dGbp)],
+            ["Avg cust. value", formatGbp(data.revenue.avgCustomerValueGbp)],
+            ["Outstanding", formatGbp(data.revenue.outstandingGbp)],
+            ["Paid", formatGbp(data.revenue.paidGbp)],
+            ["Lost revenue", formatGbp(data.revenue.lostRevenueGbp)],
           ].map(([label, value], idx) => (
             <View key={idx} style={styles.kpi}>
               <Text style={styles.kpiLabel}>{label}</Text>
@@ -235,7 +231,7 @@ export function AnalyticsPdf({ data }: { data: AnalyticsPdfInput }) {
             <View key={c.id} style={styles.topRow}>
               <Text style={[styles.topCol, { fontWeight: 700 }]}>{c.name}</Text>
               <Text style={styles.topCol}>
-                {gbp(c.mrr)} · Health {num(c.health)}
+                {formatGbp(c.mrr)} · Health {num(c.health)}
               </Text>
             </View>
           ))
@@ -252,13 +248,13 @@ export function AnalyticsPdf({ data }: { data: AnalyticsPdfInput }) {
           <View style={styles.kpi}>
             <Text style={styles.kpiLabel}>Avg MRR</Text>
             <Text style={styles.kpiValue}>
-              {gbp(data.benchmarks.averageMrrGbp)}
+              {formatGbp(data.benchmarks.averageMrrGbp)}
             </Text>
           </View>
           <View style={styles.kpi}>
             <Text style={styles.kpiLabel}>Avg LTV</Text>
             <Text style={styles.kpiValue}>
-              {gbp(data.benchmarks.averageLtvGbp)}
+              {formatGbp(data.benchmarks.averageLtvGbp)}
             </Text>
           </View>
           <View style={styles.kpi}>

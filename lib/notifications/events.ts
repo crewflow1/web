@@ -11,7 +11,7 @@
  * return shape — caller doesn't pick.
  */
 
-import { bandFromScore } from "@/lib/hq/customer-financials";
+import { bandFromScore, formatGbp } from "@/lib/hq/customer-financials";
 import type { NotificationCreate } from "./types";
 
 // ---------------------------------------------------------------------
@@ -46,11 +46,6 @@ function hqForOrg(
     type,
     ...base,
   };
-}
-
-function gbp(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined) return "—";
-  return `£${Math.round(amount).toLocaleString("en-GB")}`;
 }
 
 // =====================================================================
@@ -154,7 +149,7 @@ export function notifyOnFailedPayment(input: {
     customerOrgWide(input.org_id, "stripe.payment_failed", {
       category: "stripe",
       priority: "urgent",
-      title: `Payment of ${gbp(input.amount_gbp)} failed`,
+      title: `Payment of ${formatGbp(input.amount_gbp)} failed`,
       body:
         input.reason ??
         "Your card was declined. Update your payment method to avoid service interruption.",
@@ -166,7 +161,7 @@ export function notifyOnFailedPayment(input: {
     hqForOrg(input.org_id, "stripe.payment_failed", {
       category: "stripe",
       priority: "high",
-      title: `Failed payment: ${gbp(input.amount_gbp)}`,
+      title: `Failed payment: ${formatGbp(input.amount_gbp)}`,
       body: input.reason ?? "Card declined.",
       action_url: `/admin/customers/${input.org_id}`,
       source_module: "stripe",
@@ -191,7 +186,7 @@ export function notifyOnOverdueInvoice(input: {
       category: "billing",
       priority: input.days_overdue > 14 ? "urgent" : "high",
       title: `Invoice overdue (${input.days_overdue} days)`,
-      body: `${gbp(input.amount_gbp)} outstanding. Please settle to keep your subscription active.`,
+      body: `${formatGbp(input.amount_gbp)} outstanding. Please settle to keep your subscription active.`,
       action_url: `/dashboard`,
       source_module: "billing",
       source_id: input.invoice_id,
@@ -200,7 +195,7 @@ export function notifyOnOverdueInvoice(input: {
     hqForOrg(input.org_id, "billing.invoice_overdue", {
       category: "billing",
       priority: input.days_overdue > 30 ? "urgent" : "high",
-      title: `Invoice ${input.days_overdue}d overdue: ${gbp(input.amount_gbp)}`,
+      title: `Invoice ${input.days_overdue}d overdue: ${formatGbp(input.amount_gbp)}`,
       body: null,
       action_url: `/admin/billing`,
       source_module: "billing",
@@ -219,7 +214,7 @@ export function notifyOnSetupFeePaid(input: {
       category: "billing",
       priority: "medium",
       title: "Setup fee paid — welcome aboard",
-      body: `Thanks! Your ${gbp(input.amount_gbp ?? 1000)} setup is settled. Onboarding continues on /dashboard.`,
+      body: `Thanks! Your ${formatGbp(input.amount_gbp ?? 1000)} setup is settled. Onboarding continues on /dashboard.`,
       action_url: "/dashboard",
       source_module: "billing",
       source_id: null,
@@ -228,7 +223,7 @@ export function notifyOnSetupFeePaid(input: {
     hqForOrg(input.org_id, "billing.setup_fee_paid", {
       category: "billing",
       priority: "low",
-      title: `Setup fee paid — ${gbp(input.amount_gbp ?? 1000)}`,
+      title: `Setup fee paid — ${formatGbp(input.amount_gbp ?? 1000)}`,
       body: null,
       action_url: `/admin/customers/${input.org_id}`,
       source_module: "billing",

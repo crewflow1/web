@@ -11,6 +11,8 @@
  *   - No automation yet — we just MEASURE; status tracking only.
  */
 
+import { formatGbp } from "@/lib/hq/customer-financials";
+
 export const MONTHLY_PRICE_GBP = 500;
 export const SETUP_FEE_GBP = 1000;
 
@@ -132,8 +134,8 @@ export function buildMorningSummary(
       { label: "New demos awaiting contact", value: String(metrics.pendingDemos) },
       { label: "Customers in onboarding/trial", value: String(metrics.activeOnboarding) },
       { label: "Active paying customers", value: String(metrics.activeCustomers) },
-      { label: "MRR right now", value: fmtGbp(metrics.mrrGbp) },
-      { label: "Forecast MRR (incl. trials)", value: fmtGbp(metrics.forecastMrrGbp) },
+      { label: "MRR right now", value: formatGbp(metrics.mrrGbp) },
+      { label: "Forecast MRR (incl. trials)", value: formatGbp(metrics.forecastMrrGbp) },
     ],
   };
 }
@@ -143,10 +145,6 @@ function greetingFor(firstName: string | null, now: Date): string {
   const period =
     hour < 5 ? "Up late," : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   return firstName ? `${period} ${firstName}.` : `${period}.`;
-}
-
-function fmtGbp(n: number): string {
-  return `£${Math.round(n).toLocaleString("en-GB")}`;
 }
 
 function clampPct(n: number): number {
