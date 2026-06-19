@@ -11,6 +11,7 @@ import {
   type ChecklistStepId,
 } from "@/lib/onboarding/checklist";
 import { markStarted, skipStep, unskipStep } from "./actions";
+import { FadeIn, AnimatedBar, AnimatedNumber } from "@/components/ui";
 
 /**
  * /onboarding/setup — guided setup walkthrough.
@@ -110,24 +111,20 @@ export default async function OnboardingSetupPage({
       ) : null}
 
       {/* Progress card ----------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-base font-semibold text-slate-900">
-            {progress.pct}% complete
+            <AnimatedNumber value={progress.pct} format="percent" /> complete
           </h2>
           <p className="text-xs text-slate-500">
             {progress.done} of {progress.total} steps done
           </p>
         </div>
-        <div
-          className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100"
-          aria-hidden
-        >
-          <div
-            className="h-full rounded-full bg-slate-900 transition-all"
-            style={{ width: `${progress.pct}%` }}
-          />
-        </div>
+        <AnimatedBar
+          value={progress.pct}
+          className="mt-3 h-2 w-full rounded-full bg-slate-100"
+          barClassName="bg-slate-900"
+        />
 
         {next ? (
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -148,7 +145,7 @@ export default async function OnboardingSetupPage({
             </Link>
           </div>
         ) : null}
-      </section>
+      </FadeIn>
 
       {/* Step list --------------------------------------------------- */}
       <section className="space-y-2">
@@ -156,80 +153,82 @@ export default async function OnboardingSetupPage({
           All steps
         </h2>
         <ul className="space-y-2">
-          {items.map(({ step, complete, dismissed, isNext }) => (
-            <li
-              key={step.id}
-              className={`rounded-xl border bg-white p-4 shadow-sm transition sm:p-5 ${
-                isNext
-                  ? "border-slate-900 ring-1 ring-slate-900"
-                  : complete
-                    ? "border-emerald-200"
-                    : dismissed
-                      ? "border-slate-200 opacity-70"
-                      : "border-slate-200"
-              }`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <StepStatusBadge
-                      complete={complete}
-                      dismissed={dismissed}
-                      isNext={isNext}
-                    />
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      {step.title}
-                    </h3>
-                    {!step.required ? (
-                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
-                        Optional
-                      </span>
-                    ) : null}
+          {items.map(({ step, complete, dismissed, isNext }, i) => (
+            <li key={step.id}>
+              <FadeIn
+                delay={Math.min(i * 0.05, 0.3)}
+                className={`rounded-xl border p-4 shadow-sm transition-colors sm:p-5 ${
+                  isNext
+                    ? "border-slate-900 bg-white ring-1 ring-slate-900"
+                    : complete
+                      ? "border-emerald-200 bg-white"
+                      : dismissed
+                        ? "border-slate-200 bg-slate-50"
+                        : "border-slate-200 bg-white"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <StepStatusBadge
+                        complete={complete}
+                        dismissed={dismissed}
+                        isNext={isNext}
+                      />
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {step.title}
+                      </h3>
+                      {!step.required ? (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                          Optional
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-600">
+                      {step.description}
+                    </p>
                   </div>
-                  <p className="mt-1.5 text-xs text-slate-600">
-                    {step.description}
-                  </p>
-                </div>
 
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {!complete ? (
-                    <>
-                      <Link
-                        href={step.cta.href}
-                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
-                      >
-                        {step.cta.label} →
-                      </Link>
-                      {!step.required && !dismissed ? (
-                        <form action={skipStep}>
-                          <input type="hidden" name="step_id" value={step.id} />
-                          <button
-                            type="submit"
-                            className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800"
-                          >
-                            Skip for now
-                          </button>
-                        </form>
-                      ) : null}
-                      {dismissed ? (
-                        <form action={unskipStep}>
-                          <input type="hidden" name="step_id" value={step.id} />
-                          <button
-                            type="submit"
-                            className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800"
-                          >
-                            Bring back
-                          </button>
-                        </form>
-                      ) : null}
-                    </>
-                  ) : (
-                    <span className="text-xs font-medium text-emerald-700">
-                      Done
-                    </span>
-                  )}
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {!complete ? (
+                      <>
+                        <Link
+                          href={step.cta.href}
+                          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                        >
+                          {step.cta.label} →
+                        </Link>
+                        {!step.required && !dismissed ? (
+                          <form action={skipStep}>
+                            <input type="hidden" name="step_id" value={step.id} />
+                            <button
+                              type="submit"
+                              className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800"
+                            >
+                              Skip for now
+                            </button>
+                          </form>
+                        ) : null}
+                        {dismissed ? (
+                          <form action={unskipStep}>
+                            <input type="hidden" name="step_id" value={step.id} />
+                            <button
+                              type="submit"
+                              className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800"
+                            >
+                              Bring back
+                            </button>
+                          </form>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-xs font-medium text-emerald-700">
+                        Done
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </FadeIn>
             </li>
           ))}
         </ul>

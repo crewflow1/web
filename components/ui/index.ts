@@ -55,6 +55,8 @@ export {
   Stagger,
   StaggerItem,
   HoverLift,
+  Pop,
+  AnimatedBar,
   AnimatedNumber,
   type NumberFormat,
 } from "./motion";

@@ -3,6 +3,7 @@ import { requireUser } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Button } from "@/components/ui/button";
+import { FadeIn } from "@/components/ui";
 import { acceptOrgInvite } from "./actions";
 
 /**
@@ -63,7 +64,7 @@ export default async function JoinPage({
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+    <FadeIn className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         You&apos;ve been invited
       </p>
@@ -98,6 +99,6 @@ export default async function JoinPage({
           Join {org.name}
         </Button>
       </form>
-    </div>
+    </FadeIn>
   );
 }

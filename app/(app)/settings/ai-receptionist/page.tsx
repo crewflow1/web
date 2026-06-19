@@ -9,6 +9,7 @@ import {
   TEST_CHECKLIST_ITEMS,
   type AiReceptionistStatus,
 } from "@/lib/ai-receptionist/schema";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /settings/ai-receptionist
@@ -152,20 +153,22 @@ export default async function AiReceptionistSettingsPage() {
         </div>
       ) : null}
 
-      <AiReceptionistForm
-        action={saveAiReceptionistSetup}
-        isAdmin={isAdmin}
-        defaults={{
-          enabled: row?.enabled ?? false,
-          business_phone: row?.business_phone ?? "",
-          whatsapp_number: row?.whatsapp_number ?? "",
-          facebook_page: row?.facebook_page ?? "",
-          instagram_handle: row?.instagram_handle ?? "",
-          preferred_voice: row?.preferred_voice ?? "",
-          business_hours: row?.business_hours ?? "",
-          trade_type: row?.trade_type ?? "",
-        }}
-      />
+      <FadeIn>
+        <AiReceptionistForm
+          action={saveAiReceptionistSetup}
+          isAdmin={isAdmin}
+          defaults={{
+            enabled: row?.enabled ?? false,
+            business_phone: row?.business_phone ?? "",
+            whatsapp_number: row?.whatsapp_number ?? "",
+            facebook_page: row?.facebook_page ?? "",
+            instagram_handle: row?.instagram_handle ?? "",
+            preferred_voice: row?.preferred_voice ?? "",
+            business_hours: row?.business_hours ?? "",
+            trade_type: row?.trade_type ?? "",
+          }}
+        />
+      </FadeIn>
     </div>
   );
 }

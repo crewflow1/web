@@ -136,6 +136,83 @@ export function HoverLift({
   );
 }
 
+/** Scale + fade entrance with a spring — for celebration marks, success icons, badges. */
+export function Pop({
+  delay = 0,
+  className,
+  children,
+}: {
+  delay?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  const reduce = useReducedMotion();
+  if (reduce) return <div className={className}>{children}</div>;
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, scale: 0.6 }}
+      whileInView={{ opacity: 1, scale: 1 }}
+      viewport={{ once: true, margin: "-20px" }}
+      transition={{ type: "spring", stiffness: 380, damping: 18, delay }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/**
+ * AnimatedBar — a progress fill that draws in from empty when it scrolls into
+ * view. GPU-friendly: animates `transform: scaleX` (composited), never layout
+ * width. Mirrors the static <Meter> a11y contract (role="progressbar" +
+ * aria-valuenow) so screen readers get the true value immediately while the
+ * fill animates. Reduced-motion users get the final fill with no movement.
+ */
+export function AnimatedBar({
+  value,
+  className,
+  barClassName,
+  durationMs = 900,
+  delayMs = 0,
+}: {
+  /** 0–100. */
+  value: number;
+  /** Track classes (height, width, rounding, background). */
+  className?: string;
+  /** Fill classes (background colour). */
+  barClassName?: string;
+  durationMs?: number;
+  delayMs?: number;
+}) {
+  const reduce = useReducedMotion();
+  const pct = Math.max(0, Math.min(100, value));
+  const frac = pct / 100;
+  return (
+    <div
+      className={cn("overflow-hidden", className)}
+      role="progressbar"
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      {reduce ? (
+        <div
+          className={cn("h-full w-full origin-left", barClassName)}
+          style={{ transform: `scaleX(${frac})` }}
+        />
+      ) : (
+        <motion.div
+          className={cn("h-full w-full origin-left", barClassName)}
+          initial={{ scaleX: 0 }}
+          whileInView={{ scaleX: frac }}
+          viewport={{ once: true, margin: "-20px" }}
+          transition={{ duration: durationMs / 1000, ease: EASE, delay: delayMs / 1000 }}
+        />
+      )}
+    </div>
+  );
+}
+
 export type NumberFormat = "number" | "currency" | "percent" | "compact";
 
 function formatValue(

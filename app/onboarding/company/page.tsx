@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createOrg } from "./actions";
 import { requireUser } from "@/server/auth/session";
+import { FadeIn } from "@/components/ui";
 
 type SearchParams = Promise<{ error?: string }>;
 
@@ -21,7 +22,7 @@ export default async function CompanyPage({
   const errorMessage = error ? decodeURIComponent(error) : null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+    <FadeIn className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         Set up your company
       </p>
@@ -90,7 +91,7 @@ export default async function CompanyPage({
           Continue →
         </button>
       </form>
-    </div>
+    </FadeIn>
   );
 }
 

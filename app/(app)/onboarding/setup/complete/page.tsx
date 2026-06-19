@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { computeProgress } from "@/lib/onboarding/checklist";
 import { markCompleted } from "../actions";
+import { FadeIn, Pop } from "@/components/ui";
 
 /**
  * /onboarding/setup/complete — celebration screen.
@@ -51,10 +52,12 @@ export default async function OnboardingSetupCompletePage() {
         </p>
       </header>
 
-      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center shadow-sm">
-        <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-3xl font-bold text-white shadow">
-          ✓
-        </div>
+      <FadeIn className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center shadow-sm">
+        <Pop delay={0.15}>
+          <div className="mx-auto inline-flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-3xl font-bold text-white shadow">
+            ✓
+          </div>
+        </Pop>
         <p className="mt-4 text-base font-semibold text-emerald-900">
           {progress.done} of {progress.total} steps done — 100% complete.
         </p>
@@ -63,9 +66,9 @@ export default async function OnboardingSetupCompletePage() {
           any time to revisit anything. Settings live at{" "}
           <Link href="/settings" className="underline">/settings</Link>.
         </p>
-      </section>
+      </FadeIn>
 
-      <div className="flex flex-wrap justify-center gap-2">
+      <FadeIn delay={0.1} className="flex flex-wrap justify-center gap-2">
         <Link
           href="/dashboard"
           className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
@@ -78,9 +81,9 @@ export default async function OnboardingSetupCompletePage() {
         >
           Create another quote
         </Link>
-      </div>
+      </FadeIn>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700 shadow-sm">
+      <FadeIn delay={0.2} className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">What now?</h2>
         <ul className="mt-3 space-y-2 text-xs text-slate-700">
           <li>
@@ -98,7 +101,7 @@ export default async function OnboardingSetupCompletePage() {
             accepts CSVs, Excel, PDFs, and photos. Roll back any time.
           </li>
         </ul>
-      </section>
+      </FadeIn>
     </div>
   );
 }
