@@ -1,3 +1,4 @@
+import type { Accent as DesignAccent } from "@/components/ui/tokens";
 import type {
   AiEmployeeStatus,
   TaskStatus,
@@ -142,4 +143,32 @@ export const ACCENT_CLASSES: Record<Accent, AccentClasses> = {
 
 export function accentClasses(accent: string): AccentClasses {
   return ACCENT_CLASSES[(accent as Accent)] ?? ACCENT_CLASSES.slate;
+}
+
+/**
+ * Bridge the AI-employee accent vocabulary (11 values, `../model`) onto the
+ * design-system accent vocabulary (9 values, `@/components/ui/tokens`).
+ *
+ * The employee palette carries three tokens the design system doesn't expose
+ * (`pink`, `green`, `blue`); each folds onto its nearest DS sibling so generic
+ * DS components (StatTile, Badge, Meter, …) always receive a valid `Accent`.
+ * The employee-specific icon tiles / rings keep their exact colour via
+ * `accentClasses()` above — only the shared DS surfaces go through this map.
+ */
+const DESIGN_ACCENT: Record<Accent, DesignAccent> = {
+  violet: "violet",
+  sky: "sky",
+  emerald: "emerald",
+  pink: "fuchsia",
+  fuchsia: "fuchsia",
+  amber: "amber",
+  cyan: "cyan",
+  indigo: "indigo",
+  green: "emerald",
+  blue: "sky",
+  slate: "slate",
+};
+
+export function toDesignAccent(accent: string): DesignAccent {
+  return DESIGN_ACCENT[(accent as Accent)] ?? "slate";
 }

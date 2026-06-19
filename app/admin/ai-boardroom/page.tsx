@@ -28,8 +28,8 @@ import {
   formatRate,
   type WorkforceSummary,
 } from "@/lib/ai-employees/stats";
-import { statusStyle, accentClasses } from "./_styles";
-import { EmployeeIcon } from "./_icon";
+import { statusStyle, accentClasses } from "@/components/ai-employees/styles";
+import { EmployeeIcon } from "@/components/ai-employees/icon";
 
 /**
  * AI Boardroom — roster grid (CEO Directive 001, Phase 1).

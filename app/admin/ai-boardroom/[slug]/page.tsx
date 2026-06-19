@@ -18,8 +18,8 @@ import {
   relativeTime,
 } from "@/lib/ai-employees/model";
 import { computeEmployeeStats, formatRate } from "@/lib/ai-employees/stats";
-import { statusStyle, taskStatusPill, accentClasses } from "../_styles";
-import { EmployeeIcon } from "../_icon";
+import { statusStyle, taskStatusPill, accentClasses } from "@/components/ai-employees/styles";
+import { EmployeeIcon } from "@/components/ai-employees/icon";
 import {
   updateAiEmployeeConfig,
   addAiEmployeeTask,

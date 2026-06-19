@@ -1,4 +1,4 @@
-import { accentClasses } from "../ai-boardroom/_styles";
+import { accentClasses } from "@/components/ai-employees/styles";
 import type {
   Importance,
   MemoryStatus,
