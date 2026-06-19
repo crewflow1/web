@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { MONTHLY_PRICE_GBP } from "@/lib/hq/customer-financials";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
 import { ConfirmForm } from "../_confirm-form";
@@ -30,8 +31,6 @@ import {
  * org counts × the current £500/mo flat plan price. Once we add a
  * billing table the maths swap out without changing the panel layout.
  */
-
-const MONTHLY_PRICE_GBP = 500;
 
 type SP = Promise<{
   q?: string;

@@ -13,8 +13,15 @@
 
 import type { OrgStatus } from "@/server/auth/session";
 
+/**
+ * Business-model pricing — the single source of truth for the CEO's
+ * £1,000 one-off setup fee + £500/month per active-or-trial customer.
+ * Every HQ surface (metrics, the snapshot, demo conversion, Stripe
+ * checkout, the organizations dashboard) imports these rather than
+ * re-declaring the literals.
+ */
 export const SETUP_FEE_GBP = 1000;
-export const DEFAULT_MONTHLY_GBP = 500;
+export const MONTHLY_PRICE_GBP = 500;
 
 export const SETUP_FEE_STATUSES = [
   "pending",

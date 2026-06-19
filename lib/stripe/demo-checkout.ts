@@ -4,6 +4,7 @@ import { resolveSetupFeePrice } from "./prices";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
 import type { CheckoutSessionMetadata } from "./events";
+import { SETUP_FEE_GBP } from "@/lib/hq/customer-financials";
 
 /**
  * CrewFlow — demo setup-fee Stripe Checkout.
@@ -33,8 +34,6 @@ import type { CheckoutSessionMetadata } from "./events";
  * fall back to the manual white-glove email when Stripe is unconfigured
  * or a price can't be resolved.
  */
-
-const SETUP_FEE_GBP = 1000;
 
 export type DemoCheckoutResult =
   | {

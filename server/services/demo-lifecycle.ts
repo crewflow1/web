@@ -12,6 +12,7 @@ import {
 } from "@/lib/email/demo-templates";
 import { createOrReuseDemoSetupCheckout } from "@/lib/stripe/demo-checkout";
 import { env } from "@/lib/env";
+import { SETUP_FEE_GBP } from "@/lib/hq/customer-financials";
 
 /**
  * Demo → customer lifecycle service.
@@ -235,8 +236,6 @@ export async function onDemoApproved(args: {
 // ===========================================================================
 // 4. Setup payment sent — operator clicks "Send setup payment"
 // ===========================================================================
-
-const SETUP_FEE_GBP = 1000;
 
 export async function onSetupPaymentSent(args: {
   demo: DemoRow;

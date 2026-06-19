@@ -11,10 +11,15 @@
  *   - No automation yet — we just MEASURE; status tracking only.
  */
 
-import { formatGbp } from "@/lib/hq/customer-financials";
+import {
+  formatGbp,
+  MONTHLY_PRICE_GBP,
+  SETUP_FEE_GBP,
+} from "@/lib/hq/customer-financials";
 
-export const MONTHLY_PRICE_GBP = 500;
-export const SETUP_FEE_GBP = 1000;
+// Pricing lives once in customer-financials; re-exported so existing
+// `@/lib/hq/metrics` importers (the snapshot, analytics) keep their path.
+export { MONTHLY_PRICE_GBP, SETUP_FEE_GBP };
 
 /** Raw counts pulled from the DB by `buildHqSnapshot`. */
 export type HqSnapshot = {

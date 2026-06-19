@@ -7,7 +7,7 @@ import {
   formatMigrationEta,
   subscriptionStatusFromOrg,
   SETUP_FEE_GBP,
-  DEFAULT_MONTHLY_GBP,
+  MONTHLY_PRICE_GBP,
 } from "@/lib/hq/customer-financials";
 
 /**
@@ -131,7 +131,7 @@ describe("estimateLtvGbp", () => {
       Date.now() - 12 * 30.4375 * 86_400_000,
     ).toISOString();
     const got = estimateLtvGbp({
-      mrrGbp: DEFAULT_MONTHLY_GBP,
+      mrrGbp: MONTHLY_PRICE_GBP,
       approvedAt: twelveMonthsAgo,
       createdAt: twelveMonthsAgo,
       setupFeeStatus: "paid",
