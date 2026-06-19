@@ -2,6 +2,8 @@ import { listCustomersForHq } from "@/server/services/hq-customer-snapshot";
 import {
   formatGbp,
   subscriptionStatusFromOrg,
+  bandFromScore,
+  riskFromBand,
   type SetupFeeStatus,
   type SubscriptionStatus,
   type HealthRisk,
@@ -145,12 +147,9 @@ export default async function HqCustomersListPage({
                       r.status,
                       r.setup_fee_status,
                     );
-                    const healthRisk =
-                      r.health_score < 40
-                        ? "high"
-                        : r.health_score < 70
-                          ? "medium"
-                          : "low";
+                    const healthRisk = riskFromBand(
+                      bandFromScore(r.health_score),
+                    );
                     return (
                       <tr key={r.id} className="hover:bg-slate-900/50">
                         <td className="px-4 py-2">
@@ -225,12 +224,7 @@ export default async function HqCustomersListPage({
                   r.status,
                   r.setup_fee_status,
                 );
-                const healthRisk =
-                  r.health_score < 40
-                    ? "high"
-                    : r.health_score < 70
-                      ? "medium"
-                      : "low";
+                const healthRisk = riskFromBand(bandFromScore(r.health_score));
                 return (
                   <li key={r.id}>
                     <Link

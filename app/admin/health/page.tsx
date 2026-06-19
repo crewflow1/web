@@ -50,6 +50,15 @@ const BAND_PILL: Record<HealthBand, string> = {
   unknown: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
 };
 
+// Trend sparkline number colours, keyed by the same band as the pills so
+// the score history reads through the single bandFromScore derivation.
+const BAND_TREND_TEXT: Record<HealthBand, string> = {
+  red: "text-rose-300",
+  yellow: "text-amber-300",
+  green: "text-emerald-300",
+  unknown: "text-slate-400",
+};
+
 export default async function HqHealthPage({
   searchParams,
 }: {
@@ -230,13 +239,7 @@ export default async function HqHealthPage({
                           {row.trend.map((t, i) => (
                             <span
                               key={i}
-                              className={
-                                t.score < 40
-                                  ? "text-rose-300"
-                                  : t.score < 70
-                                    ? "text-amber-300"
-                                    : "text-emerald-300"
-                              }
+                              className={BAND_TREND_TEXT[bandFromScore(t.score)]}
                             >
                               {t.score}
                               {i < row.trend.length - 1 ? " →" : ""}

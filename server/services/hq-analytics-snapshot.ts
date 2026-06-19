@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildHqSnapshot } from "@/server/services/hq-snapshot";
-import { estimateLtvGbp } from "@/lib/hq/customer-financials";
+import { bandFromScore, estimateLtvGbp } from "@/lib/hq/customer-financials";
 import type { SetupFeeStatus } from "@/lib/hq/customer-financials";
 import type {
   AnalyticsOrg,
@@ -205,8 +205,7 @@ export function pickHighestRiskCustomers(
     .filter(
       (o) =>
         (o.status === "active" || o.status === "trial") &&
-        o.health_score !== null &&
-        o.health_score < 40,
+        bandFromScore(o.health_score) === "red",
     )
     .sort((a, b) => (a.health_score ?? 0) - (b.health_score ?? 0))
     .slice(0, 5)

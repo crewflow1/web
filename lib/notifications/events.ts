@@ -11,6 +11,7 @@
  * return shape — caller doesn't pick.
  */
 
+import { bandFromScore } from "@/lib/hq/customer-financials";
 import type { NotificationCreate } from "./types";
 
 // ---------------------------------------------------------------------
@@ -358,7 +359,7 @@ export function notifyOnHealthDropped(input: {
 }): NotificationCreate {
   const delta = input.new_score - input.old_score;
   const priority =
-    input.new_score < 40
+    bandFromScore(input.new_score) === "red"
       ? "urgent"
       : Math.abs(delta) >= 20
         ? "high"
@@ -368,7 +369,7 @@ export function notifyOnHealthDropped(input: {
     priority,
     title: `${input.org_name ?? "Customer"} health ${input.old_score}→${input.new_score} (${delta})`,
     body:
-      input.new_score < 40
+      bandFromScore(input.new_score) === "red"
         ? "Critical band. Schedule a retention call today."
         : "Watch this customer.",
     action_url: `/admin/customers/${input.org_id}`,

@@ -149,6 +149,29 @@ export function formatMigrationEta(date: string | null): string {
  */
 export type HealthRisk = "high" | "medium" | "low";
 
+/**
+ * Health band — the single source of truth for turning a 0-100 health
+ * score into a traffic-light bucket. Every HQ health surface (this
+ * heuristic's `risk`, the /admin/health deep-dive page, the customer
+ * detail header) derives from `bandFromScore` so the 40/70 cutoffs can
+ * never drift apart. `lib/hq/health-deep-dive` re-exports both for the
+ * callers that already import them from there.
+ */
+export type HealthBand = "red" | "yellow" | "green" | "unknown";
+
+/** Score → band. red <40, yellow 40-69, green ≥70, unknown when unscored. */
+export function bandFromScore(score: number | null): HealthBand {
+  if (score === null) return "unknown";
+  if (score < 40) return "red";
+  if (score < 70) return "yellow";
+  return "green";
+}
+
+/** Band → coarse risk used by the customer-list row colouring. */
+export function riskFromBand(band: HealthBand): HealthRisk {
+  return band === "red" ? "high" : band === "yellow" ? "medium" : "low";
+}
+
 export type HealthInput = {
   status: OrgStatus | string;
   setupFeeStatus: SetupFeeStatus;
@@ -232,15 +255,9 @@ export function computeHealthScore(input: HealthInput): HealthResult {
   }
 
   score = Math.max(0, Math.min(100, Math.round(score)));
-  const risk: HealthRisk = score < 40 ? "high" : score < 70 ? "medium" : "low";
+  const risk: HealthRisk = riskFromBand(bandFromScore(score));
   return { score, risk, reasons };
 }
-
-export const HEALTH_PILL: Record<HealthRisk, string> = {
-  high: "bg-red-100 text-red-800 border-red-200",
-  medium: "bg-amber-100 text-amber-900 border-amber-200",
-  low: "bg-emerald-100 text-emerald-900 border-emerald-200",
-};
 
 export function formatGbp(n: number): string {
   return `£${Math.round(n).toLocaleString("en-GB")}`;

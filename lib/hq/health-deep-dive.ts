@@ -7,16 +7,21 @@
  * deterministic — no LLM.
  */
 
-import type { HealthRisk } from "@/lib/hq/customer-financials";
+import {
+  bandFromScore,
+  type HealthBand,
+  type HealthRisk,
+} from "@/lib/hq/customer-financials";
 
-export type HealthBand = "red" | "yellow" | "green" | "unknown";
-
-export function bandFromScore(score: number | null): HealthBand {
-  if (score === null) return "unknown";
-  if (score < 40) return "red";
-  if (score < 70) return "yellow";
-  return "green";
-}
+/**
+ * `bandFromScore` + `HealthBand` are the single source of truth, defined
+ * in customer-financials alongside the score heuristic and its risk
+ * mapping so the 40/70 cutoffs live in exactly one place. They're
+ * re-exported here so the callers that already import them from
+ * health-deep-dive keep their import path.
+ */
+export { bandFromScore };
+export type { HealthBand, HealthRisk };
 
 export const HEALTH_BAND_LABEL: Record<HealthBand, string> = {
   red: "Critical",
@@ -281,6 +286,3 @@ export function applyHealthFilter<T extends HealthDeepDiveRow>(
     }
   });
 }
-
-// Re-export HealthRisk for callers that need it.
-export type { HealthRisk };
