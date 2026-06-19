@@ -242,6 +242,17 @@ create table hq_metrics (
   primary key (metric, grain, ts, dims)
 );
 create index on hq_metrics (metric, grain, ts desc);
+
+-- 03.15b hq_metric_counters — a tiny live-counter store the rollup reconciles
+-- against (fast increments now; hq_metrics stays the authoritative time-series).
+-- Drift between counter and rollup is expected and self-heals on recompute.
+create table hq_metric_counters (
+  metric     text not null references hq_metric_definitions(metric),
+  dims       jsonb not null default '{}',
+  value      numeric not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (metric, dims)
+);
 ```
 
 ### 6. Memory graph — semantic layer (Ch.12)
