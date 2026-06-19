@@ -5,6 +5,8 @@
  * deep-link to the affected object. Pure functions, server/client-safe.
  */
 
+import { relativeTimeVerbose } from "@/lib/time/relative";
+
 export type ActivityRow = {
   id: string;
   actor_name: string | null;
@@ -159,24 +161,8 @@ export function activityHref(row: ActivityRow): string | null {
   }
 }
 
-const SHORT_LOCALE = "en-GB";
-const RELATIVE = new Intl.RelativeTimeFormat(SHORT_LOCALE, { numeric: "auto" });
-
 export function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return iso;
-  const diffSec = (then - Date.now()) / 1000;
-  const abs = Math.abs(diffSec);
-  if (abs < 60) return RELATIVE.format(Math.round(diffSec), "second");
-  if (abs < 3600) return RELATIVE.format(Math.round(diffSec / 60), "minute");
-  if (abs < 86400) return RELATIVE.format(Math.round(diffSec / 3600), "hour");
-  if (abs < 604800) return RELATIVE.format(Math.round(diffSec / 86400), "day");
-  return new Date(iso).toLocaleDateString(SHORT_LOCALE, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Europe/London",
-  });
+  return relativeTimeVerbose(iso);
 }
 
 /** Coarse filter prefixes the UI exposes as quick filters. */

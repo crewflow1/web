@@ -16,6 +16,7 @@ import { researchAiEnabled } from "@/server/services/research-llm";
 import { ResearchLauncher } from "./_launcher";
 import { Tile, ProvenanceBadge } from "./_components";
 import { STATUS_LABEL, STATUS_PILL, scoreTone } from "./_styles";
+import { relativeTime as relativeTimeCore } from "@/lib/time/relative";
 
 /**
  * Research AI — section home (CEO Directive 005, Phase 1 + 10).
@@ -230,15 +231,5 @@ function RunRow({ run }: { run: ResearchRunRow }) {
 }
 
 function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return relativeTimeCore(iso, { overflow: "shortDate", invalid: "" });
 }
