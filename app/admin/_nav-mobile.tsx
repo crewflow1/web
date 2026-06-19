@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { pill } from "@/components/ui/tokens";
 
 type NavItem = {
   href: string;
@@ -90,7 +91,7 @@ export function HqNavMobile({
                   >
                     <span className="truncate">{item.label}</span>
                     {item.shipsIn ? (
-                      <span className="ml-2 shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300 ring-1 ring-inset ring-amber-400/30">
+                      <span className={`ml-2 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${pill("amber")}`}>
                         {item.shipsIn}
                       </span>
                     ) : null}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedNumber, IconTile } from "@/components/ui";
+import { AnimatedNumber, IconTile, pill } from "@/components/ui";
 import {
   ArrowRight,
   BookMarked,
@@ -316,7 +316,7 @@ function LearningCard({ learning: l }: { learning: SalesLearningItem }) {
           <Chip>{learningStatusLabel(l.status)}</Chip>
         ) : null}
         {l.memory_id ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[10px] font-medium text-fuchsia-300 ring-1 ring-inset ring-fuchsia-400/30">
+          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${pill("fuchsia")}`}>
             <Sparkles className="h-3 w-3" aria-hidden />
             In Shared Memory
           </span>
