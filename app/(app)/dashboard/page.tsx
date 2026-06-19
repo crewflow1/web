@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FadeIn } from "@/components/ui";
+import { FadeIn, AnimatedNumber } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
@@ -1058,7 +1058,9 @@ export default async function DashboardPage() {
         </Card>
 
         <Card title="Photos missing" href="/jobs">
-          <p className="text-3xl font-bold text-slate-900">{photosMissing}</p>
+          <p className="text-3xl font-bold text-slate-900">
+            <AnimatedNumber value={photosMissing} />
+          </p>
           <p className="mt-2 text-xs text-slate-500">
             In-progress or completed jobs with zero photos. Field staff should
             add before/during/after shots.

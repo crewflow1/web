@@ -9,6 +9,7 @@ import {
   isValidRecurringPayload,
 } from "@/lib/schedule/recurring";
 import type { CalendarJob } from "@/lib/schedule/types";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /jobs/calendar — week-view + month-view scheduling surface.
@@ -150,7 +151,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
     }
 
     return (
-      <div className="space-y-4">
+      <FadeIn className="space-y-4">
         <ViewToggle
           weekHref={`/jobs/calendar?${viewLinkQs("week")}`}
           monthHref={`/jobs/calendar?${viewLinkQs("month")}`}
@@ -163,12 +164,12 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
           filterStatus={sp.status ?? ""}
           filterStaff={sp.staff ?? ""}
         />
-      </div>
+      </FadeIn>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <FadeIn className="space-y-4">
       <ViewToggle
         weekHref={`/jobs/calendar?${viewLinkQs("week")}`}
         monthHref={`/jobs/calendar?${viewLinkQs("month")}`}
@@ -187,7 +188,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
         statusFilter={sp.status ?? ""}
         staffFilter={sp.staff ?? ""}
       />
-    </div>
+    </FadeIn>
   );
 }
 

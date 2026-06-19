@@ -3,6 +3,7 @@ import type {
   ActivitySummaryResponse,
   LeadInsightsResponse,
 } from "@/lib/ai/types";
+import { AnimatedNumber } from "@/components/ui";
 
 /**
  * Dashboard "Insights" panel — deterministic aggregates only.
@@ -272,7 +273,7 @@ function Stat({ label, value }: { label: string; value: number }) {
         {label}
       </div>
       <div className="mt-0.5 text-base font-semibold text-slate-900">
-        {value}
+        <AnimatedNumber value={value} />
       </div>
     </div>
   );
