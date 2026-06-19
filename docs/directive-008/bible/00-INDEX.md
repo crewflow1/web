@@ -10,11 +10,41 @@
 
 ---
 
+## 🔒 Architecture Freeze — CrewFlow Architecture **v1.0**
+
+> **As of CEO Directive #003.5 ("Lock the Foundation"), this Bible is the single, frozen source of architectural truth for CrewFlow.** Twenty-one chapters across six volumes describe the entire operating system. The architecture is now **locked at v1.0**; implementation builds *from* it, never *around* it.
+
+**The three freeze rules — binding on every engineer and every future directive:**
+
+1. **No feature is built without referencing its chapter(s).** Every implementation PR names the Bible chapter(s) it realises. If a feature has no chapter, it has no architecture — and it is not built until one exists.
+2. **No engineer invents architecture outside the Bible.** The Bible is the design, not a suggestion. A deviation is not silent — it becomes an ADR in [Ch.20 §20.3](20-glossary-conventions-decision-log.md), or it does not happen.
+3. **Every future directive updates the Bible *first*, then implementation follows.** A directive that changes behaviour first changes the owning chapter (with an ADR, and a consistency sweep if it touches the canon 03/04/14); only then does code change to match.
+
+> **Architecture always comes before code.**
+
+The freeze is *enforced* by the governance rules in [Change control & governance](#change-control--governance) below, *operationalised* by the six companion documents (next section), and *recorded* by the [CEO Gate report](../CEO-GATE.md). It is lifted only by an explicit version bump (v1.1 additive, v2.0 structural), and a bump is itself an ADR. The chapters are **drafted and frozen**; what remains is not more architecture — it is the seven CEO decisions in [Ch.20 §20.4.A](20-glossary-conventions-decision-log.md) and the gated, preview-first implementation in [Ch.19](19-rollout-plan.md).
+
+### Companion governance documents (Directive #003.5)
+
+These six documents sit beside the Bible (in [`../`](..)) and translate the frozen architecture into an executable programme. They are *derived from* the Bible — every number in them is traceable to a chapter — and they do not themselves define architecture.
+
+| Document | Purpose |
+|---|---|
+| [`CEO-REVIEW-PACK.md`](../CEO-REVIEW-PACK.md) | The executive overview — every chapter scored for status, dependencies, build order, complexity, and business/customer/AI impact. |
+| [`BUILD-DEPENDENCY-GRAPH.md`](../BUILD-DEPENDENCY-GRAPH.md) | For every feature: what must exist first, what depends on it, whether it touches billing / AI / permissions / DB / mobile. Nothing is built out of sequence. |
+| [`PRIORITISATION-MATRIX.md`](../PRIORITISATION-MATRIX.md) | Every feature ranked by demand, revenue, time saved, cost, differentiation, AI leverage, and adoption → the optimal implementation order. |
+| [`PHASE-7-MASTER-PLAN.md`](../PHASE-7-MASTER-PLAN.md) | The week-by-week roadmap: objectives, deliverables, milestones, testing, rollback, definition of done, risks, and success metrics per week. |
+| [`IMPLEMENTATION-RULES.md`](../IMPLEMENTATION-RULES.md) | The non-negotiable Definition of Done — no feature is "complete" without the full quality bar (tests, monitoring, audit, docs, security, performance, accessibility). |
+| [`CEO-GATE.md`](../CEO-GATE.md) | The final gate report answering the three questions and, if all are *yes*, declaring the freeze and authorising implementation. |
+
+---
+
 ## Status & ground rules
 
 | | |
 |---|---|
-| **Document status** | Living specification — under construction. No production code is written from it until the CEO approves the blueprint **and** the Release Candidate (PR #171) is in production and stable. |
+| **Architecture version** | **v1.0 — FROZEN** (CEO Directive #003.5). The structure is complete and locked; changes are versioned ADRs, not edits-in-place. |
+| **Document status** | Frozen specification — drafted in full (21/21 chapters). No production code is written from it until the CEO approves the blueprint **and** the Release Candidate (PR #171) is in production and stable. |
 | **Release Candidate** | **Frozen.** Nothing enters PR #171 except release-quality QA bug fixes. No feature work, no refactoring, no cleanup. |
 | **This document** | Architecture only. It describes *what* to build and *why*, in enough detail that a team of 100 senior engineers could build CrewFlow from it alone. It contains illustrative DDL, API signatures, and pseudocode — none of it is production code. |
 | **Branch** | Authored on `directive-008/architecture-blueprint`. The RC branch (`feature/design-system-foundation`) is never touched by this work. |
@@ -129,6 +159,20 @@ An AI employee is specified like a real hire. Every employee in the roster has a
 
 ---
 
-## Change control
+## Change control & governance
 
 The Bible is versioned in git alongside the code. Material changes are proposed as edits to the relevant chapter with a one-line entry appended to the **Decision Log** in Ch.20 (an ADR: context → decision → consequences). The canon chapters (03 Data Model, 04 Event Taxonomy, 14 Permissions) are the highest-stakes: a change there ripples everywhere, so each requires an explicit ADR and a consistency sweep of dependent chapters. **One source, forever** — applied to the specification itself.
+
+Under the **Architecture Freeze** (above), change control is not advisory — it is the mechanism that keeps v1.0 coherent. The rules:
+
+**1. Architecture before code (the prime rule).** No production code is written for a behaviour the Bible does not yet describe. The order is always *chapter → ADR → review → implementation*, never the reverse. A pull request that introduces behaviour absent from the Bible is incomplete by definition, regardless of how good the code is.
+
+**2. Every implementation PR cites its chapter(s).** The PR description names the chapter(s) it realises (e.g. "implements Ch.04 §2 outbox + Ch.03 §03.1 `hq_events`"). This is the freeze made checkable: a reviewer can hold the diff against the spec. A PR that cites no chapter is asked *"which chapter is this?"* before review proceeds — and if the honest answer is "none", work stops until the chapter exists.
+
+**3. A change is a Bible edit *first*.** When a directive or a discovery requires the architecture to change, the **first** artifact produced is the chapter edit + ADR — not the code. Implementation then conforms to the amended chapter. This guarantees the Bible never lags reality; the specification is always the most current description of the system, because nothing ships ahead of it.
+
+**4. Deviations are ADRs, not surprises.** If implementation reveals the design is wrong, that is *expected and welcome* — but it is surfaced as a proposed chapter edit + ADR (context → decision → consequences), reviewed like any change, and the canon-sweep runs if it touches 03/04/14. An undocumented deviation discovered in code review is a defect to be reconciled, not a fait accompli.
+
+**5. Versioning the freeze.** v1.0 is the frozen baseline. Additive, backward-compatible refinements accumulate as ADRs and roll up to **v1.1, v1.2, …**; a structural change that invalidates a frozen decision is a **v2.0** event requiring explicit CEO endorsement. The version lives in the [Status & ground rules](#status--ground-rules) table; every bump names the ADR that caused it. The freeze is *durable*, not *eternal* — it changes deliberately, in the open, one recorded decision at a time.
+
+> **The test for any future change:** *Did the Bible change before the code did?* If yes, the freeze is intact. If no, the change is out of order — stop, write the chapter, then build.
