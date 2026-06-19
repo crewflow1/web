@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "db:seed": "tsx scripts/seed.ts",
     "email": "email dev --dir emails --port 3001",
-    "test": "vitest"
+    "test": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
