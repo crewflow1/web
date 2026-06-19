@@ -136,14 +136,15 @@ const config = [
     plugins: { "hq-design": hqDesign },
     rules: { "hq-design/no-raw-status-pill": "error" },
   },
-  // Knowingly-deferred local accent maps — reconciled under CEO Directive 008
-  // (AI Workforce roster + CEO cockpit trend deltas). Tracked, not overlooked.
+  // One justified exemption: the AI-employee roster icon palette
+  // (ACCENT_CLASSES) is a richer, employee-specific vocabulary — hover rings +
+  // glow shadows, plus pink / green / blue, three hues the shared token system
+  // doesn't define. Its status pills + dots already come from the tokens
+  // (pill() / statusDot() / pillMap()); only the icon-tile palette stays local,
+  // pending the token-palette expansion CEO Directive 008 (AI Workforce) will
+  // settle. Tracked, not overlooked.
   {
-    files: [
-      "components/ai-employees/styles.ts",
-      "app/admin/ceo/page.tsx",
-      "app/admin/command-centre/page.tsx",
-    ],
+    files: ["components/ai-employees/styles.ts"],
     rules: { "hq-design/no-raw-status-pill": "off" },
   },
 ];

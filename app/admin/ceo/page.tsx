@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { IconTile } from "@/components/ui";
+import { IconTile, pill } from "@/components/ui";
 import Link from "next/link";
 import {
   Activity,
@@ -350,13 +350,11 @@ function HealthLegend() {
 function TrendBadge({ trend }: { trend: ExecTrend }) {
   if (trend.direction === "flat") return null;
   const up = trend.direction === "up";
-  const cls = up
-    ? "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30"
-    : "bg-rose-500/15 text-rose-300 ring-rose-400/30";
+  const cls = pill(up ? "emerald" : "rose");
   const Icon = up ? ArrowUpRight : ArrowDownRight;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${cls}`}
+      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${cls}`}
     >
       <Icon className="h-3 w-3" strokeWidth={2.5} aria-hidden />
       {Math.abs(trend.pct)}%
