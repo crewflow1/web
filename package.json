@@ -13,7 +13,9 @@
     "db:seed": "tsx scripts/seed.ts",
     "email": "email dev --dir emails --port 3001",
     "test": "vitest",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:security": "vitest run --config vitest.security.config.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",

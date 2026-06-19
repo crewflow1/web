@@ -14,6 +14,11 @@ node_modules/
 # testing
 coverage/
 
+# playwright (E2E) — generated reports/artifacts + browser cache, never commit
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
 # next.js
 .next/
 out/

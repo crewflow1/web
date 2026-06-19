@@ -5,15 +5,23 @@ import path from "node:path";
  * Vitest config — unit tests only. Fast and dependency-free: mocked
  * Supabase clients, no DB, no network, no PDF rendering.
  *
- * Integration tests (__tests__/integration/**) are EXCLUDED here — they
- * need a real Postgres and run via their own config:
- * `npm run test:integration` (see vitest.integration.config.ts).
+ * Two tiers run via their own configs and are EXCLUDED here so each CI gate
+ * owns exactly one tier (a failure is attributed to the right gate, never
+ * buried in the unit run):
+ *   - Integration (__tests__/integration/**) — needs a real Postgres;
+ *     `npm run test:integration` (vitest.integration.config.ts).
+ *   - Security    (__tests__/security/**)    — trust-boundary proofs;
+ *     `npm run test:security` (vitest.security.config.ts).
  */
 export default defineConfig({
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts"],
-    exclude: [...configDefaults.exclude, "__tests__/integration/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "__tests__/integration/**",
+      "__tests__/security/**",
+    ],
     globals: false,
     pool: "forks",
     setupFiles: ["__tests__/setup.ts"],
