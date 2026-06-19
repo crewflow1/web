@@ -236,7 +236,10 @@ describe("Phase 1 — /admin/ops page", () => {
 
   it("renders the traffic-light status banner", () => {
     expect(OPS_PAGE).toMatch(/snapshot\.status/);
-    expect(OPS_PAGE).toMatch(/STATUS_PILL/);
+    // The status-keyed style map was renamed STATUS_PILL → STATUS_BANNER
+    // in the design-system pass (Directive 006); the traffic-light intent
+    // (role="status", keyed on snapshot.status) is unchanged.
+    expect(OPS_PAGE).toMatch(/STATUS_BANNER/);
   });
 
   it("renders env presence list, email queue tile, cron table, recent failures", () => {

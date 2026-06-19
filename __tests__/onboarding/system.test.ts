@@ -311,7 +311,11 @@ describe("Phase 2 — /onboarding/setup route", () => {
   it("renders a progress bar + step list ordered by CHECKLIST_STEP_ORDER", () => {
     expect(SETUP_PAGE).toMatch(/CHECKLIST_STEP_ORDER/);
     expect(SETUP_PAGE).toMatch(/progress\.pct/);
-    expect(SETUP_PAGE).toMatch(/\$\{progress\.pct\}%/);
+    // The progress bar is now the shared design-system <AnimatedBar>
+    // (Directive 006), driven by progress.pct, plus an <AnimatedNumber
+    // … format="percent"> read-out — replacing the old `${progress.pct}%`
+    // inline width/string.
+    expect(SETUP_PAGE).toMatch(/<AnimatedBar[\s\S]*?value=\{progress\.pct\}/);
   });
 
   it("each step's CTA deep-links to its existing destination (no form duplication)", () => {

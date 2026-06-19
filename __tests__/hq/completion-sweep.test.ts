@@ -157,7 +157,9 @@ describe("/admin loading + error shells", () => {
     expect(existsSync(p)).toBe(true);
     const f = read("app/admin/loading.tsx");
     expect(f).toMatch(/Loading HQ/);
-    expect(f).toMatch(/animate-pulse/);
+    // Skeleton chrome is now the shared design-system <Shimmer> primitive
+    // (Directive 006) rather than a raw `animate-pulse` utility class.
+    expect(f).toMatch(/Shimmer/);
   });
 
   it("app/admin/error.tsx exists, is a client component, logs the error", () => {
