@@ -81,11 +81,16 @@ describe("design tokens — palette completeness", () => {
     expect(ACCENTS).toContain("orange");
   });
 
-  it("carries two distinct neutral states (Directive 007.6, Option A)", () => {
+  it("carries three distinct neutral states (Directive 007.6)", () => {
     expect(ACCENTS).toContain("neutral");
     expect(ACCENTS).toContain("muted");
-    // They must NOT be the same swatch — that is the whole point of Option A.
+    expect(ACCENTS).toContain("quiet");
+    // All three must be distinct swatches: an active neutral, a recessed-but-
+    // readable financial neutral, and a dimmed disabled neutral — they must
+    // never collapse into one another.
     expect(accent("neutral").chip).not.toBe(accent("muted").chip);
+    expect(accent("neutral").chip).not.toBe(accent("quiet").chip);
+    expect(accent("quiet").chip).not.toBe(accent("muted").chip);
   });
 
   it("accent() falls back to slate for null/undefined", () => {
@@ -112,6 +117,13 @@ describe("pill() — solid status pill is pixel-identical under .dark", () => {
     expectDarkRender(
       pill("muted"),
       "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+    );
+  });
+
+  it("quiet (financial-neutral) → bg-slate-700/40 text-slate-300 ring-slate-600/40", () => {
+    expectDarkRender(
+      pill("quiet"),
+      "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
     );
   });
 });

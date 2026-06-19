@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pillMap } from "@/components/ui/tokens";
 import { notFound } from "next/navigation";
 import { loadCustomerSnapshot } from "@/server/services/hq-customer-snapshot";
 import {
@@ -64,30 +65,28 @@ import {
 // lib/hq/customer-financials are light-themed (consumed by other light
 // views), so HQ's dark surfaces resolve their own token idioms locally
 // — presentation only, no behaviour change.
-const SUBSCRIPTION_PILL_DARK: Record<SubscriptionStatus, string> = {
-  trial: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  active:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  past_due: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  suspended: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  cancelled:
-    "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-};
+const SUBSCRIPTION_PILL_DARK = pillMap<SubscriptionStatus>({
+  trial: "sky",
+  active: "emerald",
+  past_due: "amber",
+  suspended: "rose",
+  cancelled: "quiet",
+  pending: "amber",
+});
 
-const SETUP_FEE_PILL_DARK: Record<SetupFeeStatus, string> = {
-  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  sent: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  paid: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  waived: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  refunded: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-};
+const SETUP_FEE_PILL_DARK = pillMap<SetupFeeStatus>({
+  pending: "amber",
+  sent: "sky",
+  paid: "emerald",
+  waived: "quiet",
+  refunded: "rose",
+});
 
-const HEALTH_PILL_DARK: Record<HealthRisk, string> = {
-  high: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  medium: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  low: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-};
+const HEALTH_PILL_DARK = pillMap<HealthRisk>({
+  high: "rose",
+  medium: "amber",
+  low: "emerald",
+});
 
 type Params = Promise<{ id: string }>;
 type SP = Promise<{ saved?: string; error?: string; detail?: string; stripe?: string; kind?: string }>;

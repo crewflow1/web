@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pill, pillMap } from "@/components/ui/tokens";
 import { listInternalNotesForOrg } from "@/server/services/hq-internal-notes";
 import {
   INTERNAL_NOTE_CATEGORIES,
@@ -29,30 +30,25 @@ import { Button, Input, Panel, Select, Textarea } from "@/components/ui";
 // are light-themed (consumed by the light /admin/notes view), so HQ's
 // dark surfaces resolve their own token idioms locally — presentation
 // only, no behaviour change.
-const NOTE_CATEGORY_PILL_DARK: Record<InternalNoteCategory, string> = {
-  general: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  sales:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  onboarding:
-    "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  billing: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  support: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  risk: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  technical:
-    "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  success:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-};
+const NOTE_CATEGORY_PILL_DARK = pillMap<InternalNoteCategory>({
+  general: "quiet",
+  sales: "emerald",
+  onboarding: "indigo",
+  billing: "amber",
+  support: "sky",
+  risk: "rose",
+  technical: "quiet",
+  success: "emerald",
+});
 
-const NOTE_PRIORITY_PILL_DARK: Record<InternalNotePriority, string> = {
-  low: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  normal: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  high: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  urgent: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-};
+const NOTE_PRIORITY_PILL_DARK = pillMap<InternalNotePriority>({
+  low: "quiet",
+  normal: "sky",
+  high: "amber",
+  urgent: "rose",
+});
 
-const PILL_FALLBACK_DARK =
-  "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40";
+const PILL_FALLBACK_DARK = pill("quiet");
 
 export async function InternalNotesPanel({ orgId }: { orgId: string }) {
   const notes = await listInternalNotesForOrg(orgId, {
@@ -135,7 +131,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   {n.pinned ? (
-                    <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300 ring-1 ring-inset ring-amber-400/30">
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${pill("amber")}`}>
                       Pinned
                     </span>
                   ) : null}

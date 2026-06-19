@@ -1,4 +1,5 @@
 import { requireHqPage } from "@/server/auth/hq";
+import { pill } from "@/components/ui/tokens";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
 import {
   AnimatedNumber,
@@ -23,9 +24,9 @@ import {
 export const dynamic = "force-dynamic";
 
 const STATUS_PILL = {
-  ok: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  skipped: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
+  ok: pill("emerald"),
+  failed: pill("rose"),
+  skipped: pill("quiet"),
 } as const;
 
 export default async function AutomationsPage() {
@@ -138,8 +139,8 @@ export default async function AutomationsPage() {
                           h.last_status
                             ? STATUS_PILL[h.last_status]
                             : h.rule.enabled
-                              ? "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40"
-                              : "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30"
+                              ? pill("quiet")
+                              : pill("amber")
                         }`}
                       >
                         {h.last_status ??

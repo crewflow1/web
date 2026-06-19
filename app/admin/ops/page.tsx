@@ -1,4 +1,5 @@
 import { requireHqPage } from "@/server/auth/hq";
+import { pill } from "@/components/ui/tokens";
 import {
   buildOpsSnapshot,
   type CronRouteHealth,
@@ -199,10 +200,10 @@ function EnvRow({ env }: { env: EnvVarStatus }) {
       <span
         className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
           env.present
-            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30"
+            ? pill("emerald")
             : env.required
-              ? "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30"
-              : "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30"
+              ? pill("rose")
+              : pill("amber")
         }`}
       >
         {env.present
@@ -218,10 +219,10 @@ function EnvRow({ env }: { env: EnvVarStatus }) {
 function CronRow({ cron }: { cron: CronRouteHealth }) {
   const okBadge =
     cron.last_ok === true
-      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30"
+      ? pill("emerald")
       : cron.last_ok === false
-        ? "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30"
-        : "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40";
+        ? pill("rose")
+        : pill("quiet");
   return (
     <tr className="transition-colors hover:bg-slate-900/50">
       <td className="px-3 py-2 font-mono text-xs font-medium text-slate-200">

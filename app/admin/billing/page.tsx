@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pill, pillMap } from "@/components/ui/tokens";
 import {
   listCustomersForBilling,
   listBillingInvoicesForOrg,
@@ -67,31 +68,31 @@ type SP = Promise<{
 
 // Dark status pills — mirror the light maps in lib/hq/billing +
 // lib/hq/customer-financials on the dark canvas (presentation only).
-const SUBSCRIPTION_PILL_DARK: Record<SubscriptionStatus, string> = {
-  trial: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  past_due: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  suspended: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  cancelled: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-};
+const SUBSCRIPTION_PILL_DARK = pillMap<SubscriptionStatus>({
+  trial: "sky",
+  active: "emerald",
+  past_due: "amber",
+  suspended: "rose",
+  cancelled: "quiet",
+  pending: "amber",
+});
 
-const SETUP_FEE_PILL_DARK: Record<SetupFeeStatus, string> = {
-  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  sent: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  paid: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  waived: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  refunded: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-};
+const SETUP_FEE_PILL_DARK = pillMap<SetupFeeStatus>({
+  pending: "amber",
+  sent: "sky",
+  paid: "emerald",
+  waived: "quiet",
+  refunded: "rose",
+});
 
-const BILLING_STATUS_PILL_DARK: Record<BillingInvoiceStatus, string> = {
-  draft: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  sent: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  paid: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  refunded: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  void: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-};
+const BILLING_STATUS_PILL_DARK = pillMap<BillingInvoiceStatus>({
+  draft: "quiet",
+  sent: "sky",
+  paid: "emerald",
+  failed: "rose",
+  refunded: "amber",
+  void: "quiet",
+});
 
 const SUBSCRIPTION_OPTIONS: ReadonlyArray<string> = [
   "trial",
@@ -291,7 +292,7 @@ function CustomerBillingRowView({
             Setup: {SETUP_FEE_LABELS[row.setup_fee_status]}
           </span>
           {row.summary.failedCount > 0 ? (
-            <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-400/30">
+            <span className={`rounded-full px-2 py-0.5 ${pill("rose")}`}>
               {row.summary.failedCount} failed
             </span>
           ) : null}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pill, pillMap } from "@/components/ui/tokens";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MONTHLY_PRICE_GBP } from "@/lib/hq/customer-financials";
@@ -73,17 +74,17 @@ type DemoRow = {
   created_at: string;
 };
 
-const STATUS_PILL: Record<string, string> = {
-  pending_demo: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  demo_booked: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  approved: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  pending: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  trial: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  active: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  suspended: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  rejected: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-  cancelled: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-};
+const STATUS_PILL = pillMap<string>({
+  pending_demo: "amber",
+  demo_booked: "indigo",
+  approved: "emerald",
+  pending: "amber",
+  trial: "sky",
+  active: "emerald",
+  suspended: "rose",
+  rejected: "quiet",
+  cancelled: "quiet",
+});
 
 const STATUS_LABEL: Record<string, string> = {
   pending_demo: "Pending demo",
@@ -253,7 +254,7 @@ export default async function AdminOrganizationsPage({
           </>
         }
         actions={
-          <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-300 ring-1 ring-inset ring-amber-400/30">
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${pill("amber")}`}>
             {totalPendingForCeo} awaiting your review
           </span>
         }
@@ -371,7 +372,7 @@ function DemoRowItem({ demo }: { demo: DemoRow }) {
               {demo.company}
             </p>
             <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[demo.status] ?? "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40"}`}
+              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[demo.status] ?? pill("quiet")}`}
             >
               {STATUS_LABEL[demo.status] ?? demo.status}
             </span>
@@ -485,7 +486,7 @@ function OrgRowItem({
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-white">{org.name}</p>
             <span
-              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[org.status] ?? "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40"}`}
+              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[org.status] ?? pill("quiet")}`}
             >
               {STATUS_LABEL[org.status] ?? org.status}
               {org.status === "trial" && trialDaysLeft !== null

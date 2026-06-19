@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pill } from "@/components/ui/tokens";
 import {
   listOnboardingForHq,
   listImportsForOrg,
@@ -193,7 +194,7 @@ function OnboardingRowView({
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           {danger ? (
-            <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-400/30">
+            <span className={`rounded-full px-2 py-0.5 ${pill("rose")}`}>
               {row.rows_failed > 0 ? `${row.rows_failed} failed rows` : null}
               {row.rows_failed > 0 && row.imports_rolled_back > 0 ? " · " : ""}
               {row.imports_rolled_back > 0
@@ -202,12 +203,12 @@ function OnboardingRowView({
             </span>
           ) : null}
           {stalled ? (
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+            <span className={`rounded-full px-2 py-0.5 ${pill("amber")}`}>
               {row.imports_in_progress} in flight
             </span>
           ) : null}
           {row.migration_percent === 100 ? (
-            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+            <span className={`rounded-full px-2 py-0.5 ${pill("emerald")}`}>
               Migration complete
             </span>
           ) : null}
@@ -339,13 +340,13 @@ function importPill(
   committed: string | null,
   rolledBack: string | null,
 ): string {
-  if (rolledBack) return "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30";
-  if (committed) return "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30";
-  if (status === "failed") return "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30";
+  if (rolledBack) return pill("rose");
+  if (committed) return pill("emerald");
+  if (status === "failed") return pill("rose");
   if (status === "detected" || status === "uploaded") {
-    return "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30";
+    return pill("amber");
   }
-  return "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40";
+  return pill("quiet");
 }
 
 function ProgressBar({

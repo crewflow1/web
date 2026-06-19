@@ -28,7 +28,8 @@ export type Accent =
   | "red"
   | "slate"
   | "neutral"
-  | "muted";
+  | "muted"
+  | "quiet";
 
 export interface AccentClasses {
   /** Foreground for headline values, icons and labels. */
@@ -59,6 +60,7 @@ export const ACCENTS: Accent[] = [
   "slate",
   "neutral",
   "muted",
+  "quiet",
 ];
 
 export const ACCENT: Record<Accent, AccentClasses> = {
@@ -150,10 +152,14 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     bar: "bg-slate-500 dark:bg-slate-600",
     dot: "bg-slate-400",
   },
-  // Two distinct neutral states (CEO Directive 007.6, Option A) — kept
-  // separate so an "active but neutral" pill and a "muted / disabled" pill
-  // never collapse into one another. Dark halves are byte-identical to the
-  // hand-spelled recipes the AI-platform surfaces shipped with.
+  // Three distinct neutral states (CEO Directive 007.6) — kept separate so they
+  // never collapse into one another, brightest body → dimmest:
+  //   • neutral — active-but-neutral pill: light /15 body, slate-300 text.
+  //   • quiet   — recessed financial-table neutral (defined below): muted /40
+  //               body, but text stays slate-300 so dense rows stay readable.
+  //   • muted   — disabled / inactive: muted /40 body AND dimmed slate-400 text.
+  // Dark halves are byte-identical to the hand-spelled recipes the surfaces
+  // shipped with.
   neutral: {
     text: "text-slate-600 dark:text-slate-300",
     glow: "bg-slate-500/20",
@@ -169,6 +175,20 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     soft: "bg-slate-50 text-slate-500 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-slate-700",
     bar: "bg-slate-400 dark:bg-slate-600",
     dot: "bg-slate-400 dark:bg-slate-600",
+  },
+  // The financial-table neutral (CEO Directive 007.6 — the *final* neutral
+  // token). Muted /40 body so the pill recedes into dense billing / customer
+  // tables, but the text stays slate-300 (fully readable) — distinct from
+  // `muted`, whose text dims to slate-400. Dark `chip` is byte-identical to the
+  // `bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40` recipe
+  // these surfaces grew for skipped / cancelled / void / draft / unknown rows.
+  quiet: {
+    text: "text-slate-600 dark:text-slate-300",
+    glow: "bg-slate-500/20",
+    chip: "bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300 dark:bg-slate-700/40 dark:text-slate-300 dark:ring-slate-600/40",
+    soft: "bg-slate-50 text-slate-600 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-slate-700",
+    bar: "bg-slate-500 dark:bg-slate-400/80",
+    dot: "bg-slate-500 dark:bg-slate-400",
   },
 };
 

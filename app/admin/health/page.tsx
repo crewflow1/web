@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pill, pillMap } from "@/components/ui/tokens";
 import {
   AnimatedNumber,
   Button,
@@ -43,12 +44,12 @@ export const dynamic = "force-dynamic";
 
 // Dark band pills — mirror the light HEALTH_BAND_PILL shape from
 // lib/hq/health-deep-dive on the dark canvas.
-const BAND_PILL: Record<HealthBand, string> = {
-  red: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
-  yellow: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  green: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  unknown: "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40",
-};
+const BAND_PILL = pillMap<HealthBand>({
+  red: "rose",
+  yellow: "amber",
+  green: "emerald",
+  unknown: "quiet",
+});
 
 // Trend sparkline number colours, keyed by the same band as the pills so
 // the score history reads through the single bandFromScore derivation.
@@ -267,7 +268,7 @@ export default async function HqHealthPage({
                           </p>
                         </>
                       ) : (
-                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${pill("emerald")}`}>
                           No action needed
                         </span>
                       )}
