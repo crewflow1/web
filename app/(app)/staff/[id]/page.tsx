@@ -11,6 +11,7 @@ import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { FadeIn } from "@/components/ui";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -71,7 +72,7 @@ export default async function StaffDetailPage({
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <FadeIn className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/staff" className="hover:text-slate-900">Staff</Link>
         <span aria-hidden>/</span>
@@ -188,7 +189,7 @@ export default async function StaffDetailPage({
           </ConfirmForm>
         </section>
       ) : null}
-    </div>
+    </FadeIn>
   );
 }
 

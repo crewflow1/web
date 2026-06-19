@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { approveExpenseDraftAction, rejectExpenseDraft } from "../actions";
 import { AmountInput } from "./_amount-input";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /expenses/[id] — approve / reject an AI-extracted expense draft.
@@ -95,7 +96,7 @@ export default async function ExpenseDraftPage({
   const editable = row.status === "extracted";
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <FadeIn className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/expenses" className="hover:text-slate-900">
           Expenses
@@ -311,6 +312,6 @@ export default async function ExpenseDraftPage({
           </button>
         </form>
       ) : null}
-    </div>
+    </FadeIn>
   );
 }

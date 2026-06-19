@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
+import { FadeIn } from "@/components/ui";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -66,7 +67,7 @@ export default async function ReconcilePage({
     : null;
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/payments" className="hover:text-slate-900">Payments</Link>
         <span aria-hidden>/</span>
@@ -197,6 +198,6 @@ export default async function ReconcilePage({
           </table>
         </div>
       </section>
-    </div>
+    </FadeIn>
   );
 }

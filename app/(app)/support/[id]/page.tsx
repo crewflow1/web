@@ -12,6 +12,7 @@ import {
   type SupportCategory,
 } from "@/lib/hq/support";
 import { replyToSupportTicket } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 type SP = Promise<{ saved?: string; error?: string }>;
 type Params = Promise<{ id: string }>;
@@ -88,7 +89,7 @@ export default async function CustomerSupportTicketPage({
       ) : null}
 
       {/* Thread */}
-      <section className="space-y-3">
+      <FadeIn className="space-y-3">
         {ticket.messages.length === 0 ? (
           <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
             No replies yet.
@@ -120,42 +121,44 @@ export default async function CustomerSupportTicketPage({
             );
           })
         )}
-      </section>
+      </FadeIn>
 
       {/* Reply box */}
-      {isClosed ? (
-        <p className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-center text-xs text-slate-500">
-          This ticket is {ticket.status}. Open a new ticket if you need
-          further help.
-        </p>
-      ) : (
-        <form
-          action={replyToSupportTicket}
-          className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-        >
-          <input type="hidden" name="ticket_id" value={ticket.id} />
-          <label className="block text-sm font-medium text-slate-700">
-            Reply
-            <textarea
-              name="body"
-              required
-              minLength={1}
-              maxLength={10_000}
-              rows={4}
-              placeholder="Type your reply…"
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </label>
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Send reply
-            </button>
-          </div>
-        </form>
-      )}
+      <FadeIn delay={0.08}>
+        {isClosed ? (
+          <p className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-center text-xs text-slate-500">
+            This ticket is {ticket.status}. Open a new ticket if you need
+            further help.
+          </p>
+        ) : (
+          <form
+            action={replyToSupportTicket}
+            className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+          >
+            <input type="hidden" name="ticket_id" value={ticket.id} />
+            <label className="block text-sm font-medium text-slate-700">
+              Reply
+              <textarea
+                name="body"
+                required
+                minLength={1}
+                maxLength={10_000}
+                rows={4}
+                placeholder="Type your reply…"
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              />
+            </label>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                Send reply
+              </button>
+            </div>
+          </form>
+        )}
+      </FadeIn>
     </div>
   );
 }

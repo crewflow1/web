@@ -11,6 +11,7 @@ import {
   type TimeEntry,
 } from "@/lib/time/compute";
 import { formatDateUK, formatTimeUK } from "@/lib/time/format";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Owner / admin view of one staff member's hours.
@@ -97,7 +98,7 @@ export default async function TimesheetPage({
   const nextWeek = addDaysIso(weekStartIso, 7);
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/staff" className="hover:text-slate-900">Staff</Link>
         <span aria-hidden>/</span>
@@ -214,7 +215,7 @@ export default async function TimesheetPage({
           </table>
         </div>
       </section>
-    </div>
+    </FadeIn>
   );
 }
 

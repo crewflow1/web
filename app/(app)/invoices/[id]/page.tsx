@@ -6,6 +6,7 @@ import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Invoice detail view.
@@ -107,7 +108,7 @@ export default async function InvoiceDetailPage({
   const status = invoice.status as InvoiceStatus;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <FadeIn className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/invoices" className="hover:text-slate-900">
           Invoices
@@ -267,6 +268,6 @@ export default async function InvoiceDetailPage({
           />
         </div>
       </section>
-    </div>
+    </FadeIn>
   );
 }

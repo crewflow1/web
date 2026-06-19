@@ -25,6 +25,7 @@ import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { SendQuote } from "./_send-quote";
 import { env } from "@/lib/env";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Quote edit + lifecycle actions page.
@@ -210,7 +211,7 @@ export default async function EditQuotePage({
   const updateAction = updateQuote.bind(null, id);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <FadeIn className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/quotes" className="hover:text-slate-900">
           Quotes
@@ -567,6 +568,6 @@ export default async function EditQuotePage({
           Delete quote
         </button>
       </ConfirmForm>
-    </div>
+    </FadeIn>
   );
 }

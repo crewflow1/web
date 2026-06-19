@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { rollbackImport } from "../../actions";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Audit log for one import session. Every imported row, its source file,
@@ -65,7 +66,7 @@ export default async function ImportAuditPage({
   }
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/imports" className="hover:text-slate-900">Imports</Link>
         <span aria-hidden>/</span>
@@ -149,6 +150,6 @@ export default async function ImportAuditPage({
           </table>
         </div>
       </section>
-    </div>
+    </FadeIn>
   );
 }

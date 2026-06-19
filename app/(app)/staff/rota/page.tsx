@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
 import { CreateRotaForm } from "./_create-form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Rota — weekly view, optionally month via ?view=month.
@@ -125,7 +126,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
     : null;
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Rota</h1>
@@ -251,6 +252,6 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
           </tbody>
         </table>
       </section>
-    </div>
+    </FadeIn>
   );
 }

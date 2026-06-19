@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
+import { FadeIn } from "@/components/ui";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -81,7 +82,7 @@ export default async function PayrollRunPage({
     : null;
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/payroll" className="hover:text-slate-900">Payroll</Link>
         <span aria-hidden>/</span>
@@ -227,7 +228,7 @@ export default async function PayrollRunPage({
         1257L tax code and 2025-26 thresholds. Confirm with your accountant
         or HMRC&apos;s Basic PAYE Tools before submitting RTI.
       </p>
-    </div>
+    </FadeIn>
   );
 }
 

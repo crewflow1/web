@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Pre-launch QA checklist — internal page for owners verifying every
@@ -97,7 +98,7 @@ export default async function QaPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <header>
         <h1 className="text-2xl font-bold text-slate-900">Pre-launch QA checklist</h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -169,6 +170,6 @@ export default async function QaPage() {
           </li>
         </ul>
       </section>
-    </div>
+    </FadeIn>
   );
 }

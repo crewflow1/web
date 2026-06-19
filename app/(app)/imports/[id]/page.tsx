@@ -10,6 +10,7 @@ import {
   resolveReviewRow,
   sendStaffInvitesFromImport,
 } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 /**
  * The import wizard. Five steps in one page; the displayed UI is driven
@@ -134,7 +135,7 @@ export default async function ImportWizardPage({
     : null;
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/imports" className="hover:text-slate-900">Imports</Link>
         <span aria-hidden>/</span>
@@ -527,7 +528,7 @@ export default async function ImportWizardPage({
           Every row it created has been deleted from your live tables.
         </section>
       ) : null}
-    </div>
+    </FadeIn>
   );
 }
 

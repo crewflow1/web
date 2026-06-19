@@ -6,6 +6,7 @@ import {
   deleteComplianceDocument,
   getComplianceDocSignedUrl,
 } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 /**
  * /compliance/[id] — view a compliance document.
@@ -82,7 +83,7 @@ export default async function ComplianceDocPage({
         </p>
       </header>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <FadeIn className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -136,9 +137,9 @@ export default async function ComplianceDocPage({
             </ul>
           </div>
         ) : null}
-      </section>
+      </FadeIn>
 
-      <div className="flex flex-wrap gap-2">
+      <FadeIn className="flex flex-wrap gap-2" delay={0.08}>
         {signedUrl ? (
           <a
             href={signedUrl}
@@ -166,7 +167,7 @@ export default async function ComplianceDocPage({
             Delete
           </button>
         </form>
-      </div>
+      </FadeIn>
     </div>
   );
 }

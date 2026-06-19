@@ -8,6 +8,7 @@ import {
 } from "../actions";
 import { CreateLeaveForm } from "./_create-form";
 import { formatDateUK } from "@/lib/time/format";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Leave requests — submit, review (approve/reject), cancel.
@@ -116,7 +117,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
     : null;
 
   return (
-    <div className="space-y-6">
+    <FadeIn className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Leave requests</h1>
@@ -240,7 +241,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
           </table>
         </div>
       </section>
-    </div>
+    </FadeIn>
   );
 }
 
