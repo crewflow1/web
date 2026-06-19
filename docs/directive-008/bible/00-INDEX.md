@@ -45,22 +45,22 @@ The Bible is a set of **volumes**; each volume is a set of **chapters**; each ch
 | 02 | **System Architecture** | The planes, the kernel model, the end-to-end data flow, technology choices | ✅ drafted |
 | 03 | **Data Model** | Every table — existing and new — with DDL, indexes, RLS, retention | ✅ drafted |
 | 04 | **Event Spine & Taxonomy** | The one event log, the canonical verb registry, delivery semantics | ✅ drafted |
-| 05 | **Services & APIs** | The service layer, server actions, route handlers, contracts, versioning | ⏳ planned |
-| 06 | **Real-time Infrastructure** | Supabase Realtime, server-authorized broadcast, presence, the island model | ⏳ planned |
-| 07 | **AI Employee Framework** | The runtime, the lifecycle FSM, the tool registry, cost/budget | ⏳ planned |
-| 08 | **AI Employee Roster** | A full dossier for each of the 12 employees | ⏳ planned |
-| 09 | **Mission Control** | The OS homepage — live, connected, the centre of CrewFlow | ⏳ planned |
-| 10 | **Global Search** | Cross-entity search + the ⌘K command palette | ⏳ planned |
-| 11 | **Event Timeline** | The global + per-entity feed projected from the spine | ⏳ planned |
-| 12 | **Memory Graph** | Episodic/semantic/procedural memory, pgvector, typed edges | ⏳ planned |
-| 13 | **Approvals & Human Oversight** | The approval workflow, policy engine, the inbox | ⏳ planned |
-| 14 | **Permissions & RBAC** | Capabilities, roles, the single `authorize()` chokepoint | ⏳ planned |
-| 15 | **Observability, Metrics & Audit** | Tracing, the metric registry, the immutable audit log | ⏳ planned |
-| 16 | **Security** | Trust boundaries, AI-specific defenses, data protection | ⏳ planned |
-| 17 | **Scalability** | Partitioning, load-levelling, LLM cost control, graduation triggers | ⏳ planned |
-| 18 | **Testing Strategy** | The test pyramid, RLS tests, event-contract tests, AI evals | ⏳ planned |
-| 19 | **Rollout Plan** | The eight phases, flags, backout, success criteria | ⏳ planned |
-| 20 | **Glossary, Conventions & Decision Log** | Shared vocabulary, ADRs, open questions | ⏳ planned |
+| 05 | **Services & APIs** | The service layer, server actions, route handlers, contracts, versioning | ✅ drafted |
+| 06 | **Real-time Infrastructure** | Supabase Realtime, server-authorized broadcast, presence, the island model | ✅ drafted |
+| 07 | **AI Employee Framework** | The runtime, the lifecycle FSM, the tool registry, cost/budget | ✅ drafted |
+| 08 | **AI Employee Roster** | A full dossier for each of the 12 employees | ✅ drafted |
+| 09 | **Mission Control** | The OS homepage — live, connected, the centre of CrewFlow | ✅ drafted |
+| 10 | **Global Search** | Cross-entity search + the ⌘K command palette | ✅ drafted |
+| 11 | **Event Timeline** | The global + per-entity feed projected from the spine | ✅ drafted |
+| 12 | **Memory Graph** | Episodic/semantic/procedural memory, pgvector, typed edges | ✅ drafted |
+| 13 | **Approvals & Human Oversight** | The approval workflow, policy engine, the inbox | ✅ drafted |
+| 14 | **Permissions & RBAC** | Capabilities, roles, the single `authorize()` chokepoint | ✅ drafted |
+| 15 | **Observability, Metrics & Audit** | Tracing, the metric registry, the immutable audit log | ✅ drafted |
+| 16 | **Security** | Trust boundaries, AI-specific defenses, data protection | ✅ drafted |
+| 17 | **Scalability** | Partitioning, load-levelling, LLM cost control, graduation triggers | ✅ drafted |
+| 18 | **Testing Strategy** | The test pyramid, RLS tests, event-contract tests, AI evals | ✅ drafted |
+| 19 | **Rollout Plan** | The eight phases, flags, backout, success criteria | ✅ drafted |
+| 20 | **Glossary, Conventions & Decision Log** | Shared vocabulary, ADRs, open questions | ✅ drafted |
 
 ---
 
