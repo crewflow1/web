@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { buildLaunchReadiness } from "@/server/services/launch-readiness";
 import { GlowHeader, Panel, Surface } from "@/components/ui";
+import { pill } from "@/components/ui/tokens";
 
 /**
  * /admin/launch-checklist — Phase 8.
@@ -17,10 +18,9 @@ import { GlowHeader, Panel, Surface } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 const STATUS_PILL = {
-  green:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  amber: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  red: "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30",
+  green: pill("emerald"),
+  amber: pill("amber"),
+  red: pill("rose"),
 } as const;
 
 const STATUS_BANNER = {

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AnimatedNumber } from "@/components/ui";
+import { pill } from "@/components/ui/tokens";
 import {
   Facebook,
   Instagram,
@@ -80,12 +81,15 @@ function dayHeading(dayKey: string, now: Date): string {
 
 function integrationPill(status: string): string {
   if (status === "connected") {
-    return "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30";
+    return pill("emerald");
   }
+  // Bespoke: an intentionally dimmer slate-500 text for the de-emphasised
+  // "disabled" integration state — no canonical neutral token reproduces it
+  // (neutral is text-slate-300, muted is text-slate-400). Kept local on purpose.
   if (status === "disabled") {
     return "bg-slate-700/40 text-slate-500 ring-1 ring-inset ring-slate-600/40";
   }
-  return "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30";
+  return pill("indigo");
 }
 
 export default async function CommunicationsPage({

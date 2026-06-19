@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { pill } from "@/components/ui/tokens";
 import {
   Brain,
   Building2,
@@ -311,7 +312,7 @@ export default async function CompanyDetailPage({
               unit="%"
               arc="rgb(129,140,248)"
               pill={
-                <Pill className="bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                <Pill className={pill("indigo")}>
                   {profile.completeness.present}/{profile.completeness.total} signals
                 </Pill>
               }
@@ -875,13 +876,13 @@ function relationshipArc(band: RelationshipBand): string {
 function relationshipPillClass(band: RelationshipBand): string {
   switch (band) {
     case "strong":
-      return "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30";
+      return pill("emerald");
     case "engaged":
-      return "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30";
+      return pill("sky");
     case "warming":
-      return "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30";
+      return pill("amber");
     default:
-      return "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40";
+      return pill("muted");
   }
 }
 
@@ -933,7 +934,7 @@ function AiAttribution({
   }
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      <Pill className="bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+      <Pill className={pill("indigo")}>
         <Sparkles className="mr-1 h-3 w-3" aria-hidden /> AI
       </Pill>
       {employee ? (
@@ -957,7 +958,7 @@ function ContactRow({
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium text-slate-200">{ct.full_name}</span>
           {ct.is_primary ? (
-            <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+            <Pill className={pill("amber")}>
               Primary
             </Pill>
           ) : null}
@@ -1024,7 +1025,7 @@ function LocationRow({ location: loc }: { location: SalesLocation }) {
           {loc.label ?? loc.city ?? "Location"}
         </span>
         {loc.is_headquarters ? (
-          <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+          <Pill className={pill("amber")}>
             HQ
           </Pill>
         ) : null}
@@ -1071,12 +1072,12 @@ function ChannelRow({
           <Chip>{typeLabel}</Chip>
           <span className="break-all font-medium text-slate-200">{ch.value}</span>
           {ch.is_primary ? (
-            <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+            <Pill className={pill("amber")}>
               Primary
             </Pill>
           ) : null}
           {ch.is_verified ? (
-            <Pill className="bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+            <Pill className={pill("emerald")}>
               Verified
             </Pill>
           ) : null}
@@ -1230,7 +1231,7 @@ function RecommendationView({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {active ? (
-            <Pill className="bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+            <Pill className={pill("emerald")}>
               Active
             </Pill>
           ) : (

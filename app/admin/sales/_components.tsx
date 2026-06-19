@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { pill } from "@/components/ui/tokens";
 import {
   Building2,
   Phone,
@@ -164,12 +165,12 @@ export function StatusPill({ status }: { status: string }) {
 /** Status pill for an AI task-queue row (open / completed / failed / other). */
 export function AiTaskStatusPill({ status }: { status: string }) {
   const cls = isOpenTaskStatus(status)
-    ? "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30"
+    ? pill("sky")
     : status === "completed"
-      ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30"
+      ? pill("emerald")
       : status === "failed"
-        ? "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30"
-        : "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40";
+        ? pill("red")
+        : pill("muted");
   return <Pill className={cls}>{aiTaskStatusLabel(status)}</Pill>;
 }
 
