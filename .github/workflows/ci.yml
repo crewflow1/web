@@ -3,13 +3,16 @@ name: CI
 # Gates every PR. Fails the merge button if any check fails.
 #
 # Checks (run in parallel as separate jobs for clear pass/fail rows):
-#   - typecheck  (tsc --noEmit)
-#   - lint       (eslint via next lint — soon to migrate to next-lint-to-eslint-cli)
-#   - tests      (vitest run)
+#   - typecheck    (tsc --noEmit)
+#   - lint         (eslint via next lint — soon to migrate to next-lint-to-eslint-cli)
+#   - tests        (vitest run — unit tier, mocked Supabase)
+#   - integration  (vitest run against a REAL Postgres — OQ-16)
 #
-# Migration dry-run is intentionally NOT here yet — would need a
-# disposable Supabase project per PR. Vercel preview's own DB-less build
-# catches most schema-vs-code mismatches via the generated types.
+# The integration job boots the Supabase local stack (`supabase start`),
+# applies the actual supabase/migrations on a fresh volume, and runs the
+# integration tier (__tests__/integration) to assert RLS, auth, triggers,
+# and tenant isolation — behaviour the mocked unit tier structurally cannot
+# cover. This closes the gap that previously lived in this comment.
 
 on:
   pull_request:
@@ -65,3 +68,50 @@ jobs:
           cache: "npm"
       - run: npm ci --no-audit --no-fund
       - run: npx vitest run
+
+  integration:
+    name: integration (real Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+
+      # Supabase CLI pinned to the version that generated supabase/config.toml,
+      # so `supabase start` parses the config without schema drift. Bump
+      # deliberately, alongside a `supabase init` config regeneration.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.98.2
+
+      # Boots Postgres + Auth + Storage and applies supabase/migrations on the
+      # fresh runner volume. ubuntu-latest ships a running Docker daemon, so no
+      # extra container setup is required.
+      - name: Start Supabase local stack
+        run: supabase start
+
+      # Map the running stack's connection details onto the names the harness
+      # reads (__tests__/integration/_harness.ts), then run the integration
+      # tier. `set -a` exports each assignment into the test process. CI=true
+      # means describeIntegration FAILS LOUDLY (never silently skips) if the DB
+      # is somehow absent — so a misconfigured run can never go green.
+      - name: Run integration tests
+        run: |
+          set -a
+          eval "$(supabase status -o env \
+            --override-name api.url=SUPABASE_URL \
+            --override-name auth.anon_key=SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY)"
+          set +a
+          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
+          done
+          npm run test:integration
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop
