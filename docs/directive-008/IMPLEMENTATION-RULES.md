@@ -38,10 +38,10 @@ Not every gate applies to every feature, and pretending otherwise produces cargo
 - **Enforced at:** CI (the validation triplet must be green before merge).
 
 ### Gate 2 — Integration tests · *Universal (heaviest for Conditional — DB)*
-- **Requirement:** the feature is tested **against a real Postgres**, not a mock — including its **RLS posture** and its **event contracts**. An `RLS:hq` table is proven service-role-only; an emitted event is proven to match the `Verb` registry; a consumer is proven idempotent on replay.
-- **Grounded in:** [Ch.18 §RLS tests, §event-contract tests](bible/18-testing-strategy.md); the enabling dependency is **[OQ-16 — a real Postgres in CI](bible/20-glossary-conventions-decision-log.md)**, *"the single most important gap."*
+- **Requirement:** the feature is tested **against a real Postgres**, not a mock — including its **RLS posture** and its **event contracts**. An `RLS:hq` table is proven service-role-only; an emitted event is proven to match the `Verb` registry; a consumer is proven idempotent on replay. **Mandatory-domain rule (Directive #004 / P11):** every feature that affects **Security, Authentication, Multi-tenancy, the Database, AI Infrastructure, Billing, Payroll, or Customer Data** *must* carry a live integration test here — a mocked test alone is no longer sufficient.
+- **Grounded in:** [Ch.18 §RLS tests, §event-contract tests, §13a the mandatory pipeline](bible/18-testing-strategy.md); the enabling dependency, **[OQ-16 — a real Postgres in CI](bible/20-glossary-conventions-decision-log.md)**, is **resolved** ([ADR-015](bible/20-glossary-conventions-decision-log.md), [PR #172](https://github.com/crewflow1/web/pull/172)).
 - **The check:** integration tests run against the CI-Postgres harness and pass; RLS tests prove no JWT path reads an HQ table; replay tests prove no double-apply.
-- **Enforced at:** CI. **Blocking caveat:** until OQ-16 is resolved (a T-minus deliverable), this gate cannot truly gate — which is exactly why the harness is a pre-flight requirement, not a convenience.
+- **Enforced at:** CI — **and the gate now truly gates.** The harness (Supabase CLI local stack in the runner) applies every migration to a fresh volume and runs the RLS suite as anon / tenant-JWT / service-role on every PR. On its first live runs it caught two real defects that every mock had passed ([§20.6 L-1, L-2](bible/20-glossary-conventions-decision-log.md)) — the proof that *real infrastructure proves behaviour where a mock only proves intent.*
 
 ### Gate 3 — End-to-end tests · *Conditional — UI*
 - **Requirement:** the operator's actual flow works end-to-end against a preview deployment — Mission Control loads and renders capability-filtered tiles; an approval can be decided; search returns and navigates; the timeline streams.
@@ -145,7 +145,7 @@ Rules that aren't enforced are decoration. Each gate has a real enforcement poin
 
 | Enforcement point | Gates it holds | How |
 |---|---|---|
-| **CI (the validation triplet)** | Unit, Integration, preview-green | tsc / lint / tests must pass; the CI-Postgres harness runs the RLS/contract tests. Red CI = no merge. |
+| **CI (the validation triplet + the live real-Postgres harness)** | Unit, Integration, preview-green | tsc / lint / tests must pass; the **live** CI-Postgres harness applies every migration to a fresh DB and runs the RLS/contract tests as anon / tenant / service-role on every PR (OQ-16 resolved, [ADR-015](bible/20-glossary-conventions-decision-log.md)). Red CI = no merge. |
 | **PR review** | Documentation (chapter citation), Monitoring, Audit, Analytics, Performance (the one-million paragraph), Additive-migration | A human reviewer checks the DoD block against the diff; *"which chapter?"* is question one. |
 | **Preview, pre-flip** | E2E, Accessibility, Performance budgets | Exercised on the preview deployment before the production flag flips. |
 | **Dedicated security sign-off** | Security review | Mandatory at P3 (broadcast boundary) and every P7 grant; named reviewer. |

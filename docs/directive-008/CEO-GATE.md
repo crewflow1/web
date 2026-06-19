@@ -59,8 +59,8 @@ But "nothing is missing" would be a lie of omission, so here is the **complete, 
 6. **OQ-6** — where does AI-originated email live (extend the live queue vs a parallel table)? *(Recommend extend additively; it touches a live tenant table, so it's your call.)*
 7. **OQ-7** — promote the `q<T>()` typing shim repo-wide? *(Recommend yes; it's a lead call as it touches every service file.)*
 
-**B. One tooling precondition — the only thing the Bible calls a "gap":**
-- **OQ-16 — a real Postgres in CI.** Until CI provisions a genuine Postgres, the RLS and event-contract tests that protect the spine and the gate cannot truly *block* a bad merge. This is an **implementation/tooling task, not an architectural gap** — the tests are designed; they need a place to run. It is the single most important pre-flight build, and the [Master Plan](PHASE-7-MASTER-PLAN.md) makes it a **T-minus deliverable** (built during the RC soak, ready the day Phase 0 lands).
+**B. One tooling precondition — the only thing the Bible calls a "gap" — ✅ now delivered:**
+- **OQ-16 — a real Postgres in CI. ✅ BUILT & GREEN** ([PR #172](https://github.com/crewflow1/web/pull/172), held in Draft until launch). The RLS and event-contract tests that protect the spine and the gate now truly *block* a bad merge: the Supabase CLI boots a fresh stack in the runner, applies every migration to an empty volume, and the RLS suite runs as anon / tenant-JWT / service-role on every PR. This was an **implementation/tooling task, not an architectural gap** — the tests were designed; they now have a place to run. The harness paid for itself on day one, catching two real defects that every mocked test had silently passed ([§20.6 L-1, L-2](bible/20-glossary-conventions-decision-log.md), [ADR-015](bible/20-glossary-conventions-decision-log.md)). Per the [Master Plan](PHASE-7-MASTER-PLAN.md) it was a **T-minus deliverable**, built during the RC soak; the PR stays in Draft and **merges only when the RC is live in production and the CEO approves** — no exceptions.
 
 **C. One sequencing precondition — the hard standing rule:**
 - **The Release Candidate (PR #171) must be in production and stable** before any OS migration is written ([Ch.19 §4 gate](bible/19-rollout-plan.md)). This has governed the entire programme from the start: *no production code until the blueprint is approved **and** the RC is live and stable.* It is not a gap; it is the deliberate order of operations — we let the foundation set before building on it.
@@ -112,7 +112,7 @@ The first three actions, in order, none of which is feature code:
 | # | Action | Owner | Output |
 |---|---|---|---|
 | 1 | **Make the seven §20.4.A decisions** (or ratify the recommendations) | CEO (+ CTO for OQ-2) | The calibrations recorded as ADRs; the gate rubric fixed. |
-| 2 | **Build the CI-Postgres harness** ([OQ-16](bible/20-glossary-conventions-decision-log.md)) | Eng lead | RLS + event-contract tests can truly gate, before Phase 0. |
+| 2 | **Build the CI-Postgres harness** ([OQ-16](bible/20-glossary-conventions-decision-log.md)) — ✅ **done** ([PR #172](https://github.com/crewflow1/web/pull/172), draft, green) | Eng lead | RLS + event-contract tests now truly gate; merge held until the RC is live. |
 | 3 | **Ship & soak the Release Candidate** (PR #171 → production) | Eng lead + CEO sign-off | The [Ch.19 §4 gate](bible/19-rollout-plan.md) criteria turn green. |
 
 When all three are done and the gate is green: **rollout Phase 0 begins** — the event spine, the verb registry, the permission gate, behind flags, changing nothing on the day it lands. The [Phase 7 Master Plan](PHASE-7-MASTER-PLAN.md) takes it from there, week by week, to the first AI employee that acts.
@@ -127,7 +127,7 @@ When all three are done and the gate is green: **rollout Phase 0 begins** — th
 | **Bible** | 21 chapters · 6 volumes · ~7,000 lines · complete & consistent |
 | **Governance** | Freeze + 6 companion documents in place; Definition of Done binding |
 | **Blocking architectural gaps** | **None** |
-| **Pre-flight checklist** | 7 CEO decisions · 1 CI task (OQ-16) · RC-to-production precondition |
+| **Pre-flight checklist** | 7 CEO decisions · 1 CI task (OQ-16 — ✅ **delivered**, [PR #172](https://github.com/crewflow1/web/pull/172), held until launch) · RC-to-production precondition |
 | **Implementation** | Authorised to begin — countdown now; Phase 0 at the launch gate |
 | **The standing rule, intact** | No feature code until the RC is in production and stable |
 

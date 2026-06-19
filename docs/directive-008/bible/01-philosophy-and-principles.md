@@ -69,7 +69,7 @@ CrewFlow OS borrows the proven shape of an operating system kernel. The metaphor
 
 ---
 
-## The ten operating principles
+## The eleven operating principles
 
 Each principle states the rule, the reason, and the one-million-companies test it passes.
 
@@ -123,6 +123,11 @@ Each principle states the rule, the reason, and the one-million-companies test i
 **Why:** an OS is judged by whether you can run the company from it. If you still have to go hunting, we built pages, not an OS.
 **At 1M companies:** the leverage of one operator over a million companies *is* the product. Yes.
 
+### P11 — Verify against production-equivalent infrastructure; never assume
+**Rule:** a safety-critical property is proven against *real* infrastructure, not a mock of it. Every feature that touches **security, authentication, multi-tenancy, the database, AI infrastructure, billing, payroll, or customer data** carries a **live integration test** against a real Postgres (the CI-Postgres harness, Ch.18); a mocked test alone is no longer sufficient for these domains. *Never assume — verify.*
+**Why:** a mock proves *intent* (the code calls what we think it calls); only real infrastructure proves *behaviour* (RLS actually denies, the migration actually bootstraps, the trigger actually fires). The gap between the two is exactly where the irreversible bugs hide. The harness proved this the day it was built — its first live runs surfaced two real defects that every mocked test and every green production had silently passed over ([Ch.20 §20.6](20-glossary-conventions-decision-log.md)).
+**At 1M companies:** the blast radius of an un-verified tenant-isolation or money-moving bug is a million companies. At that scale you cannot afford to *assume* Postgres does what the SQL says — you prove it on every change, against the real thing. Yes — and it is mandatory, not optional ([ADR-015](20-glossary-conventions-decision-log.md)).
+
 ---
 
 ## What CrewFlow OS is *not* (non-goals)
@@ -145,7 +150,7 @@ When you face an architectural choice, run it through this gate, in order:
 
 1. **The thesis.** Does this keep the fact existing *once*, observable *everywhere*, actionable by *AI*? If it creates a second source of truth, stop.
 2. **The Golden Rule.** At one million companies, would we still build it this way? If no, redesign.
-3. **The principles.** Does it violate any of P1–P10? A violation requires an explicit ADR (Ch.20) justifying the exception.
+3. **The principles.** Does it violate any of P1–P11? A violation requires an explicit ADR (Ch.20) justifying the exception.
 4. **Additivity & reversibility.** Can it ship behind a flag, to preview, with a backout, without breaking a working surface? If not, find the version that can.
 5. **Cost & blast radius.** What does it cost at scale, and what is the worst thing it can do if it's wrong? Bound both before proceeding.
 

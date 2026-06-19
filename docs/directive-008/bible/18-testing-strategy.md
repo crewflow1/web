@@ -8,7 +8,7 @@ The OS earns one privilege the page-collection never had: it lets an AI workforc
 
 It is governed by the same philosophy as everything else. **One source, forever (P1):** a test asserts a property *once*, against the one authoritative thing — the Verb registry, the `authorize()` chokepoint, the RLS policy — never re-encoding the rule in a second place that can drift from it. **Reliability > speed:** a slower, trustworthy gate beats a fast one that lets a tenant-isolation break through. And the **Golden Rule** applies to the suite itself: at one million companies the blast radius of an un-tested permission bug is catastrophic, so the highest-stakes properties (isolation, the gate, injection containment) get the deepest coverage — proportionate to consequence, not to how easy they are to write.
 
-The codebase already tests at scale: **131 spec files** under `__tests__/` run on Vitest (♻️ `vitest.config.ts`), gated in CI (♻️ `.github/workflows/ci.yml`). This chapter does not start from zero; it names the layers that exist, the layers the OS *adds*, and the one structural gap (a database in CI) that the OS's safety properties force us to close.
+The codebase already tests at scale: **131 spec files** under `__tests__/` run on Vitest (♻️ `vitest.config.ts`), gated in CI (♻️ `.github/workflows/ci.yml`). This chapter does not start from zero; it names the layers that exist, the layers the OS *adds*, and the one structural gap (a database in CI) that the OS's safety properties force us to close — **now closed**: a real Postgres runs in CI on every PR (§13; [OQ-16 — resolved](20-glossary-conventions-decision-log.md)).
 
 ## 2. Goals & non-goals
 
@@ -300,12 +300,25 @@ The merge gate is the enforcement arm of the whole strategy, and it extends the 
 | typecheck ♻️ | every PR | a type error — incl. an unregistered `Verb` or `CapabilityKey` (the compile-time contract) |
 | lint ♻️ | every PR | an ESLint violation (incl. a non-token colour — one-source enforcement) |
 | unit + integration + RLS + contract + permission | every PR | **any** failing spec — especially an RLS isolation or fail-closed regression |
-| **DB-backed job** 🔬 | every PR | *the gap the OS forces.* `ci.yml` today notes a DB dry-run "would need a disposable Supabase project per PR" — the OS's RLS and integration layers *require* exactly that. The decision (Supabase CLI local stack in the runner vs. an ephemeral project per PR) is logged for Ch.20. Until resolved, RLS tests cannot truly gate, and that is the single most important gap to close. |
+| **DB-backed job** ✅ | every PR | **RESOLVED ([OQ-16](20-glossary-conventions-decision-log.md), [PR #172](https://github.com/crewflow1/web/pull/172)).** A real Postgres runs in CI on every PR: the Supabase CLI boots a fresh stack in the runner, applies every `supabase/migrations` file to an empty volume, and the RLS suite executes as anon / tenant-JWT / service-role against it. The decision (Supabase CLI local stack in the runner vs. an ephemeral project per PR) was settled in favour of the local stack and logged as [ADR-015](20-glossary-conventions-decision-log.md). The RLS tests now *truly gate* — and on their first live runs the harness caught two real defects that every mocked test had silently passed ([§20.6 L-1, L-2](20-glossary-conventions-decision-log.md)). |
 | **migration safety** | every PR touching `supabase/migrations/*` | a migration doesn't apply forward on an empty DB; a *destructive* change (a `drop`/`alter … drop column`) appears without an explicit, reviewed ADR exception (P2 — additive, never destructive); partitions fail to create |
 | **AI eval regression** | every PR touching an employee image / a tool / the runtime; nightly full | a golden-task suite regresses below baseline; **any** Safety/injection regression (unconditional block) |
 | preview deploy ♻️ | every PR | the build fails (the human smoke-test surface, P7 — preview-first) |
 
 **What blocks merge, stated plainly:** typecheck, lint, and the full deterministic suite must be green; a migration must be additive and apply cleanly; the eval suite must not regress (and must never regress on Safety). A PR that breaks tenant isolation, opens an `RLS:hq` table, makes the gate fail open, drifts an event payload, or lets an injected AI escalate a capability **cannot reach `main`** — by construction, not by reviewer vigilance. Migrations follow the existing forward-only, numbered-timestamp discipline (Ch.03), now gated for additivity.
+
+### 13a. The mandatory pipeline (Directive #004 — production-equivalent verification, P11)
+
+Now that a real Postgres gates every PR (OQ-16 resolved), the full gate sequence is **mandatory for every future PR**, and it runs in this order — each gate a hard precondition for the next:
+
+1. **Typecheck** — `tsc --noEmit` (incl. the compile-time `Verb`/`CapabilityKey` contract).
+2. **Lint** — ESLint (incl. one-source design-token enforcement).
+3. **Unit tests** — the deterministic `vitest` suite.
+4. **Real-Postgres integration tests** — the CI-Postgres harness (§13): every migration applied to a fresh volume, RLS proven as anon / tenant-JWT / service-role, event contracts and idempotency proven against the real DB.
+5. **Security validation** — the trust-boundary and fail-closed checks (Ch.16): the service-role key never crosses to the client, no JWT path reads an `RLS:hq` table, the gate checks the grant not the wish.
+6. **End-to-end tests** — *where applicable* (operator-facing flows, §E2E) on the preview deployment.
+
+**Only after every gate passes may a deployment be considered.** And the domain rule that makes the integration gate non-negotiable: **every feature that affects Security, Authentication, Multi-tenancy, the Database, AI Infrastructure, Billing, Payroll, or Customer Data must carry a live integration test against the real Postgres — a mocked test alone is no longer sufficient.** This is the executable form of **P11** (*never assume; verify against production-equivalent infrastructure*) and is mandated by [ADR-015](20-glossary-conventions-decision-log.md). The justification is not theoretical: the harness's first live runs caught two real defects — a baseline migration that could not bootstrap a fresh database, and a runtime requirement that every mock had hidden — both of which every mocked test and every green production had passed over ([§20.6 L-1, L-2](20-glossary-conventions-decision-log.md)). Mocks prove *intent*; real infrastructure proves *behaviour*, and for these eight domains only proven behaviour is acceptable.
 
 ## 14. What we deliberately don't test (and why); flake policy
 

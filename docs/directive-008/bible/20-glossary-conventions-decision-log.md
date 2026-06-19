@@ -2,12 +2,13 @@
 
 > The reference volume. Where every other chapter *uses* the shared vocabulary, this chapter *defines* it; where they *make* decisions, this chapter *records* them; where they *defer* a decision, this chapter *collects* it so the people who must choose can choose in one place. It is the index of the Bible's mind.
 
-This chapter has four parts:
+This chapter has five substantive parts:
 
 - **§20.1 Glossary** — the shared vocabulary, defined once.
 - **§20.2 Conventions** — the naming, notation, and authoring rules every chapter obeys.
 - **§20.3 Decision Log (ADRs)** — the load-bearing decisions already made, with their rationale.
 - **§20.4 Open Questions** — the 🔬 decisions still owed, organised by who must make them. **This is the CEO's decision surface.**
+- **§20.6 Engineering Lessons** — discoveries *proven by building*, recorded so they are learned once and never lost.
 
 ---
 
@@ -109,6 +110,7 @@ The load-bearing decisions, recorded so a future engineer finds the *why* in one
 | **ADR-012** | **Rollout is eight additive, flagged, observable-before-active, CEO-gated phases.** | Layering an AI OS onto a live product risks destabilising it. → Eight phases (canon → observability → read-only projections → realtime → memory → draft-only AI → approvals → graduated execution); flags in `hq_settings` default off; the RC (PR #171) ships and stabilises *first*; execution-enabling phases are CEO-gated, one capability at a time. → Every phase is independently revertible by a flag flip; nothing big-bang. | 19 |
 | **ADR-013** | **Memory is episodic/semantic/procedural with pgvector + typed scored edges.** | An AI workforce that cannot *remember* repeats work and mistakes. → Three memory kinds; `pgvector(1536)` HNSW for similarity; typed, scored `hq_memory_edges` for graph recall; reflection distils *facts with provenance*, never raw PII/secrets. → Recall is hybrid and tunable; the graph is machine-maintained while human annotations stay a separate, unscored layer. | 12 |
 | **ADR-014** | **The audit log is immutable by construction; hash-chaining is an optional seam.** | Compliance needs a tamper-resistant record without over-building on day one. → `admin_activity_log` is append-only with no update/delete grant exposed (immutable by construction); a `prev_hash`/`row_hash` chain + scheduled `verifyAuditChain` is *specified* but not necessarily *enabled*. → Strong evidence today; tamper-*evidence* is one cron away on the SOC2 path (OQ-1). | 15 |
+| **ADR-015** | **Production-equivalent verification is mandatory; the live CI-Postgres harness is its proof surface.** | A mocked unit tier structurally cannot prove what Postgres *does* — RLS enforcement, triggers, constraints, a migration's ability to bootstrap from zero (OQ-16, *"the single most important gap"*). → CI provisions a real Postgres (Supabase CLI local stack) and runs the integration/RLS tier on **every** PR; **every** feature touching security, auth, multi-tenancy, the database, AI infrastructure, billing, payroll, or customer data must carry a **live** integration test — a mock alone is no longer sufficient *(CEO Directive, post-OQ-16)*. → The irreversible-property gates (2, 5, 8) can finally *block* a bad merge, not just decorate it; the binding discipline is **P11 — never assume; verify against production-equivalent infrastructure**. The harness's first live runs immediately surfaced two real defects (§20.6 L-1, L-2), proving the principle on day one. | 18, 01 |
 
 ---
 
@@ -140,7 +142,7 @@ Every 🔬 in the Bible, consolidated and de-duplicated. Each is **additive and 
 | **OQ-13** | Unify `hq_memory_relationships` (human, unscored) with `hq_memory_edges` (machine, typed, scored)? | Keep both; promote a human annotation to a typed edge only when it recurs with evidence. | 12 |
 | **OQ-14** | Does `shapeDelta` reuse the timeline projection's row-shaping verbatim? | Yes — one shaping function, one source (P1). | 06, 11 |
 | **OQ-15** | Re-derive `projected_effect` at decision time vs request time for volatile actions. | Edit re-renders from a fresh payload before granting; keep volatile actions short-`expires_at` so they lapse rather than execute stale. | 13 |
-| **OQ-16** | **How CI provisions a real Postgres** — Supabase CLI local stack in the runner vs an ephemeral project per PR. *(The single most important gap: RLS/integration tests cannot truly gate until resolved.)* | Local stack in-runner first; move to ephemeral-per-PR if parallelism demands. **Prioritise** — this unblocks the OS's irreversible-property tests. | 18 |
+| **OQ-16** ✅ | **How CI provisions a real Postgres** — Supabase CLI local stack in the runner vs an ephemeral project per PR. | **✅ RESOLVED — Supabase CLI local stack in the runner.** Built and green on every PR via the `integration (real Postgres)` job ([PR #172](https://github.com/crewflow1/web/pull/172)): `supabase start` applies all migrations to a fresh volume, then the RLS/tenant-isolation tier runs as anon + tenant-JWT + service-role. Two real defects surfaced on its first live runs (§20.6 L-1, L-2). See [ADR-015](#203-decision-log-adrs). The PR's *merge* to `main` is held until the RC is in production (the standing gate, OQ §C below); move to ephemeral-per-PR only if parallelism later demands. | 18 |
 | **OQ-17** | Search ranking-weight ownership, the trigram similarity threshold, and the searchable-event window. | Hand-set weights in `hq_settings`; bound the searchable window; calibrate by measurement. | 10 |
 | **OQ-18** | Feature flags: simple booleans vs a typed schema (percentage rollouts, per-actor targeting). | Booleans in `hq_settings` suffice for this plan; the typed-schema seam is noted. | 19 |
 | **OQ-19** | Secret rotation cadence + a per-secret owner; dual-key the service-role during rotation. | Define a written policy (e.g. quarterly + on-incident); the *mechanism* already exists, only the *policy* is missing. | 16 |
@@ -164,5 +166,26 @@ These are not choices to make today; they are **named thresholds to calibrate** 
 - **A reviewer** checks a change against §20.2 and confirms any canon edit added an ADR to §20.3.
 - **The CEO** reads §20.4.A — the seven decisions this plan asks of you — and §20.3 for the reasoning behind what is already settled.
 - **Anyone proposing a change** appends an ADR here and, if the change touches Ch.03/04/14, runs the consistency sweep. The Bible governs itself by its own one-source rule.
+
+---
+
+## 20.6 Engineering Lessons (surfaced in implementation)
+
+The decisions in §20.3 are made *before* code; these lessons were *proven by building*. They are recorded permanently because the cheapest place to learn a lesson is once. Both were surfaced the first time the [OQ-16 CI-Postgres harness](18-testing-strategy.md) ran the real migrations against a real Postgres — the harness earning its keep on day one, and the executable proof of **[P11 — verify against production-equivalent infrastructure](01-philosophy-and-principles.md)**.
+
+**L-1 — A migration that no-ops on production can still be unable to *bootstrap* a fresh database.** The baseline schema migration grouped its constraints by table, emitting several `FOREIGN KEY`s before the `PRIMARY KEY`/`UNIQUE` they reference. Postgres requires a FK's target to already carry a PK/UNIQUE, so `supabase start` aborted on a clean volume (`SQLSTATE 42830`). The bug had never surfaced because production was migrated *incrementally* and the migration's `if not exists` guards make the whole file a no-op on an already-migrated database — so the ordering fault was invisible to every environment **except a fresh one**.
+
+- **Impact:** disaster recovery, any new or staging environment, and local developer onboarding were all silently broken — none could rebuild the schema from zero.
+- **Fix:** a schema-preserving two-pass reorder (all `PRIMARY KEY`/`UNIQUE` first, then all `FOREIGN KEY`s), produced by an auditable script asserting the statement *multiset* is unchanged — so the edit is provably a no-op on the already-migrated production database.
+- **Lesson:** *a migration set is only as correct as its ability to rebuild the world from zero. Assert that in CI on a fresh volume; never infer it from a green production, whose `if-not-exists` guards hide the very faults a clean apply would catch.*
+
+**L-2 — A test that mocks its dependencies hides its runtime requirements.** The harness's first live client call threw `Node.js 20 detected without native WebSocket support`: `supabase-js` eagerly constructs a `RealtimeClient`, which needs a global `WebSocket` — present natively only on Node ≥ 22. The mocked unit tier never builds a live client, so it never exercised that path and never revealed the requirement.
+
+- **Fix:** the `integration` job runs on **Node 22**; the mocked unit jobs deliberately stay on Node 20.
+- **Lesson:** *the runtime a mock lets you skip is exactly the runtime production depends on. A production-equivalent gate finds the missing dependency; a mock-shaped gate cannot — which is precisely why P11 makes the real gate mandatory for the highest-stakes domains.*
+
+> Both lessons share one root: **mocks prove intent, real infrastructure proves behaviour.** The directive they harden into law — *every feature touching security, auth, multi-tenancy, the database, AI infrastructure, billing, payroll, or customer data carries a live integration test* — is recorded as [ADR-015](#203-decision-log-adrs) and enforced by [Ch.18 §13](18-testing-strategy.md) and the [Implementation Rules](../IMPLEMENTATION-RULES.md) Gate 2.
+
+---
 
 *The Bible is complete in structure: twenty chapters across six volumes, one philosophy, one rule, one source. What remains is not more specification — it is the CEO's decisions in §20.4.A, and then the disciplined, gated, preview-first implementation that Ch.19 lays out. This document is the foundation of CrewFlow for the next decade.*

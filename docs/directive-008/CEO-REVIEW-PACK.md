@@ -133,7 +133,7 @@ One card per chapter, grouped by the rollout phase in which its code lands. Each
 ### Governs everything (no separate build)
 
 #### Ch.01 — Philosophy & Principles · *reference*
-- **Purpose:** the thesis ("AI employees, not assistants"), the operating principles (P1–P9), and the decision framework. The *why* behind every other chapter.
+- **Purpose:** the thesis ("AI employees, not assistants"), the operating principles (P1–P11), and the decision framework. The *why* behind every other chapter.
 - **Status:** ✅ drafted & frozen. **Depends on:** nothing (it is the root). **Integrations:** none.
 - **Revenue lever:** indirect but total — it is the reason the workforce exists, which is the reason for the cost-avoidance the whole programme delivers.
 - **Competitive edge:** the "one source, observable everywhere, actionable by AI" philosophy is the moat — competitors bolt AI onto a dashboard; CrewFlow builds the dashboard *for* the AI.
