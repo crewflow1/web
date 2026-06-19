@@ -199,3 +199,17 @@ export function pillSoft(tone: Accent | null | undefined): string {
 export function statusDot(tone: Accent | null | undefined): string {
   return accent(tone).dot;
 }
+
+/**
+ * Build a `status → pill class` lookup from a `status → tone` map. Lets a
+ * surface keep its colour *decisions* as data (which status is which tone)
+ * while the class strings come from one place. Replaces the per-surface
+ * `Record<Status, string>` literal pill maps the AI-platform pages grew.
+ */
+export function pillMap<K extends string>(
+  tones: Record<K, Accent>,
+): Record<K, string> {
+  const out = {} as Record<K, string>;
+  for (const k of Object.keys(tones) as K[]) out[k] = pill(tones[k]);
+  return out;
+}

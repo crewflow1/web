@@ -4,13 +4,22 @@ import type {
   ResearchStepStatus,
   ResearchTaskStatus,
 } from "@/lib/research/model";
+import { pillMap, type Accent } from "@/components/ui/tokens";
 
 /**
- * Research AI — dark-theme presentation classes (CEO Directive 005).
+ * Research AI — dark-theme presentation classes (CEO Directive 005 → status
+ * pills consolidated under 007.6).
  *
  * Co-located under app/ so Tailwind's JIT scanner emits every literal utility
  * string used by the live run view + section pages. The lib/research layer
  * stays a pure data layer with no class strings in it.
+ *
+ * The phase + task-status pills keep their colour *decisions* here as `Accent`
+ * tone data; the class strings come from the one design-system source
+ * (components/ui/tokens), byte-identical under `.dark` (see
+ * __tests__/ui/tokens.test.ts). The bespoke research-only treatments below
+ * (step dots, score bands, provenance, score-factor bars) have no analogue in
+ * the shared token vocabulary and stay local on purpose.
  */
 
 /** Per-step checklist colours, keyed by the live step status. */
@@ -38,24 +47,29 @@ export const STEP_BADGE: Record<ResearchStepStatus, string> = {
   failed: "text-red-300",
 };
 
-export const PHASE_PILL: Record<ResearchPhase, string> = {
-  queued: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  running: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  researching: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  analysing: "bg-violet-500/15 text-violet-300 ring-1 ring-inset ring-violet-400/30",
-  scoring: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  reasoning: "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-400/30",
-  completed: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+const PHASE_ACCENT: Record<ResearchPhase, Accent> = {
+  queued: "neutral",
+  running: "indigo",
+  researching: "sky",
+  analysing: "violet",
+  scoring: "amber",
+  reasoning: "cyan",
+  completed: "emerald",
+  failed: "red",
 };
 
-export const STATUS_PILL: Record<ResearchTaskStatus, string> = {
-  pending: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  running: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  completed: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  cancelled: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+export const PHASE_PILL: Record<ResearchPhase, string> = pillMap(PHASE_ACCENT);
+
+const STATUS_ACCENT: Record<ResearchTaskStatus, Accent> = {
+  pending: "neutral",
+  running: "indigo",
+  completed: "emerald",
+  failed: "red",
+  cancelled: "muted",
 };
+
+export const STATUS_PILL: Record<ResearchTaskStatus, string> =
+  pillMap(STATUS_ACCENT);
 
 export const STATUS_LABEL: Record<ResearchTaskStatus, string> = {
   pending: "Queued",
@@ -89,6 +103,12 @@ export const PROVENANCE_LABEL: Record<ResearchProvenance, string> = {
   deterministic: "Deterministic (no model)",
 };
 
+/**
+ * Provenance pills use a /10 fill with a /30 ring — a hybrid that matches
+ * neither the canonical solid chip (/15 + /30) nor the soft pill (/10 + /20),
+ * so they cannot route through the shared token without shifting a pixel. Kept
+ * local by design.
+ */
 export const PROVENANCE_PILL: Record<ResearchProvenance, string> = {
   anthropic: "bg-indigo-500/10 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
   openai: "bg-emerald-500/10 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",

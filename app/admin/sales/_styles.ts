@@ -5,105 +5,109 @@ import type {
   ScoreBand,
 } from "@/lib/sales/model";
 import type { CallStatus, CallTone } from "@/lib/sales/calling";
+import { pillMap, type Accent } from "@/components/ui/tokens";
 
 /**
- * Sales AI Platform — dark-theme presentation classes (CEO Directive 003,
- * Phase 1). Lives under app/ so Tailwind's JIT scanner (which only globs
- * app / components / emails) emits these utility classes. Keeping every
- * literal class string here means the model layer stays a pure data layer.
+ * Sales AI Platform — status → pill mapping (CEO Directive 003 → consolidated
+ * under 007.6).
+ *
+ * The colour *decisions* live here as `Accent` tone data; the class strings
+ * come from the one design-system source (components/ui/tokens). HQ renders
+ * under `.dark`, where every pill is byte-identical to the recipe this surface
+ * shipped with — proven in __tests__/ui/tokens.test.ts. The exported maps +
+ * helpers keep their original shapes, so no call site changes.
  */
 
-export const STATUS_PILL: Record<PipelineStatus, string> = {
-  new: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  qualified: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  outreach_ready:
-    "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  contacted:
-    "bg-violet-500/15 text-violet-300 ring-1 ring-inset ring-violet-400/30",
-  replied: "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-400/30",
-  demo_booked:
-    "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  won: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  lost: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  disqualified:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const STATUS_ACCENT: Record<PipelineStatus, Accent> = {
+  new: "neutral",
+  qualified: "sky",
+  outreach_ready: "indigo",
+  contacted: "violet",
+  replied: "cyan",
+  demo_booked: "amber",
+  won: "emerald",
+  lost: "red",
+  disqualified: "muted",
 };
+
+export const STATUS_PILL: Record<PipelineStatus, string> = pillMap(STATUS_ACCENT);
 
 export function statusPill(s: string): string {
   return STATUS_PILL[s as PipelineStatus] ?? STATUS_PILL.new;
 }
 
-export const SCORE_PILL: Record<ScoreBand, string> = {
-  hot: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  warm: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  cool: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  cold: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  unscored:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const SCORE_ACCENT: Record<ScoreBand, Accent> = {
+  hot: "emerald",
+  warm: "amber",
+  cool: "sky",
+  cold: "neutral",
+  unscored: "muted",
 };
+
+export const SCORE_PILL: Record<ScoreBand, string> = pillMap(SCORE_ACCENT);
 
 export function scorePill(band: ScoreBand): string {
   return SCORE_PILL[band] ?? SCORE_PILL.unscored;
 }
 
-export const LIKELIHOOD_PILL: Record<LikelihoodBand, string> = {
-  very_high:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  high: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  medium: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  low: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  unknown:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const LIKELIHOOD_ACCENT: Record<LikelihoodBand, Accent> = {
+  very_high: "emerald",
+  high: "sky",
+  medium: "amber",
+  low: "neutral",
+  unknown: "muted",
 };
+
+export const LIKELIHOOD_PILL: Record<LikelihoodBand, string> =
+  pillMap(LIKELIHOOD_ACCENT);
 
 export function likelihoodPill(b: string): string {
   return LIKELIHOOD_PILL[b as LikelihoodBand] ?? LIKELIHOOD_PILL.unknown;
 }
 
-export const RISK_PILL: Record<RiskLevel, string> = {
-  low: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  medium: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  high: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  unknown:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const RISK_ACCENT: Record<RiskLevel, Accent> = {
+  low: "emerald",
+  medium: "amber",
+  high: "red",
+  unknown: "muted",
 };
+
+export const RISK_PILL: Record<RiskLevel, string> = pillMap(RISK_ACCENT);
 
 export function riskPill(r: string): string {
   return RISK_PILL[r as RiskLevel] ?? RISK_PILL.unknown;
 }
 
 /**
- * Calling Centre (Phase 6) — pill classes for call statuses + a generic
- * positive/neutral/negative tone the outcome + sentiment pills share
- * (lib/sales/calling owns the value → tone mapping; the literal Tailwind
- * classes live here so the JIT scanner emits them).
+ * Calling Centre (Phase 6) — call-status + a generic positive/neutral/negative
+ * tone the outcome + sentiment pills share.
  */
-export const CALL_STATUS_PILL: Record<CallStatus, string> = {
-  queued: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  scheduled:
-    "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-  in_progress:
-    "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  completed:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  no_answer: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  voicemail: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  busy: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  cancelled:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const CALL_STATUS_ACCENT: Record<CallStatus, Accent> = {
+  queued: "neutral",
+  scheduled: "indigo",
+  in_progress: "amber",
+  completed: "emerald",
+  no_answer: "neutral",
+  voicemail: "sky",
+  busy: "amber",
+  failed: "red",
+  cancelled: "muted",
 };
+
+export const CALL_STATUS_PILL: Record<CallStatus, string> =
+  pillMap(CALL_STATUS_ACCENT);
 
 export function callStatusPill(s: string): string {
   return CALL_STATUS_PILL[s as CallStatus] ?? CALL_STATUS_PILL.queued;
 }
 
-export const CALL_TONE_PILL: Record<CallTone, string> = {
-  positive:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  neutral: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  negative: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+const CALL_TONE_ACCENT: Record<CallTone, Accent> = {
+  positive: "emerald",
+  neutral: "neutral",
+  negative: "red",
 };
+
+export const CALL_TONE_PILL: Record<CallTone, string> = pillMap(CALL_TONE_ACCENT);
 
 export function tonerPill(tone: CallTone): string {
   return CALL_TONE_PILL[tone] ?? CALL_TONE_PILL.neutral;

@@ -4,51 +4,57 @@ import type {
   MemoryStatus,
   MemoryVisibility,
 } from "@/lib/memory/model";
+import { pillMap, type Accent } from "@/components/ui/tokens";
 
 /**
- * Shared Memory Engine — dark-theme presentation classes (CEO Directive
- * 002, Phase 2). Lives under app/ so Tailwind's JIT scanner (which only
- * globs app / components / emails) emits these utility classes.
+ * Shared Memory Engine — status → pill mapping (CEO Directive 002 →
+ * consolidated under 007.6).
  *
- * Memory-type accents reuse the AI Boardroom palette (`accentClasses`)
- * so the two HQ surfaces share one colour vocabulary — no duplication.
+ * Colour decisions live here as `Accent` tone data; the class strings come
+ * from the one design-system source (components/ui/tokens) and are
+ * byte-identical under `.dark` (see __tests__/ui/tokens.test.ts). Memory-type
+ * accents still reuse the AI-employee `accentClasses` palette.
  */
 
 export { accentClasses };
 
-export const IMPORTANCE_PILL: Record<Importance, string> = {
-  low: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  normal: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  high: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  critical: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+const IMPORTANCE_ACCENT: Record<Importance, Accent> = {
+  low: "neutral",
+  normal: "sky",
+  high: "amber",
+  critical: "red",
 };
+
+export const IMPORTANCE_PILL: Record<Importance, string> =
+  pillMap(IMPORTANCE_ACCENT);
 
 export function importancePill(i: string): string {
   return IMPORTANCE_PILL[i as Importance] ?? IMPORTANCE_PILL.normal;
 }
 
-export const STATUS_PILL: Record<MemoryStatus, string> = {
-  draft: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  active:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  archived:
-    "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
-  superseded:
-    "bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30",
+const STATUS_ACCENT: Record<MemoryStatus, Accent> = {
+  draft: "neutral",
+  active: "emerald",
+  archived: "muted",
+  superseded: "orange",
 };
+
+export const STATUS_PILL: Record<MemoryStatus, string> = pillMap(STATUS_ACCENT);
 
 export function statusPill(s: string): string {
   return STATUS_PILL[s as MemoryStatus] ?? STATUS_PILL.active;
 }
 
-export const VISIBILITY_PILL: Record<MemoryVisibility, string> = {
-  public_hq:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  department: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  private: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  restricted: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  system: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const VISIBILITY_ACCENT: Record<MemoryVisibility, Accent> = {
+  public_hq: "emerald",
+  department: "sky",
+  private: "amber",
+  restricted: "red",
+  system: "muted",
 };
+
+export const VISIBILITY_PILL: Record<MemoryVisibility, string> =
+  pillMap(VISIBILITY_ACCENT);
 
 export function visibilityPill(v: string): string {
   return VISIBILITY_PILL[v as MemoryVisibility] ?? VISIBILITY_PILL.public_hq;

@@ -1,4 +1,9 @@
-import type { Accent as DesignAccent } from "@/components/ui/tokens";
+import {
+  pill,
+  pillMap,
+  statusDot,
+  type Accent as DesignAccent,
+} from "@/components/ui/tokens";
 import type {
   AiEmployeeStatus,
   TaskStatus,
@@ -6,56 +11,56 @@ import type {
 } from "@/lib/ai-employees/model";
 
 /**
- * AI Boardroom — dark-theme presentation classes.
+ * AI Boardroom — dark-theme presentation classes (status pills consolidated
+ * under CEO Directive 007.6).
  *
  * Lives under app/ so Tailwind's JIT scanner (which only globs
  * app / components / emails) generates these utility classes. The
  * pure data + labels live in lib/ai-employees/model.ts.
+ *
+ * Employee + task status dots/pills keep their colour *decisions* here as
+ * `DesignAccent` tone data and draw their class strings from the one
+ * design-system source (components/ui/tokens) — byte-identical under `.dark`
+ * (proven in __tests__/ui/tokens.test.ts). The 11-colour icon-tile palette
+ * (`ACCENT_CLASSES`) below is a richer, employee-specific vocabulary (hover
+ * rings + glow shadows, plus pink/green/blue) with no shared-token analogue,
+ * so it stays local.
  */
 
 export type StatusStyle = { dot: string; pill: string };
 
-export const STATUS_STYLE: Record<AiEmployeeStatus, StatusStyle> = {
-  idle: {
-    dot: "bg-slate-400",
-    pill: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  },
-  working: {
-    dot: "bg-emerald-400",
-    pill: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  },
-  waiting_approval: {
-    dot: "bg-amber-400",
-    pill: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  },
-  blocked: {
-    dot: "bg-orange-400",
-    pill: "bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30",
-  },
-  error: {
-    dot: "bg-red-400",
-    pill: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  },
-  disabled: {
-    dot: "bg-slate-600",
-    pill: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
-  },
+const STATUS_ACCENT: Record<AiEmployeeStatus, DesignAccent> = {
+  idle: "neutral",
+  working: "emerald",
+  waiting_approval: "amber",
+  blocked: "orange",
+  error: "red",
+  disabled: "muted",
 };
+
+export const STATUS_STYLE: Record<AiEmployeeStatus, StatusStyle> = (() => {
+  const out = {} as Record<AiEmployeeStatus, StatusStyle>;
+  for (const k of Object.keys(STATUS_ACCENT) as AiEmployeeStatus[]) {
+    out[k] = { dot: statusDot(STATUS_ACCENT[k]), pill: pill(STATUS_ACCENT[k]) };
+  }
+  return out;
+})();
 
 export function statusStyle(status: string): StatusStyle {
   return STATUS_STYLE[(status as AiEmployeeStatus)] ?? STATUS_STYLE.idle;
 }
 
-export const TASK_STATUS_PILL: Record<TaskStatus, string> = {
-  pending: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  in_progress: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  waiting_approval:
-    "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  completed:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  cancelled: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+const TASK_STATUS_ACCENT: Record<TaskStatus, DesignAccent> = {
+  pending: "neutral",
+  in_progress: "sky",
+  waiting_approval: "amber",
+  completed: "emerald",
+  failed: "red",
+  cancelled: "muted",
 };
+
+export const TASK_STATUS_PILL: Record<TaskStatus, string> =
+  pillMap(TASK_STATUS_ACCENT);
 
 export function taskStatusPill(status: string): string {
   return TASK_STATUS_PILL[(status as TaskStatus)] ?? TASK_STATUS_PILL.pending;
