@@ -268,7 +268,7 @@ The [Ch.19 §8 risk register](bible/19-rollout-plan.md) (R1–R10) is the author
 | The **RC isn't stable** at T-minus | Phase 0 does not start. The programme is paperwork until the gate is green. |
 | A **dependency slips** (e.g. memory) | Only its *downstream* waits ([dependency graph](BUILD-DEPENDENCY-GRAPH.md)); already-flown stages are untouched. |
 | An **AI acts wrongly** in Phase 7 | Revoke the one grant; instant draft-only; the audit trail of what it did is preserved (the safety record). |
-| **CI can't truly gate** (OQ-16 unresolved) | The programme **does not begin** — the harness is a T-minus deliverable, not a nice-to-have. |
+| **CI can't truly gate** (OQ-16) — ✅ *retired* | **Delivered.** The real-Postgres harness is built and green ([PR #172](https://github.com/crewflow1/web/pull/172), held in Draft until the RC is live); CI now truly gates. The abort-mode stands as a standing rule — had it been unresolved the programme would not begin — but the precondition is now met (the harness was a T-minus deliverable, not a nice-to-have). |
 
 ---
 
