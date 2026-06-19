@@ -2,8 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { updateSection } from "@/server/services/hq-settings";
 import { SECTION_IDS, type SectionId } from "@/lib/hq/settings";
 
@@ -22,14 +21,6 @@ import { SECTION_IDS, type SectionId } from "@/lib/hq/settings";
  *   4. Redirects back to /admin/settings#<section> with a status
  *      banner.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
 
 function isSectionId(value: string): value is SectionId {
   return (SECTION_IDS as ReadonlyArray<string>).includes(value);
@@ -91,7 +82,7 @@ export async function saveSection(
   section: string,
   formData: FormData,
 ): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   if (!isSectionId(section)) {
     redirect(`/admin/settings?error=${encodeURIComponent("unknown_section")}`);
   }

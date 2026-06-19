@@ -739,8 +739,8 @@ describe("/admin/analytics page", () => {
 });
 
 describe("server actions wiring", () => {
-  it("recomputeHealthNow re-checks isSuperAdminEmail", () => {
-    expect(ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("recomputeHealthNow gates on HQ access via requireHq()", () => {
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
   });
   it("writes the batch summary to admin_activity_log", () => {
     expect(ACTIONS).toMatch(/recordAdminActivity/);

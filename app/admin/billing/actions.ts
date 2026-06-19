@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -29,12 +28,6 @@ import {
  * `billing_events` in HQ-4-stripe and flip the relevant invoice
  * status via this same code path.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? "" };
-}
 
 // Same cast helper as hq-billing-snapshot until db:generate picks up
 // the new tables.
@@ -109,7 +102,7 @@ const createInvoiceSchema = z.object({
 });
 
 export async function createBillingInvoice(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = createInvoiceSchema.safeParse({
     org_id: formData.get("org_id"),
     kind: formData.get("kind"),
@@ -228,7 +221,7 @@ const flipSchema = z.object({
 export async function setBillingInvoiceStatus(
   formData: FormData,
 ): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = flipSchema.safeParse({
     invoice_id: formData.get("invoice_id"),
     status: formData.get("status"),
@@ -355,7 +348,7 @@ const renewalSchema = z.object({
 });
 
 export async function setNextRenewal(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = renewalSchema.safeParse({
     org_id: formData.get("org_id"),
     next_renewal_at: formData.get("next_renewal_at") ?? "",

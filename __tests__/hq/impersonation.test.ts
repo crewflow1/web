@@ -138,9 +138,9 @@ describe("impersonation service", () => {
 // =====================================================================
 
 describe("impersonation server actions", () => {
-  it("every action gates on isSuperAdminEmail via requireAdmin", () => {
-    expect(ACTIONS).toMatch(/async function requireAdmin/);
-    expect(ACTIONS).toMatch(/isSuperAdminEmail/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
   });
 
   it("exports start / end / forceEnd", () => {

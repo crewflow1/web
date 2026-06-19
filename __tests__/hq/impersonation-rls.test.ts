@@ -131,9 +131,9 @@ describe("HQ-10.1 — customer cannot impersonate (regression pin)", () => {
     expect(hq10Migration).not.toMatch(/create policy/i);
   });
 
-  it("start action still gates on isSuperAdminEmail", () => {
+  it("start action still gates on HQ access via requireHq()", () => {
     const actions = read("app/admin/impersonation/actions.ts");
-    expect(actions).toMatch(/isSuperAdminEmail/);
-    expect(actions).toMatch(/requireAdmin/);
+    expect(actions).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(actions).toMatch(/requireHq\(\)/);
   });
 });

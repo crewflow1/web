@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   createMemory,
@@ -36,12 +35,6 @@ import {
  * READ-FIRST for AI: there is no action here that an AI employee can
  * invoke. These are operator-facing curation actions only.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? "" };
-}
 
 const SLUG_RE = /^[a-z0-9_]{1,60}$/;
 
@@ -153,7 +146,7 @@ function buildWriteInput(formData: FormData):
 // --------------------------------------------------------------------
 
 export async function createMemoryAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const built = buildWriteInput(formData);
   if (!built.ok) {
     redirect(
@@ -196,7 +189,7 @@ export async function createMemoryAction(formData: FormData): Promise<void> {
 // --------------------------------------------------------------------
 
 export async function updateMemoryAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const idRaw = String(formData.get("id") ?? "");
   if (!UUID_RE.test(idRaw)) {
     redirect(`/admin/memory?error=${encodeURIComponent("Invalid memory id")}`);
@@ -244,7 +237,7 @@ const pinSchema = z.object({
 });
 
 export async function togglePinAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = pinSchema.safeParse({
     id: formData.get("id"),
     next: formData.get("next"),
@@ -287,7 +280,7 @@ const statusSchema = z.object({
 });
 
 export async function setStatusAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = statusSchema.safeParse({
     id: formData.get("id"),
     status: formData.get("status"),

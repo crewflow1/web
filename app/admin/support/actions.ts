@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -31,14 +30,6 @@ import {
  *      action on their timelines.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 const ticketIdSchema = z.string().uuid();
 
 // --------------------------------------------------------------------
@@ -52,7 +43,7 @@ const replySchema = z.object({
 });
 
 export async function replyAsHq(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = replySchema.safeParse({
     ticket_id: formData.get("ticket_id"),
     body: formData.get("body"),
@@ -157,7 +148,7 @@ const statusSchema = z.object({
 });
 
 export async function setTicketStatus(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = statusSchema.safeParse({
     ticket_id: formData.get("ticket_id"),
     status: formData.get("status"),
@@ -228,7 +219,7 @@ const prioritySchema = z.object({
 });
 
 export async function setTicketPriority(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = prioritySchema.safeParse({
     ticket_id: formData.get("ticket_id"),
     priority: formData.get("priority"),
@@ -276,7 +267,7 @@ const categorySchema = z.object({
 });
 
 export async function setTicketCategory(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = categorySchema.safeParse({
     ticket_id: formData.get("ticket_id"),
     category: formData.get("category"),
@@ -307,7 +298,7 @@ const assignSchema = z.object({
 });
 
 export async function assignTicket(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = assignSchema.safeParse({
     ticket_id: formData.get("ticket_id"),
     assigned_to: formData.get("assigned_to") ?? "",

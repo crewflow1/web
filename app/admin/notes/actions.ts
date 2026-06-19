@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnUrgentHqAlert } from "@/lib/notifications/events";
@@ -33,14 +32,6 @@ import {
  *   4. URGENT notes additionally fire an HQ-only notification via
  *      notifyOnUrgentHqAlert.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
 
 // --------------------------------------------------------------------
 // Schemas
@@ -107,7 +98,7 @@ function safeRedirect(input: string | undefined, fallback: string): string {
 // --------------------------------------------------------------------
 
 export async function createNoteAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = createSchema.safeParse({
     org_id: formData.get("org_id"),
     title: formData.get("title") ?? "",
@@ -180,7 +171,7 @@ export async function createNoteAction(formData: FormData): Promise<void> {
 // --------------------------------------------------------------------
 
 export async function updateNoteAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = updateSchema.safeParse({
     id: formData.get("id"),
     title: formData.get("title") ?? undefined,
@@ -241,7 +232,7 @@ export async function updateNoteAction(formData: FormData): Promise<void> {
 // --------------------------------------------------------------------
 
 export async function archiveNoteAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = idOnlySchema.safeParse({
     id: formData.get("id"),
     redirect_to: formData.get("redirect_to") ?? undefined,
@@ -267,7 +258,7 @@ export async function archiveNoteAction(formData: FormData): Promise<void> {
 }
 
 export async function unarchiveNoteAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = idOnlySchema.safeParse({
     id: formData.get("id"),
     redirect_to: formData.get("redirect_to") ?? undefined,
@@ -293,7 +284,7 @@ export async function unarchiveNoteAction(formData: FormData): Promise<void> {
 }
 
 export async function togglePinNoteAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = idOnlySchema.safeParse({
     id: formData.get("id"),
     redirect_to: formData.get("redirect_to") ?? undefined,

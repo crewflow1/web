@@ -375,7 +375,7 @@ beforeEach(() => {
 describe("authorization — unauthenticated callers are blocked", () => {
   beforeEach(() => {
     // Real requireUser() redirects to /login with no session — it throws
-    // and halts the action before requireAdmin even checks the allowlist.
+    // and halts the action before requireHq even checks the allowlist.
     requireUserMock.mockImplementation(() => {
       throw new Error("REDIRECT:/login");
     });

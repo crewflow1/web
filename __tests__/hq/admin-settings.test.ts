@@ -241,9 +241,9 @@ describe("app/admin/settings/actions.ts", () => {
   it("uses 'use server'", () => {
     expect(ACTIONS).toMatch(/^"use server";/);
   });
-  it("re-checks isSuperAdminEmail (defence in depth)", () => {
-    expect(ACTIONS).toMatch(/isSuperAdminEmail/);
-    expect(ACTIONS).toMatch(/requireUser/);
+  it("gates on HQ access via requireHq() (defence in depth)", () => {
+    expect(ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
   });
   it("rejects unknown section ids", () => {
     expect(ACTIONS).toMatch(/isSectionId/);

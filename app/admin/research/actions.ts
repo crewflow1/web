@@ -1,8 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { startResearch } from "@/server/services/hq-research";
 
@@ -24,12 +23,6 @@ function strOf(formData: FormData, key: string): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-async function requireAdmin(): Promise<{ id: string; email: string | null }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? null };
-}
-
 /**
  * The launcher form (useActionState): research a brand-new prospect from a
  * name / website / Companies House number, creating the company record if it
@@ -39,7 +32,7 @@ export async function researchCompanyAction(
   _prev: ResearchFormState,
   formData: FormData,
 ): Promise<ResearchFormState> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
 
   const companyId = strOf(formData, "company_id") || null;
   const name = strOf(formData, "name");
@@ -73,7 +66,7 @@ export async function researchCompanyAction(
  * the company page). Plain action — enqueue then redirect to the live run.
  */
 export async function researchExistingCompanyAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const companyId = strOf(formData, "company_id");
   if (!companyId) redirect("/admin/research");
 

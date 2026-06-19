@@ -2,8 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe/client";
 import {
@@ -60,18 +59,6 @@ class CheckoutError extends Error {
     this.detail = detail;
     this.cause = cause;
   }
-}
-
-// --------------------------------------------------------------------
-// Auth gate
-// --------------------------------------------------------------------
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
 }
 
 // --------------------------------------------------------------------
@@ -201,7 +188,7 @@ async function runCheckout(
   kind: CheckoutKind,
   formData: FormData,
 ): Promise<string> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
 
   const orgIdSchema = z.string().uuid();
   const parsed = orgIdSchema.safeParse(formData.get("org_id"));

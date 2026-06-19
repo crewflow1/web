@@ -202,8 +202,8 @@ describe("migration 20260606000000 — Customers OS schema", () => {
 });
 
 describe("server actions — super-admin gate + dual-write to admin_activity_log", () => {
-  it("every action re-checks isSuperAdminEmail", () => {
-    expect(ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
     for (const action of [
       "updateCustomerFinancials",
       "updateCustomerProgress",

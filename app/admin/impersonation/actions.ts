@@ -4,8 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import {
   IMPERSONATION_COOKIE,
   IMPERSONATION_MAX_HOURS,
@@ -35,14 +34,6 @@ import { notifyOnUrgentHqAlert } from "@/lib/notifications/events";
  * never grants access.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 // --------------------------------------------------------------------
 // START
 // --------------------------------------------------------------------
@@ -57,7 +48,7 @@ const startSchema = z.object({
 });
 
 export async function startImpersonation(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = startSchema.safeParse({
     org_id: formData.get("org_id"),
     reason: formData.get("reason"),
@@ -132,7 +123,7 @@ export async function startImpersonation(formData: FormData): Promise<void> {
 // --------------------------------------------------------------------
 
 export async function endImpersonation(): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const active = await getActiveImpersonation(admin.email);
 
   const jar = await cookies();
@@ -172,7 +163,7 @@ const forceEndSchema = z.object({
 export async function forceEndImpersonation(
   formData: FormData,
 ): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = forceEndSchema.safeParse({
     session_id: formData.get("session_id"),
   });

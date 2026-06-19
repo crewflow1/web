@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   addChannel,
@@ -59,12 +58,6 @@ import {
  * attribution (`generated_by`, `model`, `ai_employee_id`) is recorded so
  * future autonomous work stays traceable, but humans drive every write.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? "" };
-}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -193,7 +186,7 @@ function buildCompanyInput(
 }
 
 export async function createCompanyAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const built = buildCompanyInput(formData);
   if (!built.ok) {
     fail("/admin/sales/companies/new", "Company name, status and source are required.");
@@ -228,7 +221,7 @@ export async function createCompanyAction(formData: FormData): Promise<void> {
 }
 
 export async function updateCompanyAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const id = str(formData, "id");
   if (!UUID_RE.test(id)) {
     fail("/admin/sales/companies", "Invalid company id");
@@ -272,7 +265,7 @@ const statusSchema = z.object({
 });
 
 export async function setCompanyStatusAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = statusSchema.safeParse({
     id: formData.get("id"),
     status: formData.get("status"),
@@ -316,7 +309,7 @@ const contactCore = z.object({
 });
 
 export async function addContactAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = contactCore.safeParse({
     company_id: formData.get("company_id"),
     full_name: formData.get("full_name"),
@@ -369,7 +362,7 @@ const deleteContactSchema = z.object({
 });
 
 export async function deleteContactAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = deleteContactSchema.safeParse({
     id: formData.get("id"),
     company_id: formData.get("company_id"),
@@ -410,7 +403,7 @@ const researchCore = z.object({
 });
 
 export async function addResearchAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = researchCore.safeParse({
     company_id: formData.get("company_id"),
     generated_by: formData.get("generated_by"),
@@ -477,7 +470,7 @@ const recoCore = z.object({
 });
 
 export async function addRecommendationAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = recoCore.safeParse({
     company_id: formData.get("company_id"),
     generated_by: formData.get("generated_by"),
@@ -537,7 +530,7 @@ export async function addRecommendationAction(formData: FormData): Promise<void>
 // ---------------------------------------------------------------------
 
 export async function logInteractionAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const companyId = str(formData, "company_id");
   const eventType = str(formData, "event_type");
   const direction = str(formData, "direction");
@@ -595,7 +588,7 @@ const promoteSchema = z.object({
 });
 
 export async function promoteResearchAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = promoteSchema.safeParse({
     report_id: formData.get("report_id"),
     company_id: formData.get("company_id"),
@@ -635,7 +628,7 @@ const locationCore = z.object({
 });
 
 export async function addLocationAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = locationCore.safeParse({
     company_id: formData.get("company_id"),
     generated_by: formData.get("generated_by") ?? "human",
@@ -708,7 +701,7 @@ const channelCore = z.object({
 });
 
 export async function addChannelAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = channelCore.safeParse({
     company_id: formData.get("company_id"),
     channel_type: formData.get("channel_type"),
@@ -772,7 +765,7 @@ const deleteChannelSchema = z.object({
 });
 
 export async function deleteChannelAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = deleteChannelSchema.safeParse({
     id: formData.get("id"),
     company_id: formData.get("company_id"),
@@ -813,7 +806,7 @@ const taskCore = z.object({
 });
 
 export async function enqueueAiTaskAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const companyId = uuidOrNull(formData, "company_id");
   // Company-scoped tasks return to the company; global tasks to the queue.
   const back = companyId
@@ -875,7 +868,7 @@ const promoteOutcomeSchema = z.object({
 });
 
 export async function promoteOutcomeAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = promoteOutcomeSchema.safeParse({
     event_id: formData.get("event_id"),
     company_id: formData.get("company_id"),

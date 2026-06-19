@@ -212,9 +212,9 @@ describe("/api/admin/stripe/verify diagnostic", () => {
 // =====================================================================
 
 describe("checkout server actions", () => {
-  it("both actions re-check isSuperAdminEmail via requireAdmin()", () => {
-    expect(CHECKOUT_ACTIONS).toMatch(/async function requireAdmin/);
-    expect(CHECKOUT_ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("both actions gate on HQ access via requireHq()", () => {
+    expect(CHECKOUT_ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(CHECKOUT_ACTIONS).toMatch(/requireHq\(\)/);
   });
 
   it("exports both setup + subscription checkout creators", () => {

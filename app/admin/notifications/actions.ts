@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import {
   markNotificationRead,
   markAllNotificationsRead,
@@ -20,18 +19,10 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  * action shows up on the audit timeline.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 const idSchema = z.object({ id: z.string().uuid() });
 
 export async function markReadHq(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = idSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect("/admin/notifications?error=invalid_input");
   await markNotificationRead(parsed.data.id, { audience: "hq" });
@@ -48,7 +39,7 @@ export async function markReadHq(formData: FormData): Promise<void> {
 }
 
 export async function markAllReadHq(): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   await markAllNotificationsRead({ audience: "hq" });
   await recordAdminActivity({
     actorId: admin.id,
@@ -63,7 +54,7 @@ export async function markAllReadHq(): Promise<void> {
 }
 
 export async function dismissHq(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = idSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect("/admin/notifications?error=invalid_input");
   await dismissNotification(parsed.data.id, { audience: "hq" });

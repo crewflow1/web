@@ -272,9 +272,9 @@ describe("internal-notes service", () => {
 // =====================================================================
 
 describe("HQ notes actions", () => {
-  it("every action gates on isSuperAdminEmail via requireAdmin()", () => {
-    expect(HQ_ACTIONS).toMatch(/async function requireAdmin/);
-    expect(HQ_ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(HQ_ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(HQ_ACTIONS).toMatch(/requireHq\(\)/);
   });
 
   it("exports createNoteAction / updateNoteAction / archive / unarchive / togglePin", () => {

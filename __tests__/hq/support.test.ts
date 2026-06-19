@@ -404,9 +404,9 @@ describe("customer server actions", () => {
 });
 
 describe("HQ server actions", () => {
-  it("every action re-checks isSuperAdminEmail", () => {
-    expect(HQ_ACTIONS).toMatch(/isSuperAdminEmail/);
-    expect(HQ_ACTIONS).toMatch(/requireAdmin/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(HQ_ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(HQ_ACTIONS).toMatch(/requireHq\(\)/);
   });
 
   it("exports replyAsHq + setTicketStatus + setTicketPriority + setTicketCategory + assignTicket", () => {

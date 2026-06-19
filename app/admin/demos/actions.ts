@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -32,14 +33,6 @@ import {
  * Audit writes are best-effort and never fail the primary update.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 // --------------------------------------------------------------------
 // Status transitions (kanban drag-and-drop + button presses)
 // --------------------------------------------------------------------
@@ -51,7 +44,7 @@ const moveSchema = z.object({
 });
 
 export async function moveDemoToStatus(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = moveSchema.safeParse({
     demo_id: formData.get("demo_id"),
     status: formData.get("status"),
@@ -366,7 +359,7 @@ const noteSchema = z.object({
 });
 
 export async function addDemoNote(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = noteSchema.safeParse({
     demo_id: formData.get("demo_id"),
     note: formData.get("note") ?? "",
@@ -422,7 +415,7 @@ const scheduleSchema = z.object({
 });
 
 export async function scheduleDemo(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = scheduleSchema.safeParse({
     demo_id: formData.get("demo_id"),
     preferred_demo_time: formData.get("preferred_demo_time") ?? "",

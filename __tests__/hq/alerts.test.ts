@@ -701,9 +701,9 @@ describe("migration 20260608000000 — admin_alert_state", () => {
 // =====================================================================
 
 describe("alert server actions", () => {
-  it("every action re-checks isSuperAdminEmail via requireAdmin()", () => {
-    expect(ACTIONS).toMatch(/async function requireAdmin/);
-    expect(ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
   });
 
   it("exports every lifecycle action the page wires", () => {

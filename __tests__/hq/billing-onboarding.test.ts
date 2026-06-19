@@ -222,8 +222,8 @@ describe("migration 20260607000000 — billing_invoices + billing_events", () =>
 // --------------------------------------------------------------------
 
 describe("server actions — super-admin gate + admin_activity_log dual-write", () => {
-  it("every action re-checks isSuperAdminEmail", () => {
-    expect(BILLING_ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
+  it("every action gates on HQ access via requireHq()", () => {
+    expect(BILLING_ACTIONS).toMatch(/requireHq\(\)/);
     for (const action of [
       "createBillingInvoice",
       "setBillingInvoiceStatus",

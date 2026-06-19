@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { recomputeAllOrgs } from "@/server/services/hq-health-recompute";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
@@ -18,16 +17,8 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  * admin_activity_log so the audit trail records who ran it.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 export async function recomputeHealthNow(): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const summary = await recomputeAllOrgs("manual", admin);
 
   // One audit row for the operator-triggered batch run, separate

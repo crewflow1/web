@@ -121,11 +121,11 @@ describe("Phase 6 — recovery actions are wired into the UI", () => {
     expect(ACTIONS).toMatch(/action: "customer\.invite_resent"/);
   });
 
-  it("each recovery action re-checks requireAdmin (defence in depth)", () => {
-    // The single requireAdmin() helper at the top of the file is
-    // called by every action; the new ones share that path.
-    expect(ACTIONS).toMatch(/async function requireAdmin/);
-    expect(ACTIONS).toMatch(/isSuperAdminEmail/);
+  it("each recovery action gates on HQ access via requireHq() (defence in depth)", () => {
+    // The single requireHq() gate (server/auth/hq.ts) is called by every
+    // action; the recovery actions share that path.
+    expect(ACTIONS).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(ACTIONS).toMatch(/requireHq\(\)/);
   });
 });
 

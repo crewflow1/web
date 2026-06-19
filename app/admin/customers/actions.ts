@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -26,12 +25,6 @@ import { SETUP_FEE_STATUSES } from "@/lib/hq/customer-financials";
  * stops a stolen-cookie attempt that somehow reaches an action URL
  * directly.
  */
-
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? "" };
-}
 
 // --------------------------------------------------------------------
 // Financials — MRR, setup fee, billing email
@@ -60,7 +53,7 @@ const financialsSchema = z.object({
 export async function updateCustomerFinancials(
   formData: FormData,
 ): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = financialsSchema.safeParse({
     org_id: formData.get("org_id"),
     setup_fee_status: formData.get("setup_fee_status"),
@@ -175,7 +168,7 @@ const progressSchema = z.object({
 });
 
 export async function updateCustomerProgress(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = progressSchema.safeParse({
     org_id: formData.get("org_id"),
     onboarding_percent: formData.get("onboarding_percent") ?? "0",
@@ -276,7 +269,7 @@ const noteSchema = z.object({
 });
 
 export async function updateCustomerNotes(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = noteSchema.safeParse({
     org_id: formData.get("org_id"),
     notes: formData.get("notes") ?? "",
@@ -324,7 +317,7 @@ const lifecycleSchema = z.object({
 });
 
 export async function setCustomerLifecycle(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = lifecycleSchema.safeParse({
     org_id: formData.get("org_id"),
     status: formData.get("status"),
@@ -396,7 +389,7 @@ const impersonateSchema = z.object({
 export async function logImpersonationAttempt(
   formData: FormData,
 ): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = impersonateSchema.safeParse({
     org_id: formData.get("org_id"),
     reason: formData.get("reason") ?? "",
@@ -446,7 +439,7 @@ export async function logImpersonationAttempt(
 const orgIdSchema = z.object({ org_id: z.string().uuid() });
 
 export async function resetOnboarding(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
   if (!parsed.success) {
     redirect(`/admin/customers?error=invalid_org_id`);
@@ -478,7 +471,7 @@ export async function resetOnboarding(formData: FormData): Promise<void> {
 }
 
 export async function markSetupComplete(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
   if (!parsed.success) {
     redirect(`/admin/customers?error=invalid_org_id`);
@@ -521,7 +514,7 @@ export async function markSetupComplete(formData: FormData): Promise<void> {
 }
 
 export async function resendInvite(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = orgIdSchema.safeParse({ org_id: formData.get("org_id") });
   if (!parsed.success) {
     redirect(`/admin/customers?error=invalid_org_id`);

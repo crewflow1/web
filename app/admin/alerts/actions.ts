@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { ALERT_RULE_IDS } from "@/lib/hq/alert-rules";
@@ -69,14 +68,6 @@ function alertStateTable() {
   };
 }
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 // --------------------------------------------------------------------
 // Schemas
 // --------------------------------------------------------------------
@@ -129,7 +120,7 @@ function alertTargetId(ruleId: string, orgId: string): string {
 // --------------------------------------------------------------------
 
 export async function markAlertRead(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = z
     .object({ rule_id: ruleIdSchema, org_id: orgIdSchema })
     .safeParse({
@@ -168,7 +159,7 @@ const resolveSchema = z.object({
 });
 
 export async function markAlertResolved(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = resolveSchema.safeParse({
     rule_id: formData.get("rule_id"),
     org_id: formData.get("org_id"),
@@ -230,7 +221,7 @@ const snoozeSchema = z.object({
 });
 
 export async function snoozeAlert(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = snoozeSchema.safeParse({
     rule_id: formData.get("rule_id"),
     org_id: formData.get("org_id"),
@@ -280,7 +271,7 @@ const assignSchema = z.object({
 });
 
 export async function assignAlert(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = assignSchema.safeParse({
     rule_id: formData.get("rule_id"),
     org_id: formData.get("org_id"),
@@ -331,7 +322,7 @@ const reopenSchema = z.object({
 });
 
 export async function reopenAlert(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = reopenSchema.safeParse({
     rule_id: formData.get("rule_id"),
     org_id: formData.get("org_id"),

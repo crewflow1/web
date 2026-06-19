@@ -71,10 +71,10 @@ describe("Rule 2 — only approved super-admins may access /admin/*, HQ, imperso
   });
 
   it("every impersonation server action is gated by a super-admin check", () => {
-    // requireAdmin() = requireUser + isSuperAdminEmail (else bounce). Every
-    // mutating impersonation action calls it first.
-    expect(impersonationActions).toMatch(/isSuperAdminEmail/);
-    expect(impersonationActions).toMatch(/requireAdmin/);
+    // requireHq() = requireUser + isSuperAdminEmail (else bounce), the single
+    // HQ gate every mutating impersonation action calls first.
+    expect(impersonationActions).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(impersonationActions).toMatch(/requireHq\(\)/);
   });
 
   it("the HQ analytics/stripe API route handlers self-guard (not behind the layout)", () => {

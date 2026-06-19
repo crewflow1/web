@@ -115,12 +115,14 @@ describe("migration 20260605000000 — admin_activity_log", () => {
 });
 
 describe("server actions — auth + dual-write", () => {
-  it("every action re-checks isSuperAdminEmail (defence in depth)", () => {
-    // requireAdmin in actions.ts wraps requireUser + isSuperAdminEmail.
+  it("every action gates on HQ access (requireHq + inline allowlist)", () => {
+    // The redirect-style actions (moveDemoToStatus, addDemoNote, scheduleDemo)
+    // funnel through the single requireHq() gate; the optimistic-UI JSON
+    // actions (moveDemoToStatusJson, logDemoContact) keep a bespoke inline
+    // isSuperAdminEmail(user.email) check so they can return { ok: false }
+    // instead of redirecting. Both gate styles must be present.
+    expect(DEMO_ACTIONS).toMatch(/requireHq\(\)/);
     expect(DEMO_ACTIONS).toMatch(/isSuperAdminEmail\(user\.email\)/);
-    // moveDemoToStatus + moveDemoToStatusJson + addDemoNote +
-    // scheduleDemo + logDemoContact all go through requireAdmin or the
-    // inline equivalent; each must be present.
     for (const action of [
       "moveDemoToStatus",
       "moveDemoToStatusJson",

@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -35,12 +34,6 @@ import {
  * a stolen-cookie attempt that reaches an action URL directly.
  */
 
-async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
-  return { id: user.id, email: user.email ?? "" };
-}
-
 const SLUG_RE = /^[a-z0-9-]{1,60}$/;
 const optionalText = (max: number) =>
   z
@@ -68,7 +61,7 @@ const configSchema = z.object({
 });
 
 export async function updateAiEmployeeConfig(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = configSchema.safeParse({
     id: formData.get("id"),
     slug: formData.get("slug"),
@@ -153,7 +146,7 @@ const taskSchema = z.object({
 });
 
 export async function addAiEmployeeTask(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = taskSchema.safeParse({
     ai_employee_id: formData.get("ai_employee_id"),
     slug: formData.get("slug"),
@@ -223,7 +216,7 @@ const memorySchema = z.object({
 });
 
 export async function addAiEmployeeMemory(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
+  const admin = await requireHq();
   const parsed = memorySchema.safeParse({
     ai_employee_id: formData.get("ai_employee_id"),
     slug: formData.get("slug"),
