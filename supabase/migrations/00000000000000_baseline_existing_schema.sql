@@ -252,6 +252,114 @@ create table if not exists public."waitlist" (
 -- constraints ---------------------------------------------------------
 -- Each constraint is added inside a DO block that first checks pg_constraint,
 -- making the migration safe to re-run.
+-- Applied in two passes so the migration bootstraps a FRESH database, not
+-- just an already-migrated one: a FOREIGN KEY can only reference a column
+-- that already carries a PRIMARY KEY / UNIQUE constraint. Pass 1 adds all
+-- PK/UNIQUE; pass 2 adds the FKs. Every block is idempotent, so this stays
+-- a no-op on production (all constraints already exist) while becoming the
+-- correct dependency order on a clean Postgres. See OQ-16 / CI integration.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'calls_pkey' and conrelid = 'public.calls'::regclass) then
+    alter table public."calls" add constraint "calls_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'conversations_pkey' and conrelid = 'public.conversations'::regclass) then
+    alter table public."conversations" add constraint "conversations_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'customers_pkey' and conrelid = 'public.customers'::regclass) then
+    alter table public."customers" add constraint "customers_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'leads_pkey' and conrelid = 'public.leads'::regclass) then
+    alter table public."leads" add constraint "leads_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'memberships_pkey' and conrelid = 'public.memberships'::regclass) then
+    alter table public."memberships" add constraint "memberships_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'memberships_org_id_user_id_key' and conrelid = 'public.memberships'::regclass) then
+    alter table public."memberships" add constraint "memberships_org_id_user_id_key" UNIQUE (org_id, user_id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'messages_pkey' and conrelid = 'public.messages'::regclass) then
+    alter table public."messages" add constraint "messages_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'missed_call_textbacks_pkey' and conrelid = 'public.missed_call_textbacks'::regclass) then
+    alter table public."missed_call_textbacks" add constraint "missed_call_textbacks_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'organizations_pkey' and conrelid = 'public.organizations'::regclass) then
+    alter table public."organizations" add constraint "organizations_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'organizations_slug_key' and conrelid = 'public.organizations'::regclass) then
+    alter table public."organizations" add constraint "organizations_slug_key" UNIQUE (slug);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'properties_pkey' and conrelid = 'public.properties'::regclass) then
+    alter table public."properties" add constraint "properties_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'quote_line_items_pkey' and conrelid = 'public.quote_line_items'::regclass) then
+    alter table public."quote_line_items" add constraint "quote_line_items_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'quotes_pkey' and conrelid = 'public.quotes'::regclass) then
+    alter table public."quotes" add constraint "quotes_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'quotes_org_id_number_key' and conrelid = 'public.quotes'::regclass) then
+    alter table public."quotes" add constraint "quotes_org_id_number_key" UNIQUE (org_id, number);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'quotes_public_token_key' and conrelid = 'public.quotes'::regclass) then
+    alter table public."quotes" add constraint "quotes_public_token_key" UNIQUE (public_token);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'service_catalog_pkey' and conrelid = 'public.service_catalog'::regclass) then
+    alter table public."service_catalog" add constraint "service_catalog_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'users_pkey' and conrelid = 'public.users'::regclass) then
+    alter table public."users" add constraint "users_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'voice_notes_pkey' and conrelid = 'public.voice_notes'::regclass) then
+    alter table public."voice_notes" add constraint "voice_notes_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'waitlist_pkey' and conrelid = 'public.waitlist'::regclass) then
+    alter table public."waitlist" add constraint "waitlist_pkey" PRIMARY KEY (id);
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'waitlist_email_key' and conrelid = 'public.waitlist'::regclass) then
+    alter table public."waitlist" add constraint "waitlist_email_key" UNIQUE (email);
+  end if;
+end $$;
+
+-- foreign keys (every PK/UNIQUE target above now exists) ---------------
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'calls_conversation_id_fkey' and conrelid = 'public.calls'::regclass) then
     alter table public."calls" add constraint "calls_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL;
@@ -265,11 +373,6 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'calls_org_id_fkey' and conrelid = 'public.calls'::regclass) then
     alter table public."calls" add constraint "calls_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'calls_pkey' and conrelid = 'public.calls'::regclass) then
-    alter table public."calls" add constraint "calls_pkey" PRIMARY KEY (id);
   end if;
 end $$;
 do $$ begin
@@ -288,18 +391,8 @@ do $$ begin
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'conversations_pkey' and conrelid = 'public.conversations'::regclass) then
-    alter table public."conversations" add constraint "conversations_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'customers_org_id_fkey' and conrelid = 'public.customers'::regclass) then
     alter table public."customers" add constraint "customers_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'customers_pkey' and conrelid = 'public.customers'::regclass) then
-    alter table public."customers" add constraint "customers_pkey" PRIMARY KEY (id);
   end if;
 end $$;
 do $$ begin
@@ -323,11 +416,6 @@ do $$ begin
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'leads_pkey' and conrelid = 'public.leads'::regclass) then
-    alter table public."leads" add constraint "leads_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'memberships_org_id_fkey' and conrelid = 'public.memberships'::regclass) then
     alter table public."memberships" add constraint "memberships_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
   end if;
@@ -335,16 +423,6 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'memberships_user_id_fkey' and conrelid = 'public.memberships'::regclass) then
     alter table public."memberships" add constraint "memberships_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'memberships_pkey' and conrelid = 'public.memberships'::regclass) then
-    alter table public."memberships" add constraint "memberships_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'memberships_org_id_user_id_key' and conrelid = 'public.memberships'::regclass) then
-    alter table public."memberships" add constraint "memberships_org_id_user_id_key" UNIQUE (org_id, user_id);
   end if;
 end $$;
 do $$ begin
@@ -358,11 +436,6 @@ do $$ begin
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'messages_pkey' and conrelid = 'public.messages'::regclass) then
-    alter table public."messages" add constraint "messages_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'missed_call_textbacks_call_id_fkey' and conrelid = 'public.missed_call_textbacks'::regclass) then
     alter table public."missed_call_textbacks" add constraint "missed_call_textbacks_call_id_fkey" FOREIGN KEY (call_id) REFERENCES calls(id) ON DELETE SET NULL;
   end if;
@@ -370,21 +443,6 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'missed_call_textbacks_org_id_fkey' and conrelid = 'public.missed_call_textbacks'::regclass) then
     alter table public."missed_call_textbacks" add constraint "missed_call_textbacks_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'missed_call_textbacks_pkey' and conrelid = 'public.missed_call_textbacks'::regclass) then
-    alter table public."missed_call_textbacks" add constraint "missed_call_textbacks_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'organizations_pkey' and conrelid = 'public.organizations'::regclass) then
-    alter table public."organizations" add constraint "organizations_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'organizations_slug_key' and conrelid = 'public.organizations'::regclass) then
-    alter table public."organizations" add constraint "organizations_slug_key" UNIQUE (slug);
   end if;
 end $$;
 do $$ begin
@@ -398,11 +456,6 @@ do $$ begin
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'properties_pkey' and conrelid = 'public.properties'::regclass) then
-    alter table public."properties" add constraint "properties_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'quote_line_items_org_id_fkey' and conrelid = 'public.quote_line_items'::regclass) then
     alter table public."quote_line_items" add constraint "quote_line_items_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
   end if;
@@ -410,11 +463,6 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'quote_line_items_quote_id_fkey' and conrelid = 'public.quote_line_items'::regclass) then
     alter table public."quote_line_items" add constraint "quote_line_items_quote_id_fkey" FOREIGN KEY (quote_id) REFERENCES quotes(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'quote_line_items_pkey' and conrelid = 'public.quote_line_items'::regclass) then
-    alter table public."quote_line_items" add constraint "quote_line_items_pkey" PRIMARY KEY (id);
   end if;
 end $$;
 do $$ begin
@@ -443,38 +491,13 @@ do $$ begin
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'quotes_pkey' and conrelid = 'public.quotes'::regclass) then
-    alter table public."quotes" add constraint "quotes_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'quotes_org_id_number_key' and conrelid = 'public.quotes'::regclass) then
-    alter table public."quotes" add constraint "quotes_org_id_number_key" UNIQUE (org_id, number);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'quotes_public_token_key' and conrelid = 'public.quotes'::regclass) then
-    alter table public."quotes" add constraint "quotes_public_token_key" UNIQUE (public_token);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'service_catalog_org_id_fkey' and conrelid = 'public.service_catalog'::regclass) then
     alter table public."service_catalog" add constraint "service_catalog_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE;
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'service_catalog_pkey' and conrelid = 'public.service_catalog'::regclass) then
-    alter table public."service_catalog" add constraint "service_catalog_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'users_id_fkey' and conrelid = 'public.users'::regclass) then
     alter table public."users" add constraint "users_id_fkey" FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'users_pkey' and conrelid = 'public.users'::regclass) then
-    alter table public."users" add constraint "users_pkey" PRIMARY KEY (id);
   end if;
 end $$;
 do $$ begin
@@ -485,21 +508,6 @@ end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'voice_notes_recorded_by_fkey' and conrelid = 'public.voice_notes'::regclass) then
     alter table public."voice_notes" add constraint "voice_notes_recorded_by_fkey" FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL;
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'voice_notes_pkey' and conrelid = 'public.voice_notes'::regclass) then
-    alter table public."voice_notes" add constraint "voice_notes_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'waitlist_pkey' and conrelid = 'public.waitlist'::regclass) then
-    alter table public."waitlist" add constraint "waitlist_pkey" PRIMARY KEY (id);
-  end if;
-end $$;
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'waitlist_email_key' and conrelid = 'public.waitlist'::regclass) then
-    alter table public."waitlist" add constraint "waitlist_email_key" UNIQUE (email);
   end if;
 end $$;
 
