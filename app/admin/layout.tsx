@@ -37,6 +37,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/ceo", label: "👑 CEO Dashboard" },
   { href: "/admin/overview", label: "Overview" },
   { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
+  { href: "/admin/ai-employees", label: "👥 AI Employees" },
   { href: "/admin/memory", label: "📚 Shared Memory" },
   { href: "/admin/sales", label: "💼 Sales AI" },
   { href: "/admin/research", label: "🔬 Research AI" },
