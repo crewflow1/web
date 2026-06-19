@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createVariation } from "@/app/(app)/quotes/actions";
 import { VariationForm } from "./_form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * New Variation Order page.
@@ -68,7 +69,9 @@ export default async function NewVariationPage({
         </div>
       ) : null}
 
-      <VariationForm action={createVariation.bind(null, id)} />
+      <FadeIn>
+        <VariationForm action={createVariation.bind(null, id)} />
+      </FadeIn>
     </div>
   );
 }

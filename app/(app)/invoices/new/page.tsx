@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { NewInvoiceForm } from "./_form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * New-invoice page: server-fetches the org's ACCEPTED quotes for the
@@ -51,19 +52,21 @@ export default async function NewInvoicePage() {
         </p>
       </header>
 
-      {options.length === 0 ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <EmptyState
-            icon="🧾"
-            title="No accepted quotes to bill"
-            body="Invoices are generated automatically the moment a quote is accepted. To bill one by hand you first need a quote in the accepted state — approve and send a quote, then accept it on the customer's behalf (or have them accept it on their portal)."
-            primary={{ href: "/quotes", label: "Go to quotes" }}
-            secondary={{ href: "/invoices", label: "Back to invoices" }}
-          />
-        </div>
-      ) : (
-        <NewInvoiceForm quotes={options} />
-      )}
+      <FadeIn>
+        {options.length === 0 ? (
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <EmptyState
+              icon="🧾"
+              title="No accepted quotes to bill"
+              body="Invoices are generated automatically the moment a quote is accepted. To bill one by hand you first need a quote in the accepted state — approve and send a quote, then accept it on the customer's behalf (or have them accept it on their portal)."
+              primary={{ href: "/quotes", label: "Go to quotes" }}
+              secondary={{ href: "/invoices", label: "Back to invoices" }}
+            />
+          </div>
+        ) : (
+          <NewInvoiceForm quotes={options} />
+        )}
+      </FadeIn>
     </div>
   );
 }

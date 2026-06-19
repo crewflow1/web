@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createCustomer } from "../actions";
 import { CustomerForm } from "../_form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Create-customer page.
@@ -26,11 +27,13 @@ export default function NewCustomerPage() {
         </p>
       </header>
 
-      <CustomerForm
-        action={createCustomer}
-        submitLabel="Save customer"
-        cancelHref="/customers"
-      />
+      <FadeIn>
+        <CustomerForm
+          action={createCustomer}
+          submitLabel="Save customer"
+          cancelHref="/customers"
+        />
+      </FadeIn>
     </div>
   );
 }

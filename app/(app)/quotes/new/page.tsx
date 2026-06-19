@@ -8,6 +8,7 @@ import {
   listLeadsForQuote,
 } from "../_form-helpers";
 import { createQuote } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 /**
  * New-quote page.
@@ -68,16 +69,18 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
         </p>
       </header>
 
-      <QuoteBuilder
-        action={createQuote}
-        submitLabel="Save quote"
-        customers={customers}
-        properties={properties}
-        leads={leads}
-        defaultCustomerId={prefillCustomerId}
-        defaultLeadId={prefillLeadId}
-        defaultTerms={orgRow?.default_terms ?? ""}
-      />
+      <FadeIn>
+        <QuoteBuilder
+          action={createQuote}
+          submitLabel="Save quote"
+          customers={customers}
+          properties={properties}
+          leads={leads}
+          defaultCustomerId={prefillCustomerId}
+          defaultLeadId={prefillLeadId}
+          defaultTerms={orgRow?.default_terms ?? ""}
+        />
+      </FadeIn>
     </div>
   );
 }

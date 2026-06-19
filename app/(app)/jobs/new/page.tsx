@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createJob } from "../actions";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { JobForm } from "../_form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * Create-job page.
@@ -31,13 +32,15 @@ export default async function NewJobPage() {
         <h1 className="text-2xl font-bold text-slate-900">New job</h1>
       </header>
 
-      <JobForm
-        action={createJob}
-        submitLabel="Create job"
-        cancelHref="/jobs"
-        customers={customers}
-        staff={staff}
-      />
+      <FadeIn>
+        <JobForm
+          action={createJob}
+          submitLabel="Create job"
+          cancelHref="/jobs"
+          customers={customers}
+          staff={staff}
+        />
+      </FadeIn>
     </div>
   );
 }

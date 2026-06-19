@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { SupplierForm } from "../_form";
 import { createSupplier } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 export default async function NewSupplierPage() {
   await requireOrgContext();
@@ -16,11 +17,13 @@ export default async function NewSupplierPage() {
         <span className="text-slate-900">New</span>
       </div>
       <h1 className="text-2xl font-bold text-slate-900">Add supplier</h1>
-      <SupplierForm
-        action={createSupplier}
-        submitLabel="Save supplier"
-        cancelHref="/suppliers"
-      />
+      <FadeIn>
+        <SupplierForm
+          action={createSupplier}
+          submitLabel="Save supplier"
+          cancelHref="/suppliers"
+        />
+      </FadeIn>
     </div>
   );
 }

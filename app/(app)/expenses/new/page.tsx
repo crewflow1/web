@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadExpenseReceipt } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 const ERROR_MAP: Record<string, string> = {
   no_file: "Pick a file to upload.",
@@ -42,49 +43,51 @@ export default async function NewExpensePage({
         </div>
       ) : null}
 
-      <form
-        action={uploadExpenseReceipt}
-        encType="multipart/form-data"
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div>
-          <label
-            htmlFor="file"
-            className="block text-sm font-medium text-slate-800"
-          >
-            Receipt or supplier invoice
-            <span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <input
-            id="file"
-            type="file"
-            name="file"
-            required
-            accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,image/webp"
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-slate-200"
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            PDF, JPG, PNG, HEIC, HEIF or WebP. Max 10 MB. The AI will
-            extract amount, VAT, supplier and category — you review and
-            approve before anything posts to your books.
-          </p>
-        </div>
+      <FadeIn>
+        <form
+          action={uploadExpenseReceipt}
+          encType="multipart/form-data"
+          className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <div>
+            <label
+              htmlFor="file"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Receipt or supplier invoice
+              <span className="ml-0.5 text-red-500">*</span>
+            </label>
+            <input
+              id="file"
+              type="file"
+              name="file"
+              required
+              accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,image/webp"
+              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-slate-200"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              PDF, JPG, PNG, HEIC, HEIF or WebP. Max 10 MB. The AI will
+              extract amount, VAT, supplier and category — you review and
+              approve before anything posts to your books.
+            </p>
+          </div>
 
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Upload + extract
-          </button>
-          <Link
-            href="/expenses"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Upload + extract
+            </button>
+            <Link
+              href="/expenses"
+              className="text-sm font-medium text-slate-600 hover:text-slate-900"
+            >
+              Cancel
+            </Link>
+          </div>
+        </form>
+      </FadeIn>
     </div>
   );
 }

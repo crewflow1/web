@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createReviewRequestAction } from "../actions";
+import { FadeIn } from "@/components/ui";
 
 const ERROR_MAP: Record<string, string> = {
   validation: "Some fields look off — pick a customer and platform.",
@@ -69,133 +70,135 @@ export default async function NewReviewRequestPage({
         </div>
       ) : null}
 
-      <form
-        action={createReviewRequestAction}
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div>
-          <label
-            htmlFor="customer_id"
-            className="block text-sm font-medium text-slate-800"
-          >
-            Customer<span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <select
-            id="customer_id"
-            name="customer_id"
-            required
-            defaultValue={sp.customer_id ?? ""}
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          >
-            <option value="">— Choose a customer —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name ?? "Customer"}
-                {c.email ? ` · ${c.email}` : " · no email"}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-slate-500">
-            Customers without an email can still be tracked, but you won&rsquo;t be
-            able to use &ldquo;Send email now&rdquo;.
-          </p>
-        </div>
-
-        <div>
-          <label
-            htmlFor="job_id"
-            className="block text-sm font-medium text-slate-800"
-          >
-            Completed job (optional)
-          </label>
-          <select
-            id="job_id"
-            name="job_id"
-            defaultValue={sp.job_id ?? ""}
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          >
-            <option value="">— No specific job —</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {(j.notes ?? "Job").slice(0, 60)} · {j.status}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
+      <FadeIn>
+        <form
+          action={createReviewRequestAction}
+          className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
           <div>
             <label
-              htmlFor="platform"
+              htmlFor="customer_id"
               className="block text-sm font-medium text-slate-800"
             >
-              Platform<span className="ml-0.5 text-red-500">*</span>
+              Customer<span className="ml-0.5 text-red-500">*</span>
             </label>
             <select
-              id="platform"
-              name="platform"
+              id="customer_id"
+              name="customer_id"
               required
-              defaultValue="google"
+              defaultValue={sp.customer_id ?? ""}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
-              <option value="google">Google</option>
-              <option value="facebook">Facebook</option>
-              <option value="trustpilot">Trustpilot</option>
-              <option value="other">Other</option>
+              <option value="">— Choose a customer —</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name ?? "Customer"}
+                  {c.email ? ` · ${c.email}` : " · no email"}
+                </option>
+              ))}
             </select>
+            <p className="mt-1 text-xs text-slate-500">
+              Customers without an email can still be tracked, but you won&rsquo;t be
+              able to use &ldquo;Send email now&rdquo;.
+            </p>
           </div>
+
           <div>
             <label
-              htmlFor="delay_days"
+              htmlFor="job_id"
               className="block text-sm font-medium text-slate-800"
             >
-              When to send<span className="ml-0.5 text-red-500">*</span>
+              Completed job (optional)
             </label>
             <select
-              id="delay_days"
-              name="delay_days"
-              required
-              defaultValue="0"
+              id="job_id"
+              name="job_id"
+              defaultValue={sp.job_id ?? ""}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
-              <option value="0">Immediately</option>
-              <option value="3">3 days from now</option>
-              <option value="7">7 days from now</option>
+              <option value="">— No specific job —</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {(j.notes ?? "Job").slice(0, 60)} · {j.status}
+                </option>
+              ))}
             </select>
           </div>
-        </div>
 
-        <div>
-          <label
-            htmlFor="notes"
-            className="block text-sm font-medium text-slate-800"
-          >
-            Notes
-          </label>
-          <textarea
-            id="notes"
-            name="notes"
-            rows={3}
-            placeholder="Optional — internal note about why you&rsquo;re requesting"
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          />
-        </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor="platform"
+                className="block text-sm font-medium text-slate-800"
+              >
+                Platform<span className="ml-0.5 text-red-500">*</span>
+              </label>
+              <select
+                id="platform"
+                name="platform"
+                required
+                defaultValue="google"
+                className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              >
+                <option value="google">Google</option>
+                <option value="facebook">Facebook</option>
+                <option value="trustpilot">Trustpilot</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label
+                htmlFor="delay_days"
+                className="block text-sm font-medium text-slate-800"
+              >
+                When to send<span className="ml-0.5 text-red-500">*</span>
+              </label>
+              <select
+                id="delay_days"
+                name="delay_days"
+                required
+                defaultValue="0"
+                className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              >
+                <option value="0">Immediately</option>
+                <option value="3">3 days from now</option>
+                <option value="7">7 days from now</option>
+              </select>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Schedule review request
-          </button>
-          <Link
-            href="/reviews"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+          <div>
+            <label
+              htmlFor="notes"
+              className="block text-sm font-medium text-slate-800"
+            >
+              Notes
+            </label>
+            <textarea
+              id="notes"
+              name="notes"
+              rows={3}
+              placeholder="Optional — internal note about why you&rsquo;re requesting"
+              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Schedule review request
+            </button>
+            <Link
+              href="/reviews"
+              className="text-sm font-medium text-slate-600 hover:text-slate-900"
+            >
+              Cancel
+            </Link>
+          </div>
+        </form>
+      </FadeIn>
     </div>
   );
 }

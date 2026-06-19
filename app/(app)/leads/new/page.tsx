@@ -3,6 +3,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createLead } from "../actions";
 import { LeadForm } from "../_form";
 import { listCustomersForLead, listStaffForLead } from "../_form-helpers";
+import { FadeIn } from "@/components/ui";
 
 export default async function NewLeadPage() {
   await requireOrgContext();
@@ -30,13 +31,15 @@ export default async function NewLeadPage() {
         </p>
       </header>
 
-      <LeadForm
-        action={createLead}
-        submitLabel="Save lead"
-        cancelHref="/leads"
-        customers={customers}
-        staff={staff}
-      />
+      <FadeIn>
+        <LeadForm
+          action={createLead}
+          submitLabel="Save lead"
+          cancelHref="/leads"
+          customers={customers}
+          staff={staff}
+        />
+      </FadeIn>
     </div>
   );
 }

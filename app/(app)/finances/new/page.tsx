@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { NewFinanceForm } from "./_form";
+import { FadeIn } from "@/components/ui";
 
 /**
  * New finance entry — server wrapper around the client form.
@@ -57,7 +58,9 @@ export default async function NewFinancePage({ searchParams }: { searchParams: S
         </p>
       </header>
 
-      <NewFinanceForm jobId={jobId} jobLabel={jobLabel} />
+      <FadeIn>
+        <NewFinanceForm jobId={jobId} jobLabel={jobLabel} />
+      </FadeIn>
     </div>
   );
 }
