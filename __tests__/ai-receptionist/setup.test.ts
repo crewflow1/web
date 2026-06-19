@@ -288,10 +288,13 @@ describe("AI Receptionist — HQ UI", () => {
     expect(src).toMatch(/TEST_CHECKLIST_ITEMS\.map/);
   });
 
-  it("HQ actions gate on isSuperAdminEmail (404 not 403)", () => {
+  it("HQ actions gate via the single requireHq() gate (redirect to /dashboard lives in server/auth/hq)", () => {
+    // Every mutating receptionist action calls requireHq() first; the
+    // requireUser → allowlist → redirect("/dashboard") chain is owned by
+    // server/auth/hq.ts and proven in __tests__/auth/hq-gate.test.ts.
     const src = read("app/admin/ai-receptionist/actions.ts");
-    expect(src).toMatch(/isSuperAdminEmail/);
-    expect(src).toMatch(/redirect\("\/dashboard"\)/);
+    expect(src).toMatch(/import \{ requireHq \} from "@\/server\/auth\/hq"/);
+    expect(src).toMatch(/requireHq\(\)/);
   });
 
   it("HQ actions audit every transition", () => {

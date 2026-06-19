@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { env } from "@/lib/env";
@@ -12,7 +11,7 @@ import { env } from "@/lib/env";
 /**
  * Super-admin organisation moderation actions.
  *
- * Each action re-checks `isSuperAdminEmail(user.email)` so the gate
+ * Each action calls the single HQ gate `requireHq()` so the gate
  * applies even if a non-admin submits the form directly. Writes go
  * through the service-role admin client — RLS on `organizations`
  * doesn't currently allow cross-tenant writes via JWT.
@@ -46,18 +45,8 @@ const setDemoStatusSchema = z.object({
   reason: z.string().trim().max(2000).optional(),
 });
 
-async function requireSuperAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    // 404, not 403 — we don't want to confirm the route exists to
-    // anyone who isn't already on the allowlist.
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 export async function setOrganizationStatus(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const parsed = setStatusSchema.safeParse({
     org_id: formData.get("org_id"),
     status: formData.get("status"),
@@ -287,7 +276,7 @@ const DEMO_EMAIL: Record<
 };
 
 export async function setDemoRequestStatus(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const parsed = setDemoStatusSchema.safeParse({
     demo_id: formData.get("demo_id"),
     status: formData.get("status"),

@@ -2,8 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHq } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -24,16 +23,8 @@ import {
  * HQ list page and the customer-facing settings page.
  */
 
-async function requireSuperAdmin(): Promise<{ id: string; email: string }> {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) {
-    redirect("/dashboard");
-  }
-  return { id: user.id, email: user.email ?? "" };
-}
-
 export async function setAiReceptionistStatus(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const parsed = aiReceptionistStatusSchema.safeParse({
     id: formData.get("id"),
     status: formData.get("status"),
@@ -102,7 +93,7 @@ export async function setAiReceptionistStatus(formData: FormData): Promise<void>
 }
 
 export async function toggleAiReceptionistChecklist(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const parsed = aiReceptionistChecklistSchema.safeParse({
     id: formData.get("id"),
     key: formData.get("key"),
@@ -161,7 +152,7 @@ export async function toggleAiReceptionistChecklist(formData: FormData): Promise
 }
 
 export async function updateAiReceptionistNotes(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const parsed = aiReceptionistNotesSchema.safeParse({
     id: formData.get("id"),
     hq_notes: formData.get("hq_notes") ?? "",
@@ -206,7 +197,7 @@ export async function updateAiReceptionistNotes(formData: FormData): Promise<voi
  * status='live' but mounted on a separate button for clarity.
  */
 export async function markAiReceptionistConfigured(formData: FormData): Promise<void> {
-  const admin = await requireSuperAdmin();
+  const admin = await requireHq();
   const id = String(formData.get("id") ?? "");
   if (!id.match(/^[0-9a-f-]{36}$/i)) {
     redirect("/admin/ai-receptionist?error=invalid_input");
