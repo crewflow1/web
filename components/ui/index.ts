@@ -11,7 +11,16 @@
 export { cn } from "@/lib/utils";
 
 // Tokens
-export { ACCENT, ACCENTS, accent, type Accent, type AccentClasses } from "./tokens";
+export {
+  ACCENT,
+  ACCENTS,
+  accent,
+  pill,
+  pillSoft,
+  statusDot,
+  type Accent,
+  type AccentClasses,
+} from "./tokens";
 
 // Structure
 export { Surface, Panel, GlowHeader, SectionHeading } from "./surface";

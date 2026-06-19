@@ -19,12 +19,16 @@ export type Accent =
   | "indigo"
   | "emerald"
   | "amber"
+  | "orange"
   | "sky"
   | "violet"
   | "cyan"
   | "fuchsia"
   | "rose"
-  | "slate";
+  | "red"
+  | "slate"
+  | "neutral"
+  | "muted";
 
 export interface AccentClasses {
   /** Foreground for headline values, icons and labels. */
@@ -45,12 +49,16 @@ export const ACCENTS: Accent[] = [
   "indigo",
   "emerald",
   "amber",
+  "orange",
   "sky",
   "violet",
   "cyan",
   "fuchsia",
   "rose",
+  "red",
   "slate",
+  "neutral",
+  "muted",
 ];
 
 export const ACCENT: Record<Accent, AccentClasses> = {
@@ -77,6 +85,14 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     soft: "bg-amber-50/60 text-amber-700 ring-1 ring-inset ring-amber-600/15 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20",
     bar: "bg-amber-500 dark:bg-amber-400/80",
     dot: "bg-amber-500 dark:bg-amber-400",
+  },
+  orange: {
+    text: "text-orange-600 dark:text-orange-300",
+    glow: "bg-orange-500/20",
+    chip: "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-400/30",
+    soft: "bg-orange-50/60 text-orange-700 ring-1 ring-inset ring-orange-600/15 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-400/20",
+    bar: "bg-orange-500 dark:bg-orange-400/80",
+    dot: "bg-orange-500 dark:bg-orange-400",
   },
   sky: {
     text: "text-sky-600 dark:text-sky-300",
@@ -118,6 +134,14 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     bar: "bg-rose-500 dark:bg-rose-400/80",
     dot: "bg-rose-500 dark:bg-rose-400",
   },
+  red: {
+    text: "text-red-600 dark:text-red-300",
+    glow: "bg-red-500/20",
+    chip: "bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-400/30",
+    soft: "bg-red-50/60 text-red-700 ring-1 ring-inset ring-red-600/15 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20",
+    bar: "bg-red-500 dark:bg-red-400/80",
+    dot: "bg-red-500 dark:bg-red-400",
+  },
   slate: {
     text: "text-slate-700 dark:text-slate-200",
     glow: "bg-slate-500/20",
@@ -126,9 +150,52 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     bar: "bg-slate-500 dark:bg-slate-600",
     dot: "bg-slate-400",
   },
+  // Two distinct neutral states (CEO Directive 007.6, Option A) — kept
+  // separate so an "active but neutral" pill and a "muted / disabled" pill
+  // never collapse into one another. Dark halves are byte-identical to the
+  // hand-spelled recipes the AI-platform surfaces shipped with.
+  neutral: {
+    text: "text-slate-600 dark:text-slate-300",
+    glow: "bg-slate-500/20",
+    chip: "bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-400/30 dark:bg-slate-500/15 dark:text-slate-300 dark:ring-slate-400/30",
+    soft: "bg-slate-50 text-slate-600 ring-1 ring-inset ring-slate-300 dark:bg-slate-500/10 dark:text-slate-300 dark:ring-slate-400/20",
+    bar: "bg-slate-500 dark:bg-slate-400/80",
+    dot: "bg-slate-500 dark:bg-slate-400",
+  },
+  muted: {
+    text: "text-slate-500 dark:text-slate-400",
+    glow: "bg-slate-500/10",
+    chip: "bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-300 dark:bg-slate-700/40 dark:text-slate-400 dark:ring-slate-600/40",
+    soft: "bg-slate-50 text-slate-500 ring-1 ring-inset ring-slate-200 dark:bg-slate-800/60 dark:text-slate-400 dark:ring-slate-700",
+    bar: "bg-slate-400 dark:bg-slate-600",
+    dot: "bg-slate-400 dark:bg-slate-600",
+  },
 };
 
 /** Resolve an accent's class bundle, defaulting to the calm slate set. */
 export function accent(a: Accent | null | undefined): AccentClasses {
   return ACCENT[a ?? "slate"];
+}
+
+/**
+ * The canonical status pill for a tone — the solid chip fill (`/15` bg, `/30`
+ * ring). HQ is rooted in `.dark` (app/admin/layout.tsx), so this renders
+ * byte-identical to the legacy hand-spelled `bg-{c}-500/15 text-{c}-300 ring-1
+ * ring-inset ring-{c}-400/30` recipe the sales / memory / research / employee
+ * surfaces each grew independently. One source now: retune a colour here and
+ * every status pill across HQ follows. Tailwind sees the literals in `ACCENT`,
+ * so the JIT scanner still emits them.
+ */
+export function pill(tone: Accent | null | undefined): string {
+  return accent(tone).chip;
+}
+
+/** Softer status pill — `/10` fill, `/20` ring. For low-emphasis tags. */
+export function pillSoft(tone: Accent | null | undefined): string {
+  return accent(tone).soft;
+}
+
+/** The status dot swatch for a tone (pair with `<Dot pulse />` for "live"). */
+export function statusDot(tone: Accent | null | undefined): string {
+  return accent(tone).dot;
 }
