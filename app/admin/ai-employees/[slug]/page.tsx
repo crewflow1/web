@@ -8,12 +8,18 @@ import {
   Lock,
   ScrollText,
   Settings2,
+  Share2,
   Sparkles,
   UserCircle2,
 } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { getEmployeeProfile } from "@/server/services/ai-employee-profiles";
+import {
+  getEmployeeMemoryFeed,
+  listMemoryTypes,
+} from "@/server/services/hq-memory";
+import type { MemoryListItem } from "@/lib/memory/model";
 import {
   departmentLabel,
   memoryScopeLabel,
@@ -48,6 +54,13 @@ import {
   MonoChip,
   healthAccent,
 } from "../_components";
+import {
+  AddMemoryForm,
+  ConfigForm,
+  LogTaskForm,
+  SavedBanner,
+} from "../_forms";
+import { MemoryCard, buildTypeMap, type TypeMap } from "../../memory/_components";
 
 /**
  * AI Employee — the full six-dimension profile (CEO Directive 007, Phase 1).
@@ -63,6 +76,7 @@ import {
  */
 
 type Params = Promise<{ slug: string }>;
+type SearchParams = Promise<{ saved?: string; error?: string }>;
 
 export const dynamic = "force-dynamic";
 
@@ -75,17 +89,44 @@ const AUDIT_ACCENT: Record<AuditKind, Accent> = {
 
 export default async function AiEmployeeDetailPage({
   params,
+  searchParams,
 }: {
   params: Params;
+  searchParams: SearchParams;
 }) {
   const user = await requireUser();
   if (!isSuperAdminEmail(user.email)) notFound();
 
   const { slug } = await params;
+  const sp = await searchParams;
   const detail = await getEmployeeProfile(slug);
   if (!detail) notFound();
 
-  const { employee, profile, seeded } = detail;
+  const { employee, profile, seeded, row } = detail;
+
+  // Shared-memory feed (CEO Directive 002) — the permission-aware slice this
+  // employee may READ from the company knowledge engine. Scoped to its live
+  // row, so it only loads for a seeded employee; foundation employees have no
+  // row to target and show nothing rather than an invented feed.
+  let feedGroups: Array<{ label: string; items: MemoryListItem[] }> = [];
+  let memoryTypeMap: TypeMap = {};
+  if (row) {
+    const [memoryFeed, memoryTypes] = await Promise.all([
+      getEmployeeMemoryFeed({ id: row.id, department: row.department }),
+      listMemoryTypes(),
+    ]);
+    memoryTypeMap = buildTypeMap(memoryTypes);
+    feedGroups = [
+      { label: "Pinned", items: memoryFeed.pinned },
+      { label: "Relevant", items: memoryFeed.relevant },
+      {
+        label: `${departmentLabel(row.department)} department`,
+        items: memoryFeed.department,
+      },
+      { label: "Recently added", items: memoryFeed.recent },
+    ];
+  }
+  const hasFeed = feedGroups.some((g) => g.items.length > 0);
   const id = profile.identity;
   const cfg = profile.configuration;
   const rt = profile.runtime;
@@ -157,6 +198,9 @@ export default async function AiEmployeeDetailPage({
             <FrameworkBadge />
           </div>
         </header>
+
+        {/* Save / error feedback from a config, task or memory write */}
+        <SavedBanner saved={sp.saved} error={sp.error} />
 
         {/* Foundation honesty banner */}
         {profile.foundation ? (
@@ -390,6 +434,25 @@ export default async function AiEmployeeDetailPage({
               {cfg.systemPrompt}
             </pre>
           </details>
+
+          {/* Operator-editable configuration — safe descriptive fields only */}
+          <div className="mt-6 border-t border-slate-200 pt-6 dark:border-slate-800">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+              Edit configuration
+            </h3>
+            <p className="mb-4 mt-0.5 text-xs text-slate-500">
+              Safe fields only — there is no execution toggle. Every change is
+              audit-logged.
+            </p>
+            {row ? (
+              <ConfigForm row={row} />
+            ) : (
+              <Alert tone="info" icon={<Sparkles aria-hidden />}>
+                Configuration editing unlocks once this employee is seeded with a
+                live row.
+              </Alert>
+            )}
+          </div>
         </Panel>
 
         {/* ===== Dimension 3 — Runtime ===== */}
@@ -456,6 +519,9 @@ export default async function AiEmployeeDetailPage({
               )}
             </div>
           </div>
+
+          {/* Operator task-logging — appends to the runtime history above */}
+          {row ? <LogTaskForm row={row} /> : null}
         </Panel>
 
         {/* ===== Dimension 4 — Memory ===== */}
@@ -499,6 +565,9 @@ export default async function AiEmployeeDetailPage({
               ))}
             </ul>
           )}
+
+          {/* Operator memory-append — adds to long-term memory above */}
+          {row ? <AddMemoryForm row={row} /> : null}
         </Panel>
 
         {/* ===== Dimension 5 — Performance ===== */}
@@ -594,6 +663,51 @@ export default async function AiEmployeeDetailPage({
             </div>
           )}
         </Panel>
+
+        {/* ===== Shared memory — read-only knowledge slice (Directive 002) ===== */}
+        {row ? (
+          <Panel
+            icon={<Share2 className="h-4 w-4" aria-hidden />}
+            accent={ds}
+            title="Shared memory"
+            subtitle="A permission-aware slice from the company knowledge engine. Read-only — this employee reads memory; it never writes."
+          >
+            {!hasFeed ? (
+              <EmptyState
+                icon={<Share2 aria-hidden />}
+                title="No shared memory yet"
+                description="No company memory is visible to this employee yet."
+                action={
+                  <Link
+                    href="/admin/memory"
+                    className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                  >
+                    Open Shared Memory →
+                  </Link>
+                }
+              />
+            ) : (
+              <div className="space-y-5">
+                {feedGroups.map((group) =>
+                  group.items.length === 0 ? null : (
+                    <div key={group.label}>
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        {group.label}
+                      </p>
+                      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {group.items.map((mItem) => (
+                          <li key={mItem.id}>
+                            <MemoryCard memory={mItem} typeMap={memoryTypeMap} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+          </Panel>
+        ) : null}
       </div>
     </Surface>
   );
