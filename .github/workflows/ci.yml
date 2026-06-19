@@ -77,7 +77,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22+ (not 20) is required here: supabase-js eagerly builds a
+          # RealtimeClient inside createClient(), and realtime-js needs a global
+          # WebSocket — which only exists natively on Node >=22. On Node 20 the
+          # harness throws "Node.js 20 detected without native WebSocket support"
+          # before a single query runs. The unit `test` job mocks Supabase and
+          # never builds a live client, so it deliberately stays on 20.
+          node-version: "22"
           cache: "npm"
       - run: npm ci --no-audit --no-fund
 
