@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import {
   ArrowRight,
   BookMarked,
@@ -131,11 +132,11 @@ export default async function LearningPage({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <Tile
             label="Patterns"
-            value={stats.total.toLocaleString()}
+            value={<AnimatedNumber value={stats.total} />}
             accent
             sub="distilled plays"
           />
-          <Tile label="Active" value={stats.active.toLocaleString()} sub="in rotation" />
+          <Tile label="Active" value={<AnimatedNumber value={stats.active} />} sub="in rotation" />
           <Tile
             label="Blended win rate"
             value={`${stats.blendedWinRate}%`}
@@ -148,12 +149,12 @@ export default async function LearningPage({
           />
           <Tile
             label="Logged uses"
-            value={stats.totalUses.toLocaleString()}
+            value={<AnimatedNumber value={stats.totalUses} />}
             sub="real applications"
           />
           <Tile
             label="Promoted"
-            value={stats.promoted.toLocaleString()}
+            value={<AnimatedNumber value={stats.promoted} />}
             sub="in Shared Memory"
           />
         </div>

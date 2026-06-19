@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import {
   Activity,
   BarChart3,
@@ -147,12 +148,12 @@ export default async function SalesDashboardPage() {
       <div className="space-y-5 p-5 sm:p-7">
         {/* Headline status counts */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Tile label="Total companies" value={d.total.toLocaleString()} accent />
+          <Tile label="Total companies" value={<AnimatedNumber value={d.total} />} accent />
           {HEADLINE.map((h) => (
             <Tile
               key={h.key}
               label={statusLabel(h.key)}
-              value={(d.counts[h.key as keyof typeof d.counts] ?? 0).toLocaleString()}
+              value={<AnimatedNumber value={(d.counts[h.key as keyof typeof d.counts] ?? 0)} />}
               accent={h.accent}
             />
           ))}
@@ -169,8 +170,8 @@ export default async function SalesDashboardPage() {
           <Tile label="Won value" value={formatGbp(d.wonValueGbp)} sub="closed-won" />
           <Tile label="Win rate" value={`${d.winRate}%`} sub="won ÷ all" />
           <Tile label="Close rate" value={`${d.closeRate}%`} sub="won ÷ decided" />
-          <Tile label="Weekly activity" value={d.activity.weekly.toLocaleString()} sub="last 7 days" />
-          <Tile label="Monthly activity" value={d.activity.monthly.toLocaleString()} sub="last 30 days" />
+          <Tile label="Weekly activity" value={<AnimatedNumber value={d.activity.weekly} />} sub="last 7 days" />
+          <Tile label="Monthly activity" value={<AnimatedNumber value={d.activity.monthly} />} sub="last 30 days" />
         </div>
 
         {/* Funnel + activity */}
@@ -198,10 +199,10 @@ export default async function SalesDashboardPage() {
           }
         >
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Tile label="Research reports" value={d.aiProductivity.researchReports.toLocaleString()} />
-            <Tile label="Recommendations" value={d.aiProductivity.recommendations.toLocaleString()} />
-            <Tile label="Logged actions" value={d.aiProductivity.loggedActions.toLocaleString()} />
-            <Tile label="Total AI actions" value={d.aiProductivity.total.toLocaleString()} accent />
+            <Tile label="Research reports" value={<AnimatedNumber value={d.aiProductivity.researchReports} />} />
+            <Tile label="Recommendations" value={<AnimatedNumber value={d.aiProductivity.recommendations} />} />
+            <Tile label="Logged actions" value={<AnimatedNumber value={d.aiProductivity.loggedActions} />} />
+            <Tile label="Total AI actions" value={<AnimatedNumber value={d.aiProductivity.total} />} accent />
           </div>
         </Section>
 

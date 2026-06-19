@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import { notFound } from "next/navigation";
 import {
   Activity,
@@ -157,7 +158,7 @@ export default async function MemoryDetailPage({
             value={`${m.confidence}%`}
             sub={confidenceNote(m.confidence)}
           />
-          <Tile label="Access count" value={m.access_count.toLocaleString()} />
+          <Tile label="Access count" value={<AnimatedNumber value={m.access_count} />} />
           <Tile
             label="Last accessed"
             value={m.last_accessed_at ? relativeTime(m.last_accessed_at) : "Never"}

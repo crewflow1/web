@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import {
   Activity,
   AlertCircle,
@@ -108,16 +109,16 @@ export default async function ResearchHomePage({
 
         {/* Live metrics */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Companies researched" value={metrics.completed.toLocaleString()} accent />
-          <Tile label="In flight" value={metrics.inFlight.toLocaleString()} sub="queued + running" />
+          <Tile label="Companies researched" value={<AnimatedNumber value={metrics.completed} />} accent />
+          <Tile label="In flight" value={<AnimatedNumber value={metrics.inFlight} />} sub="queued + running" />
           <Tile
             label="Average score"
             value={metrics.avgScore == null ? "—" : `${metrics.avgScore}`}
             sub={metrics.scored ? `${metrics.scored} scored` : "no scores yet"}
           />
-          <Tile label="Decision makers" value={metrics.decisionMakersIdentified.toLocaleString()} sub="identified" />
-          <Tile label="Total runs" value={metrics.total.toLocaleString()} />
-          <Tile label="Failed" value={metrics.failed.toLocaleString()} />
+          <Tile label="Decision makers" value={<AnimatedNumber value={metrics.decisionMakersIdentified} />} sub="identified" />
+          <Tile label="Total runs" value={<AnimatedNumber value={metrics.total} />} />
+          <Tile label="Failed" value={<AnimatedNumber value={metrics.failed} />} />
         </div>
 
         {/* Provenance breakdown — honest about how figures were produced */}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { ResearchProvenance } from "@/lib/research/model";
 import type { ResearchScoreFactor } from "@/lib/research/score";
 import { ChipList as UIChipList } from "@/components/ui";
@@ -31,7 +32,7 @@ export function Tile({
   accent,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   sub?: string;
   accent?: boolean;
 }) {

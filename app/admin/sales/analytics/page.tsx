@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import { BarChart3, TrendingUp } from "lucide-react";
 import { getSalesAnalytics } from "@/server/services/hq-sales";
 import { formatGbp } from "@/lib/sales/model";
@@ -49,12 +50,12 @@ export default async function SalesAnalyticsPage() {
 
         {/* Headline rates + money */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Total companies" value={a.total.toLocaleString()} accent />
-          <Tile label="Open pipeline" value={open.toLocaleString()} sub="not yet decided" />
+          <Tile label="Total companies" value={<AnimatedNumber value={a.total} />} accent />
+          <Tile label="Open pipeline" value={<AnimatedNumber value={open} />} sub="not yet decided" />
           <Tile label="Pipeline value" value={formatGbp(a.pipelineValueGbp)} sub="open deals" accent />
           <Tile label="Win rate" value={`${a.winRate}%`} sub="won ÷ all" />
           <Tile label="Close rate" value={`${a.closeRate}%`} sub="won ÷ decided" />
-          <Tile label="Decided deals" value={decided.toLocaleString()} sub="won + lost + DQ" />
+          <Tile label="Decided deals" value={<AnimatedNumber value={decided} />} sub="won + lost + DQ" />
         </div>
 
         {/* Funnel + conversion */}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import { Building2, ListChecks, Plus } from "lucide-react";
 import {
   getAiTaskCounts,
@@ -119,12 +120,12 @@ export default async function SalesTasksPage({
 
         {/* Status counts */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Total" value={total.toLocaleString()} accent />
-          <Tile label="Open" value={open.toLocaleString()} sub="pending + running" />
-          <Tile label="Pending" value={counts.pending.toLocaleString()} />
-          <Tile label="Running" value={counts.running.toLocaleString()} />
-          <Tile label="Completed" value={counts.completed.toLocaleString()} />
-          <Tile label="Failed" value={counts.failed.toLocaleString()} />
+          <Tile label="Total" value={<AnimatedNumber value={total} />} accent />
+          <Tile label="Open" value={<AnimatedNumber value={open} />} sub="pending + running" />
+          <Tile label="Pending" value={<AnimatedNumber value={counts.pending} />} />
+          <Tile label="Running" value={<AnimatedNumber value={counts.running} />} />
+          <Tile label="Completed" value={<AnimatedNumber value={counts.completed} />} />
+          <Tile label="Failed" value={<AnimatedNumber value={counts.failed} />} />
         </div>
 
         {/* Filters */}

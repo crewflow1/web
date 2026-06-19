@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import {
   Facebook,
   Instagram,
@@ -195,9 +196,9 @@ export default async function CommunicationsPage({
       <div className="space-y-5 p-5 sm:p-7">
         {/* Totals */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Tile label="Messages" value={summary.total.toLocaleString()} accent sub="in this window" />
-          <Tile label="Inbound" value={summary.inbound.toLocaleString()} sub="prospect → us" />
-          <Tile label="Outbound" value={summary.outbound.toLocaleString()} sub="us → prospect" />
+          <Tile label="Messages" value={<AnimatedNumber value={summary.total} />} accent sub="in this window" />
+          <Tile label="Inbound" value={<AnimatedNumber value={summary.inbound} />} sub="prospect → us" />
+          <Tile label="Outbound" value={<AnimatedNumber value={summary.outbound} />} sub="us → prospect" />
           <Tile
             label="Active channels"
             value={`${summary.channelsActive}/${COMM_CHANNELS.length}`}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import {
   BookOpen,
   Clock,
@@ -125,12 +126,12 @@ export default async function CallingPage({ searchParams }: { searchParams: SP }
       <div className="space-y-5 p-5 sm:p-7">
         {/* Totals */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Total calls" value={stats.total.toLocaleString()} accent sub="all time" />
-          <Tile label="In queue" value={stats.queued.toLocaleString()} sub="waiting / live" />
-          <Tile label="Completed" value={stats.completed.toLocaleString()} sub="dialled to end" />
+          <Tile label="Total calls" value={<AnimatedNumber value={stats.total} />} accent sub="all time" />
+          <Tile label="In queue" value={<AnimatedNumber value={stats.queued} />} sub="waiting / live" />
+          <Tile label="Completed" value={<AnimatedNumber value={stats.completed} />} sub="dialled to end" />
           <Tile label="Connect rate" value={`${stats.connectRate}%`} sub="connected ÷ dialled" />
           <Tile label="Avg talk" value={formatDuration(stats.avgTalkSeconds)} sub="per connected call" />
-          <Tile label="Follow-ups due" value={stats.followUpsDue.toLocaleString()} sub="overdue call-backs" />
+          <Tile label="Follow-ups due" value={<AnimatedNumber value={stats.followUpsDue} />} sub="overdue call-backs" />
         </div>
 
         {/* Sentiment + outcome breakdown */}

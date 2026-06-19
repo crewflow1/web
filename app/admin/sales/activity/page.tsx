@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import { Activity as ActivityIcon, Search, X } from "lucide-react";
 import { listActivityFeed } from "@/server/services/hq-sales";
 import { eventCategory } from "@/lib/sales/model";
@@ -142,10 +143,10 @@ export default async function SalesActivityPage({
 
         {/* Window summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Tile label="Events shown" value={feed.length.toLocaleString()} accent />
-          <Tile label="Interactions" value={interactions.toLocaleString()} sub="logged touches" />
-          <Tile label="Milestones" value={lifecycle.toLocaleString()} sub="lifecycle events" />
-          <Tile label="AI actions" value={aiActions.toLocaleString()} sub="AI-attributed" />
+          <Tile label="Events shown" value={<AnimatedNumber value={feed.length} />} accent />
+          <Tile label="Interactions" value={<AnimatedNumber value={interactions} />} sub="logged touches" />
+          <Tile label="Milestones" value={<AnimatedNumber value={lifecycle} />} sub="lifecycle events" />
+          <Tile label="AI actions" value={<AnimatedNumber value={aiActions} />} sub="AI-attributed" />
         </div>
 
         {/* Feed */}

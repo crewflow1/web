@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AnimatedNumber } from "@/components/ui";
 import { Brain, Plus, Search, ShieldCheck } from "lucide-react";
 import {
   getDashboardStats,
@@ -87,14 +88,14 @@ export default async function MemoryDashboardPage() {
       <div className="space-y-5 p-5 sm:p-7">
         {/* Headline stats */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Total memories" value={stats.total.toLocaleString()} />
-          <Tile label="Added today" value={stats.today.toLocaleString()} />
-          <Tile label="Important" value={stats.important.toLocaleString()} />
-          <Tile label="Pinned" value={stats.pinned.toLocaleString()} />
-          <Tile label="Unread" value={stats.unread.toLocaleString()} />
+          <Tile label="Total memories" value={<AnimatedNumber value={stats.total} />} />
+          <Tile label="Added today" value={<AnimatedNumber value={stats.today} />} />
+          <Tile label="Important" value={<AnimatedNumber value={stats.important} />} />
+          <Tile label="Pinned" value={<AnimatedNumber value={stats.pinned} />} />
+          <Tile label="Unread" value={<AnimatedNumber value={stats.unread} />} />
           <Tile
             label="Recently accessed"
-            value={stats.recentlyAccessed.toLocaleString()}
+            value={<AnimatedNumber value={stats.recentlyAccessed} />}
             sub="last 7 days"
           />
         </div>
