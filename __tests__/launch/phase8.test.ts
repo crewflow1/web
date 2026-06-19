@@ -59,10 +59,9 @@ describe("Phase 8 — buildLaunchReadiness service", () => {
 // =====================================================================
 
 describe("Phase 8 — /admin/launch-checklist page", () => {
-  it("auth-gates with isSuperAdminEmail + notFound", () => {
-    expect(PAGE).toMatch(/requireUser/);
-    expect(PAGE).toMatch(/isSuperAdminEmail/);
-    expect(PAGE).toMatch(/notFound\(\)/);
+  it("auth-gates on HQ access via requireHqPage()", () => {
+    expect(PAGE).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(PAGE).toMatch(/requireHqPage\(\)/);
   });
 
   it("renders overall traffic-light + per-row pills", () => {

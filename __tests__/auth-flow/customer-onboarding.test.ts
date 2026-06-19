@@ -134,11 +134,11 @@ describe("/login page surfaces actionable errors", () => {
   });
 });
 
-describe("HQ remains gated on isSuperAdminEmail only", () => {
-  it("admin layout still uses isSuperAdminEmail + notFound (customers can't access)", () => {
+describe("HQ remains gated on super-admin access only", () => {
+  it("admin layout gates on requireHqPage() — 404 for customers (no access)", () => {
     const src = read("app/admin/layout.tsx");
-    expect(src).toMatch(/isSuperAdminEmail/);
-    expect(src).toMatch(/notFound\(\)/);
+    expect(src).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(src).toMatch(/requireHqPage\(\)/);
   });
 });
 

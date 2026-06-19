@@ -1,7 +1,5 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { buildLaunchReadiness } from "@/server/services/launch-readiness";
 import { GlowHeader, Panel, Surface } from "@/components/ui";
 
@@ -38,8 +36,7 @@ const STATUS_LABEL = {
 } as const;
 
 export default async function LaunchChecklistPage() {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const readiness = await buildLaunchReadiness();
 

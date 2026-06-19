@@ -210,18 +210,19 @@ describe("sparklinePoints", () => {
 });
 
 describe("HQ layout — auth gate", () => {
-  it("layout calls isSuperAdminEmail and 404s when it returns false", () => {
-    expect(LAYOUT).toMatch(/isSuperAdminEmail\(user\.email\)/);
-    expect(LAYOUT).toMatch(/notFound\(\)/);
+  it("layout gates on HQ access via requireHqPage() (404s non-super-admins)", () => {
+    expect(LAYOUT).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(LAYOUT).toMatch(/requireHqPage\(\)/);
   });
 
-  it("layout enforces gate via the requireUser → check → notFound chain", () => {
-    const idxRequire = LAYOUT.indexOf("await requireUser()");
-    // Match the actual call site (with semicolon), not the prose mention
-    // in the doc-comment block that sits above the code.
-    const idxNotFound = LAYOUT.indexOf("notFound();");
-    expect(idxRequire).toBeGreaterThan(0);
-    expect(idxNotFound).toBeGreaterThan(idxRequire);
+  it("enforces the gate first — requireHqPage() is awaited before any render", () => {
+    // The gate must run before the component returns any markup; the
+    // requireUser → allowlist → notFound chain lives in requireHqPage and is
+    // proven in __tests__/auth/hq-gate.test.ts.
+    const idxGate = LAYOUT.indexOf("await requireHqPage()");
+    const idxReturn = LAYOUT.indexOf("return (");
+    expect(idxGate).toBeGreaterThan(0);
+    expect(idxReturn).toBeGreaterThan(idxGate);
   });
 
   it("HQ_NAV is exported as a named ReadonlyArray", () => {

@@ -1,5 +1,5 @@
 import "server-only";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 
@@ -37,5 +37,21 @@ export type HqActor = { id: string; email: string };
 export async function requireHq(): Promise<HqActor> {
   const user = await requireUser();
   if (!isSuperAdminEmail(user.email)) redirect("/dashboard");
+  return { id: user.id, email: user.email ?? "" };
+}
+
+/**
+ * HQ gate for pages and the `/admin` layout. Same authenticated-super-admin
+ * requirement as `requireHq()`, but a non-allowlisted caller gets
+ * `notFound()` (a 404) rather than a redirect. That is deliberate: a 404
+ * hides the very existence of the HQ surface from snoopers, whereas a
+ * redirect would confirm the route is real.
+ *   - unauthenticated            → redirect("/login")  (via requireUser)
+ *   - authenticated, not allowed → notFound()  (404, route stays hidden)
+ *   - allowlisted                → returns { id, email }
+ */
+export async function requireHqPage(): Promise<HqActor> {
+  const user = await requireUser();
+  if (!isSuperAdminEmail(user.email)) notFound();
   return { id: user.id, email: user.email ?? "" };
 }

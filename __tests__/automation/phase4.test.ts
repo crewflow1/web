@@ -197,9 +197,8 @@ describe("Phase 4 — dispatchAutomation", () => {
 
 describe("Phase 4 — /admin/automations page", () => {
   it("is HQ-only (defence in depth)", () => {
-    expect(PAGE).toMatch(/requireUser/);
-    expect(PAGE).toMatch(/isSuperAdminEmail/);
-    expect(PAGE).toMatch(/notFound\(\)/);
+    expect(PAGE).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(PAGE).toMatch(/requireHqPage\(\)/);
   });
 
   it("renders the rule catalogue with last-run + 7d counts", () => {

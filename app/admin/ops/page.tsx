@@ -1,6 +1,4 @@
-import { notFound } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import {
   buildOpsSnapshot,
   type CronRouteHealth,
@@ -27,8 +25,8 @@ import {
  *   4. Cron status (last run, last success, failures last 7d).
  *   5. Recent failures table (across all crons).
  *
- * No client JS. HQ-gated at the layout (notFound for non-superadmin).
- * The page double-checks with `notFound()` for defence-in-depth.
+ * No client JS. HQ-gated at the layout (requireHqPage → 404 for
+ * non-superadmin). The page re-calls requireHqPage() for defence-in-depth.
  */
 
 export const dynamic = "force-dynamic";
@@ -40,8 +38,7 @@ const STATUS_BANNER = {
 } as const;
 
 export default async function OpsPage() {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const snapshot = await buildOpsSnapshot();
 

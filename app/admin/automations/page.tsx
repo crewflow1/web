@@ -1,6 +1,4 @@
-import { notFound } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
 import {
   AnimatedNumber,
@@ -31,8 +29,7 @@ const STATUS_PILL = {
 } as const;
 
 export default async function AutomationsPage() {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const health = await readAutomationHealth();
   const totalRuns = health.reduce((acc, h) => acc + h.runs_7d, 0);

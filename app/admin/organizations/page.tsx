@@ -1,7 +1,5 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
@@ -22,8 +20,8 @@ import {
  *   1. demo_requests — landing-page submissions, pre-signup.
  *   2. organizations — completed signups gated by the access flow.
  *
- * Gated by isSuperAdminEmail(user.email). Non-allowlisted users get a
- * 404 (the route's existence isn't leaked).
+ * Gated by requireHqPage() (the single HQ page gate). Non-allowlisted
+ * users get a 404 (the route's existence isn't leaked).
  *
  * Search / status filter / sort all live in the URL via AdminFilters,
  * so a refresh or shared link preserves the view.
@@ -138,8 +136,7 @@ export default async function AdminOrganizationsPage({
 }: {
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  const user = await requireHqPage();
 
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();

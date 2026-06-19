@@ -1,6 +1,4 @@
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { notFound } from "next/navigation";
+import { requireHqPage } from "@/server/auth/hq";
 import { getSettings } from "@/server/services/hq-settings";
 import {
   SECTION_IDS,
@@ -29,8 +27,8 @@ import {
  * pattern used by /admin/impersonation and /admin/notifications so
  * the operator surface stays consistent.
  *
- * Auth: HQ layout already gates non-superadmins with notFound().
- * The page double-checks for defence in depth.
+ * Auth: HQ layout already gates non-superadmins (requireHqPage → 404).
+ * The page re-calls requireHqPage() for defence in depth.
  */
 
 export const dynamic = "force-dynamic";
@@ -46,8 +44,7 @@ export default async function HqSettingsPage({
 }: {
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const sp = await searchParams;
   const settings = await getSettings();

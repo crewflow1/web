@@ -1,7 +1,5 @@
-import { notFound } from "next/navigation";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
 import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
@@ -13,10 +11,10 @@ import { NavLink } from "./_nav-link";
 /**
  * CrewFlow HQ — internal operating system for the team running CrewFlow.
  *
- * NOT the customer product. Gated at this layout level so every child
- * route inherits the 404-for-non-allowlisted rule; the existing
- * /admin/organizations page also calls `notFound()` itself for
- * defence-in-depth.
+ * NOT the customer product. Gated at this layout level via `requireHqPage()`
+ * (the single HQ page gate) so every child route inherits the
+ * 404-for-non-allowlisted rule; landing pages re-call `requireHqPage()`
+ * themselves for defence-in-depth.
  *
  * Sidebar carries all 12 sections from the directive. Sections not yet
  * built render a "Coming in HQ Sprint N" stub — no dead ends.
@@ -67,8 +65,7 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  const user = await requireHqPage();
 
   // Live ticket count drives the Support queue badge. Best-effort —
   // failures degrade to no badge rather than breaking the layout.

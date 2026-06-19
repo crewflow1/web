@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { Boxes, Layers, Lock, Users } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { getEmployeeRoster } from "@/server/services/ai-employee-profiles";
 import { departmentLabel, statusLabel } from "@/lib/ai-employees/model";
 import { formatRate } from "@/lib/ai-employees/stats";
@@ -30,15 +28,14 @@ import { AvatarTile, FrameworkBadge, HealthPill } from "./_components";
  *
  * FRAMEWORK ONLY — no employee executes anything. The header says so.
  *
- * HQ-gated at the layout; this page re-checks `isSuperAdminEmail` and
- * `notFound()`s for defence-in-depth.
+ * HQ-gated at the layout; this page re-calls `requireHqPage()` (the single
+ * HQ page gate — 404 for non-super-admins) for defence-in-depth.
  */
 
 export const dynamic = "force-dynamic";
 
 export default async function AiEmployeesPage() {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const roster = await getEmployeeRoster();
 

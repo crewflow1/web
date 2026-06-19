@@ -12,8 +12,7 @@ import {
   Sparkles,
   UserCircle2,
 } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { getEmployeeProfile } from "@/server/services/ai-employee-profiles";
 import {
   getEmployeeMemoryFeed,
@@ -94,8 +93,7 @@ export default async function AiEmployeeDetailPage({
   params: Params;
   searchParams: SearchParams;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const { slug } = await params;
   const sp = await searchParams;

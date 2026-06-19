@@ -53,14 +53,18 @@ const API_ADMIN_ROUTES = [
 describe("Rule 1 — customer/owner/staff users must NEVER see CrewFlow HQ", () => {
   it("the /admin layout 404s anyone who is not a super-admin", () => {
     // Every page under app/admin/* renders inside this layout, so a single
-    // server-side guard covers the whole HQ surface.
-    expect(adminLayout).toMatch(/const user = await requireUser\(\)/);
-    expect(adminLayout).toMatch(/if \(!isSuperAdminEmail\(user\.email\)\) notFound\(\)/);
+    // server-side guard — requireHqPage() — covers the whole HQ surface. The
+    // 404-for-non-super-admin behaviour is proven in __tests__/auth/hq-gate.
+    expect(adminLayout).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(adminLayout).toMatch(/requireHqPage\(\)/);
   });
 
-  it("uses notFound() (404) — HQ's existence is not even revealed to tenants", () => {
-    expect(adminLayout).toMatch(/import \{ notFound \}/);
-    expect(adminLayout).not.toMatch(/redirect\("\/dashboard"\).*isSuperAdmin/s);
+  it("uses the page gate (404), not the action gate (redirect) — HQ's existence is not even revealed to tenants", () => {
+    // requireHqPage() 404s a non-allowlisted caller, hiding the route's very
+    // existence; it must NOT be the action gate requireHq(), which redirects
+    // to /dashboard and would thereby confirm the route is real.
+    expect(adminLayout).toMatch(/requireHqPage\(\)/);
+    expect(adminLayout).not.toMatch(/redirect\("\/dashboard"\)/);
   });
 });
 
@@ -90,16 +94,18 @@ describe("Rule 2 — only approved super-admins may access /admin/*, HQ, imperso
 
 describe("Rule 3 — non-admin HQ access impossible via URL / stale session / history / cache", () => {
   it("the guard is a server component that validates a LIVE user every request", () => {
-    // requireUser() → getUser() makes a network call to validate the JWT, so a
-    // stale/forged cookie or a back-button cached page can't satisfy it.
+    // requireHqPage() → requireUser() → getUser() makes a network call to
+    // validate the JWT, so a stale/forged cookie or a back-button cached page
+    // can't satisfy it.
     expect(adminLayout).toMatch(/export default async function/);
-    expect(adminLayout).toMatch(/await requireUser\(\)/);
+    expect(adminLayout).toMatch(/await requireHqPage\(\)/);
     expect(middleware).toMatch(/supabase\.auth\.getUser\(\)/);
   });
 
   it("HQ landing pages add defense-in-depth self-guards (not layout-only)", () => {
     const orgPage = read("app/admin/organizations/page.tsx");
-    expect(orgPage).toMatch(/if \(!isSuperAdminEmail\(user\.email\)\) notFound\(\)/);
+    expect(orgPage).toMatch(/import \{ requireHqPage \} from "@\/server\/auth\/hq"/);
+    expect(orgPage).toMatch(/requireHqPage\(\)/);
   });
 });
 
