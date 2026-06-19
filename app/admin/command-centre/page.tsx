@@ -108,11 +108,11 @@ function Header() {
             Sales AI
           </Link>
           <Link
-            href="/admin/ai-boardroom"
+            href="/admin/ai-employees"
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
           >
             <BrainCircuit className="h-3.5 w-3.5" aria-hidden />
-            AI Boardroom
+            AI Employees
           </Link>
         </div>
       </div>

@@ -148,7 +148,7 @@ export function taskStatusLabel(status: string): string {
 // ---------------------------------------------------------------------
 // Accent tokens — keyed by the seeded `accent` value. The Tailwind
 // class strings that render these live in
-// app/admin/ai-boardroom/_styles.ts (so the JIT scanner, which only
+// components/ai-employees/styles.ts (so the JIT scanner, which only
 // globs app/components/emails, picks them up). This module stays free
 // of presentation classes so it remains a pure, portable data layer.
 // ---------------------------------------------------------------------

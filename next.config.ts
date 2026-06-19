@@ -18,6 +18,26 @@ const config: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: buildSecurityHeaders() }];
   },
+  /**
+   * Route consolidation (CEO Directive 007.5). The AI Boardroom was merged
+   * into the AI Employees SDK surface — its pages, actions and write forms now
+   * live under /admin/ai-employees. These permanent redirects keep any stale
+   * bookmark or deep link working after the merge.
+   */
+  async redirects() {
+    return [
+      {
+        source: "/admin/ai-boardroom",
+        destination: "/admin/ai-employees",
+        permanent: true,
+      },
+      {
+        source: "/admin/ai-boardroom/:slug*",
+        destination: "/admin/ai-employees/:slug*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 /**

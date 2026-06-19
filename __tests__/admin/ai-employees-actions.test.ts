@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
- * AI Boardroom — authorization-boundary + pure-logic contract tests
- * (CEO Directive 001, Phase 1).
+ * AI Employees — authorization-boundary + pure-logic contract tests
+ * (CEO Directive 007.5 consolidation; baseline CEO Directive 001, Phase 1).
  *
- * The directive requires proof that:
+ * The three mutating server actions now live at
+ * `app/admin/ai-employees/actions.ts` — the single AI surface after the
+ * Boardroom→Employees merge. This suite proves that:
  *   1. Unauthenticated users are blocked.
  *   2. Normal (non-allowlisted) customer users are blocked.
  *   3. HQ / super-admin users are allowed (and their writes are audited).
@@ -129,7 +131,7 @@ vi.mock("@/server/auth/superadmin", () => ({
 
 // Late import so all module-level mocks are applied first.
 async function loadActions() {
-  return await import("@/app/admin/ai-boardroom/actions");
+  return await import("@/app/admin/ai-employees/actions");
 }
 
 function makeFormData(fields: Record<string, string>): FormData {
@@ -276,7 +278,7 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
   it("updateAiEmployeeConfig persists safe fields + audit, never can_execute", async () => {
     const { updateAiEmployeeConfig } = await loadActions();
     await expect(updateAiEmployeeConfig(validConfigForm())).rejects.toThrow(
-      /REDIRECT:\/admin\/ai-boardroom\/sales-ai\?saved=config/,
+      /REDIRECT:\/admin\/ai-employees\/sales-ai\?saved=config/,
     );
 
     const empUpdate = mockAdmin.updates.find((u) => u.table === "ai_employees");
@@ -309,7 +311,7 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
   it("addAiEmployeeTask inserts the task, stamps activity, and audits", async () => {
     const { addAiEmployeeTask } = await loadActions();
     await expect(addAiEmployeeTask(validTaskForm())).rejects.toThrow(
-      /REDIRECT:\/admin\/ai-boardroom\/sales-ai\?saved=task/,
+      /REDIRECT:\/admin\/ai-employees\/sales-ai\?saved=task/,
     );
 
     const taskInsert = mockAdmin.inserts.find(
@@ -353,7 +355,7 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
   it("addAiEmployeeMemory inserts the entry and audits", async () => {
     const { addAiEmployeeMemory } = await loadActions();
     await expect(addAiEmployeeMemory(validMemoryForm())).rejects.toThrow(
-      /REDIRECT:\/admin\/ai-boardroom\/sales-ai\?saved=memory/,
+      /REDIRECT:\/admin\/ai-employees\/sales-ai\?saved=memory/,
     );
 
     const memInsert = mockAdmin.inserts.find(
@@ -378,7 +380,7 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
     const fd = validConfigForm();
     fd.set("status", "h4 x0r"); // not a real status
     await expect(updateAiEmployeeConfig(fd)).rejects.toThrow(
-      /REDIRECT:\/admin\/ai-boardroom\?error=/,
+      /REDIRECT:\/admin\/ai-employees\?error=/,
     );
     expect(mockAdmin.updates).toHaveLength(0);
     expect(mockAdmin.inserts).toHaveLength(0);

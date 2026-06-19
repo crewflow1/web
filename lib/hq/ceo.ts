@@ -349,7 +349,7 @@ export function assembleCeoBoard(i: CeoInput): CeoBoard {
       key: "ai",
       title: "AI workforce",
       blurb: "The autonomous workforce and its task queue — every action traced.",
-      href: "/admin/ai-boardroom",
+      href: "/admin/ai-employees",
       icon: "bot",
       accent: "indigo",
       headline: {

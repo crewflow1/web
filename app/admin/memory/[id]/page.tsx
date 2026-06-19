@@ -452,7 +452,7 @@ function EmployeeLinkRow({
     <li>
       {slug ? (
         <Link
-          href={`/admin/ai-boardroom/${slug}`}
+          href={`/admin/ai-employees/${slug}`}
           className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm transition hover:bg-slate-900"
         >
           {inner}
