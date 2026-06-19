@@ -32,7 +32,7 @@ export function CustomerImpersonateModal({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-md bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30 hover:bg-indigo-500/25"
+        className="rounded-md bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30 transition-colors hover:bg-indigo-500/25"
       >
         Impersonate
       </button>

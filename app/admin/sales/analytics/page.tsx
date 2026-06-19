@@ -28,7 +28,7 @@ export default async function SalesAnalyticsPage() {
       <div className="space-y-5 p-5 sm:p-7">
         {/* Breadcrumb + header */}
         <p className="text-sm text-slate-500">
-          <Link href="/admin/sales" className="hover:text-slate-300">
+          <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
             Sales AI
           </Link>{" "}
           / <span className="text-slate-300">Analytics</span>

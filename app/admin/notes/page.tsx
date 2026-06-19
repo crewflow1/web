@@ -404,7 +404,7 @@ export default async function HqNotesPage({
                       </Badge>
                       <Link
                         href={`/admin/customers/${n.org_id}`}
-                        className="text-[11px] font-medium text-indigo-300 hover:text-indigo-200"
+                        className="text-[11px] font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {n.org_name ?? n.org_id.slice(0, 8)} →
                       </Link>
@@ -434,7 +434,7 @@ export default async function HqNotesPage({
                       <input type="hidden" name="id" value={n.id} />
                       <button
                         type="submit"
-                        className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                        className="text-[11px] font-medium text-slate-400 transition-colors hover:text-white hover:underline"
                       >
                         {n.pinned ? "Unpin" : "Pin"}
                       </button>
@@ -444,7 +444,7 @@ export default async function HqNotesPage({
                         <input type="hidden" name="id" value={n.id} />
                         <button
                           type="submit"
-                          className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                          className="text-[11px] font-medium text-slate-400 transition-colors hover:text-white hover:underline"
                         >
                           Archive
                         </button>
@@ -454,7 +454,7 @@ export default async function HqNotesPage({
                         <input type="hidden" name="id" value={n.id} />
                         <button
                           type="submit"
-                          className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                          className="text-[11px] font-medium text-slate-400 transition-colors hover:text-white hover:underline"
                         >
                           Unarchive
                         </button>

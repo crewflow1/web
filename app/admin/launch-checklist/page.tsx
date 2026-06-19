@@ -110,14 +110,14 @@ export default async function LaunchChecklistPage() {
             See{" "}
             <Link
               href="/admin/ops"
-              className="text-indigo-300 hover:text-indigo-200"
+              className="text-indigo-300 transition-colors hover:text-indigo-200"
             >
               /admin/ops
             </Link>{" "}
             for live cron + email health, and{" "}
             <Link
               href="/admin/automations"
-              className="text-indigo-300 hover:text-indigo-200"
+              className="text-indigo-300 transition-colors hover:text-indigo-200"
             >
               /admin/automations
             </Link>{" "}

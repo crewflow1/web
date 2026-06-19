@@ -321,7 +321,7 @@ export default async function HqAnalyticsPage({
                     <li key={c.id} className="flex justify-between text-xs">
                       <Link
                         href={`/admin/customers/${c.id}`}
-                        className="font-medium text-indigo-300 hover:text-indigo-200"
+                        className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {c.name}
                       </Link>
@@ -387,7 +387,7 @@ export default async function HqAnalyticsPage({
                     <li key={c.id} className="flex justify-between text-xs">
                       <Link
                         href={`/admin/customers/${c.id}`}
-                        className="font-medium text-indigo-300 hover:text-indigo-200"
+                        className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {c.name}
                       </Link>
@@ -408,7 +408,7 @@ export default async function HqAnalyticsPage({
                     <li key={c.id} className="flex justify-between text-xs">
                       <Link
                         href={`/admin/customers/${c.id}`}
-                        className="font-medium text-indigo-300 hover:text-indigo-200"
+                        className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {c.name}
                       </Link>
@@ -429,7 +429,7 @@ export default async function HqAnalyticsPage({
                     <li key={c.id} className="flex justify-between text-xs">
                       <Link
                         href={`/admin/customers/${c.id}`}
-                        className="font-medium text-indigo-300 hover:text-indigo-200"
+                        className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {c.name}
                       </Link>
@@ -491,7 +491,7 @@ export default async function HqAnalyticsPage({
                       <div>
                         <Link
                           href={`/admin/customers/${e.org_id}`}
-                          className="font-medium text-indigo-300 hover:text-indigo-200"
+                          className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                         >
                           {e.org_id.slice(0, 8)}…
                         </Link>

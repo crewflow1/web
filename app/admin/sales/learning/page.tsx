@@ -98,7 +98,7 @@ export default async function LearningPage({
         />
         <div className="relative">
           <p className="text-sm text-slate-500">
-            <Link href="/admin/sales" className="hover:text-slate-300">
+            <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
               Sales AI
             </Link>{" "}
             / <span className="text-slate-300">Learning</span>
@@ -423,7 +423,7 @@ function LearningCard({ learning: l }: { learning: SalesLearningItem }) {
         {l.company_id && l.company_name ? (
           <Link
             href={`/admin/sales/companies/${l.company_id}`}
-            className="inline-flex items-center gap-1 text-slate-400 hover:text-indigo-300"
+            className="inline-flex items-center gap-1 text-slate-400 transition-colors hover:text-indigo-300"
           >
             <Building2 className="h-3 w-3" aria-hidden />
             {l.company_name}

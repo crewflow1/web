@@ -176,7 +176,7 @@ export default async function HqHealthPage({
                         </span>
                         <Link
                           href={`/admin/customers/${row.org_id}`}
-                          className="text-sm font-bold text-white hover:text-slate-300"
+                          className="text-sm font-bold text-white transition-colors hover:text-slate-300"
                         >
                           {row.org_name}
                         </Link>

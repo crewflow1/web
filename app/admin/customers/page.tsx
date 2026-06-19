@@ -151,11 +151,11 @@ export default async function HqCustomersListPage({
                       bandFromScore(r.health_score),
                     );
                     return (
-                      <tr key={r.id} className="hover:bg-slate-900/50">
+                      <tr key={r.id} className="transition-colors hover:bg-slate-900/50">
                         <td className="px-4 py-2">
                           <Link
                             href={`/admin/customers/${r.id}`}
-                            className="font-semibold text-slate-100 hover:text-white"
+                            className="font-semibold text-slate-100 transition-colors hover:text-white"
                           >
                             {r.name}
                           </Link>
@@ -199,7 +199,7 @@ export default async function HqCustomersListPage({
                         <td className="px-4 py-2 text-right">
                           <Link
                             href={`/admin/customers/${r.id}`}
-                            className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
+                            className="text-xs font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                           >
                             Open →
                           </Link>

@@ -93,7 +93,7 @@ export default async function AutomationsPage() {
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {health.map((h) => (
-                  <tr key={h.rule.id} className="hover:bg-slate-900/50">
+                  <tr key={h.rule.id} className="transition-colors hover:bg-slate-900/50">
                     <td className="px-3 py-2">
                       <div className="font-medium text-slate-100">
                         {h.rule.label}

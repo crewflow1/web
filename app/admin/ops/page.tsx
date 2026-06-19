@@ -223,7 +223,7 @@ function CronRow({ cron }: { cron: CronRouteHealth }) {
         ? "bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-400/30"
         : "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/40";
   return (
-    <tr className="hover:bg-slate-900/50">
+    <tr className="transition-colors hover:bg-slate-900/50">
       <td className="px-3 py-2 font-mono text-xs font-medium text-slate-200">
         /{cron.route}
       </td>

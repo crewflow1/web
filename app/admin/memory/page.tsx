@@ -176,7 +176,7 @@ export default async function MemoryDashboardPage() {
           action={
             <Link
               href="/admin/memory/search?pinned=1"
-              className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               View all →
             </Link>
@@ -201,7 +201,7 @@ export default async function MemoryDashboardPage() {
           action={
             <Link
               href="/admin/memory/search"
-              className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               Browse all →
             </Link>
@@ -213,7 +213,7 @@ export default async function MemoryDashboardPage() {
               cta={
                 <Link
                   href="/admin/memory/new"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Create a memory →
                 </Link>

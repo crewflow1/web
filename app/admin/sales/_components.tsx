@@ -457,7 +457,7 @@ export function TimelineItem({
           {showCompany && companyName ? (
             <Link
               href={`/admin/sales/companies/${event.company_id}`}
-              className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               {companyName}
             </Link>

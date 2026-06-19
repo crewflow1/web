@@ -168,11 +168,11 @@ export default async function CompanyDetailPage({
       <div className="space-y-5 p-5 sm:p-7">
         {/* Breadcrumb */}
         <p className="text-sm text-slate-500">
-          <Link href="/admin/sales" className="hover:text-slate-300">
+          <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
             Sales AI
           </Link>{" "}
           /{" "}
-          <Link href="/admin/sales/companies" className="hover:text-slate-300">
+          <Link href="/admin/sales/companies" className="transition-colors hover:text-slate-300">
             Companies
           </Link>{" "}
           / <span className="text-slate-300">{c.name}</span>
@@ -215,7 +215,7 @@ export default async function CompanyDetailPage({
                       href={c.website}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
-                      className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
+                      className="inline-flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300"
                     >
                       {c.domain ?? c.website}
                       <ExternalLink className="h-3 w-3" aria-hidden />
@@ -438,7 +438,7 @@ export default async function CompanyDetailPage({
                     href={c.website}
                     target="_blank"
                     rel="noopener noreferrer nofollow"
-                    className="text-indigo-400 hover:text-indigo-300"
+                    className="text-indigo-400 transition-colors hover:text-indigo-300"
                   >
                     {c.domain ?? c.website}
                   </a>
@@ -453,7 +453,7 @@ export default async function CompanyDetailPage({
               <KV label="Country">{c.country}</KV>
               <KV label="Email">
                 {c.primary_email ? (
-                  <a href={`mailto:${c.primary_email}`} className="text-indigo-400 hover:text-indigo-300">
+                  <a href={`mailto:${c.primary_email}`} className="text-indigo-400 transition-colors hover:text-indigo-300">
                     {c.primary_email}
                   </a>
                 ) : (
@@ -481,7 +481,7 @@ export default async function CompanyDetailPage({
                     href={c.companies_house_url}
                     target="_blank"
                     rel="noopener noreferrer nofollow"
-                    className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
+                    className="inline-flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300"
                   >
                     <Landmark className="h-3.5 w-3.5" aria-hidden />
                     {c.companies_house_number ?? "View"}
@@ -639,7 +639,7 @@ export default async function CompanyDetailPage({
           )}
           {pastRecos.length > 0 ? (
             <details className="mt-3">
-              <summary className="cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200">
+              <summary className="cursor-pointer text-xs font-medium text-slate-400 transition-colors hover:text-slate-200">
                 {pastRecos.length} superseded {pastRecos.length === 1 ? "recommendation" : "recommendations"}
               </summary>
               <ul className="mt-3 space-y-4">
@@ -706,7 +706,7 @@ export default async function CompanyDetailPage({
                       e.memory_id ? (
                         <Link
                           href={`/admin/memory/${e.memory_id}`}
-                          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 hover:text-emerald-200"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 transition-colors hover:text-emerald-200"
                         >
                           <Brain className="h-3.5 w-3.5" aria-hidden />
                           In Shared Memory
@@ -967,7 +967,7 @@ function ContactRow({
         {ct.title ? <p className="mt-0.5 text-xs text-slate-400">{ct.title}</p> : null}
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
           {ct.email ? (
-            <a href={`mailto:${ct.email}`} className="inline-flex items-center gap-1 hover:text-indigo-300">
+            <a href={`mailto:${ct.email}`} className="inline-flex items-center gap-1 transition-colors hover:text-indigo-300">
               <Mail className="h-3 w-3" aria-hidden /> {ct.email}
             </a>
           ) : null}
@@ -981,7 +981,7 @@ function ContactRow({
               href={ct.linkedin_url}
               target="_blank"
               rel="noopener noreferrer nofollow"
-              className="inline-flex items-center gap-1 hover:text-indigo-300"
+              className="inline-flex items-center gap-1 transition-colors hover:text-indigo-300"
             >
               <Linkedin className="h-3 w-3" aria-hidden /> LinkedIn
             </a>
@@ -1190,7 +1190,7 @@ function ResearchReportView({
         {r.memory_id ? (
           <Link
             href={`/admin/memory/${r.memory_id}`}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300 hover:text-emerald-200"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300 transition-colors hover:text-emerald-200"
           >
             <Brain className="h-3.5 w-3.5" aria-hidden />
             In Shared Memory
@@ -1315,7 +1315,7 @@ function Disclosure({
 }) {
   return (
     <details className="mt-4 rounded-lg border border-slate-800 bg-slate-900/40">
-      <summary className="flex cursor-pointer items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-300 hover:text-indigo-200">
+      <summary className="flex cursor-pointer items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-300 transition-colors hover:text-indigo-200">
         <Plus className="h-3.5 w-3.5" aria-hidden />
         {label}
       </summary>

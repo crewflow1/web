@@ -134,7 +134,7 @@ export default async function HqCustomerDetailPage({
             Workspace · {org.created_at.slice(0, 10)} ·{" "}
             <Link
               href="/admin/customers"
-              className="text-indigo-300 hover:text-indigo-200"
+              className="text-indigo-300 transition-colors hover:text-indigo-200"
             >
               Back to Customers OS
             </Link>
@@ -171,7 +171,7 @@ export default async function HqCustomerDetailPage({
             {ownerEmail ? (
               <a
                 href={`mailto:${ownerEmail}`}
-                className="text-indigo-300 hover:text-indigo-200"
+                className="text-indigo-300 transition-colors hover:text-indigo-200"
               >
                 {ownerEmail}
               </a>
@@ -183,7 +183,7 @@ export default async function HqCustomerDetailPage({
                 {" · "}
                 <a
                   href={`tel:${phone.replace(/\s/g, "")}`}
-                  className="text-indigo-300 hover:text-indigo-200"
+                  className="text-indigo-300 transition-colors hover:text-indigo-200"
                 >
                   {phone}
                 </a>
@@ -443,7 +443,7 @@ export default async function HqCustomerDetailPage({
                 href="/api/admin/stripe/provision"
                 target="_blank"
                 rel="noreferrer noopener"
-                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300 ring-1 ring-inset ring-amber-400/30 hover:bg-amber-500/25"
+                className="rounded-md bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300 ring-1 ring-inset ring-amber-400/30 transition-colors hover:bg-amber-500/25"
               >
                 Provision Stripe products →
               </a>
@@ -451,7 +451,7 @@ export default async function HqCustomerDetailPage({
                 href="/api/admin/stripe/verify"
                 target="_blank"
                 rel="noreferrer noopener"
-                className="text-[11px] font-medium text-slate-400 hover:text-slate-200 hover:underline"
+                className="text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-200 hover:underline"
               >
                 Run integration diagnostic →
               </a>
@@ -463,7 +463,7 @@ export default async function HqCustomerDetailPage({
               <input type="hidden" name="org_id" value={org.id} />
               <button
                 type="submit"
-                className="rounded-md bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-400/30 hover:bg-indigo-500/25"
+                className="rounded-md bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-400/30 transition-colors hover:bg-indigo-500/25"
               >
                 Open setup-fee checkout (£1,000)
               </button>
@@ -472,7 +472,7 @@ export default async function HqCustomerDetailPage({
               <input type="hidden" name="org_id" value={org.id} />
               <button
                 type="submit"
-                className="rounded-md bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30 hover:bg-emerald-500/25"
+                className="rounded-md bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30 transition-colors hover:bg-emerald-500/25"
               >
                 Open subscription checkout (£500/mo)
               </button>
@@ -552,7 +552,7 @@ export default async function HqCustomerDetailPage({
                   Originated from demo {demoRequest.created_at.slice(0, 10)} ·{" "}
                   <Link
                     href={`/admin/demos?demo=${demoRequest.id}`}
-                    className="text-indigo-300 underline hover:text-indigo-200"
+                    className="text-indigo-300 underline transition-colors hover:text-indigo-200"
                   >
                     open demo
                   </Link>
@@ -732,7 +732,7 @@ function ContactButton({
   return (
     <a
       href={href}
-      className="rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+      className="rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800"
     >
       {label}
     </a>
@@ -771,7 +771,7 @@ function LifecycleButton({
       <button
         type="submit"
         disabled={disabled}
-        className={`rounded-md px-3 py-1.5 text-xs font-medium ${cls} disabled:cursor-not-allowed disabled:opacity-50`}
+        className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${cls} disabled:cursor-not-allowed disabled:opacity-50`}
       >
         {label}
       </button>

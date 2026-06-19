@@ -225,7 +225,7 @@ export default async function SalesDashboardPage() {
           action={
             <Link
               href="/admin/sales/companies"
-              className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               Browse all →
             </Link>
@@ -237,7 +237,7 @@ export default async function SalesDashboardPage() {
               cta={
                 <Link
                   href="/admin/sales/companies/new"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Add a company →
                 </Link>
@@ -260,7 +260,7 @@ export default async function SalesDashboardPage() {
           action={
             <Link
               href="/admin/sales/activity"
-              className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               Full feed →
             </Link>

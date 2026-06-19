@@ -94,7 +94,7 @@ export default async function SalesTasksPage({
       <div className="space-y-5 p-5 sm:p-7">
         {/* Breadcrumb */}
         <p className="text-sm text-slate-500">
-          <Link href="/admin/sales" className="hover:text-slate-300">
+          <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
             Sales AI
           </Link>{" "}
           / <span className="text-slate-300">Task queue</span>
@@ -280,7 +280,7 @@ function TaskQueueRow({ task: t }: { task: SalesTaskItem }) {
           {t.company_id && t.company_name ? (
             <Link
               href={`/admin/sales/companies/${t.company_id}`}
-              className="inline-flex items-center gap-1 font-medium text-indigo-400 hover:text-indigo-300"
+              className="inline-flex items-center gap-1 font-medium text-indigo-400 transition-colors hover:text-indigo-300"
             >
               <Building2 className="h-3 w-3" aria-hidden />
               {t.company_name}

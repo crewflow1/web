@@ -67,7 +67,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
       action={
         <Link
           href={`/admin/notes?org_id=${orgId}`}
-          className="text-[11px] font-medium text-indigo-300 hover:text-indigo-200 hover:underline"
+          className="text-[11px] font-medium text-indigo-300 transition-colors hover:text-indigo-200 hover:underline"
         >
           Open all notes →
         </Link>
@@ -160,7 +160,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
                     />
                     <button
                       type="submit"
-                      className="font-medium text-slate-400 hover:text-slate-200 hover:underline"
+                      className="font-medium text-slate-400 transition-colors hover:text-slate-200 hover:underline"
                     >
                       {n.pinned ? "Unpin" : "Pin"}
                     </button>
@@ -175,7 +175,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
                       />
                       <button
                         type="submit"
-                        className="font-medium text-slate-400 hover:text-slate-200 hover:underline"
+                        className="font-medium text-slate-400 transition-colors hover:text-slate-200 hover:underline"
                       >
                         Archive
                       </button>
@@ -190,7 +190,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
                       />
                       <button
                         type="submit"
-                        className="font-medium text-slate-400 hover:text-slate-200 hover:underline"
+                        className="font-medium text-slate-400 transition-colors hover:text-slate-200 hover:underline"
                       >
                         Unarchive
                       </button>

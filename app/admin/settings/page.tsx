@@ -86,7 +86,7 @@ export default async function HqSettingsPage({
               <li key={id}>
                 <a
                   href={`#${id}`}
-                  className="rounded-md px-2 py-1 text-slate-300 hover:bg-slate-800/70 hover:text-white"
+                  className="rounded-md px-2 py-1 text-slate-300 transition-colors hover:bg-slate-800/70 hover:text-white"
                 >
                   {SECTION_LABEL[id]}
                 </a>

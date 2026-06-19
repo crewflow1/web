@@ -108,13 +108,13 @@ export default async function HqSupportTicketDetailPage({
           <>
             <Link
               href="/admin/support"
-              className="text-[11px] font-medium text-slate-400 hover:text-slate-200"
+              className="text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-200"
             >
               ← Back to queue
             </Link>
             <Link
               href={`/admin/customers/${ticket.org_id}`}
-              className="text-[11px] font-medium text-indigo-300 hover:text-indigo-200"
+              className="text-[11px] font-medium text-indigo-300 transition-colors hover:text-indigo-200"
             >
               Open customer →
             </Link>
@@ -250,7 +250,7 @@ export default async function HqSupportTicketDetailPage({
                     {ticket.owner_email ? (
                       <a
                         href={`mailto:${ticket.owner_email}`}
-                        className="text-indigo-300 hover:text-indigo-200"
+                        className="text-indigo-300 transition-colors hover:text-indigo-200"
                       >
                         {ticket.owner_email}
                       </a>

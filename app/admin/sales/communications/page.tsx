@@ -164,7 +164,7 @@ export default async function CommunicationsPage({
         />
         <div className="relative">
           <p className="text-sm text-slate-500">
-            <Link href="/admin/sales" className="hover:text-slate-300">
+            <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
               Sales AI
             </Link>{" "}
             / <span className="text-slate-300">Communications</span>
@@ -319,14 +319,14 @@ export default async function CommunicationsPage({
               selectedChannel || selectedDir || query ? (
                 <Link
                   href="/admin/sales/communications"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Clear filters
                 </Link>
               ) : (
                 <Link
                   href="/admin/sales/companies"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Browse companies →
                 </Link>

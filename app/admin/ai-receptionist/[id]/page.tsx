@@ -124,7 +124,7 @@ export default async function HqAiReceptionistDetailPage({
           <span className="flex items-center gap-2">
             <Link
               href="/admin/ai-receptionist"
-              className="text-indigo-300 hover:text-indigo-200"
+              className="text-indigo-300 transition-colors hover:text-indigo-200"
             >
               AI Receptionist setups
             </Link>
@@ -213,7 +213,7 @@ export default async function HqAiReceptionistDetailPage({
               <input type="hidden" name="id" value={row.id} />
               <Button
                 type="submit"
-                className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
+                className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none transition-colors hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
               >
                 Mark AI receptionist configured (Live)
               </Button>

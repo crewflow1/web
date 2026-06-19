@@ -363,7 +363,7 @@ function DemoRowItem({ demo }: { demo: DemoRow }) {
       : demo.turnover_range ?? "—";
 
   return (
-    <li className="px-5 py-4 hover:bg-slate-900/50">
+    <li className="px-5 py-4 transition-colors hover:bg-slate-900/50">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -479,7 +479,7 @@ function OrgRowItem({
       : null;
 
   return (
-    <li className="px-5 py-4 hover:bg-slate-900/50">
+    <li className="px-5 py-4 transition-colors hover:bg-slate-900/50">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

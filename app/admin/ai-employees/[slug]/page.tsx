@@ -156,7 +156,7 @@ export default async function AiEmployeeDetailPage({
         <p className="text-sm text-slate-500">
           <Link
             href="/admin/ai-employees"
-            className="hover:text-slate-700 dark:hover:text-slate-300"
+            className="transition-colors hover:text-slate-700 dark:hover:text-slate-300"
           >
             AI Employees
           </Link>
@@ -678,7 +678,7 @@ export default async function AiEmployeeDetailPage({
                 action={
                   <Link
                     href="/admin/memory"
-                    className="text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                    className="text-sm font-medium text-indigo-600 transition-colors hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
                   >
                     Open Shared Memory →
                   </Link>

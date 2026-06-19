@@ -270,12 +270,12 @@ function CustomerBillingRowView({
   collapseQs.delete("org");
 
   return (
-    <li className="px-5 py-3 hover:bg-slate-900/50">
+    <li className="px-5 py-3 transition-colors hover:bg-slate-900/50">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <Link
             href={`/admin/customers/${row.org_id}`}
-            className="text-sm font-semibold text-white hover:text-slate-300"
+            className="text-sm font-semibold text-white transition-colors hover:text-slate-300"
           >
             {row.org_name}
           </Link>
@@ -320,14 +320,14 @@ function CustomerBillingRowView({
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Link
           href={`/admin/customers/${row.org_id}`}
-          className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
+          className="text-xs font-medium text-indigo-300 transition-colors hover:text-indigo-200"
         >
           Open customer →
         </Link>
         {open ? (
           <Link
             href={`/admin/billing?${collapseQs.toString()}`}
-            className="text-xs font-medium text-slate-400 hover:text-slate-200"
+            className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-200"
             scroll={false}
           >
             Collapse
@@ -549,7 +549,7 @@ function FlipButton({
       <input type="hidden" name="status" value={status} />
       <button
         type="submit"
-        className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${cls}`}
+        className={`rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors ${cls}`}
       >
         {label}
       </button>

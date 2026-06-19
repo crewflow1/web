@@ -116,7 +116,7 @@ export default async function MemorySearchPage({
       <div className="space-y-5 p-5 sm:p-7">
         {/* Breadcrumb */}
         <p className="text-sm text-slate-500">
-          <Link href="/admin/memory" className="hover:text-slate-300">
+          <Link href="/admin/memory" className="transition-colors hover:text-slate-300">
             Shared Memory
           </Link>{" "}
           / <span className="text-slate-300">Search</span>
@@ -302,14 +302,14 @@ export default async function MemorySearchPage({
               hasFilters ? (
                 <Link
                   href="/admin/memory/search"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Clear filters
                 </Link>
               ) : (
                 <Link
                   href="/admin/memory/new"
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  className="text-xs font-medium text-indigo-400 transition-colors hover:text-indigo-300"
                 >
                   Create the first memory →
                 </Link>

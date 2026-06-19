@@ -240,7 +240,7 @@ export default async function HqSupportListPage({
         ) : (
           <ul className="divide-y divide-slate-800 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/40">
             {sorted.map((t) => (
-              <li key={t.id} className="px-4 py-3 hover:bg-slate-900/50">
+              <li key={t.id} className="px-4 py-3 transition-colors hover:bg-slate-900/50">
                 <Link
                   href={`/admin/support/${t.id}`}
                   className="flex flex-wrap items-baseline justify-between gap-2"

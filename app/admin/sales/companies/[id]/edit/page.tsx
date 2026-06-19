@@ -39,17 +39,17 @@ export default async function EditCompanyPage({
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <div className="space-y-5 p-5 sm:p-7">
         <p className="text-sm text-slate-500">
-          <Link href="/admin/sales" className="hover:text-slate-300">
+          <Link href="/admin/sales" className="transition-colors hover:text-slate-300">
             Sales AI
           </Link>{" "}
           /{" "}
-          <Link href="/admin/sales/companies" className="hover:text-slate-300">
+          <Link href="/admin/sales/companies" className="transition-colors hover:text-slate-300">
             Companies
           </Link>{" "}
           /{" "}
           <Link
             href={`/admin/sales/companies/${company.id}`}
-            className="hover:text-slate-300"
+            className="transition-colors hover:text-slate-300"
           >
             {company.name}
           </Link>{" "}

@@ -153,7 +153,7 @@ export function DemoDetailPanel({
             disabled={!waHref || pendingContact}
             target="_blank"
             rel="noopener noreferrer"
-            className="border-emerald-400/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+            className="border-emerald-400/30 bg-emerald-500/15 text-emerald-300 transition-colors hover:bg-emerald-500/25"
           />
         </div>
       </section>

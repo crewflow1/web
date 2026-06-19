@@ -300,7 +300,7 @@ function CooPanel({ alerts }: { alerts: ReadonlyArray<AlertWithState> }) {
         </div>
         <Link
           href="/admin/alerts?show=resolved"
-          className="text-xs font-medium text-indigo-300 hover:text-indigo-200"
+          className="text-xs font-medium text-indigo-300 transition-colors hover:text-indigo-200"
         >
           See archive →
         </Link>
@@ -459,7 +459,7 @@ function AlertCard({
                 target="_blank"
                 rel="noreferrer noopener"
                 size="sm"
-                className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
+                className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none transition-colors hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
               >
                 WhatsApp
               </ButtonLink>
@@ -525,7 +525,7 @@ function ResolveForm({ ruleId, orgId }: { ruleId: string; orgId: string }) {
       <Button
         type="submit"
         size="sm"
-        className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
+        className="border border-emerald-400/30 bg-emerald-500/15 text-emerald-300 shadow-none transition-colors hover:bg-emerald-500/25 focus-visible:ring-emerald-500 focus-visible:ring-offset-slate-950"
       >
         Mark resolved
       </Button>

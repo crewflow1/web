@@ -168,11 +168,11 @@ export default async function HqAiReceptionistPage({
                   if (row.instagram_handle) channels.push("IG");
 
                   return (
-                    <tr key={row.id} className="hover:bg-slate-900/50">
+                    <tr key={row.id} className="transition-colors hover:bg-slate-900/50">
                       <td className="px-3 py-2">
                         <Link
                           href={`/admin/ai-receptionist/${row.id}`}
-                          className="font-medium text-indigo-300 hover:text-indigo-200"
+                          className="font-medium text-indigo-300 transition-colors hover:text-indigo-200"
                         >
                           {row.org?.name ?? "Unknown"}
                         </Link>
@@ -239,8 +239,8 @@ function FilterPill({
       aria-current={isActive ? "page" : undefined}
       className={
         isActive
-          ? "rounded-full bg-indigo-600 px-3 py-1 font-medium text-white"
-          : "rounded-full border border-slate-700 bg-slate-900 px-3 py-1 font-medium text-slate-300 hover:bg-slate-800"
+          ? "rounded-full bg-indigo-600 px-3 py-1 font-medium text-white transition-colors"
+          : "rounded-full border border-slate-700 bg-slate-900 px-3 py-1 font-medium text-slate-300 transition-colors hover:bg-slate-800"
       }
     >
       {label}

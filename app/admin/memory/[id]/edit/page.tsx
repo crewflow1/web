@@ -46,13 +46,13 @@ export default async function EditMemoryPage({
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <div className="space-y-5 p-5 sm:p-7">
         <p className="text-sm text-slate-500">
-          <Link href="/admin/memory" className="hover:text-slate-300">
+          <Link href="/admin/memory" className="transition-colors hover:text-slate-300">
             Shared Memory
           </Link>{" "}
           /{" "}
           <Link
             href={`/admin/memory/${detail.memory.id}`}
-            className="hover:text-slate-300"
+            className="transition-colors hover:text-slate-300"
           >
             {detail.memory.title}
           </Link>{" "}

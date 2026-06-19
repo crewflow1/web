@@ -99,11 +99,11 @@ export default async function MemoryDetailPage({
       <div className="space-y-5 p-5 sm:p-7">
         {/* Breadcrumb */}
         <p className="text-sm text-slate-500">
-          <Link href="/admin/memory" className="hover:text-slate-300">
+          <Link href="/admin/memory" className="transition-colors hover:text-slate-300">
             Shared Memory
           </Link>{" "}
           /{" "}
-          <Link href="/admin/memory/search" className="hover:text-slate-300">
+          <Link href="/admin/memory/search" className="transition-colors hover:text-slate-300">
             Search
           </Link>{" "}
           / <span className="text-slate-300">{m.title}</span>

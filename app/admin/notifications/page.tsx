@@ -214,7 +214,7 @@ export default async function HqNotificationsPage({
             </dl>
             {emailStats.recent_failures.length > 0 ? (
               <details className="mt-3">
-                <summary className="cursor-pointer text-xs font-medium text-slate-300 hover:text-white">
+                <summary className="cursor-pointer text-xs font-medium text-slate-300 transition-colors hover:text-white">
                   Recent failures ({emailStats.recent_failures.length})
                 </summary>
                 <ul className="mt-2 space-y-1 text-[11px]">
@@ -335,7 +335,7 @@ export default async function HqNotificationsPage({
                         {n.action_url ? (
                           <Link
                             href={n.action_url}
-                            className="text-indigo-300 hover:text-indigo-200"
+                            className="text-indigo-300 transition-colors hover:text-indigo-200"
                           >
                             {n.title}
                           </Link>
@@ -366,7 +366,7 @@ export default async function HqNotificationsPage({
                           <input type="hidden" name="id" value={n.id} />
                           <button
                             type="submit"
-                            className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                            className="text-[11px] font-medium text-slate-400 transition-colors hover:text-white hover:underline"
                           >
                             Mark read
                           </button>
@@ -377,7 +377,7 @@ export default async function HqNotificationsPage({
                           <input type="hidden" name="id" value={n.id} />
                           <button
                             type="submit"
-                            className="text-[11px] font-medium text-slate-400 hover:text-white hover:underline"
+                            className="text-[11px] font-medium text-slate-400 transition-colors hover:text-white hover:underline"
                           >
                             Dismiss
                           </button>
