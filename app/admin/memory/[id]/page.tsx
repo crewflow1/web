@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AnimatedNumber } from "@/components/ui";
 import { notFound } from "next/navigation";
+import { pill } from "@/components/ui/tokens";
 import {
   Activity,
   History,
@@ -119,7 +120,7 @@ export default async function MemoryDetailPage({
               <div className="flex flex-wrap items-center gap-2">
                 <MemoryTypeBadge type={type} slug={m.memory_type} />
                 {m.pinned ? (
-                  <Pill className="bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+                  <Pill className={pill("amber")}>
                     <Pin className="mr-1 h-3 w-3" aria-hidden /> Pinned
                   </Pill>
                 ) : null}
