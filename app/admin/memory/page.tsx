@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedNumber } from "@/components/ui";
+import { AnimatedNumber, IconTile, pill } from "@/components/ui";
 import { Brain, Plus, Search, ShieldCheck } from "lucide-react";
 import {
   getDashboardStats,
@@ -49,9 +49,9 @@ export default async function MemoryDashboardPage() {
         />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+            <IconTile size="lg">
               <Brain className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-            </span>
+            </IconTile>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">
                 Shared Memory
@@ -157,7 +157,9 @@ export default async function MemoryDashboardPage() {
                   key={c.email}
                   className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/60 py-1 pl-1 pr-3"
                 >
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/15 text-[11px] font-bold text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+                  <span
+                    className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${pill("indigo")}`}
+                  >
                     {i + 1}
                   </span>
                   <span className="text-xs text-slate-300">{c.email}</span>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { IconTile } from "@/components/ui";
 import { Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import {
   listSalesSources,
@@ -137,9 +138,9 @@ export default async function CompaniesSearchPage({
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+            <IconTile size="md">
               <SearchIcon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-            </span>
+            </IconTile>
             <div>
               <h1 className="text-lg font-bold tracking-tight text-white">
                 Company intelligence

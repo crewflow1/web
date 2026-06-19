@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedNumber } from "@/components/ui";
+import { AnimatedNumber, IconTile } from "@/components/ui";
 import { Building2, ListChecks, Plus } from "lucide-react";
 import {
   getAiTaskCounts,
@@ -103,9 +103,9 @@ export default async function SalesTasksPage({
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+            <IconTile size="md">
               <ListChecks className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-            </span>
+            </IconTile>
             <div>
               <h1 className="text-lg font-bold tracking-tight text-white">
                 AI task queue

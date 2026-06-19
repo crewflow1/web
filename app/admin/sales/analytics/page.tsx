@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedNumber } from "@/components/ui";
+import { AnimatedNumber, IconTile } from "@/components/ui";
 import { BarChart3, TrendingUp } from "lucide-react";
 import { getSalesAnalytics } from "@/server/services/hq-sales";
 import { formatGbp } from "@/lib/sales/model";
@@ -35,9 +35,9 @@ export default async function SalesAnalyticsPage() {
         </p>
 
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+          <IconTile size="md">
             <BarChart3 className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-          </span>
+          </IconTile>
           <div>
             <h1 className="text-lg font-bold tracking-tight text-white">
               Sales analytics

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { accent, type Accent } from "./tokens";
+import { type Accent } from "./tokens";
+import { IconTile } from "./icon-tile";
 
 /**
  * Structural surfaces — the glass canvas the whole platform is built on.
@@ -51,7 +52,6 @@ export function Panel({
   bodyClassName?: string;
   children: ReactNode;
 }) {
-  const a = accent(tone);
   const hasHeader = Boolean(title || subtitle || action || icon);
   return (
     <section
@@ -64,14 +64,12 @@ export function Panel({
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             {icon ? (
-              <span
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-                  a.chip,
-                )}
-              >
+              // Panel's historical icon-tile fallback is slate (accent() maps
+              // undefined → slate); preserve it exactly rather than IconTile's
+              // own indigo default.
+              <IconTile accent={tone ?? "slate"} size="sm" className="shrink-0">
                 {icon}
-              </span>
+              </IconTile>
             ) : null}
             <div>
               {title ? (
@@ -112,7 +110,6 @@ export function GlowHeader({
   actions?: ReactNode;
   className?: string;
 }) {
-  const a = accent(tone);
   return (
     <div
       className={cn(
@@ -131,14 +128,9 @@ export function GlowHeader({
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           {icon ? (
-            <span
-              className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
-                a.chip,
-              )}
-            >
+            <IconTile accent={tone} size="lg" className="shrink-0">
               {icon}
-            </span>
+            </IconTile>
           ) : null}
           <div>
             {eyebrow ? (

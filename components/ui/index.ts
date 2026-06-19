@@ -24,6 +24,7 @@ export {
 
 // Structure
 export { Surface, Panel, GlowHeader, SectionHeading } from "./surface";
+export { IconTile, iconTileClass, type IconTileSize } from "./icon-tile";
 export { Card } from "./card";
 export { StatTile, Fact } from "./stat-tile";
 export { Table, THead, TBody, TR, TH, TD } from "./table";

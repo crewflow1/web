@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { IconTile } from "@/components/ui";
 import Link from "next/link";
 import {
   Activity,
@@ -118,9 +119,9 @@ function Header() {
       />
       <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30">
+          <IconTile accent="amber" size="lg">
             <Crown className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-          </span>
+          </IconTile>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-white">
               CEO Dashboard

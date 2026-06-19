@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { IconTile } from "@/components/ui";
 import { notFound } from "next/navigation";
 import { pill } from "@/components/ui/tokens";
 import {
@@ -186,9 +187,9 @@ export default async function CompanyDetailPage({
         <header className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+              <IconTile size="lg" className="shrink-0">
                 <Building2 className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-              </span>
+              </IconTile>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill status={c.status} />

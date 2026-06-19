@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { IconTile } from "@/components/ui";
 import type { ReactNode } from "react";
 import { pill } from "@/components/ui/tokens";
 import {
@@ -235,9 +236,9 @@ export function CompanyCard({ company: c }: { company: SalesCompanyListItem }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+          <IconTile size="xs" className="mt-0.5 rounded-lg shrink-0">
             <Building2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-          </span>
+          </IconTile>
           <div className="min-w-0">
             <p className="truncate font-semibold leading-snug text-white">
               {c.name}

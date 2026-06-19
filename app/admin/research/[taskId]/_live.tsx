@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IconTile } from "@/components/ui/icon-tile";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -105,13 +106,13 @@ export function LiveRun({
       <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+            <IconTile size="sm" className="relative">
               {terminal ? (
                 <Sparkles className="h-5 w-5" aria-hidden />
               ) : (
                 <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
               )}
-            </span>
+            </IconTile>
             <div>
               <p className="text-sm font-semibold text-white">
                 {terminal ? "Research finished" : "Research AI is working…"}

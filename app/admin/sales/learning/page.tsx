@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedNumber } from "@/components/ui";
+import { AnimatedNumber, IconTile } from "@/components/ui";
 import {
   ArrowRight,
   BookMarked,
@@ -105,9 +105,9 @@ export default async function LearningPage({
           </p>
           <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+              <IconTile size="lg">
                 <Brain className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-              </span>
+              </IconTile>
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-white">
                   Learning Engine
@@ -264,9 +264,9 @@ export default async function LearningPage({
             className="group flex items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4 transition hover:border-indigo-500/40 hover:bg-slate-900"
           >
             <div className="flex min-w-0 items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-fuchsia-500/15 text-fuchsia-300 ring-1 ring-inset ring-fuchsia-400/30">
+              <IconTile accent="fuchsia" size="sm" className="rounded-lg shrink-0">
                 <Brain className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-              </span>
+              </IconTile>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-100">
                   Shared Memory Engine

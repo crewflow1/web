@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { IconTile } from "@/components/ui";
 import Link from "next/link";
 import { Microscope, ShieldCheck } from "lucide-react";
 import {
@@ -51,9 +52,9 @@ export default async function ResearchRunPage({
         />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+            <IconTile size="lg">
               <Microscope className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-            </span>
+            </IconTile>
             <div>
               <div className="mb-1">
                 <BackToResearch />
