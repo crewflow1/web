@@ -253,6 +253,18 @@ create table hq_metric_counters (
   updated_at timestamptz not null default now(),
   primary key (metric, dims)
 );
+
+-- 03.15c hq_operator_dashboard — per-operator Mission Control state (Ch.09): the
+-- saved tile layout, and an unread high-water mark into the spine's total order.
+-- The ONLY table Mission Control owns; it reads everyone else's projections.
+-- 🔬 Open question (Ch.20): keep this table, or fold into a per-operator hq_settings
+-- row? A dedicated table keeps the hot last_seen_event write off the config store.
+create table hq_operator_dashboard (
+  operator_id     uuid primary key references auth.users(id) on delete cascade,
+  layout          jsonb       not null default '{}',   -- pinned / ordered / collapsed tiles
+  last_seen_event bigint      not null default 0,       -- high-water mark into hq_events.id (§03.1 total order)
+  updated_at      timestamptz not null default now()
+);
 ```
 
 ### 6. Memory graph — semantic layer (Ch.12)
