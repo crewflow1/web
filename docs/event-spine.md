@@ -446,13 +446,220 @@ actually hold in a live database.
 
 ---
 
+# HQ Event Spine — PR4: Historical Backfill
+
+> Module 1, PR4 (CEO Directive #003, decision **D2** — cron only, no LISTEN/NOTIFY).
+> PR1 landed the spine's storage and write primitive; PR2 wired the forward
+> producers; PR3 landed the consumer side. PR4 lands the **backfill**: it replays
+> the surviving historical rows of the three legacy logs — `activity_log`,
+> `admin_activity_log`, `hq_memory_events` — into canonical `hq_events`, so the
+> spine's timeline reaches back **before the producers existed**. Each legacy row
+> maps to **one** canonical event carrying its **original `ts`**, guarded so a
+> re-run can never duplicate (Ch.04 §backfill, Ch.11 §legacy→canonical mapping).
+>
+> The CEO's four invariants — **fully idempotent / no duplicate events**,
+> **replay-safe / restartable at any point**, **deterministic ordering**, **zero
+> customer downtime / dark shipped** — are each guaranteed by construction below.
+
+PR4 ships **dark**. A third infra kill-switch `event_spine.backfill_enabled`
+defaults **off**, so applying the migration changes no behaviour and emits **not
+one event** until an operator opts in — until then every entry point is a single
+cheap gated RPC. No tenant table is mutated: the legacy rows are **read, never
+changed** (P2), so the change is provably additive.
+
+Migration: `supabase/migrations/20260720030000_hq_event_spine_backfill.sql`.
+
+## What PR4 ships
+
+| Object | Kind | Purpose |
+|---|---|---|
+| `event_spine.backfill_enabled` | flag (in the `hq_settings` singleton JSONB) | The dark-ship / kill-switch. Seeded `false`; flipped at runtime with no deploy. Symmetric with PR2/PR3. |
+| `public.hq_spine_backfill_enabled()` | function (SECURITY DEFINER) | Reads the flag; returns `false` on any miss. `service_role`-only. |
+| `public.hq_backfill_state` | table (RLS:hq) | Durable per-source progress: the `(cursor_created_at, cursor_id)` walk position, the once-captured `ceiling`, status (`idle`/`running`/`done`) and counters. |
+| `public.hq_backfill_register(...)` | function (SECURITY DEFINER) | Ensures a source's state row exists (`on conflict do nothing`). |
+| `public.hq_backfill_emit(...)` | function (SECURITY DEFINER) | The **one** historical-insert primitive: writes a single `hq_events` row carrying the original `ts` + a deterministic `correlation_id`, **only where NOT EXISTS** a prior event with the same backfill key. Returns `true` iff a row was inserted. |
+| `public.hq_backfill_drain(...)` | function (SECURITY DEFINER) | Replays one source's next bounded batch in `(created_at, id)` order: gate → lock → capture ceiling → walk → map → emit → transactional cursor advance. Returns a jsonb summary. |
+| `public.hq_backfill_reset(...)` | function (SECURITY DEFINER) | Rewinds a source to the sentinels for a from-scratch redrive (the guard keeps it duplicate-free). |
+| `public.hq_backfill_status()` | function (SECURITY DEFINER) | Read-side rollup: the gate + every source's status/counters (Ch.15), surfaced by the cron run. |
+| `server/services/spine-backfill.ts` | TypeScript (`server-only`) | Never-throwing wrappers: `runBackfill()`, `backfillSource()`, `resetBackfill()`, `getBackfillStatus()`, `isBackfillEnabled()`. |
+| `app/api/cron/spine-backfill/route.ts` | route | The guaranteed-delivery cron (`* * * * *`, Bearer `CRON_SECRET`). |
+
+## The backfill gate — symmetric with the producer and consumer gates
+
+The kill-switch lives in the existing `hq_settings` singleton JSONB under the same
+non-UI **`event_spine`** section as PR2's `dual_write_enabled` and PR3's
+`consumer_enabled` — "maximum reuse, minimum complexity". It is deliberately **not**
+in the settings TS `SECTION_IDS`, so the operator page never renders it: a low-level
+**infra kill-switch**. It seeds **`false`** without clobbering an operator's value
+(the seed `UPDATE` writes only when the key is absent). Flip it on at runtime, no
+deploy:
+
+```sql
+update public.hq_settings
+  set data = jsonb_set(data, '{event_spine,backfill_enabled}', 'true')
+where id = 'singleton';
+```
+
+`runBackfill()` reads the gate **first** and, while dark, short-circuits to
+`{ ok: true, enabled: false, results: [] }` **without draining a single source**.
+
+## Historical `ts` — why a dedicated INSERT, not `hq_emit_event`
+
+A backfilled event must carry its **original `ts`** (the legacy `created_at`), so it
+lands in the right monthly partition and orders correctly on the timeline — and that
+determinism is also what makes replay idempotent. But `hq_events` is RANGE
+partitioned by `ts`, the validated live entry point `hq_emit_event` has **no `ts`
+parameter** (it always defaults `ts = now()`), and PR1's core is **frozen**. So the
+backfill path is legitimately distinct: it writes through `hq_backfill_emit` — a
+`SECURITY DEFINER`, `service_role`-only INSERT carrying the original `ts` and a
+deterministic `correlation_id = md5(source || ':' || id)::uuid` — **never** through
+`hq_emit_event`. The append-only guard blocks `UPDATE`/`DELETE`, **not** `INSERT`, so
+a direct historical insert is permitted. (History older than the partition runway
+lands safely in the `hq_events_default` partition PR1 created for exactly this.)
+
+> **Lesson (Ch.04).** "Emit through the one validated entry point" is the rule for
+> *live* events; backfill is the deliberate exception, because the original `ts` is
+> load-bearing and the frozen `hq_emit_event` cannot carry it. The exception is
+> contained to **one** auditable primitive so the ts / correlation / dedup contract
+> lives in exactly one place.
+
+## The replay adapters — mirror the live producer, grounded in the real vocabulary
+
+Each source is mapped from the **real** producer vocabulary, not a guessed catalogue:
+
+- **`activity_log`** mirrors PR2's `hq_emit_from_activity` **exactly** — the same
+  curated six verbs (`customer.created/updated`, `job.created`, `job.completed` on a
+  status change to `completed`, `quote.sent`, `quote.accepted`), with byte-for-byte
+  the same curated non-PII payloads. History therefore looks precisely as if the
+  forward producer had always run; when the producer is later expanded, backfill
+  follows.
+- **`admin_activity_log`** projects **only** the unambiguous canonical billing trio
+  (`stripe.invoice_paid → invoice.paid`, `stripe.invoice_failed →
+  invoice.payment_failed`, `stripe.subscription_deleted → org.churned`). Operator-
+  audit noise (impersonation, notes, CRM, support, alerts) is deliberately **not**
+  projected — the spine is the business-event heartbeat, not the operator click
+  trail.
+- **`hq_memory_events`** maps `created → memory.asserted` and a `status_changed` to
+  `superseded → memory.superseded`.
+
+> **Lesson (Ch.11) — the mapping must be grounded in production, not the spec.** The
+> Bible's Ch.11 sketch assumed `admin_activity_log` action strings
+> (`org.suspended`, `org.trial_converted`-style) that **do not exist** in
+> production; the real org/billing lifecycle is Stripe-webhook-shaped. We project
+> only what genuinely exists and defer the richer Stripe→canonical mapping
+> (subscription modes, checkout/trial detection) to a dedicated billing-producer PR
+> rather than force-fit a guessed vocabulary ("rows with no registry verb are not
+> projected").
+
+> **Lesson (Ch.11) — one canonical source per verb.** Memory creation is double-
+> logged: it appears in `admin_activity_log` as `hq_memory.created` **and** in
+> `hq_memory_events`. The memory verbs are owned by the `hq_memory_events` adapter,
+> so the admin adapter does **not** project `hq_memory.*` — otherwise the same
+> logical event would be emitted twice, and the backfill key (which dedups only
+> *within* a source) could not collapse a cross-source duplicate.
+
+## The four invariants — how each is guaranteed
+
+- **Idempotent / no duplicate events.** Every emitted event carries
+  `{backfill_source, backfill_source_id}` in its payload, and `hq_backfill_emit`
+  inserts **only where NOT EXISTS** a prior event with that key. The spine is
+  append-only and can never be reset, so this guard — not a cursor alone — is what
+  makes a **full** replay non-duplicating. A point-lookup index
+  (`hq_events_backfill_source_idx` on the two payload keys) keeps the probe off the
+  partition scan.
+- **Replay-safe / restartable at any point.** Progress is a durable per-source
+  cursor `(created_at, id)` advanced in the **same transaction** as the inserts
+  (PR3's transactional-advance pattern): a crash rolls back **both**, so the next run
+  resumes exactly where it stopped. `hq_backfill_reset` rewinds to the sentinels for
+  a from-scratch redrive; the NOT EXISTS guard keeps that duplicate-free (a redrive
+  re-walks every row but re-inserts nothing).
+- **Deterministic ordering.** Each source is walked in strict `(created_at, id)`
+  order — `id` is the row's uuid PK, a stable total order with no ties — bounded
+  above by a **ceiling** captured **once** at start (`order by created_at desc, id
+  desc limit 1`), so backfill only ever touches **history** and never races the
+  forward path.
+- **Zero customer downtime / dark shipped.** The gate defaults `false` and lives off
+  the operator UI; with it off every entry point is a cheap no-op. The cron is
+  bounded (`p_max_rows`, default 500) so each run is small and restartable.
+
+## The namespaced provenance key — a collision the integration test caught
+
+The idempotency key travels **in** the payload and is merged **on top** of the
+curated mapping payload with jsonb `||`, where the right operand wins on a key
+clash. An earlier draft used a **bare** `source` key for the provenance — and
+`quote.accepted`'s curated payload already carries its **own** `source` (the
+acceptance channel, e.g. `public_link`). The bare key silently **clobbered** the
+domain field, overwriting `public_link` with `activity_log` and breaking
+forward/backfill parity. The fix is to **namespace** the provenance under
+`backfill_source` / `backfill_source_id`, which can never collide with a curated
+domain field, so domain payloads survive byte-for-byte.
+
+> **Lesson (Ch.04 + Ch.11) — a provenance/idempotency key merged into a payload must
+> be namespaced** so it can never shadow a domain field of the same name. This was
+> caught while **designing the integration test** (`quote.accepted` is the one
+> curated payload with its own `source`), not by a mock — a concrete instance of
+> "real infrastructure proves behaviour": the security suite now pins both the
+> namespaced key **and** a regression guard against the bare `source` form.
+
+## Function hardening & privilege model (PR4)
+
+All six new functions follow the established mould: `SECURITY DEFINER` with a pinned
+empty `search_path`, `EXECUTE` revoked from `public, anon` **and** `authenticated`,
+granted only to `service_role` (L-4: Supabase's default privileges grant `EXECUTE`
+on new public functions directly to the JWT roles, so revoking from `PUBLIC` alone
+is not enough). The backfill is therefore **uncallable by any JWT client** — only
+the service-role cron can drive it. `hq_backfill_state` is **RLS:hq** (RLS enabled,
+zero policies). There is **zero dynamic SQL**: every source read is a **static**
+`CASE` branch (a `SECURITY DEFINER` function that `EXECUTE`d a source name would be a
+privilege-escalation surface we refuse on the spine).
+
+## Test coverage (PR4)
+
+| Tier | File | Proves |
+|---|---|---|
+| Unit | `__tests__/ops/spine-backfill.test.ts` | Service-layer contract against a mocked admin client: bounded-batch arg mapping + default (500); a **string** `skipped` read as a no-op reason vs a numeric counter; the never-throw contract (a rejected RPC ⇒ `ok:false`); `runBackfill` **short-circuits** while dark (never drains a source); drains all three sources in order; reset/status/`isBackfillEnabled` fail-dark. |
+| Integration | `__tests__/integration/spine/backfill.test.ts` | **Live Postgres**: ships dark (gate off ⇒ `backfill_disabled`, zero events, state untouched); deterministic `(created_at, id)` order + bounded batches + cursor resume; the oracle — every legacy row maps to one canonical event with its **original `ts`**, deterministic correlation and curated payload, and `quote.accepted` keeps its own `source` beside the namespaced provenance; **no duplicates** on a full re-drain; **restartable** — reset + redrive re-emits nothing and rebuilds byte-identical events; the legacy rows are never mutated. |
+| Security | `__tests__/security/event-spine-backfill-invariants.test.ts` | Hermetic pins on the migration text: ships dark (seeds `backfill_enabled` false, never true, off the operator UI, only-when-absent; drain fails-dark); original `ts` via a direct INSERT **not** `hq_emit_event`; deterministic md5 correlation; the **NOT EXISTS** guard on the namespaced key (+ a regression guard against a bare `source`); deterministic `(created_at, id)` walk, captured ceiling, single-active lock, transactional advance; the three grounded mappings; reset sentinels; **no** dynamic SQL; `SECURITY DEFINER` + pinned `search_path`; `EXECUTE` revoked from `public, anon, authenticated` and granted only to `service_role`; `hq_backfill_state` RLS:hq. |
+
+"Mocks prove intent; real infrastructure proves behaviour" — the unit tier maps the
+service contract against a mock; the security tier pins the backfill contract against
+the migration source; the integration tier proves the dark-ship, the original-`ts`
+replay, deterministic ordering, the no-duplicate guard and restartability actually
+hold in a live database — and is where the namespaced-key collision was caught.
+
+> **Lesson (Directive #004, six-gate CI) — an integration fixture must reckon with
+> EXACTLY the migration-seeded baseline: no more, and no less.** CI is
+> **migrations-only** (a fresh `supabase start`, no `seed.sql`), so the database holds
+> precisely what the migrations create — nothing an operator later added in prod, and
+> nothing less than the migrations' own seed rows. Two consecutive CI runs each caught
+> a different side of this, both invisible to a mock:
+>
+> 1. **Prod-only data is absent.** The memory fixture used a `memory_type` slug
+>    (`fact`) that exists in production — an operator added it through the admin UI,
+>    since types are *extensible data* — but that no migration seeds, so it violated
+>    the `hq_memory_types` FK. Fix: seed from a **migration-provided** slug
+>    (`engineering`). A fixture may assume only what the migrations create.
+> 2. **Migration-seeded example data is present.** The shared-memory **seed migration**
+>    inserts six example `hq_memory_events`, so the table is **not** empty in CI. The
+>    deterministic bounded-batch test asserts whole-*source* drain arithmetic, and the
+>    drain walks the entire table — so those six recent-`now()` rows extended the
+>    captured ceiling past our year-2000 seeds and leaked an extra batch. Fix: a
+>    whole-table assertion must **own the table's contents** — clear every pre-existing
+>    row in `beforeAll` so the source holds exactly the fixtures (safe here: no other
+>    integration suite reads it and the CI database is ephemeral).
+>
+> The unifying rule: a real-Postgres fixture is only deterministic if it accounts for
+> the migration baseline on both sides. This is exactly the class of gap the
+> real-Postgres tier exists to catch — a mock would have sailed past both.
+
+---
+
 # Roadmap
 
-PR1 (storage + write primitive), PR2 (producers) and PR3 (offset consumer) are in.
-Per the locked implementation order, the following remain:
+PR1 (storage + write primitive), PR2 (producers), PR3 (offset consumer) and PR4
+(historical backfill) are in. Per the locked implementation order, the following
+remain:
 
-- **PR4** — Historical backfill of `activity_log` / `admin_activity_log` /
-  `hq_memory_events` into canonical events (idempotent).
 - **PR5** — Timeline / The Pulse (first customer-visible deliverable) +
   `requireHqPage()`.
 - **PR6** — Realtime: server-authorised broadcaster + live channels.
