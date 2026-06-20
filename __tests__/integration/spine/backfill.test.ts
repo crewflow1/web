@@ -305,7 +305,11 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
     expect(org.error, org.error?.message).toBeNull();
     orgId = String((org.data as { id: string }).id);
 
-    memId = await insertRow("hq_memories", { title: "PR4 backfill memory", memory_type: "fact" });
+    // `memory_type` is an FK to the hq_memory_types lookup; use a slug the schema
+    // SEEDS via migration ('engineering'), not one only added in prod via the admin
+    // UI ('fact'), so this holds on a migrations-only CI database. The type never
+    // flows into a backfilled event, so it is assertion-neutral.
+    memId = await insertRow("hq_memories", { title: "PR4 backfill memory", memory_type: "engineering" });
     // Creating the memory may auto-log an hq_memory_events row; clear it so the source
     // contains exactly our controlled seeds.
     await svc().from("hq_memory_events").delete().eq("memory_id", memId);

@@ -627,6 +627,18 @@ the migration source; the integration tier proves the dark-ship, the original-`t
 replay, deterministic ordering, the no-duplicate guard and restartability actually
 hold in a live database — and is where the namespaced-key collision was caught.
 
+> **Lesson (Directive #004, six-gate CI) — an integration fixture must seed from the
+> migrations, never from production-only data.** CI is **migrations-only** (a fresh
+> `supabase start`, no `seed.sql`), so the only reference data present is what a
+> migration inserts. The first CI run failed because the memory fixture used a
+> `memory_type` slug (`fact`) that exists in production — an operator added it through
+> the admin UI, since types are *extensible data* — but that the schema seed never
+> inserts, so it violated the `hq_memory_types` FK on the CI database. The fix is to
+> seed from a **migration-provided** slug (`engineering`). The general rule: a
+> fixture may assume only what the migrations create; lookup rows added as data in
+> prod are invisible to CI. This is exactly the class of gap the real-Postgres tier
+> exists to catch — a mock would have sailed past it.
+
 ---
 
 # Roadmap
