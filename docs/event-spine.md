@@ -284,13 +284,173 @@ actually hold in a live database.
 
 ---
 
+# HQ Event Spine — PR3: Offset Consumer
+
+> Module 1, PR3 (CEO Directive #003, decision **D2** — cron-based offset consumer,
+> **no LISTEN/NOTIFY**). PR1 landed the spine's storage and write primitive; PR2
+> wired the first producers. PR3 lands the **read side**: a generic SQL drainer
+> that reads new events since a durable offset, applies each **idempotently**, and
+> advances the offset in the **same transaction** (Ch.04). At-least-once delivery
+> over an idempotent apply is **effectively-once** — we never claim exactly-once
+> (P8). Consumers order by `id` (the total order), never `ts`.
+
+PR3 ships **dark**. A global kill-switch `event_spine.consumer_enabled` defaults
+**off**, so applying the migration changes no behaviour: the cron fires but
+short-circuits, and in prod **no consumer is registered yet**, so the drain is
+doubly a no-op until PR5 registers the timeline projection. The transactional
+core lives in **SQL** (mirroring PR1's `hq_emit_event` and PR2's producer) because
+supabase-js has no client-side multi-statement transaction and per **D1** we do
+not invent one; the TS/cron layer only *triggers* the drain.
+
+Migration: `supabase/migrations/20260720020000_hq_event_spine_consumers.sql`.
+
+## What PR3 ships
+
+| Object | Kind | Purpose |
+|---|---|---|
+| `event_spine.consumer_enabled` | flag (in the `hq_settings` singleton JSONB) | The dark-ship / kill-switch. Seeded `false`; flipped at runtime with no deploy. Symmetric with PR2's `dual_write_enabled`. |
+| `public.hq_spine_consumer_enabled()` | function (SECURITY DEFINER) | Reads the flag; returns `false` on any miss. `service_role`-only. |
+| `public.hq_consumer_register(...)` | function (SECURITY DEFINER) | Registers a consumer at a start offset (`on conflict do nothing`), so a redeploy never rewinds a live consumer. |
+| `public.hq_consumer_apply(...)` | function (SECURITY DEFINER) | The apply seam — **static** `CASE` dispatch on consumer name. No dynamic `EXECUTE`. `else null` is the forward-compatible no-op. |
+| `public.hq_drain_consumer(...)` | function (SECURITY DEFINER) | The drain engine: gate → lock → bounded id-order read → apply → transactional advance → dead-letter. Returns a jsonb summary. |
+| `public.hq_replay_consumer(...)` | function (SECURITY DEFINER) | Rewinds the offset (default 0) and clears retry/dead rows beyond it — the deterministic "drop + replay". |
+| `public.hq_spine_golden_signals()` | function (SECURITY DEFINER) | Read-side rollup: throughput windows, per-consumer lag, dead-event count, retry backlog (Ch.15). |
+| `public.hq_consumer_retries` | table (RLS:hq) | Transient per-event failure counter — the dead-letter ledger across cron runs. |
+| `public.hq_consumer_selftest` | table (RLS:hq) | The conformance read-model for the `__spine_selftest__` fixture (dormant in prod). |
+| `server/services/spine-consumer.ts` | TypeScript (`server-only`) | Never-throwing wrappers: `drainRegisteredConsumers()`, `drainConsumer()`, `registerConsumer()`, `replayConsumer()`, `getSpineGoldenSignals()`, `isConsumerEnabled()`. |
+| `app/api/cron/spine-drain/route.ts` | route | The guaranteed-delivery cron (`* * * * *`, Bearer `CRON_SECRET`). |
+
+`hq_event_consumers` (the durable offsets) and `dead_events` (the poison side
+table) were created **dark** in PR1; PR3 is the code that first writes them.
+
+## The consumer gate — symmetric with the producer gate
+
+The kill-switch lives in the existing `hq_settings` singleton JSONB under the same
+non-UI **`event_spine`** section as PR2's `dual_write_enabled` — "maximum reuse,
+minimum complexity". It is deliberately **not** in the settings TS `SECTION_IDS`,
+so the operator page never renders it: this is a low-level **infra kill-switch**.
+It seeds **`false`** without clobbering an operator's value (the seed `UPDATE`
+writes only when the key is absent). Flip it on later, at runtime, no deploy:
+
+```sql
+update public.hq_settings
+  set data = jsonb_set(data, '{event_spine,consumer_enabled}', 'true')
+where id = 'singleton';
+```
+
+`drainRegisteredConsumers()` reads the gate **first** and, while dark,
+short-circuits to `{ ok: true, enabled: false, results: [] }` **without even
+reading the registry** — so a dark cron run is one cheap gated RPC.
+
+## Never process an event twice
+
+Three mechanisms compose to make a double-apply impossible (the CEO's hard
+invariant), each pinned by the security tier and proven live by the integration
+tier:
+
+1. **Strict id-order, bounded read.** The drain reads `where id > v_offset order
+   by id asc limit greatest(p_max_events, 1)` — strictly after the offset, in the
+   total order, never an unbounded scan.
+2. **Single-active-drainer lock.** It selects the consumer's offset row `FOR
+   UPDATE SKIP LOCKED`. Two overlapping cron runs can't both drain one consumer:
+   the second finds the row locked and leaves (`skipped: 'locked'`) — it never
+   double-applies.
+3. **Transactional advance.** The offset advances (`v_offset := v_ev.id`) **only
+   after** a successful `hq_consumer_apply`, and is persisted back to
+   `hq_event_consumers` in the **same call**. A crash mid-drain rolls back both the
+   apply and the advance, so the next run resumes exactly where it stopped.
+
+Idempotency is belt-and-braces on top: the selftest projection upserts `ON
+CONFLICT (consumer, event_id) DO NOTHING`, so even a re-apply of the same event is
+a no-op. An immediate re-drain therefore processes **0** events and advances the
+offset by nothing.
+
+## Replay is deterministic — the offset is the only state
+
+`hq_replay_consumer(consumer, to_id => 0)` rewinds the offset to
+`greatest(to_id, 0)` and deletes the transient retry + dead rows **beyond** that
+point, so a redrive starts clean. Because the apply is idempotent and reads the
+immutable, append-only log in id-order, **drop + rewind + redrive rebuilds a
+byte-identical read-model** — the bible's effectively-once oracle. The integration
+tier proves it: it snapshots the projection, drops it, replays to the suite
+baseline, redrives, and asserts the rebuilt projection equals the original.
+
+## Dead-letter handling — one poison event never blocks the stream
+
+Per-event failures are counted in `hq_consumer_retries` across cron runs. The
+apply runs in a nested `BEGIN … EXCEPTION` so a throw is caught, not fatal:
+
+- **Below the attempt threshold** the poison event is **head-of-line**: the batch
+  stops at it (`stopped: 'retry_pending'`), the offset does **not** pass it, and it
+  is retried on the next run. Transient failures heal themselves.
+- **At the threshold** (`v_attempts >= greatest(p_max_attempts, 1)`) the event is
+  **parked** in `dead_events` (`on conflict (consumer, event_id) do nothing`), the
+  offset advances **past** it, and the good events behind it flow again — one bad
+  event can never wedge the stream.
+
+When an event is dead-lettered the drain raises `system.alert_raised` **through the
+validated `hq_emit_event` entry point** (never a raw `INSERT into hq_events`),
+carrying the consumer, event id, verb and attempt count at `critical` severity.
+That emit is **best-effort** — wrapped in its own `BEGIN … EXCEPTION WHEN OTHERS
+THEN NULL` block — so a telemetry hiccup can never roll back the drain's committed
+progress.
+
+## Golden signals — read-side, computed on demand (Ch.15)
+
+`hq_spine_golden_signals()` is a cheap **read rollup**, not a projection: it
+computes throughput windows (`last_1m` / `last_1h` / `last_24h` over `hq_events.ts`),
+**per-consumer lag** as `max(id) − last_event_id` (the lag canary), the
+`dead_event_count` and the retry backlog — in two scalar reads. The cron surfaces
+them alongside what it drained so each `cron_runs` row is itself the drainer-health
+signal; in prod they read out flat (no consumer, no lag) until PR5.
+
+## The conformance fixture — a dormant idempotency oracle
+
+PR3 ships a generic engine but the timeline projection it will ultimately feed
+arrives in PR5. To prove the engine **now** without pre-empting PR5, it carries a
+self-test consumer `__spine_selftest__` whose projection (`hq_consumer_selftest`,
+PK `(consumer, event_id)`) is naturally idempotent — the bible's byte-identical
+oracle for the idempotency and replay tests. It is **dormant in prod**: only the
+integration tier ever registers it. A test-only failure injection — an event whose
+payload carries `{"__poison__": true}` — forces the selftest apply to throw, so the
+dead-letter path is exercised against a live database; the magic key is scoped to
+that one consumer so the generic apply path carries no test affordance. The
+`CASE` is **static** by design: a `SECURITY DEFINER` function that `EXECUTE`d a
+stored handler name would be a privilege-escalation surface, so the whole PR3
+migration contains **zero dynamic SQL**. PR5 adds the real `timeline` branch.
+
+## Function hardening & privilege model (PR3)
+
+All six new functions follow the established mould: `SECURITY DEFINER` with a
+pinned empty `search_path`, `EXECUTE` revoked from `public, anon` **and**
+`authenticated`, granted only to `service_role` (L-4: Supabase's default
+privileges grant `EXECUTE` on new public functions directly to the JWT roles, so
+revoking from `PUBLIC` alone is not enough). The drain primitive is therefore
+**uncallable by any JWT client** — only the service-role cron can drive it. Both
+new tables are **RLS:hq** (RLS enabled, zero policies), and no privilege is ever
+granted to `anon`, `authenticated` or `public`.
+
+## Test coverage (PR3)
+
+| Tier | File | Proves |
+|---|---|---|
+| Unit | `__tests__/ops/spine-consumer.test.ts` | Service-layer contract against a mocked admin client: bounded-batch arg mapping + defaults (500/5); the never-throw contract (a rejected RPC ⇒ `ok:false`); `drainRegisteredConsumers` **short-circuits** while dark (never reads the registry); register/replay arg mapping; golden-signals null-on-error; `isConsumerEnabled` fail-dark. |
+| Integration | `__tests__/integration/spine/offset-consumer.test.ts` | **Live Postgres**: ships dark (gate off ⇒ `consumer_disabled`, offset untouched); gate on ⇒ drains in id-order, applies, advances to caught-up; an immediate re-drain processes **0** (never twice); replay rebuilds a byte-identical read-model; a poison event stops head-of-line then is dead-lettered after N attempts, the offset advances past it and `system.alert_raised` fires; golden signals read out (throughput, per-consumer lag, dead count). |
+| Security | `__tests__/security/event-spine-consumers-invariants.test.ts` | Hermetic pins on the migration text: ships dark (seeds `consumer_enabled` false, never true, off the operator UI, only-when-absent; drain fails-dark); can't double-apply (`for update skip locked`, strict id-order, bounded limit, advance-follows-apply, persists offset); idempotent apply (`on conflict do nothing`, **no** dynamic `EXECUTE`, `else null`); dead-letter (threshold, parks in `dead_events`, alert **through** `hq_emit_event` not a raw `INSERT`, best-effort); replay (rewind + clears retry/dead beyond the point); golden-signals lag formula; `SECURITY DEFINER` + pinned `search_path`; `EXECUTE` revoked from `public, anon, authenticated` and granted only to `service_role`; new tables RLS:hq. |
+
+"Mocks prove intent; real infrastructure proves behaviour" — the unit tier maps
+the service contract against a mock; the security tier pins the drain/replay/
+dead-letter contract against the migration source; the integration tier proves the
+dark-ship, the never-twice guarantee, deterministic replay and dead-lettering
+actually hold in a live database.
+
+---
+
 # Roadmap
 
-PR1 (storage + write primitive) and PR2 (producers) are in. Per the locked
-implementation order, the following remain:
+PR1 (storage + write primitive), PR2 (producers) and PR3 (offset consumer) are in.
+Per the locked implementation order, the following remain:
 
-- **PR3** — Offset consumer: the drainer, replay, lag/dead-letter metrics, golden
-  signals, cron integration.
 - **PR4** — Historical backfill of `activity_log` / `admin_activity_log` /
   `hq_memory_events` into canonical events (idempotent).
 - **PR5** — Timeline / The Pulse (first customer-visible deliverable) +
