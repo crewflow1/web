@@ -651,6 +651,14 @@ hold in a live database — and is where the namespaced-key collision was caught
 > The unifying rule: a real-Postgres fixture is only deterministic if it accounts for
 > the migration baseline on both sides. This is exactly the class of gap the
 > real-Postgres tier exists to catch — a mock would have sailed past both.
+>
+> And the **process** lesson that earned both fixes: when the real-Postgres gate
+> surfaced a genuine issue, the right move was **never to weaken the gate** — not to
+> stub the database, relax the assertion, or skip the test. Each time we **stopped,
+> found the root cause, wrote the lesson here, fixed the fixture, and re-ran every
+> gate** before re-pushing. Real infrastructure stays the arbiter; a red gate is a
+> finding to honour, not an obstacle to route around. That discipline is a standing
+> commitment for every remaining PR, not a one-off.
 
 ---
 
