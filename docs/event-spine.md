@@ -159,12 +159,136 @@ tenant table is touched, so PR1 is provably additive.
 the envelope against a mock; the integration tier proves the storage, RLS,
 append-only guard and privilege model actually hold in a live database.
 
-## What PR1 does NOT do
+---
 
-Per the locked implementation order, the following are explicitly later PRs:
+# HQ Event Spine — PR2: Domain Event Producers
 
-- **PR2** — Domain event producers: generalise `_record_activity()` to dual-write
-  `hq_events` in the same transaction as `activity_log` (flag-gated).
+> Module 1, PR2 (CEO Directive #003, decision **D1**). PR1 landed the spine's
+> storage and write primitive **dark**. PR2 wires the first **producers**: it
+> generalises the existing `public._record_activity()` chokepoint so that every
+> domain mutation which already writes `activity_log` **also** emits the canonical
+> `hq_events` row — in the **same database transaction** (Ch.04 "transactional
+> outbox"). State and its narrative become inseparable (P1): if the mutation rolls
+> back, so does its event. There is **no second event framework** and **no
+> client-side transaction layer**.
+
+PR2 ships **dark** too. The dual-write is gated by a feature flag that defaults
+**off**, so applying the migration changes no behaviour — `activity_log` is
+written exactly as before and not one `hq_events` row is produced until an
+operator flips the flag. Backwards compatibility is total: `_record_activity()`'s
+existing path is byte-for-byte unchanged; the spine is one additive trailing call
+that no-ops while dark or when the action is outside the curated subset.
+
+Migration: `supabase/migrations/20260720010000_hq_event_spine_producers.sql`.
+
+## What PR2 ships
+
+| Object | Kind | Purpose |
+|---|---|---|
+| `event_spine.dual_write_enabled` | flag (in the `hq_settings` singleton JSONB) | The dark-ship / kill-switch. Seeded `false`; flipped at runtime with no deploy. |
+| `public.hq_spine_dual_write_enabled()` | function (SECURITY DEFINER) | Reads the flag; returns `false` on any miss. `service_role`-only. |
+| `public.hq_emit_from_activity(...)` | function (SECURITY DEFINER) | The curated activity → canonical-event mapper. No-ops unless the flag is on **and** the action is a curated OPERATIONS verb. Emits **through** `hq_emit_event()`. |
+| `public._record_activity(...)` | function (generalised in place) | Reproduced verbatim with ONE additive trailing call to `hq_emit_from_activity()` after the unchanged `activity_log` insert. |
+
+## The dual-write feature flag
+
+The flag lives in the existing `public.hq_settings` singleton JSONB under a
+top-level **`event_spine`** section — "maximum reuse, minimum complexity"; no new
+flag store is invented. That key is deliberately **not** in the settings TS
+`SECTION_IDS`, so the operator settings page never renders it and
+`mergeSettings()` ignores it: this is a low-level **infra kill-switch**, not an
+operator product flag.
+
+It seeds **`false`** (dark) **without** clobbering a value an operator may already
+have set — the seed `UPDATE` only writes when the key is absent, so re-applying
+the migration is safe. Flip it on later, at runtime and with no deploy:
+
+```sql
+update public.hq_settings
+  set data = jsonb_set(data, '{event_spine,dual_write_enabled}', 'true')
+where id = 'singleton';
+```
+
+A GUC (`ALTER DATABASE … SET`) was **rejected** as the flag store: connection
+pooling makes a session GUC unreliable for live toggling. (A GUC is still the
+right tool for *correlation* propagation — see below — because that is
+per-transaction, not a global switch.)
+
+## The producer contract — a curated mirror, not a copy
+
+`hq_emit_from_activity()` is called once per `_record_activity()` write and is a
+**no-op** unless **both** (a) the flag is on **and** (b) the action is one of the
+curated **OPERATIONS** verbs in the frozen registry (`lib/events/registry.ts`).
+The OPERATIONS group is a deliberate **subset** "mirrored from activity_log", not
+the whole activity log — every other action still writes `activity_log` unchanged
+and is simply not mirrored to the spine.
+
+The curated map (jobs.status vocabulary is `new | in-progress | completed |
+blocked`, so only a transition **to `completed`** yields a canonical job verb;
+registry verbs `job.scheduled` / `job.cancelled` have no source action yet and are
+not produced):
+
+| activity action | condition | canonical verb |
+|---|---|---|
+| `customer.created` | — | `customer.created` |
+| `customer.updated` | — | `customer.updated` |
+| `job.created` | — | `job.created` |
+| `job.status_changed` | `metadata->>'to' = 'completed'` | `job.completed` |
+| `quote.sent` | — | `quote.sent` |
+| `quote.accepted` | — | `quote.accepted` |
+
+When it does emit, it emits **through `hq_emit_event()`** — the same single
+validated write entry point the PR1 service path uses, never a raw `INSERT into
+hq_events` — in the caller's transaction, so the event is atomic with the state
+change. `correlation_id` threads an end-to-end intent from the `hq.correlation_id`
+GUC when the caller has set it (Ch.04 coalesce convention), or starts a fresh
+trace. `object_type` is the verb namespace (`split_part(verb, '.', 1)`).
+
+## The PII boundary — the spine carries no second copy of tenant PII
+
+The spine is a lean event log, **not** a second copy of tenant PII (Ch.04:
+payloads are "small, structured, never PII-heavy"). A naive generalisation would
+pass the raw `activity_log` metadata straight through as the payload — but that
+metadata **is** PII for several actions: a customer's name/email/phone on
+`customer.created`, the changed name on `customer.updated`, a quote signer's name
+on `quote.accepted`. So `hq_emit_from_activity()` projects only a **curated,
+non-PII** payload — status, identifiers, amounts — and deliberately drops personal
+data, which stays in `activity_log` and never crosses into `hq_events`. The
+actor's human-readable name is dropped the same way: the event carries
+`actor_type` (`human` / `system`) and, for a human, the actor uuid — never the
+name. The security suite pins this with a payload-key exclusion on the migration
+text, and the integration tier proves it against a live insert.
+
+## Function hardening & privilege model (PR2)
+
+Both new functions follow the PR1 mould: `SECURITY DEFINER` with a pinned empty
+`search_path`, `EXECUTE` revoked from `public, anon` **and** `authenticated`, and
+granted only to `service_role` (L-4: Supabase's default privileges grant `EXECUTE`
+on new public functions directly to the JWT roles, so revoking from `PUBLIC` alone
+is not enough). Inside the trigger's `SECURITY DEFINER` chain `current_user` is the
+function owner, so the nested `hq_emit_event()` runs as owner — which holds
+`EXECUTE` despite the JWT-role revokes and bypasses RLS on the owned
+`hq_settings` — under both `service_role`- and `authenticated`-initiated writes.
+
+## Test coverage (PR2)
+
+| Tier | File | Proves |
+|---|---|---|
+| Integration | `__tests__/integration/spine/domain-producers.test.ts` | **Live Postgres**: flag off ⇒ `activity_log` written, zero events (ships dark); flag on ⇒ the curated OPERATIONS verbs are mirrored, each in the same transaction as the state change; out-of-subset actions (`customer.deleted`, job → `blocked`, `quote.created`) are NOT mirrored; no tenant PII crosses into the payload, yet curated non-PII hints (status, quote number) survive. |
+| Security | `__tests__/security/event-spine-producers-invariants.test.ts` | Hermetic pins on the migration text: ships dark (seeds false, never true, stored off the operator UI, only-when-absent); `_record_activity` generalised in place; emits **through** `hq_emit_event` not a raw `INSERT`; correlation coalesce; no PII payload key; the produced verb set is **exactly** the curated OPERATIONS subset and every verb is registered; `SECURITY DEFINER` + pinned `search_path`; `EXECUTE` revoked from `public, anon, authenticated` and granted only to `service_role`. |
+
+"Mocks prove intent; real infrastructure proves behaviour" — the security tier
+pins the producer contract against the migration source; the integration tier
+proves the dual-write, the dark-ship, the curated subset and the PII boundary
+actually hold in a live database.
+
+---
+
+# Roadmap
+
+PR1 (storage + write primitive) and PR2 (producers) are in. Per the locked
+implementation order, the following remain:
+
 - **PR3** — Offset consumer: the drainer, replay, lag/dead-letter metrics, golden
   signals, cron integration.
 - **PR4** — Historical backfill of `activity_log` / `admin_activity_log` /
