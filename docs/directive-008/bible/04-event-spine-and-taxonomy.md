@@ -199,7 +199,7 @@ Two audit logs exist (`activity_log`, `admin_activity_log`) plus `hq_memory_even
 
 ## Security
 
-- **No PII in payloads beyond identifiers** — enforced by review + a lint check on `emitEvent` payload shapes; sensitive detail lives in the domain table, fetched under service-role when rendering.
+- **No PII in payloads beyond identifiers** — enforced by review + a lint check on `emitEvent` payload shapes **and**, for the trigger-emitted SQL producers (`_record_activity()` → `hq_emit_from_activity()`), a curated non-PII projection *at the producer*: the migration whitelists only status/identifier/amount hints, pinned by the security tier on the migration text and proved by the integration tier against a live insert (§20.6 L-6). A TS-level lint cannot see a payload built in SQL, so each producer path carries its own proof. Sensitive detail lives in the domain table, fetched under service-role when rendering.
 - **The spine is `RLS:hq`** — unreadable by any JWT client. Delivery is via authorized broadcast only (Ch.16).
 - **Tamper-evidence:** the audit projection (`admin_activity_log`) may be hash-chained (Ch.15); the spine itself is append-only (no update/delete grants, even to service-role, except partition retention).
 
