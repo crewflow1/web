@@ -627,17 +627,30 @@ the migration source; the integration tier proves the dark-ship, the original-`t
 replay, deterministic ordering, the no-duplicate guard and restartability actually
 hold in a live database — and is where the namespaced-key collision was caught.
 
-> **Lesson (Directive #004, six-gate CI) — an integration fixture must seed from the
-> migrations, never from production-only data.** CI is **migrations-only** (a fresh
-> `supabase start`, no `seed.sql`), so the only reference data present is what a
-> migration inserts. The first CI run failed because the memory fixture used a
-> `memory_type` slug (`fact`) that exists in production — an operator added it through
-> the admin UI, since types are *extensible data* — but that the schema seed never
-> inserts, so it violated the `hq_memory_types` FK on the CI database. The fix is to
-> seed from a **migration-provided** slug (`engineering`). The general rule: a
-> fixture may assume only what the migrations create; lookup rows added as data in
-> prod are invisible to CI. This is exactly the class of gap the real-Postgres tier
-> exists to catch — a mock would have sailed past it.
+> **Lesson (Directive #004, six-gate CI) — an integration fixture must reckon with
+> EXACTLY the migration-seeded baseline: no more, and no less.** CI is
+> **migrations-only** (a fresh `supabase start`, no `seed.sql`), so the database holds
+> precisely what the migrations create — nothing an operator later added in prod, and
+> nothing less than the migrations' own seed rows. Two consecutive CI runs each caught
+> a different side of this, both invisible to a mock:
+>
+> 1. **Prod-only data is absent.** The memory fixture used a `memory_type` slug
+>    (`fact`) that exists in production — an operator added it through the admin UI,
+>    since types are *extensible data* — but that no migration seeds, so it violated
+>    the `hq_memory_types` FK. Fix: seed from a **migration-provided** slug
+>    (`engineering`). A fixture may assume only what the migrations create.
+> 2. **Migration-seeded example data is present.** The shared-memory **seed migration**
+>    inserts six example `hq_memory_events`, so the table is **not** empty in CI. The
+>    deterministic bounded-batch test asserts whole-*source* drain arithmetic, and the
+>    drain walks the entire table — so those six recent-`now()` rows extended the
+>    captured ceiling past our year-2000 seeds and leaked an extra batch. Fix: a
+>    whole-table assertion must **own the table's contents** — clear every pre-existing
+>    row in `beforeAll` so the source holds exactly the fixtures (safe here: no other
+>    integration suite reads it and the CI database is ephemeral).
+>
+> The unifying rule: a real-Postgres fixture is only deterministic if it accounts for
+> the migration baseline on both sides. This is exactly the class of gap the
+> real-Postgres tier exists to catch — a mock would have sailed past both.
 
 ---
 

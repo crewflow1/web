@@ -50,6 +50,7 @@ interface Insertable extends Thenable<null> {
 }
 interface Mutable extends Thenable<null> {
   eq(column: string, value: unknown): Mutable;
+  neq(column: string, value: unknown): Mutable;
 }
 interface Table {
   select(columns?: string): Selectable<Record<string, unknown>>;
@@ -310,9 +311,18 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
     // UI ('fact'), so this holds on a migrations-only CI database. The type never
     // flows into a backfilled event, so it is assertion-neutral.
     memId = await insertRow("hq_memories", { title: "PR4 backfill memory", memory_type: "engineering" });
-    // Creating the memory may auto-log an hq_memory_events row; clear it so the source
-    // contains exactly our controlled seeds.
-    await svc().from("hq_memory_events").delete().eq("memory_id", memId);
+    // The deterministic bounded-batch test below asserts whole-SOURCE drain arithmetic
+    // (it drains hq_memory_events to 'done' in fixed batches), and the drain walks the
+    // ENTIRE table — so the source must hold EXACTLY our seeds. Clear every pre-existing
+    // row first: the schema's seed migration inserts six example 'created' timeline events
+    // at recent `now()` timestamps (which would extend the once-captured ceiling past our
+    // year-2000 rows and leak extra batches), and creating the memory above may auto-log
+    // one. memory_id is NOT NULL, so `<> zero-uuid` matches every row. No other integration
+    // suite reads this table and the CI database is ephemeral, so a full clear is safe.
+    await svc()
+      .from("hq_memory_events")
+      .delete()
+      .neq("memory_id", "00000000-0000-0000-0000-000000000000");
 
     for (let i = 0; i < actPlan.length; i++) {
       const p = actPlan[i] as Plan;
