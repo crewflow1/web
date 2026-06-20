@@ -2,14 +2,23 @@ name: CI
 
 # Gates every PR. Fails the merge button if any check fails.
 #
-# Checks (run in parallel as separate jobs for clear pass/fail rows):
-#   - typecheck  (tsc --noEmit)
-#   - lint       (eslint via next lint — soon to migrate to next-lint-to-eslint-cli)
-#   - tests      (vitest run)
+# The mandatory six-gate pipeline (Directive #004 — production-equivalent
+# verification, P11). Run in parallel as separate jobs for clear pass/fail rows:
+#   1. typecheck    (tsc --noEmit)
+#   2. lint         (eslint)
+#   3. tests        (vitest run — unit tier, mocked Supabase)
+#   4. integration  (vitest run against a REAL Postgres — OQ-16)
+#   5. security     (vitest run — hermetic trust-boundary proofs + dep advisory)
+#   6. e2e          (Playwright against the REAL app on a REAL Postgres)
 #
-# Migration dry-run is intentionally NOT here yet — would need a
-# disposable Supabase project per PR. Vercel preview's own DB-less build
-# catches most schema-vs-code mismatches via the generated types.
+# The integration job boots the Supabase local stack (`supabase start`),
+# applies the actual supabase/migrations on a fresh volume, and runs the
+# integration tier (__tests__/integration) to assert RLS, auth, triggers,
+# and tenant isolation — behaviour the mocked unit tier structurally cannot
+# cover. The e2e job goes one further: it builds and boots the real Next.js
+# server against that same stack and drives a browser, proving the auth
+# redirect contract + security headers on the genuine request path. Mocks
+# prove intent; real infrastructure proves behaviour.
 
 on:
   pull_request:
@@ -65,3 +74,158 @@ jobs:
           cache: "npm"
       - run: npm ci --no-audit --no-fund
       - run: npx vitest run
+
+  integration:
+    name: integration (real Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22+ (not 20) is required here: supabase-js eagerly builds a
+          # RealtimeClient inside createClient(), and realtime-js needs a global
+          # WebSocket — which only exists natively on Node >=22. On Node 20 the
+          # harness throws "Node.js 20 detected without native WebSocket support"
+          # before a single query runs. The unit `test` job mocks Supabase and
+          # never builds a live client, so it deliberately stays on 20.
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+
+      # Supabase CLI pinned to the version that generated supabase/config.toml,
+      # so `supabase start` parses the config without schema drift. Bump
+      # deliberately, alongside a `supabase init` config regeneration.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.98.2
+
+      # Boots Postgres + Auth + Storage and applies supabase/migrations on the
+      # fresh runner volume. ubuntu-latest ships a running Docker daemon, so no
+      # extra container setup is required.
+      - name: Start Supabase local stack
+        run: supabase start
+
+      # Map the running stack's connection details onto the names the harness
+      # reads (__tests__/integration/_harness.ts), then run the integration
+      # tier. `set -a` exports each assignment into the test process. CI=true
+      # means describeIntegration FAILS LOUDLY (never silently skips) if the DB
+      # is somehow absent — so a misconfigured run can never go green.
+      - name: Run integration tests
+        run: |
+          set -a
+          eval "$(supabase status -o env \
+            --override-name api.url=SUPABASE_URL \
+            --override-name auth.anon_key=SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY)"
+          set +a
+          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
+          done
+          npm run test:integration
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop
+
+  security:
+    name: security (trust boundaries)
+    runs-on: ubuntu-latest
+    env:
+      # The security tier's setupFiles (__tests__/setup.ts) stub these, but
+      # exporting them here keeps the intent explicit and the run identical
+      # whether or not the setup file changes (mirrors the unit `test` job).
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Hermetic tier (filesystem scans + pure functions + mocked Supabase,
+          # no live client) so Node 20 is fine — no native WebSocket needed.
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+
+      # BLOCKING gate: the trust-boundary proofs — tenant isolation on the
+      # service-role (RLS-bypass) path, cron Bearer gates, portal-upload safety,
+      # CSP + baseline security headers, rate limits, role-escalation prevention,
+      # customer-portal scoping, and "no secret env in client bundles". These are
+      # deterministic and fully within our control to keep green.
+      - name: Security validation (trust-boundary proofs)
+        run: npm run test:security
+
+      # NON-BLOCKING advisory. `npm audit` reads the LIVE upstream advisory
+      # database, so it can turn red the instant a new CVE is published against
+      # an already-shipped dependency — with zero change to our code. Making it
+      # a hard merge-blocker would (a) violate the determinism/flake policy
+      # (Ch.18) — a re-run going green isn't a pass — and (b) force unplanned
+      # major dependency bumps mid-launch (e.g. a Next.js major), which the
+      # launch freeze forbids. So we SURFACE the report here and triage upgrades
+      # deliberately, rather than letting the advisory landscape gate the merge.
+      - name: Dependency advisory (non-blocking)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
+  e2e:
+    name: e2e (real app, real Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22+ (not 20): `next start` boots the real app, which builds a
+          # live supabase-js client; realtime-js needs a global WebSocket, native
+          # only on Node >=22 (same reason as the integration job — OQ-16 L-2).
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund
+
+      # Chromium + its OS deps for Playwright. @playwright/test is pinned by the
+      # lockfile, so the matching browser build is deterministic.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Same pinned CLI as the integration job — the version that generated
+      # supabase/config.toml, so `supabase start` parses it without drift.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.98.2
+      - name: Start Supabase local stack
+        run: supabase start
+
+      # One shell so the exported env survives across build → test → the
+      # Playwright-managed `next start` (webServer inherits this process's env).
+      # We map the running stack onto the PUBLIC names the app validates
+      # (lib/env.ts) and inlines at build time, then build + run the smoke tier
+      # against the real production server. `set -a` exports each assignment.
+      - name: Build and run E2E smoke (Playwright)
+        run: |
+          set -a
+          eval "$(supabase status -o env \
+            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
+            --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY)"
+          export NEXT_PUBLIC_APP_URL="http://localhost:3000"
+          set +a
+          for v in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
+          done
+          npm run build
+          npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop
