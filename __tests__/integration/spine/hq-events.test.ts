@@ -54,13 +54,6 @@ function emitArgs(
   };
 }
 
-/** The current UTC month's partition name, e.g. `hq_events_2026_06`. */
-function currentMonthPartition(): string {
-  const d = new Date();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  return `hq_events_${d.getUTCFullYear()}_${m}`;
-}
-
 /**
  * Assert an anon read obtained no spine row — denial being equally valid whether
  * it arrives as a hard privilege error or as an RLS-filtered empty set. The
@@ -101,48 +94,39 @@ describeIntegration("HQ Event Spine · hq_events (PR1)", () => {
     expect(verbs).toEqual(["system.alert_raised", "system.cron_ran"]);
   });
 
-  it("anon cannot read hq_events (parent) — RLS:hq denies every JWT client", async () => {
+  it("anon cannot read hq_events — RLS:hq denies every JWT client", async () => {
+    // PostgREST exposes only the partitioned PARENT (a direct read of a child
+    // partition returns "not found" in this stack), so the parent is the entire
+    // API read surface — and RLS:hq denies it to anon. Per-partition RLS is kept
+    // as defence-in-depth and pinned in the security tier from the migration text.
     const correlationId = crypto.randomUUID();
     const emit = await svc().rpc<number>("hq_emit_event", emitArgs(correlationId));
     expect(emit.error, emit.error?.message).toBeNull();
 
-    const read = await anon()
+    // service_role (BYPASSRLS) sees the row through the parent…
+    const asService = await svc()
       .from("hq_events")
       .select("id")
-      .eq("correlation_id", correlationId);
-    expectAnonDenied(read);
-  });
-
-  it("anon cannot read the partition directly (parent RLS is NOT inherited)", async () => {
-    // The load-bearing partition test: the emitted row lands in the current-month
-    // partition. service_role reads it THROUGH the partition name; anon is denied
-    // AT the partition — proving we enabled RLS on the partition, not just the
-    // parent (the PostgREST pitfall the migration's SECURITY NOTE calls out).
-    const correlationId = crypto.randomUUID();
-    const emit = await svc().rpc<number>("hq_emit_event", emitArgs(correlationId));
-    expect(emit.error, emit.error?.message).toBeNull();
-
-    const part = currentMonthPartition();
-    const asService = await svc()
-      .from(part)
-      .select("id, correlation_id")
       .eq("correlation_id", correlationId);
     expect(asService.error, asService.error?.message).toBeNull();
     expect(asService.data).toHaveLength(1);
 
-    const asAnon = await anon().from(part).select("id").eq("correlation_id", correlationId);
+    // …anon does not.
+    const asAnon = await anon().from("hq_events").select("id").eq("correlation_id", correlationId);
     expectAnonDenied(asAnon);
-
-    // The DEFAULT catch-all exists and is queryable by service_role (empty in
-    // normal operation because the runway covers every current month).
-    const def = await svc().from("hq_events_default").select("id");
-    expect(def.error, def.error?.message).toBeNull();
   });
 
-  it("anon cannot call hq_emit_event — EXECUTE is service_role-only", async () => {
-    const res = await anon().rpc<number>("hq_emit_event", emitArgs(crypto.randomUUID()));
-    expect(res.error).not.toBeNull();
-    expect(res.data).toBeNull();
+  it("anon cannot call the spine's SECURITY DEFINER functions — EXECUTE is service_role-only", async () => {
+    // Supabase grants EXECUTE on new public functions to anon/authenticated by
+    // default, so the migration revokes from `public, anon, authenticated`. Both
+    // the write primitive AND the partition creator must be closed to JWT clients.
+    const emit = await anon().rpc<number>("hq_emit_event", emitArgs(crypto.randomUUID()));
+    expect(emit.error, "anon must not be able to emit events").not.toBeNull();
+
+    const partition = await anon().rpc<string>("hq_create_events_partition", {
+      p_anchor: new Date(Date.UTC(2027, 5, 15, 12, 0, 0)).toISOString(),
+    });
+    expect(partition.error, "anon must not be able to create partitions").not.toBeNull();
   });
 
   it("hq_events is append-only — UPDATE and DELETE are rejected even for service_role", async () => {

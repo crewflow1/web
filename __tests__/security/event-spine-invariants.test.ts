@@ -163,12 +163,21 @@ describe("spine — SECURITY DEFINER functions are hardened", () => {
 // 6. Privilege model — emit + partition creation are service_role-only
 // =====================================================================
 
-describe("spine — EXECUTE is revoked from PUBLIC and granted only to service_role", () => {
+describe("spine — EXECUTE is revoked from anon/authenticated and granted only to service_role", () => {
   for (const fn of ["hq_emit_event", "hq_create_events_partition"]) {
-    it(`${fn} revokes from public and grants execute to service_role`, () => {
+    it(`${fn} revokes from public, anon AND authenticated`, () => {
+      // Revoking from PUBLIC alone is NOT enough: Supabase's default privileges
+      // grant EXECUTE on new public functions directly to anon/authenticated, so
+      // a JWT client could otherwise call it. (Proven by the integration tier.)
       expect(exec).toMatch(
-        new RegExp(`revoke all on function\\s+public\\.${fn}\\([\\s\\S]*?\\)\\s*from public`, "i"),
+        new RegExp(
+          `revoke all on function\\s+public\\.${fn}\\([\\s\\S]*?\\)\\s*from public, anon, authenticated`,
+          "i",
+        ),
       );
+    });
+
+    it(`${fn} grants execute only to service_role`, () => {
       expect(exec).toMatch(
         new RegExp(
           `grant execute on function\\s+public\\.${fn}\\([\\s\\S]*?\\)\\s*to service_role`,
@@ -178,9 +187,12 @@ describe("spine — EXECUTE is revoked from PUBLIC and granted only to service_r
     });
   }
 
-  it("executable SQL never references anon or authenticated (they get nothing)", () => {
-    // With every base table RLS:hq and both functions service_role-only, the JWT
-    // roles must appear NOWHERE in the executable SQL — no stray grant can leak in.
-    expect(exec).not.toMatch(/\b(anon|authenticated)\b/i);
+  it("no EXECUTE/privilege is ever GRANTED to a JWT role (anon/authenticated/public)", () => {
+    // The functions are the only API surface without RLS, so the grant IS the
+    // gate. service_role is the sole grantee; anon/authenticated/public appear
+    // only in the REVOKE.
+    expect(exec).not.toMatch(/\bto\s+anon\b/i);
+    expect(exec).not.toMatch(/\bto\s+authenticated\b/i);
+    expect(exec).not.toMatch(/grant[\s\S]*?\bto\s+public\b/i);
   });
 });

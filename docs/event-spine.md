@@ -123,21 +123,28 @@ policies**. The Supabase `service_role` has `BYPASSRLS`, so server code
 reads/writes while every JWT client (`anon`/`authenticated`) is denied. No
 tenant table is touched, so PR1 is provably additive.
 
-- **Partitions are individually RLS-protected.** PostgREST exposes a partition
-  as a queryable table in its own right, and a partitioned parent's RLS is **not
-  inherited** by its partitions. Enabling RLS on `hq_events` alone would leave
-  `hq_events_2026_06` etc. readable by anon. So RLS is enabled on the parent
-  **and** on every partition — the initial runway, the DEFAULT, and each one the
-  creator function makes. The integration tier proves anon is denied at a
-  populated partition, not just at the parent.
+- **Partitions carry their own RLS.** A partitioned parent's RLS-enabled flag is
+  **not inherited** by its partitions. In this Supabase/PostgREST version only the
+  partitioned **parent** is exposed over the REST API — a direct read of a child
+  partition returns "not found" (`PGRST205`) — so the API read surface is the
+  parent, which RLS:hq denies to every JWT client. RLS is still enabled on every
+  partition (the initial runway, the DEFAULT, and each one the creator function
+  makes) as **defence-in-depth**: it costs nothing and closes the path for any
+  future config that *does* expose a child, or a non-service direct connection.
+  The integration tier proves anon is denied at the parent; the security tier
+  pins per-partition RLS from the migration text.
 - **Append-only.** `BEFORE UPDATE`/`BEFORE DELETE` triggers raise
   `restrict_violation` and reject mutation **even under service_role**
   (`BYPASSRLS` does not bypass triggers). Partition retention uses `DETACH`
   (DDL), not row `DELETE`, so cold-storage rollover is unaffected (Ch.16).
 - **Emit is service_role-only.** `hq_emit_event` and
   `hq_create_events_partition` are `SECURITY DEFINER` with `search_path = ''`;
-  `EXECUTE` is revoked from `PUBLIC` and granted only to `service_role`. No JWT
-  client can emit an event or create a partition.
+  `EXECUTE` is revoked from `PUBLIC`, **`anon` and `authenticated`** and granted
+  only to `service_role`. Revoking from `PUBLIC` alone is **not** enough —
+  Supabase's default privileges grant `EXECUTE` on new public functions directly
+  to the JWT roles — so the revoke names them explicitly. Functions have no RLS,
+  so the grant *is* the gate; no JWT client can emit an event or create a
+  partition.
 
 ## Test coverage (six gates)
 
@@ -145,8 +152,8 @@ tenant table is touched, so PR1 is provably additive.
 |---|---|---|
 | Unit | `__tests__/lib/event-registry.test.ts` | Registry invariants: no duplicates, `domain.action` format, flat tuple == groups, locked size/counts, runtime guard. |
 | Unit | `__tests__/ops/event-spine.test.ts` | `emitEvent()` envelope mapping, defaults, correlation-id generation, result contract — against a mocked RPC (no DB). |
-| Integration | `__tests__/integration/spine/hq-events.test.ts` | **Live Postgres**: service emits & reads back; id is monotonic; anon denied at parent **and** partition; anon can't emit; UPDATE/DELETE blocked; creator idempotent; consumers/dead_events RLS. |
-| Security | `__tests__/security/event-spine-invariants.test.ts` | Hermetic pins on the migration text: RLS:hq everywhere, no policies, partition-level RLS, append-only guard, SECURITY DEFINER + pinned `search_path`, EXECUTE locked to `service_role`, no anon/authenticated in executable SQL. |
+| Integration | `__tests__/integration/spine/hq-events.test.ts` | **Live Postgres**: service emits & reads back; id is monotonic; anon denied at the parent; anon can't call either `SECURITY DEFINER` function; append-only UPDATE/DELETE rejected; creator idempotent; consumers/dead_events RLS. |
+| Security | `__tests__/security/event-spine-invariants.test.ts` | Hermetic pins on the migration text: RLS:hq everywhere, no policies, partition-level RLS, append-only guard, SECURITY DEFINER + pinned `search_path`, EXECUTE revoked from `public, anon, authenticated` and granted only to `service_role`. |
 
 "Mocks prove intent; real infrastructure proves behaviour" — the unit tier maps
 the envelope against a mock; the integration tier proves the storage, RLS,

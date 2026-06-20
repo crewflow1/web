@@ -29,12 +29,27 @@
 -- JWT client — anon/authenticated — is denied). No tenant table is touched, so
 -- the change is provably additive (P2).
 --
--- SECURITY NOTE — partitions are individually RLS-protected. PostgREST exposes a
--- partition as a queryable table in its own right, and a partitioned PARENT's RLS
--- is NOT inherited by its partitions. So enabling RLS on `hq_events` alone would
--- leave `hq_events_2026_06` etc. readable by anon. We therefore enable RLS on the
--- parent AND on every partition (initial, default, and each one the creator
--- function makes). The integration tier proves both paths are denied to anon.
+-- SECURITY NOTE — partitions carry their OWN RLS. A partitioned PARENT's
+-- RLS-enabled flag is NOT inherited by its partitions, so each partition must
+-- enable RLS in its own right. In this Supabase/PostgREST version only the
+-- partitioned PARENT is exposed over the REST API — a direct read of a child
+-- partition returns "not found" (PGRST205) — so the API attack surface is the
+-- parent, which RLS:hq denies to every JWT client. We still enable RLS on every
+-- partition (initial, default, and each one the creator function makes) as
+-- defence-in-depth: it costs nothing and closes the path for any future config
+-- that DOES expose a child, or a non-service direct connection. The integration
+-- tier proves anon is denied at the parent; the security tier pins per-partition
+-- RLS in the migration text.
+--
+-- SECURITY NOTE — function EXECUTE is revoked from anon/authenticated, not just
+-- PUBLIC. Supabase's default privileges GRANT EXECUTE on every new public
+-- function to the `anon` and `authenticated` roles directly, so `revoke … from
+-- public` alone would leave a JWT client able to call hq_emit_event /
+-- hq_create_events_partition. We therefore revoke from `public, anon,
+-- authenticated` and grant only to `service_role` (the same hardening the
+-- activity-log retention function uses). Tables don't need this — RLS:hq denies
+-- the rows regardless of any table grant — but functions have no RLS, so the
+-- grant IS the gate.
 
 -- ---------------------------------------------------------------------------
 -- 1. hq_events — the append-only spine (partitioned monthly by ts).
@@ -101,7 +116,7 @@ begin
 end;
 $$;
 
-revoke all on function public.hq_create_events_partition(timestamptz) from public;
+revoke all on function public.hq_create_events_partition(timestamptz) from public, anon, authenticated;
 grant execute on function public.hq_create_events_partition(timestamptz) to service_role;
 
 -- Pre-create the runway: current month + 6 ahead.
@@ -149,8 +164,8 @@ create trigger hq_events_no_delete
 -- ---------------------------------------------------------------------------
 -- 4. hq_emit_event — the single validated write entry point.
 --    SECURITY DEFINER so a future trigger / non-owner caller can write through
---    it; EXECUTE revoked from PUBLIC and granted only to service_role, so no JWT
---    client can emit an event. The actor_type/severity CHECKs on hq_events reject
+--    it; EXECUTE revoked from PUBLIC, anon and authenticated and granted only to
+--    service_role, so no JWT client can emit an event. The actor_type/severity CHECKs on hq_events reject
 --    a malformed envelope (failing the whole transaction, by design — P1). Verb
 --    validity is enforced at the producer by the TypeScript registry + a contract
 --    test (Ch.04), not by a DB constraint.
@@ -193,7 +208,7 @@ $$;
 
 revoke all on function public.hq_emit_event(
   text, text, text, text, text, uuid, text, text, bigint, text, jsonb, text
-) from public;
+) from public, anon, authenticated;
 grant execute on function public.hq_emit_event(
   text, text, text, text, text, uuid, text, text, bigint, text, jsonb, text
 ) to service_role;
