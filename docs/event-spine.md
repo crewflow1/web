@@ -918,6 +918,38 @@ surface, behind `requireHqPage()` / `requireHqApi()`, can reach it.
 > / `requireHqPage()`), in the **same** PR, so each guard proves the chokepoint that
 > now exists rather than the one that used to.
 
+> **Lesson (Directive #004, six-gate CI; extends the Ch.04 "a fixture must own its
+> scope" family) — a 'dark' / negative fixture is still a live row in the immutable
+> log; never give it the suite's scoping token.** The integration tier runs against a
+> shared real Postgres, so this suite scopes every read with a per-run token
+> (`TOKEN = \`pulseit${alpha(10)}\``; reads go through `page({ search: TOKEN })`) to see
+> only its own fixtures. The "ships dark" test emits an event **while the consumer gate
+> is off**, to prove it is NOT projected — and that event correctly stays *pending* in
+> `hq_events` at the consumer's offset. The very next test opens the gate and drains;
+> the consumer — append-only, replaying from its stored offset — **faithfully backfills
+> that still-pending dark event** (it sits at a lower `event_id` than the suite's
+> e1–e3). That is the spine working **exactly as designed**: the log is immutable and
+> nothing pending is ever skipped. The bug was that the dark event carried `TOKEN` in
+> its `object_id`, so its generated `search` tsvector then matched `page({ search:
+> TOKEN })` — it silently re-entered every token-scoped read and inflated two exact-id
+> assertions (keyset ordering and replay determinism), each gaining one spurious extra
+> id. Only **real Postgres** caught it: locally the suite self-skips (no DB) and the
+> unit tier mocks the RPC, so neither drives the real append-only log through the real
+> consumer offset, and the backfill that surfaces the dark event never happens there. A
+> mock sailed past; the live database did not. The fix was to make the dark fixture
+> **tokenless** (`p_object_id: "dark-unprojected"`) and look it up by id: the spine
+> still backfills it (behaviour unchanged, **no assertion weakened**), it simply never
+> enters the suite's token scope. The permanent rule, extending the PR4 family: **a
+> scope token belongs only on fixtures you intend every scoped read to see.** Any row
+> you deliberately withhold from the projection — a dark / negative fixture — or any row
+> you look up by id, must be **tokenless**, because the spine's own guarantee
+> (deterministic replay from offset) will faithfully surface it later, and a carried
+> token then smuggles it back into a scoped assertion **through the very correctness the
+> test is proving**. As in PR4, the real-Postgres gate stayed the arbiter: a red
+> integration gate was a finding to honour — stop, find the root cause, write the lesson
+> here, fix the fixture, re-run every gate — never a thing to route around by stubbing
+> the database or relaxing the assertion.
+
 ## Test coverage (PR5)
 
 | Tier | File | Proves |

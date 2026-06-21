@@ -217,7 +217,13 @@ describeIntegration("HQ Event Spine · the Pulse timeline projection (PR5)", () 
 
   it("ships DARK — gate off: a freshly-emitted event is NOT projected", async () => {
     await setConsumerEnabled(false);
-    const dark = await emit({ p_object_id: `dark-${TOKEN}` });
+    // Deliberately TOKENLESS. This event is emitted while dark but stays in
+    // hq_events; the very next test opens the gate and drainAll() correctly
+    // backfills it (it sits at a lower id than e1–e3) — that is the spine
+    // working as designed, not a leak. If it carried TOKEN it would then match
+    // every TOKEN-scoped read below and inflate the exact-id assertions in the
+    // keyset + replay tests. We look it up by id, so it needs no token.
+    const dark = await emit({ p_object_id: "dark-unprojected" });
     const res = await drain();
     expect(res.skipped).toBe("consumer_disabled");
     expect(await timelineRow(dark)).toBeNull();
