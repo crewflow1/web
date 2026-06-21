@@ -272,15 +272,105 @@ page links straight to `/admin/memory/[id]`).
 Supabase admin is a queue-based chainable stub; `redirect()` is stubbed to
 throw (mirroring Next.js halting the action).
 
+### Security trust-boundary tier (gate 5)
+
+`__tests__/security/hq-sales-intelligence-invariants.test.ts` (42 tests) pins
+the database + service contract against **source text** — hermetic, no
+database, run via `npm run test:security`. It mirrors the five
+`event-spine-*-invariants` suites so the most sensitive HQ surface is held to
+the same bar as the spine:
+
+1. **RLS:hq on all 17 tables** — every `hq_sales_*` table is created **and**
+   `enable row level security`, and the family declares **zero** `create
+   policy`. `service_role` (BYPASSRLS) is the only reader; no anon /
+   authenticated JWT can read a row.
+2. **No escalation surface** — no dynamic SQL (`execute format(` / `execute
+   '`) and **no `SECURITY DEFINER` function**. Access is gated by RLS:hq + the
+   service-role client, not a definer RPC, so there is no unhardened privilege
+   path to pin.
+3. **Decoupled from tenant RLS** — no `hq_sales_*` table has a foreign key
+   into a customer/tenant table (`organizations`, `customers`, `leads`,
+   `jobs`, `quotes`, `invoices`). HQ never re-couples to customer RLS.
+4. **AI traceability** — the `generated_by` / `model` / `ai_employee_id` triad
+   is present, and the canonical AI artifact (`hq_sales_research_reports`)
+   carries all three.
+5. **Search integrity** — the company `search_tsv` is a GENERATED weighted
+   tsvector that can never drift from its source columns.
+6. **Service boundary** — `server/services/hq-sales.ts` is `server-only`,
+   reaches the DB only through `createAdminClient()`, **never** reads a tenant
+   table, and **never** touches the spine truth log (`hq_events`).
+7. **The single HQ gate** — the `/admin/sales/**` tree inherits
+   `requireHqPage()` at `app/admin/layout.tsx`, and the gate answers **404,
+   not 403** (`isSuperAdminEmail` → `notFound()` / `status: 404`; never 403,
+   which would announce the surface's existence).
+
+### Integration tier (gate 4)
+
+`__tests__/integration/sales/hq-sales-rls.test.ts` (8 tests) proves the
+BEHAVIOUR the source check cannot — against a **live Postgres** with the real
+migrations applied, run via `npm run test:integration` (CI, or any disposable
+Supabase; self-skips locally with no DB, fails loudly in CI if the DB is
+missing):
+
+1. **RLS:hq is real** — a `service_role` client (BYPASSRLS) reads a
+   representative slice of the family, but neither an **anonymous** JWT nor a
+   minted **authenticated** (customer/staff) JWT reads a single row — even from
+   the tables the migrations **seed** (`hq_sales_sources`, `_call_scripts`,
+   `_objections`, `_learnings`), so "zero" is a true denial, never a vacuously
+   empty table.
+2. **Write denial** — an anon insert is rejected and creates no row.
+3. **Generated search** — the company `search_tsv` is computed by Postgres and
+   is full-text queryable (`websearch_to_tsquery`).
+4. **Schema defaults** — the AI-traceability columns round-trip and the
+   defaults Postgres applies (`generated_by` → `ai`, `likelihood_band` →
+   `unknown`, `risk_level` → `medium`, `status` → `final`) are asserted on
+   real rows, not the app's idea of them.
+5. **Intra-family cascade** — deleting a company cascades to its contacts: the
+   family's foreign keys stay **inside** `hq_sales_*` (the runtime mirror of
+   "no FK into a tenant table").
+
+### E2E auth-wall tier (gate 6)
+
+`e2e/sales.spec.ts` (2 tests) boots the **real production build** (`next
+start`) on the real Supabase stack and proves the anonymous front door: every
+`/admin/sales` page (the command dashboard and the company-intelligence search)
+is caught by middleware and **307-redirected to `/login`** with the destination
+preserved, so the prospect surface never paints. Unlike the Pulse, this surface
+exposes **no** anonymous JSON API — it is SSR + server actions under the single
+HQ-gated `app/admin/layout.tsx`, so the page wall *is* the network boundary. The
+404-not-403 contract for an **authenticated** non-allowlisted caller is pinned
+in the security tier (it needs a real super-admin-vs-not session the anonymous
+e2e deliberately does not build).
+
+### Engineering lesson — retro-fitting the six-gate bar
+
+The Company Intelligence Database **predates** the mandatory six-gate CI
+regime (Directive #004). It shipped genuinely production-grade on the model /
+service / UI / **unit** axes, yet cleared only **3 of the 6** gates
+(typecheck, lint, unit): it had **no** security trust-boundary, real-Postgres
+integration, or e2e auth-wall suite — even though the event spine (a later,
+less sensitive surface) had all three. The lesson: a module being "done and
+shipped" is not the same as it meeting the *current* bar; when the bar rises,
+the **most sensitive** surfaces are retro-fitted first. Closing the security
+tier touched **zero production code** — it is pure additive coverage that pins
+existing, already-correct behaviour, so it is safe under the Foundation's
+maintenance-mode / code-freeze. The integration (gate 4) and e2e (gate 6)
+tiers were closed the same way — pure additive coverage, **zero production code
+touched** — bringing the Company Intelligence Database to the full six-gate bar
+the rest of the Foundation already meets.
+
 ---
 
 ## Validation gate (run before every PR)
 
 ```bash
-npm run typecheck   # tsc --noEmit — clean
-npx next lint       # ESLint — clean
-npx vitest run      # full suite — green
-npm run build       # production build — passes
+npm run typecheck         # gate 1 — tsc --noEmit — clean
+npm run lint              # gate 2 — eslint . — clean
+npm run test              # gate 3 — unit suite — green
+npm run test:integration  # gate 4 — real-Postgres (CI; self-skips with no DB)
+npm run test:security     # gate 5 — trust-boundary invariants — green
+npm run test:e2e          # gate 6 — auth wall on the real build (CI)
+npm run build             # production build — passes
 ```
 
 ---
