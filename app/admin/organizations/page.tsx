@@ -1,7 +1,5 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
@@ -131,8 +129,7 @@ export default async function AdminOrganizationsPage({
 }: {
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  const user = await requireHqPage();
 
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();

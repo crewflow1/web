@@ -210,17 +210,18 @@ describe("sparklinePoints", () => {
 });
 
 describe("HQ layout — auth gate", () => {
-  it("layout calls isSuperAdminEmail and 404s when it returns false", () => {
-    expect(LAYOUT).toMatch(/isSuperAdminEmail\(user\.email\)/);
-    expect(LAYOUT).toMatch(/notFound\(\)/);
+  it("layout gates via requireHqPage() — the single source of truth (Directive #005, STEP 4)", () => {
+    expect(LAYOUT).toMatch(/await requireHqPage\(\)/);
   });
 
-  it("layout enforces gate via the requireUser → check → notFound chain", () => {
-    const idxRequire = LAYOUT.indexOf("await requireUser()");
-    // Match the actual call site (with semicolon), not the prose mention
-    // in the doc-comment block that sits above the code.
-    const idxNotFound = LAYOUT.indexOf("notFound();");
+  it("requireHqPage enforces the requireUser → isSuperAdminEmail → notFound chain", () => {
+    // STEP 4 consolidated the inline gate into requireHqPage(); the chain that
+    // 404s a non-allowlisted user now lives there, so we pin it at its real home.
+    const hqAuth = read("server/auth/hq.ts");
+    const idxRequire = hqAuth.indexOf("await requireUser()");
+    const idxNotFound = hqAuth.indexOf("notFound();");
     expect(idxRequire).toBeGreaterThan(0);
+    expect(hqAuth).toMatch(/isSuperAdminEmail\(user\.email\)/);
     expect(idxNotFound).toBeGreaterThan(idxRequire);
   });
 
