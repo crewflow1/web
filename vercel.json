@@ -38,6 +38,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/qualification-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/spine-partitions",
       "schedule": "15 4 * * *"
     },
