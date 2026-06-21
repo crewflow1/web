@@ -34,7 +34,6 @@ import {
 import {
   clampScore,
   likelihoodBandFromScore,
-  scoreBand,
   scoreBandLabel,
   type SalesCompany,
   type SalesContact,
@@ -44,7 +43,6 @@ import {
   applyStep,
   emptyIntelligence,
   initialSteps,
-  RESEARCH_STEP_LABEL,
   type CommsDrafts,
   type CompanyIntelligence,
   type DecisionMaker,
@@ -85,7 +83,6 @@ import {
   getCompany,
   promoteResearchToMemory,
   recordTimelineEvent,
-  type WriteResult,
 } from "@/server/services/hq-sales";
 import { normaliseUrl } from "@/lib/research/extract";
 
@@ -94,7 +91,6 @@ const RESEARCH_AI_SLUG = "research-ai";
 const STUCK_RUNNING_MS = 5 * 60 * 1000;
 
 type Actor = { id: string | null; email: string | null };
-const SYSTEM_ACTOR: Actor = { id: null, email: null };
 
 // ---------------------------------------------------------------------
 // Minimal typed access to hq_sales_ai_tasks (the runner's only direct table).
