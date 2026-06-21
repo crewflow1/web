@@ -267,9 +267,8 @@ describe("app/admin/settings/page.tsx", () => {
   it("no longer uses the ComingSoonStub", () => {
     expect(PAGE).not.toMatch(/ComingSoonStub/);
   });
-  it("re-checks isSuperAdminEmail", () => {
-    expect(PAGE).toMatch(/isSuperAdminEmail/);
-    expect(PAGE).toMatch(/notFound\(\)/);
+  it("re-gates via requireHqPage() (defence-in-depth, not layout-only)", () => {
+    expect(PAGE).toMatch(/requireHqPage\(\)/);
   });
   it("renders a form for every section", () => {
     for (const id of SECTION_IDS) {

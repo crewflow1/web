@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "db:seed": "tsx scripts/seed.ts",
     "email": "email dev --dir emails --port 3001",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:security": "vitest run --config vitest.security.config.ts",
     "test:e2e": "playwright test"
@@ -26,6 +27,7 @@
     "@sentry/nextjs": "^8.40.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
+    "@tanstack/react-virtual": "^3.14.3",
     "@vercel/kv": "^3.0.0",
     "@vercel/og": "^0.6.5",
     "class-variance-authority": "^0.7.1",

@@ -228,10 +228,9 @@ describe("Phase 1 — buildOpsSnapshot", () => {
 // =====================================================================
 
 describe("Phase 1 — /admin/ops page", () => {
-  it("is HQ-only: requires both layout + page-level isSuperAdminEmail", () => {
-    expect(OPS_PAGE).toMatch(/requireUser/);
-    expect(OPS_PAGE).toMatch(/isSuperAdminEmail/);
-    expect(OPS_PAGE).toMatch(/notFound\(\)/);
+  it("is HQ-only: both the layout and the page itself gate via requireHqPage()", () => {
+    expect(OPS_PAGE).toMatch(/requireHqPage\(\)/);
+    expect(ADMIN_LAYOUT).toMatch(/requireHqPage\(\)/);
   });
 
   it("renders the traffic-light status banner", () => {

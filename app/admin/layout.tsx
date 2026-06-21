@@ -1,8 +1,6 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
 import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
@@ -33,6 +31,7 @@ type NavItem = {
 
 export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/command-centre", label: "⚡ Command Centre" },
+  { href: "/admin/pulse", label: "📡 The Pulse" },
   { href: "/admin/ceo", label: "👑 CEO Dashboard" },
   { href: "/admin/overview", label: "Overview" },
   { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
@@ -65,8 +64,7 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  const user = await requireHqPage();
 
   // Live ticket count drives the Support queue badge. Best-effort —
   // failures degrade to no badge rather than breaking the layout.
