@@ -131,6 +131,72 @@ export function memoryStatusLabel(s: string): string {
 }
 
 // ---------------------------------------------------------------------
+// Cognitive class (CrewFlow Bible, Volume X §4).
+//
+// The COARSE category that drives lifecycle (expiry, consolidation,
+// retrieval weighting) — additive to, and orthogonal from, the
+// fine-grained data-driven `memory_type` lookup. Five classes are a fixed
+// enum because they drive engine behaviour; new `memory_type`s stay data.
+// ---------------------------------------------------------------------
+
+export const MEMORY_CLASSES = [
+  "semantic", // durable facts & knowledge — the shared company brain
+  "episodic", // a time-stamped experience an employee had
+  "working", // short-lived scratchpad for an in-flight task
+  "long_term", // consolidated, durable knowledge promoted from episodes
+  "procedural", // learned how-to — playbooks, skills, repeatable methods
+] as const;
+export type MemoryClass = (typeof MEMORY_CLASSES)[number];
+
+export const MEMORY_CLASS_LABELS: Record<MemoryClass, string> = {
+  semantic: "Semantic",
+  episodic: "Episodic",
+  working: "Working",
+  long_term: "Long-term",
+  procedural: "Procedural",
+};
+
+export const MEMORY_CLASS_HELP: Record<MemoryClass, string> = {
+  semantic: "Durable facts and knowledge, true regardless of who learned them.",
+  episodic: "A time-stamped experience an employee had at a moment in time.",
+  working: "Short-lived scratchpad for an in-flight task; expires with it.",
+  long_term: "Consolidated, important knowledge promoted from many episodes.",
+  procedural: "Learned how-to: playbooks, skills, repeatable methods.",
+};
+
+export function memoryClassLabel(c: string): string {
+  return MEMORY_CLASS_LABELS[c as MemoryClass] ?? c;
+}
+
+export function isMemoryClass(c: string): c is MemoryClass {
+  return (MEMORY_CLASSES as readonly string[]).includes(c);
+}
+
+/**
+ * Durable company-brain classes — never auto-expire; superseded only by
+ * versioning or explicit human archival (Volume X §10).
+ */
+export const DURABLE_CLASSES: ReadonlySet<MemoryClass> = new Set<MemoryClass>([
+  "semantic",
+  "long_term",
+  "procedural",
+]);
+
+/** Ephemeral lived-experience classes — subject to TTL / decay (Volume X §10). */
+export const EPHEMERAL_CLASSES: ReadonlySet<MemoryClass> = new Set<MemoryClass>([
+  "episodic",
+  "working",
+]);
+
+export function isDurableClass(c: string): boolean {
+  return DURABLE_CLASSES.has(c as MemoryClass);
+}
+
+export function isEphemeralClass(c: string): boolean {
+  return EPHEMERAL_CLASSES.has(c as MemoryClass);
+}
+
+// ---------------------------------------------------------------------
 // Relationship entity kinds.
 // ---------------------------------------------------------------------
 
@@ -315,6 +381,16 @@ export type MemoryRecord = {
   last_accessed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Additive (Volume X §5; CEO Directive 009 Module 1). Optional so the
+  // existing read-first service layer keeps compiling unchanged; the AI
+  // write/recall paths (PR2/PR3) populate and consume them.
+  memory_class?: MemoryClass;
+  owner_employee_id?: string | null;
+  expires_at?: string | null;
+  consolidated_into?: string | null;
+  salience?: number;
+  bound_task_id?: string | null;
+  last_reinforced_at?: string | null;
 };
 
 /**
@@ -342,10 +418,17 @@ export type MemoryDetail = {
 // ---------------------------------------------------------------------
 
 export function canEmployeeAccess(
-  memory: Pick<MemoryRecord, "visibility" | "department">,
+  memory: Pick<MemoryRecord, "visibility" | "department" | "owner_employee_id">,
   employee: { id: string; department: string },
   grants: ReadonlyArray<Pick<MemoryAccessGrant, "grantee_type" | "grantee_value">>,
 ): boolean {
+  // An employee may always read its OWN private experience (Volume X §6).
+  // owner_employee_id is additive and optional; when absent (the classic
+  // company-owned memory) this is simply false and behaviour is unchanged.
+  const isOwner =
+    memory.owner_employee_id != null &&
+    memory.owner_employee_id === employee.id;
+
   const hasGrant = grants.some(
     (g) =>
       (g.grantee_type === "employee" && g.grantee_value === employee.id) ||
@@ -363,11 +446,12 @@ export function canEmployeeAccess(
       return (
         (memory.department != null &&
           memory.department === employee.department) ||
+        isOwner ||
         hasGrant
       );
     case "private":
     case "restricted":
-      return hasGrant;
+      return isOwner || hasGrant;
     default:
       // Unknown visibility → fail closed.
       return false;
