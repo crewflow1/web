@@ -77,12 +77,12 @@ working memory (XII).
 | Visibility model (public_hq/department/private/restricted/system) + grants | **Built** | enforced in the service layer today; this volume makes it the SDK permission matrix. |
 | Full-text search (weighted generated tsvector + GIN) | **Built** | `hq_memories.search_tsv`, `hq_memories_search_idx`. |
 | Per-memory timeline incl. `ai_accessed` | **Built** | `hq_memory_events` already models AI reads. |
-| Reserved semantic-search column | **Built (dormant)** | `hq_memories.embedding_placeholder jsonb` — *never populated*; this volume activates it via pgvector. |
+| Reserved semantic-search column | **Built** · activated D009 M1 PR4 | the original `embedding_placeholder jsonb` (Directive 002) stays *never populated*; PR4 adds a real `embedding vector(1536)` column beside it, so the live ANN is decoupled from the placeholder. |
 | Memory **classes** (episodic/working/long-term/procedural) | **Built** · D009 M1 PR1 | additive `memory_class` + lifecycle columns (`owner_employee_id`, `expires_at`, `consolidated_into`, `salience`, `bound_task_id`, `last_reinforced_at`); migration `20260722000000`. The `hq_memory_types` lookup stays data-driven. |
 | AI **write** path (employees author memory) | **Built (owned)** · D009 M1 PR2 | `hq_memory_write` commits owned episodic/working/private autonomously; shared-knowledge writes return the NULL sentinel pending the Module 4 approval checkpoint (§6). Migration `20260723000000`; the human write path is untouched. |
-| The **retrieval pipeline** (hybrid rank + budget + assembly) | **Built** · D009 M1 PR3 | SQL `hq_memory_recall` does the permissioned stage-1/2 read and returns RAW candidate signals; the pure `rankAndAssemble` (`lib/memory/retrieval.ts`) composes score→diversify→assemble (stages 3–5); `hq_memory_reinforce` reinforces the assembled set + writes the `ai_accessed` audit. Migration `20260724000000`. Semantic ANN stays dormant (PR4 seam). |
+| The **retrieval pipeline** (hybrid rank + budget + assembly) | **Built** · D009 M1 PR3 | SQL `hq_memory_recall` does the permissioned stage-1/2 read and returns RAW candidate signals; the pure `rankAndAssemble` (`lib/memory/retrieval.ts`) composes score→diversify→assemble (stages 3–5); `hq_memory_reinforce` reinforces the assembled set + writes the `ai_accessed` audit. Migration `20260724000000`. The semantic ANN channel is switched on in PR4 (§7, §11). |
 | **Consolidation / compression / expiry** engines | **To build** | recurring tasks (XII). |
-| pgvector + embedding-on-write | **To build** | enable extension; backfill; embed task. |
+| pgvector + the embedding worker | **Built** · D009 M1 PR4 | `vector` extension (pinned to `public`); real `embedding vector(1536)` + the 9 permanent metadata fields; partial HNSW cosine index; a *derived* queue (`embedded_at IS NULL`) drained by a dark background worker. Migrations `20260725000000` (layer) + `20260726000000` (ANN recall). |
 
 **Net:** the *record, versioning, permission model, FTS and audit are shipped.*
 This volume **activates** semantic search, **opens** an AI write path, **adds**
@@ -96,8 +96,9 @@ into cognition. No existing table is rewritten — every change is additive.
 > + per-memory event + a `memory.asserted` Pulse event in **one** transaction;
 > shared-knowledge writes are **withheld** (NULL sentinel + `approvalRequired`)
 > until the Module 4 Task Engine can host the approval checkpoint. Embeddings
-> stay a **plug-in, not a dependency**: pgvector remains dormant (PR4) and the
-> write is byte-identical with or without it. *PR3* builds the **recall pipeline**
+> stay a **plug-in, not a dependency**: the write is byte-identical with or without
+> a vector (pgvector was still dormant at PR2 — PR4 activates it, below). *PR3*
+> builds the **recall pipeline**
 > (`hq_memory_recall` + `hq_memory_reinforce`, migration `20260724000000`): the SQL
 > enforces the §6 permission filter as a stage-1 `WHERE` (forbidden rows are never
 > scored), does the lexical + structural candidate read, and returns RAW signals
@@ -105,9 +106,22 @@ into cognition. No existing table is rewritten — every change is additive.
 > `rankAndAssemble` then scores, diversifies and budget-packs them (stages 3–5)
 > with no DB. Recall emits **nothing** on The Pulse — there is no recall verb in the
 > registry; an AI read is audited per-memory (`hq_memory_events.ai_accessed`) by
-> `hq_memory_reinforce`, which also reinforces decay on the assembled set. The
-> query-embedding parameter ships as a stable `float8[]` seam PR4 fills — no caller
-> changes when semantic search switches on.
+> `hq_memory_reinforce`, which also reinforces decay on the assembled set.
+>
+> *PR4* lights up the **embedding layer** and the **semantic channel** (migrations
+> `20260725000000` + `20260726000000`). pgvector is enabled (pinned to `public`); a
+> real `embedding vector(1536)` column + nine permanent metadata fields land on
+> `hq_memories`; a *partial* HNSW cosine index backs the probe. Vectors are produced
+> by a **dedicated background worker** (`server/services/memory-embedder.ts`, cron
+> `*/2`) — never inside a SQL transaction, never on The Pulse — that claims a leased
+> batch, embeds it through the configured provider, and stores it atomically; the
+> queue is *derived* (`embedded_at IS NULL`), not a side table. `hq_memory_recall`
+> gains one trailing `p_query_version` argument and turns its dormant semantic stage
+> on: the §6 permission predicate runs in **both** channels, version + dimension
+> isolate the comparison to one model's space, and `cos_sim` joins the raw signals.
+> Embeddings stay a **plug-in, not a dependency** end to end — with no provider
+> configured the worker no-ops and recall is byte-identical to PR3, and the
+> application cannot tell semantic is off.
 
 ---
 
@@ -180,32 +194,73 @@ alter table public.hq_memories
   -- Decay bookkeeping for episodic ranking (recency × salience).
   add column if not exists last_reinforced_at timestamptz;
 
--- pgvector: activate the reserved semantic-search slot. embedding_placeholder
--- (jsonb) stays for back-compat; the live vector lives in its own column so we
--- are not coupled to enabling the extension everywhere at once.
-create extension if not exists vector;
+-- pgvector (PR4): activate semantic search. The reserved `embedding_placeholder
+-- jsonb` (Directive 002) stays for back-compat; the live vector + its metadata
+-- live in their own columns, so the ANN is decoupled from the placeholder. The
+-- extension is pinned to `public` because the recall/worker functions run under
+-- `search_path = ''` and must schema-qualify the type + operator (`public.vector`,
+-- `OPERATOR(public.<=>)`); the pin makes those qualifications correct regardless
+-- of the migration session's search_path.
+create extension if not exists vector with schema public;
 alter table public.hq_memories
-  add column if not exists embedding vector(1536),     -- model-dependent dim
-  add column if not exists embedding_model text,       -- which model produced it
-  add column if not exists embedded_at timestamptz;    -- null = not yet embedded
+  add column if not exists embedding vector(1536),       -- "Version 1" dim; null = not embedded
+  -- The 9 PERMANENT metadata fields every embedded memory carries.
+  add column if not exists embedding_provider   text,    -- vendor (cost analysis, mixed-provider filtering)
+  add column if not exists embedding_model      text,    -- model    (cost analysis)
+  add column if not exists embedding_dimension  integer, -- cosine compares only WITHIN a dimension
+  add column if not exists embedding_version    text,    -- provider:model:dDIM:vREV — the staleness key
+  add column if not exists embedding_checksum   text,    -- SHA-256 of embedded text (idempotency + drift)
+  add column if not exists embedded_at          timestamptz,  -- null = THE work queue
+  add column if not exists embedding_latency_ms integer,
+  add column if not exists embedding_cost       numeric,
+  add column if not exists embedding_status     text not null default 'pending'
+    check (embedding_status in ('pending','embedded','failed','stale')),
+  -- Worker lease / backoff bookkeeping (claim → embed → complete/fail).
+  add column if not exists embedding_attempts        integer not null default 0,
+  add column if not exists embedding_last_error      text,
+  add column if not exists embedding_claimed_at      timestamptz,
+  add column if not exists embedding_claimed_by      text,
+  add column if not exists embedding_next_attempt_at timestamptz;
 
--- Retrieval indexes.
-create index if not exists hq_memories_class_idx       on public.hq_memories (memory_class);
+-- Lifecycle retrieval indexes (PR1).
+create index if not exists hq_memories_class_idx        on public.hq_memories (memory_class);
 create index if not exists hq_memories_owner_idx        on public.hq_memories (owner_employee_id)
   where owner_employee_id is not null;
 create index if not exists hq_memories_expiry_idx       on public.hq_memories (expires_at)
   where expires_at is not null;
 create index if not exists hq_memories_bound_task_idx   on public.hq_memories (bound_task_id)
   where bound_task_id is not null;
--- ANN index for vector recall (ivfflat/hnsw chosen at build time; hnsw preferred
--- for recall quality at our scale). Built CONCURRENTLY in a follow-up step.
-create index if not exists hq_memories_embedding_idx
-  on public.hq_memories using hnsw (embedding vector_cosine_ops);
+-- ANN index (PR4): HNSW cosine, PARTIAL — only embedded rows, so it stays empty
+-- until the worker populates it and never indexes a null vector.
+create index if not exists hq_memories_embedding_hnsw
+  on public.hq_memories using hnsw (embedding vector_cosine_ops)
+  where embedding is not null;
+-- The derived work queue + re-embed / crash-recovery scans (PR4, all partial so
+-- they stay tiny in steady state — index scans at the millions-of-rows scale).
+create index if not exists hq_memories_embed_queue_idx
+  on public.hq_memories (embedding_next_attempt_at asc nulls first, created_at asc)
+  where embedded_at is null and embedding_status <> 'failed';
+create index if not exists hq_memories_embed_version_idx
+  on public.hq_memories (embedding_version) where embedded_at is not null;
+create index if not exists hq_memories_embed_claimed_idx
+  on public.hq_memories (embedding_claimed_at) where embedding_claimed_at is not null;
 ```
 
 No existing column is dropped or retyped; `memory_class` defaults make the whole
 change a no-op for current rows (they remain `semantic`, company-owned, never
-expiring) — protecting production (directive).
+expiring) — protecting production (directive). The embedding columns are likewise
+all-nullable / defaulted, so existing rows become simply "pending" (an empty ANN
+index) until the worker embeds them — no backfill, no behaviour change on apply.
+
+> **As-built (D009 M1 PR4).** The embedding columns above ship in migration
+> `20260725000000`. Two companions live in the same migration but off this table:
+> a `before update` drift trigger (`_hq_memories_embed_requeue`) that clears
+> `embedded_at` when `title`/`summary`/`body` change — re-queueing the row while
+> KEEPING the old vector searchable until its replacement lands — and
+> `hq_embedding_runs`, an append-only per-attempt **cost ledger** (provider, model,
+> dimension, tokens, cost, latency, attempt, status, failure reason, worker id).
+> Both are RLS:hq (service-role only). Every embedding write goes through the SQL
+> primitives in §12.1, never raw DML.
 
 ---
 
@@ -325,13 +380,33 @@ Design rules:
 > `rankAndAssemble` (`lib/memory/retrieval.ts`): `scoreCandidate` → `diversify` →
 > `assembleContext`, fully DB-free and deterministic. Stage 6's reinforcement +
 > `ai_accessed` audit is `hq_memory_reinforce`, applied to the *assembled* set
-> only. The semantic ANN channel (2b) and the `cos_sim` term are dormant until
-> PR4 — the scorer treats a missing embedding as 0, so ranking is identical with
-> or without it. **Supersession is resolved by presence, not score order:** an
-> episode whose `consolidated_into` target is in the candidate set is dropped even
-> when the fresh episode out-scores the durable consolidation that rolls it up —
+> only. The semantic ANN channel (2b) and the `cos_sim` term were a dormant seam
+> in PR3 — the scorer treats a missing embedding as 0, so ranking is identical with
+> or without it; PR4 lights them up (see the next note). **Supersession is resolved
+> by presence, not score order:** an episode whose `consolidated_into` target is in
+> the candidate set is dropped even when the fresh episode out-scores the durable
+> consolidation that rolls it up —
 > "prefer the latest version" (stage 4) is a hard lineage fact, not a ranking
 > tie-break, and it collapses version chains correctly.
+
+> **As-built (D009 M1 PR4).** Stage 2b is now live (migration `20260726000000`).
+> `hq_memory_recall` gains a trailing `p_query_version`; when the service passes a
+> query vector AND its version it adds a top-k cosine probe (`OPERATOR(public.<=>)`
+> over the partial HNSW index) as a SECOND candidate source — UNIONed with the
+> lexical/structural set, purely ADDITIVE (it never narrows or replaces it). Stage 1
+> is re-applied as an inline base-table `WHERE` INSIDE the ANN set so the index
+> backs `ORDER BY … LIMIT` (routing the probe through a CTE/join would materialise
+> the permitted set and defeat HNSW — fatal at scale); the two permission predicates
+> are kept textually identical and the security gate asserts both exist, so a vector
+> inherits its memory's permissions and semantic can never surface a row the
+> employee couldn't already read. `cos_sim` is computed only for a candidate whose
+> `embedding_version` + `embedding_dimension` match the probe (a CASE short-circuit,
+> so `<=>` never runs on a mismatched row) — cosine therefore only ever compares one
+> model's space; a row not yet re-embedded to the current version contributes no
+> semantic signal (a graceful coverage ramp, never an outage). With no probe — no
+> provider, or a blank query — the function is byte-identical to PR3. The query
+> VECTOR and its VERSION are generated INTERNALLY by `recallMemory` from the active
+> provider (§11/§12.2); the SDK contract (`query`, not a raw vector) is unchanged.
 
 ---
 
@@ -405,23 +480,102 @@ no-op).
 
 ## 11. Embeddings / pgvector
 
-- **Activation.** `create extension vector`; add the `embedding vector(1536)`
-  column (§5). The dormant `embedding_placeholder jsonb` (Directive 002's
-  reserved slot) stays for back-compat; the live ANN runs on the real vector
-  column so we are decoupled from when the extension is enabled everywhere.
-- **Embed-on-write.** When a memory is created/`body`-updated, enqueue an
-  `embed.memory` task (XII). The runner calls the embedding model through the SDK
-  API gateway (XIII — metered, audited), writes `embedding`, `embedding_model`,
-  `embedded_at`. `embedded_at IS NULL` is the work queue; a partial index drives
-  the backfill of the existing corpus.
-- **Index.** HNSW (`vector_cosine_ops`) preferred for recall quality at our
-  scale; built `CONCURRENTLY`. ivfflat is the fallback if build cost matters.
-- **Model versioning.** `embedding_model` is stored per row so a model upgrade is
-  a **re-embed migration** (enqueue `embed.memory` for the old-model rows), never
-  a silent mismatch — cross-model cosine is meaningless, so retrieval filters to
-  one model generation at a time.
-- **Cost.** Embedding spend is metered per the SDK cost model (XIII); a backfill
-  is budgeted and rate-limited like any other AI cost.
+Built in PR4 (migrations `20260725000000` + `20260726000000`; `lib/ai/embeddings/*`
++ `server/services/memory-embedder.ts`). The governing rule is the directive's:
+**embeddings are a plug-in, not a dependency.** Every interface above works with
+no embeddings at all; configuring a provider makes semantic search appear with no
+application-code change, and nothing can tell from the outside whether it is on.
+
+**The provider seam.** `getEmbeddingProvider()` (`lib/ai/embeddings/index.ts`) is
+the ONE place that knows the vendor. It returns an `EmbeddingProvider` — `{ info:
+{ provider, model, dimension, version }, embed(texts, { signal }) }` — or `null`.
+Selection is **configuration only**: `MEMORY_EMBEDDING_PROVIDER` names the vendor
+(default `openai`) and the vendor's own key gates it; an unknown name or a missing
+key degrades to `null`, never a crash. Adding Anthropic / Voyage / Azure / a local
+model is a `case` here plus a sibling file — the Memory Engine never changes. That
+`null` IS the degradation contract: provider present → semantic recall + the worker
+switch on; provider null → semantic is simply unavailable and permission / lexical
+/ structural / ranking / assembly all keep working.
+
+**pgvector pin + schema qualification.** The extension is created `with schema
+public` (§5). The recall and worker functions pin `search_path = ''` for injection
+safety, so they reference the type and operator schema-qualified — `public.vector`,
+`OPERATOR(public.<=>)` (cosine distance). The float8 array crosses the boundary as
+`p_query_embedding::real[]::public.vector`. An unqualified `vector` / `<=>` would
+not resolve at runtime — the pin is what makes the qualifications deterministic.
+
+**Embeddings are VERSIONED ASSETS.** Every embedded row permanently stores the
+nine metadata fields (§5). The canonical staleness key is the composite
+`embedding_version` = `provider:model:dDIM:vREV` (`embeddingVersion()`), so a
+SINGLE comparison detects a provider, model, dimension, OR quality change
+(`EMBEDDING_SCHEMA_REVISION` is the manual lever for a quality bump with no model
+swap). A SHA-256 `embedding_checksum` of the exact embedded text gives idempotency
+("text unchanged ⇒ vector already correct, skip") and content-drift detection.
+
+**Embedding is NOT a business event, and the queue is DERIVED.** Generating a
+vector is mechanical bookkeeping, not company history: nothing in the embedding
+path touches the Event Spine — no `hq_emit_event`, no `memory.*` verb, nothing on
+The Pulse. (The business event is `memory.asserted`, emitted by the *write*, PR2;
+the embedding it eventually triggers is invisible to the bus.) There is **no
+enqueue table** to drift out of sync: a memory needs embedding iff `embedded_at IS
+NULL`, driven by a tiny partial index. New rows start pending; the §5 drift trigger
+re-queues a row whose `title`/`summary`/`body` changes (clearing `embedded_at`
+while leaving the old vector in place).
+
+**The worker** (`runEmbeddingWorker`, cron `GET /api/cron/memory-embed`, schedule
+`*/2 * * * *`, `maxDuration 60`). An external provider call must never run inside a
+Postgres transaction (spine D1), so the loop is the seam between SQL and TS:
+
+```
+reclaim crashed leases (SQL)
+  → for each batch, up to maxBatches:
+       claim a lease  (hq_embedding_claim_batch, FOR UPDATE SKIP LOCKED)   — SQL
+       embed it       (provider.embed(inputs, { signal }))   — TS, OUTSIDE any txn
+       store / retire (hq_embedding_complete | hq_embedding_fail)          — SQL
+```
+
+It is **dark by default and degrades**: gate off (`memory_embedding.worker_enabled
+= false`, seeded in `hq_settings`) → one cheap RPC, no work; no provider → no work,
+recall keeps serving lexical/structural. It **never throws** — a provider hiccup is
+recorded per-memory and reported in the run summary, never raised into the cron.
+Every resilience property the directive named is present: **batching** (default 32);
+**retry + exponential backoff** (`min(2^attempts·30s, 1h)`) and **dead-letter**
+after `maxAttempts` (default 5; status `'failed'` drops out of the queue — the row
+stays fully recallable via lexical/structural, only semantic is unavailable);
+**idempotency + crash recovery** via a persisted **lease** (`embedding_claimed_at`/
+`_by`) with a `claimed_by` guard on complete/fail (a late finisher whose lease was
+reclaimed is a no-op, never a duplicate) and `hq_embedding_reclaim_stale` for
+resume-after-restart; **concurrency** via `SKIP LOCKED` + a per-run worker id;
+**cost limiting** (`maxCostUsd`, default 5) and a **wall-clock deadline**
+(`maxRunMs`, default 50 000, under the 60 s ceiling); **cancellation** (an
+`AbortSignal` per provider call); and a defensive dimension/finite-value guard so a
+corrupt vector dead-letters instead of poisoning the ANN index.
+
+**Re-embedding is designed in, not bolted on.** A model/quality upgrade is a
+**config change + a re-embed**, never a redesign: bump the provider config (or
+`EMBEDDING_SCHEMA_REVISION`), then `hq_embedding_enqueue_stale(target_version,
+limit)` walks embedded rows whose version differs and clears `embedded_at` in
+bounded batches — **leaving the old vector + version in place**, so old vectors stay
+searchable until the worker computes the replacement and `hq_embedding_complete`
+swaps it in atomically (one UPDATE: vector + all metadata + lease cleared). A
+million-row migration is paced over many background runs; coverage ramps, recall
+never goes dark. `hq_embedding_reset_failed` drains the dead-letter once a root
+cause (bad key, outage) is fixed.
+
+**Cost accounting.** `hq_embedding_runs` records one row per attempt (success or
+failure) with provider, model, dimension, tokens, cost, latency, attempt, status,
+failure reason, worker id — the full history; the per-memory columns hold the
+latest outcome. Token attribution splits the provider's authoritative batch usage
+across inputs by an estimate; pricing (`embeddingCostUsd`) is provider METADATA, and
+an unpriced model still embeds (cost recorded as unknown — cost is observability,
+never a correctness gate).
+
+**Recall integration.** `recallMemory` (`server/services/hq-memory.ts`) asks
+`getEmbeddingProvider()` for a probe ITSELF, embeds the trimmed query under a short
+abort timeout, and forwards `(vector, version)` to `hq_memory_recall`. Any failure —
+no provider, blank query, provider throw/timeout, wrong-shape vector — yields a null
+probe and lexical/structural recall, so the caller's request always succeeds. There
+is no query-embedding parameter on the SDK; the stable contract is `query`.
 
 ---
 
@@ -432,14 +586,20 @@ no-op).
 ```
 hq_memory_recall(p_employee_id uuid, p_query text, p_query_embedding float8[],
                  p_subject_kind text, p_subject_id text, p_class_filter text[],
-                 p_limit int) returns jsonb
-    -- BUILT — D009 M1 PR3. Stages 1–2 of the pipeline (§7): the §6 permission
-    -- filter is the stage-1 WHERE (forbidden/system rows are never scored), then a
-    -- lexical (ts_rank) + structural candidate read. Returns up to p_limit RAW
-    -- candidates as jsonb (signals only — a body_tokens estimate, never the body);
-    -- the pure rankAndAssemble scores/diversifies/budgets them (stages 3–5), so
-    -- there is NO p_token_budget here. p_query_embedding is the dormant float8[]
-    -- seam PR4 fills — accepted and ignored today (no pgvector, no ::vector cast).
+                 p_limit int, p_query_version text) returns jsonb
+    -- BUILT — D009 M1 PR3, semantic channel switched on PR4d. Stages 1–2 of the
+    -- pipeline (§7): the §6 permission filter is the stage-1 WHERE (forbidden/
+    -- system rows are never scored), then lexical (ts_rank) + structural candidates
+    -- UNIONed with the optional semantic ANN set. Returns up to p_limit RAW
+    -- candidates as jsonb (signals only — ts_rank, structural_match, cos_sim, a
+    -- body_tokens estimate, never the body); the pure rankAndAssemble scores/
+    -- diversifies/budgets them (stages 3–5), so there is NO p_token_budget here.
+    -- The trailing p_query_version (added PR4d; PR3 calls still resolve via the
+    -- default) ARMS semantic only WITH a vector: a top-k OPERATOR(public.<=>) probe
+    -- over the partial HNSW index, permission re-applied inline, filtered to the
+    -- query's exact embedding_version + dimension (one model's space). Null probe ⇒
+    -- byte-identical to PR3. The version is derived internally from the active
+    -- provider, never supplied by the caller — the SDK surface is unchanged.
 
 hq_memory_write(p_employee_id uuid, p_class text, p_type text, p_title text,
                 p_summary text, p_body text, p_visibility text, p_owner uuid,
@@ -452,14 +612,45 @@ hq_memory_write(p_employee_id uuid, p_class text, p_type text, p_title text,
     -- Task Engine (XII) when it exists — no caller change then. Snapshots a
     -- version, writes the per-memory event, and emits the registered
     -- `memory.asserted` on The Pulse in the SAME transaction. Embeddings are a
-    -- plug-in: a future PR4 consumer subscribes to `memory.asserted` to backfill
-    -- the vector — no `embed.memory` enqueue and no embedding column written here.
+    -- plug-in: this function writes NO embedding column and emits NO embed event —
+    -- the new row is simply pending (embedded_at IS NULL), and the PR4 background
+    -- worker (§11) picks it off the DERIVED queue out-of-band. Embedding is not a
+    -- business event, so it never rides this (or any) transaction.
 
 hq_memory_reinforce(p_employee_id uuid, p_memory_ids uuid[]) returns void
     -- BUILT — D009 M1 PR3. Applied to the ASSEMBLED set: bumps last_reinforced_at
     -- (slows decay, §10), increments access_count, and writes one per-memory
     -- ai_accessed row to hq_memory_events attributed to p_employee_id — the audit
     -- home for AI reads (NOT a Pulse verb; recall never broadcasts).
+
+-- The embedding worker primitives (BUILT — D009 M1 PR4, §11). The external
+-- provider call lives in TS (server/services/memory-embedder.ts); these are the
+-- atomic SQL halves of claim → embed → complete/fail. All SECURITY DEFINER,
+-- search_path='', service-role-only. None touches the Event Spine.
+hq_memory_embed_enabled() returns boolean
+    -- The worker kill-switch read (memory_embedding.worker_enabled). Fail-dark.
+hq_embedding_claim_batch(p_worker_id text, p_limit int, p_lease_seconds int) returns jsonb
+    -- Lease a batch off the DERIVED queue (FOR UPDATE SKIP LOCKED); returns each
+    -- id + the composed embed_input. No-op jsonb when the gate is off.
+hq_embedding_complete(p_memory_id uuid, p_worker_id text, p_embedding float8[],
+                      p_provider text, p_model text, p_dimension int, p_version text,
+                      p_checksum text, p_tokens int, p_cost numeric, p_latency_ms int) returns jsonb
+    -- The ATOMIC swap: one UPDATE writes the vector (::real[]::public.vector) + all
+    -- metadata + clears the lease. Lease-guarded (claimed_by) ⇒ a late finisher is
+    -- a no-op, never a duplicate. Appends a 'succeeded' hq_embedding_runs row.
+hq_embedding_fail(p_memory_id uuid, p_worker_id text, p_provider text, p_model text,
+                  p_error text, p_max_attempts int) returns jsonb
+    -- Record a failed attempt: exponential backoff (next_attempt_at) or dead-letter
+    -- (status='failed') at the threshold. Lease-guarded. Appends a 'failed' run.
+hq_embedding_reclaim_stale(p_lease_seconds int, p_limit int) returns int
+    -- Crash recovery: free expired leases so their rows are claimable again.
+hq_embedding_enqueue_stale(p_target_version text, p_limit int) returns int
+    -- Re-embed driver: re-queue embedded rows whose version != target, in bounded
+    -- batches, LEAVING the old vector searchable until atomic replacement (§11).
+hq_embedding_reset_failed(p_limit int) returns int
+    -- Drain the dead-letter once a root cause is fixed (bounded).
+hq_embedding_golden_signals(p_target_version text) returns jsonb -- §13
+
 hq_memory_consolidate(p_employee_id uuid, p_theme text) returns uuid -- §9.2
 hq_memory_expire_sweep(p_now timestamptz, p_limit int) returns jsonb -- §10
 hq_memory_golden_signals() returns jsonb                -- §13
@@ -498,6 +689,15 @@ interface Memory {
 the permission predicate builder — unit-testable without a DB; the SQL holds only
 the atomic, permissioned reads/writes.
 
+> **As-built (D009 M1 PR4).** `recall()` takes `query`, NOT a vector — and that did
+> not change when semantic switched on. The implementation (`recallMemory`) asks the
+> provider seam (§11) for the query embedding ITSELF and forwards `(vector, version)`
+> to the SQL; with no provider, a blank query, or a provider failure it forwards a
+> null probe and recall degrades to lexical/structural. A caller-supplied raw vector
+> would be unversioned (uncomparable) and would leak whether semantic is on, so the
+> seam is deliberately internal. There is correspondingly NO embedding RPC on the SDK
+> surface — the worker primitives in §12.1 are infrastructure, called only by the cron.
+
 ---
 
 ## 13. Observability
@@ -507,6 +707,14 @@ the atomic, permissioned reads/writes.
 permission-denials (a spike may mean a mis-scoped employee); consolidation &
 expiry throughput; storage/embedding cost rollup; "stale brain" canary
 (semantic memories never reinforced in N months). Surfaced on The Pulse (XI).
+
+> **As-built (D009 M1 PR4).** The embedding-worker signals are their own read,
+> `hq_embedding_golden_signals(p_target_version)`: `worker_enabled`; queue depth
+> (total / embedded / pending / failed / in-flight); spend (`cost_1h`, `cost_24h`,
+> `tokens_24h` from `hq_embedding_runs`); throughput (`succeeded_1h` / `failed_1h`);
+> and — when a target version is passed — the **re-embed backlog** (embedded rows
+> whose `embedding_version` no longer matches, the coverage gauge for a migration).
+> Cheap bounded aggregates, no projection.
 
 ---
 
@@ -540,6 +748,20 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 | 5 security | RLS:hq on `hq_memories` (anon/authenticated denied); entry-point `EXECUTE` revoked from JWT roles; the read predicate denies cross-owner/cross-department leakage; `system` visibility never returned to AI — pinned in source. |
 | 6 e2e | the HQ memory surface behind the auth wall (anonymous → 307 → /login, never paints). |
 
+> **As-built (D009 M1 PR4).** Every embedding failure mode is proven
+> deterministically across the tiers. *Unit*: the provider seam + versioning/cost
+> helpers, and `recallMemory`'s graceful degradation (no provider, blank query,
+> provider throw/timeout, wrong-shape vector ⇒ null probe; happy path forwards
+> vector + version and cos_sim drives the rank); the worker's retry/backoff/DLQ/
+> idempotency/crash-recovery/cost-cap/deadline (mocked RPC + provider). *Security*:
+> the recall ANN invariants (permission predicate present in BOTH channels;
+> schema-qualified `public.vector`/`OPERATOR(public.<=>)`, no bare cast; version +
+> dimension isolation; no body/tsv/embedding leaked; no Pulse verb; service-role-
+> only grants) pinned in source. *Integration* (real pgvector): the `::public.vector`
+> cast + cosine operator execute; semantic is additive to lexical; permission,
+> version, and dimension isolation hold; the channel is gated by its args. Large-
+> dataset latency/stress is deferred to the Module 1 finalize gate.
+
 ---
 
 ## 16. Conflicts resolved & open questions
@@ -551,17 +773,22 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 - Contributes to **C5** — memory access/writes emit bus events (one audit truth).
 - Contributes to **C2/P4** — shared-knowledge writes route through the autonomy
   test's approval path; private experience does not.
+- **OQ1 (embedding model & dimension) — RESOLVED (D009 M1 PR4).** The model is
+  decided: OpenAI `text-embedding-3-small`, 1536-d — "Version 1". Because the
+  canonical staleness key is the composite `provider:model:dDIM:vREV` (not a bare
+  model name), a vendor/model/dimension swap OR a quality bump is a **config-only
+  re-embed**: `hq_embedding_enqueue_stale` walks the corpus in bounded batches
+  while old vectors stay searchable until atomic replacement (§11) — never a
+  redesign, never an outage. The dimension presumption is now a deliberate,
+  documented, reversible choice rather than an open question.
 
 **Open questions for a future directive:**
-1. **Embedding model & dimension.** Locking `vector(1536)` presumes a specific
-   model family. The dimension must be chosen with the model (a future decision);
-   the `embedding_model` column makes a later switch a re-embed, not a redesign.
-2. **Cross-department knowledge sharing policy.** Today `department` visibility
+1. **Cross-department knowledge sharing policy.** Today `department` visibility
    silos knowledge. Do we want an explicit "publish to company" promotion flow
    (an approval-gated `department → public_hq` transition) as the default path
    for consolidated long_term memories? *Recommendation: yes — it's the engine of
    the shared brain.*
-3. **Forgetting vs. compliance.** A future data-retention/GDPR requirement may
+2. **Forgetting vs. compliance.** A future data-retention/GDPR requirement may
    demand *hard* deletion of certain customer-derived memories. The "never hard-
    delete" rule needs a documented, audited exception path then — flagged, not
    built.
