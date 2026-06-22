@@ -1189,3 +1189,60 @@ export async function recallMemory(
 
   return { ok: true, items, manifest, candidateCount: rows.length };
 }
+
+// ---------------------------------------------------------------------
+// AI forget path (Volume X §12.2/§14; CEO Directive 009 Module 1, PR6).
+//
+// `forgetMemory` is the service-layer surface the SDK `Memory.forget()`
+// binds to. It is a thin, faithful wrapper over the atomic SQL primitive
+// `hq_memory_forget`, which owns the §14 contract: an employee may forget
+// ONLY memory it owns (permission re-asserted in SQL, P5), the memory is
+// ARCHIVED + version-snapshotted (never hard-deleted — memory is an audit
+// subject), the act is audited as `archived` with the acting employee
+// stamped, and NOTHING is emitted on The Pulse (there is no forget verb in
+// the frozen registry, exactly as expiry/archival emit nothing).
+//
+// Ownership is the whole guard: an AI employee only ever owns private /
+// episodic / working memory, so this can never touch the durable, owner-less
+// company brain — retracting shared knowledge is a Module 4 approval-gated
+// transition, never an autonomous forget.
+// ---------------------------------------------------------------------
+
+export type ForgetResult =
+  | { ok: true; id: string; version: number }
+  | { ok: false; error: string };
+
+/** Reasons the SQL primitive refuses, mapped to friendly messages. */
+const FORGET_REASONS: Record<string, string> = {
+  not_found: "memory not found",
+  not_owner: "an employee may only forget memory it owns",
+  already_inactive: "memory is already inactive",
+};
+
+export async function forgetMemory(
+  memoryId: string,
+  reason: string,
+  employee: { id: string },
+): Promise<ForgetResult> {
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<{
+    ok: boolean;
+    memory_id?: string;
+    version?: number;
+    reason?: string;
+  }>(admin, "hq_memory_forget", {
+    p_employee_id: employee.id,
+    p_memory_id: memoryId,
+    p_reason: reason,
+  });
+
+  if (error) {
+    console.error("[hq-memory] forgetMemory failed", error);
+    return { ok: false, error: error.message };
+  }
+  if (!data || data.ok !== true) {
+    const code = data?.reason ?? "unknown";
+    return { ok: false, error: FORGET_REASONS[code] ?? code };
+  }
+  return { ok: true, id: data.memory_id ?? memoryId, version: data.version ?? 0 };
+}
