@@ -52,6 +52,10 @@
     {
       "path": "/api/cron/spine-backfill",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/memory-embed",
+      "schedule": "*/2 * * * *"
     }
   ]
 }

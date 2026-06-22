@@ -26,6 +26,7 @@ import {
   type AssemblyResult,
   type RecallCandidate,
 } from "@/lib/memory/retrieval";
+import { getEmbeddingProvider } from "@/lib/ai/embeddings";
 
 /**
  * CrewFlow HQ — Shared Memory Engine data access (CEO Directive 002).
@@ -948,17 +949,69 @@ export async function rememberMemory(
 // per-memory + reinforced (decays slower, gains popularity) by the separate
 // `hq_memory_reinforce` primitive — signal, not noise.
 //
-// Embeddings are a PLUG-IN, not a dependency: `queryEmbedding` is the stable
-// PR4 seam (null today). When pgvector lights up, the embedding is filled and
-// the SQL adds an ANN channel with NO change to this signature — semantic
-// search becomes available automatically, no caller-code edit.
+// Embeddings are a PLUG-IN, not a dependency (PR4). The caller passes only the
+// human `query`; recall asks `getEmbeddingProvider()` for a vector ITSELF and,
+// when one comes back, hands the SQL an ANN channel alongside lexical +
+// structural. With no provider configured — or any provider failure — the
+// vector is simply null, semantic search switches off, and every other channel
+// keeps working. The application cannot tell the difference, which is exactly
+// why the vector is generated here and NEVER supplied by the caller: only an
+// internally-produced vector carries a known version (provider:model:dDIM:vREV),
+// and that version MUST travel with the vector so the SQL only ever compares
+// within one model's space. There is no `queryEmbedding` on the input — the
+// stable contract is `query`, and that does not change whether semantic is on.
 // ---------------------------------------------------------------------
+
+/**
+ * Hard ceiling on the query-embedding call. Recall is request-scoped and
+ * latency-critical; a slow embedding provider must degrade to lexical recall,
+ * never stall the read. On timeout the embed throws → semantic goes dark.
+ */
+const QUERY_EMBED_TIMEOUT_MS = 3_000;
+
+/**
+ * Turn the query string into a semantic probe — a (vector, version) pair — or
+ * (null, null) when semantic recall isn't possible. This is the whole
+ * plug-in contract on the read path, in one place:
+ *
+ *   - blank query                         → (null, null): nothing to embed
+ *   - no provider configured              → (null, null): semantic off
+ *   - provider.embed() throws / times out → (null, null): semantic off
+ *   - vector has the wrong shape          → (null, null): semantic off
+ *
+ * In every degraded case recall keeps working on permission + lexical +
+ * structural + ranking + assembly, and the caller cannot tell. The version is
+ * the provider's composite identity; it is returned WITH the vector so the two
+ * always travel together into the SQL (single-model-space comparison).
+ */
+async function resolveQueryProbe(
+  query: string | null | undefined,
+): Promise<{ embedding: number[] | null; version: string | null }> {
+  const none = { embedding: null, version: null } as const;
+
+  const text = query?.trim();
+  if (!text) return none;
+
+  const provider = getEmbeddingProvider();
+  if (!provider) return none;
+
+  try {
+    const { vectors } = await provider.embed([text], {
+      signal: AbortSignal.timeout(QUERY_EMBED_TIMEOUT_MS),
+    });
+    const vector = vectors[0];
+    if (!vector || vector.length !== provider.info.dimension) return none;
+    return { embedding: vector, version: provider.info.version };
+  } catch (err) {
+    // A provider failure must NEVER fail the recall the caller asked for.
+    console.warn("[hq-memory] query embedding failed; semantic recall off", err);
+    return none;
+  }
+}
 
 export type RecallInput = {
   /** Free-text task query (websearch grammar). Null/blank → recency-ranked recall. */
   query?: string | null;
-  /** PR4 seam — the query embedding; null until embeddings are switched on. */
-  queryEmbedding?: number[] | null;
   /** Subject entity kind for structural recall (e.g. 'feature', 'customer'). */
   subjectKind?: string | null;
   /** Subject entity id (free-form, matches hq_memory_relationships.entity_id). */
@@ -1024,13 +1077,14 @@ type RecallCandidateRow = {
   last_reinforced_at: string | null;
   ts_rank: number;
   structural_match: number;
+  /** Semantic similarity in [-1,1] for same-version vectors; null when off/absent. */
+  cos_sim: number | null;
   body_tokens: number;
   summary_tokens: number;
 };
 
 const recallSchema = z.object({
   query: z.string().max(2000).nullish(),
-  queryEmbedding: z.array(z.number()).nullish(),
   subjectKind: z.string().max(60).nullish(),
   subjectId: z.string().max(300).nullish(),
   classFilter: z.array(z.enum(MEMORY_CLASSES)).nullish(),
@@ -1049,15 +1103,22 @@ export async function recallMemory(
   }
   const m = parsed.data;
 
+  // Resolve the semantic probe BEFORE the read — outside any transaction, one
+  // optional external call, gracefully null. The vector + its version travel
+  // together so the SQL only compares within one model's space; both null ⇒
+  // semantic stays dark and recall is byte-identical to the lexical path.
+  const probe = await resolveQueryProbe(m.query);
+
   const admin = createAdminClient();
   const { data, error } = await callRpc<RecallCandidateRow[]>(admin, "hq_memory_recall", {
     p_employee_id: employee.id,
     p_query: m.query ?? null,
-    p_query_embedding: m.queryEmbedding ?? null,
+    p_query_embedding: probe.embedding,
     p_subject_kind: m.subjectKind ?? null,
     p_subject_id: m.subjectId ?? null,
     p_class_filter: m.classFilter ?? null,
     p_limit: m.candidateLimit,
+    p_query_version: probe.version,
   });
 
   if (error) {
@@ -1069,9 +1130,10 @@ export async function recallMemory(
   const byId = new Map<string, RecallCandidateRow>(rows.map((r) => [r.id, r]));
   const now = Date.now();
 
-  // Map the raw SQL signals onto the pure candidate shape. cosSim is left
-  // undefined (embeddings dormant → treated as 0); age is now − last recall
-  // (or creation) so used knowledge ranks fresher (§7 reinforcement).
+  // Map the raw SQL signals onto the pure candidate shape. cosSim is filled
+  // only for rows that carried a same-version vector (null otherwise → the
+  // scorer treats it as 0); age is now − last recall (or creation) so used
+  // knowledge ranks fresher (§7 reinforcement).
   const candidates: RecallCandidate[] = rows.map((r) => ({
     id: r.id,
     memoryClass: r.memory_class,
@@ -1081,6 +1143,7 @@ export async function recallMemory(
     accessCount: r.access_count,
     pinned: r.pinned,
     tsRank: r.ts_rank,
+    cosSim: r.cos_sim ?? undefined,
     structuralMatch: r.structural_match,
     ageMs: now - Date.parse(r.last_reinforced_at ?? r.created_at),
     bodyTokens: r.body_tokens,
