@@ -81,7 +81,7 @@ working memory (XII).
 | Memory **classes** (episodic/working/long-term/procedural) | **Built** · D009 M1 PR1 | additive `memory_class` + lifecycle columns (`owner_employee_id`, `expires_at`, `consolidated_into`, `salience`, `bound_task_id`, `last_reinforced_at`); migration `20260722000000`. The `hq_memory_types` lookup stays data-driven. |
 | AI **write** path (employees author memory) | **Built (owned)** · D009 M1 PR2 | `hq_memory_write` commits owned episodic/working/private autonomously; shared-knowledge writes return the NULL sentinel pending the Module 4 approval checkpoint (§6). Migration `20260723000000`; the human write path is untouched. |
 | The **retrieval pipeline** (hybrid rank + budget + assembly) | **Built** · D009 M1 PR3 | SQL `hq_memory_recall` does the permissioned stage-1/2 read and returns RAW candidate signals; the pure `rankAndAssemble` (`lib/memory/retrieval.ts`) composes score→diversify→assemble (stages 3–5); `hq_memory_reinforce` reinforces the assembled set + writes the `ai_accessed` audit. Migration `20260724000000`. The semantic ANN channel is switched on in PR4 (§7, §11). |
-| **Consolidation / compression / expiry** engines | **To build** | recurring tasks (XII). |
+| **Consolidation / compression / expiry** engines | **Built** · D009 M1 PR5 | the three §9 reduction engines (summarise / consolidate / dedupe→supersede) + the §10 TTL/decay sweep + eviction primitive, driven by a dark background worker (`server/services/memory-lifecycle.ts`, cron `*/15`). Migration `20260727000000`. LLM summarisation is a plug-in (`lib/ai/text/*`), never a dependency. |
 | pgvector + the embedding worker | **Built** · D009 M1 PR4 | `vector` extension (pinned to `public`); real `embedding vector(1536)` + the 9 permanent metadata fields; partial HNSW cosine index; a *derived* queue (`embedded_at IS NULL`) drained by a dark background worker. Migrations `20260725000000` (layer) + `20260726000000` (ANN recall). |
 
 **Net:** the *record, versioning, permission model, FTS and audit are shipped.*
@@ -122,6 +122,34 @@ into cognition. No existing table is rewritten — every change is additive.
 > Embeddings stay a **plug-in, not a dependency** end to end — with no provider
 > configured the worker no-ops and recall is byte-identical to PR3, and the
 > application cannot tell semantic is off.
+>
+> *PR5* builds the **reduction + lifecycle engines** (§9–§10; migration
+> `20260727000000`, worker `server/services/memory-lifecycle.ts`, cron `*/15`) —
+> the recurring work that keeps the company brain dense, coherent and bounded
+> forever. Three reduction engines: **summarisation** (`hq_memory_summary_candidates`
+> detects a long under-summarised body and returns it; `hq_memory_set_summary`
+> persists + versions + audits it), **consolidation** (`hq_memory_consolidate`
+> rolls ≥3 of an employee's themed episodes into ONE private `long_term` lesson),
+> and **deduplication** (`hq_memory_dedupe_pairs` finds near-duplicate vectors;
+> `hq_memory_supersede` merges the loser away — reversibly). Two lifecycle passes:
+> hard-**TTL expiry** + **decay archival** of consolidated episodes below the floor
+> (`hq_memory_expire_sweep`), plus a class-guarded **eviction** primitive
+> (`hq_memory_archive`). The **event model** is assessed, not assumed: consolidation
+> WRITES knowledge → it emits the canonical `memory.asserted`; supersession is a
+> business fact → it emits `memory.superseded` (the verb the registry RESERVED at
+> the spine's birth, emitted for the first time here); expiry / decay / eviction /
+> summarisation are MECHANICAL maintenance → they emit **nothing** on The Pulse,
+> audited only per-memory (the widened `hq_memory_events` vocabulary). **DARK by
+> default** (`memory_lifecycle.worker_enabled = false`) and a graceful no-op with no
+> text provider / no embeddings: consolidation's body is a DETERMINISTIC SQL digest
+> (LLM refinement is a later plug-in), and dedupe returns `[]` with no vectors — the
+> LLM text seam (`lib/ai/text/*`, PR5c) mirrors the embeddings seam exactly
+> (`getTextProvider()` → `null` when unconfigured). The worker drives only the
+> mechanical-safe reducers autonomously each tick (expire-sweep → dedupe → summarise);
+> **consolidation is exposed** (`consolidateTheme()`) but **not yet auto-driven** —
+> there is no theme-discovery / clustering signal yet, so per the standing rule
+> (Detect → Design → Expose stable interface → Complete later) the primitive ships
+> ready and a future signal turns it on with **no application change**.
 
 ---
 
@@ -456,6 +484,57 @@ Three reduction engines keep the brain dense and affordable. Each is a recurring
    references, archive the rest as `superseded`), so the corpus doesn't bloat
    with paraphrases. Conservative: merges are versioned and reversible.
 
+> **As-built (D009 M1 PR5).** All three engines exist, idempotent, each split into
+> a READ-ONLY detector + an atomic APPLY primitive so the external LLM call can live
+> in TS, OUTSIDE any SQL transaction (the spine's no-IO-in-txn rule). The policy
+> numbers live in ONE pure place (`lib/memory/lifecycle.ts`) and the SQL uses those
+> EXACT literals, pinned equal by the security gate.
+>
+> - **Summarisation.** `hq_memory_summary_candidates(limit)` returns each long
+>   under-summarised memory WITH its body (bounded to the leading 24 000 chars, plus
+>   the true `body_chars`) — everything the worker needs in ONE read, no second
+>   round-trip. "Under-summarised" == `needsSummary`: `body ≥ SUMMARY_MIN_BODY_CHARS`
+>   (1200) AND the summary is empty OR still ≥ `SUMMARY_MAX_RATIO` (0.6) of the body
+>   (so it saves nothing). `hq_memory_set_summary(id, text)` persists it, bumps the
+>   version + snapshots, audits `summarised`, and — because changing the summary trips
+>   the PR4 drift trigger — the row is automatically re-embedded from the better text.
+>   The worker computes the text via the PR5c provider when configured and SKIPS the
+>   write if the result is empty or not actually shorter (the ratio guard again, now
+>   on the candidate's true `body_chars`).
+> - **Consolidation.** `hq_memory_consolidate(employee, theme)` gathers the employee's
+>   OWN active, unconsolidated episodic memories whose `search_tsv` matches the theme;
+>   below `MIN_CONSOLIDATION_SOURCES` (3) it is noise → NULL no-op. Otherwise it writes
+>   ONE **private, owner-scoped** `long_term` lesson (autonomous per §6) with a
+>   DETERMINISTIC SQL digest body, points every source's `consolidated_into` at it (the
+>   sources are NOT archived — they keep decaying and §10 archives them later, lesson
+>   preserved), snapshots version 1, audits `created` + one `consolidated` per source,
+>   and emits `memory.asserted`. Naturally idempotent: consolidated sources drop out of
+>   the candidate set, so a re-run on the theme finds < 3 fresh and no-ops. The lesson
+>   is private; **promoting it to shared** (`public_hq`/`department`) is the §6 approval
+>   checkpoint owned by the Module 4 Task Engine — deferred, no caller change when it
+>   lands. The worker exposes this as `consolidateTheme()` but does NOT call it on the
+>   autonomous tick (no theme-discovery signal yet — see the §3 PR5 note).
+> - **Deduplication.** `hq_memory_dedupe_pairs(limit, threshold)` is read-only: for a
+>   bounded batch of embedded active rows it probes the HNSW index for each row's single
+>   nearest CO-SCOPED neighbour (same type / visibility / department / owner AND same
+>   embedding version + dimension — vectors compared only within one model's space),
+>   keeps pairs above `DEDUPE_COSINE_THRESHOLD` (0.95), labels the survivor with the
+>   EXACT `chooseDedupeKeeper` rule (highest confidence, then most recent, then smaller
+>   id), and collapses unordered dupes. With no embeddings there are no vectors → `[]`,
+>   a graceful no-op (embeddings are a plug-in). `hq_memory_supersede(keep, drop, reason)`
+>   is the atomic, REVERSIBLE apply: relinks inbound memory-edges drop→keep, repoints any
+>   `consolidated_into` the drop → keep, records a `superseded_by` lineage breadcrumb,
+>   bumps the drop's version + snapshots it `status='superseded'`, audits `superseded`,
+>   and emits `memory.superseded`. Idempotent via the `status='active'` guard on the drop.
+>
+> **The text/LLM seam is a plug-in, not a dependency** — `lib/ai/text/*` (PR5c) mirrors
+> the embeddings seam: `getTextProvider()` is the ONE place that knows the vendor and
+> returns a `TextProvider` (`{ info, generate(prompt, opts) }`) or `null`. Selection is
+> configuration only — `MEMORY_TEXT_PROVIDER` (default `auto`: Anthropic key, else OpenAI
+> key, else `null`); an unknown name or missing key degrades to `null`, never a crash.
+> `null` IS the contract: provider present → summaries are LLM-written; provider null →
+> the engines still run (deterministic digest, no summary) and nothing outside can tell.
+
 ---
 
 ## 10. Expiry, decay & eviction
@@ -475,6 +554,36 @@ working/episodic first, never touches shared knowledge, and is fully audited
 (`memory.expired`/`memory.archived` events). The expiry sweep is a recurring task
 reading `hq_memories_expiry_idx` — idempotent (re-expiring an expired memory is a
 no-op).
+
+> **As-built (D009 M1 PR5).** `hq_memory_expire_sweep(now, limit)` is the autonomous
+> driver the cron calls each tick — fail-dark on `memory_lifecycle.worker_enabled`
+> (returns `{skipped:'worker_disabled', ttl_expired:0, decayed_archived:0}` while off).
+> It runs two bounded, idempotent passes as SEPARATE statements (a row matching both is
+> archived once — the second pass sees the first's status change and skips it), each
+> guarded by `status='active'` so a re-run never re-archives:
+>
+> - **(a) TTL expiry** — `working`/`episodic` past `expires_at` → `status='archived'`,
+>   audited `expired`. A class guard is belt-and-suspenders: a durable memory can never
+>   be archived by the clock even if a bug set its `expires_at`.
+> - **(b) Decay archival** — `episodic` that is ALREADY `consolidated_into` something
+>   (its lesson is preserved) AND whose retention score has fallen below `DECAY_FLOOR`
+>   (0.05) → `archived`, audited `archived`. The score is
+>   `e^(−age/τ) · salience/100` with τ = 30 days, age clamped ≥ 0 — byte-for-byte the
+>   pure `shouldArchiveEpisodic`. An UNCONSOLIDATED episode is NEVER decay-archived,
+>   however old (dropping it would lose its lesson); durable classes are never touched.
+>
+> **Eviction** is `hq_memory_archive(id, reason)` — a deliberate single-row primitive
+> (the worker computes WHICH rows with the pure `evictionPlan`, lowest-score ephemeral
+> first, and calls this per id). Durable company-brain classes are STRUCTURALLY
+> un-evictable: the `memory_class IN ('working','episodic')` guard means a
+> semantic/long_term/procedural id can never be archived by this path, however it is
+> called. Active storage-pressure detection is a future signal; the stable primitive is
+> ready for it (Detect → Design → Expose → Complete). **Event-model correction:** the
+> design's `memory.expired`/`memory.archived` are realised as per-memory
+> `hq_memory_events` rows (`expired`/`archived`), NOT Pulse verbs — expiry, decay and
+> eviction are mechanical maintenance and broadcast nothing (only supersession +
+> consolidation are business facts on the bus). Every transition stays reversible +
+> traceable without flooding the spine.
 
 ---
 
@@ -651,8 +760,53 @@ hq_embedding_reset_failed(p_limit int) returns int
     -- Drain the dead-letter once a root cause is fixed (bounded).
 hq_embedding_golden_signals(p_target_version text) returns jsonb -- §13
 
-hq_memory_consolidate(p_employee_id uuid, p_theme text) returns uuid -- §9.2
-hq_memory_expire_sweep(p_now timestamptz, p_limit int) returns jsonb -- §10
+-- The lifecycle + reduction primitives (BUILT — D009 M1 PR5, §9–§10). The external
+-- LLM call lives in TS (server/services/memory-lifecycle.ts); these are the atomic
+-- SQL halves. All SECURITY DEFINER, search_path='', service-role-only. Only
+-- consolidate + supersede touch the Event Spine (memory.asserted / memory.superseded).
+hq_memory_lifecycle_enabled() returns boolean
+    -- The worker kill-switch read (memory_lifecycle.worker_enabled). STABLE, fail-dark.
+    -- The ONLY gate protecting the ungated apply primitives below — the TS worker checks
+    -- it FIRST each tick, and the autonomous sweep/consolidate also self-gate (defence
+    -- in depth). Mirrors hq_memory_embed_enabled().
+hq_memory_expire_sweep(p_now timestamptz, p_limit int) returns jsonb
+    -- §10. The autonomous TTL + decay driver, fail-dark on the gate. Two bounded,
+    -- idempotent passes as SEPARATE statements: (a) working/episodic past expires_at →
+    -- 'archived'/audit 'expired'; (b) consolidated episodic whose e^(−age/τ)·salience/100
+    -- (τ=30d, floor 0.05) < DECAY_FLOOR → 'archived'/audit 'archived'. Unconsolidated
+    -- + durable classes spared. Returns {ttl_expired, decayed_archived, …}. No Pulse.
+hq_memory_consolidate(p_employee_id uuid, p_theme text) returns uuid
+    -- §9.2. AUTONOMOUS company-brain write, fail-dark (NULL when disabled). Clusters the
+    -- employee's OWN active unconsolidated episodic by theme (search_tsv); < 3
+    -- (MIN_CONSOLIDATION_SOURCES) ⇒ NULL no-op. Else writes ONE private long_term lesson
+    -- (deterministic SQL digest body — LLM refinement is a later plug-in), links sources
+    -- via consolidated_into (NOT archived), v1 snapshot, audits created + consolidated,
+    -- emits memory.asserted. Idempotent. Exposed as consolidateTheme(); not on the tick.
+hq_memory_dedupe_pairs(p_limit int, p_threshold float8) returns jsonb
+    -- §9.3 detection (READ-ONLY, no gate). For a bounded batch of embedded active rows,
+    -- probes the HNSW index for each row's nearest CO-SCOPED neighbour (same type/
+    -- visibility/department/owner + same embedding version+dimension) and returns the
+    -- pairs above p_threshold (default 0.95) with the chooseDedupeKeeper survivor labelled
+    -- ({keep_id, drop_id, cos_sim}). No embeddings ⇒ [] (graceful no-op).
+hq_memory_supersede(p_keep_id uuid, p_drop_id uuid, p_reason text) returns jsonb
+    -- §9.3 apply (atomic, REVERSIBLE, not gated — the worker self-gates). Relinks inbound
+    -- edges drop→keep, repoints consolidated_into drop→keep, records a superseded_by
+    -- lineage edge, bumps the drop's version + snapshots it status='superseded', audits
+    -- 'superseded', emits memory.superseded (the long-reserved verb). Idempotent via the
+    -- drop's active-status guard; a non-active keeper is refused.
+hq_memory_summary_candidates(p_limit int) returns jsonb
+    -- §9.1 detection (READ-ONLY, no gate), the SQL twin of needsSummary. Returns
+    -- [{id, title, body, body_chars, summary_chars}] — body bounded to its leading 24000
+    -- chars so the worker summarises in ONE read (body_chars still the true length for the
+    -- ratio guard). Detects body ≥ 1200 with an empty OR ≥ 0.6×body summary.
+hq_memory_set_summary(p_memory_id uuid, p_summary text) returns jsonb
+    -- §9.1 apply (not gated). Persists the summary, bumps version + snapshots, audits
+    -- 'summarised'. The PR4 drift trigger re-embeds the row from the improved text. No
+    -- Pulse (mechanical). Idempotent-safe via the active-status guard; empty text refused.
+hq_memory_archive(p_memory_id uuid, p_reason text) returns jsonb
+    -- §10 eviction primitive (not gated). Class-guarded: only working/episodic can be
+    -- archived by this path — durable company-brain classes are structurally un-evictable.
+    -- Audits 'archived', no Pulse. Idempotent via the active-status guard.
 hq_memory_golden_signals() returns jsonb                -- §13
 ```
 
@@ -716,6 +870,16 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 > whose `embedding_version` no longer matches, the coverage gauge for a migration).
 > Cheap bounded aggregates, no projection.
 
+> **As-built (D009 M1 PR5).** The lifecycle read is `hq_memory_golden_signals()`:
+> `worker_enabled`; the status distribution (total / active / archived / superseded /
+> draft); the active corpus `by_class`; the **backlog** each engine faces
+> (`ttl_expired_due`, `decay_archivable`, `summary_candidates`,
+> `unconsolidated_episodic` — computed with the SAME policy literals as the engines, so
+> the dashboard can never disagree with them); and a 24h count of each transition
+> (`expired` / `archived` / `consolidated` / `superseded` / `summarised`). STABLE +
+> ungated, so state is observable even while the worker is dark. Surfaced through the
+> worker summary (`getMemoryGoldenSignals()`) and mirrors `hq_embedding_golden_signals`.
+
 ---
 
 ## 14. Security & permissions (P5 applied)
@@ -762,6 +926,30 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 > version, and dimension isolation hold; the channel is gated by its args. Large-
 > dataset latency/stress is deferred to the Module 1 finalize gate.
 
+> **As-built (D009 M1 PR5).** Every lifecycle failure mode is proven deterministically
+> across the tiers. *Unit*: the pure §9/§10 policy (`retentionScore` /
+> `shouldArchiveEpisodic` / `needsSummary` / `chooseDedupeKeeper` / `evictionPlan` and
+> the decay math), the text-provider seam + cost helper (null when unconfigured;
+> Anthropic-preferred auto-select; blank-prompt no-network; vendor-throw surfaces), and
+> the worker's orchestration with a mocked RPC + provider (gate-dark short-circuit; the
+> mechanical-safe tick; per-engine caps `maxSupersedes`/`maxSummaries`; the cost cap and
+> wall-clock deadline; a failed supersede / a generation throw / an empty or too-long
+> summary each isolated, never persisted; never-throws). *Security*: the lifecycle
+> invariants pinned in source — SQL ↔ TS policy literals AGREE (0.05 / 30 days / 1200 /
+> 0.6 / 0.95 / 3); every primitive is `SECURITY DEFINER`, `search_path=''`, EXECUTE
+> revoked from JWT roles + granted only to `service_role`; the event model (consolidation
+> emits `memory.asserted`, supersession emits `memory.superseded`, expiry/decay/eviction/
+> summarisation emit NOTHING on the bus); the class guards on decay + eviction; the
+> dedup probe schema-qualified `public.vector`/`OPERATOR(public.<=>)`. *Integration*
+> (real Postgres): the kill-switch truly gates the autonomous engines (disabled ⇒
+> expire_sweep no-ops + consolidate withholds, nothing changes); TTL + decay archival in
+> one bounded idempotent pass with unconsolidated + durable spared; consolidation rolls
+> ≥3 themed episodes into one private long_term lesson, links (not archives) the sources,
+> emits `memory.asserted`, and is idempotent; dedupe finds the pair by vector + applies
+> the keeper rule, supersede is atomic/audited/reversible/idempotent, a no-embedding row
+> is never paired; summarise detect → apply → drop-out; golden signals; service-role-only.
+> Large-dataset latency/stress is deferred to the Module 1 finalize gate.
+
 ---
 
 ## 16. Conflicts resolved & open questions
@@ -769,7 +957,10 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 **Resolves:**
 - **C6 (memory is a table+UI, not a live substrate)** — directly and fully:
   AI-writable, typed, semantically searchable, with retrieval/consolidation/
-  expiry engines. The filing cabinet becomes cognition.
+  expiry engines. The filing cabinet becomes cognition. *D009 M1 PR5* ships the
+  last of these: the §9 reduction engines (summarise / consolidate / dedupe→supersede)
+  and the §10 TTL/decay/eviction lifecycle, a dark background worker that prunes and
+  compresses the brain with no application change once switched on.
 - Contributes to **C5** — memory access/writes emit bus events (one audit truth).
 - Contributes to **C2/P4** — shared-knowledge writes route through the autonomy
   test's approval path; private experience does not.
@@ -787,7 +978,11 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
    silos knowledge. Do we want an explicit "publish to company" promotion flow
    (an approval-gated `department → public_hq` transition) as the default path
    for consolidated long_term memories? *Recommendation: yes — it's the engine of
-   the shared brain.*
+   the shared brain.* **As-built note (PR5):** `hq_memory_consolidate` already
+   produces the candidate — a `long_term` lesson — but writes it `private` +
+   owner-scoped (autonomous per §6). The `private → public_hq/department` promotion is
+   exactly the approval-gated transition this question asks for; it is owned by the
+   Module 4 Task Engine and lands with **no change** to the consolidation engine.
 2. **Forgetting vs. compliance.** A future data-retention/GDPR requirement may
    demand *hard* deletion of certain customer-derived memories. The "never hard-
    delete" rule needs a documented, audited exception path then — flagged, not
