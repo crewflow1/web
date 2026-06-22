@@ -78,9 +78,9 @@ working memory (XII).
 | Full-text search (weighted generated tsvector + GIN) | **Built** | `hq_memories.search_tsv`, `hq_memories_search_idx`. |
 | Per-memory timeline incl. `ai_accessed` | **Built** | `hq_memory_events` already models AI reads. |
 | Reserved semantic-search column | **Built (dormant)** | `hq_memories.embedding_placeholder jsonb` — *never populated*; this volume activates it via pgvector. |
-| Memory **classes** (episodic/working/long-term/procedural) | **To build** | additive columns + the extensible `hq_memory_types` lookup (data, not code). |
-| AI **write** path (employees author memory) | **To build** | SDK `remember()` → audited entry point; today only humans write. |
-| The **retrieval pipeline** (hybrid rank + budget + assembly) | **To build** | the core of this volume. |
+| Memory **classes** (episodic/working/long-term/procedural) | **Built** · D009 M1 PR1 | additive `memory_class` + lifecycle columns (`owner_employee_id`, `expires_at`, `consolidated_into`, `salience`, `bound_task_id`, `last_reinforced_at`); migration `20260722000000`. The `hq_memory_types` lookup stays data-driven. |
+| AI **write** path (employees author memory) | **Built (owned)** · D009 M1 PR2 | `hq_memory_write` commits owned episodic/working/private autonomously; shared-knowledge writes return the NULL sentinel pending the Module 4 approval checkpoint (§6). Migration `20260723000000`; the human write path is untouched. |
+| The **retrieval pipeline** (hybrid rank + budget + assembly) | **To build** (foundation landed) | pure-`lib/memory` scorer/budget/decay foundation shipped (D009 M1 PR1, `lib/memory/retrieval.ts`); the SQL `hq_memory_recall` is PR3 — the core of this volume. |
 | **Consolidation / compression / expiry** engines | **To build** | recurring tasks (XII). |
 | pgvector + embedding-on-write | **To build** | enable extension; backfill; embed task. |
 
@@ -88,6 +88,16 @@ working memory (XII).
 This volume **activates** semantic search, **opens** an AI write path, **adds**
 the memory typology, and **builds** the retrieval pipeline that turns storage
 into cognition. No existing table is rewritten — every change is additive.
+
+> **As-built — CEO Directive 009 · Module 1 (Shared Memory).** *PR1* added the
+> cognitive classes + lifecycle columns and the pure `lib/memory` scorer/budget/
+> decay foundation. *PR2* opened the **AI write path** (`hq_memory_write`): an
+> employee's owned experience commits autonomously and atomically — row + version
+> + per-memory event + a `memory.asserted` Pulse event in **one** transaction;
+> shared-knowledge writes are **withheld** (NULL sentinel + `approvalRequired`)
+> until the Module 4 Task Engine can host the approval checkpoint. Embeddings
+> stay a **plug-in, not a dependency**: pgvector remains dormant (PR4) and the
+> write is byte-identical with or without it. *PR3* builds the recall pipeline.
 
 ---
 
@@ -215,11 +225,23 @@ never touched by employee code directly; P5). It composes the existing
   department/type;
 - **never** edit another employee's private memory, or `system` memory.
 
+> **As-built (D009 M1 PR2).** The autonomous branch is live in `hq_memory_write`.
+> The shared-knowledge approval checkpoint has no host until the Module 4 Task
+> Engine (XII) exists, so a shared write *without* the capability does **not**
+> touch the company brain: the function returns the NULL sentinel and the SDK
+> surfaces `approvalRequired`. Wiring the `waiting_approval` task later changes no
+> caller code — the `{ id, approvalRequired }` contract (§12.2) is already the
+> surface. The pure mirror of this rule is `lib/memory/model.ts decideMemoryWrite`
+> (unit-tested); the SQL function is the atomic gate, and an integration test pins
+> the two in agreement across the §6 matrix.
+
 Every read by an AI writes an `ai_accessed` row to `hq_memory_events` (already
 modelled) and increments `access_count`/`last_accessed_at` — both the audit
 trail (C5: also mirrored as a `memory.read` event on the bus) and a retrieval
-signal (popular memories rank up). Every write emits `memory.written` /
-`memory.updated` on the Event Bus and snapshots a `hq_memory_versions` row.
+signal (popular memories rank up). Every write emits the **registered**
+`memory.asserted` verb on the Event Bus and snapshots a `hq_memory_versions`
+row. *(The frozen verb registry in `lib/events/registry.ts` is the source of
+truth; this volume's earlier prose said `memory.written`.)*
 
 ---
 
@@ -388,10 +410,15 @@ hq_memory_write(p_employee_id uuid, p_class text, p_type text, p_title text,
                 p_summary text, p_body text, p_visibility text, p_owner uuid,
                 p_salience int, p_expires_at timestamptz, p_bound_task_id uuid,
                 p_correlation_id uuid, p_context jsonb) returns uuid
-    -- AI write path. Enforces §6 write rules: autonomous for owned private/
-    -- episodic/working; raises an approval checkpoint (returns a sentinel +
-    -- opens a task) for shared semantic/long_term without the capability scope.
-    -- Snapshots a version, emits memory.written, enqueues embed.memory.
+    -- AI write path (BUILT — D009 M1 PR2). Enforces §6 write rules: autonomous
+    -- for owned private/episodic/working. A shared semantic/long_term/procedural
+    -- write *without* the `memory.write.shared` scope returns the NULL sentinel
+    -- (a proposal withheld); the `waiting_approval` task is opened by the Module 4
+    -- Task Engine (XII) when it exists — no caller change then. Snapshots a
+    -- version, writes the per-memory event, and emits the registered
+    -- `memory.asserted` on The Pulse in the SAME transaction. Embeddings are a
+    -- plug-in: a future PR4 consumer subscribes to `memory.asserted` to backfill
+    -- the vector — no `embed.memory` enqueue and no embedding column written here.
 
 hq_memory_reinforce(p_memory_ids uuid[]) returns void   -- bump last_reinforced_at
 hq_memory_consolidate(p_employee_id uuid, p_theme text) returns uuid -- §9.2
@@ -453,7 +480,8 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
   silently rewritten by an AI.
 - **No hard deletes.** `forget()` archives + versions; memory is an audit subject.
 - **All AI access audited**: `hq_memory_events.ai_accessed` (built) + a
-  `memory.read`/`memory.written` event on the bus (C5 single source of truth).
+  `memory.read` (recall, PR3) / `memory.asserted` (write, built) event on the bus
+  (C5 single source of truth).
 - **RLS:hq** throughout; no customer/staff JWT can ever touch memory (P5). The
   customer-facing product is untouched.
 
