@@ -5,10 +5,12 @@ import {
   aggregateMemoryFacets,
   canEmployeeAccess,
   extractKeywords,
+  importanceRank,
   MEMORY_CLASSES,
   MEMORY_VISIBILITIES,
   type DashboardStats,
   type MemoryAccessGrant,
+  type MemoryClass,
   type MemoryDetail,
   type MemoryEmployeeLink,
   type MemoryEvent,
@@ -19,6 +21,11 @@ import {
   type MemoryType,
   type MemoryVersion,
 } from "@/lib/memory/model";
+import {
+  rankAndAssemble,
+  type AssemblyResult,
+  type RecallCandidate,
+} from "@/lib/memory/retrieval";
 
 /**
  * CrewFlow HQ — Shared Memory Engine data access (CEO Directive 002).
@@ -920,4 +927,202 @@ export async function rememberMemory(
   // when a shared-knowledge proposal is withheld pending approval. NULL is
   // unambiguous here: denials and invalid input RAISE (handled above).
   return { ok: true, id: data ?? null, approvalRequired: data == null };
+}
+
+// ---------------------------------------------------------------------
+// AI recall path (Volume X §7–§8; CEO Directive 009 Module 1, PR3).
+//
+// `recallMemory` is the service-layer surface the future SDK
+// `Memory.recall()` binds to. The split mirrors the write path: the atomic,
+// permissioned reads live in the SQL primitive `hq_memory_recall` (stage 1
+// the §6 permission filter — the same rules as the pure `canEmployeeAccess`
+// — and stage 2 the indexed lexical + structural candidate retrieval), and
+// the deterministic maths lives in the pure `rankAndAssemble`
+// (lib/memory/retrieval.ts): blended scoring (§7.3), diversify (§7.4) and the
+// token-budget knapsack (§8). Permission is enforced BEFORE scoring, in SQL,
+// so the ranking layer can never widen what an employee may read.
+//
+// Reads do NOT broadcast. There is no `memory.read` verb in the frozen event
+// registry and the spine is the business-event heartbeat, not the read trail,
+// so recall emits nothing on The Pulse. The assembled set is instead audited
+// per-memory + reinforced (decays slower, gains popularity) by the separate
+// `hq_memory_reinforce` primitive — signal, not noise.
+//
+// Embeddings are a PLUG-IN, not a dependency: `queryEmbedding` is the stable
+// PR4 seam (null today). When pgvector lights up, the embedding is filled and
+// the SQL adds an ANN channel with NO change to this signature — semantic
+// search becomes available automatically, no caller-code edit.
+// ---------------------------------------------------------------------
+
+export type RecallInput = {
+  /** Free-text task query (websearch grammar). Null/blank → recency-ranked recall. */
+  query?: string | null;
+  /** PR4 seam — the query embedding; null until embeddings are switched on. */
+  queryEmbedding?: number[] | null;
+  /** Subject entity kind for structural recall (e.g. 'feature', 'customer'). */
+  subjectKind?: string | null;
+  /** Subject entity id (free-form, matches hq_memory_relationships.entity_id). */
+  subjectId?: string | null;
+  /** Restrict to specific cognitive classes (e.g. only 'procedural'). */
+  classFilter?: MemoryClass[] | null;
+  /** Candidate cap fetched from SQL; the ranker diversifies/budgets it down. */
+  candidateLimit?: number;
+  /** Token budget for the assembled context (Volume X §8). */
+  tokenBudget?: number;
+  /** Reinforce + audit the assembled set (default true); pass false for a dry run. */
+  reinforce?: boolean;
+};
+
+/** One assembled memory the recall returns, with display metadata + how it was placed. */
+export type RecallItem = {
+  id: string;
+  memoryClass: MemoryClass;
+  memoryType: string;
+  title: string;
+  summary: string;
+  visibility: string;
+  department: string | null;
+  ownerEmployeeId: string | null;
+  importance: string;
+  salience: number;
+  pinned: boolean;
+  /** Blended §7.3 score (higher = more relevant). */
+  score: number;
+  /** How the §8 knapsack placed it: full body, or summary-only under pressure. */
+  form: "full" | "summary";
+};
+
+export type RecallResult =
+  | {
+      ok: true;
+      /** The assembled set, highest score first. */
+      items: RecallItem[];
+      /** Token accounting + included/summarised/dropped ids (Volume X §8). */
+      manifest: AssemblyResult;
+      /** How many permitted candidates SQL returned before ranking. */
+      candidateCount: number;
+    }
+  | { ok: false; error: string };
+
+/** The raw candidate row hq_memory_recall returns (snake_case jsonb). */
+type RecallCandidateRow = {
+  id: string;
+  memory_class: MemoryClass;
+  memory_type: string;
+  title: string;
+  summary: string;
+  visibility: string;
+  department: string | null;
+  owner_employee_id: string | null;
+  importance: string;
+  salience: number;
+  pinned: boolean;
+  access_count: number;
+  consolidated_into: string | null;
+  version: number;
+  created_at: string;
+  last_reinforced_at: string | null;
+  ts_rank: number;
+  structural_match: number;
+  body_tokens: number;
+  summary_tokens: number;
+};
+
+const recallSchema = z.object({
+  query: z.string().max(2000).nullish(),
+  queryEmbedding: z.array(z.number()).nullish(),
+  subjectKind: z.string().max(60).nullish(),
+  subjectId: z.string().max(300).nullish(),
+  classFilter: z.array(z.enum(MEMORY_CLASSES)).nullish(),
+  candidateLimit: z.number().int().min(1).max(200).optional().default(48),
+  tokenBudget: z.number().int().min(1).max(200000).optional().default(4000),
+  reinforce: z.boolean().optional().default(true),
+});
+
+export async function recallMemory(
+  input: RecallInput,
+  employee: { id: string },
+): Promise<RecallResult> {
+  const parsed = recallSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join("; ") };
+  }
+  const m = parsed.data;
+
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<RecallCandidateRow[]>(admin, "hq_memory_recall", {
+    p_employee_id: employee.id,
+    p_query: m.query ?? null,
+    p_query_embedding: m.queryEmbedding ?? null,
+    p_subject_kind: m.subjectKind ?? null,
+    p_subject_id: m.subjectId ?? null,
+    p_class_filter: m.classFilter ?? null,
+    p_limit: m.candidateLimit,
+  });
+
+  if (error) {
+    console.error("[hq-memory] recallMemory failed", error);
+    return { ok: false, error: error.message };
+  }
+
+  const rows = (data ?? []) as RecallCandidateRow[];
+  const byId = new Map<string, RecallCandidateRow>(rows.map((r) => [r.id, r]));
+  const now = Date.now();
+
+  // Map the raw SQL signals onto the pure candidate shape. cosSim is left
+  // undefined (embeddings dormant → treated as 0); age is now − last recall
+  // (or creation) so used knowledge ranks fresher (§7 reinforcement).
+  const candidates: RecallCandidate[] = rows.map((r) => ({
+    id: r.id,
+    memoryClass: r.memory_class,
+    memoryType: r.memory_type,
+    importanceRank: importanceRank(r.importance),
+    salience: r.salience,
+    accessCount: r.access_count,
+    pinned: r.pinned,
+    tsRank: r.ts_rank,
+    structuralMatch: r.structural_match,
+    ageMs: now - Date.parse(r.last_reinforced_at ?? r.created_at),
+    bodyTokens: r.body_tokens,
+    summaryTokens: r.summary_tokens,
+    supersededBy: r.consolidated_into,
+  }));
+
+  // Stage 3–5 — score → diversify → assemble, all pure (Volume X §7.3/§7.4/§8).
+  const { items: ranked, manifest } = rankAndAssemble(candidates, {
+    tokenBudget: m.tokenBudget,
+  });
+
+  const items: RecallItem[] = [];
+  for (const it of ranked) {
+    const r = byId.get(it.id);
+    if (!r) continue;
+    items.push({
+      id: r.id,
+      memoryClass: r.memory_class,
+      memoryType: r.memory_type,
+      title: r.title,
+      summary: r.summary,
+      visibility: r.visibility,
+      department: r.department,
+      ownerEmployeeId: r.owner_employee_id,
+      importance: r.importance,
+      salience: r.salience,
+      pinned: r.pinned,
+      score: it.score,
+      form: it.form,
+    });
+  }
+
+  // Reinforce + audit ONLY the assembled set (Volume X §7/§10). Best-effort:
+  // a reinforcement failure must never fail the recall the caller asked for.
+  if (m.reinforce && items.length > 0) {
+    const { error: rErr } = await callRpc<null>(admin, "hq_memory_reinforce", {
+      p_employee_id: employee.id,
+      p_memory_ids: items.map((i) => i.id),
+    });
+    if (rErr) console.error("[hq-memory] recallMemory reinforce failed", rErr);
+  }
+
+  return { ok: true, items, manifest, candidateCount: rows.length };
 }

@@ -259,8 +259,16 @@ export type DiversifyOptions = {
 /**
  * Drop near-duplicates, prefer the latest version, and spread across types
  * (Volume X §7.4). Greedy over score-desc input: a candidate is skipped if
- * it is superseded by an already-selected item, a near-duplicate (cosine >
- * threshold) of one, or would exceed the per-type soft cap. Stable and pure.
+ * it is superseded by a newer version present in the candidate set, a
+ * near-duplicate (cosine > threshold) of an already-selected item, or would
+ * exceed the per-type soft cap. Stable and pure.
+ *
+ * Supersession is resolved by PRESENCE, not by selection order: a candidate
+ * whose `supersededBy` points at any id in the input is dropped even when the
+ * superseding version scores lower. This is what "prefer the latest version"
+ * means in practice — a consolidation (durable, barely-decaying) routinely
+ * scores below the fresh episode it rolls up, so a selection-order rule would
+ * keep the stale episode. Presence also collapses version CHAINS correctly.
  */
 export function diversify(
   items: ReadonlyArray<DiversifyItem>,
@@ -270,16 +278,17 @@ export function diversify(
   const maxPerType = opts.maxPerType ?? 4;
   const limit = opts.limit ?? Infinity;
 
+  const presentIds = new Set(items.map((i) => i.id));
   const ranked = [...items].sort((a, b) => b.score - a.score);
   const selected: DiversifyItem[] = [];
-  const selectedIds = new Set<string>();
   const typeCounts = new Map<string, number>();
 
   for (const cand of ranked) {
     if (selected.length >= limit) break;
 
-    // Superseded by something already chosen → drop (keep the latest version).
-    if (cand.supersededBy && selectedIds.has(cand.supersededBy)) continue;
+    // Superseded by a newer version anywhere in the set → drop (keep the
+    // latest version), independent of score order.
+    if (cand.supersededBy && presentIds.has(cand.supersededBy)) continue;
 
     // Near-duplicate of an already-selected, higher-scoring item → drop.
     if (cand.embedding) {
@@ -300,7 +309,6 @@ export function diversify(
     if (count >= maxPerType) continue;
 
     selected.push(cand);
-    selectedIds.add(cand.id);
     typeCounts.set(type, count + 1);
   }
 
@@ -379,6 +387,156 @@ export function assembleContext(
   for (const item of rest) place(item, false);
 
   return { included, summarised, dropped, tokensUsed: used, budget };
+}
+
+// =====================================================================
+// The recall orchestrator — §7.3 score → §7.4 diversify → §8 assembly
+// =====================================================================
+
+/**
+ * One candidate row as returned by the SQL entry point hq_memory_recall, in
+ * pure-domain shape (the server wrapper maps the snake_case SQL row onto
+ * this). Embedding-derived signals (`cosSim`) are absent until PR4 switches
+ * on pgvector — the scorer treats them as 0, so recall ranks identically
+ * with or without embeddings (embeddings are a plug-in, not a dependency).
+ */
+export type RecallCandidate = {
+  id: string;
+  memoryClass: MemoryClass;
+  /** Fine-grained type, for diversify type-spread. */
+  memoryType?: string;
+  /** Importance rank 0..3 (model.importanceRank of the row's importance). */
+  importanceRank?: number;
+  salience?: number;
+  accessCount?: number;
+  pinned?: boolean;
+  /** Lexical ts_rank from SQL (0 when there was no query). */
+  tsRank?: number;
+  /** Semantic similarity — undefined until embeddings are switched on (PR4). */
+  cosSim?: number;
+  /** Structural graph match to the task subject, 0 or 1 (from SQL). */
+  structuralMatch?: number;
+  /** Age in ms (now − last_reinforced_at ?? created_at), computed by the wrapper. */
+  ageMs?: number;
+  /** Token cost of the FULL body (≈chars/4, computed in SQL — bodies are not shipped). */
+  bodyTokens: number;
+  /** Token cost of the stored summary (from SQL). */
+  summaryTokens?: number;
+  /** Consolidation/version lineage: dropped if its target is also selected. */
+  supersededBy?: string | null;
+};
+
+/** One assembled memory in the recall manifest. */
+export type RecalledItem = {
+  id: string;
+  memoryClass: MemoryClass;
+  score: number;
+  /** How assembly placed it: full body, or summary-only under budget pressure. */
+  form: "full" | "summary";
+};
+
+export type RecallAssembly = {
+  /** The assembled set (full + summarised), highest score first. */
+  items: RecalledItem[];
+  /** Token accounting + included/summarised/dropped ids (Volume X §8). */
+  manifest: AssemblyResult;
+  /** Every candidate's blended score, ordered as scored — for observability/audit. */
+  scored: Array<{ id: string; score: number }>;
+};
+
+export type RankAndAssembleOptions = {
+  /** Token budget for the assembled context (Volume X §8). */
+  tokenBudget: number;
+  /** Diversify knobs (per-type cap, near-dup threshold, hard limit). */
+  diversify?: DiversifyOptions;
+};
+
+/**
+ * Rank → diversify → assemble the recall candidates into a budgeted manifest
+ * (Volume X §7.3 → §7.4 → §8). Pure + DB-free by design: the SQL entry point
+ * performs the permissioned reads (stage 1–2) and returns RAW signals; this
+ * composes the three pure cores over them (stage 3–5). Keeping the
+ * composition here — not in SQL, not in the server wrapper — is what lets the
+ * unit gate prove the whole ranking deterministically without a live
+ * database, and the security gate prove "permission before scoring" (the
+ * permission filter is upstream, in SQL; nothing here can widen it).
+ *
+ * Pinned candidates are treated as always-in at assembly (a deliberately
+ * pinned, in-scope fact is non-negotiable, Volume X §8); everything else is
+ * packed by score, full body if it fits, else summary, else dropped.
+ */
+export function rankAndAssemble(
+  candidates: ReadonlyArray<RecallCandidate>,
+  opts: RankAndAssembleOptions,
+): RecallAssembly {
+  const scored = candidates.map((c) => ({
+    id: c.id,
+    memoryClass: c.memoryClass,
+    memoryType: c.memoryType,
+    supersededBy: c.supersededBy ?? null,
+    pinned: c.pinned ?? false,
+    bodyTokens: c.bodyTokens,
+    summaryTokens: c.summaryTokens,
+    score: scoreCandidate({
+      memoryClass: c.memoryClass,
+      cosSim: c.cosSim,
+      tsRank: c.tsRank,
+      ageMs: c.ageMs,
+      salience: c.salience,
+      importanceRank: c.importanceRank,
+      accessCount: c.accessCount,
+      pinned: c.pinned,
+      structuralMatch: c.structuralMatch,
+    }),
+  }));
+
+  const byId = new Map(scored.map((s) => [s.id, s] as const));
+
+  // §7.4 — dedupe + spread, score-desc. Embeddings are absent pre-PR4, so
+  // near-dup detection falls back to version lineage + per-type cap.
+  const diversified = diversify(
+    scored.map((s) => ({
+      id: s.id,
+      score: s.score,
+      memoryType: s.memoryType,
+      supersededBy: s.supersededBy,
+    })),
+    opts.diversify ?? {},
+  );
+
+  // §8 — pack under the token budget.
+  const assemblyItems: AssemblyItem[] = [];
+  for (const d of diversified) {
+    const s = byId.get(d.id);
+    if (!s) continue;
+    assemblyItems.push({
+      id: s.id,
+      tokens: s.bodyTokens,
+      summaryTokens: s.summaryTokens,
+      score: s.score,
+      alwaysIn: s.pinned,
+    });
+  }
+  const manifest = assembleContext(assemblyItems, opts.tokenBudget);
+
+  const includedSet = new Set(manifest.included);
+  const placedSet = new Set<string>([...manifest.included, ...manifest.summarised]);
+
+  const items: RecalledItem[] = [];
+  for (const d of diversified) {
+    if (!placedSet.has(d.id)) continue;
+    const s = byId.get(d.id);
+    if (!s) continue;
+    items.push({
+      id: s.id,
+      memoryClass: s.memoryClass,
+      score: s.score,
+      form: includedSet.has(d.id) ? "full" : "summary",
+    });
+  }
+  items.sort((a, b) => b.score - a.score);
+
+  return { items, manifest, scored: scored.map((s) => ({ id: s.id, score: s.score })) };
 }
 
 // Re-exported so callers building candidates have the canonical class list.

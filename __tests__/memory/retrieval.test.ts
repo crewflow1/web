@@ -146,12 +146,32 @@ describe("effectiveScore + evictionOrder (Volume X §10)", () => {
 // ---------------------------------------------------------------------
 
 describe("diversify (Volume X §7.4)", () => {
-  it("drops a memory superseded by an already-selected newer version", () => {
+  it("drops a memory superseded by a newer version present in the set", () => {
     const out = diversify([
       { id: "v2", score: 0.9, supersededBy: null },
       { id: "v1", score: 0.8, supersededBy: "v2" },
     ]);
     expect(out.map((i) => i.id)).toEqual(["v2"]);
+  });
+
+  it("drops a superseded memory even when the newer version scores LOWER", () => {
+    // A consolidation (durable, barely-decaying) routinely scores below the
+    // fresh episode it rolls up. Supersession is resolved by presence, not by
+    // score order, so the stale episode is dropped for the lower-scoring rollup.
+    const out = diversify([
+      { id: "episode", score: 0.9, supersededBy: "rollup" },
+      { id: "rollup", score: 0.3, supersededBy: null },
+    ]);
+    expect(out.map((i) => i.id)).toEqual(["rollup"]);
+  });
+
+  it("collapses a version chain to its latest link", () => {
+    const out = diversify([
+      { id: "v1", score: 0.9, supersededBy: "v2" },
+      { id: "v2", score: 0.8, supersededBy: "v3" },
+      { id: "v3", score: 0.7, supersededBy: null },
+    ]);
+    expect(out.map((i) => i.id)).toEqual(["v3"]);
   });
 
   it("drops near-duplicates by cosine, keeping the higher score", () => {
