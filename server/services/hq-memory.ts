@@ -1,9 +1,12 @@
 import "server-only";
+import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   aggregateMemoryFacets,
   canEmployeeAccess,
   extractKeywords,
+  MEMORY_CLASSES,
+  MEMORY_VISIBILITIES,
   type DashboardStats,
   type MemoryAccessGrant,
   type MemoryDetail,
@@ -80,6 +83,25 @@ type AdminClient = ReturnType<typeof createAdminClient>;
 
 function table<T>(admin: AdminClient, name: string): MemQuery<T> {
   return admin.from(name as never) as unknown as MemQuery<T>;
+}
+
+/**
+ * Typed shim over the (still-untyped) Supabase RPC builder. The AI write
+ * path (PR2) reaches SQL engine primitives — `hq_memory_write` — through
+ * this, the same way reads go through `table<T>()`. Returns the scalar the
+ * function yields (a memory uuid for hq_memory_write) or null.
+ */
+async function callRpc<T>(
+  admin: AdminClient,
+  fn: string,
+  args: Record<string, unknown>,
+): Promise<SingleResult<T>> {
+  const run = admin.rpc as unknown as (
+    f: string,
+    a: Record<string, unknown>,
+  ) => PromiseLike<SingleResult<T>>;
+  const { data, error } = await run(fn, args);
+  return { data, error };
 }
 
 // ---------------------------------------------------------------------
@@ -781,4 +803,121 @@ export async function setMemoryStatus(
     detail: { from: current.status, to: status },
   });
   return { ok: true, id };
+}
+
+// ---------------------------------------------------------------------
+// AI write path (Volume X §6/§12; CEO Directive 009 Module 1, PR2).
+//
+// `rememberMemory` is the service-layer surface the future SDK
+// `Memory.remember()` binds to. It is a THIN, faithful wrapper over the
+// atomic SQL primitive `hq_memory_write`, which is the SINGLE source of
+// truth for the §6 write decision — it re-derives the exact rules the pure
+// `decideMemoryWrite` predicate (lib/memory/model.ts) encodes and enforces
+// them in-transaction (insert + version-1 snapshot + per-memory event + a
+// `memory.asserted` Pulse event, atomic via the transactional outbox).
+//
+// One engine, two callers: the human operator path above (createMemory /
+// updateMemory) is untouched; this is the additive AI author path.
+//
+// §6 outcomes map onto the result:
+//   * autonomous commit                  -> { ok: true, id, approvalRequired: false }
+//   * shared-knowledge proposal withheld -> { ok: true, id: null, approvalRequired: true }
+//       (nothing touches the company brain; the waiting_approval task is opened
+//        by the Module 4 Workflow/Task engine, no caller-code change — §12.2)
+//   * §6 denial / invalid input          -> { ok: false, error }
+//
+// Embeddings are a PLUG-IN, not a dependency: the vector is backfilled by a
+// future PR4 consumer off the `memory.asserted` event, so nothing here
+// imports an embedding model or changes when semantic search is enabled.
+// ---------------------------------------------------------------------
+
+export type RememberInput = {
+  memoryClass: string;
+  memoryType: string;
+  title: string;
+  summary?: string;
+  body?: string;
+  visibility?: string;
+  salience?: number;
+  expiresAt?: string | null;
+  boundTaskId?: string | null;
+  correlationId?: string | null;
+  context?: Record<string, unknown>;
+};
+
+export type RememberResult =
+  | { ok: true; id: string | null; approvalRequired: boolean }
+  | { ok: false; error: string };
+
+const rememberSchema = z.object({
+  memoryClass: z.enum(MEMORY_CLASSES),
+  memoryType: z.string().min(1).max(60),
+  title: z.string().min(1).max(300),
+  summary: z.string().max(2000).optional().default(""),
+  body: z.string().max(200000).optional().default(""),
+  visibility: z.enum(MEMORY_VISIBILITIES).optional().default("private"),
+  salience: z.number().int().min(0).max(100).optional().default(50),
+  expiresAt: z.string().datetime().nullish(),
+  boundTaskId: z.string().uuid().nullish(),
+  correlationId: z.string().uuid().nullish(),
+  context: z.record(z.unknown()).optional().default({}),
+});
+
+export async function rememberMemory(
+  input: RememberInput,
+  employee: { id: string },
+): Promise<RememberResult> {
+  const parsed = rememberSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues.map((i) => i.message).join("; "),
+    };
+  }
+  const m = parsed.data;
+
+  // Fast, friendly rejection — an AI employee never authors engine-internal
+  // memory (the SQL gate enforces this too; this just avoids a round-trip).
+  if (m.visibility === "system") {
+    return { ok: false, error: "system memory cannot be written by an AI employee" };
+  }
+
+  // Ownership is DERIVED, never caller-supplied: an employee owns the private
+  // experience it writes (episodic/working, or anything private). Shared,
+  // durable company knowledge is owner-less (the company brain). This makes
+  // the §6 decision deterministic from (class, visibility) and prevents a
+  // caller from spoofing ownership.
+  const owner =
+    m.visibility === "private" ||
+    m.memoryClass === "episodic" ||
+    m.memoryClass === "working"
+      ? employee.id
+      : null;
+
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<string>(admin, "hq_memory_write", {
+    p_employee_id: employee.id,
+    p_class: m.memoryClass,
+    p_type: m.memoryType,
+    p_title: m.title,
+    p_summary: m.summary,
+    p_body: m.body,
+    p_visibility: m.visibility,
+    p_owner: owner,
+    p_salience: m.salience,
+    p_expires_at: m.expiresAt ?? null,
+    p_bound_task_id: m.boundTaskId ?? null,
+    p_correlation_id: m.correlationId ?? null,
+    p_context: m.context,
+  });
+
+  if (error) {
+    console.error("[hq-memory] rememberMemory failed", error);
+    return { ok: false, error: error.message };
+  }
+
+  // The SQL returns the new memory's uuid on an autonomous commit, or NULL
+  // when a shared-knowledge proposal is withheld pending approval. NULL is
+  // unambiguous here: denials and invalid input RAISE (handled above).
+  return { ok: true, id: data ?? null, approvalRequired: data == null };
 }

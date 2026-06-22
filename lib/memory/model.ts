@@ -459,6 +459,98 @@ export function canEmployeeAccess(
 }
 
 // ---------------------------------------------------------------------
+// Write-permission resolution (pure) — the §6 AI write rules.
+//
+// Answers: when an AI employee proposes to WRITE a memory, may it commit
+// autonomously, must it cross an approval checkpoint, or is it forbidden?
+// This is the DB-free predicate the SQL `hq_memory_write` mirrors as its
+// atomic, final gate (the same split as canEmployeeAccess ↔ the SQL stage-1
+// read filter). Keyed purely on the memory shape + the employee's scopes, so
+// create vs. update never changes the outcome (a create always owns itself;
+// editing another's private memory is forbidden either way).
+//
+// Volume X §6:
+//  - create episodic/working/private memory it OWNS            → autonomous
+//  - create/update shared semantic/long_term/procedural        → a PROPOSAL
+//      that hits an approval checkpoint, UNLESS the employee holds the
+//      `memory.write.shared` capability scope (Volume XIII)     → autonomous
+//  - never edit another employee's private memory, or system   → denied
+// ---------------------------------------------------------------------
+
+/** The §6 write outcomes. */
+export type WriteOutcome = "autonomous" | "approval_required" | "denied";
+
+export type WriteDecision = {
+  outcome: WriteOutcome;
+  /** Machine-stable reason code — for the audit trail + the (future,
+   *  Module 4) approval-task payload. */
+  reason: string;
+};
+
+/**
+ * The capability scope that lets an employee write SHARED company knowledge
+ * without an approval checkpoint (Volume X §6; Volume XIII capability model).
+ * Held in `ai_employees.permissions.scopes` until the capability volume lands.
+ */
+export const SHARED_WRITE_SCOPE = "memory.write.shared";
+
+/**
+ * Resolve the §6 write decision for one proposed memory write. Pure: no DB,
+ * no I/O. The SQL primitive re-derives the same decision as the atomic gate.
+ */
+export function decideMemoryWrite(
+  memory: {
+    memory_class: MemoryClass;
+    visibility: MemoryVisibility | string;
+    owner_employee_id?: string | null;
+  },
+  employee: { id: string; scopes?: ReadonlyArray<string> },
+): WriteDecision {
+  const { visibility } = memory;
+  const cls = memory.memory_class;
+  const owner = memory.owner_employee_id ?? null;
+  const isOwner = owner != null && owner === employee.id;
+
+  // (1) System memory is engine-internal — never writable via the AI path.
+  if (visibility === "system") {
+    return { outcome: "denied", reason: "system_visibility" };
+  }
+
+  // (2) Never edit another employee's private/restricted memory (§6).
+  if (
+    owner != null &&
+    !isOwner &&
+    (visibility === "private" || visibility === "restricted")
+  ) {
+    return { outcome: "denied", reason: "foreign_private" };
+  }
+
+  // (3) Shared, durable company-brain knowledge (semantic/long_term/procedural
+  //     at public_hq/department visibility): a PROPOSAL that crosses an approval
+  //     checkpoint, unless the employee holds the shared-write capability scope.
+  const isSharedDurable =
+    DURABLE_CLASSES.has(cls) &&
+    (visibility === "public_hq" || visibility === "department");
+  if (isSharedDurable) {
+    const hasScope = (employee.scopes ?? []).includes(SHARED_WRITE_SCOPE);
+    return hasScope
+      ? { outcome: "autonomous", reason: "shared_write_capability" }
+      : { outcome: "approval_required", reason: "shared_knowledge_proposal" };
+  }
+
+  // (4) The employee's OWN lived experience (episodic/working), or its OWN
+  //     private memory — autonomous: reversible, bounded, low blast-radius.
+  const isOwnedExperience =
+    isOwner && (cls === "episodic" || cls === "working" || visibility === "private");
+  if (isOwnedExperience) {
+    return { outcome: "autonomous", reason: "owned_experience" };
+  }
+
+  // (5) Fail closed — anything not explicitly permitted is denied.
+  return { outcome: "denied", reason: "not_permitted" };
+}
+
+// ---------------------------------------------------------------------
 // Keyword + tag normalisation (pure) — the indexing helpers the service
 // runs on every write so memories are searchable + topic-grouped.
 // ---------------------------------------------------------------------
