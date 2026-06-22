@@ -80,7 +80,7 @@ working memory (XII).
 | Reserved semantic-search column | **Built (dormant)** | `hq_memories.embedding_placeholder jsonb` — *never populated*; this volume activates it via pgvector. |
 | Memory **classes** (episodic/working/long-term/procedural) | **Built** · D009 M1 PR1 | additive `memory_class` + lifecycle columns (`owner_employee_id`, `expires_at`, `consolidated_into`, `salience`, `bound_task_id`, `last_reinforced_at`); migration `20260722000000`. The `hq_memory_types` lookup stays data-driven. |
 | AI **write** path (employees author memory) | **Built (owned)** · D009 M1 PR2 | `hq_memory_write` commits owned episodic/working/private autonomously; shared-knowledge writes return the NULL sentinel pending the Module 4 approval checkpoint (§6). Migration `20260723000000`; the human write path is untouched. |
-| The **retrieval pipeline** (hybrid rank + budget + assembly) | **To build** (foundation landed) | pure-`lib/memory` scorer/budget/decay foundation shipped (D009 M1 PR1, `lib/memory/retrieval.ts`); the SQL `hq_memory_recall` is PR3 — the core of this volume. |
+| The **retrieval pipeline** (hybrid rank + budget + assembly) | **Built** · D009 M1 PR3 | SQL `hq_memory_recall` does the permissioned stage-1/2 read and returns RAW candidate signals; the pure `rankAndAssemble` (`lib/memory/retrieval.ts`) composes score→diversify→assemble (stages 3–5); `hq_memory_reinforce` reinforces the assembled set + writes the `ai_accessed` audit. Migration `20260724000000`. Semantic ANN stays dormant (PR4 seam). |
 | **Consolidation / compression / expiry** engines | **To build** | recurring tasks (XII). |
 | pgvector + embedding-on-write | **To build** | enable extension; backfill; embed task. |
 
@@ -97,7 +97,17 @@ into cognition. No existing table is rewritten — every change is additive.
 > shared-knowledge writes are **withheld** (NULL sentinel + `approvalRequired`)
 > until the Module 4 Task Engine can host the approval checkpoint. Embeddings
 > stay a **plug-in, not a dependency**: pgvector remains dormant (PR4) and the
-> write is byte-identical with or without it. *PR3* builds the recall pipeline.
+> write is byte-identical with or without it. *PR3* builds the **recall pipeline**
+> (`hq_memory_recall` + `hq_memory_reinforce`, migration `20260724000000`): the SQL
+> enforces the §6 permission filter as a stage-1 `WHERE` (forbidden rows are never
+> scored), does the lexical + structural candidate read, and returns RAW signals
+> (`ts_rank`, `structural_match`, token *estimates* — never the body); the pure
+> `rankAndAssemble` then scores, diversifies and budget-packs them (stages 3–5)
+> with no DB. Recall emits **nothing** on The Pulse — there is no recall verb in the
+> registry; an AI read is audited per-memory (`hq_memory_events.ai_accessed`) by
+> `hq_memory_reinforce`, which also reinforces decay on the assembled set. The
+> query-embedding parameter ships as a stable `float8[]` seam PR4 fills — no caller
+> changes when semantic search switches on.
 
 ---
 
@@ -236,12 +246,15 @@ never touched by employee code directly; P5). It composes the existing
 > the two in agreement across the §6 matrix.
 
 Every read by an AI writes an `ai_accessed` row to `hq_memory_events` (already
-modelled) and increments `access_count`/`last_accessed_at` — both the audit
-trail (C5: also mirrored as a `memory.read` event on the bus) and a retrieval
-signal (popular memories rank up). Every write emits the **registered**
-`memory.asserted` verb on the Event Bus and snapshots a `hq_memory_versions`
-row. *(The frozen verb registry in `lib/events/registry.ts` is the source of
-truth; this volume's earlier prose said `memory.written`.)*
+modelled) and increments `access_count`/`last_accessed_at` — a **per-memory**
+audit trail and a retrieval signal (popular memories rank up). Reads do **not**
+broadcast on The Pulse: there is deliberately **no** `memory.read`/`memory.recalled`
+verb in the registry, so recall — the most-called operation — never floods the
+event bus. Every *write*, by contrast, emits the **registered** `memory.asserted`
+verb on the Event Bus and snapshots a `hq_memory_versions` row. *(The frozen verb
+registry in `lib/events/registry.ts` is the source of truth; an earlier draft of
+this volume wrongly mirrored reads as a `memory.read` bus event and named the
+write `memory.written` — both corrected here as-built, D009 M1 PR2/PR3.)*
 
 ---
 
@@ -302,6 +315,23 @@ Design rules:
 - **Reinforcement.** Memories that get recalled are *used*; bumping
   `last_reinforced_at` makes the decay model (§10) keep useful knowledge and let
   unused episodes fade — a usage-weighted brain.
+
+> **As-built (D009 M1 PR3).** Stages 1–2 live in SQL (`hq_memory_recall`): the
+> permission predicate is the stage-1 `WHERE` (so `system` and any non-permitted
+> row is never even scored), then a lexical (`ts_rank` over `search_tsv`) +
+> structural (relationship / own-working) candidate read returns up to `p_limit`
+> rows as RAW signals — crucially a `body_tokens` *estimate*, never the body, so
+> the knapsack packs without shipping the corpus. Stages 3–5 are the pure
+> `rankAndAssemble` (`lib/memory/retrieval.ts`): `scoreCandidate` → `diversify` →
+> `assembleContext`, fully DB-free and deterministic. Stage 6's reinforcement +
+> `ai_accessed` audit is `hq_memory_reinforce`, applied to the *assembled* set
+> only. The semantic ANN channel (2b) and the `cos_sim` term are dormant until
+> PR4 — the scorer treats a missing embedding as 0, so ranking is identical with
+> or without it. **Supersession is resolved by presence, not score order:** an
+> episode whose `consolidated_into` target is in the candidate set is dropped even
+> when the fresh episode out-scores the durable consolidation that rolls it up —
+> "prefer the latest version" (stage 4) is a hard lineage fact, not a ranking
+> tie-break, and it collapses version chains correctly.
 
 ---
 
@@ -400,11 +430,16 @@ no-op).
 ### 12.1 SQL entry points (P5: `SECURITY DEFINER`, `search_path=''`, service-role-only)
 
 ```
-hq_memory_recall(p_employee_id uuid, p_query text, p_query_embedding vector,
+hq_memory_recall(p_employee_id uuid, p_query text, p_query_embedding float8[],
                  p_subject_kind text, p_subject_id text, p_class_filter text[],
-                 p_limit int, p_token_budget int) returns jsonb
-    -- the pipeline (§7). Stage 1 permission filter is a WHERE built from the
-    -- employee's scopes; returns ranked items + a context manifest + provenance.
+                 p_limit int) returns jsonb
+    -- BUILT — D009 M1 PR3. Stages 1–2 of the pipeline (§7): the §6 permission
+    -- filter is the stage-1 WHERE (forbidden/system rows are never scored), then a
+    -- lexical (ts_rank) + structural candidate read. Returns up to p_limit RAW
+    -- candidates as jsonb (signals only — a body_tokens estimate, never the body);
+    -- the pure rankAndAssemble scores/diversifies/budgets them (stages 3–5), so
+    -- there is NO p_token_budget here. p_query_embedding is the dormant float8[]
+    -- seam PR4 fills — accepted and ignored today (no pgvector, no ::vector cast).
 
 hq_memory_write(p_employee_id uuid, p_class text, p_type text, p_title text,
                 p_summary text, p_body text, p_visibility text, p_owner uuid,
@@ -420,7 +455,11 @@ hq_memory_write(p_employee_id uuid, p_class text, p_type text, p_title text,
     -- plug-in: a future PR4 consumer subscribes to `memory.asserted` to backfill
     -- the vector — no `embed.memory` enqueue and no embedding column written here.
 
-hq_memory_reinforce(p_memory_ids uuid[]) returns void   -- bump last_reinforced_at
+hq_memory_reinforce(p_employee_id uuid, p_memory_ids uuid[]) returns void
+    -- BUILT — D009 M1 PR3. Applied to the ASSEMBLED set: bumps last_reinforced_at
+    -- (slows decay, §10), increments access_count, and writes one per-memory
+    -- ai_accessed row to hq_memory_events attributed to p_employee_id — the audit
+    -- home for AI reads (NOT a Pulse verb; recall never broadcasts).
 hq_memory_consolidate(p_employee_id uuid, p_theme text) returns uuid -- §9.2
 hq_memory_expire_sweep(p_now timestamptz, p_limit int) returns jsonb -- §10
 hq_memory_golden_signals() returns jsonb                -- §13
@@ -479,9 +518,12 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
   knowledge crosses an approval checkpoint (P4) — the company brain can't be
   silently rewritten by an AI.
 - **No hard deletes.** `forget()` archives + versions; memory is an audit subject.
-- **All AI access audited**: `hq_memory_events.ai_accessed` (built) + a
-  `memory.read` (recall, PR3) / `memory.asserted` (write, built) event on the bus
-  (C5 single source of truth).
+- **All AI access audited**: an AI *read* writes a per-memory
+  `hq_memory_events.ai_accessed` row (via `hq_memory_reinforce`, PR3) and emits
+  **nothing** on the bus — there is deliberately no `memory.read` verb, so recall
+  (the hottest path) can't flood The Pulse. Only *writes* emit a registered bus
+  event (`memory.asserted`, PR2). C5's "one audit truth" is the registry, which
+  has no recall verb.
 - **RLS:hq** throughout; no customer/staff JWT can ever touch memory (P5). The
   customer-facing product is untouched.
 
