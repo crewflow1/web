@@ -259,6 +259,23 @@ The handler "remembers" experiences (episodic, autonomous) and "proposes"
 shared-knowledge writes (which route to approval). Recalled ids auto-populate the
 output `evidence[]`.
 
+> **As-built (Directive 009 · Module 1, PR6).** This dimension is **built and
+> standalone** — `createMemory(identity)` (`server/sdk/memory.ts`, Volume X §12.2)
+> returns the bound `interface Memory { recall, remember, resolve, forget, search }`.
+> It already delivers everything this section promises: identity stamped on every
+> verb (no `actor_id` to set by hand — the spoofing class is designed out, §8),
+> working/episodic `remember()` auto-bound to the running task (`bound_task_id`),
+> and recalled ids accumulated (`evidence()`) for the output envelope (§10).
+> `memory_scope` enforcement stays SERVER-SIDE in the Volume X SQL (keyed off the
+> employee id), so the facet can only narrow ergonomics, never widen scope. What is
+> NOT yet built is the surrounding `ctx`: the **unified ABI** (the To-build row in
+> §3) that assembles this facet alongside `comms`/`events`/`tasks`/`tools`/`api`
+> into one `RunContext`, plus the task-completion hook that drains `evidence()` into
+> `result.evidence[]` and expires the bound working memory. The memory facet is
+> built to its stable contract so that `createContext()`, when it lands, exposes it
+> AS `ctx.memory` with **no change** to the facet ("expose a stable interface,
+> complete later").
+
 ## 12. Tools *(dimension 8)*
 
 The Built `tools_allowed text[]` (labels) becomes a typed **tool registry**. A

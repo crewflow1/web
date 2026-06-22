@@ -83,6 +83,7 @@ working memory (XII).
 | The **retrieval pipeline** (hybrid rank + budget + assembly) | **Built** · D009 M1 PR3 | SQL `hq_memory_recall` does the permissioned stage-1/2 read and returns RAW candidate signals; the pure `rankAndAssemble` (`lib/memory/retrieval.ts`) composes score→diversify→assemble (stages 3–5); `hq_memory_reinforce` reinforces the assembled set + writes the `ai_accessed` audit. Migration `20260724000000`. The semantic ANN channel is switched on in PR4 (§7, §11). |
 | **Consolidation / compression / expiry** engines | **Built** · D009 M1 PR5 | the three §9 reduction engines (summarise / consolidate / dedupe→supersede) + the §10 TTL/decay sweep + eviction primitive, driven by a dark background worker (`server/services/memory-lifecycle.ts`, cron `*/15`). Migration `20260727000000`. LLM summarisation is a plug-in (`lib/ai/text/*`), never a dependency. |
 | pgvector + the embedding worker | **Built** · D009 M1 PR4 | `vector` extension (pinned to `public`); real `embedding vector(1536)` + the 9 permanent metadata fields; partial HNSW cosine index; a *derived* queue (`embedded_at IS NULL`) drained by a dark background worker. Migrations `20260725000000` (layer) + `20260726000000` (ANN recall). |
+| The AI **SDK memory facet** (`ctx.memory`) | **Built** · D009 M1 PR6 | `server/sdk/memory.ts` binds the §12.2 `interface Memory` (recall/remember/resolve/forget/search) to ONE employee — identity stamped on every call (no `actor_id` to spoof), working memory auto-bound to the running task, recalled ids accumulated as the output `evidence[]`. `forget()` is backed by the new `hq_memory_forget` primitive (ownership-checked, versioned, audited, never a hard delete, nothing on The Pulse). Migration `20260728000000`. The rest of the `ctx` ABI (comms/events/tasks/tools/api) is Volume XIII. |
 
 **Net:** the *record, versioning, permission model, FTS and audit are shipped.*
 This volume **activates** semantic search, **opens** an AI write path, **adds**
@@ -150,6 +151,33 @@ into cognition. No existing table is rewritten — every change is additive.
 > there is no theme-discovery / clustering signal yet, so per the standing rule
 > (Detect → Design → Expose stable interface → Complete later) the primitive ships
 > ready and a future signal turns it on with **no application change**.
+>
+> *PR6* closes Module 1 by binding everything above into the **`ctx.memory` SDK
+> facet** (`server/sdk/memory.ts`, migration `20260728000000`) — the single memory
+> surface an AI employee ever touches (§12.2 `interface Memory`). It does not
+> re-implement anything: it WRAPS the built service layer (`recallMemory` /
+> `rememberMemory` / `forgetMemory`) and stamps the **calling employee's identity
+> onto every verb** — there is no parameter anywhere to act as another employee
+> (the spoofing class is designed out, XIII §8). Three behaviours the loose
+> service functions could not give: working/episodic `remember()` **auto-binds**
+> the running task (`bound_task_id`, so the lifecycle worker can expire the
+> scratchpad when the task ends); `recall()` + `resolve()` **accumulate** the ids
+> they surface so a future RunContext drains them into the output `evidence[]`
+> (XIII §10) with zero handler code; and `search()` is the raw escape hatch (ranked,
+> no assembly drop, **no** reinforcement — a dedupe probe leaves no audit trail).
+> The one missing primitive was **`forget()`**: `hq_memory_archive` (PR5) is
+> mechanical eviction (class-guarded, owner-blind, unversioned), so PR6 adds
+> `hq_memory_forget` — an employee may forget ONLY memory it OWNS (permission
+> re-asserted in SQL, P5), which **archives + versions** it (never a hard delete —
+> memory stays an audit subject, §14) and audits an `archived` row stamped with the
+> acting employee, emitting **nothing** on The Pulse (there is no forget verb).
+> Ownership is the whole guard: an employee only ever owns private/episodic/working
+> memory, so this can never touch the owner-less company brain — retracting shared
+> knowledge stays a Module 4 approval. This is a **standalone facet, not a whole
+> `ctx`**: the full RunContext (identity·memory·comms·events·tasks·tools·api) is
+> Volume XIII, a separate module; PR6 builds the memory dimension to its stable
+> contract so a future `createContext()` exposes it AS `ctx.memory` with no change
+> here ("expose a stable interface, complete later").
 
 ---
 
@@ -852,6 +880,21 @@ the atomic, permissioned reads/writes.
 > seam is deliberately internal. There is correspondingly NO embedding RPC on the SDK
 > surface — the worker primitives in §12.1 are infrastructure, called only by the cron.
 
+> **As-built (D009 M1 PR6).** `interface Memory` is now real: `createMemory(identity)`
+> (`server/sdk/memory.ts`) returns the bound facet, with the five verbs delegating to
+> the service layer. The contract is honoured verb-for-verb — `recall()` returns
+> `{ context, items, manifest }` (the `context` rendered prompt-ready from the
+> assembled set); `remember()` returns `{ id, approvalRequired }` and `id` is `null`
+> exactly when a shared-knowledge write is withheld; `resolve(ref)` is structural
+> recall fully biased to an entity; `search()` is the raw, unreinforced lookup; and
+> `forget(id, reason)` archives via `hq_memory_forget`. Identity is supplied by the
+> SDK, never by a verb argument (§14, P2/P5): every call runs as the bound employee,
+> the permission filter stays server-side (the SDK can only narrow ergonomics, never
+> widen scope), and recalled ids accumulate as `evidence()`. The five verbs **throw**
+> on failure (the handler ABI is throw-based); the underlying `{ ok:false }` results
+> are converted to thrown errors at this seam. The facet is deliberately standalone —
+> a future `ctx` (XIII) exposes it AS `ctx.memory` unchanged.
+
 ---
 
 ## 13. Observability
@@ -890,6 +933,11 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
   knowledge crosses an approval checkpoint (P4) — the company brain can't be
   silently rewritten by an AI.
 - **No hard deletes.** `forget()` archives + versions; memory is an audit subject.
+  *As-built (PR6):* `hq_memory_forget` re-asserts ownership in SQL (an employee may
+  forget ONLY memory it owns — never another's, never the owner-less company brain),
+  flips `active → archived`, bumps + snapshots the version, and audits an `archived`
+  row stamped with the acting employee — no `DELETE`, no Pulse verb. A second forget
+  is an idempotent `already_inactive` no-op.
 - **All AI access audited**: an AI *read* writes a per-memory
   `hq_memory_events.ai_accessed` row (via `hq_memory_reinforce`, PR3) and emits
   **nothing** on the bus — there is deliberately no `memory.read` verb, so recall
@@ -950,6 +998,27 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 > is never paired; summarise detect → apply → drop-out; golden signals; service-role-only.
 > Large-dataset latency/stress is deferred to the Module 1 finalize gate.
 
+> **As-built (D009 M1 PR6).** The `ctx.memory` facet is proven across the tiers.
+> *Unit* (`memory-sdk.test.ts`, RPC mocked so the real SDK + service + pure ranker
+> run): identity is stamped on EVERY verb (no parameter can act as another employee);
+> `recall()` maps subject/classes/limit and renders a prompt-ready `context`;
+> `recall()`/`resolve()` accumulate `evidence()` while `search()` deliberately does
+> not; working/episodic `remember()` auto-binds the running task (durable does not;
+> an explicit `boundTask` overrides); `expiresAt` serialises and an approval-withheld
+> write surfaces `id:null`; `search()` does not reinforce; the bound identity is
+> frozen; and every verb throws on a service failure. *Security*
+> (`memory-forget-invariants.test.ts`, pinned in source): `hq_memory_forget`
+> re-asserts ownership BOTH in the pre-check AND the `UPDATE` (TOCTOU-safe), never
+> `DELETE`s/`TRUNCATE`s, bumps + snapshots the version, audits an `ai_employee_id`-
+> stamped `archived` row with `action:'forget'`, emits nothing on the bus / never
+> widens the event CHECK, is `SECURITY DEFINER` + `search_path=''`, and is EXECUTE-
+> revoked from JWT roles + granted only to `service_role`. *Integration* (real
+> Postgres, `forget-path.test.ts`): an owned active memory is archived + versioned +
+> audited with nothing on The Pulse; another employee's memory and the owner-less
+> company brain are both refused `not_owner` and left unchanged; a second forget is
+> an idempotent `already_inactive` no-op (no second version); an unknown id is
+> `not_found`; anon is refused outright.
+
 ---
 
 ## 16. Conflicts resolved & open questions
@@ -986,7 +1055,12 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 2. **Forgetting vs. compliance.** A future data-retention/GDPR requirement may
    demand *hard* deletion of certain customer-derived memories. The "never hard-
    delete" rule needs a documented, audited exception path then — flagged, not
-   built.
+   built. **As-built note (PR6):** the *soft* forget is now built — `forget()` /
+   `hq_memory_forget` archives + versions an owned memory (the deliberate
+   counterpart to the lifecycle worker's mechanical eviction). It is explicitly
+   NOT a hard delete; the compliance hard-delete exception above remains open and
+   would be a separate, audited, approval-gated primitive — never the autonomous
+   `forget()` path.
 
 ---
 
