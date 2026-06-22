@@ -44,6 +44,17 @@ const envSchema = z.object({
   // (not an enum) so a new provider needs zero env-schema edits.
   MEMORY_EMBEDDING_PROVIDER: z.string().optional(),
 
+  // -- Shared Memory text generation (Directive 009 M1 PR5) --------------
+  // Names the active LLM vendor for the lifecycle reducers (summarisation,
+  // consolidation refinement). Default "auto": prefer Anthropic (Haiku) when
+  // ANTHROPIC_API_KEY is set, else OpenAI when OPENAI_API_KEY is set, else
+  // off. As with embeddings this is a PLUG-IN, never a dependency: with no
+  // provider the worker leaves the deterministic SQL digest/summary in place
+  // and every other lifecycle reducer keeps running. Switching providers is
+  // configuration only — no application code changes. Free string (not an
+  // enum) so a new provider needs zero env-schema edits.
+  MEMORY_TEXT_PROVIDER: z.string().optional(),
+
   // -- Email --------------------------------------------------------------
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),

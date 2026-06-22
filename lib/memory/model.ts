@@ -258,6 +258,14 @@ export const EVENT_TYPES = [
   "linked",
   "unlinked",
   "version_restored",
+  // Volume X §9–§10 lifecycle transitions (Directive 009 M1 PR5). Mirrors the
+  // widened hq_memory_events.event_type CHECK in
+  // 20260727000000_hq_memory_lifecycle.sql — kept in lock-step.
+  "summarised",
+  "consolidated",
+  "superseded",
+  "archived",
+  "expired",
 ] as const;
 export type MemoryEventType = (typeof EVENT_TYPES)[number];
 
@@ -272,6 +280,11 @@ export const EVENT_LABELS: Record<MemoryEventType, string> = {
   linked: "Linked",
   unlinked: "Unlinked",
   version_restored: "Version restored",
+  summarised: "Summary refreshed",
+  consolidated: "Consolidated into a lesson",
+  superseded: "Superseded by a duplicate",
+  archived: "Archived",
+  expired: "Expired",
 };
 
 export function eventLabel(t: string): string {
