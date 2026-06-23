@@ -104,11 +104,16 @@ async function callRpc<T>(
   fn: string,
   args: Record<string, unknown>,
 ): Promise<SingleResult<T>> {
-  const run = admin.rpc as unknown as (
+  // `.bind(admin)` is REQUIRED: supabase-js's `rpc()` delegates to `this.rest`,
+  // so a *detached* reference (`const run = admin.rpc; run(...)`) calls it with
+  // `this === undefined` and throws "Cannot read properties of undefined
+  // (reading 'rest')". Binding pins `this` to the client before the cast loosens
+  // the (still-untyped) RPC function names — the same idiom event-spine.ts uses.
+  const rpc = admin.rpc.bind(admin) as unknown as (
     f: string,
     a: Record<string, unknown>,
   ) => PromiseLike<SingleResult<T>>;
-  const { data, error } = await run(fn, args);
+  const { data, error } = await rpc(fn, args);
   return { data, error };
 }
 
