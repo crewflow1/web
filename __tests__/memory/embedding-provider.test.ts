@@ -11,6 +11,7 @@ import {
 } from "@/lib/ai/embeddings/versioning";
 import { getEmbeddingProvider, isEmbeddingConfigured } from "@/lib/ai/embeddings";
 import { createOpenAiEmbeddingProvider } from "@/lib/ai/embeddings/openai";
+import { createDeterministicEmbeddingProvider } from "@/lib/ai/embeddings/deterministic";
 
 /**
  * Shared Memory — embedding provider abstraction (Volume X §11; CEO Directive
@@ -301,5 +302,97 @@ describe("OpenAI provider.embed — order, tokens, failure propagation", () => {
   it("propagates an invalid-API-key error (no silent swallow)", async () => {
     mockCreate.mockRejectedValue(new Error("401 Incorrect API key provided"));
     await expect(provider.embed(["x"])).rejects.toThrow(/401/);
+  });
+});
+
+// =====================================================================
+// 8. Deterministic provider — the offline plug-in (local / CI / bench)
+// =====================================================================
+
+describe("getEmbeddingProvider — the deterministic offline provider (config swap)", () => {
+  const ENV = ["MEMORY_EMBEDDING_PROVIDER", "OPENAI_API_KEY"] as const;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of ENV) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("selects the deterministic provider by name — WITHOUT any API key", () => {
+    // The whole point: it runs offline, so it is configured even though no
+    // OPENAI_API_KEY (or any other key) is present. Proves "a new provider is a
+    // configuration swap, not a Memory-Engine change".
+    process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
+    const p = getEmbeddingProvider();
+    expect(p).not.toBeNull();
+    expect(p?.info.provider).toBe("deterministic");
+    expect(p?.info.model).toBe("hash-v1");
+    expect(p?.info.dimension).toBe(1536);
+    expect(isEmbeddingConfigured()).toBe(true);
+  });
+
+  it("accepts the 'hash' alias too, case/space-insensitively", () => {
+    process.env.MEMORY_EMBEDDING_PROVIDER = "  Hash  ";
+    expect(getEmbeddingProvider()?.info.provider).toBe("deterministic");
+  });
+
+  it("its version equals embeddingVersion(info) — versioned like any provider", () => {
+    process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
+    expect(getEmbeddingProvider()?.info.version).toBe(
+      embeddingVersion({ provider: "deterministic", model: "hash-v1", dimension: 1536 }),
+    );
+  });
+
+  it("is NOT the production default (default stays openai → null without a key)", () => {
+    // No MEMORY_EMBEDDING_PROVIDER, no key → still null. Adding the offline
+    // provider must never change the default behaviour.
+    expect(getEmbeddingProvider()).toBeNull();
+  });
+});
+
+describe("deterministic provider.embed — stable, sound, offline", () => {
+  const provider = createDeterministicEmbeddingProvider();
+
+  it("returns an empty result for an empty batch", async () => {
+    const out = await provider.embed([]);
+    expect(out).toEqual({ vectors: [], model: "hash-v1", dimension: 1536, tokens: 0 });
+  });
+
+  it("produces 1536-d, all-finite, UNIT-LENGTH vectors", async () => {
+    const { vectors } = await provider.embed(["the quick brown fox"]);
+    const v = vectors[0]!;
+    expect(v).toHaveLength(1536);
+    expect(v.every((n) => Number.isFinite(n))).toBe(true);
+    const norm = Math.sqrt(v.reduce((s, n) => s + n * n, 0));
+    expect(norm).toBeCloseTo(1, 6);
+    expect(() => assertValidEmbedding(v, 1536)).not.toThrow();
+  });
+
+  it("is DETERMINISTIC: identical text ⇒ identical vector (idempotency + dedupe)", async () => {
+    const a = (await provider.embed(["same text"])).vectors[0]!;
+    const b = (await provider.embed(["same text"])).vectors[0]!;
+    expect(a).toEqual(b);
+  });
+
+  it("distinct text ⇒ distinct vector (so candidates are separable)", async () => {
+    const a = (await provider.embed(["alpha"])).vectors[0]!;
+    const b = (await provider.embed(["beta"])).vectors[0]!;
+    expect(a).not.toEqual(b);
+  });
+
+  it("preserves batch order and counts tokens (~chars/4, never billed)", async () => {
+    const out = await provider.embed(["a", "bb", "cccc"]);
+    expect(out.vectors).toHaveLength(3);
+    expect(out.vectors[0]).toEqual((await provider.embed(["a"])).vectors[0]);
+    expect(out.tokens).toBe(estimateTokens("a") + estimateTokens("bb") + estimateTokens("cccc"));
   });
 });

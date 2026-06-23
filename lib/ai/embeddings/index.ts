@@ -22,6 +22,7 @@ import "server-only";
 
 import type { EmbeddingProvider } from "./types";
 import { createOpenAiEmbeddingProvider } from "./openai";
+import { createDeterministicEmbeddingProvider } from "./deterministic";
 
 export type { EmbeddingProvider, EmbeddingResult, EmbeddingModelInfo, EmbeddingStatus } from "./types";
 export {
@@ -52,7 +53,15 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
       return createOpenAiEmbeddingProvider(key);
     }
 
-    // Future providers slot in here — configuration only:
+    // A DETERMINISTIC, offline, network-free provider for local dev, CI, and
+    // the performance benchmark harness. Never semantically meaningful — it
+    // exercises the full queue→embed→store→ANN loop with no API key. Opt-in
+    // only; the production default above is unaffected. (See ./deterministic.)
+    case "deterministic":
+    case "hash":
+      return createDeterministicEmbeddingProvider();
+
+    // Future real providers slot in here — configuration only:
     //   case "anthropic": ...
     //   case "voyage":    ...
     //   case "azure-openai": ...
