@@ -105,11 +105,25 @@ describe("memory recall — the §6 read rules are enforced in SQL", () => {
     expect(src).toMatch(/grantee_type = 'employee'[\s\S]*?grantee_value = p_employee_id::text/i);
   });
 
-  it("NEVER recalls system memory — 'system' is not a permitted branch at all", () => {
-    // canEmployeeAccess returns false for system even to the owner; the SQL
-    // achieves this by simply never listing it as a branch, so a stray future
-    // edit that tried to recall system memory would have to ADD the literal.
+  it("NEVER recalls system memory — ownership widens ONLY {department,private,restricted}", () => {
+    // canEmployeeAccess returns false for `system` EVEN TO THE OWNER. The old
+    // version of this gate only checked the literal 'system' was absent — but an
+    // UNCONDITIONAL ownership branch (`or (m.owner_employee_id = caller)`) recalls
+    // owned system memory WITHOUT ever naming 'system', so the literal check gave
+    // false confidence. We now pin the structure instead.
+    //
+    // (a) the source never lists 'system' as a permitted branch:
     expect(src).not.toMatch(/'system'/);
+    // (b) the stage-1 ownership clause is visibility-scoped to exactly the three
+    //     owner-widenable visibilities (mirrors canEmployeeAccess):
+    expect(src).toMatch(
+      /m\.visibility in \('department',\s*'private',\s*'restricted'\)\s+and\s+m\.owner_employee_id is not null and m\.owner_employee_id = p_employee_id/i,
+    );
+    // (c) there is NO bare ownership branch — i.e. no `or (m.owner_employee_id …)`
+    //     opening a permission group unguarded by a visibility scope. This is the
+    //     exact shape of the leak; the working/episodic STAGE-2 relevance clause
+    //     opens with `(m.memory_class …`, so it is unaffected by this guard.
+    expect(src).not.toMatch(/or\s*\(\s*m\.owner_employee_id\b/i);
   });
 
   it("permission is a WHERE filter, not a post-filter (relevance comes AFTER it)", () => {

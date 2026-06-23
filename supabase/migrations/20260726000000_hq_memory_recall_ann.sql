@@ -163,7 +163,8 @@ begin
       -- ===== STAGE 1: §6 permission filter (mirrors canEmployeeAccess) =====
       and (
         m.visibility = 'public_hq'
-        or (m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
+        or (m.visibility in ('department', 'private', 'restricted')
+              and m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
         or (m.visibility = 'department'
               and m.department is not null and m.department = v_dept)
         or (m.visibility in ('department', 'private', 'restricted')
@@ -206,7 +207,8 @@ begin
       -- ===== STAGE 1: §6 permission filter (mirrors canEmployeeAccess) =====
       and (
         m.visibility = 'public_hq'
-        or (m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
+        or (m.visibility in ('department', 'private', 'restricted')
+              and m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
         or (m.visibility = 'department'
               and m.department is not null and m.department = v_dept)
         or (m.visibility in ('department', 'private', 'restricted')

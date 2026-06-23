@@ -148,8 +148,19 @@ describe("memory recall ANN — the §6 read rules guard BOTH candidate sources"
     expect(count(/from public\.hq_memory_access_grants/gi)).toBeGreaterThanOrEqual(2);
   });
 
-  it("NEVER recalls system memory — 'system' is not a permitted branch at all", () => {
+  it("NEVER recalls system memory — ownership is visibility-scoped in BOTH channels", () => {
+    // Same hardening as the PR3 gate (an unconditional ownership branch leaks
+    // owned `system` memory without ever naming the literal), but PR4 carries TWO
+    // inline copies of the §6 predicate — lexical AND semantic. So the leak shape
+    // must be absent everywhere, and the visibility-scoped owner clause must
+    // appear in BOTH copies (kept textually in sync).
     expect(src).not.toMatch(/'system'/);
+    expect(
+      count(
+        /m\.visibility in \('department',\s*'private',\s*'restricted'\)\s+and\s+m\.owner_employee_id is not null and m\.owner_employee_id = p_employee_id/gi,
+      ),
+    ).toBeGreaterThanOrEqual(2);
+    expect(src).not.toMatch(/or\s*\(\s*m\.owner_employee_id\b/i);
   });
 
   it("permission is enforced BEFORE the cosine distance order-by (not a post-filter)", () => {

@@ -131,14 +131,18 @@ begin
       -- lib/memory/model.ts canEmployeeAccess). This is a WHERE clause,
       -- not a post-filter: a non-permitted row is never even a candidate.
       --   public_hq            → everyone
-      --   owned (any class)    → the owning employee
+      --   owned (dept/private/restricted) → the owning employee
       --   department           → same department, an owner, or a grant
       --   private / restricted → an owner or a grant
       --   system / unknown     → never (no branch matches → fail closed)
+      -- Ownership widens ONLY {department, private, restricted} — NEVER
+      -- 'system' (engine-internal, never surfaced even to the owner) — so the
+      -- clause is scoped to those three visibilities, exactly as canEmployeeAccess.
       -- ============================================================
       and (
         m.visibility = 'public_hq'
-        or (m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
+        or (m.visibility in ('department', 'private', 'restricted')
+              and m.owner_employee_id is not null and m.owner_employee_id = p_employee_id)
         or (m.visibility = 'department'
               and m.department is not null and m.department = v_dept)
         or (m.visibility in ('department', 'private', 'restricted')
