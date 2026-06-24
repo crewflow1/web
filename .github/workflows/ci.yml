@@ -118,8 +118,17 @@ jobs:
             --override-name api.url=SUPABASE_URL \
             --override-name auth.anon_key=SUPABASE_ANON_KEY \
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY)"
+          # The harness (_harness.ts) reads the bare names above. The two
+          # service-driven suites (adversarial, service-rpc-binding) instead
+          # exercise the REAL service layer, which builds its own admin client
+          # from the PRODUCTION env names (lib/supabase/admin.ts reads
+          # NEXT_PUBLIC_SUPABASE_URL). Mirror the bare values onto the public
+          # names so that production code path runs as-built — a mock proves
+          # orchestration, never the wire.
+          export NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL"
+          export NEXT_PUBLIC_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
           set +a
-          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
+          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY; do
             [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
           done
           npm run test:integration
