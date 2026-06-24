@@ -125,12 +125,12 @@ describeIntegration("Shared Memory · embedding-worker crash recovery (real clie
       embedding_claimed_by: "dead-worker-aaa",
       embedded_at: null,
     });
-    const n = await serviceClient().rpc("hq_embedding_reclaim_stale", {
+    const n = await serviceClient().rpc("hq_embedding_reclaim_stale" as never, {
       p_lease_seconds: 300,
       p_limit: 500,
-    });
+    } as never);
     expect(n.error, n.error?.message ?? "").toBeNull();
-    expect((n.data as number) >= 1, "≥1 stale lease reclaimed").toBe(true);
+    expect((n.data as unknown as number) >= 1, "≥1 stale lease reclaimed").toBe(true);
 
     const row = await getRow(id);
     expect(row?.embedding_claimed_at, "lease cleared").toBeNull();
@@ -144,10 +144,10 @@ describeIntegration("Shared Memory · embedding-worker crash recovery (real clie
       embedding_claimed_by: "live-worker-bbb",
       embedded_at: null,
     });
-    const n = await serviceClient().rpc("hq_embedding_reclaim_stale", {
+    const n = await serviceClient().rpc("hq_embedding_reclaim_stale" as never, {
       p_lease_seconds: 300,
       p_limit: 500,
-    });
+    } as never);
     expect(n.error, n.error?.message ?? "").toBeNull();
 
     const row = await getRow(id);
@@ -160,13 +160,13 @@ describeIntegration("Shared Memory · embedding-worker crash recovery (real clie
       embedding_next_attempt_at: new Date(Date.now() + HOUR_MS).toISOString(),
       embedded_at: null,
     });
-    const res = await serviceClient().rpc("hq_embedding_claim_batch", {
+    const res = await serviceClient().rpc("hq_embedding_claim_batch" as never, {
       p_worker_id: "probe-ccc",
       p_limit: 100,
       p_lease_seconds: 300,
-    });
+    } as never);
     expect(res.error, res.error?.message ?? "").toBeNull();
-    const claimed = ((res.data as { claimed?: { id: string }[] }).claimed ?? []).map((r) => r.id);
+    const claimed = ((res.data as unknown as { claimed?: { id: string }[] }).claimed ?? []).map((r) => r.id);
     expect(claimed.includes(id), "a backed-off row must be skipped").toBe(false);
     await setEmbedGate(false);
   });
