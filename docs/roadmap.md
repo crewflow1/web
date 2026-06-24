@@ -12,8 +12,10 @@ module** (CEO standing mandate): completed modules marked, progress refreshed,
 architectural decisions logged, and a handover summary kept current so anyone —
 human or AI employee — can pick the work up cold.
 
-**Last updated:** 2026-06-21 · on the merge of **Module 3 — Lead Qualification
-AI** (PR #180, merge `a21389d`).
+**Last updated:** 2026-06-24 · on the merge of the **Shared Memory Engine**
+(Directive 002; shipped on a branch labelled "Directive 009 · Module 1") — PR #183,
+merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Module 3
+— Lead Qualification AI (#180, `a21389d`)._
 
 ---
 
@@ -24,7 +26,8 @@ AI** (PR #180, merge `a21389d`).
 | **HQ Sales AI programme** (Directive 003) | 3 of 7 modules shipped | ▓▓▓░░░░ **~43%** |
 | **AI Boardroom roster** (Directive 001) | 13 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
 | **Event Spine** foundation (Directive 004) | core shipped (PR1–PR5) · Realtime + Hooks remain | ▓▓▓▓▓░░ **~71%** |
-| **Six-gate CI bar** | enforced on every PR; newest two modules at full bar | ▓▓▓▓▓▓ **live** |
+| **Shared Memory Engine** (Directive 002) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
+| **Six-gate CI bar** | enforced on every PR; newest modules at full bar | ▓▓▓▓▓▓ **live** |
 
 Honest reading: the **foundation and the front of the sales funnel are built**.
 Three Sales-AI modules and the Event Spine give CrewFlow HQ a working
@@ -60,7 +63,7 @@ in-repo directives:
 | # | Title | What it governs | Anchor |
 |---|---|---|---|
 | **001** | AI Employee Framework / AI Boardroom | The roster of specialised AI employees and the `ai_employees` table; framework + seed. | `supabase/migrations/20260712000100_ai_employees_seed.sql` |
-| **002** | Shared Memory Engine | The company knowledge graph every AI employee reads/writes — the "company brain". | `docs/research-ai.md` (Shared Memory bridge) |
+| **002** | Shared Memory Engine — ✅ **shipped** | The company knowledge graph every AI employee reads/writes — the "company brain". Built end-to-end: `queue→embed→store→ANN→recall`, lifecycle, `forget`, and the `ctx.memory` SDK facet. Merged PR #183 (`91eec1b`), tag `crewflow-shared-memory-v1.0`. _Merge artifacts label it "Directive 009 · Module 1" — see the numbering note below._ | `supabase/migrations/20260722…20260728_*`, `server/sdk/memory.ts` |
 | **003** | HQ Sales AI programme | The umbrella for the Sales-AI module sequence (this roadmap's spine). "Maximum reuse. Minimum complexity. One architecture. One source of truth." | `docs/sales-ai.md`, `docs/lead-qualification.md` |
 | **003.5** | Lock the Foundation | Freeze Architecture v1.0 + the governance "programme pack". | commit `6d63d60` |
 | **004** | Engineering Bible / Event Spine / six-gate CI | The frozen data-model reservation (the `hq_sales_*` family), the Event Spine architecture, and the **mandatory six-gate, production-equivalent verification**. | `docs/event-spine.md`, `.github/workflows/ci.yml` |
@@ -68,6 +71,18 @@ in-repo directives:
 
 > Directives 006/007 are not yet issued. "Directive 008" exists only as a branch
 > / directory name for the CI-Postgres harness work, not a numbered directive.
+>
+> ⚠️ **Numbering reconciliation needed — CEO ruling.** The Shared Memory Engine is
+> **Directive 002** in this table, but it was built and merged on branch
+> `directive/009-shared-memory` with commits and a tag labelled **"Directive 009 ·
+> Module 1"**, while the Bible's directories self-label differently again (#007
+> Workforce, #008 Operating-model, #009 Shared-Memory-build). **Three schemes now
+> disagree.** This roadmap keeps the **thing-name** ("Shared Memory Engine") as the
+> stable identifier and records both numbers above. Before the next directive is
+> issued, the CEO should fix **one** canonical numbering. In particular: a brief
+> calling the first AI employee **"Directive #004" collides** — #004 here is the
+> Event Spine, and the first executing employee was #005. The next free integer is
+> **≈#010**.
 
 ---
 
@@ -181,6 +196,54 @@ audit backbone the Sales-AI modules' own timelines complement. Internal sequence
 
 ---
 
+## Workstream C — the Shared Memory Engine (Directive 002)
+
+HQ-wide infrastructure, parallel to the Event Spine: the **company brain** every AI
+employee reads and writes through **one** engine. Shipped end-to-end and merged at
+`91eec1b` (PR #183), tagged `crewflow-shared-memory-v1.0`.
+
+**What shipped.** The full `queue → embed → store → ANN → recall` loop over
+`hq_memories` + pgvector; lifecycle dedupe; a `forget` primitive; the `ctx.memory`
+SDK facet (`server/sdk/memory.ts` — the **first built piece of the AI Employee
+SDK**); two dark-by-default background workers (embed `/2m`, lifecycle `/15m`).
+Permission is **always enforced first, server-side**; embeddings/LLM are a
+**graceful plug-in, never a hard dependency** (no key ⇒ semantic search goes dark,
+every other recall channel keeps working).
+
+**How it was validated.** Entirely on a **local Docker Supabase** (Postgres 17.6 /
+pgvector 0.8.0) with a deterministic offline provider — **production was never
+touched**. All six gates green; performance measured to a **100k-memory corpus**;
+crash/lease-reclaim, backoff, dead-letter and the adversarial security surface
+proven against real Postgres. The finalize gate caught and fixed **two real
+production bugs** invisible to mocks (a recall system-memory leak; a `callRpc`
+this-binding), each now pinned by a real-client test. **This is the reference
+implementation** for every module that follows, and the local-validation strategy
+is now the standard.
+
+> **Doctrine adopted (permanent):** _a mock proves orchestration, never the wire._
+> Every service path that reaches Postgres carries at least one real-client test.
+
+**Production migration is a separate, gated step.** The merge is code-only. Prod has
+the base memory schema (`20260713_*`) but **not** the 7 engine migrations
+(`20260722…20260728`). Prod's ledger also lags `main` by two prior migrations
+(`hq_timeline_projection`, `lead_qualification_employee`), so a future
+`supabase db push` would apply **9** migrations — to be scheduled with CEO approval,
+never auto-applied.
+
+### ◻ Module 1A — Recall Optimisation — _follow-up, not yet built_
+
+A scoped, **performance-only** fast-follow flagged at the finalize gate (CEO-approved
+as a follow-up, explicitly **not** part of Module 1). On a corpus-wide query the
+unbounded `lexical` CTE feeds every permitted match into an exact per-candidate
+cosine recompute (≈600 ms at 100k for the worst-case bench query that matches the
+whole corpus). The fix: **cap the lexical candidate set with a bounded `ts_rank`
+pre-limit before cosine enrichment**, mirroring the already-bounded `LIMIT 60`
+semantic channel. **Strict boundary: no behavioural, ranking, permission, or API
+change — latency only.** The recall *contract* (permission-first, frozen order, no
+body/embedding/system leak) is unaffected. A future project, not Module 1.
+
+---
+
 ## The quality regime — the six-gate bar (Directive 004)
 
 Every PR clears six independent CI jobs (`.github/workflows/ci.yml`); a module is
@@ -252,7 +315,10 @@ them:
 **Where we are.** Module 3 (Lead Qualification AI) is merged to `main` (PR #180,
 `a21389d`) and deploying. The Sales-AI funnel now runs `new → researched/scored
 → qualified | disqualified`, with a permanent, attributed audit trail and a live
-HQ UI at `/admin/qualification`. The repo is green on all six gates.
+HQ UI at `/admin/qualification`. The repo is green on all six gates. The **Shared
+Memory Engine** is now also merged (PR #183, `91eec1b`) — the company brain plus the
+first SDK facet (`ctx.memory`); its production migration is gated, not yet applied
+(see Workstream C).
 
 **What exists to build on.**
 - **Template:** copy the Research AI / Lead Qualification AI shape (see decision
@@ -287,6 +353,7 @@ living-knowledge-base on every change · branch → preview → human-approved m
 
 | Date | Module | PR | Merge |
 |---|---|---|---|
+| 2026-06-24 | Shared Memory Engine — _Directive 002_ (merged as "Directive 009 · Module 1") | #183 | `91eec1b` |
 | 2026-06-21 | Module 3 — Lead Qualification AI | #180 | `a21389d` |
 | — | Module 2 — Company Research AI | #179 | `8d0b531` |
 | — | Module 1 — Company Intelligence Database | #178 | `465937d` |
