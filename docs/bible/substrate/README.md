@@ -112,6 +112,19 @@ Every design choice below is traceable to a standing rule:
    mocks: the spine's invariants are proved against a *real* database, and the
    substrate inherits that discipline.
 
+   > **A mock proves orchestration. Never the wire.** — ratified as permanent
+   > doctrine after the Module 1 (Shared Memory) finalize gate. Two bugs that the
+   > unit tier (a mocked Supabase client) and the primitive integration tier
+   > (direct SQL calls) both passed surfaced **only** when the *service layer* ran
+   > against real Postgres: a `callRpc` helper that detached the supabase-js `rpc`
+   > method (dropping `this` → `this.rest` undefined) so **every** memory service
+   > RPC threw against a real client, and a permission predicate that — under one
+   > ownership shape — leaked `system`-visibility memory the contract promises is
+   > never returned. A mock validated the call sequence and saw neither. Therefore
+   > the standing rule for the whole substrate: **every service path that reaches
+   > Postgres carries at least one real-client test**, or a this-binding / cast /
+   > predicate bug hides until production.
+
 ---
 
 ## Shared primitives — defined ONCE here, referenced everywhere

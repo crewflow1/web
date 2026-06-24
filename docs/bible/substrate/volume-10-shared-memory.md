@@ -1064,6 +1064,208 @@ expiry throughput; storage/embedding cost rollup; "stale brain" canary
 
 ---
 
-*Volume X of the AI Substrate. Architecture only — no code, no production change,
-no PR. Continues into Volume XI (Event Bus), the backbone both this volume's
-episodic source and its audit emissions depend on.*
+## 17. Module 1 final validation (D009 M1 finalize gate)
+
+This section closes the two "deferred to the Module 1 finalize gate" notes left in
+§15 (PR4 semantic recall, PR5 lifecycle) and records the gate's findings as-built.
+The mandate was absolute and is now permanent doctrine: **production is never a
+test environment.** The entire validation ran against a *local* Docker Supabase
+(PostgreSQL 17.6, pgvector 0.8.0) — the same migration set, byte-for-byte — seeded
+with a realistic corpus and driven by the **deterministic offline embedding
+provider** (§4, `MEMORY_EMBEDDING_PROVIDER=deterministic`), so the full
+queue → embed → store → ANN → recall loop runs with zero network and zero API key.
+That provider is the living proof of the plug-in rule: a vendor is a configuration
+swap, not a Memory-Engine change. It is mechanically faithful (idempotency,
+versioning, cost ledger, ANN index population, lease/crash recovery) and never
+semantically meaningful — it must never be selected in production.
+
+### 17.1 Two production bugs the gate caught (the reason the rule exists)
+
+Both bugs were invisible to the unit tier (which mocks the Supabase client) AND to
+the primitive-level integration tier (which calls the SQL functions directly). Only
+driving the **service layer against real Postgres** surfaced them — exactly the gap
+the finalize gate exists to close.
+
+1. **Recall system-memory leak.** The §6 permission predicate scoped owned and
+   shared visibility correctly but did not exclude `system` visibility from the
+   owner clause in one channel, so an employee's recall could, under a specific
+   ownership shape, surface engine-internal `system` memory that §5/§6 promise is
+   *never* returned to an AI. Fixed by tightening the ownership clause in the PR3
+   write/recall and PR4 ANN-recall migrations; the source-pinned recall-invariant
+   tests were strengthened so the contract ("`system` is never recalled") fails
+   loudly if the clause regresses.
+
+2. **`callRpc` this-binding.** The service helper `callRpc` *detached* the Supabase
+   `rpc` method (`const run = admin.rpc; run(...)`), dropping its `this`. supabase-js's
+   `rpc()` delegates to `this.rest`, so **every** service RPC (`remember` / `recall` /
+   `reinforce` / `forget`) threw `Cannot read properties of undefined (reading 'rest')`
+   the instant it ran against a real client. The unit tier's mock ignored `this`; the
+   integration tier called `.rpc()` as a method (preserving `this`), so neither saw
+   it. Fixed with `admin.rpc.bind(admin)` — the idiom `event-spine.ts` already used —
+   and pinned by a new real-client regression suite (`service-rpc-binding.test.ts`)
+   that drives the three RPC-bearing wrappers end-to-end and fails loudly if the bind
+   is ever dropped again.
+
+The lesson is doctrine now: **a mock proves orchestration, never the wire.** Any
+service path that reaches Postgres needs at least one real-client test, or a
+this-binding / cast / predicate bug hides until production.
+
+### 17.2 Performance benchmarks
+
+Measured on the local single-node stack (Apple Silicon, Colima VM; Postgres 17.6 /
+pgvector 0.8.0 HNSW m=16 ef_construction=64), deterministic provider, via
+`scripts/memory-bench.ts`. Each recall figure is the service function
+`recallMemory()` end-to-end (permission filter → lexical+semantic candidate gather →
+score → diversify → assemble), `candidateLimit=60`, warm cache, n=50 iterations per
+cell. The query path uses the synthetic probe `benchmark corpus alpha`, which by
+construction matches *every* seeded body — the deliberate worst case for the recall
+analysis below.
+
+| corpus | seed (rows/s) | embed (mem/s) | recall p50 / p95 — query | recall p50 / p95 — recency |
+| -----: | ------------: | ------------: | ------------------------: | -------------------------: |
+|    100 | 9,482         | 80            | 21.0 / 24.9 ms            | 11.3 / 13.8 ms             |
+|  1,000 | 23,015        | 98            | 26.8 / 30.4 ms            | 13.8 / 16.7 ms             |
+| 10,000 | 26,304        | 78            | 94.8 / 108.2 ms           | 30.4 / 32.1 ms             |
+|100,000 | 18,474        | 60            | 597.9 / 646.7 ms          | 87.8 / 96.2 ms             |
+
+**What the numbers say.**
+- **Recency recall stays cheap and near-flat.** The no-query / no-vector path (pure
+  permission-filtered recency over the GIN + btree indexes) holds at **87.8 ms p50
+  over 100,000 memories** — a ~7.8× latency rise for a 1,000× corpus, strongly
+  sub-linear. This is the common "what was I just doing" path and it never degrades.
+- **Query recall is interactive to ~10k, then grows with the *matching set* — and
+  the 100k cell is a deliberate worst case.** Because the synthetic query matches
+  every seeded body, at 100k the `lexical` CTE returns the entire permitted set —
+  **75,004 rows** for the probe employee (public_hq + owned + same-department) — and
+  `enriched` then computes an exact cosine (`embedding <=> probe`, 1536-dim) for
+  *every one* of them. That per-candidate exact recompute, not any index, is the
+  ~600 ms: the `lexical` CTE is intentionally **unbounded** (it must not drop a
+  lexically-relevant row before scoring), so a query matching a large fraction of an
+  employee's accessible corpus costs roughly **linearly in that match-set size**. A
+  *typical* real query matches a small subset and stays in the tens of milliseconds;
+  the 100k figure is the pathological "matches everything" ceiling, recorded
+  honestly. See §17.3 for the limitation and its scoped fast-follow.
+- **The HNSW semantic channel itself is correctly bounded and fast.** In isolation
+  the ANN probe (`Index Scan using hq_memories_embedding_hnsw`,
+  `ORDER BY embedding <=> v_qvec LIMIT 60`) returns in ~51 ms at 100k; the GIN
+  lexical scan (`hq_memories_search_idx`) in ~17.8 ms. The wall-clock above is *not*
+  the indexes — it is the exact re-scoring of the unbounded lexical candidate set, a
+  service-layer choice, not an index limit.
+- **Embedding throughput degrades with corpus size, by design of HNSW.** 80 mem/s
+  at 100 falls to 60 mem/s at 100k because each vector write pays graph-maintenance
+  cost that grows with the number of indexed neighbours. This is expected, bounded,
+  and irrelevant to *recall* latency (which the same index keeps fast); it only sets
+  the wall-clock of a bulk (re-)embed, which is a paced background drain (§11), never
+  on the request path. The full 100,000-row drain ran in **391 bounded batches,
+  1,660.4 s (≈27.7 min) wall, 0 failures, $0 ledger** (deterministic).
+- **Worker memory stays flat.** Peak RSS of the embedding worker held at **≈150 MiB**
+  across the 100k drain — it claims and embeds in bounded batches (no full-corpus
+  load), so memory is a function of batch size, not corpus size.
+- **DB plan.** `EXPLAIN ANALYZE` on `hq_memory_recall` over the 100k corpus confirms
+  the intended access paths: a GIN `hq_memories_search_idx` scan for the lexical
+  channel and an `Index Scan using hq_memories_embedding_hnsw` (`LIMIT 60`) for the
+  semantic channel; the dominant node is the per-candidate cosine recompute in
+  `enriched` over the 75,004-row permitted lexical set, exactly as the latency above
+  predicts — index-bound nowhere, enrichment-bound on a corpus-wide query.
+
+### 17.3 Known limitations
+
+- **The deterministic provider is mechanics-only.** It proves the *pipeline*, never
+  *retrieval quality*; two paraphrases are not close in its space. Production
+  retrieval quality is a property of the real provider (OpenAI `text-embedding-3-
+  small`, §4 / OQ1) and is out of scope for an offline gate.
+- **Unbounded lexical candidate set on broad queries.** The recall function's
+  `lexical` CTE returns *all* permitted rows matching the query (it deliberately
+  drops nothing before scoring), and `enriched` then computes an exact cosine for
+  every candidate whenever a semantic probe is present. For a selective query this is
+  a handful of rows and stays in the tens of milliseconds; for a query that matches a
+  large fraction of an employee's accessible corpus it is the whole set (75,004 rows
+  → ~600 ms at 100k). The recall *contract* — permission-first, frozen order, no
+  body/embedding/system leak — is wholly unaffected; this is purely latency. The
+  scoped fast-follow, deliberately **not** taken inside this finalize gate (the rule
+  is *never rewrite a working system mid-validation*), is to cap the lexical
+  candidate set with a bounded `ts_rank`-ordered pre-limit before the exact-cosine
+  enrichment, mirroring the already-bounded `LIMIT 60` semantic channel. Flagged for
+  CEO disposition as a Module 1 fast-follow, **not** a merge blocker.
+- **Single-node, local scale.** These figures are a faithful *shape* (sub-linear
+  recency, match-set-linear query, HNSW-bounded embed), not a production capacity
+  statement; managed-Postgres IOPS, connection pooling, and concurrent tenant load
+  will move the absolute numbers. The benchmark harness (`scripts/memory-bench.ts`)
+  is committed precisely so the ladder can be re-run on any environment.
+- **Bulk re-embed is paced, not instant.** A provider/model/dimension swap re-embeds
+  the corpus via `hq_embedding_enqueue_stale` in bounded batches while old vectors
+  stay searchable (§11) — correct and outage-free, but a 100k+ migration is measured
+  in worker-minutes, to be scheduled, not awaited synchronously.
+- **Lifecycle dedupe is the most corpus-sensitive primitive.** `hq_memory_dedupe`'s
+  pairwise vector comparison is the one lifecycle op whose cost grows fastest with
+  corpus size; the worker paces it with `scanLimit` / `maxRunMs` / a per-run cost cap
+  so it never ranges unbounded. (Observed during the gate: a dedupe pass left to
+  range over a stale 10k embedded corpus hit the statement timeout — a test-isolation
+  artefact, not a product fault, fixed by cleaning the bench corpus first; it is
+  nonetheless the canary for "the lifecycle worker must stay paced".)
+
+### 17.4 Operational procedures
+
+- **Two kill-switches, both fail-dark.** `hq_settings.data->memory_embedding->
+  worker_enabled` and `->memory_lifecycle->worker_enabled` gate the two background
+  workers; `hq_memory_embed_enabled()` / `hq_memory_lifecycle_enabled()` read them
+  and treat *any* error as OFF. Default is dark: a fresh deploy embeds and prunes
+  nothing until an operator switches it on. Recall, lexical and structural, works
+  regardless.
+- **Draining the embed queue.** The worker is driven by an authenticated cron
+  (`CRON_SECRET`); a single run claims a lease, embeds a bounded batch, completes
+  atomically, and reports `claimed/embedded/failed/batches/costUsd/stopped`. To pace
+  a large backfill, raise the cron cadence rather than the batch bound.
+- **Switching providers.** Set `MEMORY_EMBEDDING_PROVIDER` (and the vendor key);
+  `getEmbeddingProvider()` resolves it at runtime and returns `null` when unusable —
+  semantic search simply goes dark, every other recall channel keeps working, and no
+  application code changes. After a swap, enqueue a re-embed (below).
+
+### 17.5 Disaster recovery
+
+- **Worker crash / restart.** A worker that dies mid-batch leaves rows leased
+  (`embedding_claimed_at` set, `embedded_at` null). `hq_embedding_reclaim_stale`
+  clears expired leases so the rows are claimable again; the `claimed_by` guard on
+  `complete`/`fail` makes a late finisher a no-op, so no work is lost and none is
+  double-done. Proven against real Postgres in `embed-recovery.test.ts`.
+- **Provider outage / transient failure.** A failed batch routes through
+  `hq_embedding_fail`: it records the error, releases the lease, and sets
+  `embedding_next_attempt_at = now() + backoff`, so a backed-off row is *not*
+  re-claimed until due — retry pacing, never a retry storm. Repeated failure
+  dead-letters the row (`embedding_status='failed'`) rather than blocking the queue.
+- **Corrupt vector.** `assertValidEmbedding` rejects a wrong-dimension or non-finite
+  vector at the worker boundary; the row is dead-lettered, never indexed.
+- **Re-embed after model change.** `hq_embedding_enqueue_stale` re-queues rows whose
+  composite version `provider:model:dDIM:vREV` no longer matches the target, in
+  bounded batches, leaving the old vector searchable until atomic replacement (§11).
+
+### 17.6 Maintenance procedures
+
+- **Re-validate on any change** with the committed harness:
+  `memory-bench.ts clean → seed N → embed → recall K → lifecycle → report`, sourced
+  against a local Supabase with `MEMORY_EMBEDDING_PROVIDER=deterministic`. Every row
+  it creates is tagged (`BENCH·` title / `bench-` slug) so `clean` removes exactly
+  its own footprint.
+- **Watch the golden signals.** `getEmbeddingGoldenSignals()` exposes queue depth,
+  failure/dead-letter counts, and oldest-pending age; an alert on rising dead-letters
+  or pending-age is the earliest sign of a provider or quota problem.
+- **Cost.** The embedding worker writes a per-run cost ledger (`hq_embedding_runs`);
+  the deterministic provider records $0 (no pricing row), a real provider records the
+  metered spend. The lifecycle worker is similarly cost-capped per run.
+
+> **Resolved.** The §15 PR4 and PR5 deferrals ("large-dataset latency/stress is
+> deferred to the Module 1 finalize gate") are closed by §17.2–§17.5: latency is
+> measured to 100k (recency sub-linear; query interactive to 10k and match-set-linear
+> on a corpus-wide probe, §17.3), stress (crash/lease-reclaim, backoff, dead-letter)
+> is proven against real Postgres, and the security surface (SQL/prompt injection,
+> malformed and unknown employee identity) is probed end-to-end through the service
+> layer. One latency fast-follow (bound the lexical candidate set, §17.3) is flagged
+> for CEO disposition — not a merge blocker.
+
+---
+
+*Volume X of the AI Substrate. The architecture (§1–§16) is design-only — no
+production change; §17 records the Module 1 finalize gate as-built, run entirely
+against a local Docker Supabase (production was never touched). Continues into
+Volume XI (Event Bus), the backbone both this volume's episodic source and its
+audit emissions depend on.*
