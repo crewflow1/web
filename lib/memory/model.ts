@@ -131,6 +131,72 @@ export function memoryStatusLabel(s: string): string {
 }
 
 // ---------------------------------------------------------------------
+// Cognitive class (CrewFlow Bible, Volume X §4).
+//
+// The COARSE category that drives lifecycle (expiry, consolidation,
+// retrieval weighting) — additive to, and orthogonal from, the
+// fine-grained data-driven `memory_type` lookup. Five classes are a fixed
+// enum because they drive engine behaviour; new `memory_type`s stay data.
+// ---------------------------------------------------------------------
+
+export const MEMORY_CLASSES = [
+  "semantic", // durable facts & knowledge — the shared company brain
+  "episodic", // a time-stamped experience an employee had
+  "working", // short-lived scratchpad for an in-flight task
+  "long_term", // consolidated, durable knowledge promoted from episodes
+  "procedural", // learned how-to — playbooks, skills, repeatable methods
+] as const;
+export type MemoryClass = (typeof MEMORY_CLASSES)[number];
+
+export const MEMORY_CLASS_LABELS: Record<MemoryClass, string> = {
+  semantic: "Semantic",
+  episodic: "Episodic",
+  working: "Working",
+  long_term: "Long-term",
+  procedural: "Procedural",
+};
+
+export const MEMORY_CLASS_HELP: Record<MemoryClass, string> = {
+  semantic: "Durable facts and knowledge, true regardless of who learned them.",
+  episodic: "A time-stamped experience an employee had at a moment in time.",
+  working: "Short-lived scratchpad for an in-flight task; expires with it.",
+  long_term: "Consolidated, important knowledge promoted from many episodes.",
+  procedural: "Learned how-to: playbooks, skills, repeatable methods.",
+};
+
+export function memoryClassLabel(c: string): string {
+  return MEMORY_CLASS_LABELS[c as MemoryClass] ?? c;
+}
+
+export function isMemoryClass(c: string): c is MemoryClass {
+  return (MEMORY_CLASSES as readonly string[]).includes(c);
+}
+
+/**
+ * Durable company-brain classes — never auto-expire; superseded only by
+ * versioning or explicit human archival (Volume X §10).
+ */
+export const DURABLE_CLASSES: ReadonlySet<MemoryClass> = new Set<MemoryClass>([
+  "semantic",
+  "long_term",
+  "procedural",
+]);
+
+/** Ephemeral lived-experience classes — subject to TTL / decay (Volume X §10). */
+export const EPHEMERAL_CLASSES: ReadonlySet<MemoryClass> = new Set<MemoryClass>([
+  "episodic",
+  "working",
+]);
+
+export function isDurableClass(c: string): boolean {
+  return DURABLE_CLASSES.has(c as MemoryClass);
+}
+
+export function isEphemeralClass(c: string): boolean {
+  return EPHEMERAL_CLASSES.has(c as MemoryClass);
+}
+
+// ---------------------------------------------------------------------
 // Relationship entity kinds.
 // ---------------------------------------------------------------------
 
@@ -192,6 +258,14 @@ export const EVENT_TYPES = [
   "linked",
   "unlinked",
   "version_restored",
+  // Volume X §9–§10 lifecycle transitions (Directive 009 M1 PR5). Mirrors the
+  // widened hq_memory_events.event_type CHECK in
+  // 20260727000000_hq_memory_lifecycle.sql — kept in lock-step.
+  "summarised",
+  "consolidated",
+  "superseded",
+  "archived",
+  "expired",
 ] as const;
 export type MemoryEventType = (typeof EVENT_TYPES)[number];
 
@@ -206,6 +280,11 @@ export const EVENT_LABELS: Record<MemoryEventType, string> = {
   linked: "Linked",
   unlinked: "Unlinked",
   version_restored: "Version restored",
+  summarised: "Summary refreshed",
+  consolidated: "Consolidated into a lesson",
+  superseded: "Superseded by a duplicate",
+  archived: "Archived",
+  expired: "Expired",
 };
 
 export function eventLabel(t: string): string {
@@ -315,6 +394,16 @@ export type MemoryRecord = {
   last_accessed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Additive (Volume X §5; CEO Directive 009 Module 1). Optional so the
+  // existing read-first service layer keeps compiling unchanged; the AI
+  // write/recall paths (PR2/PR3) populate and consume them.
+  memory_class?: MemoryClass;
+  owner_employee_id?: string | null;
+  expires_at?: string | null;
+  consolidated_into?: string | null;
+  salience?: number;
+  bound_task_id?: string | null;
+  last_reinforced_at?: string | null;
 };
 
 /**
@@ -342,10 +431,17 @@ export type MemoryDetail = {
 // ---------------------------------------------------------------------
 
 export function canEmployeeAccess(
-  memory: Pick<MemoryRecord, "visibility" | "department">,
+  memory: Pick<MemoryRecord, "visibility" | "department" | "owner_employee_id">,
   employee: { id: string; department: string },
   grants: ReadonlyArray<Pick<MemoryAccessGrant, "grantee_type" | "grantee_value">>,
 ): boolean {
+  // An employee may always read its OWN private experience (Volume X §6).
+  // owner_employee_id is additive and optional; when absent (the classic
+  // company-owned memory) this is simply false and behaviour is unchanged.
+  const isOwner =
+    memory.owner_employee_id != null &&
+    memory.owner_employee_id === employee.id;
+
   const hasGrant = grants.some(
     (g) =>
       (g.grantee_type === "employee" && g.grantee_value === employee.id) ||
@@ -363,15 +459,108 @@ export function canEmployeeAccess(
       return (
         (memory.department != null &&
           memory.department === employee.department) ||
+        isOwner ||
         hasGrant
       );
     case "private":
     case "restricted":
-      return hasGrant;
+      return isOwner || hasGrant;
     default:
       // Unknown visibility → fail closed.
       return false;
   }
+}
+
+// ---------------------------------------------------------------------
+// Write-permission resolution (pure) — the §6 AI write rules.
+//
+// Answers: when an AI employee proposes to WRITE a memory, may it commit
+// autonomously, must it cross an approval checkpoint, or is it forbidden?
+// This is the DB-free predicate the SQL `hq_memory_write` mirrors as its
+// atomic, final gate (the same split as canEmployeeAccess ↔ the SQL stage-1
+// read filter). Keyed purely on the memory shape + the employee's scopes, so
+// create vs. update never changes the outcome (a create always owns itself;
+// editing another's private memory is forbidden either way).
+//
+// Volume X §6:
+//  - create episodic/working/private memory it OWNS            → autonomous
+//  - create/update shared semantic/long_term/procedural        → a PROPOSAL
+//      that hits an approval checkpoint, UNLESS the employee holds the
+//      `memory.write.shared` capability scope (Volume XIII)     → autonomous
+//  - never edit another employee's private memory, or system   → denied
+// ---------------------------------------------------------------------
+
+/** The §6 write outcomes. */
+export type WriteOutcome = "autonomous" | "approval_required" | "denied";
+
+export type WriteDecision = {
+  outcome: WriteOutcome;
+  /** Machine-stable reason code — for the audit trail + the (future,
+   *  Module 4) approval-task payload. */
+  reason: string;
+};
+
+/**
+ * The capability scope that lets an employee write SHARED company knowledge
+ * without an approval checkpoint (Volume X §6; Volume XIII capability model).
+ * Held in `ai_employees.permissions.scopes` until the capability volume lands.
+ */
+export const SHARED_WRITE_SCOPE = "memory.write.shared";
+
+/**
+ * Resolve the §6 write decision for one proposed memory write. Pure: no DB,
+ * no I/O. The SQL primitive re-derives the same decision as the atomic gate.
+ */
+export function decideMemoryWrite(
+  memory: {
+    memory_class: MemoryClass;
+    visibility: MemoryVisibility | string;
+    owner_employee_id?: string | null;
+  },
+  employee: { id: string; scopes?: ReadonlyArray<string> },
+): WriteDecision {
+  const { visibility } = memory;
+  const cls = memory.memory_class;
+  const owner = memory.owner_employee_id ?? null;
+  const isOwner = owner != null && owner === employee.id;
+
+  // (1) System memory is engine-internal — never writable via the AI path.
+  if (visibility === "system") {
+    return { outcome: "denied", reason: "system_visibility" };
+  }
+
+  // (2) Never edit another employee's private/restricted memory (§6).
+  if (
+    owner != null &&
+    !isOwner &&
+    (visibility === "private" || visibility === "restricted")
+  ) {
+    return { outcome: "denied", reason: "foreign_private" };
+  }
+
+  // (3) Shared, durable company-brain knowledge (semantic/long_term/procedural
+  //     at public_hq/department visibility): a PROPOSAL that crosses an approval
+  //     checkpoint, unless the employee holds the shared-write capability scope.
+  const isSharedDurable =
+    DURABLE_CLASSES.has(cls) &&
+    (visibility === "public_hq" || visibility === "department");
+  if (isSharedDurable) {
+    const hasScope = (employee.scopes ?? []).includes(SHARED_WRITE_SCOPE);
+    return hasScope
+      ? { outcome: "autonomous", reason: "shared_write_capability" }
+      : { outcome: "approval_required", reason: "shared_knowledge_proposal" };
+  }
+
+  // (4) The employee's OWN lived experience (episodic/working), or its OWN
+  //     private memory — autonomous: reversible, bounded, low blast-radius.
+  const isOwnedExperience =
+    isOwner && (cls === "episodic" || cls === "working" || visibility === "private");
+  if (isOwnedExperience) {
+    return { outcome: "autonomous", reason: "owned_experience" };
+  }
+
+  // (5) Fail closed — anything not explicitly permitted is denied.
+  return { outcome: "denied", reason: "not_permitted" };
 }
 
 // ---------------------------------------------------------------------
