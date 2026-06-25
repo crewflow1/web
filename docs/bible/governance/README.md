@@ -14,9 +14,27 @@ system is, the governance records describe *how decisions about it are tracked*.
   directive numbers, ADR numbers, and volume numbering. Resolves the five
   conflicting numbering schemes; where any branch, commit, tag, comment, or older
   doc disagrees, this file wins.
+- **[`architecture-freeze.md`](./architecture-freeze.md)** — the platform contracts
+  that are **architectural foundations** (Event Spine, Shared Memory, AI SDK,
+  RunContext, Task Engine, Approval Engine, Communication Layer, Capability Registry,
+  Boardroom interfaces, Shared Communication Protocol), each honestly status-tagged
+  (Established / Partial / Reserved), and the rule that **changing any of them
+  requires an ADR + an architectural review** in the same PR.
+- **[`runtime-identity.md`](./runtime-identity.md)** — a **record** (not a decision)
+  of the current runtime `actor_id` slugs the 14 seeded employees stamp on the Event
+  Spine, where they diverge from the specs and the SDK volume (the qualification
+  three-way split), and why the canonical identity decision is **deferred** to the
+  AI SDK directive (D-04 / #014). `design-ai` is recorded as **Reserved**.
 
-*(Further governance records — the Architecture Freeze and links to the Version 1.0
-Constitution — are added later in this directive.)*
+## Related, outside this directory
+
+- **[`../../crewflow-v1.0-constitution.md`](../../crewflow-v1.0-constitution.md)** —
+  the **CrewFlow Version 1.0 Constitution**: the acceptance contract answering *"what
+  must exist before CrewFlow OS V1.0 can be declared complete?"* It is **not** part of
+  the Bible, the ADRs, or the Roadmap — it is the finish line they are all measured
+  against — so it lives at the `docs/` root, not under `governance/`. The Architecture
+  Freeze feeds it: a contract earns its `crewflow-*-v1.0` tag here, the platform earns
+  **CrewFlow OS V1.0** there.
 
 ---
 
