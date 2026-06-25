@@ -60,6 +60,16 @@ const envSchema = z.object({
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
+  // -- Communication Layer provider (Directive 010 Phase 4) ---------------
+  // Names the active outbound email provider for the Communication Layer.
+  // Default "auto": use Resend when RESEND_API_KEY is set, else off. As with
+  // the text/embedding seams this is a PLUG-IN, never a dependency: with no
+  // provider configured `deliverDraft` records a terminal `failed`/no_provider
+  // attempt and SENDS NOTHING — the path CI exercises. Switching providers is
+  // configuration only — no application code changes. Free string (not an enum)
+  // so a new provider needs zero env-schema edits.
+  COMMS_EMAIL_PROVIDER: z.string().optional(),
+
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The
   // webhook + checkout routes return 503 with a clear error when these

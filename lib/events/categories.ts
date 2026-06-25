@@ -32,7 +32,7 @@ export type Category = (typeof CATEGORIES)[number]["id"];
 /**
  * category → the verb-namespaces it groups. EVERY namespace produced today
  * (org, invoice, billing, customer, job, quote, support, ai, approval, memory,
- * permission, system, notification) is covered exactly once — a drift test in
+ * comm, permission, system, notification) is covered exactly once — a drift test in
  * the unit tier asserts no registered verb falls through. Forward namespaces with
  * no verbs yet (payroll, document, portal, lead, staff, member) are defined now
  * so the chip exists the moment those producers ship.
@@ -47,7 +47,7 @@ export const CATEGORY_NAMESPACES: Record<Category, readonly string[]> = {
   ai: ["ai", "approval", "memory"],
   documents: ["document"],
   portal: ["portal"],
-  communication: ["support", "notification"],
+  communication: ["support", "notification", "comm"],
   system: ["system"],
 };
 

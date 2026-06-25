@@ -94,6 +94,25 @@ const MEMORY = [
   "memory.access_revoked",
 ] as const;
 
+// Communication Layer (Directive 010, Phase 4). The DELIVERY lifecycle of an
+// APPROVED draft handed to a replaceable provider — a new domain, not a duplicate
+// vocabulary (cf. approval.*, memory.*). Past tense, facts that happened:
+//   comm.sent       — a provider accepted the message for delivery
+//   comm.delivered  — the recipient's server confirmed receipt (provider webhook)
+//   comm.bounced    — the message bounced (provider webhook)
+//   comm.complained — the recipient marked it as spam (provider webhook)
+//   comm.failed     — delivery failed at the transport (no provider / rejection)
+//   comm.suppressed — a send was blocked by the do-not-contact list
+// There is no `comm.queued`: the send is synchronous, so there is no queued state.
+const COMM = [
+  "comm.sent",
+  "comm.delivered",
+  "comm.bounced",
+  "comm.complained",
+  "comm.failed",
+  "comm.suppressed",
+] as const;
+
 const PERMISSION = [
   "permission.role_granted",
   "permission.role_revoked",
@@ -129,6 +148,7 @@ export const VERB_GROUPS = {
   ai: AI,
   approval: APPROVAL,
   memory: MEMORY,
+  comm: COMM,
   permission: PERMISSION,
   system: SYSTEM,
   notification: NOTIFICATION,
@@ -145,6 +165,7 @@ export const VERBS = [
   ...AI,
   ...APPROVAL,
   ...MEMORY,
+  ...COMM,
   ...PERMISSION,
   ...SYSTEM,
   ...NOTIFICATION,

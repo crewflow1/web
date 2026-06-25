@@ -190,6 +190,22 @@ export async function generateDraft(input: GenerateDraftInput): Promise<DraftRes
   return { ok: true, draft: data };
 }
 
+/**
+ * Read one immutable draft by id, or null when it does not exist. This is the Draft
+ * Engine's READ SEAM: the Communication Layer (Phase 4) resolves a `draft_id` through
+ * THIS function, so no other system re-queries hq_drafts — the two engines stay
+ * separate, joined only by the draft id and this public read.
+ */
+export async function getDraft(id: string): Promise<DraftRow | null> {
+  if (!id?.trim()) return null;
+  const admin = createAdminClient();
+  const { data } = await drafts<DraftRow>(admin)
+    .select(ROW_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  return data ?? null;
+}
+
 // ---------------------------------------------------------------------
 // The leg selector — LLM (bounded) or the deterministic fallback.
 // ---------------------------------------------------------------------
