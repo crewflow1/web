@@ -63,26 +63,23 @@ in-repo directives:
 | # | Title | What it governs | Anchor |
 |---|---|---|---|
 | **001** | AI Employee Framework / AI Boardroom | The roster of specialised AI employees and the `ai_employees` table; framework + seed. | `supabase/migrations/20260712000100_ai_employees_seed.sql` |
-| **002** | Shared Memory Engine — ✅ **shipped** | The company knowledge graph every AI employee reads/writes — the "company brain". Built end-to-end: `queue→embed→store→ANN→recall`, lifecycle, `forget`, and the `ctx.memory` SDK facet. Merged PR #183 (`91eec1b`), tag `crewflow-shared-memory-v1.0`. _Merge artifacts label it "Directive 009 · Module 1" — see the numbering note below._ | `supabase/migrations/20260722…20260728_*`, `server/sdk/memory.ts` |
 | **003** | HQ Sales AI programme | The umbrella for the Sales-AI module sequence (this roadmap's spine). "Maximum reuse. Minimum complexity. One architecture. One source of truth." | `docs/sales-ai.md`, `docs/lead-qualification.md` |
 | **003.5** | Lock the Foundation | Freeze Architecture v1.0 + the governance "programme pack". | commit `6d63d60` |
 | **004** | Engineering Bible / Event Spine / six-gate CI | The frozen data-model reservation (the `hq_sales_*` family), the Event Spine architecture, and the **mandatory six-gate, production-equivalent verification**. | `docs/event-spine.md`, `.github/workflows/ci.yml` |
 | **005** | Company Research AI | The first **operational** AI employee (Sales programme Module 2). | `docs/research-ai.md` |
+| **009** | Shared Memory Engine — ✅ **shipped** | The company knowledge graph every AI employee reads/writes — the "company brain". Built end-to-end: `queue→embed→store→ANN→recall`, lifecycle, `forget`, and the `ctx.memory` SDK facet. Merged PR #183 (`91eec1b`), tag `crewflow-shared-memory-v1.0`. _Canonical **#009** — the roadmap previously labelled this #002, now retired; see `docs/bible/governance/numbering.md`._ | `supabase/migrations/20260722…20260728_*`, `server/sdk/memory.ts` |
+| **010** | The Conversion Arc | The shared conversion substrate — **Approval Engine**, **Draft Generation**, **Communication Layer** — plus Outreach AI Phases 1–4. Each phase carries an ADR (`0001`–`0003`). Phases authored; PRs #187/#188/#189 pending merge. | `supabase/migrations/20260730…20260801_*`, `docs/bible/decisions/0001-approval-engine.md` |
 
-> Directives 006/007 are not yet issued. "Directive 008" exists only as a branch
-> / directory name for the CI-Postgres harness work, not a numbered directive.
->
-> ⚠️ **Numbering reconciliation needed — CEO ruling.** The Shared Memory Engine is
-> **Directive 002** in this table, but it was built and merged on branch
-> `directive/009-shared-memory` with commits and a tag labelled **"Directive 009 ·
-> Module 1"**, while the Bible's directories self-label differently again (#007
-> Workforce, #008 Operating-model, #009 Shared-Memory-build). **Three schemes now
-> disagree.** This roadmap keeps the **thing-name** ("Shared Memory Engine") as the
-> stable identifier and records both numbers above. Before the next directive is
-> issued, the CEO should fix **one** canonical numbering. In particular: a brief
-> calling the first AI employee **"Directive #004" collides** — #004 here is the
-> Event Spine, and the first executing employee was #005. The next free integer is
-> **≈#010**.
+> ✅ **Numbering — resolved (CEO Directive #011 / Master Roadmap D-01).** One
+> canonical scheme now governs, recorded in full at
+> `docs/bible/governance/numbering.md`: the **thing-name is the identity**, the
+> number is metadata, monotonic from **#011** and never reused. The Shared Memory
+> Engine's canonical number is **#009** (the old **#002** label is retired);
+> `#006`–`#008` were never issued (they survive only as directory self-labels and
+> branch names); the first operational employee is **#005** (the brief that called
+> "the first AI employee #004" collided with the Event Spine, which is #004). The
+> highest substantive directive before this reconciliation is **#010** (The
+> Conversion Arc); this reconciliation is **#011**; the next free number is **#012**.
 
 ---
 

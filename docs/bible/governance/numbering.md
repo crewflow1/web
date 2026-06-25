@@ -1,0 +1,174 @@
+# CrewFlow Governance — Directive, ADR & Volume Numbering (canonical)
+
+> **Status:** Canonical governance record. This file is the **single source of
+> truth** for how CrewFlow's CEO Directives, Architecture Decision Records, and
+> Bible volumes are numbered. Where any branch name, commit message, tag, code
+> comment, directory label, or older document disagrees with this ledger, **this
+> ledger wins.**
+>
+> **Issued under:** CEO Directive **#011** — *Governance, Numbering & Scope
+> Reconciliation* (Master Roadmap **D-01**). Documentation only: this change
+> renames nothing in code, runs no migration, and rewrites no git history.
+
+---
+
+## 1. Why this exists
+
+By mid-2026 the same body of work was being numbered five different ways at once,
+and the schemes contradicted one another:
+
+1. **The roadmap governance ledger** (`docs/roadmap.md`) — thing-name first, with
+   `001–005` + `003.5`; it labelled the Shared Memory Engine **#002**.
+2. **The Bible README ledger** (`docs/bible/README.md`) — `001–005`, with a note to
+   "begin new assignments at **#006**."
+3. **The Bible directory self-labels** — the substrate/workforce volumes referred to
+   themselves as **#007 Workforce**, **#008 Operating-model**, **#009
+   Shared-Memory-build**.
+4. **Branch / commit / tag labels** — the Shared Memory Engine shipped on
+   `directive/009-shared-memory` with commits and a tag reading **"Directive 009 ·
+   Module 1"**; CI-harness work used `directive-008/*`; the conversion substrate uses
+   `directive/010-*` and commits reading **"CEO Directive 010, Phase 2/3/4"**.
+5. **The adoption-analysis recommendation** (`docs/bible/adoption-analysis.md` §9) —
+   a *proposed* forward sequence (#006 Bible Adoption → #007 SDK → #008 Event Bus →
+   #009 Design → #010 Conversion Arc → #011 Boardroom → …).
+
+The headline collisions: **#002 vs #009** for one engine; the first operational
+employee mislabelled **#004** in one brief when #004 is the Event Spine; **#008**
+used by three different things; and a *recommended* sequence that never matched what
+was actually issued. A constitution cannot contradict itself, so D-01 fixes **one**
+canonical scheme and records every other label as an alias.
+
+---
+
+## 2. The canonical model
+
+1. **The thing-name is the identity.** "Shared Memory Engine", "The Conversion Arc",
+   "Company Research AI" are stable forever. The directive **number is metadata** for
+   ordering and citation, not the primary key. When in doubt, cite the thing-name.
+2. **Numbers are monotonic from #011 and never reused.** Every directive issued from
+   D-01 onward takes the next free integer. Retired numbers (§4) and skipped numbers
+   (§4) stay dead — they are never backfilled, reassigned, or recycled.
+3. **No new half-integers.** `#003.5` ("Lock the Foundation") is a frozen historical
+   artifact. Future directives are whole integers only.
+4. **History is immutable; the ledger is authoritative.** Branch names, commit
+   messages, tags, and in-code comments are permanent artifacts of when they were
+   written. We **do not** rewrite them. Where they disagree with this ledger, the
+   ledger is correct and the old label is recorded here as an alias.
+5. **ADR numbers are a separate sequence** (§5). They have nothing to do with
+   directive numbers.
+6. **Volume numbers are governed by principle, not renumbered en masse** (§6).
+
+---
+
+## 3. Canonical directive ledger
+
+| # | Thing-name (canonical) | What it governs | Status | Aliases / other labels |
+|---|---|---|---|---|
+| **001** | AI Employee Framework / AI Boardroom | The roster + `ai_employees` table; framework + seed. | Issued · framework + seed built; Boardroom orchestration pending | — |
+| **002** | *(retired number)* | — | **Retired** — do not reuse | Was used briefly as an early label for the **Shared Memory Engine**; that engine's canonical number is **#009** (see below). |
+| **003** | HQ Sales AI programme | Umbrella for the Sales-AI module sequence. | Issued · Modules 1–3 shipped | — |
+| **003.5** | Lock the Foundation | Freeze Architecture v1.0 + the governance "programme pack". | Issued (historical half-integer) | commit `6d63d60` |
+| **004** | Engineering Bible / Event Spine / six-gate CI | The frozen `hq_sales_*` reservation, the Event Spine, the six-gate CI bar. | Issued · Spine core (PR1–PR5) shipped; PR6/PR7 pending | **Mislabel of #005:** the Pulse (Spine PR5) code header in `lib/events/categories.ts` cites "CEO Directive #005, PR5" — that work is part of the Event Spine, i.e. **#004**. Code comment left as-is (Rule 4); the meaning is recorded here. |
+| **005** | Company Research AI | The first **operational** AI employee (Sales Module 2). | Issued · shipped | One early brief called "the first AI employee" **#004**; that collides — #004 is the Event Spine, the first executing employee is **#005**. |
+| **006** | *(reserved — never issued)* | — | **Skipped** — do not reuse | `adoption-analysis.md` §9 *recommended* "#006 Bible Adoption / Constitution". Never issued as a directive; that governance work is **#011**. |
+| **007** | *(reserved — never issued)* | — | **Skipped** — do not reuse | Bible workforce volume self-labelled "#007 Workforce"; adoption-analysis §9 recommended "#007 AI Employee SDK". Never issued. |
+| **008** | *(reserved — never issued)* | — | **Skipped** — do not reuse | Used only as branch/dir names (`directive-008/architecture-blueprint`, `directive-008/ci-postgres-harness`), a Bible "#008 Operating-model" self-label, and an adoption-analysis "#008 Event Bus" recommendation. Never a numbered directive. |
+| **009** | Shared Memory Engine | The company brain (`queue → embed → store → ANN → recall`), lifecycle, `forget`, and the first SDK facet `ctx.memory`. | Issued · shipped (PR #183, tag `crewflow-shared-memory-v1.0`); **prod migration gated** | The roadmap ledger labelled it **#002**; it shipped on `directive/009-shared-memory` with commits/tag reading "Directive 009 · Module 1". **#009 is canonical.** |
+| **010** | The Conversion Arc | The Approval Engine, Draft Generation, and Communication Layer substrate, plus Outreach AI Phases 1–4. ADRs `0001`–`0003`. | Issued · phases authored; PRs **#187/#188/#189** pending merge to `main` | Branches `directive/010-*`; commits "CEO Directive 010, Phase 2/3/4". |
+| **011** | Governance, Numbering & Scope Reconciliation | **This directive.** The canonical numbering ledger, the Architecture Freeze, and the Version 1.0 Constitution. Documentation only. | Issued · in progress | Master Roadmap **D-01**. |
+| **012 – 029** | *(reserved)* | Master Roadmap **D-02 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
+
+**Next free number beyond the current roadmap: `#030`.** (Within the roadmap, the
+next directive to be *issued* is D-02 = **#012**.)
+
+---
+
+## 4. Retired and reserved numbers (do not reuse)
+
+- **Retired:** `#002` — collapsed into the Shared Memory Engine's canonical `#009`.
+- **Skipped / never issued:** `#006`, `#007`, `#008` — these appear only as
+  recommendations, directory self-labels, or branch names. They were never issued as
+  directives and are **not** backfilled. Numbering proceeds monotonically past them.
+
+The point of recording dead numbers explicitly is that a future reader who finds
+"Directive 008" in a branch name can resolve it here instead of assuming a directive
+exists.
+
+---
+
+## 5. ADR numbering (separate sequence)
+
+Architecture Decision Records live in [`../decisions/`](../decisions/) and use their
+own four-digit sequence `NNNN-title.md`, **independent of directive numbers**. An ADR
+records *one* major architectural decision (the "document before you build" rule in
+[`../README.md`](../README.md)); a directive may spawn several ADRs.
+
+| ADR | Title | Under directive |
+|---|---|---|
+| [`0001`](../decisions/0001-approval-engine.md) | The Approval Engine | #010 (The Conversion Arc) |
+| [`0002`](../decisions/0002-draft-generation.md) | Draft Generation | #010 |
+| [`0003`](../decisions/0003-communication-layer.md) | Communication Layer | #010 |
+
+**Next free ADR number: `0004`.** ADR numbers are also monotonic and never reused.
+
+---
+
+## 6. Volume numbering (principle only — no mass renumber)
+
+The Bible canon has known internal collisions (two "Volume VII", two "Volume VIII");
+`adoption-analysis.md` §2/§4 and Appendix A describe a proposed canonical map. D-01
+**approves the governance principle, not a bulk renumber:**
+
+- There is **one** canonical volume map (adoption-analysis Appendix A) that volumes
+  migrate **toward** as they are next edited — no flag-day rewrite.
+- Until a volume is touched, its existing header stands; a reader resolves collisions
+  via Appendix A.
+- New volumes follow Appendix A's scheme from creation.
+
+This keeps the cost proportional: the meaning is pinned now; the headers converge
+naturally rather than through one high-churn, history-noisy commit.
+
+---
+
+## 7. Master Roadmap mapping (D-01 … D-19 → #011 … #029)
+
+The CrewFlow Version 1.0 Master Roadmap is the live forward plan. Its directives map
+to canonical numbers by a fixed offset — **D-_N_ = #(010 + _N_)**:
+
+| Roadmap | Canonical # | Roadmap | Canonical # |
+|---|---|---|---|
+| D-01 | **#011** *(this directive)* | D-11 | #021 |
+| D-02 | #012 | D-12 | #022 |
+| D-03 | #013 | D-13 | #023 |
+| D-04 | #014 | D-14 | #024 |
+| D-05 | #015 | D-15 | #025 |
+| D-06 | #016 | D-16 | #026 |
+| D-07 | #017 | D-17 | #027 |
+| D-08 | #018 | D-18 | #028 |
+| D-09 | #019 | D-19 | #029 |
+| D-10 | #020 | | |
+
+The earlier `adoption-analysis.md` §9 sequence (#006–#013) was a *recommendation* made
+before the roadmap existed; it is **superseded** by the table above for anything not
+yet issued. (Its #010 = "Sales Conversion Arc" happens to match what was actually
+issued as #010; its #011 = "AI Boardroom" does **not** — actual #011 is this
+governance directive.)
+
+---
+
+## 8. How to issue the next directive
+
+1. Take the **next free integer** (today: D-02 = `#012`; beyond the roadmap: `#030`).
+2. Add a row to §3 with the thing-name, scope, and status `Issued · in progress`.
+3. Name the branch `directive/NNN-<slug>`; the canonical number and the branch number
+   should agree from here on (the historical mismatches above are frozen, not fixed).
+4. If the directive makes a major architectural decision, write its ADR(s) under the
+   next free `decisions/NNNN-*` number **in the same PR** (the document-before-build
+   rule).
+5. On merge, update the status here and append a row to the living tracker in
+   [`../adoption-analysis.md`](../adoption-analysis.md).
+
+---
+
+*Documentation only. No code, schema, configuration, or git history was changed by
+this record. Adopted under CEO Directive #011 (Master Roadmap D-01).*
