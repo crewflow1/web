@@ -13,7 +13,7 @@ architectural decisions logged, and a handover summary kept current so anyone �
 human or AI employee — can pick the work up cold.
 
 **Last updated:** 2026-06-24 · on the merge of the **Shared Memory Engine**
-(Directive 002; shipped on a branch labelled "Directive 009 · Module 1") — PR #183,
+(Directive #009; the roadmap previously labelled it #002) — PR #183,
 merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Module 3
 — Lead Qualification AI (#180, `a21389d`)._
 
@@ -24,9 +24,9 @@ merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Modul
 | Workstream | Status | Progress |
 |---|---|---|
 | **HQ Sales AI programme** (Directive 003) | 3 of 7 modules shipped | ▓▓▓░░░░ **~43%** |
-| **AI Boardroom roster** (Directive 001) | 13 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
+| **AI Boardroom roster** (Directive 001) | 14 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
 | **Event Spine** foundation (Directive 004) | core shipped (PR1–PR5) · Realtime + Hooks remain | ▓▓▓▓▓░░ **~71%** |
-| **Shared Memory Engine** (Directive 002) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
+| **Shared Memory Engine** (Directive #009) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
 | **Six-gate CI bar** | enforced on every PR; newest modules at full bar | ▓▓▓▓▓▓ **live** |
 
 Honest reading: the **foundation and the front of the sales funnel are built**.
@@ -83,7 +83,7 @@ in-repo directives:
 
 ---
 
-## The AI Boardroom — 13 employees seeded
+## The AI Boardroom — 14 employees seeded
 
 The roster (Directive 001) is the org chart. **Seeded ≠ executing**: most
 employees are framework rows awaiting their execution module. Two now perform
@@ -104,6 +104,7 @@ real, gated work — and they are the template for the rest.
 | 11 | `operations-ai` | Operations AI | framework |
 | 12 | `research-ai` | **Company Research AI** | ✅ **executing** (read + draft, human-approved) |
 | 13 | `lead-qualification` | **Lead Qualification AI** | ✅ **executing** (autonomous, deterministic) |
+| 14 | `outreach-ai` | **Outreach AI** | framework — seeded Directive #010 Ph.1 (draft-only; no `send` scope) |
 
 The **12th and 13th** members are the first to leave the framework and do work.
 Each future executing employee follows the same template (see _Architectural
@@ -193,7 +194,7 @@ audit backbone the Sales-AI modules' own timelines complement. Internal sequence
 
 ---
 
-## Workstream C — the Shared Memory Engine (Directive 002)
+## Workstream C — the Shared Memory Engine (Directive #009)
 
 HQ-wide infrastructure, parallel to the Event Spine: the **company brain** every AI
 employee reads and writes through **one** engine. Shipped end-to-end and merged at
@@ -350,7 +351,7 @@ living-knowledge-base on every change · branch → preview → human-approved m
 
 | Date | Module | PR | Merge |
 |---|---|---|---|
-| 2026-06-24 | Shared Memory Engine — _Directive 002_ (merged as "Directive 009 · Module 1") | #183 | `91eec1b` |
+| 2026-06-24 | Shared Memory Engine — _Directive #009_ (canonical; early artifacts labelled it #002) | #183 | `91eec1b` |
 | 2026-06-21 | Module 3 — Lead Qualification AI | #180 | `a21389d` |
 | — | Module 2 — Company Research AI | #179 | `8d0b531` |
 | — | Module 1 — Company Intelligence Database | #178 | `465937d` |

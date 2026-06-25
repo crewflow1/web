@@ -10,6 +10,43 @@
 > **Method:** evidence-based — every claim about "what is built" is grounded in a
 > repository census (Appendix B), not memory or assumption. Where the Bible says a
 > thing exists and the repo disagrees, the repo wins and it is recorded as a gap.
+>
+> **Now also the living engineering tracker (CEO Directive #011 / D-01).** The
+> study in §0–§10 is the **2026-06-21 baseline**, frozen as authored. From Directive
+> #011 onward this file is updated **after every merged directive**: the
+> [Living engineering tracker](#living-engineering-tracker) immediately below carries
+> the current census and the per-directive merge log. Where a baseline figure has
+> since moved, the tracker is authoritative.
+
+---
+
+## Living engineering tracker
+
+> Updated after every merged directive (CEO standing mandate). The 2026-06-21 study
+> below is the frozen baseline; this section is the moving picture. Numbering is
+> canonical per [`governance/numbering.md`](./governance/numbering.md).
+
+**Current census (delta from the 2026-06-21 baseline):**
+
+| Metric | Baseline (2026-06-21) | Current | Note |
+|---|---|---|---|
+| Migrations | 92 | **103** | +11: Shared Memory engine (×7), approvals, drafts, communications, plus the outreach/research/qualification employee seeds |
+| AI employees seeded | 13 | **14** | +1: `outreach-ai` (Directive #010, Phase 1) |
+| AI employees executing | 2 | **2** | `research-ai`, `lead-qualification` (unchanged) |
+| Employee specifications | — | **42** | `docs/bible/workforce/employees/01..42-*.md` |
+| ADRs recorded | 0 | **3** | `decisions/0001`–`0003`; next free `0004` |
+
+**Per-directive merge log:**
+
+| Canonical # | Directive | State | Anchor |
+|---|---|---|---|
+| **#009** | Shared Memory Engine | merged (PR #183) · prod migration gated | tag `crewflow-shared-memory-v1.0` |
+| **#010** | The Conversion Arc — Approval · Draft · Comms · Outreach Ph.1–4 | phases authored; PRs #187/#188/#189 pending merge | ADRs [`0001`](./decisions/0001-approval-engine.md)–[`0003`](./decisions/0003-communication-layer.md) |
+| **#011** | Governance, Numbering & Scope Reconciliation (D-01) | in progress (this change) — documentation only | [`governance/numbering.md`](./governance/numbering.md) |
+
+> The §9 directive sequence (#006…) below is the **original recommendation**,
+> superseded for anything not yet issued; the live forward plan is the Master
+> Roadmap (D-01…D-19 → #011…#029).
 
 ---
 
@@ -22,13 +59,14 @@ merge). The load-bearing numbers (full table in Appendix B):
 - **137** customer/admin pages, **~53** internal API route handlers, **13** cron
   drains/pollers.
 - **~50** server services (`server/services/*.ts`), **~50** pure `lib/*` domains.
-- **92** migrations declaring **99** tables; **40** migrations enable RLS, **26**
-  declare policies.
+- **92** migrations declaring **99** tables (baseline; **103** as of Directive
+  #010 — see the living tracker); **40** migrations enable RLS, **26** declare
+  policies.
 - **154** unit test files across **~45** domains; **5** Playwright e2e specs;
   the **six-gate CI** (typecheck · lint · unit · integration-real-Postgres ·
   security · e2e) is live.
-- **13** AI employees seeded; **2** actually executing (`research-ai`,
-  `lead-qualification`).
+- **13** AI employees seeded (baseline; **14** as of Directive #010 Phase 1 —
+  `outreach-ai`); **2** actually executing (`research-ai`, `lead-qualification`).
 - **2** shared UI primitives (`components/ui/button.tsx`, `skeleton.tsx`).
 - Integrations present: **Stripe, Twilio, Resend, Anthropic, OpenAI, PostHog,
   Sentry**. **`inngest` is installed but unwired (0 usages).** No realtime push,
@@ -151,6 +189,11 @@ brief asks which volumes become *Directive #004, #005, #006…* — but **004 an
 005 are already issued** (004 = Engineering Bible/Event Spine/six-gate; 005 =
 Research AI). New volume→directive assignments must start at **#006** or the
 ledger corrupts. Flagged here because it changes the answer to deliverable #9.
+
+> **Resolved (Directive #011 / D-01).** Numbering is now canonical in
+> [`governance/numbering.md`](./governance/numbering.md): `#002` retired (→ #009),
+> `#006`–`#008` never issued, monotonic from `#011`. The "start at #006" advice in
+> §9 is the original recommendation, superseded for anything not yet issued.
 
 **C9 — "Volume VI — API Architecture (Part 2)" has no Part 1.** The provided API
 volume is explicitly *Part 2*. The foundational half (resource model, auth model,
@@ -294,8 +337,8 @@ A volume-by-volume read of doctrine against the measured repository.
 | **I — Vision / Philosophy** | An AI OS for construction; the promise + Golden/30% rules | Lived in practice; not written down in-repo until now | **Adopted, undocumented** |
 | **II — Product** | Full construction OS, lead→cash + WOW + 15 phases | CRM, leads, customers, quotes, jobs(+calendar), variations, invoices, payments, payroll, staff(+rota/leave), suppliers, expenses, finances, tax, compliance, support, reviews, customer portal (token), AI receptionist (foundation), marketing site | **Foundation strong; WOW/later phases mostly absent** |
 | **III — HQ** | The company's own OS + Boardroom + decision centre | Rich admin surface: ai-boardroom, sales (companies/calling/comms/learning/tasks/analytics), research, qualification, memory, pulse, ceo, health, ops, billing, demos, organisations, support | **Surfaces built; orchestration/decision-centre not** |
-| **IV / VII-AI / VIII-Boardroom — AI workforce** | ~13–30 coordinated, permissioned, audited employees + Boardroom + protocol | 13 seeded, **2 executing** in isolation; boardroom is a *view*; no protocol, no live memory, no cost controls | **~10–15% — the defining gap** |
-| **V — Database** | RLS-first, event-driven, audited, scalable | 92 migrations / 99 tables, 40 RLS-enabling, event spine (core→timeline), shared memory, scale indexes, rate-limit guards | **Strong (~70%)** |
+| **IV / VII-AI / VIII-Boardroom — AI workforce** | ~13–30 coordinated, permissioned, audited employees + Boardroom + protocol | 14 seeded, **2 executing** in isolation; boardroom is a *view*; no protocol, no live memory, no cost controls | **~10–15% — the defining gap** |
+| **V — Database** | RLS-first, event-driven, audited, scalable | 103 migrations / 99+ tables, 40 RLS-enabling, event spine (core→timeline), shared memory, scale indexes, rate-limit guards | **Strong (~70%)** |
 | **VI — APIs** | Internal + versioned public + webhooks + SDK + marketplace | ~53 internal routes, Stripe webhook inbound, 13 crons; **no `/v1`/public/SDK/marketplace; "Part 1" missing** | **Internal solid; ecosystem absent (~40%)** |
 | **VII — Security** | Zero-trust, least privilege, RLS, audit, MFA, compliance | RLS across 40 migrations, secdef RPC guards, rate limiting, storage hardening, impersonation isolation, security CI gate | **Strong (~70%); AI guardrail doctrine missing** |
 | **VIII — Design System** | Tokens + library + motion; one world-class look | Tailwind + globals + **2 UI primitives**; ad-hoc styling | **Weak (~15%) — largest silent gap** |
@@ -392,6 +435,13 @@ exists will triplicate the substrate by hand and guarantee drift. The Bible's ow
 
 ## 9. Recommended directive mapping (#006 and beyond)
 
+> **Superseded for forward planning (Directive #011 / D-01).** What was *actually*
+> issued diverged from this recommendation: `#006`–`#008` were never issued, Shared
+> Memory shipped as `#009`, and the Conversion Arc shipped as `#010`. Canonical
+> numbering is now [`governance/numbering.md`](./governance/numbering.md), and the
+> live forward plan is the Master Roadmap (D-01…D-19 → #011…#029). The table below
+> is retained as the original dependency-ordered reasoning, not the live sequence.
+
 **Important correction (C8):** the brief asks for Directives #004/#005, but those
 are **already issued** (004 = Engineering Bible/Event Spine/six-gate; 005 =
 Research AI). New assignments therefore begin at **#006**. Proposed sequence,
@@ -424,7 +474,9 @@ and expensive later.
    the "single source of truth" is itself ambiguous. *(C8)*
 2. **Canonical numbering.** Approve the Appendix-A renumber (or an alternative) so
    there is exactly one Volume VII and one Volume VIII before the manual grows.
-   *(C1, C9)*
+   *(C1, C9)* — **Directive numbering resolved** by Directive #011 / D-01
+   (`governance/numbering.md`); the volume renumber stays **principle-only** (no
+   flag-day rewrite — `numbering.md` §6).
 3. **The AI guardrail model — the safety keystone.** Service-role runners bypass
    RLS. Before a *third* employee ships, ratify: what surface the runner may
    touch, how autonomy is bounded in code, how every action is audited, and the
@@ -488,15 +540,15 @@ root.
 | Cron drains/pollers | 13 |
 | Server services (`server/services/*.ts`) | ~50 |
 | Pure `lib/*` domains | ~50 |
-| Migrations | 92 |
-| Tables created | 99 |
+| Migrations | 92 (baseline) · **103** current |
+| Tables created | 99 (baseline) |
 | Migrations enabling RLS | 40 |
 | Migrations declaring policies | 26 |
 | Unit test files (`*.test.ts`) | 154 |
 | `__tests__` domains | ~45 |
 | Playwright e2e specs | 5 (pulse, qualification, research, sales, smoke) |
 | CI gates | 6 (typecheck, lint, unit, integration-PG, security, e2e) |
-| AI employees seeded | 13 |
+| AI employees seeded | 13 (baseline) · **14** current (+`outreach-ai`) |
 | AI employees executing | 2 (research-ai, lead-qualification) |
 | `components/ui` primitives | 2 (button, skeleton) |
 | Integrations wired | Stripe, Twilio, Resend, Anthropic, OpenAI, PostHog, Sentry |
