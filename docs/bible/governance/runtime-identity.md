@@ -5,10 +5,13 @@
 > Bible specs and the SDK volume. It deliberately makes **no canonical decision** and
 > renames nothing.
 >
-> **The canonical runtime-identity decision is deferred** to the **AI SDK directive**
-> (Master Roadmap **D-04** = canonical **#014**), where employee identity, the
-> `RunContext`, and the SDK contracts are designed together. Issued under CEO Directive
-> **#011** (*Governance, Numbering & Scope Reconciliation*; D-01).
+> **The canonical runtime-identity decision is deferred** to the **RunContext Runtime
+> Contract directive** (Master Roadmap **D-03** = canonical **#013**), where employee
+> identity is settled as part of the runtime contract — *before* the AI SDK envelope
+> (D-04 / #014) is assembled over it. (The CEO-approved
+> [dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md) moved
+> the identity decision ahead of the SDK; it was previously bundled with D-04.) Issued
+> under CEO Directive **#011** (*Governance, Numbering & Scope Reconciliation*; D-01).
 
 ---
 
@@ -21,8 +24,9 @@ documentation edit, and it must be designed alongside the identity/`RunContext`
 contract that every employee will inherit.
 
 For that reason D-01 (a documentation-only directive) **does not standardise runtime
-identities.** It records the current state and the inconsistencies so the AI SDK
-directive can decide the canonical scheme once, with full knowledge of the divergence.
+identities.** It records the current state and the inconsistencies so the RunContext Runtime
+Contract directive can decide the canonical scheme once, with full knowledge of the
+divergence.
 
 ---
 
@@ -79,8 +83,8 @@ The Lead Qualification AI is named **three different ways**:
 The conflict is real and load-bearing: the spec asserts the actor is `qualification-ai`,
 but the **running code stamps `lead-qualification`**. A reader reconstructing "everything
 this employee did" must query `actor_id = 'lead-qualification'` today — *not* the value
-the spec names. **No change is made here**; the canonical identifier is chosen by the AI
-SDK directive (§6).
+the spec names. **No change is made here**; the canonical identifier is chosen by the
+RunContext Runtime Contract directive (§6).
 
 ---
 
@@ -94,15 +98,19 @@ original Directive #001 seed) but has **no specification** among the 42-employee
 Per CEO direction, `design-ai` is **neither adopted nor deprecated**. It is recorded as
 **Reserved for future implementation**: its existence is acknowledged, but no
 architectural assumption is made about its responsibilities, scopes, or runner. If and
-when a Design employee is built, its spec and contract are defined then — under the SDK
-directive's identity rules.
+when a Design employee is built, its spec and contract are defined then — under the
+RunContext Runtime Contract directive's identity rules.
 
 ---
 
-## 6. The deferral (what the AI SDK directive decides)
+## 6. The deferral (what the RunContext Runtime Contract directive decides)
 
-The **AI SDK directive (D-04 / #014)** owns the canonical runtime-identity decision,
-because identity is part of the SDK/`RunContext` contract every employee inherits. It
+The **RunContext Runtime Contract directive (D-03 / #013)** owns the canonical
+runtime-identity decision, because identity is the first field of the `RunContext` every
+employee inherits — and the
+[dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md) sequences
+the runtime contract *ahead* of the AI SDK (D-04 / #014) and the Capability Registry
+(D-05 / #015) precisely because identity must settle before either can rely on it. It
 will decide, once and for all:
 
 - the canonical identifier per employee (e.g. resolve `lead-qualification` vs
