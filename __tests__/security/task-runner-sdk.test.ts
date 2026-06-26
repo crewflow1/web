@@ -9,12 +9,13 @@ import { VERBS } from "@/lib/events/registry";
  * PR-A pins the QUEUE (RLS:hq, the guard, the seven entry points); PR-B pins the
  * EMITTER (every wired transition writes one registered task.* event in-transaction).
  * These pin the RUNNER — the TypeScript surface every AI employee inherits — as a
- * matter of SOURCE, not discipline. The five runner/handler rules (Volume XIII §21):
+ * matter of SOURCE, not discipline. The six runner/handler rules (Volume XIII §21):
  *   1. no employee claims from SQL      — only the runner's claimTask dequeues;
  *   2. no employee writes its own runner — there is one run-loop, here;
  *   3. no handler completes/fails itself — ctx.tasks is create + checkpoint ONLY;
  *   4. the runner owns the lifecycle mechanism;
- *   5. handlers own business logic only.
+ *   5. handlers own business logic only;
+ *   6. handler purity — a handler takes ctx and returns or throws; nothing else.
  *
  * Each fact below, and what breaks if it silently flips:
  *   • The service layer mutates the queue ONLY through the seven SECURITY DEFINER

@@ -446,12 +446,13 @@ sdk.runEmployee({
 // The author wrote ONLY the handler. That is the blueprint.
 ```
 
-**The runner/handler contract (five rules, enforced — Directive #012 / D-02, PR-C).**
+**The runner/handler contract (six rules, enforced — Directive #012 / D-02, PR-C).**
 The blueprint above is not a convention an employee may opt out of; it is the line
 between *protected Operating System infrastructure* (the runner) and *employee code*
 (the handler). The Generic Task Engine (XII) is the durable queue; the SDK runner
-(`server/sdk/tasks.ts`) is the only sanctioned way to drive it. Five rules hold that
-line — the first three are prohibitions, the last two assign ownership:
+(`server/sdk/tasks.ts`) is the only sanctioned way to drive it. Six rules hold that
+line — the first three are prohibitions, the next two assign ownership, and the sixth
+states the handler's positive shape:
 
 1. **No AI employee may claim tasks directly from SQL.** The atomic dequeue is
    `hq_ai_task_claim` reached *through the runner*, never a hand-written `select … for
@@ -471,6 +472,13 @@ line — the first three are prohibitions, the last two assign ownership:
    spine (XII PR-B) so the audit is identical whoever runs.
 5. **Handlers own business logic only** — read inputs, reason, produce the output
    envelope (§10), propose actions (§15). Everything mechanical is the runner's.
+6. **Handler purity — a handler is a deterministic business function** (CEO Directive
+   #012). It receives a `RunContext` and either *returns* a result or *throws*. It
+   never claims, retries, completes, or fails a task; never emits a task-lifecycle
+   event; never touches a lease or a heartbeat. This is the positive statement of
+   rules 1–5: keep the handler simple — input → reasoning → output — so the operating
+   system can own execution *uniformly* for every employee. Everything else belongs
+   to the runtime.
 
 These are the SDK expression of the Task Engine's standing posture: the queue is
 touched *only* through the seven SECURITY DEFINER entry points (XII §11.1), and an
@@ -478,6 +486,15 @@ employee touches *those* only through the runner. The rule is held in code — t
 runner is the single claim/complete/fail caller, `ctx.tasks` deliberately omits the
 terminal verbs, and the source-analysis security test bans raw `hq_ai_tasks` writes
 (`__tests__/security/task-engine-spine.test.ts`) — not left to discipline.
+
+**The SDK surface, generalised (forward principle — Directive #012).** `ctx.tasks` is
+the first of a family, not a one-off. Every capability an employee needs reaches it
+the same way: `ctx.memory` (X) and `ctx.tasks` (XII) today, and — as they land —
+`ctx.company`, `ctx.comms`, `ctx.calendar`, `ctx.analytics`, each a business-friendly
+facet that *hides* its infrastructure beneath the same trust boundary the task
+contract draws here. The SDK is intended to become the **only** interface an AI
+employee touches: ergonomic above, protected substrate below. Every new module ships
+to this architecture — so employee #42 inherits exactly the surface of employee #3.
 
 ---
 
