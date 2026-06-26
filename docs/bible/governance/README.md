@@ -52,6 +52,17 @@ system is, the governance records describe *how decisions about it are tracked*.
   dependency is **asymmetric** — the registry depends on the runtime contract, not the
   reverse — so it recommends **Option B**: `RunContext` contract → AI SDK → Capability
   Registry, and recommends the CEO update the roadmap before any #013 implementation.
+- **[`directive-013-runcontext-architecture-proposal.md`](./directive-013-runcontext-architecture-proposal.md)** —
+  the **architecture proposal** (design only; **held** pending CEO approval; no
+  implementation) for **Directive #013 / D-03 — the RunContext Runtime Contract**.
+  Answers the CEO's review questions one-by-one (what RunContext is · the fields it owns
+  and deliberately does not · its relation to the Task Engine, the AI SDK, identity, and
+  permissions/capabilities · how it propagates correlation, budget, deadlines, and
+  cancellation · its interaction with Shared Memory · what defers to #014/#015 · the ADR,
+  tests, and migrations required · what would make it over-engineered). Its thesis: #013
+  is mostly **binding inert seams the Task Engine already reserved** (`deadline_at`, the
+  `cancelled` status/transition, `required_capability`, `correlation_id`, `cost_budget_micros`),
+  so the schema delta is **one `SECURITY DEFINER` cancel function and zero new columns**.
 
 ## Related, outside this directory
 
