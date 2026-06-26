@@ -92,17 +92,25 @@ XIII); the *events* a task emits/consumes (XI); the *context* a task reads/write
 | Task types as **data** | **Built** | `hq_sales_task_types` lookup (new type = a row). |
 | The **runner pattern** (atomic claim, checkpoint, mirror, idempotent) | **Built** | Research AI + Lead Qualification AI runners — the ADR pattern. |
 | Per-employee task **metrics** | **Built** | `ai_employee_task_metrics`. |
-| **Employee-generic** task table (`hq_ai_tasks`) | **To build** | generalise off `company_id`/`contact_id` → polymorphic subject. |
-| **Dependencies / DAG** (parent-child, depends_on) | **To build** | new columns + a readiness rule. |
-| **Approval checkpoints** (the autonomy test home) | **To build** | new states + `hq_ai_task_approvals`. |
-| **Verification stage** | **To build** | new state + verify hook. |
-| **Lease + heartbeat** crash recovery | **To build** | new columns + a reaper. |
+| **Employee-generic** task table (`hq_ai_tasks`) | **Built** · D-02/PR-A | polymorphic `(subject_kind, subject_id)`, FK-free subject; queue columns carried over verbatim. |
+| **Dependencies / DAG** (parent-child, depends_on) | **Seam** · D-02/PR-A | `parent_task_id`/`depends_on` + `blocked` placed as inert seams; readiness rule deferred to its own directive. |
+| **Approval checkpoints** (the autonomy test home) | **Seam** · D-02/PR-A | `approval_status`/`waiting_approval` reserved inert; behaviour deferred. |
+| **Verification stage** | **Seam** · D-02/PR-A | `verification`/`verifying` reserved inert; verify hook deferred. |
+| **Lease + heartbeat** crash recovery | **Built** · D-02/PR-A | `lease_owner`/`lease_expires_at`/`heartbeat_at` + the `reap` reaper + the task-reaper cron. |
 | Recurring/cron tasks (drive sweeps, drains) | **To build** | `hq_ai_schedules` + a tick. |
 
 **Net:** the *durable queue, priority, retry, dedupe, the proven runner pattern,
 and metrics are shipped.* This volume generalises the subject, and adds DAG,
 approval, verification, and lease recovery — the four scheduler features a
 *workforce* needs that a *sales pipeline* didn't.
+
+**Reconciled (D-02, PR-A–G).** The generic engine and lease-recovery are now
+**built** (`hq_ai_tasks`, PR-A) and both live employees — `research_company` and
+`qualify_company` — run *entirely* on it through the runner SDK (PR-E / PR-F),
+retiring the `STUCK_RUNNING_MS` wall clock. DAG, approval, and verification remain
+**reserved seams** awaiting their own directives. The as-built decision of record is
+[ADR 0004](../decisions/0004-generic-task-engine.md); the unified operator surface
+over the engine is the **AI Task Queue** (`/admin/tasks`, PR-G).
 
 ---
 
@@ -682,7 +690,11 @@ fan-in stalls (long-blocked tasks); per-employee throughput & cost. On The Pulse
    `hq_ai_tasks`, or do the sales runners keep their table while *new* employees
    use the general one and they converge later? *Recommendation: leave sales
    running, build new employees on `hq_ai_tasks`, converge via a view + a backfill
-   when proven — protect production first.*
+   when proven — protect production first.* **— Resolved (D-02).** A forward-only,
+   per-`task_type` cutover: `research_company` (PR-E) and `qualify_company` (PR-F)
+   were re-pointed at `hq_ai_tasks`, retiring `STUCK_RUNNING_MS`; the sales pipeline's
+   rows stay in `hq_sales_ai_tasks`, untouched (no backfill, no re-stamp). The employee
+   cutover is held open pending the complete Directive #012 review and CEO authorisation.
 2. **Lease TTL & heartbeat interval defaults.** Need tuning against real runner
    durations (a long research task vs a quick score). Per-task-type override is in
    the schema; the defaults are a decision.
@@ -696,3 +708,10 @@ fan-in stalls (long-blocked tasks); per-employee throughput & cost. On The Pulse
 *Volume XII of the AI Substrate. Architecture only — no code, no production
 change, no PR. Continues into Volume XIII (AI SDK), the interface through which
 every employee claims and runs the tasks defined here.*
+
+*Reconciliation (Directive #012 / D-02, PR-G): the engine this volume specifies is
+now built — `hq_ai_tasks` (PR-A), the `task.*` spine emitter (PR-B), the runner SDK
+(PR-C), the memory↔task FK (PR-D), and both live employees migrated onto it (PR-E /
+PR-F). This volume stands as the design of record; the as-built decision is
+[ADR 0004](../decisions/0004-generic-task-engine.md), and the operator read-model is
+the AI Task Queue at `/admin/tasks`.*

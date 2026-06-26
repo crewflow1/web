@@ -533,6 +533,32 @@ The test of a migration is not "does the employee still work?" but "is there now
 one substrate. The workforce grows by adding *data* (a row, a capability, a handler);
 the *system* it runs on only ever gets smaller per employee absorbed.
 
+**The Reference Employee Rule (Directive #012 / D-02, PR-G).** The first successfully
+migrated employee is the canonical migration reference, and every future migration
+conforms to the execution model it proved. Research AI (PR-E) is that reference; Lead
+Qualification AI (PR-F) is the first migration to *conform* to it — the same enqueue
+path, the same runner SDK, the same lease-and-reaper recovery, the same audit — which
+is precisely why the second migration **deleted more than it added** and needed no
+infrastructure of its own. The rule's force is its default: **when a migration appears
+to need new infrastructure, assume the platform is missing a capability — not that the
+employee is exceptional.** An employee earns "exceptional" only after the substrate gap
+is named, designed, and shipped as the platform's own directive; until then the burden
+of proof sits on the operating system, never on the employee. A new employee is
+presumed ordinary.
+
+**The architectural health metric (Directive #012 / D-02, PR-G).** Read the migrations
+as a trend line, not as isolated events: **every new AI employee should get smaller, and
+the operating system should get larger.** Platform capability grows; employee complexity
+shrinks. Each employee absorbed onto the engine should leave behind *less*
+employee-specific code than the last and *more* shared substrate — and a genuinely new
+capability should be built once, in the OS, where every employee inherits it. This is a
+standing, long-term health metric, not a one-time migration checkpoint: if employee N+1
+is larger than employee N, or the OS did not grow to absorb what was common between them,
+the architecture is regressing and the next migration is the place to correct it. The
+**AI Task Queue** operator surface (PR-G) is where the metric becomes legible — one
+engine, one runner, one audit, every employee visibly converging on the shared substrate
+rather than each carrying its own.
+
 ---
 
 ## 22. The reference employee (the blueprint, proven)
