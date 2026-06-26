@@ -456,7 +456,7 @@ than silently carried.
 
 ## 8. Status & next step
 
-**Held for CEO review.** On approval, #013 is issued: branch `directive/013-*`, ADR
+**Reviewed — outcome in §9.** On approval, #013 is issued: branch `directive/013-*`, ADR
 `0007` written **before** code (the document-before-build rule), the contract frozen and
 graduated to Established, and the Platform Reuse Index gains its #013 entry (expected
 shape: **R1** the frozen contract + `hq_ai_task_cancel`; **R2** heavy reuse — five seams
@@ -466,7 +466,46 @@ is approved.**
 
 ---
 
+## 9. CEO review outcome *(recorded after review)*
+
+The CEO completed an independent CTO review of this proposal. **Outcome: the RunContext
+Runtime Contract architecture is approved**, with **one architectural amendment** and **two
+additional standing rules**. All three are now encoded as first-class principles in
+**[ADR 0007 — The RunContext Runtime Contract](../decisions/0007-runcontext-runtime-contract.md)**
+(Decisions 2–4):
+
+1. **Execution-state ownership (amendment).** RunContext **does not own execution state**.
+   *The Operating System (Task Engine) owns it* — cancellation, deadlines, budget, leases,
+   retries. *RunContext exposes it* — `ctx.signal`, `ctx.deadline`, `ctx.budget`. *Handlers
+   consume it* and **never own or mutate runtime execution state**. This becomes a permanent
+   architectural principle. It **sharpens** this proposal's thesis: even the new
+   `hq_ai_task_cancel` entry point is an *engine* capability — RunContext merely surfaces its
+   effect.
+2. **RunContext immutability (rule).** Once execution begins, `identity`, `correlationId`,
+   `deadline`, `budget`, and `signal` remain immutable; the handler's context object stays
+   stable throughout execution, guaranteeing deterministic handler behaviour. (ADR 0007
+   pins the one precise carve-out: the `signal` reference is immutable and its `aborted` flag
+   is a monotonic one-way latch — the designed cancellation edge, not a context mutation.)
+3. **No infrastructure exposure (rule).** RunContext never exposes infrastructure — no SQL,
+   Supabase, database clients, transport clients, or raw services. Employees interact with
+   the OS **only through SDK abstractions**: *the SDK becomes the only interface between AI
+   employees and the operating system.*
+
+**Field-name reconciliation carried into ADR 0007:** the exposed budget accessor is
+**`ctx.budget`** (the CEO's vocabulary; a clean abstraction), replacing today's raw-unit
+`ctx.budgetMicros` (`server/sdk/tasks.ts:110`) while still carrying the reserved micros
+ceiling.
+
+**Current gate.** ADR 0007 is **authored and held for the CEO's review**. Per the CEO's
+authorisation — *"Begin ADR 0007. Do not begin implementation until ADR 0007 has been
+reviewed and approved."* — **no implementation begins** until ADR 0007 is reviewed and
+approved.
+
+---
+
 *Documentation only. No code, schema, migration, configuration, or git history was
 changed by this proposal. Prepared under CEO Directive #011 (Master Roadmap D-01) as the
 architecture proposal for Directive #013 / D-03; the forward sequence it designs against
-was approved by the CEO (Option B) and recorded in [`numbering.md`](./numbering.md) §3.*
+was approved by the CEO (Option B) and recorded in [`numbering.md`](./numbering.md) §3.
+The CEO's review outcome is recorded in §9; the approved contract and its three amendments
+are formalised in [ADR 0007](../decisions/0007-runcontext-runtime-contract.md).*
