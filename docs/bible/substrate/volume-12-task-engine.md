@@ -596,6 +596,14 @@ checkpoint → verify → complete, heartbeating throughout, every step audited 
 `task.*` event. An employee author writes only the `handler`; the substrate owns
 everything around it.
 
+That division is governed by the **runner/handler contract — six enforced rules**
+(XIII §21): no employee claims from SQL, none implements its own runner, none
+completes or fails its own task; the runner owns the whole lifecycle mechanism,
+handlers own business logic only — a handler stays a deterministic business function
+that takes a `RunContext` and returns or throws, nothing more. PR-C ships the first
+slice of this `Tasks` surface (`create` + the `run` loop + `checkpoint`;
+`complete`/`fail` stay runner-internal by rule 3) over the seven entry points above.
+
 ---
 
 ## 12. Worked flow — an orchestrated objective
