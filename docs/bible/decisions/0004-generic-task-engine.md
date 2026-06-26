@@ -189,14 +189,25 @@ Directive 004. The freeze status moves to **Partial** precisely because PR-A
 establishes the contract while PR-B–G complete it.
 
 **Follow-ups (sequenced, each its own reviewable + reversible PR; none in this one).**
-- **PR-B** — the canonical `task.*` Event Spine verbs and an `AFTER` emitter, so every
-  lifecycle transition writes one audit event in the same transaction (the pattern of
-  ADRs [0001](./0001-approval-engine.md)/[0003](./0003-communication-layer.md)).
-- **PR-C** — the TypeScript runner abstraction at `server/sdk/tasks.ts`, the SDK
-  surface that becomes `ctx.tasks.create()/run()/checkpoint()/complete()`.
-- **PR-D** — the `bound_task_id` FK from Shared Memory, closing the memory↔task link.
-- **PR-E / PR-F** — migrate `research-ai` and lead-qualification off
-  `hq_sales_ai_tasks` onto the generic engine, by `task_type`, retiring
-  `STUCK_RUNNING_MS`.
-- **PR-G** — the operator read-view and the Volume XII / living-tracker reconciliation
-  that records the engine as built.
+The sequence is now built out; status is tracked here as the engine lands — PR-G's own
+remit is the living-tracker reconciliation that records the engine as built.
+- **PR-B** ✅ *merged* — the canonical `task.*` Event Spine verbs and an `AFTER` emitter,
+  so every lifecycle transition writes one audit event in the same transaction (the
+  pattern of ADRs [0001](./0001-approval-engine.md)/[0003](./0003-communication-layer.md)).
+- **PR-C** ✅ *merged (#196)* — the TypeScript runner abstraction at `server/sdk/tasks.ts`,
+  the SDK surface that becomes `ctx.tasks.create()/run()/checkpoint()/complete()`.
+- **PR-D** ✅ *merged (#197)* — the `bound_task_id` FK from Shared Memory, closing the
+  memory↔task link.
+- **PR-E** ✅ *complete — approved, held open (#198)* — `research-ai` migrated off
+  `hq_sales_ai_tasks` onto the generic engine by `task_type`, retiring `STUCK_RUNNING_MS`.
+  The **reference migration** ([Volume XIII](../substrate/volume-13-ai-sdk.md): the
+  Reference Employee Rule).
+- **PR-F** ✅ *complete — approved, held open (#199)* — lead-qualification migrated the
+  same way, *conforming* to PR-E (it deleted more than it added and needed no new
+  infrastructure of its own).
+- **PR-G** ⟳ *this PR* — the unified operator read-view (`/admin/tasks`, the **AI Task
+  Queue**, read-only over `hq_ai_tasks` across every `task_type`) and the Volume XII /
+  living-tracker reconciliation that records the engine as built. The employee migrations
+  (PR-E / PR-F) remain **held** pending the complete Directive #012 review and CEO cutover
+  authorisation; PR-G adds **no** migration and no new infrastructure — it reads the engine
+  and reconciles the record.
