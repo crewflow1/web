@@ -76,10 +76,12 @@ canonical scheme and records every other label as an alias.
 | **009** | Shared Memory Engine | The company brain (`queue → embed → store → ANN → recall`), lifecycle, `forget`, and the first SDK facet `ctx.memory`. | Issued · shipped (PR #183, tag `crewflow-shared-memory-v1.0`); **prod migration gated** | The roadmap ledger labelled it **#002**; it shipped on `directive/009-shared-memory` with commits/tag reading "Directive 009 · Module 1". **#009 is canonical.** |
 | **010** | The Conversion Arc | The Approval Engine, Draft Generation, and Communication Layer substrate, plus Outreach AI Phases 1–4. ADRs `0001`–`0003`. | Issued · phases authored; PRs **#187/#188/#189** pending merge to `main` | Branches `directive/010-*`; commits "CEO Directive 010, Phase 2/3/4". |
 | **011** | Governance, Numbering & Scope Reconciliation | **This directive.** The canonical numbering ledger, the Architecture Freeze, and the Version 1.0 Constitution. Documentation only. | Issued · in progress | Master Roadmap **D-01**. |
-| **012 – 029** | *(reserved)* | Master Roadmap **D-02 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
+| **012** | Generic Task Engine | One durable, crash-safe, audited work queue (`hq_ai_tasks`) every AI employee runs on — plus the runner SDK, `task.*` spine emission, the memory↔task binding, the reference + second employee migrations, and the unified operator read model. ADRs `0004`–`0006`. | Issued · **architecturally complete** — PR-A…PR-G merged to the `#011` integration branch; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-02**. Branches `directive/012-*`. Completion record: [`directive-012-completion-report.md`](./directive-012-completion-report.md). |
+| **013 – 029** | *(reserved)* | Master Roadmap **D-03 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
 
-**Next free number beyond the current roadmap: `#030`.** (Within the roadmap, the
-next directive to be *issued* is D-02 = **#012**.)
+**Next free number beyond the current roadmap: `#030`.** (Within the roadmap, D-02 =
+**#012** is issued and architecturally complete; the next directive to be *issued*
+is D-03 = **#013**.)
 
 ---
 
