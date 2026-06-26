@@ -103,8 +103,10 @@ inheritance promise. For V1.0 the SDK must:
 - be **versioned**: the SDK earns `crewflow-ai-sdk-v1.0` only when its surface is
   stable and frozen under the Architecture Freeze.
 
-The canonical SDK + identity design is owned by the **AI SDK directive (D-04 /
-#014)**; this Constitution sets the acceptance bar that directive must clear.
+The canonical **SDK envelope** is owned by the **AI SDK directive (D-04 / #014)**;
+the canonical **runtime-identity** design is settled by the **RunContext Runtime
+Contract directive (D-03 / #013)**. This Constitution sets the acceptance bar both
+must clear.
 
 ---
 

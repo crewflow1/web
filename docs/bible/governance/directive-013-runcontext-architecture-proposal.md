@@ -496,10 +496,21 @@ additional standing rules**. All three are now encoded as first-class principles
 `ctx.budgetMicros` (`server/sdk/tasks.ts:110`) while still carrying the reserved micros
 ceiling.
 
-**Current gate.** ADR 0007 is **authored and held for the CEO's review**. Per the CEO's
-authorisation — *"Begin ADR 0007. Do not begin implementation until ADR 0007 has been
-reviewed and approved."* — **no implementation begins** until ADR 0007 is reviewed and
-approved.
+**Outcome.** The CEO reviewed and **accepted ADR 0007**
+([`../decisions/0007-runcontext-runtime-contract.md`](../decisions/0007-runcontext-runtime-contract.md),
+status *Accepted*), confirming the kernel boundary: *the OS owns execution state · the Task
+Engine owns task state · RunContext exposes execution context · the SDK exposes platform
+capabilities · employee handlers own business logic only.* The CEO also authorised the
+minimal **Constitution §3 reconciliation** flagged in §7 (identity → D-03 / #013; SDK
+envelope → D-04 / #014).
+
+**Implementation authorisation.** Once ADR 0007 and the Constitution reconciliation are
+merged, Directive #013 implementation is authorised — the **smallest correct** RunContext
+Runtime Contract, strictly within the ADR scope: **no** SDK-envelope expansion, **no**
+Capability Registry, **no** employee migration, **no** new platform tools, **no** raw
+infrastructure exposure; held to the full validation discipline (typecheck · lint · unit ·
+integration · security · production build). Directive #014 does not begin until #013 has a
+completion report and CEO review.
 
 ---
 

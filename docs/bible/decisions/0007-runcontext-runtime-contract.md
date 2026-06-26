@@ -1,8 +1,7 @@
 # ADR 0007 — The RunContext Runtime Contract
 
-> **Status:** Proposed — held for CEO review; **implementation is gated on this ADR's
-> approval** · **Date:** 2026-06-27 · **Directive:** CEO Directive #013 / D-03 (the
-> RunContext Runtime Contract) · **Supersedes:** none · **Superseded by:** none ·
+> **Status:** Accepted · **Date:** 2026-06-27 · **Directive:** CEO Directive #013 / D-03
+> (the RunContext Runtime Contract) · **Supersedes:** none · **Superseded by:** none ·
 > **Builds on:** [ADR 0004](./0004-generic-task-engine.md),
 > [ADR 0005](./0005-task-engine-spine-emission.md)
 >
@@ -302,17 +301,21 @@ invocation, and the SDK stays the only interface.
 
 **Numbering.** This is ADR **0007**
 ([`../governance/numbering.md`](../governance/numbering.md) §5); ADR numbers are monotonic
-and never reused. Because it is **held for review before any implementation** (the CEO's
-explicit gate), its §5 registration row and the bump to **next free `0008`** land **with
-its acceptance** — in the implementation PR that carries the code plus the
-architectural-review sign-off, per the [Architecture Freeze](../governance/architecture-freeze.md)
-§2 same-PR rule — not with this proposed draft. The number is reserved by this file's
-existence.
+and never reused. The CEO accepted ADR 0007 **ahead of** implementation, so it is
+**registered in §5 with this acceptance** and the next free ADR number advances to
+**`0008`**. The architectural-review sign-off the
+[Architecture Freeze](../governance/architecture-freeze.md) §2 requires for the *contract
+change itself* travels with the implementation PR that carries the code; this accepted
+decision record is that PR's prerequisite.
 
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed
 by this record. Authored ahead of implementation under the document-before-you-build rule
-at the CEO's direction; **implementation is gated on this ADR's review and approval.**
-Prepared for CEO Directive #013 / D-03 (the RunContext Runtime Contract); the contract it
-records was approved by the CEO with the three amendments encoded above.*
+at the CEO's direction. The CEO **accepted** this ADR and **authorised Directive #013
+implementation** within the approved scope — the smallest correct RunContext Runtime
+Contract, with **no** SDK-envelope expansion, **no** Capability Registry, **no** employee
+migration, **no** new platform tools, and **no** raw infrastructure exposure — to begin
+once this ADR and the Constitution reconciliation are merged. Prepared for CEO Directive
+#013 / D-03 (the RunContext Runtime Contract); the contract it records was approved by the
+CEO with the three amendments encoded above.*
