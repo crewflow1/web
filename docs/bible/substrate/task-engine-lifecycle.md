@@ -516,8 +516,8 @@ employee may introduce a custom task runner, and no parallel queue is permitted.
 | Reserved | Carried as | Wired by |
 |----------|-----------|----------|
 | ~~Spine emission + `task.*` verbs~~ | **Done (PR-B · ADR 0005):** five verbs registered, emitted in-transaction | **PR-B ✓** |
-| The SDK runner / `run()` loop / `RunContext` | `server/sdk/tasks.ts` (not yet written) | **PR-C** |
-| Memory⇄task binding | `hq_memories.bound_task_id` (FK from Shared Memory) | **PR-D** |
+| ~~The SDK runner / `run()` loop / `RunContext`~~ | **Done (PR-C):** `server/sdk/tasks.ts` (runner + registry + `ctx.tasks`) over the seven entry points; the six-rule runner/handler contract (XIII §21) | **PR-C ✓** |
+| ~~Memory⇄task binding~~ | **Done (PR-D · ADR 0006):** `hq_memories.bound_task_id → hq_ai_tasks(id)` FK, `ON DELETE SET NULL` (`20260804000000`) | **PR-D ✓** |
 | Migration of the two live sales workloads | `hq_sales_ai_tasks` still runs untouched | **PR-E / PR-F** |
 | Dependencies / DAG | `parent_task_id`, `depends_on[]` columns; `blocked` state | later directive |
 | Assignment hand-off | `assigned_employee_id`; `claimed` state | later directive |
