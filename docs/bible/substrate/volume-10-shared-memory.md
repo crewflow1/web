@@ -367,6 +367,40 @@ registry in `lib/events/registry.ts` is the source of truth; an earlier draft of
 this volume wrongly mirrored reads as a `memory.read` bus event and named the
 write `memory.written` — both corrected here as-built, D009 M1 PR2/PR3.)*
 
+**Memory ownership — the task–memory boundary.** A task may *create* a memory; a
+task never *owns* one. The two are linked by `hq_memories.bound_task_id`, but that
+edge records **provenance only** — which task a `working`/`episodic` memory was
+produced under — and confers no ownership. Ownership stays exactly where the matrix
+above puts it: with `owner_employee_id`, or, for shared knowledge, with no one (the
+company brain). Stated plainly:
+
+> - Tasks may create memories.
+> - Tasks never own memories.
+> - Memories are durable knowledge.
+> - Tasks are temporary execution.
+> - **Deleting a task must never delete knowledge.**
+> - The task–memory relationship exists only to preserve provenance.
+
+This is not a convention to be remembered — it is **enforced in the database**. The
+`bound_task_id` foreign key is `ON DELETE SET NULL` (ADR 0006, Directive #012 PR-D):
+when a task is removed — a reaper sweep, an operator cleanup, a test teardown — the
+memory **survives** and merely loses its binding; its own `expires_at` TTL (§10)
+remains the hard backstop. Cascade-deleting knowledge because a transient work item
+was cleaned up is the single outcome the constraint makes impossible. The dependency
+runs one way only — Memory → Task; the Task Engine holds no column pointing back at
+`hq_memories` (XII), so it stays the generic, memory-agnostic substrate every
+employee inherits.
+
+**Forward principle — memory is long-lived organisational knowledge (future
+guidance; no implementation).** A memory created by one task may later be referenced
+by *many* future tasks: the objection a Sales AI logs today (§1) is the one a
+different employee recalls six months on. Shared Memory is therefore **long-lived
+organisational knowledge, not execution state** — its lifetime is governed by its
+own typology and TTL (§4, §10), never by the lifecycle of any single task that
+happened to touch it. This is the standard against which future memory work is
+measured: a task ending may *expire a scratchpad* (a `working` memory bound to it,
+§10), but it never deletes the durable record. No code follows from this note.
+
 ---
 
 ## 7. The retrieval pipeline (the heart)
