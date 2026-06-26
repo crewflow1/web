@@ -216,6 +216,44 @@ export function verbNamespace(verb: Verb): string {
   return verb.slice(0, verb.indexOf("."));
 }
 
+// --- Event schema versions (the Event Spine versioning rule) ------------------
+//
+// Every registered event carries a STABLE schema version, starting at 1. This is
+// the SINGLE SOURCE of those versions, kept registry-first by design: Volume XI
+// §4.2 holds verb + payload-schema validity a PRODUCER contract (a TS registry +
+// contract test), never a hot-path DB constraint — so a bad version can no more
+// wedge the append-only log than a bad verb can. The rule, scope and rationale
+// live in `docs/bible/substrate/event-versioning.md`; the per-event task contract
+// in `docs/bible/substrate/task-event-contract.md`.
+//
+// The contract, in one line: a version is IMMUTABLE once shipped. A
+// backward-incompatible payload change mints a NEW version (an override below) —
+// it never edits or reuses an old one — because events are immutable history that
+// must stay replayable forever (Volume XI §10). This is deliberately NOT a
+// behavioural change: nothing about emission changes today. It is the stable
+// identifier replay, analytics and schema evolution will key off tomorrow.
+//
+// Today every event is v1, so OVERRIDES is empty. Each future bump is one line:
+// `"verb.name": 2,` — added in the same edit as the payload change and its ADR.
+
+/** The version every registered event starts at. */
+export const EVENT_SCHEMA_VERSION_BASELINE = 1 as const;
+
+/**
+ * Per-event version bumps. A verb appears here ONLY once its payload schema has
+ * changed incompatibly; the value is the current version (always ≥ 2 — v1 is the
+ * baseline, so an entry of 1 would be redundant). Absent ⇒ the event is v1.
+ */
+export const EVENT_SCHEMA_VERSION_OVERRIDES: Partial<Record<Verb, number>> = {};
+
+/**
+ * The stable payload-schema version of a registered event — the baseline (1)
+ * unless the verb has been bumped in EVENT_SCHEMA_VERSION_OVERRIDES.
+ */
+export function eventSchemaVersion(verb: Verb): number {
+  return EVENT_SCHEMA_VERSION_OVERRIDES[verb] ?? EVENT_SCHEMA_VERSION_BASELINE;
+}
+
 // --- Envelope enums (mirror the CHECK constraints on hq_events) ---------------
 
 export const ACTOR_TYPES = ["human", "ai_employee", "system", "tenant"] as const;
