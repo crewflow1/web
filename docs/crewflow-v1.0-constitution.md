@@ -130,6 +130,17 @@ For each employee, V1.0 records a tier:
 - **every Live employee stood up by inheritance only** (the §1.4 test), proving the
   roster scales from #3 to #42 without substrate forks.
 
+> **Protected platform capability (added under D-02 / #012).** Every AI employee
+> created after D-02 **inherits the Generic Task Engine**
+> ([ADR 0004](./bible/decisions/0004-generic-task-engine.md);
+> [`bible/governance/architecture-freeze.md`](./bible/governance/architecture-freeze.md)
+> contract #5). **No employee may introduce a custom task runner. No parallel queue
+> implementations are permitted.** Any exception requires an ADR, an architectural
+> review, **and** CEO approval. This is what "without substrate forks" means for work
+> execution: the one inherited queue — or a CEO-approved, ADR-recorded exception —
+> never a quiet second runner. The Task Engine is the work-execution mechanism behind
+> the §1.4 inheritance promise.
+
 ---
 
 ## 5. Construction platform scope
