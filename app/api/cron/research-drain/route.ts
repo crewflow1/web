@@ -10,9 +10,11 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  *
  * The live "Research Company" flow kicks each run from the browser as soon as
  * the task is enqueued, so most runs never reach this cron. This is the
- * guarantee that nothing is ever lost: it picks up tasks that were enqueued
- * but never kicked (browser closed, request dropped) and re-runs anything left
- * stuck in 'running' past the dead-worker threshold. Bounded per invocation so
+ * guarantee that nothing is ever lost: it picks up tasks that were enqueued but
+ * never kicked (browser closed, request dropped) and drains them through the
+ * generic Task Engine. Crash recovery is no longer this cron's job — a claim
+ * takes a time-boxed lease and the separate task-reaper cron recovers anything
+ * whose lease expired (Directive #012 / D-02, PR-E). Bounded per invocation so
  * one drain can never run away.
  *
  * Auth: Bearer CRON_SECRET (lib/cron/auth). Returns 401 otherwise.
