@@ -4,6 +4,14 @@
 > first; this volume uses the shared primitives (P1–P7) and does not redefine
 > them.
 >
+> **For the *built* engine, read the companion.** This volume is the full intended
+> design. The part that is **shipped** (the generic table, the guard, and the
+> seven entry points — CEO Directive #012 / D-02, PR-A) is described, reconciled
+> with the code and without SQL, in
+> [`task-engine-lifecycle.md`](./task-engine-lifecycle.md) — the canonical
+> engineering reference for how a task lives and dies today. The decision is
+> [ADR 0004](../decisions/0004-generic-task-engine.md).
+>
 > *Provisional numbering "XII" per the CEO directive; collides with the existing
 > Master Roadmap volume. Tracked in the canonical renumber.*
 
