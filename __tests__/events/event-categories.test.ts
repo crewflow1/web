@@ -37,6 +37,7 @@ describe("event categories — no registered verb drifts off the chips", () => {
     expect(categoryForVerb("job.completed")).toBe("projects");
     expect(categoryForVerb("invoice.paid")).toBe("finance");
     expect(categoryForVerb("ai.run_completed")).toBe("ai");
+    expect(categoryForVerb("task.created")).toBe("ai");
     expect(categoryForVerb("support.ticket_opened")).toBe("communication");
     expect(categoryForVerb("permission.role_granted")).toBe("staff");
     expect(categoryForVerb("system.cron_ran")).toBe("system");
@@ -69,7 +70,7 @@ describe("event categories — the map is internally consistent", () => {
 
 describe("event categories — selection helpers", () => {
   it("namespacesForCategories flattens + dedupes; empty selection → []", () => {
-    expect(namespacesForCategories(["ai"])).toEqual(["ai", "approval", "memory"]);
+    expect(namespacesForCategories(["ai"])).toEqual(["ai", "approval", "memory", "task"]);
     expect(namespacesForCategories([])).toEqual([]);
     // Overlapping/duplicated categories never duplicate a namespace.
     const dup = namespacesForCategories(["sales", "sales"]);
