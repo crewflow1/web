@@ -21,16 +21,19 @@ import {
  * Lead Qualification AI runner — real-Postgres proof of the decision engine
  * (Module 3, CEO Directive 003; six-gate bar). Gate 4.
  *
- * The runner (server/services/hq-qualification.ts) owns NO tables of its own:
- * it claims a `qualify_company` task off hq_sales_ai_tasks, drives the
- * lifecycle (Queued → Running → Assessing → Deciding → Completed), runs the
- * DETERMINISTIC rubric, and persists every artifact through the existing
- * Sales-AI writers. The unit tier proves the pure rubric in isolation; this
- * tier proves the BEHAVIOUR a mock cannot: that against a LIVE database with the
- * real migrations applied (so the lead-qualification employee, the
- * `qualify_company` task type, and the `ai_qualification` source all exist), a
- * full run actually writes the rows it claims to, in the shapes it claims, and
- * moves the company exactly where the verdict says — and nowhere else.
+ * The runner (server/services/hq-qualification.ts) owns NO tables of its own —
+ * and after the Directive #012 / D-02 migration (PR-F) it owns no queue of its
+ * own either: it claims a `qualify_company` task off the GENERIC Task Engine
+ * (hq_ai_tasks) through the runner SDK (register handler → claim-one / drain),
+ * drives the lifecycle (Queued → Running → Assessing → Deciding → Completed),
+ * runs the DETERMINISTIC rubric, and persists every artifact through the
+ * existing Sales-AI writers. The unit tier proves the pure rubric in isolation;
+ * this tier proves the BEHAVIOUR a mock cannot: that against a LIVE database
+ * with the real migrations applied (so the lead-qualification employee, the
+ * `qualify_company` task type, the `ai_qualification` source, AND the generic
+ * hq_ai_tasks engine all exist), a full run actually writes the rows it claims
+ * to, in the shapes it claims, and moves the company exactly where the verdict
+ * says — and nowhere else.
  *
  * There is no model in this path, so no mock is needed: the rubric is the whole
  * engine. We seed two ground-truth companies that force two opposite, certain
@@ -46,8 +49,10 @@ import {
  * finished task is a no-op skip).
  *
  * Runs only against a live DB (describeIntegration): skips locally, fails loudly
- * in CI if the DB is missing. Teardown deletes both probe companies, whose FKs
- * cascade to their tasks, contacts and timeline rows.
+ * in CI if the DB is missing. Teardown deletes both probe companies (whose FKs
+ * cascade to their contacts and timeline rows) and, because the generic engine's
+ * tasks hang off a free-form subject_id with no FK back to the company, deletes
+ * the two hq_ai_tasks rows explicitly.
  */
 
 // loose-cast client shim — the generated Database type does not model the
@@ -222,6 +227,13 @@ describeIntegration("HQ Lead Qualification AI · runner against a real Postgres 
 
   afterAll(async () => {
     const svc = serviceClient();
+    // The generic engine's tasks live on a free-form subject_id (no FK to the
+    // company), so deleting the company cannot cascade to them — remove them by
+    // id. The company delete still cascades to its hq_sales_* children
+    // (contacts, timeline rows).
+    for (const id of [qualifiedTaskId, overseasTaskId]) {
+      if (id) await db(svc).from("hq_ai_tasks").delete().eq("id", id);
+    }
     for (const id of [qualifiedCompanyId, overseasCompanyId]) {
       if (id) await db(svc).from("hq_sales_companies").delete().eq("id", id);
     }
@@ -329,12 +341,12 @@ describeIntegration("HQ Lead Qualification AI · runner against a real Postgres 
     expect(await latestQualificationTaskId(qualifiedCompanyId)).toBe(qualifiedTaskId);
   });
 
-  it("re-running a finished task is an idempotent skip (claim fails on a non-pending row)", async () => {
+  it("re-running a finished task is an idempotent skip (no ready task of this type remains to claim)", async () => {
     const again = await runQualificationTask(qualifiedTaskId);
     expect(again.ok).toBe(true);
     expect(again.status).toBe("skipped");
 
-    // The drain, too, finds nothing pending to do for these tasks.
+    // The drain, too, finds no ready qualify_company task left to claim.
     const drained = await drainQualificationTasks(5);
     expect(drained.ok).toBe(true);
   });
