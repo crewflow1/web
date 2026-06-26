@@ -44,6 +44,14 @@ system is, the governance records describe *how decisions about it are tracked*.
   employee-specific code added · infrastructure removed · platform-vs-employee trend) to
   make the CEO's thesis — *platform capability grows, employee complexity shrinks* —
   visible and auditable over time. Inaugurated with the Directive #012 entry.
+- **[`directive-013-dependency-ordering-analysis.md`](./directive-013-dependency-ordering-analysis.md)** —
+  a **dependency analysis & recommendation** (not a decision; renumbers nothing)
+  answering whether a **Capability Registry can be designed before the `RunContext`
+  contract**. Across the eight named dimensions (identity · capability/permission
+  propagation · cancellation · deadlines · budget · correlation · SDK contracts) the
+  dependency is **asymmetric** — the registry depends on the runtime contract, not the
+  reverse — so it recommends **Option B**: `RunContext` contract → AI SDK → Capability
+  Registry, and recommends the CEO update the roadmap before any #013 implementation.
 
 ## Related, outside this directory
 
