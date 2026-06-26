@@ -7,6 +7,10 @@
 > `supabase/migrations/20260803000000_hq_ai_tasks_spine.sql` (CEO Directive #012 /
 > D-02, PR-B) and the registry `lib/events/registry.ts`.
 >
+> Beyond each event's payload, the contract also records its **ownership and
+> lifecycle** (§0) — owner, introducing directive, status, and primary consumer —
+> so the event catalogue stays governable as it grows.
+>
 > Read alongside: the lifecycle spec (`./task-engine-lifecycle.md`, the state
 > machine these events project), the versioning rule (`./event-versioning.md`, why
 > every event has a version), the Event Bus (`./volume-11-event-bus.md`, the spine
@@ -15,7 +19,7 @@
 
 ---
 
-## 0. Scope — five events, one engine
+## 0. Scope, ownership & lifecycle
 
 The Task Engine emits **exactly five** registered verbs, one per *wired* lifecycle
 transition. All are **schema version 1**.
@@ -34,6 +38,62 @@ function-level emission choice buys that an `AFTER` trigger could not recover
 (ADR-0005). Deliberately **absent** (registered only when a real transition lands,
 never as dead vocabulary): `task.heartbeated`, `task.checkpointed`, `task.cancelled`
 — see §4.
+
+### Ownership & lifecycle
+
+Beyond its payload, **every registered event also declares** who owns it, the
+directive that introduced it, its current lifecycle status, any deprecation
+directive, and its primary consumer. Today all five task events are uniform on
+these — they ship as one engine — so a future sixth event simply adds its own row:
+
+| Event | Owner | Introduced | Status | Deprecation | Primary consumer |
+|-------|-------|------------|--------|-------------|------------------|
+| `task.created`   | Generic Task Engine (Platform / HQ) | #012 / D-02 (PR-B) | **Stable** | — | `timeline` (The Pulse) |
+| `task.claimed`   | Generic Task Engine (Platform / HQ) | #012 / D-02 (PR-B) | **Stable** | — | `timeline` (The Pulse) |
+| `task.completed` | Generic Task Engine (Platform / HQ) | #012 / D-02 (PR-B) | **Stable** | — | `timeline` (The Pulse) |
+| `task.retried`   | Generic Task Engine (Platform / HQ) | #012 / D-02 (PR-B) | **Stable** | — | `timeline` (The Pulse) |
+| `task.failed`    | Generic Task Engine (Platform / HQ) | #012 / D-02 (PR-B) | **Stable** | — | `timeline` (The Pulse) |
+
+- **Owner** — the team/system accountable for the verb's meaning and payload. The
+  Task Engine is shared OS infrastructure, so its events are owned by the **engine
+  itself**, not by any one AI employee that enqueues work onto it.
+- **Introduced** — the directive (and PR) that first registered the verb; the
+  *why* of its shape lives in ADR-0005 and the per-event contract (§3).
+- **Status** — the lifecycle state defined just below.
+- **Deprecation** — the directive that retired the verb, once one exists (`—` while
+  the event is current).
+- **Primary consumer** — the headline reader; the full per-event consumer list is in
+  §3. New consumers attach as **data** (subscription rows, Volume XI §6.2), never by
+  changing the verb.
+
+### Lifecycle states
+
+Every registered event sits at one point on a single progression. This is
+**documentation only** — the status is recorded here, not enforced in code (no
+runtime behaviour, exactly as versioning adds none):
+
+> **Experimental → Stable → Deprecated → Removed**
+
+- **Experimental** — registered and emitted, but the payload may still change
+  *without* a version bump while the shape settles. Readable, but expect churn; used
+  briefly and deliberately.
+- **Stable** — the payload is frozen under the versioning rule
+  (`./event-versioning.md`): any backward-incompatible change now mints a **new
+  version** instead of editing the shape. The default for a shipped, reviewed event.
+  **All five task events are Stable.**
+- **Deprecated** — superseded by a replacement and recorded in a **Deprecation
+  Directive**. The verb is **still emitted** so existing consumers and replay keep
+  working; new consumers target the replacement. A deprecation is an intent, not a
+  deletion.
+- **Removed** — the producer **no longer emits** the verb. On an append-only spine
+  this closes the *future* only: every event already written stays in the immutable
+  log and **remains replayable forever**, so a Removed verb stays **registered and
+  frozen** precisely so its history can still be read. The progression ends at
+  *Removed* (no new emissions), never at *Deleted* — history is immutable (Volume XI
+  §10).
+
+This ownership-and-lifecycle block is the **standard shape** every domain's event
+contract follows, not a task-only convention.
 
 ---
 
@@ -284,6 +344,12 @@ change is additive, never a surprise:
   New subscribers (a task scheduler reacting to lifecycle, analytics, SLA sweeps) are
   added as **data** (subscription rows, Volume XI §6.2) against this same contract —
   no change to the emitter.
+- **Lifecycle & deprecation.** All five events are **Stable** today (§0); none is
+  Deprecated or Removed. The three deferred verbs above are *pre-lifecycle* — they
+  enter at **Experimental** or **Stable**, and gain a matrix row, the day a real
+  transition wires them. When an event is ever superseded, a **Deprecation Directive**
+  records it and the verb keeps emitting for replay; a verb is **closed to new
+  emission**, never deleted (history is immutable — §0, Volume XI §10).
 
 ---
 
