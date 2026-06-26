@@ -366,3 +366,55 @@ describe("lead-qualification — /admin/qualification inherits the single HQ cho
     expect(read(ADMIN_LAYOUT)).toMatch(/await requireHqPage\(\)/);
   });
 });
+
+// =====================================================================
+// 8. The execution layer runs on the generic Task Engine (Directive #012 / D-02)
+// =====================================================================
+//
+// PR-F migrated this employee off its bespoke hq_sales_ai_tasks queue onto the
+// shared Generic Task Engine (hq_ai_tasks) — no new infrastructure, no behaviour
+// change (the CEO's Employee Migration Rule). These assertions pin the
+// post-migration trust boundary so it can never silently regress to a hand-rolled
+// queue: every enqueue goes through the sanctioned service path, every run goes
+// through the canonical runner SDK, the bespoke stuck-detection is gone (leases +
+// reaper + engine retry replace it), and the runner names no queue table of its
+// own — it may READ the generic queue directly but WRITES it only through the
+// engine's entry points.
+
+describe("lead-qualification — the execution layer runs on the generic Task Engine (Directive #012 / D-02, PR-F)", () => {
+  const raw = read(RUNNER);
+  const code = codeOf(raw);
+
+  it("ENQUEUES through the sanctioned service path (enqueueTask), never a hand-rolled queue insert", () => {
+    expect(code).toMatch(
+      /import\s*\{[^}]*\benqueueTask\b[^}]*\}\s*from\s*["']@\/server\/services\/hq-tasks["']/,
+    );
+    expect(code).toMatch(/\benqueueTask\s*\(/);
+  });
+
+  it("EXECUTES through the canonical runner SDK — register + claim-one + drain (server/sdk/tasks)", () => {
+    expect(code).toMatch(/from\s*["']@\/server\/sdk\/tasks["']/);
+    expect(code).toMatch(/\bregisterTaskHandler\s*\(/);
+    expect(code).toMatch(/\brunReadyTask\s*\(/);
+    expect(code).toMatch(/\bdrainTaskType\s*\(/);
+  });
+
+  it("binds to the durable task_type contract the engine drains on — qualify_company", () => {
+    expect(code).toMatch(/QUALIFY_TASK_TYPE\s*=\s*["']qualify_company["']/);
+  });
+
+  it("RETIRES the bespoke stuck-detection — STUCK_RUNNING_MS is gone (leases + reaper + engine retry replace it)", () => {
+    expect(code).not.toMatch(/STUCK_RUNNING_MS/);
+  });
+
+  it("sheds its old bespoke queue entirely — never names hq_sales_ai_tasks (it owns no queue table)", () => {
+    expect(code).not.toMatch(/hq_sales_ai_tasks/);
+  });
+
+  it("never raw-writes the generic queue either — mutations go through the entry points; only reads are direct", () => {
+    const oneLine = code.replace(/\s+/g, " ");
+    expect(oneLine).not.toMatch(
+      /\.from\(\s*["'`]hq_ai_tasks["'`](\s+as\s+never)?\s*\)\s*\.(insert|update|delete|upsert)\b/,
+    );
+  });
+});
