@@ -32,6 +32,18 @@ system is, the governance records describe *how decisions about it are tracked*.
   maturity, lessons, metrics, risks, and roadmap adjustments. The companion
   migration dashboard lives in the workforce canon
   ([`../workforce/platform-compatibility-matrix.md`](../workforce/platform-compatibility-matrix.md)).
+- **[`directive-012-platform-independence-audit.md`](./directive-012-platform-independence-audit.md)** —
+  the closing **verification audit** of Directive **#012**: a four-question check,
+  each backed by `file:line` repository evidence, proving the Task Engine substrate is
+  employee-agnostic (removing either live employee leaves the OS substrate unchanged)
+  before platform expansion continues into Directive #013. Names the one residual gap:
+  four scattered registration surfaces with no single declarative Employee Registry.
+- **[`platform-reuse-index.md`](./platform-reuse-index.md)** — a **standing
+  architectural-health metric**, appended to for every future directive. Records five
+  components per directive (platform capabilities added · existing capabilities reused ·
+  employee-specific code added · infrastructure removed · platform-vs-employee trend) to
+  make the CEO's thesis — *platform capability grows, employee complexity shrinks* —
+  visible and auditable over time. Inaugurated with the Directive #012 entry.
 
 ## Related, outside this directory
 
