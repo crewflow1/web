@@ -81,6 +81,37 @@ in-repo directives:
 > highest substantive directive before this reconciliation is **#010** (The
 > Conversion Arc); this reconciliation is **#011**; the next free number is **#012**.
 
+> **Forward sequence — approved, not yet issued (CEO Directive #011 / D-01).**
+> Since the reconciliation note above was written, **D-02 / #012 — the Generic Task
+> Engine** has been issued and is architecturally complete (PR-A…PR-G merged to the
+> `#011` integration branch; cutover to `main` and the production migration are
+> CEO-gated; record: `docs/bible/governance/directive-012-completion-report.md`). The
+> CEO has **approved the next three directives in this order**, on the evidence of the
+> dependency-ordering analysis
+> (`docs/bible/governance/directive-013-dependency-ordering-analysis.md`, **Option B** —
+> the runtime contract is sequenced first because the Capability Registry depends on it,
+> not the reverse):
+>
+> 1. **D-03 / #013 — RunContext Runtime Contract** *(next to be issued)* — the
+>    per-employee runtime contract the runner assembles at claim and threads through
+>    every invocation: identity, correlation, budget, deadline, cancellation, and the
+>    permission/capability hooks the SDK enforces. Graduates Architecture-Freeze
+>    contract **#4 (RunContext)** to Established and settles the canonical
+>    runtime-identity decision deferred from D-01.
+> 2. **D-04 / #014 — AI SDK Envelope** — the full per-employee SDK envelope
+>    (`comms`/`events`/`tools`/`api` facets) assembled over the frozen RunContext,
+>    reading the existing `ai_employees` scope columns. Graduates contract **#3 (AI
+>    SDK)** to Established.
+> 3. **D-05 / #015 — Capability Registry** — one declarative source of truth + resolver
+>    consolidating the scattered employee scope/capability data (`tools_allowed`,
+>    `permissions`, `memory_scope`, `department`) and the four registration surfaces
+>    named by the platform-independence audit. Graduates contract **#8 (Capability
+>    Registry)** to Established; sequenced **last** because it consolidates what #013
+>    and #014 settle.
+>
+> Canonical ledger: `docs/bible/governance/numbering.md` §3. No historical directive is
+> renumbered; only the forward sequence is recorded.
+
 ---
 
 ## The AI Boardroom — 14 employees seeded

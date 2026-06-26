@@ -46,7 +46,12 @@
 
 > The §9 directive sequence (#006…) below is the **original recommendation**,
 > superseded for anything not yet issued; the live forward plan is the Master
-> Roadmap (D-01…D-19 → #011…#029).
+> Roadmap (D-01…D-19 → #011…#029). The next three slots now carry approved
+> thing-names — **D-03 / #013 RunContext Runtime Contract → D-04 / #014 AI SDK
+> Envelope → D-05 / #015 Capability Registry** — sequenced by the CEO-approved
+> [dependency-ordering analysis](./governance/directive-013-dependency-ordering-analysis.md)
+> (Option B: runtime contract → SDK → registry); see
+> [`governance/numbering.md`](./governance/numbering.md) §3 for the canonical ledger.
 
 ---
 
