@@ -25,6 +25,13 @@ system is, the governance records describe *how decisions about it are tracked*.
   Spine, where they diverge from the specs and the SDK volume (the qualification
   three-way split), and why the canonical identity decision is **deferred** to the
   AI SDK directive (D-04 / #014). `design-ai` is recorded as **Reserved**.
+- **[`directive-012-completion-report.md`](./directive-012-completion-report.md)** —
+  the permanent **engineering record** of a completed directive: CEO Directive
+  **#012** (Master Roadmap **D-02**), *The Generic Task Engine*. Records the
+  objectives met, deferred work, technical debt, architecture assessment, platform
+  maturity, lessons, metrics, risks, and roadmap adjustments. The companion
+  migration dashboard lives in the workforce canon
+  ([`../workforce/platform-compatibility-matrix.md`](../workforce/platform-compatibility-matrix.md)).
 
 ## Related, outside this directory
 

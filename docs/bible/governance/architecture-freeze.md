@@ -75,7 +75,7 @@ the *first* implementation goes through ADR + review rather than landing ad hoc.
 | 2 | **Shared Memory** | **Established** *(prod migration gated)* | `supabase/migrations/20260713000000_hq_shared_memory.sql` + write/recall/embeddings/lifecycle/forget migrations; SDK facet `server/sdk/memory.ts`. Canonical Directive **#009**. |
 | 3 | **AI SDK** | **Partial** | Only the **Memory facet** is built (`server/sdk/memory.ts` — `createMemory` / `BoundMemory`). The full per-employee SDK envelope is not yet written. Owned by the AI SDK directive (D-04 / **#014**). |
 | 4 | **RunContext** | **Reserved** *(embryonic)* | Referenced **only as intent** in `server/sdk/memory.ts` comments ("the future RunContext … can drain them into the output envelope"). No implementation. Designed under D-04 / **#014** alongside the SDK. |
-| 5 | **Task Engine** *(generic)* | **Partial** | Generic, crash-safe `hq_ai_tasks` queue + state-machine guard + seven SECURITY DEFINER entry points (`supabase/migrations/20260802000000_hq_ai_tasks.sql`); **ADR 0004**. Shipped under **#012 / D-02** (PR-A). The schema and sanctioned API exist; spine emission, the SDK runner (`server/sdk/tasks.ts`), and migration of the two live workloads land in PR-B–F. Spec: Bible `substrate/volume-12-task-engine.md`. |
+| 5 | **Task Engine** *(generic)* | **Partial** | Generic, crash-safe `hq_ai_tasks` queue + state-machine guard + seven SECURITY DEFINER entry points (`supabase/migrations/20260802000000_hq_ai_tasks.sql`); **ADR 0004**. Shipped under **#012 / D-02**: PR-A (schema + sanctioned API), PR-B `task.*` spine emission (**ADR 0005**), PR-C the SDK runner (`server/sdk/tasks.ts`), PR-D the memory↔task binding (**ADR 0006**), PR-E/PR-F the two live workloads migrated (`research-ai`, `lead-qualification`), PR-G the unified operator read model (`server/services/hq-task-queue.ts` → `/admin/tasks`) — all merged to the `#011` integration branch (cutover to `main`/prod CEO-gated). **Partial** because the reserved seams — task dependencies/DAG (`depends_on`), approval-gated tasks, and verification — are inert pending their own ADRs. Completion record: [`directive-012-completion-report.md`](./directive-012-completion-report.md); live inheritance: [`../workforce/platform-compatibility-matrix.md`](../workforce/platform-compatibility-matrix.md). Spec: Bible `substrate/volume-12-task-engine.md`. |
 | 6 | **Approval Engine** | **Established** | `supabase/migrations/20260730000000_hq_approvals.sql`; `server/services/hq-approvals.ts`; **ADR 0001**. Shipped under **#010**. |
 | 7 | **Communication Layer** | **Established** *(PR pending merge)* | `supabase/migrations/20260801000000_hq_communications.sql`; `server/services/hq-comms.ts`; **ADR 0003**. **#010** Phase 4. |
 | 8 | **Capability Registry** | **Reserved** *(spec only)* | Bible (`substrate/`, `workforce/`). No capability-registry table or resolver in code; employee scopes are enforced ad hoc today. |
@@ -118,8 +118,8 @@ the *first* implementation goes through ADR + review rather than landing ad hoc.
 ## 6. Relationship to the rest of governance
 
 - **Numbering:** directive/ADR/volume numbers are governed by
-  [`numbering.md`](./numbering.md). ADRs referenced here (0001–0004) live in
-  [`../decisions/`](../decisions/); the next free ADR number is **0005**.
+  [`numbering.md`](./numbering.md). ADRs referenced here (0001–0006) live in
+  [`../decisions/`](../decisions/); the next free ADR number is **0007**.
 - **Runtime identity:** the `actor_id` an employee stamps onto Event Spine rows is a
   separate frozen concern recorded in [`runtime-identity.md`](./runtime-identity.md);
   its canonical decision is deferred to D-04 / **#014**.
