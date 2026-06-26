@@ -16,12 +16,15 @@ import {
  * bar). Gate 4.
  *
  * The runner (server/services/hq-research.ts) owns NO tables of its own: it
- * claims a `research_company` task off hq_sales_ai_tasks, drives the lifecycle
- * (Queued → Researching → Analysing → Scoring → Reasoning → Completed), and
- * persists every artifact through the existing Sales-AI writers. The unit tier
- * proves the pure scoring/parsing in isolation; this tier proves the BEHAVIOUR
- * a mock cannot: that against a LIVE database with the real migrations applied,
- * a full run actually writes the rows it claims to, in the shapes it claims.
+ * drains a `research_company` task off the generic Task Engine (hq_ai_tasks)
+ * through the canonical runner SDK (Directive #012 / D-02, PR-E) — which claims
+ * the task, holds the lease, and decides the terminal transition off the
+ * handler's return/throw — drives the lifecycle (Queued → Researching →
+ * Analysing → Scoring → Reasoning → Completed), and persists every artifact
+ * through the existing Sales-AI writers. The unit tier proves the pure scoring/
+ * parsing in isolation; this tier proves the BEHAVIOUR a mock cannot: that
+ * against a LIVE database with the real migrations applied, a full run actually
+ * writes the rows it claims to, in the shapes it claims.
  *
  * We force the DETERMINISTIC path — the directive's "unknown is acceptable"
  * applied to the model itself — by mocking the model layer to the no-key
@@ -45,8 +48,9 @@ import {
  * Runs only against a live DB (describeIntegration): skips locally with no DB,
  * fails loudly in CI if the DB is missing. The integration config runs files
  * serially, so this is the only suite touching the research queue; teardown
- * deletes the probe company, whose FKs cascade to its task, report, contacts,
- * timeline and recommendations.
+ * deletes the probe company — whose FKs cascade to its report, contacts,
+ * timeline and recommendations — and then the generic-engine task row, which is
+ * referenced by free-form subject_id (no FK, no cascade) and so removed by id.
  */
 
 // Force the deterministic path regardless of CI env: researchAiEnabled() →
@@ -136,10 +140,15 @@ describeIntegration("HQ Company Research AI · runner against a real Postgres (M
   });
 
   afterAll(async () => {
-    // Deleting the company cascades to its task, report, contacts, timeline and
-    // recommendations (every hq_sales_* child is on delete cascade).
+    // Deleting the company cascades to its report, contacts, timeline and
+    // recommendations (every hq_sales_* child is on delete cascade). The task now
+    // lives on the generic engine (hq_ai_tasks), linked by free-form subject_id —
+    // no FK, no cascade — so remove it explicitly.
     if (companyId) {
       await db(serviceClient()).from("hq_sales_companies").delete().eq("id", companyId);
+    }
+    if (taskId) {
+      await db(serviceClient()).from("hq_ai_tasks").delete().eq("id", taskId);
     }
   });
 
@@ -250,7 +259,9 @@ describeIntegration("HQ Company Research AI · runner against a real Postgres (M
     expect(await latestResearchTaskId(companyId)).toBe(taskId);
   });
 
-  it("re-running a finished task is an idempotent skip (claim fails on a non-pending row)", async () => {
+  it("re-running a finished task is an idempotent skip (the type-oriented claim finds the queue drained)", async () => {
+    // The generic engine dequeues by TYPE, not by id: with the only research_company
+    // task already terminal, the re-kick claims nothing and reports an empty skip.
     const again = await runResearchTask(taskId);
     expect(again.ok).toBe(true);
     expect(again.status).toBe("skipped");

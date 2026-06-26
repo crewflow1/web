@@ -25,7 +25,11 @@ import { resolve } from "node:path";
  *   • an /admin/research route or action escaping the Super-Admin allowlist, or
  *     the gate announcing the surface's existence with a 403 instead of a 404;
  *   • a run kicker / poller accepting an unvalidated id, or the cron drain
- *     losing its secret.
+ *     losing its secret;
+ *   • the execution layer regressing off the generic Task Engine (Directive
+ *     #012 / D-02) — research hand-rolling a queue insert or its own stuck-
+ *     detection instead of enqueueing through the service path and running
+ *     through the canonical runner SDK.
  *
  * The migration checks run over `exec` (SQL with `--` comments stripped); the
  * TS checks run over `code` (TS with `//` + block comments stripped) — so the
@@ -280,5 +284,53 @@ describe("research-ai — /admin/research inherits the single HQ chokepoint", ()
     // Every app/admin/research/** page is a child of app/admin/layout.tsx, so
     // the layout's gate is the single chokepoint for the Research AI UI.
     expect(read(ADMIN_LAYOUT)).toMatch(/await requireHqPage\(\)/);
+  });
+});
+
+// =====================================================================
+// 8. The execution layer runs on the GENERIC Task Engine, not a bespoke queue
+//    (CEO Directive #012 / D-02, PR-E). Research-ai's work is ENQUEUED through
+//    the sanctioned service path and RUN through the canonical runner SDK, so
+//    every claim / heartbeat / checkpoint / completion / failure / retry is the
+//    engine's — the runner hand-rolls no queue and no stuck-detection of its own.
+//    (The global operator "AI Task Queue" view stays on hq_sales_ai_tasks until
+//    PR-G; this pins only research-ai's OWN execution path.)
+// =====================================================================
+
+describe("research-ai — the execution layer runs on the generic Task Engine (Directive #012 / D-02, PR-E)", () => {
+  const raw = read(RUNNER);
+  const code = codeOf(raw);
+
+  it("ENQUEUES through the sanctioned service path (enqueueTask), never a hand-rolled queue insert", () => {
+    expect(code).toMatch(
+      /import\s*\{[^}]*\benqueueTask\b[^}]*\}\s*from\s*["']@\/server\/services\/hq-tasks["']/,
+    );
+    expect(code).toMatch(/\benqueueTask\s*\(/);
+  });
+
+  it("EXECUTES through the canonical runner SDK — register + claim-one + drain (server/sdk/tasks)", () => {
+    expect(code).toMatch(/from\s*["']@\/server\/sdk\/tasks["']/);
+    expect(code).toMatch(/\bregisterTaskHandler\s*\(/);
+    expect(code).toMatch(/\brunReadyTask\s*\(/);
+    expect(code).toMatch(/\bdrainTaskType\s*\(/);
+  });
+
+  it("binds to the durable task_type contract the engine drains on — research_company", () => {
+    expect(code).toMatch(/RESEARCH_TASK_TYPE\s*=\s*["']research_company["']/);
+  });
+
+  it("RETIRES the bespoke stuck-detection — STUCK_RUNNING_MS is gone (leases + reaper + engine retry replace it)", () => {
+    expect(code).not.toMatch(/STUCK_RUNNING_MS/);
+  });
+
+  it("sheds its old bespoke queue entirely — never names hq_sales_ai_tasks (it owns no queue table)", () => {
+    expect(code).not.toMatch(/hq_sales_ai_tasks/);
+  });
+
+  it("never raw-writes the generic queue either — mutations go through the entry points; only reads are direct", () => {
+    const oneLine = code.replace(/\s+/g, " ");
+    expect(oneLine).not.toMatch(
+      /\.from\(\s*["'`]hq_ai_tasks["'`](\s+as\s+never)?\s*\)\s*\.(insert|update|delete|upsert)\b/,
+    );
   });
 });
