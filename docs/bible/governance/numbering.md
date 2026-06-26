@@ -108,8 +108,9 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0001`](../decisions/0001-approval-engine.md) | The Approval Engine | #010 (The Conversion Arc) |
 | [`0002`](../decisions/0002-draft-generation.md) | Draft Generation | #010 |
 | [`0003`](../decisions/0003-communication-layer.md) | Communication Layer | #010 |
+| [`0004`](../decisions/0004-generic-task-engine.md) | The Generic Task Engine | #012 (D-02) |
 
-**Next free ADR number: `0004`.** ADR numbers are also monotonic and never reused.
+**Next free ADR number: `0005`.** ADR numbers are also monotonic and never reused.
 
 ---
 

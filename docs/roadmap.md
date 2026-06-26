@@ -305,6 +305,16 @@ them:
 8. **Tenant decoupling.** No HQ prospect engine ever reads a customer/tenant
    table (`organizations`, `customers`, `leads`, `jobs`, `quotes`, `invoices`)
    or the spine truth log (`hq_events`).
+9. **The Generic Task Engine is a protected platform capability (D-02 / #012).**
+   Every AI employee created after D-02 inherits **one** durable, crash-safe,
+   audited work queue — `hq_ai_tasks`
+   ([ADR 0004](./bible/decisions/0004-generic-task-engine.md)). **No employee may
+   introduce a custom task runner, and no parallel queue implementations are
+   permitted.** The per-employee runner of decision #1 generalises *into* this
+   shared engine; it is not re-cloned. Any exception requires an ADR, an
+   architectural review, **and** CEO approval. This is the work-execution form of
+   the inheritance promise: employee #42 claims, leases, retries, and recovers
+   exactly as employee #3 does.
 
 ---
 
