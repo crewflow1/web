@@ -446,6 +446,39 @@ sdk.runEmployee({
 // The author wrote ONLY the handler. That is the blueprint.
 ```
 
+**The runner/handler contract (five rules, enforced — Directive #012 / D-02, PR-C).**
+The blueprint above is not a convention an employee may opt out of; it is the line
+between *protected Operating System infrastructure* (the runner) and *employee code*
+(the handler). The Generic Task Engine (XII) is the durable queue; the SDK runner
+(`server/sdk/tasks.ts`) is the only sanctioned way to drive it. Five rules hold that
+line — the first three are prohibitions, the last two assign ownership:
+
+1. **No AI employee may claim tasks directly from SQL.** The atomic dequeue is
+   `hq_ai_task_claim` reached *through the runner*, never a hand-written `select … for
+   update` or a raw `update set status='running'` (the pre-engine sales pattern, now
+   forbidden). One claim primitive, one caller.
+2. **No AI employee may implement its own runner.** There is exactly one run-loop —
+   this one. A bespoke per-employee loop re-opens the race, the lease, and the audit
+   gaps the engine closed once for everyone ("no parallel queue implementations",
+   ADR-0004). Employee #42 inherits the runner; it does not rewrite it.
+3. **No employee handler may complete or fail its own task directly.** A handler
+   never calls `hq_ai_task_complete` / `hq_ai_task_fail` (nor the `ctx.tasks` facet
+   exposes them). It signals outcome by *returning* (success) or *throwing* (failure);
+   the runner translates that into the lease-guarded terminal transition. This is why
+   `ctx.tasks` offers `create` + `checkpoint` only.
+4. **The runner owns claim, heartbeat, checkpoint, completion, failure and retry** —
+   the entire lifecycle mechanism, uniform across every employee, emitted once to the
+   spine (XII PR-B) so the audit is identical whoever runs.
+5. **Handlers own business logic only** — read inputs, reason, produce the output
+   envelope (§10), propose actions (§15). Everything mechanical is the runner's.
+
+These are the SDK expression of the Task Engine's standing posture: the queue is
+touched *only* through the seven SECURITY DEFINER entry points (XII §11.1), and an
+employee touches *those* only through the runner. The rule is held in code — the
+runner is the single claim/complete/fail caller, `ctx.tasks` deliberately omits the
+terminal verbs, and the source-analysis security test bans raw `hq_ai_tasks` writes
+(`__tests__/security/task-engine-spine.test.ts`) — not left to discipline.
+
 ---
 
 ## 22. The reference employee (the blueprint, proven)
