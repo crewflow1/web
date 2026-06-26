@@ -77,7 +77,10 @@ canonical scheme and records every other label as an alias.
 | **010** | The Conversion Arc | The Approval Engine, Draft Generation, and Communication Layer substrate, plus Outreach AI Phases 1–4. ADRs `0001`–`0003`. | Issued · phases authored; PRs **#187/#188/#189** pending merge to `main` | Branches `directive/010-*`; commits "CEO Directive 010, Phase 2/3/4". |
 | **011** | Governance, Numbering & Scope Reconciliation | **This directive.** The canonical numbering ledger, the Architecture Freeze, and the Version 1.0 Constitution. Documentation only. | Issued · in progress | Master Roadmap **D-01**. |
 | **012** | Generic Task Engine | One durable, crash-safe, audited work queue (`hq_ai_tasks`) every AI employee runs on — plus the runner SDK, `task.*` spine emission, the memory↔task binding, the reference + second employee migrations, and the unified operator read model. ADRs `0004`–`0006`. | Issued · **architecturally complete** — PR-A…PR-G merged to the `#011` integration branch; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-02**. Branches `directive/012-*`. Completion record: [`directive-012-completion-report.md`](./directive-012-completion-report.md). |
-| **013 – 029** | *(reserved)* | Master Roadmap **D-03 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
+| **013** | RunContext Runtime Contract | The per-employee runtime contract the runner assembles at claim and threads through every invocation: identity, correlation, budget, deadline, cancellation, and the permission/capability hooks the SDK enforces. Graduates Architecture-Freeze contract **#4 (RunContext)** Reserved → Established; makes the canonical runtime-identity decision deferred from D-01. | **Planned · approved (D-03)** — thing-name assigned by the CEO-approved [dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md) (Option B). Not yet issued. | Master Roadmap **D-03**. Previously D-04 bundled RunContext with the SDK; Option B split them, runtime contract first. |
+| **014** | AI SDK Envelope | The full per-employee SDK envelope (`comms`/`events`/`tools`/`api` facets) assembled over the frozen RunContext, reading the existing `ai_employees` scope columns. Graduates contract **#3 (AI SDK)** Partial → Established. | **Planned · approved (D-04)** | Master Roadmap **D-04**. The canon's long-standing "AI SDK directive (D-04 / #014)"; the RunContext contract and the identity decision now precede it at **#013**. |
+| **015** | Capability Registry | One declarative source of truth + resolver consolidating the scattered employee scope/capability data (`tools_allowed`, `permissions`, `memory_scope`, `department`) and the four registration surfaces named by the platform-independence audit. Graduates contract **#8 (Capability Registry)** Reserved → Established. | **Planned · approved (D-05)** | Master Roadmap **D-05**. Sequenced **last** by the dependency analysis: it consolidates what #013/#014 settle. |
+| **016 – 029** | *(reserved)* | Master Roadmap **D-06 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
 
 **Next free number beyond the current roadmap: `#030`.** (Within the roadmap, D-02 =
 **#012** is issued and architecturally complete; the next directive to be *issued*
@@ -159,11 +162,19 @@ yet issued. (Its #010 = "Sales Conversion Arc" happens to match what was actuall
 issued as #010; its #011 = "AI Boardroom" does **not** — actual #011 is this
 governance directive.)
 
+**Forward thing-names (approved, not yet issued).** The mapping offset above is
+unchanged, but the three next roadmap slots now carry **assigned thing-names**, recorded
+in §3: **D-03 / #013 = RunContext Runtime Contract**, **D-04 / #014 = AI SDK Envelope**,
+**D-05 / #015 = Capability Registry**. The names and their order were settled by the
+CEO-approved [dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md)
+(Option B — runtime contract → SDK → registry). No historical directive is renumbered;
+only the forward sequence is recorded.
+
 ---
 
 ## 8. How to issue the next directive
 
-1. Take the **next free integer** (today: D-02 = `#012`; beyond the roadmap: `#030`).
+1. Take the **next free integer** (today: D-03 = `#013`; beyond the roadmap: `#030`).
 2. Add a row to §3 with the thing-name, scope, and status `Issued · in progress`.
 3. Name the branch `directive/NNN-<slug>`; the canonical number and the branch number
    should agree from here on (the historical mismatches above are frozen, not fixed).
