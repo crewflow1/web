@@ -113,6 +113,34 @@ const COMM = [
   "comm.suppressed",
 ] as const;
 
+// Generic Task Engine (Directive #012 / D-02, PR-B; ADR-0005). The LIFECYCLE of a
+// durable, crash-safe unit of work that EVERY AI employee inherits — the spine
+// projection of the `hq_ai_tasks` state machine. One verb per WIRED transition,
+// emitted in-transaction from the SECURITY DEFINER entry points (not a trigger:
+// only the function knows the honest actor and reason — see ADR-0005). Past tense,
+// facts that happened:
+//   task.created   — a task was enqueued (hq_ai_task_create)
+//   task.claimed   — a worker leased the next ready task (hq_ai_task_claim)
+//   task.completed — a task finished successfully (hq_ai_task_complete)
+//   task.retried   — a task was re-queued for another attempt, after a worker
+//                    reported a retryable failure OR the reaper recovered an
+//                    expired lease (distinguished by actor + payload.reason)
+//   task.failed    — a task reached terminal failure, worker-reported or
+//                    retries-exhausted (distinguished by actor + payload.reason)
+// Intentionally ABSENT (ADR-0005): no `task.heartbeated` (heartbeats are liveness,
+// not facts — they would drown the spine); no `task.checkpointed` (a checkpoint is
+// internal resumption state, evented only if a consumer ever needs it); no
+// `task.cancelled` yet (the guard permits *→cancelled but PR-A ships no cancel
+// entry point — the verb is registered when that function lands, never as dead
+// vocabulary).
+const TASK = [
+  "task.created",
+  "task.claimed",
+  "task.completed",
+  "task.retried",
+  "task.failed",
+] as const;
+
 const PERMISSION = [
   "permission.role_granted",
   "permission.role_revoked",
@@ -149,6 +177,7 @@ export const VERB_GROUPS = {
   approval: APPROVAL,
   memory: MEMORY,
   comm: COMM,
+  task: TASK,
   permission: PERMISSION,
   system: SYSTEM,
   notification: NOTIFICATION,
@@ -166,6 +195,7 @@ export const VERBS = [
   ...APPROVAL,
   ...MEMORY,
   ...COMM,
+  ...TASK,
   ...PERMISSION,
   ...SYSTEM,
   ...NOTIFICATION,

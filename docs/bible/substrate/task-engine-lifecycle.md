@@ -9,15 +9,17 @@
 > author) can understand the engine **without reading the SQL or the migration**.
 >
 > **Built shape, honestly marked.** Everything below describes the engine as it
-> exists after **PR-A** (CEO Directive **#012 / D-02**;
-> `supabase/migrations/20260802000000_hq_ai_tasks.sql`). Where a behaviour is a
-> **reserved seam** — present in the schema but not yet wired, or arriving in a
-> later PR (spine emission in PR-B, the SDK runner in PR-C, the Memory binding in
-> PR-D) — it is labelled **‹reserved›** or **‹PR-B…›** inline. Nothing here is
-> aspirational without that mark. When a later PR wires a seam, it updates this
-> file in the same change (the Bible's *document-before-you-build*, run forward).
+> exists after **PR-A + PR-B** (CEO Directive **#012 / D-02**;
+> `supabase/migrations/20260802000000_hq_ai_tasks.sql` for the queue,
+> `…20260803000000_hq_ai_tasks_spine.sql` for spine emission). Where a behaviour is
+> a **reserved seam** — present in the schema but not yet wired, or arriving in a
+> later PR (the SDK runner in PR-C, the Memory binding in PR-D) — it is labelled
+> **‹reserved›**, **‹PR-C…›**, or **‹later›** inline. Nothing here is aspirational
+> without that mark. When a later PR wires a seam, it updates this file in the same
+> change (the Bible's *document-before-you-build*, run forward).
 >
-> Issued under D-02 as the engineering specification the CEO required before PR-B.
+> Authored under D-02 as the engineering specification the CEO required before
+> PR-B; reconciled by PR-B, which brought the `task.*` verbs to life (ADR 0005).
 
 ---
 
@@ -73,12 +75,12 @@ Every lifecycle below is some sequence of these. Each is `SECURITY DEFINER`,
 `set search_path = ''`, `EXECUTE` revoked from `public`/`anon`/`authenticated`
 and granted to `service_role` only.
 
-| # | Function | What it does | Returns | Spine verb it will emit ‹PR-B› |
-|---|----------|--------------|---------|-------------------------------|
+| # | Function | What it does | Returns | Spine verb it emits (PR-B · ADR 0005) |
+|---|----------|--------------|---------|---------------------------------------|
 | 1 | `hq_ai_task_create` | Enqueue a task (idempotent over a live `dedupe_key`). | `jsonb` `{ok, task, deduped?}` | `task.created` |
 | 2 | `hq_ai_task_claim` | **Atomic dequeue** of the next ready task of a type; sets the lease. | `jsonb` `{ok, task}` or `{ok:false, reason:'empty'}` | `task.claimed` |
 | 3 | `hq_ai_task_heartbeat` | Extend the lease (prove the worker is alive). | `boolean` (`false` = lease lost) | — (heartbeats are not events) |
-| 4 | `hq_ai_task_checkpoint` | Persist partial `result` mid-run. | `boolean` (`false` = lease lost) | ‹reserved› `task.checkpointed` |
+| 4 | `hq_ai_task_checkpoint` | Persist partial `result` mid-run. | `boolean` (`false` = lease lost) | — (not evented; ADR 0005) |
 | 5 | `hq_ai_task_complete` | Finish successfully; clear the lease. | `jsonb` `{ok, task}` or `{ok:false, reason:'lease_lost'}` | `task.completed` |
 | 6 | `hq_ai_task_fail` | Record a failure: retry-with-backoff or fail terminally. | `jsonb` `{ok, task}` or `{ok:false, reason:'lease_lost'}` | `task.retried` / `task.failed` |
 | 7 | `hq_ai_task_reap` | Recover tasks whose lease expired (the worker died). | `integer` (count reaped) | `task.retried` / `task.failed` |
@@ -90,12 +92,14 @@ and granted to `service_role` only.
 > on a benign miss (`'empty'` queue, `'lease_lost'`). The caller branches on
 > `reason`, never on a null. (Same convention as the Shared Memory engine.)
 
-> **`task.*` verbs are not registered yet.** `lib/events/registry.ts` has no
-> `task.` namespace today — adding verbs is an edit to that file **plus an ADR**
-> (the registry is the single source of event names). PR-B registers the set and
-> emits each verb **in the same transaction as the status write** (the
-> transactional-outbox rule, substrate P1). The verb names in the table above are
-> the *intended* set PR-B will ratify; treat them as illustrative until PR-B lands.
+> **The `task.*` verbs are registered and live (PR-B).** `lib/events/registry.ts`
+> now carries the five-verb `task.` group; registering them was an edit to that file
+> **plus [ADR 0005](../decisions/0005-task-engine-spine-emission.md)** (the registry
+> is the single source of event names). Each verb is emitted **in the same
+> transaction as the status write** (the transactional-outbox rule, substrate P1),
+> from **inside the entry-point function** — not an `AFTER` trigger — because only
+> the function knows the honest actor and reason for the two row-ambiguous
+> transitions (`running → pending` and `running → failed`); see ADR 0005 §Context.
 
 ---
 
@@ -138,7 +142,7 @@ checkpointing), and completes.
 
 ```
   (pending) ── claim() ──▶ (running) ── checkpoint()* ──▶ (running) ── complete() ──▶ (completed) ✦
-                              ▲   │                                                        emits task.completed ‹PR-B›
+                              ▲   │                                                        emits task.completed
                   heartbeat() └───┘  (lease kept alive throughout)
 ```
 
@@ -196,7 +200,7 @@ mid-run does not strand its task. The lease, not a wall clock, decides liveness.
                               ┌──── yes ──────────┴───────── no ─────┐
                               ▼                                      ▼
                         (pending) + backoff                    (failed) ✦
-                        re-claimable later                     emits task.failed ‹PR-B›
+                        re-claimable later                     emits task.failed
 ```
 
 Step sequence: **[T1 claim] → (worker dies) → [T7 reap] → (pending + backoff) →
@@ -229,7 +233,7 @@ A task that cannot succeed — an unrecoverable error, or retries exhausted — 
 ```
   (running) ── fail(retryable=false) ───────────────▶ (failed) ✦
   (running) ── fail(retryable=true, retries exhausted) ▶ (failed) ✦
-                                                          emits task.failed ‹PR-B›
+                                                          emits task.failed
 ```
 
 Step sequence: **[T1 claim] → [T6 fail-terminal]** (directly, for a
@@ -275,16 +279,18 @@ requires: **Trigger · Preconditions · SQL entry point · State changes · Even
 Spine behaviour · Memory implications · Future SDK interaction**. The lifecycles
 in §§3–7-prelude are sequences of these.
 
-> Across **all** transitions, two fields read the same today and are stated once
-> here rather than repeated:
-> - **Event Spine behaviour — PR-A emits nothing.** No entry point calls
->   `hq_emit_event` yet. Each row below names the verb **PR-B** will emit, in the
->   same transaction as the status write. Until PR-B, "spine behaviour" is
->   *silent*.
+> Across **all** transitions, one field is stated once here rather than repeated:
 > - **Memory implications** depend on the SDK runner (PR-C) and the Memory⇄task
 >   binding (PR-D, the `bound_task_id` FK from `hq_memories`). The notes below
->   describe the *intended* binding so the contract is clear; in PR-A the engine
->   touches no memory itself.
+>   describe the *intended* binding so the contract is clear; in PR-A/PR-B the
+>   engine touches no memory itself.
+>
+> **Event Spine behaviour is live (PR-B).** Every entry point calls `hq_emit_event`
+> in the same transaction as its status write, through one shared `hq_ai_task_emit`
+> helper. Each row below names the verb it emits, its severity, and — for the two
+> row-ambiguous transitions — the actor and `payload.reason` that separate the
+> worker-driven path from the reaper-driven one (ADR 0005). Payloads carry only
+> small non-PII identifiers + state, never the task `payload`/`result` prose.
 
 ### T0 — create → `pending`  (a task is born)
 
@@ -301,7 +307,9 @@ in §§3–7-prelude are sequences of these.
 - **State changes:** new row at `status = 'pending'`; `correlation_id` defaulted
   if not supplied (a fresh trace) or inherited (woven into a larger saga);
   `priority_rank` computed from `priority`. The guard stamps `updated_at`.
-- **Event Spine behaviour:** ‹PR-B› `task.created`.
+- **Event Spine behaviour:** emits `task.created` (`info`) — **only on a genuine
+  insert**; a dedupe hit returns the live task and mints no second event. Actor is
+  the assignee (`ai_employee`) when the task is assigned, else `system`.
 - **Memory implications:** none at creation. The `payload` is the input spec, not
   knowledge; nothing is recalled or asserted yet.
 - **Future SDK interaction:** ‹PR-C› `ctx.tasks.create(spec)` — any employee or
@@ -324,7 +332,9 @@ in §§3–7-prelude are sequences of these.
   coalesce(started_at, now())` (preserved across re-claims). Note the wired path
   goes straight to `running`; the discrete `claimed` state is a reserved seam for
   a future assignment hand-off.
-- **Event Spine behaviour:** ‹PR-B› `task.claimed`.
+- **Event Spine behaviour:** emits `task.claimed` (`info`); actor is the assigned
+  employee when set, else `system`, with the `lease_owner` worker token and the
+  lease expiry carried in the payload.
 - **Memory implications:** ‹PR-C/PR-D› at claim the runner builds a `RunContext`
   bound to this task; working-memory the handler writes will auto-bind to it
   (`bound_task_id`), and memories it recalls accumulate as `evidence[]` for the
@@ -358,8 +368,10 @@ in §§3–7-prelude are sequences of these.
 - **SQL entry point:** `hq_ai_task_checkpoint(p_task_id, p_lease_owner,
   p_result)`. Returns `false` if the lease was lost.
 - **State changes:** `result = p_result`. Status unchanged.
-- **Event Spine behaviour:** ‹reserved› `task.checkpointed` is a candidate verb,
-  but checkpoints may be intentionally *not* evented to avoid noise — PR-B decides.
+- **Event Spine behaviour:** none — a checkpoint is internal resumption state, not a
+  business fact, so it is **not evented** (ADR 0005 settled the spec's earlier
+  "PR-B decides": no `task.checkpointed` until a concrete consumer needs it). The
+  `checkpoint` function is left unchanged by PR-B.
 - **Memory implications:** the checkpoint records *task* progress in `result`; it
   is distinct from memory writes. Side effects the handler already committed
   (e.g. a memory assertion keyed by dedupe) stay committed and are idempotent, so
@@ -378,10 +390,10 @@ in §§3–7-prelude are sequences of these.
 - **State changes:** `status → 'completed'` ✦; `result = coalesce(p_result,
   result)` (a final envelope, or the last checkpoint); `finished_at = now()`;
   lease cleared. The guard then freezes the row forever.
-- **Event Spine behaviour:** ‹PR-B› `task.completed` — and this is the verb that
-  later **unblocks DAG dependents** (a `task.completed` consumer re-evaluates
-  tasks whose `depends_on` includes this id; Volume XII §6). That consumer is a
-  later PR; the verb is emitted from PR-B.
+- **Event Spine behaviour:** emits `task.completed` (`success`) — and this is the
+  verb that later **unblocks DAG dependents** (a `task.completed` consumer
+  re-evaluates tasks whose `depends_on` includes this id; Volume XII §6). That
+  consumer is a later PR; the verb is emitted now, from PR-B.
 - **Memory implications:** ‹PR-C/PR-D› the `result` is the durable P3 output
   envelope; recalled `evidence[]` is drained into it by the RunContext. Knowledge
   the task asserted to Shared Memory is already persisted and now stands as the
@@ -404,7 +416,10 @@ in §§3–7-prelude are sequences of these.
   least(3600, 30 · 2^retry_count)` seconds (computed from `retry_count` *before*
   the increment: first retry waits 30s, then 60s, 120s, … capped at 1h). The task
   is now invisible to `claim` until the backoff elapses.
-- **Event Spine behaviour:** ‹PR-B› `task.retried`.
+- **Event Spine behaviour:** emits `task.retried` (`warn`) with the worker as actor
+  and `payload.reason = 'worker_error'` (the truncated error, the new `retry_count`,
+  and `next_run_at` ride along) — kept distinct from the reaper's `lease_expired`
+  retry (T7), which shares the verb but carries a `system` actor.
 - **Memory implications:** memory writes already committed are **not** rolled
   back — they are idempotent, and the retry resumes from the last checkpoint.
   (Multi-step tasks with external side effects that must be undone are the saga /
@@ -422,8 +437,9 @@ in §§3–7-prelude are sequences of these.
   p_retryable = false)`.
 - **State changes:** `status → 'failed'` ✦; `error_message` recorded;
   `finished_at = now()`; lease cleared. The guard freezes the row.
-- **Event Spine behaviour:** ‹PR-B› `task.failed` (a `warn`/`critical` fact, to be
-  decided in PR-B; escalation off failures is a later concern, Volume XII §8.4).
+- **Event Spine behaviour:** emits `task.failed` (`warn`) with the worker as actor
+  and `payload.reason = 'worker_error'` (escalation off failures is a later concern,
+  Volume XII §8.4).
 - **Memory implications:** as T5, committed memory is not auto-reverted; a failed
   task is surfaced for human triage.
 - **Future SDK interaction:** ‹PR-C› a thrown error classified non-retryable maps
@@ -442,7 +458,11 @@ in §§3–7-prelude are sequences of these.
 - **State changes:** identical to T5 (re-queue with backoff, `retry_count += 1`,
   lease cleared) but driven by the engine, not the worker; `error_message =
   'lease expired (worker timed out)'`.
-- **Event Spine behaviour:** ‹PR-B› `task.retried` (with a reap reason).
+- **Event Spine behaviour:** emits `task.retried` (`warn`) with **`system`** as
+  actor and `payload.reason = 'lease_expired'`, plus the `dead_lease_owner` — the
+  signal that a worker *died*, kept distinct from a worker-reported retry (T5)
+  though both share the verb. The event carries explicit `status`/`retry_count`
+  values, never read off the reaper's pre-update row snapshot.
 - **Memory implications:** as T5 — idempotent steps + checkpointing make the
   re-run safe.
 - **Future SDK interaction:** ‹PR-C/scheduler› the reaper is a recurring task, not
@@ -457,7 +477,9 @@ in §§3–7-prelude are sequences of these.
   loop).
 - **State changes:** `status → 'failed'` ✦; `error_message = 'lease expired (max
   retries exhausted)'`; `finished_at = now()`; lease cleared.
-- **Event Spine behaviour:** ‹PR-B› `task.failed`.
+- **Event Spine behaviour:** emits `task.failed` (`warn`) with **`system`** as actor
+  and `payload.reason = 'lease_expired'` (plus `dead_lease_owner`) — the reaper's
+  terminal counterpart to T6.
 - **Memory implications:** as T6.
 - **Future SDK interaction:** as T7 — engine-driven, no handler.
 
@@ -493,7 +515,7 @@ employee may introduce a custom task runner, and no parallel queue is permitted.
 
 | Reserved | Carried as | Wired by |
 |----------|-----------|----------|
-| Spine emission + `task.*` verbs | (none yet — registry has no `task.` namespace) | **PR-B** |
+| ~~Spine emission + `task.*` verbs~~ | **Done (PR-B · ADR 0005):** five verbs registered, emitted in-transaction | **PR-B ✓** |
 | The SDK runner / `run()` loop / `RunContext` | `server/sdk/tasks.ts` (not yet written) | **PR-C** |
 | Memory⇄task binding | `hq_memories.bound_task_id` (FK from Shared Memory) | **PR-D** |
 | Migration of the two live sales workloads | `hq_sales_ai_tasks` still runs untouched | **PR-E / PR-F** |
@@ -536,7 +558,11 @@ change, so this reference never drifts from the code.
 - **Architecture:** [Volume XII — Task Engine](./volume-12-task-engine.md) (the
   full intended design, including the seams above).
 - **Code (built shape):** `supabase/migrations/20260802000000_hq_ai_tasks.sql`
-  (table, guard, seven entry points, grants).
+  (table, guard, seven entry points, grants) and
+  `…/20260803000000_hq_ai_tasks_spine.sql` (PR-B — the `hq_ai_task_emit` helper and
+  the five emitting entry points).
+- **Spine decision:** [ADR 0005 — Task Engine spine emission](../decisions/0005-task-engine-spine-emission.md)
+  and the `task.*` group in [`lib/events/registry.ts`](../../../lib/events/registry.ts).
 - **Freeze status:** [architecture-freeze.md](../governance/architecture-freeze.md)
   contract #5 (Task Engine — *Partial*, protected capability).
 - **Substrate primitives:** [substrate/README.md](./README.md) P1 (event
@@ -544,13 +570,19 @@ change, so this reference never drifts from the code.
   (service-role guardrail).
 - **Tests that pin this behaviour:**
   `__tests__/integration/tasks/task-engine.test.ts` (real Postgres — claim
-  atomicity, heartbeat, reaper, retry backoff, dedupe, guard invariants, RLS) and
+  atomicity, heartbeat, reaper, retry backoff, dedupe, guard invariants, RLS),
   `__tests__/security/task-engine-invariants.test.ts` (hermetic — grants, definer,
-  search_path, generic naming, PR-A boundary).
+  search_path, generic naming, PR-A boundary), and PR-B's spine pins:
+  `__tests__/integration/tasks/task-engine-spine.test.ts` (real Postgres — each
+  transition emits its verb/actor/severity/reason under one `correlation_id`, and
+  heartbeat + checkpoint stay silent) and
+  `__tests__/security/task-engine-spine.test.ts` (hermetic — emits only registered
+  verbs through `hq_emit_event`, the helper is definer/search_path-pinned and
+  service-role-only, and no application code raw-writes the queue).
 
 ---
 
 *Engineering reference under CEO Directive #012 / D-02. Reconciled with the code
-at the PR-A commit. It records no decision and changes no schema; it makes the
-built engine legible. Updated in lockstep as PR-B and later wire the reserved
-seams.*
+at the PR-B commit (spine emission live; ADR 0005). It records no decision and
+changes no schema; it makes the built engine legible. Updated in lockstep as later
+PRs wire the remaining reserved seams.*
