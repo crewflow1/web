@@ -85,51 +85,47 @@ import {
   recordTimelineEvent,
 } from "@/server/services/hq-sales";
 import { normaliseUrl } from "@/lib/research/extract";
+import { enqueueTask, type TaskRow } from "@/server/services/hq-tasks";
+import {
+  drainTaskType,
+  NonRetryableError,
+  registerTaskHandler,
+  runReadyTask,
+  type DrainSummary,
+  type RunContext,
+  type RunnerIdentity,
+  type TaskHandler,
+} from "@/server/sdk/tasks";
 
 const RESEARCH_AI_SLUG = "research-ai";
-/** A task left 'running' longer than this is presumed dead → re-claimable. */
-const STUCK_RUNNING_MS = 5 * 60 * 1000;
+/** The durable task_type this employee drains off the generic engine. */
+const RESEARCH_TASK_TYPE = "research_company";
 
 type Actor = { id: string | null; email: string | null };
 
 // ---------------------------------------------------------------------
-// Minimal typed access to hq_sales_ai_tasks (the runner's only direct table).
-// Mirrors the cast shim used across hq-sales.ts — a typing convenience, not
-// duplicated business logic.
+// READ-ONLY typed access to hq_ai_tasks (the generic engine — Directive #012
+// / D-02, PR-E). The queue is WRITTEN only through the SECURITY DEFINER entry
+// points: enqueue via `enqueueTask` (hq-tasks.ts) and every claim / heartbeat /
+// checkpoint / complete / fail through the runner SDK (server/sdk/tasks.ts).
+// Reads are direct service-role selects — `hq_ai_tasks` is RLS:hq, so the admin
+// client is the only thing that can see it. This shim therefore exposes NO
+// insert/update/delete: a raw queue mutation here would break the engine's
+// standing posture (task-engine-spine.test.ts).
 // ---------------------------------------------------------------------
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 type DbList<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
-interface TaskQuery<T> extends DbList<T> {
-  select(columns: string): TaskQuery<T>;
-  insert(payload: unknown): TaskQuery<T>;
-  update(payload: unknown): TaskQuery<T>;
-  eq(column: string, value: unknown): TaskQuery<T>;
-  in(column: string, values: ReadonlyArray<unknown>): TaskQuery<T>;
-  lt(column: string, value: unknown): TaskQuery<T>;
-  order(column: string, options?: { ascending?: boolean }): TaskQuery<T>;
-  limit(count: number): TaskQuery<T>;
+interface TaskRead<T> extends DbList<T> {
+  select(columns: string): TaskRead<T>;
+  eq(column: string, value: unknown): TaskRead<T>;
+  order(column: string, options?: { ascending?: boolean }): TaskRead<T>;
+  limit(count: number): TaskRead<T>;
   maybeSingle(): PromiseLike<{ data: T | null; error: { message: string } | null }>;
 }
-function tasks<T>(admin: AdminClient): TaskQuery<T> {
-  return admin.from("hq_sales_ai_tasks" as never) as unknown as TaskQuery<T>;
+function taskReads<T>(admin: AdminClient): TaskRead<T> {
+  return admin.from("hq_ai_tasks" as never) as unknown as TaskRead<T>;
 }
-
-type TaskRow = {
-  id: string;
-  company_id: string | null;
-  task_type: string;
-  status: string;
-  retry_count: number;
-  max_retries: number;
-  payload: Record<string, unknown> | null;
-  result: ResearchResult | null;
-  created_by_email: string | null;
-  started_at: string | null;
-};
-
-const TASK_RUN_COLUMNS =
-  "id, company_id, task_type, status, retry_count, max_retries, payload, result, created_by_email, started_at";
 
 // ---------------------------------------------------------------------
 // The task `result` jsonb the live UI polls. Bounded by construction.
@@ -207,7 +203,6 @@ export async function startResearch(
   input: StartResearchInput,
   actor: Actor,
 ): Promise<StartResearchResult> {
-  const admin = createAdminClient();
   let companyId = input.companyId ?? null;
 
   if (!companyId) {
@@ -262,28 +257,29 @@ export async function startResearch(
   }
 
   const employeeId = await researchEmployeeId();
-  const { data, error } = await tasks<{ id: string }>(admin)
-    .insert({
-      company_id: companyId,
-      task_type: "research_company",
-      status: "pending",
-      priority: "high",
-      retry_count: 0,
-      max_retries: 2,
-      assigned_ai_employee_id: employeeId,
-      payload: input.companiesHouseNumber
-        ? { companies_house_number: normaliseCompanyNumber(input.companiesHouseNumber) }
-        : null,
-      source: "manual",
-      created_by_email: actor.email,
-    })
-    .select("id")
-    .maybeSingle();
+  // Enqueue onto the generic engine (hq_ai_tasks) through the create entry point.
+  // The company becomes the task's polymorphic SUBJECT; the Companies House hint
+  // (when present) rides in the write-once payload. `origin`/`createdBy`/
+  // `assignedEmployeeId` carry the provenance the bespoke columns used to.
+  const enq = await enqueueTask({
+    taskType: RESEARCH_TASK_TYPE,
+    subjectKind: "company",
+    subjectId: companyId,
+    priority: "high",
+    maxRetries: 2,
+    assignedEmployeeId: employeeId,
+    payload: input.companiesHouseNumber
+      ? { companies_house_number: normaliseCompanyNumber(input.companiesHouseNumber) }
+      : {},
+    origin: "manual",
+    createdBy: actor.email,
+  });
 
-  if (error || !data) {
-    console.error("[hq-research] enqueue failed", error);
-    return { ok: false, error: error?.message ?? "Could not enqueue research." };
+  if (!enq.ok) {
+    console.error("[hq-research] enqueue failed", enq.error);
+    return { ok: false, error: enq.error ?? "Could not enqueue research." };
   }
+  const taskId = enq.task.id;
 
   await recordTimelineEvent({
     company_id: companyId,
@@ -291,78 +287,72 @@ export async function startResearch(
     actor_email: actor.email,
     ai_employee_id: employeeId,
     body: "Research AI task scheduled.",
-    metadata: { task_id: data.id, task_type: "research_company" },
+    metadata: { task_id: taskId, task_type: RESEARCH_TASK_TYPE },
   });
 
-  return { ok: true, companyId, taskId: data.id };
+  return { ok: true, companyId, taskId };
 }
 
 // ---------------------------------------------------------------------
-// Claim / checkpoint / finish.
+// Runner identity (Directive #012 / D-02, PR-E). The slug drives the lease
+// owner + provenance; employeeId binds the (unused-here) memory facet. Resolved
+// per-tick — researchEmployeeId() is process-cached, so this is ~free.
 // ---------------------------------------------------------------------
 
-async function claimTask(admin: AdminClient, taskId: string): Promise<TaskRow | null> {
-  const nowIso = new Date().toISOString();
-  // Conditional update: only succeeds if the row is still pending (or stuck).
-  const { data } = await tasks<TaskRow>(admin)
-    .update({ status: "running", started_at: nowIso })
-    .eq("id", taskId)
-    .in("status", ["pending"])
-    .select(TASK_RUN_COLUMNS);
-  const claimed = Array.isArray(data) ? data[0] : null;
-  if (claimed) return claimed;
-  return null;
-}
-
-async function checkpoint(
-  admin: AdminClient,
-  taskId: string,
-  result: ResearchResult,
-): Promise<void> {
-  const { error } = await tasks(admin).update({ result }).eq("id", taskId);
-  if (error) console.error("[hq-research] checkpoint failed", error);
+async function researchIdentity(): Promise<RunnerIdentity> {
+  const employeeId = await researchEmployeeId();
+  // The seeded research-ai row id when present; the stable slug as a last-resort
+  // opaque identity (lease owner only) if the employee was never seeded.
+  return { employeeId: employeeId ?? RESEARCH_AI_SLUG, slug: RESEARCH_AI_SLUG };
 }
 
 // ---------------------------------------------------------------------
 // The pipeline.
 // ---------------------------------------------------------------------
 
-export type RunOutcome =
-  | { ok: true; taskId: string; status: "completed"; score: number | null }
-  | { ok: true; taskId: string; status: "skipped" }
-  | { ok: false; taskId: string; status: "failed"; error: string };
-
-export async function runResearchTask(taskId: string): Promise<RunOutcome> {
+/**
+ * The `research_company` business logic, as a Task Engine handler (Directive
+ * #012 / D-02, PR-E). Rule 5: business logic ONLY. The runner (server/sdk/
+ * tasks.ts) owns the lifecycle mechanism — it has already CLAIMED the task and
+ * stamped the lease before this runs; it heartbeats while this works; and it
+ * decides the terminal transition off this function's return/throw:
+ *   • return the ResearchResult  → the runner COMPLETES the task with it
+ *     (hq_ai_task_complete persists it into the same `result` jsonb the live UI
+ *     polls, so the read side is unchanged);
+ *   • throw                      → the runner FAILS the task. A structural error
+ *     a retry cannot fix is thrown as NonRetryableError (terminal); anything
+ *     else is retryable, re-queued with backoff by the engine — which is what
+ *     replaces the old STUCK_RUNNING_MS re-queue.
+ *
+ * Every checkpoint goes through `ctx.tasks.checkpoint` (lease-guarded); the
+ * handler never touches the queue, the lease, or the spine directly.
+ */
+const researchTaskHandler: TaskHandler = async (ctx: RunContext) => {
   const admin = createAdminClient();
-
-  const claimed = await claimTask(admin, taskId);
-  if (!claimed) {
-    // Already running/finished, or cancelled — nothing to do (idempotent).
-    return { ok: true, taskId, status: "skipped" };
-  }
-
-  const actor: Actor = { id: null, email: claimed.created_by_email };
-  const companyId = claimed.company_id;
+  const taskId = ctx.task.id;
+  const companyId = ctx.task.subject_id;
+  const actor: Actor = { id: null, email: ctx.task.created_by };
   const result = freshResult();
 
-  // A step helper bound to this run: mutate result, persist, log timeline.
+  // A step helper bound to this run: mutate result, persist (lease-guarded), and
+  // mirror to the company timeline.
   const setStep = async (
     key: ResearchStepKey,
     status: ResearchStepState["status"],
     detail: string | null,
   ) => {
     result.steps = applyStep(result.steps, key, status, detail);
-    await checkpoint(admin, taskId, result);
+    await ctx.tasks.checkpoint(result);
   };
   const setPhase = async (phase: ResearchPhase) => {
     result.phase = phase;
-    await checkpoint(admin, taskId, result);
+    await ctx.tasks.checkpoint(result);
   };
 
   try {
-    if (!companyId) throw new Error("Research task has no company.");
+    if (!companyId) throw new NonRetryableError("Research task has no company.");
     const company = await getCompany(companyId);
-    if (!company) throw new Error("Company not found for research task.");
+    if (!company) throw new NonRetryableError("Company not found for research task.");
 
     const employeeId = await researchEmployeeId();
     const aiActor = { generatedBy: "ai" as const, aiEmployeeId: employeeId };
@@ -380,7 +370,7 @@ export async function runResearchTask(taskId: string): Promise<RunOutcome> {
     await setPhase("researching");
 
     const site = await researchWebsite(company, result, setStep, employeeId);
-    const ch = await researchCompaniesHouse(company, claimed, result, setStep, employeeId);
+    const ch = await researchCompaniesHouse(company, ctx.task, result, setStep, employeeId);
 
     // ---- PHASE: Analysing -------------------------------------------
     await setPhase("analysing");
@@ -500,15 +490,6 @@ export async function runResearchTask(taskId: string): Promise<RunOutcome> {
     result.finishedAt = new Date().toISOString();
     result.steps = applyStep(result.steps, "completed", "done", "Research complete");
 
-    await tasks(admin)
-      .update({
-        status: "completed",
-        finished_at: result.finishedAt,
-        result,
-        error_message: null,
-      })
-      .eq("id", taskId);
-
     await recordTimelineEvent({
       company_id: companyId,
       event_type: "task_completed",
@@ -520,22 +501,23 @@ export async function runResearchTask(taskId: string): Promise<RunOutcome> {
       metadata: { task_id: taskId, score: score.overall, provenance },
     });
 
-    return { ok: true, taskId, status: "completed", score: score.overall };
+    // Hand the terminal result back; the runner completes the task with it
+    // (hq_ai_task_complete writes it into the same `result` jsonb).
+    return result;
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error("[hq-research] run failed", { taskId, error });
     result.phase = "failed";
     result.error = error;
     result.finishedAt = new Date().toISOString();
-    await tasks(admin)
-      .update({
-        status: "failed",
-        finished_at: result.finishedAt,
-        error_message: error.slice(0, 4000),
-        result,
-        retry_count: claimed.retry_count + 1,
-      })
-      .eq("id", taskId);
+    // Best-effort: persist the failed phase so the live UI reflects it. The lease
+    // may already be gone (reaped mid-run) — swallow that; the runner's failTask
+    // is the source of truth for the terminal transition + error_message.
+    try {
+      await ctx.tasks.checkpoint(result);
+    } catch {
+      /* lease lost — nothing to persist; the runner will record the failure */
+    }
     if (companyId) {
       await recordTimelineEvent({
         company_id: companyId,
@@ -545,8 +527,62 @@ export async function runResearchTask(taskId: string): Promise<RunOutcome> {
         metadata: { task_id: taskId },
       });
     }
-    return { ok: false, taskId, status: "failed", error };
+    // Re-throw so the runner fails the task (retryable unless NonRetryableError),
+    // re-queuing with backoff — the engine's retry replaces STUCK_RUNNING_MS.
+    throw e;
   }
+};
+
+// ---------------------------------------------------------------------
+// The drivers — the two entry points that run the handler through the canonical
+// runner (claim-one-and-exit). Both register the handler (idempotent) and act as
+// this employee's identity; neither re-implements the run-loop.
+// ---------------------------------------------------------------------
+
+export type RunOutcome =
+  | { ok: true; taskId: string; status: "completed"; score: number | null }
+  | { ok: true; taskId: string; status: "skipped" }
+  | { ok: false; taskId: string; status: "failed"; error: string };
+
+/**
+ * Kick the research queue: claim the next ready `research_company` task and drive
+ * it to a terminal transition via the runner. Fire-and-forget from the live run
+ * page the moment it mounts.
+ *
+ * Engine semantics: the generic queue dequeues by TYPE (atomic FOR UPDATE SKIP
+ * LOCKED), not by a specific id, so this runs "the next ready research task" —
+ * which immediately after an enqueue is the one just created. The atomic claim
+ * makes a double-kick (browser + cron) harmless: the loser finds an empty queue
+ * and reports `skipped`. `taskId` is accepted for the caller's validation /
+ * logging; the claim is type-oriented by design.
+ */
+export async function runResearchTask(taskId?: string): Promise<RunOutcome> {
+  const identity = await researchIdentity();
+  registerTaskHandler(RESEARCH_TASK_TYPE, identity, researchTaskHandler);
+  const o = await runReadyTask(RESEARCH_TASK_TYPE, researchTaskHandler, identity);
+  switch (o.status) {
+    case "completed":
+      return { ok: true, taskId: o.taskId, status: "completed", score: await scoreOfTask(o.taskId) };
+    case "empty":
+      // Nothing ready — already claimed/finished elsewhere (idempotent double-kick).
+      return { ok: true, taskId: taskId ?? "", status: "skipped" };
+    case "failed":
+      return { ok: false, taskId: o.taskId, status: "failed", error: o.error };
+    case "lease_lost":
+      return { ok: false, taskId: o.taskId, status: "failed", error: "lease lost (reaped or re-claimed)" };
+    case "error":
+      return { ok: false, taskId: taskId ?? "", status: "failed", error: o.error };
+  }
+}
+
+/** Read back a completed task's headline score from its persisted result jsonb. */
+async function scoreOfTask(taskId: string): Promise<number | null> {
+  const admin = createAdminClient();
+  const { data } = await taskReads<{ result: ResearchResult | null }>(admin)
+    .select("result")
+    .eq("id", taskId)
+    .maybeSingle();
+  return data?.result?.summary?.score ?? null;
 }
 
 type SetStep = (
@@ -1207,25 +1243,25 @@ export async function getResearchRunState(
   taskId: string,
 ): Promise<ResearchRunState | null> {
   const admin = createAdminClient();
-  const { data } = await tasks<{
+  const { data } = await taskReads<{
     id: string;
-    company_id: string | null;
+    subject_id: string | null;
     status: string;
     result: ResearchResult | null;
     started_at: string | null;
     finished_at: string | null;
     error_message: string | null;
   }>(admin)
-    .select("id, company_id, status, result, started_at, finished_at, error_message")
+    .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
   if (!data) return null;
 
-  const company = data.company_id ? await getCompany(data.company_id) : null;
+  const company = data.subject_id ? await getCompany(data.subject_id) : null;
   const result = data.result;
   return {
     taskId: data.id,
-    companyId: data.company_id,
+    companyId: data.subject_id,
     companyName: company?.name ?? null,
     status: normaliseTaskStatus(data.status),
     phase: result?.phase ?? phaseFromStatus(data.status),
@@ -1241,10 +1277,10 @@ export async function getResearchRunState(
  *  straight to a live or finished run. */
 export async function latestResearchTaskId(companyId: string): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await tasks<{ id: string }>(admin)
+  const { data } = await taskReads<{ id: string }>(admin)
     .select("id")
-    .eq("company_id", companyId)
-    .eq("task_type", "research_company")
+    .eq("subject_id", companyId)
+    .eq("task_type", RESEARCH_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(1);
   return Array.isArray(data) && data[0] ? data[0].id : null;
@@ -1263,53 +1299,25 @@ function phaseFromStatus(s: string): ResearchPhase {
   return "queued";
 }
 
-export type DrainResult = {
-  ok: boolean;
-  found: number;
-  processed: number;
-  results: Array<{ taskId: string; status: string }>;
-};
+export type DrainResult = { ok: boolean } & DrainSummary;
 
 /**
- * Cron entry point: pick up pending research tasks (and any stuck in 'running'
- * past the dead-worker threshold) and run them. Bounded per invocation so one
- * drain never runs away.
+ * Cron entry point: drain ready `research_company` tasks through the canonical
+ * runner, one at a time, up to `limit` this tick, then exit (claim-one-and-exit).
+ *
+ * The bespoke "re-queue anything stuck in 'running' past STUCK_RUNNING_MS" step
+ * is GONE — crash recovery is now the engine's: a claim takes a time-boxed lease,
+ * the runner heartbeats it, and the separate reaper cron (task-reaper) recovers
+ * any task whose lease expired. Worker-declared liveness replaced the 5-minute
+ * wall clock (Directive #012 / D-02, PR-E).
  */
 export async function drainResearchTasks(limit = 3): Promise<DrainResult> {
-  const admin = createAdminClient();
-
-  const { data: pending } = await tasks<{ id: string }>(admin)
-    .select("id")
-    .eq("task_type", "research_company")
-    .eq("status", "pending")
-    .order("priority_rank", { ascending: true })
-    .limit(limit);
-
-  const ids = (pending ?? []).map((r) => r.id);
-
-  // Re-queue dead 'running' tasks (worker timed out) that still have retries.
-  if (ids.length < limit) {
-    const cutoff = new Date(Date.now() - STUCK_RUNNING_MS).toISOString();
-    const { data: stuck } = await tasks<{ id: string }>(admin)
-      .select("id")
-      .eq("task_type", "research_company")
-      .eq("status", "running")
-      .lt("started_at", cutoff)
-      .limit(limit - ids.length);
-    for (const row of stuck ?? []) {
-      // Flip back to pending so claimTask can re-acquire it.
-      await tasks(admin).update({ status: "pending" }).eq("id", row.id);
-      ids.push(row.id);
-    }
-  }
-
-  const results: Array<{ taskId: string; status: string }> = [];
-  for (const id of ids) {
-    const outcome = await runResearchTask(id);
-    results.push({ taskId: id, status: outcome.status });
-  }
-
-  return { ok: true, found: ids.length, processed: results.length, results };
+  const identity = await researchIdentity();
+  registerTaskHandler(RESEARCH_TASK_TYPE, identity, researchTaskHandler);
+  const summary = await drainTaskType(RESEARCH_TASK_TYPE, researchTaskHandler, identity, {
+    maxTasks: limit,
+  });
+  return { ok: true, ...summary };
 }
 
 // ---------------------------------------------------------------------
@@ -1334,7 +1342,7 @@ export type ResearchRunRow = {
 
 type RecentTaskRow = {
   id: string;
-  company_id: string | null;
+  subject_id: string | null;
   status: string;
   result: ResearchResult | null;
   created_at: string | null;
@@ -1345,23 +1353,23 @@ type RecentTaskRow = {
 export async function listRecentResearchRuns(limit = 12): Promise<ResearchRunRow[]> {
   const admin = createAdminClient();
   const capped = Math.min(Math.max(limit, 1), 50);
-  const { data } = await tasks<RecentTaskRow>(admin)
-    .select("id, company_id, status, result, created_at, finished_at")
-    .eq("task_type", "research_company")
+  const { data } = await taskReads<RecentTaskRow>(admin)
+    .select("id, subject_id, status, result, created_at, finished_at")
+    .eq("task_type", RESEARCH_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(capped);
 
   const rows = Array.isArray(data) ? data : [];
   const names = await loadCompanyNames(
     admin,
-    rows.map((r) => r.company_id).filter((id): id is string => !!id),
+    rows.map((r) => r.subject_id).filter((id): id is string => !!id),
   );
   return rows.map((r) => {
     const summary = r.result?.summary ?? null;
     return {
       taskId: r.id,
-      companyId: r.company_id,
-      companyName: r.company_id ? (names.get(r.company_id) ?? null) : null,
+      companyId: r.subject_id,
+      companyName: r.subject_id ? (names.get(r.subject_id) ?? null) : null,
       status: normaliseTaskStatus(r.status),
       phase: r.result?.phase ?? phaseFromStatus(r.status),
       score: summary?.score ?? null,
@@ -1398,9 +1406,9 @@ export async function getResearchMetrics(): Promise<ResearchMetrics> {
   ]);
 
   // Aggregate the most-recent completed runs' summaries (capped window).
-  const { data } = await tasks<{ result: ResearchResult | null; finished_at: string | null }>(admin)
+  const { data } = await taskReads<{ result: ResearchResult | null; finished_at: string | null }>(admin)
     .select("result, finished_at")
-    .eq("task_type", "research_company")
+    .eq("task_type", RESEARCH_TASK_TYPE)
     .eq("status", "completed")
     .order("finished_at", { ascending: false })
     .limit(200);
@@ -1449,9 +1457,9 @@ async function countResearch(
   admin: AdminClient,
   status?: string | string[],
 ): Promise<number> {
-  let q = (admin.from("hq_sales_ai_tasks" as never) as unknown as CountQuery)
+  let q = (admin.from("hq_ai_tasks" as never) as unknown as CountQuery)
     .select("id", { count: "exact", head: true })
-    .eq("task_type", "research_company");
+    .eq("task_type", RESEARCH_TASK_TYPE);
   if (Array.isArray(status)) q = q.in("status", status);
   else if (status) q = q.eq("status", status);
   const { count } = await q;
@@ -1508,25 +1516,25 @@ export type ResearchReportView = {
 
 export async function getResearchReport(taskId: string): Promise<ResearchReportView | null> {
   const admin = createAdminClient();
-  const { data } = await tasks<{
+  const { data } = await taskReads<{
     id: string;
-    company_id: string | null;
+    subject_id: string | null;
     status: string;
     result: ResearchResult | null;
     started_at: string | null;
     finished_at: string | null;
     error_message: string | null;
   }>(admin)
-    .select("id, company_id, status, result, started_at, finished_at, error_message")
+    .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
   if (!data) return null;
 
-  const company = data.company_id ? await getCompany(data.company_id) : null;
+  const company = data.subject_id ? await getCompany(data.subject_id) : null;
   const r = data.result;
   return {
     taskId: data.id,
-    companyId: data.company_id,
+    companyId: data.subject_id,
     companyName: company?.name ?? null,
     status: normaliseTaskStatus(data.status),
     phase: r?.phase ?? phaseFromStatus(data.status),

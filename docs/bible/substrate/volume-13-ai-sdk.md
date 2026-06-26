@@ -496,6 +496,43 @@ contract draws here. The SDK is intended to become the **only** interface an AI
 employee touches: ergonomic above, protected substrate below. Every new module ships
 to this architecture — so employee #42 inherits exactly the surface of employee #3.
 
+**The Employee Migration Rule (Directive #012 / D-02, PR-E).** Research AI is the
+first employee moved off its bespoke queue onto this contract — the reference
+migration, proving a real employee can run *entirely* through the Generic Task
+Engine and the SDK with no employee-specific infrastructure. Migrating an existing
+employee is therefore governed, not ad-hoc. A migration may merge only when all
+four conditions hold:
+
+1. **Functional behaviour remains equivalent.** The employee's observable contract
+   — its lifecycle, the `result` it persists, the events and artifacts an operator
+   sees — is the same before and after. A migration changes the substrate *beneath*
+   an employee, never *what it does*.
+2. **No new infrastructure is introduced.** A migration adds no table, no queue, no
+   bespoke runner, no parallel lifecycle, no hand-rolled recovery. It *deletes* the
+   employee's private plumbing and adopts the shared engine; if it needs something
+   the substrate lacks, closing that gap is the substrate's own directive, never the
+   migration's to improvise.
+3. **All execution occurs through the Generic Task Engine (XII).** Every claim,
+   lease, heartbeat, checkpoint, completion, failure and retry is the engine's,
+   reached only through the runner — no employee-specific queue write survives.
+4. **All business logic executes through the SDK.** The employee's work is a handler
+   under the six rules above; it touches the substrate only through `ctx`.
+
+A migration is **complete only when the employee becomes indistinguishable, from the
+operating system's perspective, from every AI employee that will ever be built on the
+substrate** — the same runner drives it, the same audit describes it, the same
+operator surface governs it. Until that is true the migration is unfinished, however
+much code has moved.
+
+**Migration removes infrastructure — it never adds it (architectural principle —
+Directive #012).** Every successful employee migration must *reduce* architectural
+complexity. Migration exists to **remove** bespoke infrastructure — to converge an
+employee onto the one engine and the one SDK — **never to create** new infrastructure.
+The test of a migration is not "does the employee still work?" but "is there now
+*less* of the system to maintain?": fewer queues, fewer runners, fewer lifecycles,
+one substrate. The workforce grows by adding *data* (a row, a capability, a handler);
+the *system* it runs on only ever gets smaller per employee absorbed.
+
 ---
 
 ## 22. The reference employee (the blueprint, proven)
