@@ -1,14 +1,16 @@
 # CrewFlow Governance — Directive #014 (D-04) **Phase B** Architecture Proposal: the Doorman
 
-> **Status:** **Architecture proposal — design only.** This document presents the
-> architecture for **Directive #014 / D-04, Phase B — the permission gate ("the
-> doorman"): the P4 autonomy classifier, the `proposeActions` surface, and the hand-off to
-> the already-built Approval Engine.** It is the step the CEO authorised after the Phase A
-> merges: *"After the Phase A merges are complete: Present the architecture proposal for
-> Directive #014 Phase B. Do not begin implementation until the proposal has been reviewed
-> and approved."* It is **held pending CEO review and approval**; **no Phase B
-> implementation begins** until it is approved. The document itself changes no code,
-> schema, migration, configuration, or git history.
+> **Status:** **Approved** *(CEO independent CTO review)* — Phase B implementation
+> **authorised** in the sequence pure gate → runtime composition → Approval-Engine hand-off →
+> Reference-Employee validation; see **§9** for the outcome, the **`GateVerdict`-is-declarative**
+> refinement, and the new **Policy vs Mechanism** principle. This document presents the
+> architecture for **Directive #014 / D-04, Phase B — the permission gate ("the doorman"): the
+> P4 autonomy classifier, the `proposeActions` surface, and the hand-off to the already-built
+> Approval Engine.** It was the step the CEO authorised after the Phase A merges: *"Present the
+> architecture proposal for Directive #014 Phase B. Do not begin implementation until the
+> proposal has been reviewed and approved."* The document itself changes no code, schema,
+> migration, configuration, or git history; it is the governance record the now-authorised
+> Phase B implementation PRs build upon.
 >
 > **Phase context.** The phased plan accepted in **[ADR 0008](../decisions/0008-ai-sdk-envelope.md)**
 > (Decision 10) is **A** (`events` + `comms` facets · the P3 output envelope · the
@@ -511,7 +513,63 @@ typed tool registry) does not begin until Phase B has a completion record and CE
 
 ## 9. CEO review outcome
 
-*Reserved for the CEO's review outcome.*
+The CEO completed an independent CTO review of this proposal. **Outcome: the Directive #014
+Phase B architecture is approved.** Each load-bearing decision is approved explicitly — the
+**pure gate**, **runtime-owned orchestration**, the **Approval-Engine hand-off**, the
+**deferred executor**, the **deferred lifecycle transitions**, **deferred verification**, **no
+new schema**, and **no new ADR** — *"The separation between the gate, runtime and Approval
+Engine is correct."* The review returned **one architectural refinement** and **one new
+permanent engineering principle**, and **authorised implementation** in the proposed sequence.
+
+**Architectural refinement — `GateVerdict` is a declarative result.** The verdict represents
+**policy, not execution**: it states *what is permitted*, and *"the runtime consumes the
+verdict and determines the appropriate mechanism."* This **confirms and sharpens** §3.9 / §4 —
+the gate returns `{decision, reasons}` in policy language (`autonomous` / `needs_approval`) and
+**never** a mechanism instruction or a side effect; the runner alone maps a verdict to its
+mechanism (audit-emit vs `requestApproval`). It keeps the gate **deterministic, pure,
+independently testable, and reusable**, exactly as the proposal argued (§3.3).
+
+**New permanent engineering principle — Policy vs Mechanism.** The CEO introduced a standing
+architectural rule, homed alongside the Facet Isolation Rule and the runtime-composes-capability
+principle in the [Kernel Contract Map](./kernel-contract-map.md) §2:
+
+> **The gate defines policy. The runtime provides mechanism. The gate should never know how
+> approvals are requested, how events are emitted, or how communications are sent. The gate
+> answers only: "What is permitted under the current policy?"**
+
+This is the **gate-specific sharpening** of the runtime-composes-capability principle (§4.2):
+the gate is the *policy* leaf; the runtime *composes* it into a mechanism. It binds Phase B's
+file layout structurally — the pure predicate may import no facet and perform no I/O, and **all
+mechanism** (the audit emit, the approval request) lives in the runner (§3.3 / §3.4).
+
+**Future compatibility — the gate interface stays stable as its inputs evolve.** The CEO
+directed that the Capability Registry (Directive #015) become **another information source for
+the gate**: #015 changes *where* the gate's `capabilities` (and posture) come from, but the
+**gate interface itself remains stable** — *"Its inputs may evolve. Its responsibilities should
+not."* This is **#013 threads · #014 enforces · #015 sources** applied at the gate: because
+`evaluateAction` reads a *given* capability set and posture, #015 repoints the source with **no
+change** to its contract (§3.3 / §3.5).
+
+**How the refinement resolves the §7 open questions.** Three of the four forks are settled by
+the CEO's explicit approvals, and the fourth stands as the proposal recommended:
+
+1. **Ship `proposeActions` in Phase B as classifier-and-router** — settled **yes** by the
+   approved **deferred executor**: the verdict is policy, the runtime routes, and the executor
+   of an autonomous action arrives in Phases C/D.
+2. **Resolved posture stays a gate input the runtime resolves** (runtime-internal) — consistent
+   with *"the gate answers only what is permitted"* and *"its inputs may evolve"*; it is a
+   reversible implementation choice, additive to expose later if a use emerges.
+3. **No early capability SQL re-check** — settled by the approved **no new schema**; the
+   re-check belongs in the phase that has both an executor and the #015 registry (§3.8).
+4. **`GateVerdict` needs no separate ADR** — settled by the approved **no new ADR**; it is an
+   additive, **declarative** SDK type under ADR 0008.
+
+**Implementation authorisation.** Directive #014 **Phase B implementation is authorised**, in
+the approved sequence — **(1) the pure gate → (2) runtime composition → (3) the Approval-Engine
+hand-off → (4) Reference-Employee validation** — each held to the established six-gate
+validation discipline (§3.11) and the standing instruction to **continue protecting the kernel
+boundaries**. **Phase C (the typed tool registry) does not begin until Phase B has completed
+implementation, validation, and review.**
 
 ---
 
