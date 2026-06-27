@@ -118,8 +118,11 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0005`](../decisions/0005-task-engine-spine-emission.md) | Task Engine spine emission (the `task.*` verbs) | #012 (D-02), PR-B |
 | [`0006`](../decisions/0006-memory-task-binding.md) | Shared Memory ⇄ Task Engine binding (the `bound_task_id` FK) | #012 (D-02), PR-D |
 | [`0007`](../decisions/0007-runcontext-runtime-contract.md) | The RunContext Runtime Contract | #013 (D-03) |
+| [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Proposed · held for CEO review)* | #014 (D-04) |
 
-**Next free ADR number: `0008`.** ADR numbers are also monotonic and never reused.
+**Next free ADR number: `0009`.** ADR numbers are also monotonic and never reused. ADR
+`0008` is **Proposed · held for CEO review** — registered here on creation (the number is
+reserved), but **not yet accepted**; Directive #014 implementation is gated on its approval.
 
 ---
 

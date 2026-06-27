@@ -64,6 +64,24 @@ because a kernel contract was missing or leaked. This principle is the *why* the
 [Reuse Index](./platform-reuse-index.md) (whether each directive grew the platform or
 the employee) both exist.
 
+### The SDK Stability Rule
+
+A **second** written standard is homed here, set by CEO directive on the approval of the
+Directive #014 architecture proposal and recorded in [ADR
+0008](../decisions/0008-ai-sdk-envelope.md) (Decision 7). It **specialises** the
+kernel-stability principle above to the single kernel layer that is *also* the
+platform's **developer interface** — the AI SDK (contract #3):
+
+> **The AI SDK is the primary developer interface to the CrewFlow Operating System.
+> Backward compatibility is a design goal. Breaking SDK changes should be rare,
+> documented, and justified through ADRs when appropriate.**
+
+It follows directly from the principle above. Because the SDK is the one door every
+employee is written against, *extend before replace*
+([Architecture Freeze](./architecture-freeze.md) §2.4) is the **default mechanism** for
+every new SDK facet, and a breaking SDK change is the exception that most needs an ADR +
+architectural review — the same bar the Freeze already binds for contract #3.
+
 ---
 
 ## 3. The contract map
