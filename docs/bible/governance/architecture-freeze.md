@@ -126,6 +126,13 @@ the *first* implementation goes through ADR + review rather than landing ad hoc.
   (D-03 / **#013**). The [dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md)
   sequences the runtime contract ahead of the SDK and the registry precisely because
   identity must settle *before* a Capability Registry can key to it.
+- **Kernel Contract Map:** the [Kernel Contract Map](./kernel-contract-map.md) is the
+  **diagram** to this Freeze's **lock** — the single-page
+  **Owns / Exposes / Consumes / Does-not-own** view of the six kernel contracts
+  (`#1`–`#6`). The two are a **bound pair**: whenever a kernel contract changes here — its
+  status or any of its boundaries — the map is updated **in the same PR**, and vice
+  versa, so the lock and the diagram never drift. Synchronisation rule instituted by CEO
+  directive on the map's approval.
 - **What "done" looks like:** the bar for declaring these contracts *complete* (not
   merely frozen) is set by the **CrewFlow Version 1.0 Constitution**
   ([`../../crewflow-v1.0-constitution.md`](../../crewflow-v1.0-constitution.md)).

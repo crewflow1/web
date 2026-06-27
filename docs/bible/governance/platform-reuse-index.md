@@ -26,7 +26,11 @@ The Reuse Index makes the trend a **recorded number per directive**. It is the
 companion metric to the [Architecture Freeze](./architecture-freeze.md) (which governs
 *how* contracts change) and the Reference Employee Rule (the first migrated employee is
 canonical): the Freeze protects the substrate, the Reference Employee Rule sets the
-bar, and this index **scores every directive against that bar**.
+bar, and this index **scores every directive against that bar**. It is also the
+**metric** for the standing engineering principle recorded in the [Kernel Contract
+Map](./kernel-contract-map.md) §2 — *kernel contracts grow more stable, employee
+implementations grow easier to change* — of which "platform capability grows, employee
+complexity shrinks" is the measurable face.
 
 ---
 
