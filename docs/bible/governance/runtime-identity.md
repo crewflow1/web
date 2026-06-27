@@ -1,17 +1,21 @@
-# CrewFlow Governance — Runtime Employee Identity (a record, not a decision)
+# CrewFlow Governance — Runtime Employee Identity (the record, and its D-03 resolution)
 
-> **Status:** Governance **record**. This file documents the *current* runtime
-> identities of the seeded AI employees and the places where they disagree with the
-> Bible specs and the SDK volume. It deliberately makes **no canonical decision** and
-> renames nothing.
+> **Status:** Governance **record + resolution**. §§1–6 are the original D-01 record: the
+> *current* runtime identities of the seeded AI employees and the places where they
+> disagree with the Bible specs and the SDK volume — a record that deliberately made **no
+> canonical decision** and renamed nothing. **§7 is the resolution:** D-03 / #013 has since
+> **settled** the canonical decision, and — by choosing the slug already stamped — it too
+> renames nothing in code, seed, or spine.
 >
-> **The canonical runtime-identity decision is deferred** to the **RunContext Runtime
-> Contract directive** (Master Roadmap **D-03** = canonical **#013**), where employee
-> identity is settled as part of the runtime contract — *before* the AI SDK envelope
-> (D-04 / #014) is assembled over it. (The CEO-approved
+> **The canonical runtime-identity decision — deferred here under D-01 — is now settled by
+> the RunContext Runtime Contract directive** (Master Roadmap **D-03** = canonical
+> **#013**), as part of the runtime contract and *before* the AI SDK envelope (D-04 / #014)
+> is assembled over it (see **§7** and
+> [ADR 0007](../decisions/0007-runcontext-runtime-contract.md) Decision 5). (The CEO-approved
 > [dependency-ordering analysis](./directive-013-dependency-ordering-analysis.md) moved
-> the identity decision ahead of the SDK; it was previously bundled with D-04.) Issued
-> under CEO Directive **#011** (*Governance, Numbering & Scope Reconciliation*; D-01).
+> the identity decision ahead of the SDK; it was previously bundled with D-04.) Record
+> issued under CEO Directive **#011** (*Governance, Numbering & Scope Reconciliation*; D-01);
+> resolution recorded under CEO Directive **#013** (D-03).
 
 ---
 
@@ -83,8 +87,9 @@ The Lead Qualification AI is named **three different ways**:
 The conflict is real and load-bearing: the spec asserts the actor is `qualification-ai`,
 but the **running code stamps `lead-qualification`**. A reader reconstructing "everything
 this employee did" must query `actor_id = 'lead-qualification'` today — *not* the value
-the spec names. **No change is made here**; the canonical identifier is chosen by the
-RunContext Runtime Contract directive (§6).
+the spec names. **No change was made in this record**; D-03 / #013 has since **chosen
+`lead-qualification` as the canonical identifier** — the stamped value wins (§7) — so that
+query stays correct by rule rather than by accident.
 
 ---
 
@@ -104,6 +109,10 @@ RunContext Runtime Contract directive's identity rules.
 ---
 
 ## 6. The deferral (what the RunContext Runtime Contract directive decides)
+
+> **Settled (D-03 / #013).** The deferral below has been resolved — see **§7**. The list
+> that follows is the original D-01 statement of *what* D-03 was to decide; §7 records
+> *what it decided*.
 
 The **RunContext Runtime Contract directive (D-03 / #013)** owns the canonical
 runtime-identity decision, because identity is the first field of the `RunContext` every
@@ -127,5 +136,40 @@ file for identity state.
 
 ---
 
-*Documentation only. No slug, seed, event `actor_id`, or migration was changed by this
-record. Adopted under CEO Directive #011 (Master Roadmap D-01).*
+## 7. Resolution — settled by D-03 / #013 (ADR 0007, Decision 5)
+
+The RunContext Runtime Contract directive settled the decision §6 deferred. The authority is
+[ADR 0007](../decisions/0007-runcontext-runtime-contract.md) **Decision 5**, accepted by the
+CEO; this section records its outcome in the identity ledger.
+
+- **Canonical slug = the slug already stamped.** Each employee's canonical identifier is the
+  `actor_id` the database and the append-only spine already carry — the "authoritative for
+  running code" layer of §2. For the proven three-way split (§4), **`lead-qualification` is
+  canonical**; the spec slug `qualification-ai` and the SDK-volume identity
+  `lead-qualification-ai` reconcile *to it*.
+- **History frozen, not re-stamped.** Per ADR 0007 Decision 5 (*alias or freeze over
+  re-stamping append-only spine rows*) and the CEO's **no-employee-migration** authorisation,
+  **zero** historical `actor_id`s change. Choosing the already-stamped slug as canonical is
+  exactly what makes the settlement a no-op on the spine: of the 14 seeded rows (§3),
+  `lead-qualification` was the lone three-way split, `design-ai` is Reserved (§5), and the
+  other twelve were already consistent — so nothing needs re-stamping.
+- **Forward rule — the three layers agree.** From #013 onward runtime slug = spec slug = SDK
+  identity. `EmployeeIdentity.slug` — the first field of every `RunContext` — carries that
+  single canonical value: required, typed, resolved, non-optional (`server/sdk/tasks.ts`).
+  The live services resolve it from the seeded row (`QUALIFICATION_AI_SLUG =
+  "lead-qualification"`, `RESEARCH_AI_SLUG = "research-ai"`).
+- **Reserved rows unchanged.** `design-ai` (§5) stays **Reserved** — neither adopted nor
+  deprecated; its identity is defined if and when a Design employee is built.
+
+The spec and SDK-volume documents that still spell `qualification-ai` /
+`lead-qualification-ai` are now the *divergent* layer against this canonical rule; aligning
+their **prose** to `lead-qualification` is doc-only follow-up — it touches no code, seed,
+event, or migration, and sits outside #013's minimal footprint.
+
+---
+
+*§§1–6: documentation only — no slug, seed, event `actor_id`, or migration was changed by
+the record; adopted under CEO Directive #011 (Master Roadmap D-01). §7: the canonical
+resolution, settled by CEO Directive #013 (D-03) under
+[ADR 0007](../decisions/0007-runcontext-runtime-contract.md) Decision 5 — which, by choosing
+the already-stamped slug, likewise changed no slug, seed, `actor_id`, or migration.*

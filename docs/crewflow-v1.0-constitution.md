@@ -127,7 +127,7 @@ For each employee, V1.0 records a tier:
 - the **minimum Live roster** that makes §1.1 (customer) and §1.2 (HQ) real —
   **‹which specific employees, to be ratified by the CEO›**;
 - **runtime identity reconciled** for every Live employee: runtime slug = spec slug =
-  SDK identity, per the rule deferred to D-04 / #014 (the qualification three-way
+  SDK identity, per the rule settled by D-03 / #013 (the qualification three-way
   split resolved, not merely recorded);
 - **every Live employee stood up by inheritance only** (the §1.4 test), proving the
   roster scales from #3 to #42 without substrate forks.
