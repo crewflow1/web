@@ -82,6 +82,27 @@ employee is written against, *extend before replace*
 every new SDK facet, and a breaking SDK change is the exception that most needs an ADR +
 architectural review — the same bar the Freeze already binds for contract #3.
 
+### The SDK ABI Principle
+
+A **third** standard, set by CEO directive on the **acceptance** of [ADR
+0008](../decisions/0008-ai-sdk-envelope.md) (independent CTO review). It states the SDK
+Stability Rule's deeper form — the SDK is not merely a stable *surface* but the platform's
+stable **application interface (ABI)**, holding steady while everything beneath it moves:
+
+> **The AI SDK is the stable application interface of the CrewFlow Operating System.
+> Internal implementation may evolve. Kernel implementation may evolve. Database
+> implementation may evolve. The SDK interface should remain stable whenever reasonably
+> possible. Changes to SDK behaviour should preserve compatibility unless a documented
+> architectural reason requires otherwise; when compatibility cannot be preserved, the
+> change must be explicitly documented and justified through an ADR.**
+
+The Stability Rule above is this principle's **compatibility clause**; the ABI Principle
+adds the **layering guarantee** — kernel, internal, and database churn is **invisible** to
+the employee code written against the SDK. It is the engineering-standards counterpart to
+the boundary in §4: *the SDK exposes capabilities, never kernel implementation.* Together
+they make the SDK a contract an employee can depend on **across** kernel evolution — the
+stable top of a stratification whose lower layers are free to change.
+
 ---
 
 ## 3. The contract map
@@ -157,9 +178,15 @@ the kernel fork into per-employee special cases:
    Task Engine owns the durable row; RunContext owns the frozen per-run argument. They
    are deliberately separate so a handler can *read* its context but can never *mutate*
    execution state — the standing principle "the OS owns execution state" (ADR 0007).
-2. **The AI SDK is a facade, not an owner.** Its facets are views onto the kernel
-   primitives, delivered through `ctx`; the primitives keep their authority. "The SDK is
-   built" would be an overclaim today — only its memory facet exists.
+2. **The AI SDK is a facade, not an owner — and it exposes capabilities, not kernel
+   implementation.** Its facets are views onto the kernel primitives, delivered through
+   `ctx`; the primitives keep their authority. "The SDK is built" would be an overclaim
+   today — only its memory facet exists. **Permanent architectural objective** (CEO, on the
+   acceptance of [ADR 0008](../decisions/0008-ai-sdk-envelope.md)): the SDK exposes
+   *operating-system capabilities* and **never kernel implementation** — an employee knows
+   *what it can do* and never needs to know *how the OS performs it*. This is the §2
+   **SDK ABI Principle** stated as a boundary: the surface the employee sees stays stable
+   precisely because the implementation it hides is free to change.
 3. **The Event Spine observes; it does not own meaning.** Producers own verb semantics;
    the Spine guarantees only that the record is append-only and the vocabulary is closed.
 4. **Approval decides; the Task Engine gates.** An approval outcome is a decision

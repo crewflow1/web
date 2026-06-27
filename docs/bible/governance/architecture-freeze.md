@@ -120,7 +120,8 @@ the *first* implementation goes through ADR + review rather than landing ad hoc.
 - **Numbering:** directive/ADR/volume numbers are governed by
   [`numbering.md`](./numbering.md). ADRs referenced here (0001–0007) live in
   [`../decisions/`](../decisions/); the next free ADR number is **0009** (ADR `0008`, the
-  AI SDK Envelope under D-04 / #014, is **Proposed · held for CEO review**).
+  AI SDK Envelope under D-04 / #014, is **Accepted**; contract #3 graduates Partial →
+  Established on implementation).
 - **Runtime identity:** the `actor_id` an employee stamps onto Event Spine rows is a
   separate frozen concern recorded in [`runtime-identity.md`](./runtime-identity.md);
   its canonical decision is owned by the **RunContext Runtime Contract** directive

@@ -1,8 +1,9 @@
 # ADR 0008 — The AI SDK Envelope
 
-> **Status:** **Proposed · held for CEO review** — *implementation is gated on this ADR's
-> approval* · **Date:** 2026-06-27 · **Directive:** CEO Directive #014 / D-04 (the AI SDK
-> Envelope) · **Supersedes:** none · **Superseded by:** none · **Builds on:**
+> **Status:** **Accepted** *(CEO independent CTO review, 2026-06-27)* — Directive #014
+> implementation **authorised**, beginning with **Phase A** under per-phase review gates ·
+> **Date:** 2026-06-27 · **Directive:** CEO Directive #014 / D-04 (the AI SDK Envelope) ·
+> **Supersedes:** none · **Superseded by:** none · **Builds on:**
 > [ADR 0007](./0007-runcontext-runtime-contract.md),
 > [ADR 0004](./0004-generic-task-engine.md),
 > [ADR 0001](./0001-approval-engine.md),
@@ -296,13 +297,32 @@ to **`0009`**. Per the Architecture Freeze §2, the architectural-review sign-of
 decision record — once **accepted** by the CEO — is those PRs' prerequisite, and **no #014
 implementation begins before that acceptance**.
 
+**Acceptance & implementation authorisation.** Accepted by the CEO on independent CTO
+review (2026-06-27): the API-Gateway/SDK separation, the Tool Registry Principle, the SDK
+Stability Rule, the SDK phasing, and every deferral (Capability Registry, authorisation,
+inter-employee protocol, health expansion) are approved, and **Directive #014 implementation
+is authorised**. On acceptance the CEO introduced **two further permanent rules**, homed in
+the [Kernel Contract Map](../governance/kernel-contract-map.md): the **SDK ABI Principle**
+(§2 — the SDK is the stable application interface; kernel, internal, and database
+implementation may evolve beneath it; compatibility is preserved unless a documented
+architectural reason, carried by an ADR, requires otherwise) and the **capability-exposure
+objective** (§4 — the SDK exposes *operating-system capabilities* and **never kernel
+implementation**; an employee knows *what it can do*, never *how the OS performs it*).
+Implementation follows the approved phased plan, beginning with **Phase A** (events + comms
+facets · the P3 output envelope · the evidence-drain hook); **no later phase begins until the
+current one has completed implementation, passed the full validation suite (TypeScript · lint
+· unit · integration · security · production build), received architectural review, and
+received CEO approval.** Directive #015 stays out of scope until #014 is complete.
+
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed
 by this record. Authored ahead of implementation under the document-before-you-build rule at
-the CEO's direction, and **held for the CEO's ADR-level review**: Directive #014
-implementation is **not** authorised until this ADR is reviewed and approved. Prepared for
-CEO Directive #014 / D-04 (the AI SDK Envelope); it formalises the CEO-approved
+the CEO's direction, and **accepted by the CEO on independent CTO review (2026-06-27)**:
+Directive #014 implementation is **authorised**, beginning with Phase A under per-phase
+review gates. Prepared for CEO Directive #014 / D-04 (the AI SDK Envelope); it formalises
+the CEO-approved
 [architecture proposal](../governance/directive-014-ai-sdk-envelope-architecture-proposal.md)
 and the three decisions returned by the CTO review — the API Gateway ↔ SDK boundary, the
-Tool Registry Principle, and the SDK Stability Rule — encoded above.*
+Tool Registry Principle, and the SDK Stability Rule — encoded above, and is the prerequisite
+the now-authorised implementation PRs build upon.*
