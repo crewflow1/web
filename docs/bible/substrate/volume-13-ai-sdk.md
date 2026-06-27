@@ -78,6 +78,18 @@ IX–XIII are complete* — this volume defines the mould, not the castings).
 - **Depended on by:** every AI employee; the AI Boardroom (which *uses* the SDK to
   drive employees and compose their tasks — it does not reimplement any subsystem).
 
+**Facet isolation — the runtime composes, the facets do not.** The `ctx` above is a flat
+set of **independently composable** facets — `ctx.memory`, `ctx.events`, `ctx.comms`,
+`ctx.tasks`, … . No facet imports or depends on another. The **runtime** (the runner that
+assembles `ctx`) is the one place capabilities are combined: any cross-facet sequencing —
+for example, draining the memory facet's recalled evidence into the output envelope at
+completion — lives in the runtime, never inside an SDK module. This is the **Facet
+Isolation Rule** (set by CEO directive on the Directive #014 Phase A review), homed as a
+written standard in the [Kernel Contract Map §2](../governance/kernel-contract-map.md); its
+architectural form — *facets expose capability, the runtime composes it* — is §4.2 of the
+same map. It is what keeps the SDK modular as facets are added: each new capability binds
+onto `ctx` on its own, never by reaching into a sibling.
+
 ---
 
 ## 3. Built vs. to-build

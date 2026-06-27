@@ -103,6 +103,28 @@ the boundary in §4: *the SDK exposes capabilities, never kernel implementation.
 they make the SDK a contract an employee can depend on **across** kernel evolution — the
 stable top of a stratification whose lower layers are free to change.
 
+### The Facet Isolation Rule
+
+A **fourth** standard, set by CEO directive on the review of **Directive #014 Phase A**
+(the events + comms facets; independent CTO review). The three standards above govern the
+SDK's **vertical** boundary — a stable surface held steady over a moving kernel. This one
+governs its **horizontal** boundary — how the facets relate to **one another**:
+
+> **Each SDK facet must remain independently composable. SDK facets should not depend
+> directly on one another (`ctx.memory`, `ctx.events`, `ctx.comms`, `ctx.tasks`, …). The
+> runtime composes the facets; the facets do not compose each other. This keeps the SDK
+> modular as additional capabilities are introduced.**
+
+It is *extend before replace* ([Architecture Freeze](./architecture-freeze.md) §2.4) made
+structural at the facet seam: a new facet is added by binding it onto `ctx` in the runner
+(`server/sdk/tasks.ts`), never by importing a sibling. A facet that reached into another
+would couple two kernel primitives behind the SDK's back and re-introduce exactly the
+per-employee forking the kernel exists to prevent. The runner is the **one** place facets
+meet — where cross-facet sequencing lives (the Phase A evidence-drain folds `ctx.memory`'s
+recalled ids into the handler's output without either the memory facet or the output
+envelope importing the other). Its architectural form is the §4 boundary: **facets expose
+capability; the runtime composes it.**
+
 ---
 
 ## 3. The contract map
@@ -162,10 +184,10 @@ forking — what it **explicitly does not own**. Build status is tagged honestly
 
 | | |
 |---|---|
-| **Owns** | *Today*, only the Memory facet (`createMemory` / `BoundMemory`). The full per-employee SDK envelope is **owned by D-04 / #014**. |
-| **Exposes** | Today the memory facet; *intended* — the single employee-facing **door**: the facets (`memory`, `tasks`, …comms/events/tools/api) delivered *through* the frozen `ctx`. |
-| **Consumes** | RunContext (its facets ride inside the immutable envelope); Shared Memory; the Task Engine (`ctx.tasks` = `BoundTasks`); the Event Spine; *(intended)* Approval, Communication, the Capability Registry. |
-| **Does *not* own** | The envelope *shape* (RunContext owns it — the SDK populates facets *into* it); execution state; the kernel primitives themselves (the SDK is their employee-facing **facade**, not their owner); capability enforcement (#014, sourced by #015). |
+| **Owns** | *Today* the **memory**, **events**, and **comms** facets (`createMemory`/`BoundMemory`, `createEvents`/`BoundEvents`, `createComms`/`BoundComms`), the **output envelope** (`server/sdk/output.ts`), and the runner's **evidence-drain** hook — shipped under **D-04 / #014 Phase A** ([ADR 0008](../decisions/0008-ai-sdk-envelope.md)). The remaining envelope (the permission doorman + P4, the typed tool registry, the API gateway + cost metering — Phases B–D) is **owned by D-04 / #014**. |
+| **Exposes** | Today the memory, events, and comms facets + the output envelope, delivered *through* the frozen `ctx`; *intended* — the single employee-facing **door**: every facet (`memory`, `tasks`, `events`, `comms`, …tools/api) over one `ctx`. Each facet is **independently composable** — the runtime composes them, they do not compose each other (§2 Facet Isolation Rule). |
+| **Consumes** | RunContext (its facets ride inside the immutable envelope); Shared Memory; the Task Engine (`ctx.tasks` = `BoundTasks`); the Event Spine (`ctx.events` binds `emitEvent`); the Communication Layer (`ctx.comms` binds `deliverDraft`); *(intended)* Approval, the API gateway, the Capability Registry. |
+| **Does *not* own** | The envelope *shape* (RunContext owns it — the SDK populates facets *into* it); execution state; **cross-facet orchestration** (the runtime composes capability — §4.2 — so a facet never sequences another); the kernel primitives themselves (the SDK is their employee-facing **facade**, not their owner); capability enforcement (#014, sourced by #015). |
 
 ---
 
@@ -181,12 +203,22 @@ the kernel fork into per-employee special cases:
 2. **The AI SDK is a facade, not an owner — and it exposes capabilities, not kernel
    implementation.** Its facets are views onto the kernel primitives, delivered through
    `ctx`; the primitives keep their authority. "The SDK is built" would be an overclaim
-   today — only its memory facet exists. **Permanent architectural objective** (CEO, on the
-   acceptance of [ADR 0008](../decisions/0008-ai-sdk-envelope.md)): the SDK exposes
-   *operating-system capabilities* and **never kernel implementation** — an employee knows
-   *what it can do* and never needs to know *how the OS performs it*. This is the §2
-   **SDK ABI Principle** stated as a boundary: the surface the employee sees stays stable
-   precisely because the implementation it hides is free to change.
+   today — only the memory, events, and comms facets exist (Phase A). **Permanent
+   architectural objective** (CEO, on the acceptance of
+   [ADR 0008](../decisions/0008-ai-sdk-envelope.md)): the SDK exposes *operating-system
+   capabilities* and **never kernel implementation** — an employee knows *what it can do*
+   and never needs to know *how the OS performs it*. This is the §2 **SDK ABI Principle**
+   stated as a boundary: the surface the employee sees stays stable precisely because the
+   implementation it hides is free to change.
+
+   **Facets expose capability; the runtime composes it** — a CEO architectural principle set
+   on the review of Directive #014 Phase A: *"SDK facets expose capability. The runtime
+   composes capability. Cross-facet orchestration should remain inside the runtime rather
+   than inside individual SDK modules."* This is the architectural form of the §2 **Facet
+   Isolation Rule**: because no facet depends on another, the only place capabilities are
+   *combined* is the runner — so the facade stays a flat set of independent views, and
+   sequencing logic (e.g. the Phase A evidence-drain) lives in the OS, never smuggled into a
+   facet.
 3. **The Event Spine observes; it does not own meaning.** Producers own verb semantics;
    the Spine guarantees only that the record is append-only and the vocabulary is closed.
 4. **Approval decides; the Task Engine gates.** An approval outcome is a decision

@@ -314,6 +314,22 @@ current one has completed implementation, passed the full validation suite (Type
 · unit · integration · security · production build), received architectural review, and
 received CEO approval.** Directive #015 stays out of scope until #014 is complete.
 
+**Phase A — reviewed, approved, merged (2026-06-27).** The `events` + `comms` facets, the
+output envelope (`server/sdk/output.ts`), and the runner's evidence-drain hook were
+implemented, passed the full six-gate validation suite (TypeScript · lint · unit ·
+integration · security · production build), received architectural review, and were merged
+to the `#011` integration branch (PRs #208 → #209 → #210). On the Phase A review the CEO
+introduced **two further permanent rules**, homed in the
+[Kernel Contract Map](../governance/kernel-contract-map.md) alongside the SDK Stability Rule
+and the SDK ABI Principle: the **Facet Isolation Rule** (§2 — each SDK facet is
+independently composable; facets do not depend on one another; the runtime composes the
+facets) and its architectural form, **facets expose capability, the runtime composes it**
+(§4.2 — *"cross-facet orchestration should remain inside the runtime rather than inside
+individual SDK modules"*). Contract #3 remains **Partial** (Phase A is a partial envelope);
+it graduates **Partial → Established** when Phases B–D complete the envelope. Per the
+synchronisation rule, this Phase A canon update touches **both** the Kernel Contract Map and
+the [Architecture Freeze](../governance/architecture-freeze.md) §4 row 3 in the same PR.
+
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed
