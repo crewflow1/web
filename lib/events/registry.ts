@@ -64,6 +64,12 @@ const SUPPORT = [
   "support.csat_recorded",
 ] as const;
 
+// `ai.action_permitted` (the 11th) landed under ADR 0008 (Directive #014 / D-04,
+// Phase B — the AI SDK envelope's doorman). It is the audit fact the RUNTIME emits when
+// the pure gate (`server/sdk/gate.ts`) returns an `autonomous` verdict for a proposed
+// action, so deny-by-default is auditable BOTH ways: a needs-approval verdict lands an
+// `approval.requested` row (the Approval Engine), an autonomous one lands this. Past
+// tense, a fact that happened — the doorman permitted the action without a human.
 const AI = [
   "ai.triggered",
   "ai.run_started",
@@ -75,6 +81,7 @@ const AI = [
   "ai.budget_exceeded",
   "ai.suspended",
   "ai.escalated",
+  "ai.action_permitted",
 ] as const;
 
 const APPROVAL = [

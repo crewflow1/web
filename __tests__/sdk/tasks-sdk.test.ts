@@ -614,8 +614,8 @@ describe("createTask — standalone enqueue", () => {
 // runner DRAINS the memory facet's recalled ids into the result's evidence[].
 // =====================================================================
 
-describe("RunContext — D-04 facets (events + comms) present and identity-bound", () => {
-  it("exposes ctx.events.emit and ctx.comms.send on the still-frozen context", async () => {
+describe("RunContext — D-04 facets (events + comms + the doorman) present and identity-bound", () => {
+  it("exposes ctx.events.emit, ctx.comms.send and ctx.proposeActions on the still-frozen context", async () => {
     rpcMock.mockImplementation((fn: string) => {
       if (fn === "hq_ai_task_claim")
         return { data: { ok: true, task: makeTask() }, error: null };
@@ -629,6 +629,9 @@ describe("RunContext — D-04 facets (events + comms) present and identity-bound
 
     expect(typeof seen!.events.emit).toBe("function");
     expect(typeof seen!.comms.send).toBe("function");
+    // The doorman (Phase B) is wired onto the same frozen context — its routing matrix
+    // (autonomous→audit / needs_approval→requestApproval) is proven in propose-actions.test.ts.
+    expect(typeof seen!.proposeActions).toBe("function");
     // Both facets are bound to THIS employee's slug (the no-spoof identity).
     expect(seen!.events.identity.slug).toBe("research-ai");
     expect(seen!.comms.identity.slug).toBe("research-ai");
