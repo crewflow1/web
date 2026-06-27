@@ -169,7 +169,44 @@ describe("runner — wires the facets onto RunContext and drains evidence before
 });
 
 // =====================================================================
-// 5. gate (Phase B) — the PURE doorman predicate: imports no facet, performs
+// 5. runner — composes the PURE gate into the doorman (Phase B B2). The Policy
+//    vs Mechanism split as SOURCE: the runner imports the gate's verdict predicate
+//    AND BOTH mechanisms (the Approval Engine for needs_approval, the audit emit
+//    for autonomous); the gate (§6) imports neither. `proposeActions` lives HERE,
+//    on the RunContext — never as a facet — because only the runtime may compose
+//    policy with mechanism (the Facet Isolation Rule, Kernel Contract Map §2).
+// =====================================================================
+
+describe("runner — composes the gate into the doorman (mechanism lives in the runtime)", () => {
+  const code = codeOf(read(SDK));
+
+  it("consumes the PURE gate — imports and calls evaluateAction", () => {
+    expect(code).toMatch(/from\s+["']@\/server\/sdk\/gate["']/);
+    expect(code).toMatch(/evaluateAction\(/);
+  });
+
+  it("owns the needs_approval MECHANISM — binds the Approval Engine's requestApproval", () => {
+    expect(code).toMatch(/from\s+["']@\/server\/services\/hq-approvals["']/);
+    expect(code).toMatch(/requestApproval\(/);
+  });
+
+  it("owns the autonomous MECHANISM — emits the ai.action_permitted audit verb", () => {
+    expect(code).toMatch(/["']ai\.action_permitted["']/);
+  });
+
+  it("exposes proposeActions on the RunContext (a context method, not a sibling facet)", () => {
+    const m = code.match(/export interface RunContext \{([\s\S]*?)\n\}/);
+    expect(m, "RunContext interface not found").toBeTruthy();
+    expect(m![1]!).toMatch(/proposeActions\(/);
+  });
+
+  it("defaults a missing posture to the LOCKED floor (deny-by-default wired in source)", () => {
+    expect(code).toMatch(/identity\.posture\s*\?\?\s*LOCKED_POSTURE/);
+  });
+});
+
+// =====================================================================
+// 6. gate (Phase B) — the PURE doorman predicate: imports no facet, performs
 //    no I/O, and triggers no mechanism (the Facet Isolation Rule + the Policy
 //    vs Mechanism rule, Kernel Contract Map §2). Deny-by-default by SOURCE.
 // =====================================================================
@@ -208,6 +245,9 @@ describe("gate predicate — a pure policy leaf (no facet, no I/O, no mechanism)
     expect(code).not.toMatch(/requestApproval/);
     expect(code).not.toMatch(/deliverDraft/);
     expect(code).not.toMatch(/\.emit\(/);
+    // the audit verb the runtime emits for a permitted action is MECHANISM vocabulary —
+    // it lives in the runner (§5), never in the pure policy leaf.
+    expect(code).not.toMatch(/ai\.action_permitted/);
   });
 
   it("exports the pure verdict predicate", () => {

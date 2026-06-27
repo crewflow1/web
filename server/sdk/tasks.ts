@@ -15,9 +15,12 @@ import { createMemory, type BoundMemory } from "@/server/sdk/memory";
 import { createEvents } from "@/server/sdk/events";
 import { createComms } from "@/server/sdk/comms";
 import { drainEvidenceInto } from "@/server/sdk/output";
+import { evaluateAction } from "@/server/sdk/gate";
+import { requestApproval } from "@/server/services/hq-approvals";
 import type { BoundEvents } from "@/server/sdk/events";
 import type { BoundComms } from "@/server/sdk/comms";
 import type { TaskResult } from "@/server/sdk/output";
+import type { EmploymentPosture, ProposedAction, GateVerdict } from "@/server/sdk/gate";
 import type { MemoryScope } from "@/lib/ai-employees/model";
 
 /**
@@ -98,6 +101,14 @@ export interface EmployeeIdentity {
    * enforces and the Capability Registry (D-05) sources it.
    */
   capabilities?: ResolvedCapabilitySet;
+  /**
+   * The employee's coarse autonomy stance, resolved once at identity assembly (see
+   * {@link resolveEmployeePosture}). Optional so a caller may omit it; the doorman
+   * (`ctx.proposeActions`) defaults to {@link LOCKED_POSTURE} — the Built default-locked
+   * floor — when absent, so a missing posture is deny-by-default. The gate (D-04 Phase B)
+   * reads it as layer 1; #015 may repoint its source without changing this contract.
+   */
+  posture?: EmploymentPosture;
 }
 
 // ---------------------------------------------------------------------
@@ -147,6 +158,41 @@ export function resolveEmployeeCapabilities(emp: {
   return Object.freeze({
     tokens: Object.freeze([...tokens].sort()) as readonly string[],
     source: "ai_employees",
+  });
+}
+
+// ---------------------------------------------------------------------
+// Posture — the coarse autonomy stance (ADR 0008; the doorman's layer 1)
+// ---------------------------------------------------------------------
+
+/**
+ * The Built default-locked posture — `can_execute=false`, `requires_approval=true`
+ * (`lib/ai-employees/model.ts` `normalizePermissions`). The safe, frozen default the
+ * doorman uses when an identity carries no posture: a missing stance is deny-by-default,
+ * so every proposed action routes to approval until a posture is explicitly resolved.
+ */
+export const LOCKED_POSTURE: EmploymentPosture = Object.freeze({
+  canExecute: false,
+  requiresApproval: true,
+});
+
+/**
+ * Resolve an employee's coarse autonomy stance from the ONE source D-04 reads — the
+ * `ai_employees.permissions` jsonb — mirroring `normalizePermissions` EXACTLY so the SDK
+ * and the employee model never disagree on the floor: `can_execute` is true only when set
+ * to literal `true`, and `requires_approval` is false only when set to literal `false`
+ * (so an absent/garbage value stays locked). Structurally typed (NOT bound to the
+ * `AiEmployee` model), the sibling of {@link resolveEmployeeCapabilities}: #015 can
+ * repoint the source by changing ONLY this function, leaving the {@link EmploymentPosture}
+ * the gate reads byte-for-byte identical. The result is frozen.
+ */
+export function resolveEmployeePosture(emp: {
+  permissions?: { can_execute?: boolean | null; requires_approval?: boolean | null } | null;
+}): EmploymentPosture {
+  const p = emp.permissions ?? {};
+  return Object.freeze({
+    canExecute: p.can_execute === true,
+    requiresApproval: p.requires_approval !== false,
   });
 }
 
@@ -236,6 +282,17 @@ export interface RunContext {
    * D-04 enforces; D-05 sources them). {@link EMPTY_CAPABILITIES} when none.
    */
   capabilities: ResolvedCapabilitySet;
+  /**
+   * The doorman (#014 / D-04, Phase B). Classify proposed actions against the current
+   * policy — employee posture (layer 1), capability scope (layer 2), the five P4 atoms
+   * (layer 3) — and ROUTE each by its verdict: an `autonomous` action is audited to the
+   * spine (best-effort `ai.action_permitted`), a `needs_approval` action is handed to the
+   * Approval Engine (`requestApproval`, correlation-threaded). Returns the verdicts in
+   * input order, so a handler can proceed on the autonomous ones and await the queued
+   * ones. The gate ({@link evaluateAction}) is PURE policy; this runtime supplies the
+   * MECHANISM the gate must never know about (the Policy vs Mechanism rule).
+   */
+  proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]>;
 }
 
 /**
@@ -271,6 +328,9 @@ export class NonRetryableError extends Error {
 export type { AiOutput, AiAction, AiAlternative, TaskResult } from "@/server/sdk/output";
 export type { BoundEvents, EmitInput, EmitOutcome } from "@/server/sdk/events";
 export type { BoundComms, SendInput } from "@/server/sdk/comms";
+// The #014 / D-04 Phase B doorman vocabulary, re-exported so a handler reads the gate's
+// declarative verdict types from the same one door as the rest of the SDK.
+export type { ProposedAction, GateVerdict, GateReason, EmploymentPosture } from "@/server/sdk/gate";
 
 // ---------------------------------------------------------------------
 // Standalone enqueue (any subsystem may create work — XII §11.2)
@@ -435,6 +495,69 @@ function createTasks(
 }
 
 /**
+ * Build the in-handler `ctx.proposeActions` doorman, bound to this run's policy inputs and
+ * its events facet (#014 / D-04, Phase B). For each proposed action it asks the PURE gate
+ * ({@link evaluateAction}) for a verdict, then supplies the MECHANISM the gate must never
+ * know about (the Policy vs Mechanism rule — Kernel Contract Map §2):
+ *
+ *   • `autonomous`     → audit the decision to the spine, BEST-EFFORT (`ai.action_permitted`;
+ *                        the events facet's `emit` never throws, so a spine hiccup cannot
+ *                        break the handler's primary work).
+ *   • `needs_approval` → hand off to the Approval Engine (`requestApproval`), threading the
+ *                        run's correlation; a refused/failed request THROWS (the throw-based
+ *                        ABI) so the runner records the run as a failure rather than silently
+ *                        dropping a side effect that needed a human.
+ *
+ * Verdicts are returned in input order. Deny-by-default is structural: posture, capabilities
+ * and budget are pre-resolved by {@link buildContext} (LOCKED_POSTURE / EMPTY_CAPABILITIES
+ * when the identity carries none), so a missing input routes to approval, never autonomy.
+ * Exported as the runtime-composition seam the unit suite drives directly (the sibling of
+ * {@link resolveEmployeePosture} / {@link createTasks}).
+ */
+export function createProposeActions(deps: {
+  identity: EmployeeIdentity;
+  posture: EmploymentPosture;
+  capabilities: ResolvedCapabilitySet;
+  budget: number;
+  correlationId: string;
+  events: BoundEvents;
+}): (actions: ProposedAction[]) => Promise<GateVerdict[]> {
+  const { identity, posture, capabilities, budget, correlationId, events } = deps;
+  return async function proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]> {
+    const verdicts: GateVerdict[] = [];
+    for (const action of actions) {
+      const verdict = evaluateAction(action, posture, capabilities, budget);
+      if (verdict.decision === "needs_approval") {
+        // MECHANISM (needs_approval): queue it for a human. Throw on refusal so the run
+        // fails rather than dropping a side effect the gate said a human must see.
+        const res = await requestApproval({
+          aiEmployeeId: identity.employeeId,
+          subjectType: action.subjectType,
+          subjectId: action.subjectId,
+          action: action.type,
+          proposedPayload: action.payload,
+          correlationId,
+        });
+        if (!res.ok) {
+          throw new Error(`ctx.proposeActions: requestApproval failed: ${res.error}`);
+        }
+      } else {
+        // MECHANISM (autonomous): audit the permitted decision. Best-effort — a failed
+        // append is logged by the facet, never raised, so the spine cannot block the work.
+        await events.emit({
+          verb: "ai.action_permitted",
+          objectType: action.subjectType,
+          objectId: action.subjectId,
+          payload: { action: action.type, capability: action.capability ?? null },
+        });
+      }
+      verdicts.push(verdict);
+    }
+    return verdicts;
+  };
+}
+
+/**
  * Assemble the RunContext for a claimed task and FREEZE it (ADR 0007 immutability).
  * `signal` and `deadline` are supplied by the runner, which owns their lifecycle —
  * the context only EXPOSES them. Freezing pins the contract fields for the whole
@@ -453,18 +576,33 @@ function buildContext(
     memoryScope: identity.memoryScope,
     currentTaskId: task.id,
   });
+  // The events facet is shared with the doorman below, so an autonomous verdict's audit
+  // emit (`ai.action_permitted`) lands as the same actor + correlation as everything else
+  // this run appends to the spine. Posture/capabilities/budget are resolved once and
+  // default to the deny-by-default floor when the identity carries none.
+  const events = createEvents({ slug: identity.slug }, task.correlation_id);
+  const capabilities = identity.capabilities ?? EMPTY_CAPABILITIES;
+  const budget = task.cost_budget_micros ?? 0;
   const ctx: RunContext = {
     task,
     identity,
     memory,
     tasks: createTasks(identity, task, leaseOwner),
-    events: createEvents({ slug: identity.slug }, task.correlation_id),
+    events,
     comms: createComms({ slug: identity.slug }, task.correlation_id),
+    proposeActions: createProposeActions({
+      identity,
+      posture: identity.posture ?? LOCKED_POSTURE,
+      capabilities,
+      budget,
+      correlationId: task.correlation_id,
+      events,
+    }),
     correlationId: task.correlation_id,
-    budget: task.cost_budget_micros ?? 0,
+    budget,
     deadline,
     signal,
-    capabilities: identity.capabilities ?? EMPTY_CAPABILITIES,
+    capabilities,
   };
   return Object.freeze(ctx);
 }

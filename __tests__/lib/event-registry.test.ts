@@ -44,12 +44,14 @@ describe("event-verb registry — single-source invariants", () => {
     // Changing these requires an ADR (Ch.20) + updating this test on purpose.
     // task.* (5) added under ADR 0005 (Directive #012 / D-02, PR-B); task.cancelled
     // (the 6th) added under ADR 0007 (Directive #013 / D-03, RunContext Runtime Contract).
-    expect(VERBS).toHaveLength(78);
+    // ai.action_permitted (ai → 11) added under ADR 0008 (Directive #014 / D-04, Phase B):
+    // the audit fact the runtime emits when the doorman permits an autonomous action.
+    expect(VERBS).toHaveLength(79);
     expect(VERB_GROUPS.org).toHaveLength(10);
     expect(VERB_GROUPS.billing).toHaveLength(9);
     expect(VERB_GROUPS.operations).toHaveLength(8);
     expect(VERB_GROUPS.support).toHaveLength(5);
-    expect(VERB_GROUPS.ai).toHaveLength(10);
+    expect(VERB_GROUPS.ai).toHaveLength(11);
     expect(VERB_GROUPS.approval).toHaveLength(6);
     expect(VERB_GROUPS.memory).toHaveLength(5);
     expect(VERB_GROUPS.comm).toHaveLength(6);
