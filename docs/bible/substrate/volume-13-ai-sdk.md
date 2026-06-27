@@ -107,7 +107,7 @@ onto `ctx` on its own, never by reaching into a sibling.
 | The unified **`ctx` ABI** (memory/comms/events/tasks/tools/api) | **To build** | one typed surface over IX–XII + gateway. |
 | **Cost metering** + budgets | **To build** | `cost_micros` plumbing + the API gateway. |
 | **API gateway** (LLM/Twilio/… metered, audited, rate-limited) | **To build** | the only path to an external API. |
-| **Approval framework** wiring (P4 at the ABI) | **To build** | `proposeActions()` → XII checkpoint. |
+| **Approval framework** wiring (P4 at the ABI) | **Partial** | The **doorman** is built (#014 Phase B): the pure gate `server/sdk/gate.ts` (`evaluateAction`) + `ctx.proposeActions` route each proposed action by verdict — autonomous → audited (`ai.action_permitted`), needs-approval → the Approval Engine checkpoint (XII §8). The **executor** that applies an approved action (a typed tool acting) is Phase C. |
 | **Versioning / lifecycle / health** | **To build** | employee versions, register→retire, heartbeat. |
 
 **Net:** identity, config, permissions, tools (as labels), memory scope and
@@ -232,6 +232,16 @@ The permission check is **in the SDK and re-asserted in the SQL entry point**
 (defence in depth): even a buggy SDK can't get an unpermitted write past the
 `SECURITY DEFINER` guard (P5). Read calls are scoped too (memory permission
 matrix, X §6).
+
+**Built — the doorman (#014 Phase B).** This gate is now a **pure function**:
+`server/sdk/gate.ts` `evaluateAction(action, posture, capabilities, budget) →
+GateVerdict` composes the three layers above into one declarative verdict (POLICY,
+no I/O, imports no facet). The runtime composes it onto the context: `ctx.proposeActions`
+(`server/sdk/tasks.ts`) routes each verdict by its decision — autonomous → a best-effort
+`ai.action_permitted` audit; needs-approval → the Approval Engine checkpoint (XII §8),
+correlation-threaded — the MECHANISM the gate never knows (the Policy vs Mechanism rule,
+Kernel Contract Map §2). Phase B **classifies and routes**; it does not yet `apply(action)`
+— the executor (a typed tool acting on a permitted/approved action) is Phase C.
 
 ## 9. Inputs *(dimension 4)*
 
@@ -596,6 +606,16 @@ every dimension is real, not aspirational:
 The *current* employee already does the domain work; the SDK is what makes the
 **next** ten employees cost a configuration, not a project (C1) — and makes this
 one's autonomy, cost, and audit uniform with all of them.
+
+**Validated through the doorman (#014 Phase B B3).** An acceptance test
+(`__tests__/sdk/reference-employee.test.ts`) casts this reference employee as the
+first caller of `ctx.proposeActions` and drives it through the *real* runner, proving
+the two verdict paths resolve end to end: a reversible HQ-internal write →
+**autonomous**, audited to the spine as `ai.action_permitted` (the bound actor stamped,
+never spoofed); an irreversible customer-facing send → **parked** as a pending approval;
+and, with no posture resolved, the locked floor parks **both** (deny-by-default). The
+blueprint's autonomy is now enforced by source, not merely asserted — and it still only
+**classifies** (Phase B has no executor; applying an approved action is Phase C).
 
 ---
 
