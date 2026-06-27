@@ -1,17 +1,22 @@
 # CrewFlow Governance — Directive #014 (D-04) **Phase C** Architecture Proposal: the Executor
 
-> **Status:** **Proposed · held for CEO review.** This document presents the architecture for
-> **Directive #014 / D-04, Phase C — the executor: the typed tool registry, the step that
-> *applies* a permitted action, and the approval-completion flow that applies an action a human
-> has granted.** It is the step the CEO authorised after Phase B completed: *"Before
-> implementation begins, present the complete Phase C architecture proposal for review. Phase C
-> must clearly define: executor responsibilities, execution lifecycle, approval completion flow,
-> event sequencing, failure semantics, retry interaction, rollback expectations, boundaries with
-> the Generic Task Engine. No implementation is authorised until that proposal has been reviewed
-> and approved."* The document itself changes no code, schema, migration, configuration, or git
-> history; it is the governance record the Phase C implementation PRs will build upon. **§3
-> answers the CEO's eight required definitions, each in its own subsection.** §9 is reserved for
-> the review outcome.
+> **Status:** **Approved** *(CEO independent CTO review)* — Phase C implementation **authorised
+> but gated**: it does **not** begin until **[ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md)
+> (SDK Executor and Apply-on-Approval Runtime)** has been written, reviewed and approved; see
+> **§9** for the outcome, the five **architectural rulings** (out-of-band apply-on-approval ·
+> separate applied marker · inherited re-check at the execution boundary · granular failure
+> records · clear event sequencing), and the small-increment implementation gate. This document
+> presents the architecture for **Directive #014 / D-04, Phase C — the executor: the typed tool
+> registry, the step that *applies* a permitted action, and the approval-completion flow that
+> applies an action a human has granted.** It was the step the CEO authorised after Phase B
+> completed: *"Before implementation begins, present the complete Phase C architecture proposal
+> for review. Phase C must clearly define: executor responsibilities, execution lifecycle,
+> approval completion flow, event sequencing, failure semantics, retry interaction, rollback
+> expectations, boundaries with the Generic Task Engine. No implementation is authorised until
+> that proposal has been reviewed and approved."* The document itself changes no code, schema,
+> migration, configuration, or git history; it is the governance record the now-gated Phase C
+> implementation PRs build upon. **§3 answers the CEO's eight required definitions, each in its
+> own subsection.** §9 records the review outcome.
 >
 > **Phase context.** The phased plan accepted in
 > **[ADR 0008](../decisions/0008-ai-sdk-envelope.md)** (Decision 10) is **A** (`events` +
@@ -45,7 +50,7 @@ This proposal is governed by the **engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2** and accumulated across this directive: the
 **Facet Isolation Rule** and the *facets-expose-capability / the-runtime-composes-it* principle
 (Phase A); the **Policy vs Mechanism Rule** and the **Runtime Composition Rule** (Phase B); and
-the **Reference Path Rule** introduced on the Phase B B3 review (PR #217, under review). Phase C
+the **Reference Path Rule** introduced on the Phase B B3 review (PR #217, merged). Phase C
 is the **first test of the Reference Path Rule as a deliverable**: the new capability — *applying*
 an action — must be proven end-to-end through the **Reference Employee** before the platform
 expands on it (§3.10, §6 C4). **The proposal proposes; it does not build.**
@@ -654,7 +659,71 @@ not begin until Phase C has a completion record and CEO review.**
 
 ## 9. CEO review outcome
 
-*Reserved for the CEO's independent CTO review of this proposal.*
+The CEO completed an independent CTO review of this proposal. **Outcome: the Directive #014
+Phase C architecture is approved** — *"The Phase C proposal correctly separates classification
+from execution. Phase B decided what is permitted. Phase C defines how permitted actions become
+real effects. This is the correct next architectural step."* The approval carries **one
+structural requirement** — a new ADR before any code — and **settles every fork in §7**. The
+review also accepted the **Reference Path Rule** (PR #217, merged), the standard this proposal
+leans on and first puts to deliverable use (§3.10, §6 C4).
+
+**The ADR requirement — ADR 0009, written and approved before implementation.** The CEO ruled
+that Phase C *"introduces the first executor and apply-on-approval flow … significant enough to
+require a new ADR,"* and directed: **"Proceed with ADR 0009 — SDK Executor and Apply-on-Approval
+Runtime. Do not implement Phase C until ADR 0009 has been written, reviewed and approved."** This
+settles §7.6 — the one structural question this proposal escalated — **yes**: unlike Phases A and
+B, which rode ADR 0008, Phase C gets its own decision record under the strict
+*document-before-you-build* rule (as for ADRs 0007/0008).
+[**ADR 0009**](../decisions/0009-sdk-executor-apply-on-approval.md) records the executor
+contract, the idempotency model, and the apply-on-approval mechanics; it is registered in
+[numbering.md](./numbering.md) §5 and is itself **held for CEO review** before any Phase C code.
+
+**Approved direction (the load-bearing architecture).** Each thesis-level decision is approved
+explicitly: the **typed tool registry**; the **executor as a runtime-owned mechanism** (not a
+facet); **the tool registry *describes* capability** while **the Capability Registry *authorises*
+it later in Directive #015**; the **Approval Engine remains frozen**, with **applied state
+separate from approval state — no sixth approval state**; **retry safety through idempotency**;
+**rollback by limiting irreversible work through approval**; and **Phase D remains responsible for
+the external-provider gateway and live metering**. This ratifies the thesis (§2) and the
+over-engineering traps it named (§3.11) point for point.
+
+**Architectural decisions — the five rulings, mapped to §7.** The CEO directed: *"Use: out-of-band
+apply-on-approval; separate applied marker; inherited re-checking at execution boundary; granular
+failure records; clear event sequencing. Do not reopen the Approval Engine state machine. Do not
+expand Phase C into Phase D."* Each settles a §7 fork as the proposal recommended:
+
+1. **Out-of-band apply-on-approval** (§7.1) — a separate executor trigger over `approved` rows;
+   the `waiting_approval` task transition stays **deferred**, exactly as ADR 0008 Decision 8 drew.
+2. **Separate applied marker** (§7.2) — a distinct application/idempotency record; "applied" is
+   **not** a sixth approval state, and the Approval Engine's five-state machine is **not
+   reopened** (the explicit *"do not reopen"*).
+3. **Inherited re-checking at the execution boundary** (§7.4) — the `SECURITY DEFINER` re-check
+   lands at each tool's bound subsystem boundary (§3.9), the defence-in-depth Phase B deferred to
+   "the phase that has both an executor and a registry."
+4. **Granular failure records** (§7.5) — per-action failure is recorded (throw-by-default with a
+   typed result available), so a human-required side effect is **never silently dropped**.
+5. **Clear event sequencing** (§7.3) — the permission/approval event always precedes the
+   application event, reusing the registered `ai.tool_called` (§3.4).
+
+The two boundary instructions are standing: **do not reopen the Approval Engine state machine**
+(§3.3; trap d) and **do not expand Phase C into Phase D** (§3.11 traps b/c — no API gateway, no
+external provider call, no Capability Registry).
+
+**Implementation gate — small reviewable increments, after ADR 0009.** Implementation begins
+**only after ADR 0009 is approved**, then proceeds *"in small reviewable increments … the
+smallest safe slice,"* which maps to the proposal's within-Phase-C phasing (§6):
+
+1. **Tool registry contract** (C1) — the typed registry over `tools_allowed`, descriptive only.
+2. **Executor contract** (C2) — the autonomous apply + the `SECURITY DEFINER` re-check +
+   idempotent retry.
+3. **Apply-on-approval marker** (C3) — the out-of-band step + the separate applied record.
+4. **Reference Path execution test** (C4) — the extended Reference Employee, the Reference Path
+   Rule's first deliverable use.
+
+The CEO set explicit guardrails on the slice: **no broad executor rollout, no new employee
+migration, no Capability Registry, no API Gateway**, and **maintain full validation discipline**
+(the six-gate bar, §3.10). **Phase D (the API gateway + live cost metering) does not begin until
+Phase C has a completion record and CEO review.**
 
 ---
 
@@ -666,5 +735,5 @@ comms + the output envelope), and the Phase-B doorman (the pure gate + `proposeA
 Approval-Engine hand-off). It implements ADR 0008 Decision 6 and the execution half of Decision 8,
 and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
-and Runtime Composition Rules, and the Reference Path Rule (PR #217, under review). The CEO's
+and Runtime Composition Rules, and the Reference Path Rule (PR #217, merged). The CEO's
 review outcome is recorded in §9.*
