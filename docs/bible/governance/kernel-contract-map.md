@@ -125,6 +125,35 @@ recalled ids into the handler's output without either the memory facet or the ou
 envelope importing the other). Its architectural form is the §4 boundary: **facets expose
 capability; the runtime composes it.**
 
+### The Policy vs Mechanism Rule
+
+A **fifth** standard, set by CEO directive on the review of **Directive #014 Phase B** (the
+permission gate — "the doorman"; independent CTO review). Where the Facet Isolation Rule
+governs how facets relate to **one another**, this one governs how **enforcement** relates to
+**execution** — the seam between *deciding what is permitted* and *carrying it out*:
+
+> **The gate defines policy. The runtime provides mechanism. The gate should never know how
+> approvals are requested, how events are emitted, or how communications are sent. The gate
+> answers only: "What is permitted under the current policy?"**
+
+It is the **gate-specific sharpening** of *facets expose capability; the runtime composes it*
+(§4.2): the permission gate (`server/sdk/gate.ts`, Phase B) is a **pure predicate** —
+`evaluateAction(action, posture, capabilities, budget) → GateVerdict` — that returns a
+**declarative** verdict (`{ decision, reasons }`) and **imports no facet, performs no I/O, and
+triggers no side effect**. The verdict *represents* policy; the **runtime consumes it and
+determines the mechanism** — auditing an autonomous decision through the `events` facet, or
+handing a non-autonomous one to the Approval Engine via `requestApproval`. Keeping the gate
+free of mechanism is what makes it **deterministic, pure, independently testable, and
+reusable**, and it is the structural reason the gate is not a facet (it composes nothing) and
+`proposeActions` is not a facet (the runtime owns the composition).
+
+**Forward compatibility:** the gate's *inputs* may evolve — the Capability Registry (Directive
+**#015**) becomes another **information source** for the `capabilities` (and posture) the gate
+reads — but the **gate interface itself stays stable**: its responsibilities do not change when
+its source does. This is **#013 threads · #014 enforces · #015 sources** applied at the gate,
+and the §2 **SDK ABI Principle** (a stable interface over a moving implementation) made
+concrete one layer down.
+
 ---
 
 ## 3. The contract map
@@ -219,6 +248,13 @@ the kernel fork into per-employee special cases:
    *combined* is the runner — so the facade stays a flat set of independent views, and
    sequencing logic (e.g. the Phase A evidence-drain) lives in the OS, never smuggled into a
    facet.
+
+   **Policy ≠ mechanism** — the same boundary at the *enforcement* seam (§2 **Policy vs
+   Mechanism Rule**, set on the Directive #014 Phase B review). The permission gate states
+   *what is permitted* (a pure, declarative `GateVerdict`); the runtime decides *how* to act on
+   that verdict (audit an autonomous decision, or request approval for a non-autonomous one).
+   So the most security-critical code stays a pure, testable leaf the OS composes — the gate
+   never reaches for a facet, and `proposeActions` (the composition) lives in the runner.
 3. **The Event Spine observes; it does not own meaning.** Producers own verb semantics;
    the Spine guarantees only that the record is append-only and the vocabulary is closed.
 4. **Approval decides; the Task Engine gates.** An approval outcome is a decision
