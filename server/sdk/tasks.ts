@@ -12,6 +12,12 @@ import {
   type TaskRow,
 } from "@/server/services/hq-tasks";
 import { createMemory, type BoundMemory } from "@/server/sdk/memory";
+import { createEvents } from "@/server/sdk/events";
+import { createComms } from "@/server/sdk/comms";
+import { drainEvidenceInto } from "@/server/sdk/output";
+import type { BoundEvents } from "@/server/sdk/events";
+import type { BoundComms } from "@/server/sdk/comms";
+import type { TaskResult } from "@/server/sdk/output";
 import type { MemoryScope } from "@/lib/ai-employees/model";
 
 /**
@@ -45,6 +51,12 @@ import type { MemoryScope } from "@/lib/ai-employees/model";
  * `signal` aborts on cancellation or deadline, and `capabilities` threads the
  * employee's opaque tokens — exposed, never enforced or metered here. The OS owns
  * execution state; the assembled context is FROZEN and handlers only consume it.
+ *
+ * #014 / D-04 (Phase A; ADR 0008) EXTENDS this context with two more facets — `events`
+ * (append to the Event Spine as this employee) and `comms` (deliver APPROVED drafts) —
+ * and graduates the handler return type to the standard output envelope (Volume XIII
+ * §10), with the runner draining the memory facet's evidence into it at completion. The
+ * additions are ADDITIVE: the frozen contract and the existing facets are unchanged.
  *
  * Invocation model: claim-one-and-exit (not a long-running loop). A cron tick
  * calls `runEmployee`/`drainTaskType`, which claims ready tasks one at a time and
@@ -166,9 +178,10 @@ export interface BoundTasks {
  * graduates to Established (CEO Directive #013; ADR 0007). The runner assembles it at
  * claim and hands it to the handler as its SOLE argument; it is FROZEN
  * (`Object.freeze`) so identity, correlationId, budget, deadline, signal and
- * capabilities are stable for the whole invocation. The facets present are `memory`
- * and `tasks`; comms, tools, the API gateway, cost metering, the approval runtime,
- * autonomy and verification remain later directives that EXTEND this context.
+ * capabilities are stable for the whole invocation. The facets present are `memory`,
+ * `tasks`, `events` and `comms` (the last two added under #014 / D-04, Phase A); tools,
+ * the API gateway, cost metering, the approval runtime, autonomy and verification remain
+ * later directives that EXTEND this context.
  *
  * Execution-state ownership (ADR 0007): the OS / Task Engine OWNS cancellation,
  * deadlines, budget, leases and retries. RunContext only EXPOSES them read-only; a
@@ -184,6 +197,18 @@ export interface RunContext {
   memory: BoundMemory;
   /** Create follow-up tasks / checkpoint — create + checkpoint only (rule 3). */
   tasks: BoundTasks;
+  /**
+   * Append events to the Event Spine AS this employee (#014 / D-04, Phase A). Stamps
+   * the bound actor + the run's correlation on every emission; BEST-EFFORT — `emit`
+   * returns an outcome and never throws (the spine is best-effort by design).
+   */
+  events: BoundEvents;
+  /**
+   * Deliver APPROVED drafts + read delivery history (#014 / D-04, Phase A). Every send
+   * is approval-gated (the Approval Engine + the DB trigger are the boundary) and never
+   * autonomous; failure throws (throw-based ABI).
+   */
+  comms: BoundComms;
   /** The task's spine trace id — thread it through anything downstream. */
   correlationId: string;
   /**
@@ -216,11 +241,17 @@ export interface RunContext {
 /**
  * The unit of employee code. Receives the context, does business logic ONLY
  * (rule 5), and signals outcome by its return/throw:
- *   • return a result object (or void) → the runner completes the task with it;
- *   • throw                            → the runner fails the task (retryable
- *     unless it throws {@link NonRetryableError}).
+ *   • return a result (or void) → the runner completes the task with it, after draining
+ *     the memory facet's evidence into the result envelope (XIII §10);
+ *   • throw                     → the runner fails the task (retryable unless it throws
+ *     {@link NonRetryableError}).
+ *
+ * The canonical return shape is the standard output envelope `AiOutput` (#014 / D-04,
+ * Phase A). {@link TaskResult} stays a WIDE superset of the legacy free-form result, so
+ * graduating to the envelope NARROWS nothing a handler returned before (ADR 0008 SDK
+ * Stability Rule).
  */
-export type TaskHandler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
+export type TaskHandler = (ctx: RunContext) => Promise<TaskResult | void>;
 
 /**
  * Throw this from a handler to mark a failure as TERMINAL (no retry) regardless
@@ -234,6 +265,12 @@ export class NonRetryableError extends Error {
     this.name = "NonRetryableError";
   }
 }
+
+// The #014 / D-04 (Phase A) handler-facing types, re-exported so the SDK stays the one
+// door: a handler imports its whole vocabulary from `@/server/sdk/tasks`.
+export type { AiOutput, AiAction, AiAlternative, TaskResult } from "@/server/sdk/output";
+export type { BoundEvents, EmitInput, EmitOutcome } from "@/server/sdk/events";
+export type { BoundComms, SendInput } from "@/server/sdk/comms";
 
 // ---------------------------------------------------------------------
 // Standalone enqueue (any subsystem may create work — XII §11.2)
@@ -421,6 +458,8 @@ function buildContext(
     identity,
     memory,
     tasks: createTasks(identity, task, leaseOwner),
+    events: createEvents({ slug: identity.slug }, task.correlation_id),
+    comms: createComms({ slug: identity.slug }, task.correlation_id),
     correlationId: task.correlation_id,
     budget: task.cost_budget_micros ?? 0,
     deadline,
@@ -493,7 +532,7 @@ async function runClaimedTask(
     if (deadlineTimer) clearTimeout(deadlineTimer);
   };
 
-  let result: Record<string, unknown> | void;
+  let result: TaskResult | void;
   try {
     result = await handler(ctx);
   } catch (err) {
@@ -513,6 +552,9 @@ async function runClaimedTask(
   }
   cleanup();
 
+  // Evidence-drain (XIII §10): fold the memory facet's recalled ids into the result
+  // envelope's `evidence[]` before completion — provenance for free, zero handler code.
+  result = drainEvidenceInto(result, ctx.memory.evidence());
   const completed = await completeTask(task.id, leaseOwner, result ?? null);
   if (!completed.ok) {
     if (completed.reason === "lease_lost") return { status: "lease_lost", taskId: task.id };

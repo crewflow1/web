@@ -68,6 +68,38 @@ function makeTask(over: Row = {}): Row {
   };
 }
 
+/**
+ * A complete candidate row as hq_memory_recall projects it (snake_case) — used by the
+ * evidence-drain proofs, where the handler recalls through the REAL memory facet and the
+ * runner folds the recalled ids into the result's `evidence[]` (XIII §10).
+ */
+function memRow(over: Row = {}): Row {
+  return {
+    id: "m1",
+    memory_class: "semantic",
+    memory_type: "fact",
+    title: "Pricing tiers",
+    summary: "Three tiers: starter, pro, scale.",
+    visibility: "public_hq",
+    department: null,
+    owner_employee_id: null,
+    importance: "normal",
+    salience: 50,
+    pinned: false,
+    access_count: 0,
+    consolidated_into: null,
+    version: 1,
+    created_at: "2026-06-01T00:00:00.000Z",
+    last_reinforced_at: null,
+    ts_rank: 0.9,
+    structural_match: 0,
+    cos_sim: null,
+    body_tokens: 5,
+    summary_tokens: 2,
+    ...over,
+  };
+}
+
 /** Args of the first rpc() call to `fn` (or undefined). */
 function argsFor(fn: string): Row | undefined {
   const call = rpcMock.mock.calls.find((c) => c[0] === fn);
@@ -574,5 +606,94 @@ describe("createTask — standalone enqueue", () => {
   it("throws when the enqueue fails (the SDK ABI is throw-based)", async () => {
     rpcMock.mockImplementation(() => ({ data: null, error: { message: "boom" } }));
     await expect(createTask({ taskType: "x" })).rejects.toThrow(/tasks.create failed: boom/);
+  });
+});
+
+// =====================================================================
+// D-04 / #014 Phase A — the events + comms facets join the RunContext, and the
+// runner DRAINS the memory facet's recalled ids into the result's evidence[].
+// =====================================================================
+
+describe("RunContext — D-04 facets (events + comms) present and identity-bound", () => {
+  it("exposes ctx.events.emit and ctx.comms.send on the still-frozen context", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+    });
+
+    let seen: RunContext | undefined;
+    await runReadyTask("t", async (ctx) => {
+      seen = ctx;
+    }, IDENTITY);
+
+    expect(typeof seen!.events.emit).toBe("function");
+    expect(typeof seen!.comms.send).toBe("function");
+    // Both facets are bound to THIS employee's slug (the no-spoof identity).
+    expect(seen!.events.identity.slug).toBe("research-ai");
+    expect(seen!.comms.identity.slug).toBe("research-ai");
+    // Still the frozen D-03 contract — D-04 only ADDS facets.
+    expect(Object.isFrozen(seen)).toBe(true);
+  });
+});
+
+describe("evidence-drain — the runner folds recalled ids into the result envelope (XIII §10)", () => {
+  it("auto-fills evidence[] from what the handler recalled, preserving its result fields", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      if (fn === "hq_memory_recall")
+        return {
+          data: [memRow({ id: "a1", ts_rank: 0.9 }), memRow({ id: "a2", ts_rank: 0.8 })],
+          error: null,
+        };
+      if (fn === "hq_ai_task_complete")
+        return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+      return { data: null, error: null };
+    });
+
+    await runReadyTask("t", async (ctx) => {
+      await ctx.memory.recall({ query: "pricing" });
+      return { verdict: "done" };
+    }, IDENTITY);
+
+    // The handler never touched evidence; the runner folded the recall's ids in for free.
+    expect(argsFor("hq_ai_task_complete")).toMatchObject({
+      p_task_id: "task-1",
+      p_result: { verdict: "done", evidence: ["a1", "a2"] },
+    });
+  });
+
+  it("a handler that recalls but returns VOID still completes with a synthesised { evidence } envelope", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      if (fn === "hq_memory_recall") return { data: [memRow({ id: "z1" })], error: null };
+      if (fn === "hq_ai_task_complete")
+        return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+      return { data: null, error: null };
+    });
+
+    await runReadyTask("t", async (ctx) => {
+      await ctx.memory.recall({ query: "pricing" });
+    }, IDENTITY);
+
+    // Provenance is never silently dropped: a void return becomes a minimal envelope.
+    expect(argsFor("hq_ai_task_complete")!.p_result).toEqual({ evidence: ["z1"] });
+  });
+
+  it("a handler that never reads memory completes with its result UNCHANGED (no evidence key)", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      if (fn === "hq_ai_task_complete")
+        return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+      return { data: null, error: null };
+    });
+
+    await runReadyTask("t", async () => ({ verdict: "done" }), IDENTITY);
+
+    // The drain is a no-op with nothing recalled: no evidence key is invented.
+    expect(argsFor("hq_ai_task_complete")!.p_result).toEqual({ verdict: "done" });
   });
 });
