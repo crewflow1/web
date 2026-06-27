@@ -154,6 +154,31 @@ its source does. This is **#013 threads · #014 enforces · #015 sources** appli
 and the §2 **SDK ABI Principle** (a stable interface over a moving implementation) made
 concrete one layer down.
 
+### The Runtime Composition Rule
+
+A **sixth** standard, set by CEO directive on the review of **Directive #014 Phase B B2** (the
+runtime composition that turned the pure gate into the doorman; independent CTO review). It is
+the **explicit generalisation** of the Facet Isolation Rule: where that rule forbids a facet from
+reaching *sideways* into a sibling, this one states the positive principle it implies —
+**composition is the runtime's exclusive responsibility**:
+
+> **The runtime is the only component permitted to combine multiple kernel capabilities into
+> higher-level behaviour (e.g. policy + approvals, policy + events, policy + communications). SDK
+> facets remain capability providers; the runtime remains the orchestrator. No SDK facet may
+> orchestrate another SDK facet directly.**
+
+`ctx.proposeActions` (Phase B B2, `server/sdk/tasks.ts`) is the worked example: it combines the
+pure gate's **policy** (`evaluateAction → GateVerdict`) with two **mechanisms** — the `events`
+facet's audit emit for an autonomous verdict, the Approval Engine's `requestApproval` for a
+non-autonomous one — into the higher-level *doorman* behaviour. That composition lives in the
+runner, never in a facet, which is the same structural reason the gate is not a facet and
+`proposeActions` is not a facet (§4.2; the Policy vs Mechanism Rule). The three horizontal rules
+**stack**: **Facet Isolation** forbids sideways coupling, **Policy vs Mechanism** separates
+deciding from doing, and **Runtime Composition** names the one place the two are recombined — the
+OS. A facet that orchestrated another would not merely couple two primitives (the Facet Isolation
+breach) but relocate *operating-system behaviour* into a capability provider, re-introducing the
+per-employee forking the kernel exists to prevent.
+
 ---
 
 ## 3. The contract map
@@ -244,10 +269,12 @@ the kernel fork into per-employee special cases:
    on the review of Directive #014 Phase A: *"SDK facets expose capability. The runtime
    composes capability. Cross-facet orchestration should remain inside the runtime rather
    than inside individual SDK modules."* This is the architectural form of the §2 **Facet
-   Isolation Rule**: because no facet depends on another, the only place capabilities are
-   *combined* is the runner — so the facade stays a flat set of independent views, and
-   sequencing logic (e.g. the Phase A evidence-drain) lives in the OS, never smuggled into a
-   facet.
+   Isolation Rule** and, stated positively, the §2 **Runtime Composition Rule** (set on the
+   Phase B B2 review — the runtime is the *only* component that combines kernel capabilities into
+   higher-level behaviour): because no facet depends on another, the only place capabilities are
+   *combined* is the runner — so the facade stays a flat set of independent views, and sequencing
+   logic (e.g. the Phase A evidence-drain, the Phase B doorman `ctx.proposeActions`) lives in the
+   OS, never smuggled into a facet.
 
    **Policy ≠ mechanism** — the same boundary at the *enforcement* seam (§2 **Policy vs
    Mechanism Rule**, set on the Directive #014 Phase B review). The permission gate states
