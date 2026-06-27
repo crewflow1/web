@@ -497,10 +497,56 @@ not begin until #014 has a completion report and CEO review.
 
 ## 9. CEO review outcome
 
-*Reserved. To be recorded here after the CEO's independent review, in the manner of the
-[#013 proposal](./directive-013-runcontext-architecture-proposal.md) §9 — capturing any
-architectural amendments, the scope-fork rulings from §7, the ADR acceptance, and the
-implementation authorisation.*
+The CEO completed an independent CTO review of this proposal. **Outcome: the Directive
+#014 AI SDK Envelope architecture is approved** — the proposed **scope**, **phasing**, and
+**dependency ordering** are each approved — with **one architectural clarification** and
+**two additional standing rules**, all three to be **incorporated into ADR 0008 before any
+implementation begins**.
+
+**The five §7 scope forks are resolved in favour of the proposal's recommendations:**
+
+1. **The API gateway stays in #014, phased last** — *with* the strict architectural
+   boundary in the clarification below.
+2. **The approval boundary stands as proposed:** #014 builds the P4 autonomy classifier +
+   `proposeActions` + the hand-off to the built Approval Engine (contract #6); the
+   task-lifecycle approval *mechanics* (`approval_status` transition) + verification defer
+   to their own directive.
+3. **Versioning / lifecycle / health are deferred** (outside the #014 scope).
+4. **The `inbound?` slot is reserved additively; inter-employee delivery (contract #10) is
+   not built in #014.**
+5. **The Volume XIII §24 standing questions** (runtime topology, model/provider strategy,
+   delegation limits) are **not #014** — noted for a future ruling.
+
+**Three architectural decisions carried into ADR 0008:**
+
+1. **The API Gateway ↔ SDK boundary (clarification).** The boundary between the two must
+   stay clear. **The API Gateway owns** external integration, authentication,
+   authorisation *of the external call*, rate limiting, and request auditing. **The SDK
+   owns** developer-facing abstractions, typed interfaces, and platform ergonomics. **The
+   SDK consumes the API Gateway**; the API Gateway **never becomes an SDK implementation
+   detail** (it is a separable component the SDK calls, not an internal of it). This makes
+   the gateway's *future* extraction into its own directive/service a non-breaking move.
+2. **The Tool Registry Principle (new standing rule).** **Tools describe capability; the
+   Capability Registry authorises capability.** The Tool Registry must **never** become the
+   authorisation system — **authorisation remains the responsibility of Directive #015**.
+   (This is a distinct authorisation from the gateway's call-level gating in (1): #015
+   authorises *whether an employee may hold a capability at all*; the gateway authorises
+   *whether a given external call is within budget/rate/provider limits*. The two compose;
+   neither is the Tool Registry.)
+3. **The SDK Stability Rule (new engineering standard).** **The AI SDK is the primary
+   developer interface to the CrewFlow Operating System.** Backward compatibility is a
+   **design goal**; breaking SDK changes are **rare, documented, and justified through ADRs**
+   when appropriate. Homed alongside the kernel-stability principle in the [Kernel Contract
+   Map](./kernel-contract-map.md) §2 (the engineering-standards section) and formalised in
+   ADR 0008.
+
+**Authorisation.** Proceed with **ADR 0008** (the AI SDK Envelope) incorporating the three
+decisions above. **Directive #014 implementation does not begin until ADR 0008 has been
+reviewed and approved.** The established engineering discipline (§3.12) is maintained
+throughout. PR #207 (the Kernel Contract Map + the standing principle) was **approved and
+merged**, with the CEO's standing instruction that the map and the Architecture Freeze
+remain a **synchronised pair** (updated together whenever a kernel contract changes) now
+encoded in both documents.
 
 ---
 
