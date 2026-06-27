@@ -54,6 +54,17 @@ system is, the governance records describe *how decisions about it are tracked*.
   employee-specific code added · infrastructure removed · platform-vs-employee trend) to
   make the CEO's thesis — *platform capability grows, employee complexity shrinks* —
   visible and auditable over time. Inaugurated with the Directive #012 entry.
+- **[`kernel-contract-map.md`](./kernel-contract-map.md)** — a **permanent engineering
+  reference** (not an ADR, not implementation): a single-page overview of the CrewFlow
+  Operating System **kernel** — the six frozen contracts every employee inherits (Event
+  Spine · Shared Memory · Approval Engine · Generic Task Engine · RunContext · AI SDK),
+  each mapped by **Owns / Exposes / Consumes / Explicitly does not own**, plus the four
+  boundaries that must not blur. Records the standing **engineering principle** that
+  governs them — *kernel contracts grow more stable, employee implementations grow
+  easier to change; platform maturity is the stability of the kernel and the simplicity
+  of the employees built upon it* — for which [`platform-reuse-index.md`](./platform-reuse-index.md)
+  is the metric. Instituted on the completion of Directive #013, before #014
+  implementation begins.
 - **[`directive-013-dependency-ordering-analysis.md`](./directive-013-dependency-ordering-analysis.md)** —
   a **dependency analysis & recommendation** (not a decision; renumbers nothing)
   answering whether a **Capability Registry can be designed before the `RunContext`
