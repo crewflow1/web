@@ -155,6 +155,12 @@ the kernel fork into per-employee special cases:
 - **[Architecture Freeze](./architecture-freeze.md)** — governs *how* these contracts
   may change (ADR + architectural review, same PR). The Freeze is the **lock**; this
   map is the **diagram**. The six kernel layers are frozen contracts `#1`–`#6`.
+  **Synchronisation rule (CEO directive, on approval of this map):** the Freeze and this
+  map are a **bound pair** and must stay synchronised. Whenever a kernel contract changes
+  — its status (*Established / Partial / Reserved*), its surface, or any of its
+  **Owns / Exposes / Consumes / Does-not-own** boundaries — **both documents are updated
+  together, in the same PR** as the ADR + architectural review the change already
+  requires. The lock and the diagram never drift apart.
 - **[Platform Reuse Index](./platform-reuse-index.md)** — the **metric** for the §2
   principle: it scores every directive on platform-capability-added vs employee
   complexity, the measurable face of "kernel stable, employees simple."
