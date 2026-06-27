@@ -3,12 +3,13 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * CrewFlow HQ — Directive #014 Phase A SDK-facet trust-boundary invariants
- * (CEO Directive #014 / D-04, Phase A; ADR 0008; Bible Volume XIII §10/§12/§13).
+ * CrewFlow HQ — Directive #014 SDK trust-boundary invariants
+ * (CEO Directive #014 / D-04, Phases A & B; ADR 0008; Bible Volume XIII §8/§10/§12/§13).
  *
- * Phase A graduates the SDK envelope and adds two facets — events + comms. These pin
- * the load-bearing properties as a matter of SOURCE, not discipline. Each fact below,
- * and what breaks if it silently flips:
+ * Phase A graduates the SDK envelope and adds two facets — events + comms; Phase B adds the
+ * doorman — the pure permission gate (server/sdk/gate.ts). These pin the load-bearing
+ * properties as a matter of SOURCE, not discipline. Each fact below, and what breaks if it
+ * silently flips:
  *
  *   • events stamps actor_type:"ai_employee" + actor_id = identity.slug on EVERY emit,
  *     and EmitInput carries NO actorType/actorId — there is no parameter to emit as a
@@ -25,6 +26,10 @@ import { resolve } from "node:path";
  *     I/O, so the timeline / Boardroom UI may import the result types (XIII §10).
  *   • the runner wires both facets onto the RunContext and runs the evidence-drain
  *     BEFORE completion — provenance is folded in, not left to handler discipline.
+ *   • the gate (Phase B) is a PURE policy leaf — gate.ts carries no `server-only`, imports no
+ *     facet, performs no I/O, and triggers no mechanism (the Policy vs Mechanism rule). An
+ *     inlined approval/emit or a sideways facet import would make the most security-critical
+ *     code in the SDK impure and un-auditable, breaking deny-by-default as a property of source.
  *
  * Comment text is stripped first, so the prose that DOCUMENTS the contract can neither
  * satisfy a positive match nor trip a negative one.
@@ -43,6 +48,7 @@ function codeOf(ts: string): string {
 const OUTPUT = "server/sdk/output.ts";
 const EVENTS = "server/sdk/events.ts";
 const COMMS = "server/sdk/comms.ts";
+const GATE = "server/sdk/gate.ts";
 const SDK = "server/sdk/tasks.ts";
 
 // =====================================================================
@@ -159,5 +165,52 @@ describe("runner — wires the facets onto RunContext and drains evidence before
     expect(drain).toBeGreaterThan(-1);
     expect(complete).toBeGreaterThan(-1);
     expect(drain).toBeLessThan(complete);
+  });
+});
+
+// =====================================================================
+// 5. gate (Phase B) — the PURE doorman predicate: imports no facet, performs
+//    no I/O, and triggers no mechanism (the Facet Isolation Rule + the Policy
+//    vs Mechanism rule, Kernel Contract Map §2). Deny-by-default by SOURCE.
+// =====================================================================
+
+describe("gate predicate — a pure policy leaf (no facet, no I/O, no mechanism)", () => {
+  const code = codeOf(read(GATE));
+
+  it("ships the gate module", () => {
+    expect(existsSync(resolve(ROOT, GATE)), GATE).toBe(true);
+  });
+
+  it("carries NO `server-only` import (pure like output.ts — the UI may import the verdict types)", () => {
+    expect(code).not.toMatch(/server-only/);
+  });
+
+  it("imports NO sibling facet and binds NO service (it is handed its inputs, never a binder)", () => {
+    expect(code).not.toMatch(/from\s+["']\.\/events["']/);
+    expect(code).not.toMatch(/from\s+["']\.\/comms["']/);
+    expect(code).not.toMatch(/from\s+["']\.\/memory["']/);
+    expect(code).not.toMatch(/@\/server\/services/);
+  });
+
+  it("performs no I/O (no admin client, rpc, fetch, or table builder)", () => {
+    expect(code).not.toMatch(/createAdminClient/);
+    expect(code).not.toMatch(/\brpc\(/);
+    expect(code).not.toMatch(/\bfetch\(/);
+    expect(code).not.toMatch(/\.from\(/);
+  });
+
+  it("pulls only a TYPE from the runner — its sole ./tasks edge is `import type` (erased, no coupling)", () => {
+    // a VALUE import would drag the runner's server-only runtime into the pure gate
+    expect(code).not.toMatch(/^import\s+\{[^}]*\}\s+from\s+["']\.\/tasks["']/m);
+  });
+
+  it("triggers NO mechanism — the Policy vs Mechanism rule as source (no approval, emit, or send)", () => {
+    expect(code).not.toMatch(/requestApproval/);
+    expect(code).not.toMatch(/deliverDraft/);
+    expect(code).not.toMatch(/\.emit\(/);
+  });
+
+  it("exports the pure verdict predicate", () => {
+    expect(code).toMatch(/export function evaluateAction\(/);
   });
 });
