@@ -42,8 +42,9 @@ describe("event-verb registry — single-source invariants", () => {
 
   it("locks the registry size + per-group counts (a deliberate-change tripwire)", () => {
     // Changing these requires an ADR (Ch.20) + updating this test on purpose.
-    // task.* (5) added under ADR 0005 (Directive #012 / D-02, PR-B).
-    expect(VERBS).toHaveLength(77);
+    // task.* (5) added under ADR 0005 (Directive #012 / D-02, PR-B); task.cancelled
+    // (the 6th) added under ADR 0007 (Directive #013 / D-03, RunContext Runtime Contract).
+    expect(VERBS).toHaveLength(78);
     expect(VERB_GROUPS.org).toHaveLength(10);
     expect(VERB_GROUPS.billing).toHaveLength(9);
     expect(VERB_GROUPS.operations).toHaveLength(8);
@@ -52,7 +53,7 @@ describe("event-verb registry — single-source invariants", () => {
     expect(VERB_GROUPS.approval).toHaveLength(6);
     expect(VERB_GROUPS.memory).toHaveLength(5);
     expect(VERB_GROUPS.comm).toHaveLength(6);
-    expect(VERB_GROUPS.task).toHaveLength(5);
+    expect(VERB_GROUPS.task).toHaveLength(6);
     expect(VERB_GROUPS.permission).toHaveLength(3);
     expect(VERB_GROUPS.system).toHaveLength(7);
     expect(VERB_GROUPS.notification).toHaveLength(3);

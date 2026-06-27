@@ -20,11 +20,12 @@ system is, the governance records describe *how decisions about it are tracked*.
   Boardroom interfaces, Shared Communication Protocol), each honestly status-tagged
   (Established / Partial / Reserved), and the rule that **changing any of them
   requires an ADR + an architectural review** in the same PR.
-- **[`runtime-identity.md`](./runtime-identity.md)** — a **record** (not a decision)
-  of the current runtime `actor_id` slugs the 14 seeded employees stamp on the Event
-  Spine, where they diverge from the specs and the SDK volume (the qualification
-  three-way split), and why the canonical identity decision is **deferred** to the
-  AI SDK directive (D-04 / #014). `design-ai` is recorded as **Reserved**.
+- **[`runtime-identity.md`](./runtime-identity.md)** — a **record + resolution** of the
+  runtime `actor_id` slugs the 14 seeded employees stamp on the Event Spine, where they
+  diverge from the specs and the SDK volume (the qualification three-way split), and the
+  canonical identity decision now **settled** by the RunContext Runtime Contract directive
+  (D-03 / #013, §7): `lead-qualification` is canonical and history is **frozen, not
+  re-stamped**. `design-ai` remains **Reserved**.
 - **[`directive-012-completion-report.md`](./directive-012-completion-report.md)** —
   the permanent **engineering record** of a completed directive: CEO Directive
   **#012** (Master Roadmap **D-02**), *The Generic Task Engine*. Records the
@@ -32,6 +33,15 @@ system is, the governance records describe *how decisions about it are tracked*.
   maturity, lessons, metrics, risks, and roadmap adjustments. The companion
   migration dashboard lives in the workforce canon
   ([`../workforce/platform-compatibility-matrix.md`](../workforce/platform-compatibility-matrix.md)).
+- **[`directive-013-completion-report.md`](./directive-013-completion-report.md)** —
+  the permanent **engineering record** of a completed directive: CEO Directive
+  **#013** (Master Roadmap **D-03**), *The RunContext Runtime Contract*. Records the
+  objectives achieved, objectives intentionally deferred, architectural decisions, the
+  runtime-contract summary, implementation + validation summaries, technical debt, risks,
+  future recommendations for #014, and lessons learned. RunContext graduates
+  Architecture-Freeze contract **#4 Partial → Established**; the canonical runtime identity
+  is settled ([`runtime-identity.md`](./runtime-identity.md) §7). Authority: [ADR
+  0007](../decisions/0007-runcontext-runtime-contract.md).
 - **[`directive-012-platform-independence-audit.md`](./directive-012-platform-independence-audit.md)** —
   the closing **verification audit** of Directive **#012**: a four-question check,
   each backed by `file:line` repository evidence, proving the Task Engine substrate is

@@ -1,18 +1,20 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 /**
  * Unit proof for the task-runner SDK (server/sdk/tasks.ts)
  * (CEO Directive #012 / D-02, PR-C; Bible Volume XII §11.2 + XIII §21).
  *
- * The runner BINDS the service layer (server/services/hq-tasks.ts → the seven
+ * The runner BINDS the service layer (server/services/hq-tasks.ts → the eight
  * SECURITY DEFINER entry points) into the one run-loop every employee inherits.
  * We mock ONLY the admin client's RPC surface, so the REAL service wrappers, the
  * REAL facet, the REAL registry and the REAL run-loop execute end to end — only
  * the database round-trip is faked. That lets us pin the contract precisely:
  *
  *   - the registry holds exactly one handler per task_type (re-register replaces);
- *   - the minimal RunContext is { task, identity, memory, tasks, correlationId,
- *     budgetMicros } — memory bound to THIS employee + task, budget a passthrough;
+ *   - the RunContext (D-03; ADR 0007) is { task, identity, memory, tasks,
+ *     correlationId, budget, deadline, signal, capabilities } — FROZEN, memory bound
+ *     to THIS employee + task, budget/deadline/capabilities read-only passthroughs,
+ *     and ctx.signal aborts on cancellation (heartbeat alive:false) or deadline;
  *   - RULE 3: ctx.tasks exposes create + checkpoint ONLY — never complete/fail;
  *   - a handler that RETURNS completes the task with its value; one that THROWS
  *     fails it (retryable unless NonRetryableError) — the handler never calls a
@@ -42,12 +44,14 @@ import {
   runEmployee,
   createTask,
   NonRetryableError,
+  EMPTY_CAPABILITIES,
   type RunContext,
-  type RunnerIdentity,
+  type EmployeeIdentity,
+  type ResolvedCapabilitySet,
 } from "@/server/sdk/tasks";
 
 const EMP = "11111111-1111-1111-1111-111111111111";
-const IDENTITY: RunnerIdentity = { employeeId: EMP, slug: "research-ai" };
+const IDENTITY: EmployeeIdentity = { employeeId: EMP, slug: "research-ai" };
 
 type Row = Record<string, unknown>;
 
@@ -78,6 +82,12 @@ function callsTo(fn: string): number {
 beforeEach(() => {
   rpcMock.mockReset();
   clearTaskHandlers();
+});
+
+// The cancellation/deadline proofs below drive fake timers; always hand the clock
+// back so a later test never inherits a frozen one.
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // =====================================================================
@@ -136,13 +146,13 @@ describe("RunContext — the minimal, identity-bound surface", () => {
     expect(seen!.task.id).toBe("task-1");
     expect(seen!.identity.employeeId).toBe(EMP);
     expect(seen!.correlationId).toBe("corr-1");
-    expect(seen!.budgetMicros).toBe(1500);
+    expect(seen!.budget).toBe(1500);
     // ctx.memory is the bound facet, stamped with this employee + the running task.
     expect(seen!.memory.identity.employeeId).toBe(EMP);
     expect(seen!.memory.identity.currentTaskId).toBe("task-1");
   });
 
-  it("defaults budgetMicros to 0 when the task reserved none", async () => {
+  it("defaults budget to 0 when the task reserved none", async () => {
     rpcMock.mockImplementation((fn: string) => {
       if (fn === "hq_ai_task_claim")
         return { data: { ok: true, task: makeTask({ cost_budget_micros: null }) }, error: null };
@@ -151,7 +161,7 @@ describe("RunContext — the minimal, identity-bound surface", () => {
 
     let budget = -1;
     await runReadyTask("t", async (ctx) => {
-      budget = ctx.budgetMicros;
+      budget = ctx.budget;
     }, IDENTITY);
     expect(budget).toBe(0);
   });
@@ -173,6 +183,141 @@ describe("RunContext — the minimal, identity-bound surface", () => {
     // The terminal verbs are NOT on the handler's surface — the runner owns them.
     expect((facet as unknown as Record<string, unknown>).complete).toBeUndefined();
     expect((facet as unknown as Record<string, unknown>).fail).toBeUndefined();
+  });
+});
+
+// =====================================================================
+// The D-03 Runtime Contract (CEO Directive #013; ADR 0007): the runner
+// EXPOSES execution state the OS owns — budget/deadline/signal/capabilities —
+// on a FROZEN context the handler only consumes.
+// =====================================================================
+
+describe("RunContext — D-03 envelope (budget · deadline · signal · capabilities, frozen)", () => {
+  it("hands the handler a FROZEN context carrying the full D-03 surface", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+    });
+
+    let seen: RunContext | undefined;
+    await runReadyTask("t", async (ctx) => {
+      seen = ctx;
+    }, IDENTITY);
+
+    // Immutability (ADR 0007): the contract is frozen for the whole invocation.
+    expect(Object.isFrozen(seen)).toBe(true);
+    // budget is the cost_budget_micros passthrough; deadline is null with no deadline_at.
+    expect(seen!.budget).toBe(1500);
+    expect(seen!.deadline).toBeNull();
+    // signal is a real, un-aborted AbortSignal when nothing has stopped the run.
+    expect(seen!.signal).toBeInstanceOf(AbortSignal);
+    expect(seen!.signal.aborted).toBe(false);
+    // capabilities default to the frozen empty set when the identity carries none.
+    expect(seen!.capabilities).toBe(EMPTY_CAPABILITIES);
+    expect(seen!.capabilities.tokens).toEqual([]);
+    expect(seen!.capabilities.source).toBe("none");
+  });
+
+  it("threads the identity's capability set through UNCHANGED (D-03 only exposes it)", async () => {
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+    });
+
+    const caps: ResolvedCapabilitySet = Object.freeze({
+      tokens: Object.freeze(["memory.read", "research.web"]) as readonly string[],
+      source: "ai_employees",
+    });
+
+    let seen: RunContext | undefined;
+    await runReadyTask("t", async (ctx) => {
+      seen = ctx;
+    }, { ...IDENTITY, capabilities: caps });
+
+    // Passed through by reference, not interpreted, matched or copied (D-04 enforces).
+    expect(seen!.capabilities).toBe(caps);
+  });
+
+  it("exposes deadline_at as ctx.deadline and does NOT abort while it is still in the future", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask({ deadline_at: future }) }, error: null };
+      return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+    });
+
+    let seen: RunContext | undefined;
+    await runReadyTask("t", async (ctx) => {
+      seen = ctx;
+    }, IDENTITY);
+
+    expect(seen!.deadline?.toISOString()).toBe(future);
+    expect(seen!.signal.aborted).toBe(false);
+  });
+
+  it("a deadline already in the past aborts ctx.signal (TimeoutError) BEFORE the handler runs", async () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask({ deadline_at: past }) }, error: null };
+      return { data: { ok: true, task: makeTask({ status: "completed" }) }, error: null };
+    });
+
+    let abortedAtEntry = false;
+    let reason: unknown;
+    await runReadyTask("t", async (ctx) => {
+      abortedAtEntry = ctx.signal.aborted;
+      reason = ctx.signal.reason;
+    }, IDENTITY);
+
+    // The OS stopped the run before any work — the handler sees an already-tripped latch.
+    expect(abortedAtEntry).toBe(true);
+    expect(reason).toBeInstanceOf(DOMException);
+    expect((reason as DOMException).name).toBe("TimeoutError");
+  });
+
+  it("cancellation observed via the heartbeat (alive:false) aborts ctx.signal as AbortError", async () => {
+    vi.useFakeTimers();
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "hq_ai_task_claim")
+        return { data: { ok: true, task: makeTask() }, error: null };
+      // hq_ai_task_cancel cleared the lease, so the worker's heartbeat matches no row.
+      if (fn === "hq_ai_task_heartbeat") return { data: false, error: null };
+      // The cancelled task is no longer 'running', so the terminal complete finds no row.
+      if (fn === "hq_ai_task_complete")
+        return { data: { ok: false, reason: "lease_lost" }, error: null };
+      return { data: null, error: null };
+    });
+
+    let reason: unknown;
+    const run = runReadyTask("t", async (ctx) => {
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          reason = ctx.signal.reason;
+          resolve();
+          return;
+        }
+        ctx.signal.addEventListener(
+          "abort",
+          () => {
+            reason = ctx.signal.reason;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }, IDENTITY, { leaseSeconds: 3 });
+
+    // Heartbeat fires at floor(3/3)=1s; advancing past it flips alive:false → abort.
+    await vi.advanceTimersByTimeAsync(1100);
+    const outcome = await run;
+
+    expect(reason).toBeInstanceOf(DOMException);
+    expect((reason as DOMException).name).toBe("AbortError");
+    // Cooperative: the handler stopped, and the cancelled state stands (lease was cleared).
+    expect(outcome.status).toBe("lease_lost");
   });
 });
 

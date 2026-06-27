@@ -127,18 +127,23 @@ const COMM = [
 //                    expired lease (distinguished by actor + payload.reason)
 //   task.failed    — a task reached terminal failure, worker-reported or
 //                    retries-exhausted (distinguished by actor + payload.reason)
+//   task.cancelled — a live task was cancelled from outside its worker, by an
+//                    operator/parent/OS (hq_ai_task_cancel); payload.prev_status
+//                    records whether queued or in-flight work was stopped
+// `task.cancelled` landed under D-03 / #013 (the RunContext Runtime Contract): the
+// guard has permitted *→cancelled since PR-A, and PR-B reserved the verb in words
+// "registered when that function lands, never as dead vocabulary" — D-03 is that
+// landing (the cancel entry point is the substrate behind RunContext's ctx.signal).
 // Intentionally ABSENT (ADR-0005): no `task.heartbeated` (heartbeats are liveness,
 // not facts — they would drown the spine); no `task.checkpointed` (a checkpoint is
-// internal resumption state, evented only if a consumer ever needs it); no
-// `task.cancelled` yet (the guard permits *→cancelled but PR-A ships no cancel
-// entry point — the verb is registered when that function lands, never as dead
-// vocabulary).
+// internal resumption state, evented only if a consumer ever needs it).
 const TASK = [
   "task.created",
   "task.claimed",
   "task.completed",
   "task.retried",
   "task.failed",
+  "task.cancelled",
 ] as const;
 
 const PERMISSION = [
