@@ -48,6 +48,12 @@ A contract in §4 is **frozen** in the following sense:
 4. **Extend before replace.** A frozen contract is widened by addition (new optional
    fields, new verbs appended to the registry) in preference to redefinition. A
    breaking redefinition is the exception that most needs the ADR + review.
+5. **Validate against the reference path.** Every kernel capability should have one
+   canonical end-to-end reference path that exercises it through the real runtime — for
+   the AI SDK (contract #3), the **Reference Employee**
+   (`__tests__/sdk/reference-employee.test.ts`, #014 Phase B B3). A change to a frozen
+   contract is validated against its reference path **before** the platform expands on it:
+   the **Reference Path Rule** ([Kernel Contract Map](./kernel-contract-map.md) §2).
 
 Anything **not** in §4 is ordinary application code and changes through the normal
 PR process — no ADR required.

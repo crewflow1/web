@@ -179,6 +179,45 @@ OS. A facet that orchestrated another would not merely couple two primitives (th
 breach) but relocate *operating-system behaviour* into a capability provider, re-introducing the
 per-employee forking the kernel exists to prevent.
 
+### The Reference Path Rule
+
+A **seventh** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
+Reference Employee acceptance; independent CTO review). The six standards above are **structural**
+— they say what the kernel *must be* (a stable surface, a layering guarantee, isolated facets, a
+policy/mechanism split, runtime-owned composition). This one is **evidentiary** — it says how a
+kernel capability is *proven* to honour them, and how that proof is kept honest as the platform
+grows:
+
+> **Every new kernel capability should have one canonical reference path that exercises it
+> end-to-end. The reference path exists to prove runtime composition, SDK behaviour, kernel
+> interaction, and the architectural boundaries. Future regressions should be validated against
+> the reference path before platform expansion.**
+
+It is the **verification counterpart** to *extend before replace*
+([Architecture Freeze](./architecture-freeze.md) §2.4): where the change-control rules say a frozen
+contract is widened by addition under ADR + review, the Reference Path Rule names the **regression
+gate** that addition must clear — one living, end-to-end exercise that fails loudly when an
+extension breaks the capability beneath it. A reference path is deliberately **not** a unit test of
+a part: it drives the **real** runtime so it proves the parts *compose* — that Facet Isolation,
+Policy vs Mechanism, and Runtime Composition all still hold **together**, not merely in isolation.
+It is also the operational form of the kernel-stability principle (§2): the kernel is allowed to
+stay frozen and the employees on top stay simple precisely because one canonical path proves, on
+every change, that the floor has not moved.
+
+The doorman's reference path is the **Reference Employee**
+(`__tests__/sdk/reference-employee.test.ts`, Phase B B3): the Lead Qualification AI recast as an SDK
+instance, driven through the real runner (`runReadyTask`) as the first caller of
+`ctx.proposeActions`. It exercises the pure gate (policy), the runtime composition
+(`proposeActions`), and **both** mechanisms (the `events` audit for an autonomous verdict, the
+Approval Engine hand-off for one that needs approval), and it pins the boundaries end-to-end: a
+reversible write is audited as the bound actor (no spoofing), an irreversible send is parked, a
+missing posture defaults to the locked floor (deny-by-default), and a refused approval propagates as
+a task failure (the throw-based ABI). Before Phase C extends the SDK with an executor, that path is
+the regression it must not break — the standard made operational: **prove the kernel through one
+canonical path, and defend it there.** (Distinct from, and complementary to, the *Reference Employee
+Rule* of Bible Volume XIII §22, which governs employee **migration** conformance; this rule governs
+kernel-**capability** validation.)
+
 ---
 
 ## 3. The contract map
