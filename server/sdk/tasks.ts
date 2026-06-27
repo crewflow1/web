@@ -6,6 +6,8 @@ import {
   enqueueTask,
   failTask,
   heartbeatTask,
+  cancelTask as cancelTaskRpc,
+  type CancelTaskOptions,
   type EnqueueTaskInput,
   type TaskRow,
 } from "@/server/services/hq-tasks";
@@ -20,7 +22,7 @@ import type { MemoryScope } from "@/lib/ai-employees/model";
  * run-loop, and the five runner/handler rules). This is the TypeScript runtime
  * surface over the Generic Task Engine: the single sanctioned way an AI employee
  * drives the durable queue. It does NOT re-implement the queue — it BINDS the
- * service layer (`server/services/hq-tasks.ts`, itself nothing but the seven
+ * service layer (`server/services/hq-tasks.ts`, itself nothing but the eight
  * SECURITY DEFINER entry points) into the run-loop every employee inherits.
  *
  * The five rules it enforces in code (XIII §21):
@@ -32,13 +34,17 @@ import type { MemoryScope } from "@/lib/ai-employees/model";
  *   4. The runner owns claim, heartbeat, checkpoint, completion, failure, retry.
  *   5. Handlers own business logic only.
  *
- * Minimal RunContext (the CEO-approved PR-C slice): { task, identity, memory,
- * tasks, correlationId, budgetMicros }. It wires exactly two facets — `memory`
- * (the one subsystem already built, Directive 009 PR6) and `tasks` (the engine's
- * own create+checkpoint surface) — and DELIBERATELY omits comms, tools, the API
- * gateway, cost metering, the approval runtime, autonomy and verification. Those
- * are later directives that EXTEND this context; `budgetMicros` is a passthrough
- * of the task's reserved budget, not a meter.
+ * RunContext — the per-invocation Runtime Contract (CEO Directive #013 / D-03; ADR
+ * 0007). D-03 graduates it from the PR-C slice to Established: { task, identity,
+ * memory, tasks, correlationId, budget, deadline, signal, capabilities }. It wires
+ * the same two facets — `memory` (Directive 009 PR6) and `tasks` (the engine's own
+ * create+checkpoint surface) — and DELIBERATELY omits comms, tools, the API gateway,
+ * cost metering, the approval runtime, autonomy and verification (later directives
+ * that EXTEND this context). The D-03 additions BIND seams the Task Engine already
+ * reserved: `budget`/`deadline` expose `cost_budget_micros`/`deadline_at` read-only,
+ * `signal` aborts on cancellation or deadline, and `capabilities` threads the
+ * employee's opaque tokens — exposed, never enforced or metered here. The OS owns
+ * execution state; the assembled context is FROZEN and handlers only consume it.
  *
  * Invocation model: claim-one-and-exit (not a long-running loop). A cron tick
  * calls `runEmployee`/`drainTaskType`, which claims ready tasks one at a time and
@@ -55,16 +61,81 @@ import type { MemoryScope } from "@/lib/ai-employees/model";
 // ---------------------------------------------------------------------
 
 /**
- * The employee a runner acts as. Captured once and stamped on everything: the
- * memory facet binds to it (so reads/writes can never be another employee's), the
- * lease owner is derived from it, and `created_by` on spawned tasks carries it.
+ * The employee a run acts as — the canonical runtime identity (ADR 0007, Decision 5;
+ * `RunnerIdentity` is renamed here so there is ONE settled name). Captured once and
+ * stamped on everything: the memory facet binds to it (so reads/writes can never be
+ * another employee's), the lease owner is derived from it, `created_by` on spawned
+ * tasks carries it, and `ctx.capabilities` is resolved from it.
+ *
+ * `slug` is REQUIRED (no longer optional): D-03 settles it as the canonical runtime
+ * handle the runner stamps as the spine actor and the lease owner, always present and
+ * equal to the employee's spec/SDK slug — the qualification three-way split resolved
+ * in favour of the slug already on the row, not a re-stamp.
  */
-export interface RunnerIdentity {
+export interface EmployeeIdentity {
   employeeId: string;
-  /** Human-readable handle (e.g. `research-ai`) used in lease owner + provenance. */
-  slug?: string;
+  /** Canonical runtime handle (e.g. `research-ai`): spine actor, lease owner, provenance. */
+  slug: string;
   department?: string | null;
   memoryScope?: MemoryScope;
+  /**
+   * The opaque capability tokens this employee holds, resolved once at identity
+   * assembly (see {@link resolveEmployeeCapabilities}). Optional on the identity so a
+   * caller may omit it; the runner defaults `ctx.capabilities` to
+   * {@link EMPTY_CAPABILITIES} when absent. D-03 only THREADS it; the AI SDK (D-04)
+   * enforces and the Capability Registry (D-05) sources it.
+   */
+  capabilities?: ResolvedCapabilitySet;
+}
+
+// ---------------------------------------------------------------------
+// Capabilities — opaque, read-only, source-indifferent (ADR 0007, Decision 7)
+// ---------------------------------------------------------------------
+
+/**
+ * The capability tokens an employee holds, as RunContext exposes them: an OPAQUE,
+ * READ-ONLY, source-indifferent set. D-03 only THREADS it onto `ctx.capabilities` —
+ * it does NOT interpret, match, or enforce a token (that is the AI SDK, D-04), and it
+ * does NOT decide where tokens come from (that is the Capability Registry, D-05).
+ * `source` records where this set was resolved, so the D-05 swap from the employee
+ * row to the registry is observable WITHOUT changing the contract a handler sees.
+ */
+export interface ResolvedCapabilitySet {
+  readonly tokens: readonly string[];
+  readonly source: "ai_employees" | "registry" | "none";
+}
+
+/** The empty capability set — the safe, frozen default when an identity carries none. */
+export const EMPTY_CAPABILITIES: ResolvedCapabilitySet = Object.freeze({
+  tokens: Object.freeze([]) as readonly string[],
+  source: "none",
+});
+
+/**
+ * Resolve an employee's capability tokens from the ONE source D-03 is allowed to read
+ * — the `ai_employees` row itself: the union of `tools_allowed` and
+ * `permissions.scopes`. Structurally typed (NOT bound to the `AiEmployee` model) so
+ * the SDK keeps no dependency on the employee module, and so D-05 can repoint the
+ * source to the Capability Registry by changing ONLY this function — the
+ * {@link ResolvedCapabilitySet} every handler sees stays byte-for-byte identical.
+ * Tokens are de-duplicated and sorted for a stable, comparable set.
+ */
+export function resolveEmployeeCapabilities(emp: {
+  tools_allowed?: readonly string[] | null;
+  permissions?: { scopes?: readonly string[] | null } | null;
+}): ResolvedCapabilitySet {
+  const tokens = new Set<string>();
+  for (const t of emp.tools_allowed ?? []) {
+    if (typeof t === "string" && t.length > 0) tokens.add(t);
+  }
+  for (const s of emp.permissions?.scopes ?? []) {
+    if (typeof s === "string" && s.length > 0) tokens.add(s);
+  }
+  if (tokens.size === 0) return EMPTY_CAPABILITIES;
+  return Object.freeze({
+    tokens: Object.freeze([...tokens].sort()) as readonly string[],
+    source: "ai_employees",
+  });
 }
 
 /**
@@ -91,23 +162,55 @@ export interface BoundTasks {
 }
 
 /**
- * The minimal RunContext a handler receives (Volume XIII §9, PR-C slice). The
- * facets present are exactly `memory` and `tasks`; everything else listed in §9
- * is a later directive.
+ * The RunContext a handler receives — the per-invocation Runtime Contract D-03
+ * graduates to Established (CEO Directive #013; ADR 0007). The runner assembles it at
+ * claim and hands it to the handler as its SOLE argument; it is FROZEN
+ * (`Object.freeze`) so identity, correlationId, budget, deadline, signal and
+ * capabilities are stable for the whole invocation. The facets present are `memory`
+ * and `tasks`; comms, tools, the API gateway, cost metering, the approval runtime,
+ * autonomy and verification remain later directives that EXTEND this context.
+ *
+ * Execution-state ownership (ADR 0007): the OS / Task Engine OWNS cancellation,
+ * deadlines, budget, leases and retries. RunContext only EXPOSES them read-only; a
+ * handler CONSUMES them (awaits `signal`, reads `deadline`/`budget`/`capabilities`)
+ * and never owns or mutates them.
  */
 export interface RunContext {
   /** The leased task row, as claimed. */
   task: TaskRow;
-  /** The employee this run acts as. */
-  identity: RunnerIdentity;
+  /** The employee this run acts as (canonical runtime identity). */
+  identity: EmployeeIdentity;
   /** The bound memory surface (auto-bound to this task for working/episodic). */
   memory: BoundMemory;
   /** Create follow-up tasks / checkpoint — create + checkpoint only (rule 3). */
   tasks: BoundTasks;
   /** The task's spine trace id — thread it through anything downstream. */
   correlationId: string;
-  /** Passthrough of the task's reserved budget (micros). NOT metered here. */
-  budgetMicros: number;
+  /**
+   * Read-only ceiling of the task's reserved budget, in micros (0 if none was
+   * reserved) — a passthrough the handler may inspect, NOT a meter and not enforced
+   * here. Binds the `cost_budget_micros` seam (metering is a later directive).
+   */
+  budget: number;
+  /**
+   * The task's hard deadline as a `Date`, or `null` if it has none. Set by the OS
+   * from the `deadline_at` seam; read-only. `signal` aborts when it passes.
+   */
+  deadline: Date | null;
+  /**
+   * Aborts when the OS stops this invocation — the task was cancelled
+   * (`hq_ai_task_cancel`, observed via the heartbeat) OR its `deadline` passed. A
+   * monotonic, one-way latch the handler COOPERATES with (pass it to `fetch`, await
+   * it, or check `signal.aborted`); the lease+reaper is the backstop if it does not.
+   * The runner owns the underlying controller — the handler only ever sees this
+   * read-only signal.
+   */
+  signal: AbortSignal;
+  /**
+   * The opaque, read-only capability tokens this employee holds (D-03 threads them;
+   * D-04 enforces; D-05 sources them). {@link EMPTY_CAPABILITIES} when none.
+   */
+  capabilities: ResolvedCapabilitySet;
 }
 
 /**
@@ -150,12 +253,32 @@ export async function createTask(
   return { id: res.task.id, deduped: res.deduped };
 }
 
+/**
+ * Cancel a task from anywhere (an operator action, a parent task, the OS supervising
+ * a budget/deadline) — the standalone counterpart to `createTask`. There is
+ * deliberately NO `ctx.tasks.cancel`: cancellation is the OS acting ON a task from
+ * OUTSIDE its worker (ADR 0007), never a handler cancelling itself. It transitions
+ * pending|running → cancelled and clears the lease, so the running worker's next
+ * heartbeat returns `alive:false` and the runner aborts `ctx.signal` (cooperative
+ * cancellation). Returns `{ cancelled }` — `false` is the idempotent no-op when the
+ * task was already terminal. Throws only on transport error.
+ */
+export async function cancelTask(
+  taskId: string,
+  opts: CancelTaskOptions = {},
+): Promise<{ cancelled: boolean; task: TaskRow | null }> {
+  const res = await cancelTaskRpc(taskId, opts);
+  if (res.ok) return { cancelled: true, task: res.task };
+  if (res.reason === "not_cancellable") return { cancelled: false, task: null };
+  throw new Error(`tasks.cancel failed: ${res.error}`);
+}
+
 // ---------------------------------------------------------------------
 // The handler registry (single task_type → handler — CEO decision 3)
 // ---------------------------------------------------------------------
 
 interface Registration {
-  identity: RunnerIdentity;
+  identity: EmployeeIdentity;
   handler: TaskHandler;
 }
 
@@ -169,7 +292,7 @@ const REGISTRY = new Map<string, Registration>();
  */
 export function registerTaskHandler(
   taskType: string,
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   handler: TaskHandler,
 ): void {
   REGISTRY.set(taskType, { identity, handler });
@@ -241,14 +364,14 @@ const DEFAULT_MAX_TASKS = 25;
 // ---------------------------------------------------------------------
 
 /** A short, opaque, unique lease owner for one runner invocation. */
-function mintLeaseOwner(identity: RunnerIdentity): string {
+function mintLeaseOwner(identity: EmployeeIdentity): string {
   const who = identity.slug ?? identity.employeeId;
   return `runner:${who}:${crypto.randomUUID()}`;
 }
 
 /** Build the in-handler `ctx.tasks` facet, bound to the running task + lease. */
 function createTasks(
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   task: TaskRow,
   leaseOwner: string,
 ): BoundTasks {
@@ -274,11 +397,18 @@ function createTasks(
   };
 }
 
-/** Assemble the minimal RunContext for a claimed task. */
+/**
+ * Assemble the RunContext for a claimed task and FREEZE it (ADR 0007 immutability).
+ * `signal` and `deadline` are supplied by the runner, which owns their lifecycle —
+ * the context only EXPOSES them. Freezing pins the contract fields for the whole
+ * invocation; the `memory`/`tasks` facets stay callable (their methods are untouched).
+ */
 function buildContext(
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   task: TaskRow,
   leaseOwner: string,
+  signal: AbortSignal,
+  deadline: Date | null,
 ): RunContext {
   const memory: BoundMemory = createMemory({
     employeeId: identity.employeeId,
@@ -286,14 +416,18 @@ function buildContext(
     memoryScope: identity.memoryScope,
     currentTaskId: task.id,
   });
-  return {
+  const ctx: RunContext = {
     task,
     identity,
     memory,
     tasks: createTasks(identity, task, leaseOwner),
     correlationId: task.correlation_id,
-    budgetMicros: task.cost_budget_micros ?? 0,
+    budget: task.cost_budget_micros ?? 0,
+    deadline,
+    signal,
+    capabilities: identity.capabilities ?? EMPTY_CAPABILITIES,
   };
+  return Object.freeze(ctx);
 }
 
 // ---------------------------------------------------------------------
@@ -302,35 +436,74 @@ function buildContext(
 
 /**
  * Run ONE claimed task to a terminal transition. The handler does business logic;
- * THIS function owns the lease, the heartbeat, and the complete/fail decision —
- * the handler never touches them (rules 3 & 4).
+ * THIS function owns the lease, the heartbeat, the cancellation/deadline signal, and
+ * the complete/fail decision — the handler never touches them (rules 3 & 4; ADR 0007
+ * execution-state ownership). It holds the AbortController; the handler only ever
+ * sees the read-only `ctx.signal`.
  */
 async function runClaimedTask(
   task: TaskRow,
   handler: TaskHandler,
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   leaseOwner: string,
   leaseSeconds: number,
 ): Promise<RunOutcome> {
-  const ctx = buildContext(identity, task, leaseOwner);
+  // The one signal the handler cooperates with — aborted on EITHER cause below.
+  const controller = new AbortController();
+  const deadline = task.deadline_at ? new Date(task.deadline_at) : null;
+  const ctx = buildContext(identity, task, leaseOwner, controller.signal, deadline);
 
-  // Heartbeat at a third of the lease, best-effort. `unref` so the timer never
-  // keeps the process (or a serverless invocation) alive on its own.
+  // Deadline → signal. Abort when the task's hard deadline passes (already-past ⇒
+  // abort before the handler runs). `unref` so it never holds a serverless
+  // invocation open; a deadline beyond the 32-bit timer horizon gets no per-run timer
+  // (the lease and reaper bound the run long before then — `ctx.deadline` still
+  // exposes the value).
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  if (deadline) {
+    const ms = deadline.getTime() - Date.now();
+    if (ms <= 0) {
+      controller.abort(new DOMException("Task deadline exceeded", "TimeoutError"));
+    } else if (ms <= 2_147_483_647) {
+      deadlineTimer = setTimeout(() => {
+        controller.abort(new DOMException("Task deadline exceeded", "TimeoutError"));
+      }, ms);
+      if (typeof deadlineTimer.unref === "function") deadlineTimer.unref();
+    }
+  }
+
+  // Heartbeat at a third of the lease, best-effort — AND the cancellation detector.
+  // `hq_ai_task_cancel` clears the lease, so the next heartbeat matches zero rows and
+  // returns `alive:false`; the runner then aborts the signal (cooperative
+  // cancellation, with NO extra query). `unref` so the timer never keeps the process
+  // (or a serverless invocation) alive on its own.
   const everyMs = Math.max(1, Math.floor(leaseSeconds / 3)) * 1000;
   const timer: ReturnType<typeof setInterval> = setInterval(() => {
-    void heartbeatTask(task.id, leaseOwner, leaseSeconds).catch(() => {});
+    void heartbeatTask(task.id, leaseOwner, leaseSeconds)
+      .then((res) => {
+        if (res.ok && !res.alive && !controller.signal.aborted) {
+          controller.abort(new DOMException("Task cancelled (lease lost)", "AbortError"));
+        }
+      })
+      .catch(() => {});
   }, everyMs);
   if (typeof timer.unref === "function") timer.unref();
+
+  const cleanup = () => {
+    clearInterval(timer);
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  };
 
   let result: Record<string, unknown> | void;
   try {
     result = await handler(ctx);
   } catch (err) {
-    clearInterval(timer);
+    cleanup();
     const retryable = !(err instanceof NonRetryableError);
     const message = err instanceof Error ? err.message : String(err);
     const failed = await failTask(task.id, leaseOwner, message, retryable);
     if (!failed.ok) {
+      // A cancelled task already cleared the lease, so fail finds no running row —
+      // the cancelled state stands and the runner simply reports the lost lease.
       if (failed.reason === "lease_lost") return { status: "lease_lost", taskId: task.id };
       return { status: "error", error: failed.error };
     }
@@ -338,7 +511,7 @@ async function runClaimedTask(
     const retried = failed.task.status === "pending";
     return { status: "failed", taskId: task.id, retried, error: message };
   }
-  clearInterval(timer);
+  cleanup();
 
   const completed = await completeTask(task.id, leaseOwner, result ?? null);
   if (!completed.ok) {
@@ -355,7 +528,7 @@ async function runClaimedTask(
 export async function runReadyTask(
   taskType: string,
   handler: TaskHandler,
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   opts: RunOptions = {},
 ): Promise<RunOutcome> {
   const leaseSeconds = opts.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
@@ -400,7 +573,7 @@ function tally(summary: DrainSummary, outcome: RunOutcome): void {
 export async function drainTaskType(
   taskType: string,
   handler: TaskHandler,
-  identity: RunnerIdentity,
+  identity: EmployeeIdentity,
   opts: DrainOptions = {},
 ): Promise<DrainSummary> {
   const max = opts.maxTasks ?? DEFAULT_MAX_TASKS;
@@ -415,7 +588,7 @@ export async function drainTaskType(
 }
 
 export interface RunEmployeeOptions extends DrainOptions {
-  identity: RunnerIdentity;
+  identity: EmployeeIdentity;
   /**
    * Task types to drain this tick. Each must have a registered handler (the
    * identity passed here takes precedence over the one captured at registration,

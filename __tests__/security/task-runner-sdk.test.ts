@@ -18,9 +18,10 @@ import { VERBS } from "@/lib/events/registry";
  *   6. handler purity — a handler takes ctx and returns or throws; nothing else.
  *
  * Each fact below, and what breaks if it silently flips:
- *   • The service layer mutates the queue ONLY through the seven SECURITY DEFINER
- *     RPCs — it never names `.from('hq_ai_tasks')` at all. A raw write would bypass
- *     the guard + the in-transaction spine emission.
+ *   • The service layer mutates the queue ONLY through the eight SECURITY DEFINER
+ *     RPCs (the seven of PR-A/B + hq_ai_task_cancel, D-03) — it never names
+ *     `.from('hq_ai_tasks')` at all. A raw write would bypass the guard + the
+ *     in-transaction spine emission.
  *   • The handler-facing facet type (BoundTasks) offers create + checkpoint and NOT
  *     complete/fail (rule 3) — and the facet factory never calls the terminal funcs.
  *   • Neither file emits task.* to the spine from TypeScript (no double-emit — the
@@ -55,6 +56,7 @@ const ENTRY_POINTS = [
   "hq_ai_task_checkpoint",
   "hq_ai_task_complete",
   "hq_ai_task_fail",
+  "hq_ai_task_cancel", // D-03 — cooperative cancellation (ADR 0007)
   "hq_ai_task_reap",
 ] as const;
 
@@ -71,7 +73,7 @@ describe("task-runner SDK — the layer exists", () => {
 });
 
 // =====================================================================
-// 1. The service layer touches the queue ONLY through the seven RPCs.
+// 1. The service layer touches the queue ONLY through the eight RPCs.
 // =====================================================================
 
 describe("service layer — RPC-only, never a raw table write", () => {
@@ -83,7 +85,7 @@ describe("service layer — RPC-only, never a raw table write", () => {
     expect(code).not.toMatch(/\.from\(/);
   });
 
-  it("calls each of the seven SECURITY DEFINER entry points", () => {
+  it("calls each of the eight SECURITY DEFINER entry points (incl. hq_ai_task_cancel, D-03)", () => {
     for (const fn of ENTRY_POINTS) {
       expect(code, `service must wrap ${fn}`).toContain(fn);
     }

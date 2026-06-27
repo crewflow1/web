@@ -7,6 +7,7 @@ import {
   reapTasks,
 } from "@/server/services/hq-tasks";
 import {
+  cancelTask,
   clearTaskHandlers,
   drainTaskType,
   NonRetryableError,
@@ -14,7 +15,7 @@ import {
   runEmployee,
   runReadyTask,
   type RunContext,
-  type RunnerIdentity,
+  type EmployeeIdentity,
 } from "@/server/sdk/tasks";
 
 /**
@@ -34,6 +35,16 @@ import {
  *   • ctx.tasks.create auto-threads provenance (parent + correlation + createdBy);
  *   • drain is claim-one-and-exit — it empties a backlog and honours the cap;
  *   • runEmployee drains an employee's registered types via the registry.
+ *
+ * The D-03 Runtime Contract additions (CEO Directive #013; ADR 0007) are proven the
+ * same way — against the live engine, not a mock:
+ *   • cancelTask transitions a RUNNING task → cancelled and clears its lease, so the
+ *     worker's next heartbeat returns alive:false and the runner aborts ctx.signal
+ *     (cooperative cancellation, AbortError) — the row is durably cancelled and a
+ *     single task.cancelled spine event is emitted;
+ *   • a deadline_at already in the past aborts ctx.signal (TimeoutError) at handler
+ *     entry, yet a handler that IGNORES the signal still completes (advisory, not a
+ *     force-kill — no regression to the happy path).
  *
  * Runs only against a live DB (describeIntegration). Every task is tagged with a
  * per-run task_type token and deleted on teardown (DELETE is unguarded).
@@ -71,12 +82,22 @@ const TOKEN = `it_sdk_${alpha(8)}`;
 const typeFor = (tag: string) => `${TOKEN}_${tag}`;
 
 const EMP = "00000000-0000-4000-8000-0000000000aa";
-const IDENTITY: RunnerIdentity = { employeeId: EMP, slug: "it-runner" };
+const IDENTITY: EmployeeIdentity = { employeeId: EMP, slug: "it-runner" };
 
 async function readRow(id: string): Promise<Row | null> {
   const res = await tbl().select("*").eq("id", id).maybeSingle();
   expect(res.error, res.error?.message).toBeNull();
   return res.data;
+}
+
+/** Spine events for one correlation (append-only hq_events) — used by the D-03 proofs. */
+async function eventsFor(correlationId: string): Promise<Row[]> {
+  const res = await (serviceClient() as unknown as { from(t: string): Table })
+    .from("hq_events")
+    .select("verb, actor_type, actor_id, severity, payload")
+    .eq("correlation_id", correlationId);
+  expect(res.error, res.error?.message).toBeNull();
+  return res.data ?? [];
 }
 
 describeIntegration("The task-runner SDK · run-loop over the live engine (Directive #012 / D-02, PR-C)", () => {
@@ -292,5 +313,127 @@ describeIntegration("The task-runner SDK · run-loop over the live engine (Direc
     const row = await readRow(created.task.id);
     expect(row?.status).toBe("pending"); // recovered, claimable again
     expect(row?.lease_owner).toBeNull();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // D-03 Runtime Contract — cooperative cancellation + the deadline signal
+  // (CEO Directive #013; ADR 0007), proven against the live engine.
+  // ─────────────────────────────────────────────────────────────────────────
+  it("cancelTask from OUTSIDE aborts the running handler's signal (AbortError); the row is cancelled + one task.cancelled event", async () => {
+    const t = typeFor("cancel");
+    const created = await enqueueTask({ taskType: t });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    // The handler announces it has started (so we cancel ONLY once the lease is held
+    // and the heartbeat is live), then parks until the OS aborts it — with a safety
+    // cap well under the 30s test timeout so a missed abort fails loud, not hung.
+    let announceStarted: () => void;
+    const started = new Promise<void>((res) => {
+      announceStarted = res;
+    });
+    let abortReason: unknown;
+    const run = runReadyTask(
+      t,
+      async (ctx) => {
+        announceStarted();
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) {
+            abortReason = ctx.signal.reason;
+            return resolve();
+          }
+          ctx.signal.addEventListener(
+            "abort",
+            () => {
+              abortReason = ctx.signal.reason;
+              resolve();
+            },
+            { once: true },
+          );
+          const cap = setTimeout(resolve, 5000);
+          if (typeof cap.unref === "function") cap.unref();
+        });
+      },
+      IDENTITY,
+      { leaseSeconds: 3 }, // heartbeat every ~1s → observes the cancel quickly
+    );
+
+    await started; // the worker is mid-flight, lease held
+    const res = await cancelTask(created.task.id, {
+      reason: "operator stop",
+      actorType: "human", // an operator is a human actor (hq_events actor_type enum)
+      actorId: "op-1",
+    });
+    expect(res.cancelled).toBe(true);
+    expect(res.task?.status).toBe("cancelled");
+
+    const outcome = await run;
+    // The handler cooperated; the cleared lease means the terminal complete finds no
+    // running row — the cancelled state stands, reported as lease_lost.
+    expect(outcome).toEqual({ status: "lease_lost", taskId: created.task.id });
+    expect(abortReason).toBeInstanceOf(DOMException);
+    expect((abortReason as DOMException).name).toBe("AbortError");
+
+    // The engine row is durably cancelled: lease cleared, finished, reason recorded.
+    const row = await readRow(created.task.id);
+    expect(row?.status).toBe("cancelled");
+    expect(row?.lease_owner).toBeNull();
+    expect(row?.finished_at).toBeTruthy();
+    expect(String(row?.error_message)).toContain("operator stop");
+
+    // …and exactly one task.cancelled (warn) event, attributed to the operator (the
+    // emit passes the actor through verbatim — no employee remap on an unassigned task).
+    const cancelledEvents = (await eventsFor(String(created.task.correlation_id))).filter(
+      (e) => e.verb === "task.cancelled",
+    );
+    expect(cancelledEvents).toHaveLength(1);
+    const cancelledEv = cancelledEvents[0];
+    expect(cancelledEv, "missing task.cancelled spine event").toBeTruthy();
+    if (!cancelledEv) return;
+    expect(cancelledEv.severity).toBe("warn");
+    expect(cancelledEv.actor_type).toBe("human");
+    expect(cancelledEv.actor_id).toBe("op-1");
+    expect((cancelledEv.payload as Row).status).toBe("cancelled");
+    expect((cancelledEv.payload as Row).prev_status).toBe("running");
+  });
+
+  it("a deadline_at already in the past aborts ctx.signal (TimeoutError) at entry — yet a handler that IGNORES it still completes (advisory, no force-kill)", async () => {
+    const t = typeFor("deadline");
+    const created = await enqueueTask({ taskType: t });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    // Stamp a deadline in the past directly — deadline_at is a reserved seam with no
+    // enqueue field (the OS, not a handler, owns it).
+    const past = new Date(Date.now() - 1000).toISOString();
+    const stamp = await tbl().update({ deadline_at: past }).eq("id", created.task.id);
+    expect(stamp.error, stamp.error?.message).toBeNull();
+
+    let abortedAtEntry = false;
+    let reason: unknown;
+    let seenDeadline = 0;
+    const outcome = await runReadyTask(
+      t,
+      async (ctx) => {
+        abortedAtEntry = ctx.signal.aborted;
+        reason = ctx.signal.reason;
+        seenDeadline = ctx.deadline?.getTime() ?? 0;
+        // Deliberately ignore the signal and return normally.
+        return { ok: true };
+      },
+      IDENTITY,
+    );
+
+    // ctx.deadline reflects the row; the signal was already tripped before any work.
+    expect(seenDeadline).toBe(new Date(past).getTime());
+    expect(abortedAtEntry).toBe(true);
+    expect(reason).toBeInstanceOf(DOMException);
+    expect((reason as DOMException).name).toBe("TimeoutError");
+
+    // The signal is advisory: the handler ignored it and returned, so the task still
+    // completes — the OS does not force-kill (no regression to the happy path).
+    expect(outcome).toEqual({ status: "completed", taskId: created.task.id });
+    const row = await readRow(created.task.id);
+    expect(row?.status).toBe("completed");
   });
 });

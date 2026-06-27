@@ -54,6 +54,7 @@ import {
 } from "@/lib/qualification/model";
 import { qualifyCompany, type QualificationInput } from "@/lib/qualification/criteria";
 import { listAiEmployees } from "@/server/services/ai-employees";
+import type { AiEmployee } from "@/lib/ai-employees/model";
 import {
   getCompany,
   recordTimelineEvent,
@@ -64,10 +65,11 @@ import {
   drainTaskType,
   NonRetryableError,
   registerTaskHandler,
+  resolveEmployeeCapabilities,
   runReadyTask,
   type DrainSummary,
+  type EmployeeIdentity,
   type RunContext,
-  type RunnerIdentity,
   type TaskHandler,
 } from "@/server/sdk/tasks";
 
@@ -136,12 +138,15 @@ function freshResult(): QualificationResult {
 // Lead Qualification AI employee id — resolved once, cached for the process.
 // ---------------------------------------------------------------------
 
-let cachedEmployeeId: string | null | undefined;
-async function qualificationEmployeeId(): Promise<string | null> {
-  if (cachedEmployeeId !== undefined) return cachedEmployeeId;
+let cachedEmployee: AiEmployee | null | undefined;
+async function qualificationEmployee(): Promise<AiEmployee | null> {
+  if (cachedEmployee !== undefined) return cachedEmployee;
   const employees = await listAiEmployees();
-  cachedEmployeeId = employees.find((e) => e.slug === QUALIFICATION_AI_SLUG)?.id ?? null;
-  return cachedEmployeeId;
+  cachedEmployee = employees.find((e) => e.slug === QUALIFICATION_AI_SLUG) ?? null;
+  return cachedEmployee;
+}
+async function qualificationEmployeeId(): Promise<string | null> {
+  return (await qualificationEmployee())?.id ?? null;
 }
 
 // ---------------------------------------------------------------------
@@ -215,11 +220,18 @@ export async function startQualification(
 // per-tick — qualificationEmployeeId() is process-cached, so this is ~free.
 // ---------------------------------------------------------------------
 
-async function qualificationIdentity(): Promise<RunnerIdentity> {
-  const employeeId = await qualificationEmployeeId();
+async function qualificationIdentity(): Promise<EmployeeIdentity> {
+  const emp = await qualificationEmployee();
   // The seeded lead-qualification row id when present; the stable slug as a
   // last-resort opaque identity (lease owner only) if it was never seeded.
-  return { employeeId: employeeId ?? QUALIFICATION_AI_SLUG, slug: QUALIFICATION_AI_SLUG };
+  // Capabilities resolve from the row (tools_allowed ∪ permissions.scopes) — left
+  // absent when unseeded, so the runner defaults ctx.capabilities to the empty set.
+  const identity: EmployeeIdentity = {
+    employeeId: emp?.id ?? QUALIFICATION_AI_SLUG,
+    slug: QUALIFICATION_AI_SLUG,
+  };
+  if (emp) identity.capabilities = resolveEmployeeCapabilities(emp);
+  return identity;
 }
 
 // ---------------------------------------------------------------------

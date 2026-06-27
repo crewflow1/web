@@ -75,6 +75,7 @@ import {
   runResearchSalesPrep,
 } from "@/server/services/research-llm";
 import { listAiEmployees } from "@/server/services/ai-employees";
+import type { AiEmployee } from "@/lib/ai-employees/model";
 import {
   addContact,
   addRecommendation,
@@ -90,10 +91,11 @@ import {
   drainTaskType,
   NonRetryableError,
   registerTaskHandler,
+  resolveEmployeeCapabilities,
   runReadyTask,
   type DrainSummary,
+  type EmployeeIdentity,
   type RunContext,
-  type RunnerIdentity,
   type TaskHandler,
 } from "@/server/sdk/tasks";
 
@@ -169,12 +171,15 @@ function freshResult(): ResearchResult {
 // Research AI employee id — resolved once, cached for the process.
 // ---------------------------------------------------------------------
 
-let cachedEmployeeId: string | null | undefined;
-async function researchEmployeeId(): Promise<string | null> {
-  if (cachedEmployeeId !== undefined) return cachedEmployeeId;
+let cachedEmployee: AiEmployee | null | undefined;
+async function researchEmployee(): Promise<AiEmployee | null> {
+  if (cachedEmployee !== undefined) return cachedEmployee;
   const employees = await listAiEmployees();
-  cachedEmployeeId = employees.find((e) => e.slug === RESEARCH_AI_SLUG)?.id ?? null;
-  return cachedEmployeeId;
+  cachedEmployee = employees.find((e) => e.slug === RESEARCH_AI_SLUG) ?? null;
+  return cachedEmployee;
+}
+async function researchEmployeeId(): Promise<string | null> {
+  return (await researchEmployee())?.id ?? null;
 }
 
 // ---------------------------------------------------------------------
@@ -299,11 +304,18 @@ export async function startResearch(
 // per-tick — researchEmployeeId() is process-cached, so this is ~free.
 // ---------------------------------------------------------------------
 
-async function researchIdentity(): Promise<RunnerIdentity> {
-  const employeeId = await researchEmployeeId();
+async function researchIdentity(): Promise<EmployeeIdentity> {
+  const emp = await researchEmployee();
   // The seeded research-ai row id when present; the stable slug as a last-resort
-  // opaque identity (lease owner only) if the employee was never seeded.
-  return { employeeId: employeeId ?? RESEARCH_AI_SLUG, slug: RESEARCH_AI_SLUG };
+  // opaque identity (lease owner only) if the employee was never seeded. Capabilities
+  // resolve from the row (tools_allowed ∪ permissions.scopes) — left absent when
+  // unseeded, so the runner defaults ctx.capabilities to the empty set.
+  const identity: EmployeeIdentity = {
+    employeeId: emp?.id ?? RESEARCH_AI_SLUG,
+    slug: RESEARCH_AI_SLUG,
+  };
+  if (emp) identity.capabilities = resolveEmployeeCapabilities(emp);
+  return identity;
 }
 
 // ---------------------------------------------------------------------

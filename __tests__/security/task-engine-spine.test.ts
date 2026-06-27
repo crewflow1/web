@@ -14,10 +14,11 @@ import { VERBS, VERB_GROUPS } from "@/lib/events/registry";
  *   • Emission goes through hq_emit_event (the one validated spine write), NEVER a raw
  *     hq_events INSERT — so every task event passes the envelope CHECKs. A raw insert
  *     would let a malformed/unattributed event onto the spine.
- *   • The migration mints ONLY the five registered task verbs — created/claimed/
- *     completed/retried/failed — and NONE of the deferred ones (heartbeated/
- *     checkpointed/cancelled). A stray verb here would violate the registry's
- *     "one source of event names" (ADR 0005) and ship vocabulary with no transition.
+ *   • The migration mints ONLY its five task verbs — created/claimed/completed/
+ *     retried/failed — and NEITHER the deferred ones (heartbeated/checkpointed) NOR
+ *     task.cancelled, which is a registered verb minted by its OWN migration (D-03 /
+ *     #013), never the spine. A stray verb here would violate the registry's "one
+ *     source of event names" (ADR 0005) and ship vocabulary with no transition.
  *   • The emitted verbs are a SUBSET of the actual registry (imported live), so the DB
  *     and the TypeScript source cannot drift.
  *   • The emit helper and the five redefined entry points are SECURITY DEFINER with a
@@ -48,7 +49,8 @@ function execOf(sql: string): string {
 
 const MIGRATION = "supabase/migrations/20260803000000_hq_ai_tasks_spine.sql";
 
-// The five verbs PR-B brings to life — one per WIRED transition (ADR 0005).
+// The five verbs the SPINE migration (PR-B) brings to life — one per WIRED transition
+// it owns (ADR 0005).
 const TASK_VERBS = [
   "task.created",
   "task.claimed",
@@ -57,7 +59,13 @@ const TASK_VERBS = [
   "task.failed",
 ] as const;
 
-// Deferred — registered only when a real transition exists, never as dead vocabulary.
+// The full REGISTERED task group after D-03: the spine's five + task.cancelled (minted
+// by its OWN migration, 20260805 — proven in the cancel-migration security test).
+const REGISTERED_TASK_GROUP = [...TASK_VERBS, "task.cancelled"] as const;
+
+// Absent from THIS (spine) migration: heartbeat/checkpoint are deferred (no transition
+// emits them); task.cancelled is live but minted by the cancel migration, never here —
+// the spine must not double-mint it.
 const ABSENT_VERBS = ["task.heartbeated", "task.checkpointed", "task.cancelled"] as const;
 
 // The helper + the five entry points PR-B (re)defines. heartbeat/checkpoint are NOT here.
@@ -158,8 +166,11 @@ describe("task spine — mints exactly the five registered task verbs, and no de
     }
   });
 
-  it("the registry's task group is exactly these five (no dead vocabulary in the source either)", () => {
-    expect([...VERB_GROUPS.task].sort()).toEqual([...TASK_VERBS].sort());
+  it("the registry's task group is exactly the spine's five + task.cancelled (D-03) — no dead vocabulary", () => {
+    // The registry graduated to SIX under D-03; task.cancelled's mint is proven against
+    // its own migration in the cancel-migration security test, so the registry still
+    // carries no verb without a transition.
+    expect([...VERB_GROUPS.task].sort()).toEqual([...REGISTERED_TASK_GROUP].sort());
   });
 });
 

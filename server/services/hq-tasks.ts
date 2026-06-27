@@ -6,9 +6,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
  *
  * The service-layer binding for the durable AI work queue (`hq_ai_tasks`,
  * migration 20260802000000). It is the TypeScript half of the engine's standing
- * security posture: the queue is touched ONLY through the seven SECURITY DEFINER
- * entry points (Volume XII §11.1) — create / claim / heartbeat / checkpoint /
- * complete / fail / reap — never by a raw `insert`/`update` on the table. This
+ * security posture: the queue is touched ONLY through the eight SECURITY DEFINER
+ * entry points — create / claim / heartbeat / checkpoint / complete / fail / reap
+ * (Volume XII §11.1) and cancel (D-03) — never by a raw `insert`/`update` on the
+ * table. This
  * module makes that the only thing it CAN do: every function here is an `.rpc()`
  * call, and the source-analysis security test
  * (`__tests__/security/task-engine-spine.test.ts`) fails CI if any `.from(
@@ -116,6 +117,12 @@ export type TerminalResult =
   | { ok: false; reason: "lease_lost" }
   | TaskRpcError;
 
+/** `cancelTask` — pending|running → cancelled, or the task was not cancellable. */
+export type CancelResult =
+  | { ok: true; task: TaskRow }
+  | { ok: false; reason: "not_cancellable" }
+  | TaskRpcError;
+
 /** `reapTasks` — how many expired-lease tasks were recovered. */
 export type ReapResult = { ok: true; reaped: number } | TaskRpcError;
 
@@ -177,7 +184,7 @@ export interface EnqueueTaskInput {
 }
 
 // ---------------------------------------------------------------------
-// The seven entry points — each a thin, typed wrapper over its RPC.
+// The eight entry points — each a thin, typed wrapper over its RPC.
 // ---------------------------------------------------------------------
 
 /**
@@ -319,6 +326,44 @@ export async function failTask(
   if (data?.ok === true && data.task) return { ok: true, task: data.task };
   if (data?.ok === false && data.reason === "lease_lost") return { ok: false, reason: "lease_lost" };
   return { ok: false, reason: "error", error: "hq_ai_task_fail: malformed response" };
+}
+
+/** Options for {@link cancelTask}: the audit reason and the acting identity. */
+export interface CancelTaskOptions {
+  /** Free-text reason, recorded on the row and in the `task.cancelled` event. */
+  reason?: string | null;
+  /** Who is cancelling — the spine `actor_type` (defaults to `system`). */
+  actorType?: string;
+  /** Who is cancelling — the spine `actor_id` (defaults to null/system). */
+  actorId?: string | null;
+}
+
+/**
+ * Cancel a live task (`hq_ai_task_cancel`): pending|running → cancelled, clearing the
+ * lease so the worker's next heartbeat returns `alive:false` (cooperative
+ * cancellation). NOT lease-guarded — cancel acts on a task from OUTSIDE its worker
+ * (an operator/parent/OS), so it carries an explicit actor for the audit instead of a
+ * lease. `reason: "not_cancellable"` means the task was already terminal — an
+ * idempotent no-op, not an error.
+ */
+export async function cancelTask(
+  taskId: string,
+  opts: CancelTaskOptions = {},
+): Promise<CancelResult> {
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<TaskEnvelope>(admin, "hq_ai_task_cancel", {
+    p_task_id: taskId,
+    p_reason: opts.reason ?? null,
+    p_actor_type: opts.actorType ?? "system",
+    p_actor_id: opts.actorId ?? null,
+  });
+
+  if (error) return { ok: false, reason: "error", error: error.message };
+  if (data?.ok === true && data.task) return { ok: true, task: data.task };
+  if (data?.ok === false && data.reason === "not_cancellable") {
+    return { ok: false, reason: "not_cancellable" };
+  }
+  return { ok: false, reason: "error", error: "hq_ai_task_cancel: malformed response" };
 }
 
 /**
