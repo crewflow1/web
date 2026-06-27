@@ -84,6 +84,23 @@ system is, the governance records describe *how decisions about it are tracked*.
   is mostly **binding inert seams the Task Engine already reserved** (`deadline_at`, the
   `cancelled` status/transition, `required_capability`, `correlation_id`, `cost_budget_micros`),
   so the schema delta is **one `SECURITY DEFINER` cancel function and zero new columns**.
+- **[`directive-014-ai-sdk-envelope-architecture-proposal.md`](./directive-014-ai-sdk-envelope-architecture-proposal.md)** —
+  the **architecture proposal** (design only; **held** pending CEO approval; no
+  implementation) for **Directive #014 / D-04 — the AI SDK Envelope**. Answers the
+  architecture-review questions one-by-one (what the envelope is and what "Partial →
+  Established" means · what it owns and deliberately does not · how it **extends** the
+  frozen RunContext by addition, not redefinition · the `comms`/`events`/`tools`/`api`
+  facets and which already-built subsystem each binds · the P3 output envelope + the
+  `TaskHandler` return-type graduation + the evidence-drain · the permission gate where
+  **C4 becomes structural** + the **#013 threads · #014 enforces · #015 sources** split ·
+  cost metering + the API gateway · the autonomy test P4 + the approval hand-off · audit /
+  identity-stamping · what defers to #015 and other directives · the ADR, tests, and
+  migrations required · the over-engineering traps). Its thesis: #014 **fills the slots
+  #013 froze** — binding built engines (Event Spine #1, Communication Layer #7, Approval
+  Engine #6) and activating reserved seams (`cost_micros`), with the **API gateway** the
+  one genuinely net-new chokepoint. Recommends **phasing within #014** and surfaces five
+  scope forks (notably whether the API gateway splits into its own directive) for the CEO
+  to rule on.
 
 ## Related, outside this directory
 
