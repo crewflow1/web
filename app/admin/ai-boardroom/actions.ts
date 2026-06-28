@@ -7,6 +7,7 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { authorEmployeeCapabilities } from "@/server/sdk/registry-authoring";
 import {
   AI_EMPLOYEE_STATUSES,
   MEMORY_SCOPES,
@@ -259,4 +260,111 @@ export async function addAiEmployeeMemory(formData: FormData): Promise<void> {
 
   revalidatePath(`/admin/ai-boardroom/${d.slug}`);
   redirect(`/admin/ai-boardroom/${d.slug}?saved=memory`);
+}
+
+// --------------------------------------------------------------------
+// Author capabilities — registry-native authoring (Directive #015 / D-05, LR1)
+// --------------------------------------------------------------------
+//
+// The token SET only. Authority is authored AT the Capability Registry through the
+// atomic SECURITY DEFINER RPC (server/sdk/registry-authoring.ts), which defines new
+// tokens, upserts the employee-scoped grant, and mirrors the parity-faithful split
+// back to the retained legacy ai_employees columns in ONE transaction. Posture
+// (`can_execute`) is deliberately NOT touched here — the execution lock stays where
+// the legacy model has it (Directive 001), exactly as updateAiEmployeeConfig.
+
+// The catalogue token shape (hq_capabilities.token): lowercase segments joined by
+// a single '.', '_' or '-'. Validated here for a clean message; the RPC + the table
+// constraint are the hard backstops.
+const TOKEN_RE = /^[a-z0-9]+([._-][a-z0-9]+)*$/;
+
+const capabilitiesSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string().regex(SLUG_RE),
+  tokens: z.array(z.string().regex(TOKEN_RE).max(120)).max(200),
+});
+
+export async function authorAiEmployeeCapabilities(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+
+  // Accept tokens as a free-text field (comma / whitespace separated), normalised
+  // to a lowercase sorted-distinct set — the forgiving shape a paste-in editor wants.
+  const rawTokens = String(formData.get("tokens") ?? "");
+  const tokens = Array.from(
+    new Set(
+      rawTokens
+        .split(/[\s,]+/)
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0),
+    ),
+  ).sort();
+
+  const parsed = capabilitiesSchema.safeParse({
+    id: formData.get("id"),
+    slug: formData.get("slug"),
+    tokens,
+  });
+  if (!parsed.success) {
+    redirect(
+      `/admin/ai-boardroom?error=${encodeURIComponent(
+        "Invalid capability tokens — use lowercase letters, digits and . _ - only.",
+      )}`,
+    );
+  }
+
+  const d = parsed.data;
+  const supabase = createAdminClient();
+
+  // Snapshot the legacy token set BEFORE authoring so the audit entry carries
+  // before → after (the immutable admin_activity_log is the LR1 audit trail).
+  const { data: prev } = await supabase
+    .from("ai_employees" as never)
+    .select("tools_allowed, permissions")
+    .eq("id", d.id)
+    .maybeSingle();
+  const prevRow = prev as unknown as {
+    tools_allowed: string[] | null;
+    permissions: { scopes?: string[] | null } | null;
+  } | null;
+  const beforeTokens = Array.from(
+    new Set([...(prevRow?.tools_allowed ?? []), ...(prevRow?.permissions?.scopes ?? [])]),
+  ).sort();
+
+  const result = await authorEmployeeCapabilities({
+    slug: d.slug,
+    tokens: d.tokens,
+    actorId: admin.id,
+    actorEmail: admin.email,
+  });
+
+  if (!result.ok) {
+    const message =
+      result.reason === "invalid_token"
+        ? `Unknown or malformed token: ${result.token}`
+        : result.reason === "unknown_employee"
+          ? "Employee not found."
+          : "Couldn't save capabilities — try again.";
+    console.error("[ai-boardroom] authorAiEmployeeCapabilities failed", result);
+    redirect(`/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent(message)}`);
+  }
+
+  // `redirect` above returns `never`, so `result` is narrowed to the ok variant here.
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "ai_employee.capabilities_authored",
+    targetTable: "ai_employees",
+    targetId: d.id,
+    metadata: {
+      grant_action: result.action,
+      tokens_before: beforeTokens,
+      tokens_after: result.tokens,
+      tools_allowed: result.toolsAllowed,
+      scopes: result.scopes,
+    },
+  });
+
+  revalidatePath(`/admin/ai-boardroom/${d.slug}`);
+  revalidatePath("/admin/ai-boardroom");
+  redirect(`/admin/ai-boardroom/${d.slug}?saved=capabilities`);
 }
