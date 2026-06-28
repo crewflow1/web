@@ -65,14 +65,13 @@ import {
   drainTaskType,
   NonRetryableError,
   registerTaskHandler,
-  resolveEmployeeCapabilities,
   runReadyTask,
   type DrainSummary,
   type EmployeeIdentity,
   type RunContext,
   type TaskHandler,
 } from "@/server/sdk/tasks";
-import { verifyRegistryParity } from "@/server/sdk/registry-parity";
+import { resolveServedCapabilities } from "@/server/sdk/registry-parity";
 
 /** Slug of the Lead Qualification AI employee (seeded by the Module 3 migration). */
 const QUALIFICATION_AI_SLUG = "lead-qualification";
@@ -231,14 +230,15 @@ async function qualificationIdentity(): Promise<EmployeeIdentity> {
     employeeId: emp?.id ?? QUALIFICATION_AI_SLUG,
     slug: QUALIFICATION_AI_SLUG,
   };
-  if (emp) identity.capabilities = resolveEmployeeCapabilities(emp);
-  // R3 SDK read integration (CEO Directive #015 / D-05): consult the Capability Registry as
-  // a continuously-verified shadow on the request path — the runtime "continues to verify
-  // parity during the transition". Strictly fail-open and side-effect-free beyond a log
-  // line: it does NOT touch `identity`, so the authority served stays the legacy resolution
-  // above, byte-for-byte (the Behaviour Preservation Rule). Serving authority FROM the
-  // registry is the later, separately-authorised behavioural transition (R4), not this.
-  if (emp) await verifyRegistryParity(emp);
+  // R4 runtime authority switch (CEO Directive #015 / D-05): serve the capabilities from the
+  // now-AUTHORITATIVE Capability Registry (`source: "registry"`), with the legacy resolution
+  // RETAINED as the rollback / fail-safe path — resolveServedCapabilities falls back to it on
+  // a deliberate rollback (CAPABILITY_AUTHORITY_SOURCE=legacy), a registry read error, or a
+  // subject the registry is silent about, so the switch can never strand the employee. The
+  // continuous shadow verification (the Shadow Validation Rule) is folded onto the served
+  // value. Token-for-token identical to the legacy resolution while the flat mirror holds —
+  // only `source` flips (the authorised behavioural transition).
+  if (emp) identity.capabilities = await resolveServedCapabilities(emp);
   return identity;
 }
 

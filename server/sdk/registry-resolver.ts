@@ -222,3 +222,71 @@ export function compareAuthority(
   if (dimensions.length === 0) return null;
   return { dimensions, legacy, registry };
 }
+
+// ---------------------------------------------------------------------
+// R4 — the runtime authority switch (the serving decision, PURE)
+// ---------------------------------------------------------------------
+
+/**
+ * The control that selects which source is authoritative — the R4 rollback lever,
+ * surfaced as the `CAPABILITY_AUTHORITY_SOURCE` env in the server-only bridge:
+ *   • `registry` — the registry is authoritative (the R4 default; the switch).
+ *   • `legacy`   — rolled back to the legacy model (the pre-R4 / R3 shadow posture).
+ */
+export type AuthoritySource = "registry" | "legacy";
+
+/**
+ * The serving decision the runtime takes for ONE employee: which source's authority is
+ * served and — when the legacy model is served — why. PURE metadata the bridge maps onto
+ * the served {@link import("./tasks").ResolvedCapabilitySet} and logs for parity
+ * monitoring; it carries any divergence so the monitor can report it.
+ */
+export interface ServingDecision {
+  /** The source whose authority is served. */
+  readonly basis: AuthoritySource;
+  /**
+   * Why the legacy model was served (only set when `basis` is `legacy`):
+   *   • `rollback` — the control selected legacy (a DELIBERATE rollback, not a fallback).
+   *   • `error`    — the registry read failed; the retained legacy model is the fail-safe.
+   *   • `empty`    — the registry is silent for the subject (no grants — e.g. a backfill
+   *                  gap); the retained legacy model stands in during the migration window.
+   */
+  readonly reason?: "rollback" | "error" | "empty";
+  /**
+   * The divergence between the legacy baseline and the registry authority, when the
+   * registry was both authoritative and resolved with grants but disagreed. Recorded for
+   * parity monitoring; `undefined` when the two are in parity or the registry was not the
+   * served side.
+   */
+  readonly divergence?: AuthorityDivergence;
+}
+
+/**
+ * Decide which source's authority to serve for one employee (ADR 0010 Decision 2; the R4
+ * runtime authority switch). PURE and TOTAL — same inputs → same decision, no IO — so the
+ * switch's law is unit-testable in isolation, exactly like {@link composeGrants}. The
+ * server-only bridge supplies the IO (the env control, the registry read, the legacy
+ * resolution) and acts on the decision (see server/sdk/registry-parity.ts).
+ *
+ * Order of precedence, each step safe by construction:
+ *   1. control `legacy`        → serve legacy (a deliberate rollback).
+ *   2. registry read failed    → serve legacy (the fail-safe; the registry could not answer).
+ *   3. registry silent (`none`)→ serve legacy (the migration-window fallthrough; no grants).
+ *   4. otherwise               → serve the authoritative registry, recording any divergence
+ *                                from the legacy baseline for parity monitoring.
+ *
+ * The legacy model is RETAINED as the fallback in steps 1–3, so the switch can never strand
+ * an employee on a registry that is rolled back, unreachable, or not yet authored.
+ */
+export function decideServedAuthority(input: {
+  control: AuthoritySource;
+  /** The registry-resolved authority, or `null` when the registry read failed. */
+  registry: ResolvedAuthority | null;
+  legacy: ComparableAuthority;
+}): ServingDecision {
+  if (input.control === "legacy") return { basis: "legacy", reason: "rollback" };
+  if (input.registry === null) return { basis: "legacy", reason: "error" };
+  if (input.registry.source === "none") return { basis: "legacy", reason: "empty" };
+  const divergence = compareAuthority(input.legacy, input.registry);
+  return divergence ? { basis: "registry", divergence } : { basis: "registry" };
+}

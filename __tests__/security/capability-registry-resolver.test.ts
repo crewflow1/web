@@ -3,28 +3,35 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * The Capability Registry — R3 (runtime resolver + SDK read integration) security invariants.
+ * The Capability Registry — R3 + R4 (runtime resolver + the authority SWITCH) security
+ * invariants.
  *
  * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md
  * (Decision 5). Governing rules: the Single Source of Authority Rule (13th §2 standard),
- * the Migration Parity Rule (14th), the Behaviour Preservation Rule (15th).
+ * the Migration Parity Rule (14th), the Behaviour Preservation Rule (15th), the Shadow
+ * Validation Rule (16th).
  *
- * R3 introduces the runtime resolver but, by the Behaviour Preservation Rule, changes NO
- * externally observable behaviour: the legacy model stays authoritative and is what's
- * served; the registry is consulted as a continuously-verified, FAIL-OPEN shadow. These
- * assertions pin — as a matter of SOURCE, not discipline — the facts that would be a hole
- * in that guarantee if they ever silently flipped:
- *   • the pure resolver is dependency-free (no client, no IO, no server-only) — so it can
- *     carry no request-path side effect of its own;
+ * R3 stood the registry up as a continuously-verified, FAIL-OPEN shadow (the legacy model
+ * stayed authoritative and was served). R4 performs the authorised SWITCH: the registry
+ * becomes the authoritative source of an employee's served capabilities, with the legacy
+ * model RETAINED as the rollback / fail-safe path. These assertions pin — as a matter of
+ * SOURCE, not discipline — the facts that would be a hole in the switch's safety if they
+ * ever silently flipped:
+ *   • the pure resolver is dependency-free (no client, no IO, no server-only) — both the
+ *     composition law AND the serving decision law carry no request-path side effect;
  *   • the server-only bridge reads the registry READ-ONLY and reuses the canonical legacy
- *     resolvers (so the legacy side of the comparison can never drift);
- *   • verifyRegistryParity is STRICTLY fail-open — it never throws and swallows every error;
- *   • the shadow NEVER feeds identity — the services still serve the legacy capabilities and
- *     never assign the registry result, never flip source to "registry" (that is R4).
+ *     resolvers (so the legacy side of the comparison, and the fallback, can never drift);
+ *   • verifyRegistryParity stays STRICTLY fail-open (RETAINED through R4);
+ *   • resolveServedCapabilities — the switch — serves the registry but is STRICTLY
+ *     non-throwing and ALWAYS falls back to the retained legacy model (it can never strand
+ *     an employee), and is gated by the rollback control;
+ *   • the services now serve the SWITCH (assign its result), no longer the bare legacy
+ *     resolver — this is the authorised behavioural transition;
+ *   • NOTHING is removed — the legacy resolvers, the parity verification, and the rollback
+ *     control are all present (legacy removal is a later, separately-authorised phase).
  *
- * Comment text is stripped first, so the prose that DOCUMENTS the contract (which names the
- * registry, "source", "registry", the R4 transition, etc.) can neither satisfy a positive
- * match nor trip a negative one.
+ * Comment text is stripped first, so the prose that DOCUMENTS the contract can neither
+ * satisfy a positive match nor trip a negative one.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
@@ -50,16 +57,18 @@ function importSpecifiers(code: string): string[] {
 
 const RESOLVER = "server/sdk/registry-resolver.ts";
 const PARITY = "server/sdk/registry-parity.ts";
+const TASKS = "server/sdk/tasks.ts";
+const ENV = "lib/env.ts";
 const RESEARCH = "server/services/hq-research.ts";
 const QUALIFICATION = "server/services/hq-qualification.ts";
 const SERVICES = [RESEARCH, QUALIFICATION] as const;
 
 // =====================================================================
-// 0. The R3 contract files ship.
+// 0. The contract files ship.
 // =====================================================================
 
-describe("registry R3 — the resolver modules exist", () => {
-  it("ships the pure resolver and the server-only parity bridge", () => {
+describe("registry R3+R4 — the resolver modules exist", () => {
+  it("ships the pure resolver and the server-only authority bridge", () => {
     expect(existsSync(resolve(ROOT, RESOLVER)), RESOLVER).toBe(true);
     expect(existsSync(resolve(ROOT, PARITY)), PARITY).toBe(true);
   });
@@ -67,9 +76,10 @@ describe("registry R3 — the resolver modules exist", () => {
 
 // =====================================================================
 // 1. The pure resolver is PURE — dependency-free, no IO, no server-only.
+//    Both the composition law AND the R4 serving-decision law live here.
 // =====================================================================
 
-describe("registry R3 — the resolver core is pure", () => {
+describe("registry R3+R4 — the resolver core is pure", () => {
   const code = codeOf(read(RESOLVER));
 
   it("imports NOTHING — no dependency graph, so no request-path side effect of its own", () => {
@@ -91,15 +101,28 @@ describe("registry R3 — the resolver core is pure", () => {
     expect(code).toMatch(/\.some\(/); // the ratchet is an OR across grants
     expect(code).toMatch(/Math\.min\(/); // budget is the effective minimum
   });
+
+  it("encodes the R4 serving-decision law purely, folding in the parity comparison", () => {
+    expect(code).toMatch(/export function decideServedAuthority/);
+    // The serving law reuses the pure comparison — the continuous shadow verification is
+    // computed from the same module, never re-implemented and never via IO.
+    expect(code).toMatch(/compareAuthority\(/);
+    // It is deny-safe: every non-registry branch resolves to the legacy basis, with a
+    // named reason; the registry is served only when it actually spoke.
+    expect(code).toMatch(/basis: "registry"/);
+    expect(code).toMatch(/basis: "legacy"/);
+    for (const reason of ['"rollback"', '"error"', '"empty"']) {
+      expect(code, `the serving law must name the ${reason} fallback`).toContain(reason);
+    }
+  });
 });
 
 // =====================================================================
 // 2. The server-only bridge is fenced, reuses the legacy resolvers, READS only.
 // =====================================================================
 
-describe("registry R3 — the parity bridge is server-only and read-only", () => {
-  const raw = read(PARITY);
-  const code = codeOf(raw);
+describe("registry R3+R4 — the bridge is server-only and read-only", () => {
+  const code = codeOf(read(PARITY));
 
   it("is server-only fenced (it holds the service-role client)", () => {
     expect(code).toContain("server-only");
@@ -111,16 +134,17 @@ describe("registry R3 — the parity bridge is server-only and read-only", () =>
     expect(code).toMatch(/resolveEmployeePosture/);
   });
 
-  it("composes via the pure law (it does not re-implement Decision 5)", () => {
+  it("composes via the pure law (it does not re-implement Decision 5 or the switch)", () => {
     expect(importSpecifiers(code)).toContain("@/server/sdk/registry-resolver");
     expect(code).toMatch(/composeGrants/);
     expect(code).toMatch(/applicableGrants/);
     expect(code).toMatch(/compareAuthority/);
+    expect(code).toMatch(/decideServedAuthority/);
   });
 
   it("reads the registry READ-ONLY — never writes the mirror, never writes the legacy source", () => {
-    // The shadow must never mutate (the Migration Parity Rule: the mirror is never written
-    // back; the legacy stays the single authoritative source). Only .select()/.or() appear.
+    // The Migration Parity Rule: the mirror is never written back; the legacy stays the
+    // single authoritative SOURCE-of-record. Only .select()/.or() appear.
     expect(code).toMatch(/\.select\(/);
     for (const forbidden of [".insert(", ".update(", ".delete(", ".upsert("]) {
       expect(code, `the bridge must not ${forbidden}`).not.toContain(forbidden);
@@ -129,16 +153,17 @@ describe("registry R3 — the parity bridge is server-only and read-only", () =>
 });
 
 // =====================================================================
-// 3. verifyRegistryParity is STRICTLY fail-open (the Behaviour Preservation guarantee).
+// 3. verifyRegistryParity is STRICTLY fail-open — RETAINED through R4.
 // =====================================================================
 
-describe("registry R3 — the verification is strictly fail-open", () => {
+describe("registry R3+R4 — the standalone parity gate stays fail-open", () => {
   const code = codeOf(read(PARITY));
-  // verifyRegistryParity is the last export in the module; its body runs to EOF.
+  // verifyRegistryParity sits before resolveServedCapabilities; slice between them.
   const verify = (() => {
     const start = code.indexOf("export async function verifyRegistryParity");
-    expect(start, "verifyRegistryParity not found").toBeGreaterThanOrEqual(0);
-    return code.slice(start);
+    expect(start, "verifyRegistryParity not found (must be RETAINED through R4)").toBeGreaterThanOrEqual(0);
+    const end = code.indexOf("export async function resolveServedCapabilities", start);
+    return end > start ? code.slice(start, end) : code.slice(start);
   })();
 
   it("wraps its work in try/catch", () => {
@@ -146,7 +171,7 @@ describe("registry R3 — the verification is strictly fail-open", () => {
     expect(verify).toMatch(/catch\b/);
   });
 
-  it("swallows every error — the verification NEVER throws (legacy stays authoritative)", () => {
+  it("swallows every error — the verification NEVER throws", () => {
     expect(verify).not.toMatch(/\bthrow\b/);
   });
 
@@ -157,51 +182,91 @@ describe("registry R3 — the verification is strictly fail-open", () => {
 });
 
 // =====================================================================
-// 4. The shadow NEVER feeds identity — the services preserve behaviour.
+// 4. resolveServedCapabilities — the R4 switch: registry authoritative,
+//    legacy retained, never throws, gated by the rollback control.
 // =====================================================================
 
-describe("registry R3 — the shadow does not change what is served", () => {
+describe("registry R4 — the authority switch serves the registry, retains legacy", () => {
+  const code = codeOf(read(PARITY));
+  const serve = (() => {
+    const start = code.indexOf("export async function resolveServedCapabilities");
+    expect(start, "resolveServedCapabilities not found").toBeGreaterThanOrEqual(0);
+    return code.slice(start);
+  })();
+
+  it("serves the registry as the authoritative source (the behavioural transition)", () => {
+    // The switch returns the registry's tokens AND its provenance — `source` flips to
+    // "registry" (composeGrants stamps it), the one observable change R4 makes.
+    expect(serve).toMatch(/tokens: registry\.tokens/);
+    expect(serve).toMatch(/source: registry\.source/);
+  });
+
+  it("delegates the choice to the PURE decision law (no re-implemented switch logic)", () => {
+    expect(serve).toMatch(/decideServedAuthority\(/);
+  });
+
+  it("is gated by the rollback control (the env-backed authority source)", () => {
+    expect(importSpecifiers(code)).toContain("@/lib/env");
+    expect(serve).toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
+  });
+
+  it("RETAINS the legacy model as the fallback — it can never strand an employee", () => {
+    expect(serve).toMatch(/resolveEmployeeCapabilities\(emp\)/);
+    expect(serve).toMatch(/return legacyCapabilities/);
+  });
+
+  it("is STRICTLY non-throwing (the switch fails SAFE to legacy, never to an error)", () => {
+    expect(serve).toMatch(/try\s*\{/);
+    expect(serve).toMatch(/catch\b/);
+    expect(serve).not.toMatch(/\bthrow\b/);
+  });
+});
+
+// =====================================================================
+// 5. The services SERVE the switch — the authorised behavioural transition.
+// =====================================================================
+
+describe("registry R4 — the services serve registry-derived authority", () => {
   for (const svc of SERVICES) {
     const code = codeOf(read(svc));
 
-    it(`${svc}: still serves the LEGACY capabilities (authority unchanged)`, () => {
-      expect(code).toMatch(/identity\.capabilities\s*=\s*resolveEmployeeCapabilities\(emp\)/);
-    });
-
-    it(`${svc}: consults the registry shadow, but only via the fail-open verify`, () => {
+    it(`${svc}: assigns the SWITCH result into identity (authority now flows from the registry)`, () => {
       expect(importSpecifiers(code)).toContain("@/server/sdk/registry-parity");
-      expect(code).toMatch(/verifyRegistryParity\(emp\)/);
+      expect(code).toMatch(/identity\.capabilities\s*=\s*await\s+resolveServedCapabilities\(emp\)/);
     });
 
-    it(`${svc}: NEVER assigns the registry result into identity (no behavioural transition)`, () => {
-      // The shadow is a bare statement; its outcome is never consumed. Serving authority
-      // FROM the registry — assigning a registry result, flipping source — is R4.
-      expect(code).not.toMatch(/=\s*await\s+verifyRegistryParity/);
-      expect(code).not.toMatch(/=\s*verifyRegistryParity/);
-      expect(code).not.toContain("resolveAuthorityFromRegistry");
-      expect(code).not.toContain("composeGrants");
-      expect(code).not.toContain('source: "registry"');
+    it(`${svc}: no longer serves the bare legacy resolver directly (the switch is the one seam)`, () => {
+      // The legacy resolution is RETAINED — but inside the switch (the bridge), not in the
+      // service. The service must route capabilities through resolveServedCapabilities.
+      expect(code).not.toMatch(/identity\.capabilities\s*=\s*resolveEmployeeCapabilities/);
+      expect(code).not.toMatch(/resolveEmployeeCapabilities/);
     });
   }
 });
 
 // =====================================================================
-// 5. R3 boundary — no legacy removal, no R4 transition anywhere.
+// 6. R4 boundary — legacy retained, parity retained, rollback control present.
+//    (CEO: do NOT remove legacy authority / parity verification / rollback path.)
 // =====================================================================
 
-describe("registry R3 — stays inside the authorised slice", () => {
-  it("the bridge does not flip the served source to 'registry' (that is the R4 transition)", () => {
-    // The ONLY place source becomes "registry" is the resolver's own ResolvedAuthority
-    // provenance (composeGrants). The bridge and services never serve it as the authority.
-    expect(codeOf(read(PARITY))).not.toContain('source: "registry"');
+describe("registry R4 — nothing authorised-to-keep is removed", () => {
+  it("keeps the canonical legacy resolvers in place (legacy authority retained)", () => {
+    const tasks = codeOf(read(TASKS));
+    expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
+    expect(tasks).toMatch(/export function resolveEmployeePosture/);
   });
 
-  it("keeps the legacy resolvers in place — it consumes them, it does not remove them", () => {
-    // legacy authority remains the single authoritative source (the Single Source of
-    // Authority Rule): the canonical resolvers are still imported and used everywhere.
-    for (const svc of SERVICES) {
-      expect(codeOf(read(svc))).toMatch(/resolveEmployeeCapabilities/);
-    }
-    expect(codeOf(read(PARITY))).toMatch(/resolveEmployeeCapabilities/);
+  it("retains the parity verification AND consumes the legacy model in the bridge", () => {
+    const code = codeOf(read(PARITY));
+    expect(code).toMatch(/export async function verifyRegistryParity/);
+    expect(code).toMatch(/resolveEmployeeCapabilities/);
+  });
+
+  it("ships the rollback control as a server-only, registry-default authority source", () => {
+    const env = codeOf(read(ENV));
+    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
+    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
+    // An authority control is never shipped to the browser.
+    expect(env).not.toMatch(/NEXT_PUBLIC_CAPABILITY_AUTHORITY_SOURCE/);
   });
 });
