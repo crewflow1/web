@@ -233,13 +233,44 @@ not change) — together they keep the execution seam pure. This sharpens [ADR
 capability and "must never become the authorisation system") with its run-time corollary: it must
 never become mutable *state* either.
 
+### The Executor Idempotency Rule
+
+A **ninth** standard, set by CEO directive on the review of **Directive #014 Phase C C2** (the
+executor contract; independent CTO review). Where the Executor Boundary Rule governs *who* applies a
+cleared action and the Registry Immutability Rule governs the *metadata it consumes*, this one
+governs the **application itself** — what must hold every time the executor crosses the execution
+boundary, so that the apply-seam is safe to retry:
+
+> **Every executor-applied action must be idempotent by design or protected by a deterministic
+> idempotency key. The executor must never rely on "probably only once" execution. Retries, replays
+> and approval re-processing must be safe. The idempotency key should derive from stable execution
+> identity — task id · approval id · tool label · action id · correlation id.**
+
+Idempotency is the apply-seam's safety property under the Task Engine's existing retry:
+`failTask(retryable)` re-queues and re-runs the whole handler from the top, so an action applied on
+one attempt must **not** apply twice on the next. The executor invents no new retry machinery (the
+Task Engine owns retry — [ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md) Decision 6);
+it makes each application **safe to repeat** — either the effect is naturally idempotent (a reversible
+`memory.write` converges on re-application) or it is guarded by a **deterministic key** computed from
+stable execution identity, so a re-attempt with an already-applied key is a **no-op success** (the
+Approval Engine's own *"re-deciding a row already in the target terminal state is a no-op success"*,
+and the discipline `checkpointTask` / `dedupeKey` already expose). The key is **derived, never
+random**: the same task / approval / tool / action / correlation always yields the same key, so
+determinism survives both task retries and the out-of-band apply-on-approval sweep. This sharpens
+[ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md) Decision 6 (retry safety by
+idempotency) into a standing constraint, and it **becomes mandatory before the apply-on-approval
+runtime is introduced** (Phase C C3 onward): no executor effect may rely on "probably once." It
+completes the executor triad — the executor is *mechanism only* (Boundary), the registry is
+*metadata only* (Immutability), and every application is *safe to repeat* (Idempotency) — so the
+execution seam stays deterministic, reproducible, and retry-safe together.
+
 ### The Reference Path Rule
 
-A **ninth** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
-Reference Employee acceptance; independent CTO review). The eight standards above are **structural**
+A **tenth** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
+Reference Employee acceptance; independent CTO review). The nine standards above are **structural**
 — they say what the kernel *must be* (a stable surface, a layering guarantee, isolated facets, a
-policy/mechanism split, runtime-owned composition, an execution-seam boundary, and immutable tool
-metadata). This one is **evidentiary** — it says how a
+policy/mechanism split, runtime-owned composition, an execution-seam boundary, immutable tool
+metadata, and idempotent application). This one is **evidentiary** — it says how a
 kernel capability is *proven* to honour them, and how that proof is kept honest as the platform
 grows:
 

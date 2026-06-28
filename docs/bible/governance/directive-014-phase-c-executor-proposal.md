@@ -750,8 +750,8 @@ It is the execution-seam completion of the rule stack (Facet Isolation → Polic
 Runtime Composition → **Executor Boundary**) and ratifies ADR 0009 Decisions 1, 3 and 11 as a
 standing constraint.
 
-**C1 follow-up — the typed tool registry shipped, C2 authorised (CEO independent CTO review,
-2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
+**C1 / C2 follow-up — the registry and the executor contract shipped, C3 authorised (CEO
+independent CTO review, 2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
 (`label`, `permission`, `argSchema`, `costEstimator`, `reversibilityClass`; `defineTool` /
 `createToolRegistry`; the reference tools), **descriptive only**, with unit and source-level
 trust-boundary tests — and was reviewed, **approved**, and **merged** (PR #219). On the C1 review the
@@ -763,10 +763,25 @@ of the Executor Boundary Rule:
 > initialisation. Runtime execution must consume the registry. Runtime execution must never mutate
 > the registry. This preserves determinism and reproducibility across every AI employee.**
 
-**C2** (the **executor contract** — registry consumption and the execution boundary, with **no**
-apply-on-approval runtime, **no** API Gateway, **no** Capability Registry, **no** employee
-migration) is now **authorised**; **C3 must not begin until C2 has been implemented, reviewed and
-approved.**
+**C2** was implemented as `server/sdk/executor.ts` — the **executor contract** (`planExecution`,
+`executePlan`, `execute`, `createExecutor` / `REFERENCE_EXECUTOR`; registry consumption + the
+execution boundary, with the side-effecting tool implementation **injected**, and **no**
+apply-on-approval runtime, **no** API Gateway, **no** Capability Registry, **no** employee migration,
+**no** runner wiring), with unit and source-level trust-boundary tests — and was reviewed,
+**approved**, and **merged** (PR #221). On the C2 review the CEO set **one new permanent engineering
+rule**, the **Executor Idempotency Rule** — the ninth written standard, homed in the [Kernel Contract
+Map](./kernel-contract-map.md) §2 as the third member of the executor triad (Boundary → Immutability
+→ Idempotency):
+
+> **Every executor-applied action must be idempotent by design or protected by a deterministic
+> idempotency key. The executor must never rely on "probably only once" execution. Retries, replays
+> and approval re-processing must be safe. The idempotency key should derive from stable execution
+> identity — task id · approval id · tool label · action id · correlation id.**
+
+**C3** (the **apply-on-approval marker** — applied/failure persistence and the idempotency key
+strategy, with **no** executor rollout, **no** API Gateway, **no** Capability Registry, **no**
+employee migration) is now **authorised**; **C4 must not begin until C3 has been implemented,
+reviewed and approved.**
 
 ---
 
@@ -778,6 +793,7 @@ comms + the output envelope), and the Phase-B doorman (the pure gate + `proposeA
 Approval-Engine hand-off). It implements ADR 0008 Decision 6 and the execution half of Decision 8,
 and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
-Runtime Composition, (set on the acceptance of ADR 0009) **Executor Boundary**, and (set on the C1
-review) **Registry Immutability** Rules, and the Reference Path Rule (PR #217, merged). The CEO's
+Runtime Composition, (set on the acceptance of ADR 0009) **Executor Boundary**, (set on the C1
+review) **Registry Immutability**, and (set on the C2 review) **Executor Idempotency** Rules, and the
+Reference Path Rule (PR #217, merged). The CEO's
 review outcome — and the subsequent acceptance of ADR 0009 — is recorded in §9.*
