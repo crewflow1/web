@@ -24,6 +24,7 @@ import {
   updateAiEmployeeConfig,
   addAiEmployeeTask,
   addAiEmployeeMemory,
+  authorAiEmployeeCapabilities,
 } from "../actions";
 import {
   getEmployeeMemoryFeed,
@@ -63,6 +64,13 @@ export default async function AiEmployeeDetailPage({
   const accent = accentClasses(e.accent);
   const pulse = (STATUS_PULSE as Record<string, boolean>)[e.status] ?? false;
   const st = statusStyle(e.status);
+
+  // The complete capability token set the employee holds — the union the registry
+  // grant stores and the legacy model splits into tools + scopes. Seeds the
+  // registry-native authoring editor (Directive #015 / D-05, LR1).
+  const capabilityTokens = Array.from(
+    new Set([...e.tools_allowed, ...e.permissions.scopes]),
+  ).sort();
 
   // Workforce telemetry — derived from the task + memory history already
   // loaded above (no extra query). Architecture only: read + derive.
@@ -241,24 +249,36 @@ export default async function AiEmployeeDetailPage({
 
         {/* Tools + permissions */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Section title="Allowed tools">
+          <Section
+            title="Capabilities"
+            subtitle="Authored at the Capability Registry. Edits are audit-logged; execution stays locked."
+          >
             <p className="mb-3 text-xs text-slate-500">
-              Capability labels only — no executor is wired to them in Phase 1.
+              The complete capability token set this employee holds — one token per
+              line. Saving authors the set at the registry and mirrors it to the
+              legacy model (tool permissions and scopes are split automatically by
+              the catalogue). Capability labels only — no executor is wired to them.
             </p>
-            {e.tools_allowed.length === 0 ? (
-              <p className="text-sm text-slate-500">No tools configured.</p>
-            ) : (
-              <ul className="flex flex-wrap gap-2">
-                {e.tools_allowed.map((t) => (
-                  <li
-                    key={t}
-                    className="rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-slate-300 ring-1 ring-inset ring-slate-700"
-                  >
-                    {t}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <form action={authorAiEmployeeCapabilities} className="space-y-3">
+              <input type="hidden" name="id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <textarea
+                name="tokens"
+                rows={6}
+                defaultValue={capabilityTokens.join("\n")}
+                placeholder={"e.g.\nread\nmemory.write\ncomm.send"}
+                spellCheck={false}
+                className={`${inputCls} font-mono text-xs leading-relaxed`}
+              />
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                >
+                  Save capabilities
+                </button>
+              </div>
+            </form>
           </Section>
 
           <Section title="Permissions">
@@ -739,6 +759,8 @@ function prettySaved(saved: string): string {
       return "Task logged.";
     case "memory":
       return "Memory entry added.";
+    case "capabilities":
+      return "Capabilities authored at the registry.";
     default:
       return "Saved.";
   }
