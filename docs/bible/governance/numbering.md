@@ -120,8 +120,9 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0007`](../decisions/0007-runcontext-runtime-contract.md) | The RunContext Runtime Contract | #013 (D-03) |
 | [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Accepted)* | #014 (D-04) |
 | [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Accepted)* | #014 (D-04), Phase C |
+| [`0010`](../decisions/0010-capability-registry.md) | The Capability Registry *(Proposed)* | #015 (D-05) |
 
-**Next free ADR number: `0010`.** ADR numbers are also monotonic and never reused. ADR
+**Next free ADR number: `0011`.** ADR numbers are also monotonic and never reused. ADR
 `0008` is **Accepted** (CEO independent CTO review, 2026-06-27) and ADR `0009` (SDK Executor
 and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO review, 2026-06-28);
 Directive #014 shipped under per-phase review gates as Phases **A → B → C**, all **merged**.
@@ -138,6 +139,15 @@ Idempotency Rule**; on the **C3** review the **Application Atomicity Rule**; and
 review the **Reference Implementation Rule** (the completion-and-sequencing complement to the
 earlier **Reference Path Rule**) — all homed in the [Kernel Contract Map](./kernel-contract-map.md)
 §2.
+
+ADR `0010` (the **Capability Registry**, Directive **#015 / D-05**) is **Proposed** — written under
+the strict *document-before-you-build* gate ahead of any #015 code, defining the nine areas the CEO
+required (authority ownership · registry boundaries · grant model · inheritance model · migration
+strategy · runtime resolution model · interaction with the Tool Registry · interaction with the SDK ·
+interaction with the API Gateway). **#015 implementation is gated on ADR 0010's acceptance.** On the
+#015 architecture review the CEO set the permanent **Single Source of Authority Rule** as the
+directive's governing principle (homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
+Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion.
 
 ---
 

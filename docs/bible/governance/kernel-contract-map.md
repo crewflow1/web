@@ -388,6 +388,43 @@ proof must exist and **pass before** the expansion it guards is begun. The kerne
 the employees stay simple (the §2 principle) because no capability is built upon until one canonical
 implementation has shown — across its **entire** lifecycle — that the floor beneath it holds.
 
+### The Single Source of Authority Rule
+
+A **thirteenth** standard, set by CEO directive on the review of the **Directive #015 architecture
+proposal** (the Capability Registry; independent CTO review). The twelve standards above govern the
+SDK surface, the execution seam, and how a kernel capability is proven. This one governs
+**authority** — *where* an authorisation decision is allowed to come from — and the CEO set it as
+*"the governing principle of Directive #015":*
+
+> **Every runtime authorisation decision must ultimately derive from exactly one authoritative
+> source. The platform may expose multiple read models. The platform may expose caches. The platform
+> may expose projections. Authority itself must never exist in more than one place. This rule becomes
+> the governing principle of Directive #015.**
+
+It is the **culmination of the "one source of truth" theme** the rule stack has built toward. The
+SDK ABI Principle keeps the *interface* singular; the Registry Immutability Rule keeps *tool
+metadata* singular and fixed; this rule keeps **authority** singular. Today an employee's authority
+exists in **eight** places — the four `ai_employees` columns (`tools_allowed`, `permissions`,
+`memory_scope`, `department`) and the four registration surfaces the [platform-independence
+audit](./directive-012-platform-independence-audit.md) §5 named — so the platform has no single
+answer to *"what may employee X do?"*: the precise condition this rule forbids. Directive #015
+resolves it by making the **Capability Registry** that one authoritative source; everything else —
+the gate's in-memory view, a process-start cache, an operator read model, the legacy columns mirrored
+during cutover — becomes a **read model / cache / projection** *of* that source, never a second home
+for authority. The rule's force is that a second authority home is thereby a **standards violation**,
+not merely untidy, so the scatter the #012 audit named **cannot silently re-accrete**.
+
+It composes with the enforcement rules rather than replacing them: **#013 threads · #014 enforces ·
+#015 sources** — RunContext threads the resolved set onto `ctx`, the gate (Policy vs Mechanism)
+*decides* over it, and this rule fixes that the set the gate reads **derives from exactly one
+source**. The registry is therefore *data, not judge* (it does not decide — the gate does) and *the
+single source, not a second decision engine* (it does not duplicate authority — it consolidates it).
+Its decision record is [ADR 0010](../decisions/0010-capability-registry.md) (the Capability Registry;
+**Proposed**), which defines the registry as a **declarative database of authority** the runtime
+*queries* — no runtime behaviour migrating into it — with capability inheritance composed by the
+runtime over the default-deny floor. On #015 completion, contract #8 graduates Reserved → Established
+and this rule stands as the directive's governing principle.
+
 ---
 
 ## 3. The contract map
