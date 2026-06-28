@@ -283,10 +283,13 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
     expect(empUpdate).toBeTruthy();
     const payload = empUpdate?.payload as Record<string, unknown>;
     expect(payload.status).toBe("working");
-    expect(payload.memory_scope).toBe("department");
     expect(payload.role).toBe("Outbound sales strategist");
     expect(payload.model_provider).toBe("anthropic");
     expect(payload.model_name).toBe("claude-opus-4-7");
+    // LR2 (Directive #015 / D-05, the Mirror Integrity Rule): memory_scope is
+    // capability authority, authored at the registry — NOT written direct to the
+    // legacy model here. Even when the form submits it, the config action ignores it.
+    expect(payload).not.toHaveProperty("memory_scope");
     // Framework-mode invariant: the config action must NEVER touch
     // execution permissions.
     expect(payload).not.toHaveProperty("permissions");
