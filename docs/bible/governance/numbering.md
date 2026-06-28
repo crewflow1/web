@@ -140,14 +140,18 @@ review the **Reference Implementation Rule** (the completion-and-sequencing comp
 earlier **Reference Path Rule**) — all homed in the [Kernel Contract Map](./kernel-contract-map.md)
 §2.
 
-ADR `0010` (the **Capability Registry**, Directive **#015 / D-05**) is **Proposed** — written under
+ADR `0010` (the **Capability Registry**, Directive **#015 / D-05**) is **Accepted** — written under
 the strict *document-before-you-build* gate ahead of any #015 code, defining the nine areas the CEO
 required (authority ownership · registry boundaries · grant model · inheritance model · migration
 strategy · runtime resolution model · interaction with the Tool Registry · interaction with the SDK ·
-interaction with the API Gateway). **#015 implementation is gated on ADR 0010's acceptance.** On the
-#015 architecture review the CEO set the permanent **Single Source of Authority Rule** as the
-directive's governing principle (homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
-Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion.
+interaction with the API Gateway), and accepted on independent CTO review with one amendment (the
+**Approval Ratchet Rule**). On the #015 architecture review the CEO set the permanent **Single Source
+of Authority Rule** as the directive's governing principle; on the **R1 (Registry Schema)** review the
+CEO set the permanent **Migration Parity Rule** (both homed in the
+[Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds slice by slice, each
+gated on review of the last — **R1 (Registry Schema) is established**; R2 (populate the registry from
+the legacy model and prove continuous parity) is authorised next. Contract **#8 (Capability
+Registry)** graduates Reserved → Established only on #015 completion.
 
 ---
 
