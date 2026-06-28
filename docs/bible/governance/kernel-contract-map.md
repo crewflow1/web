@@ -666,6 +666,52 @@ rule is permanent: whenever a migration keeps an old model as a compatibility mi
 authoritative one, the mirror is **derived and read-only to users** for its whole retained life — written
 only as a deterministic, atomic, reproducible function of the source it shadows.
 
+### The Registry Completeness Rule
+
+A **twentieth** standard, set by CEO directive on the review of **Directive #015 LR2** (registry-native
+memory scope; independent CTO review). The Evidence Before Deletion Rule (the eighteenth) says the
+retained model may be deleted only on objective evidence that its replacement has **taken over**; the
+Mirror Integrity Rule (the nineteenth) keeps that retained model a derived mirror while it waits. This
+one fixes the **structural precondition** the other two presuppose — what it means for the replacement to
+have *fully* taken over — and sets it as the gate a migration must pass before any removal of the model
+it replaces may even be contemplated:
+
+> **Before any legacy authority can be removed, every authority dimension must already be fully
+> represented, authored, validated, and served by the Capability Registry. A registry is not complete
+> merely because data exists within it. It is complete only when every read path, every write path,
+> every validation path, and every operational workflow depend solely upon it.**
+
+It is the **completeness** standard of the migration arc — the threshold between *coexistence* and
+*removal*. Where the Evidence Before Deletion Rule supplies the **empirical** gate (a sustained-stability
+window, a closed-out rollback need, monitoring that confirms equivalent behaviour, a verified-empty set
+of un-migrated dependents), this rule supplies the **structural** one that must hold first: the
+replacement is *complete* only when nothing of consequence still depends on the model being removed. The
+rule binds four dependency classes, **conjunctively**. *Representation + authoring*: every authority
+dimension exists in the registry and is **written** there — not merely backfilled into it (Directive
+#015's LR1 and LR2 made tokens, then memory scope, registry-authored). *Validation*: every check that
+gates a write or a read runs against the registry. *Serving*: every runtime read path resolves **from**
+the registry. *Operational workflows*: every administrative and operational procedure — authoring UI,
+parity tooling, monitoring, rollback — operates **through** it. The rule's sharpest clause is its second
+sentence: **data presence is not completeness**. A backfilled, parity-verified registry that the runtime
+still *reads around* — serving some dimension from the legacy model — is **incomplete**, and removing the
+legacy model under it would strand a live read path. So the rule's force is that **removing a replaced
+model while any read, write, validation, or operational path still depends on it — on the strength of the
+replacement merely *holding* the data — is a standards violation**.
+
+This is the bar Directive #015's legacy-removal phase must clear before it removes anything. **LR1** and
+**LR2** satisfied the *authoring* and *representation* clauses for the two authority dimensions (tokens,
+then memory scope, are registry-authored and deterministically mirrored). The *serving* clause is the one
+still outstanding: under R4 the registry is authoritative for **tokens** at runtime, but posture and
+memory scope are still **served from the legacy model** behind the authority switch — so by this rule the
+registry is **not yet complete**. **LR3** closes that gap: it migrates the remaining runtime read paths
+onto the registry, under continuous shadow validation and with rollback intact, so that every dimension
+is not only authored and validated but **served** solely by the registry. Only once completeness is
+reached — all four dependency classes resting solely on the registry — do the Evidence Before Deletion
+Rule's conditions become *gatherable*, and only then may a later, separately-authorised increment begin
+removing the legacy model. Generalised beyond #015, the rule is permanent: a replacement is **complete**,
+and its predecessor removable, only when every read, write, validation, and operational path depends on
+the replacement alone — never on the mere existence of data within it.
+
 ---
 
 ## 3. The contract map
