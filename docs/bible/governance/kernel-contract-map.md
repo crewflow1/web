@@ -624,6 +624,48 @@ any future removal of a production system — not only the legacy authority mode
 same four evidentiary conditions, and deletion is always an engineering milestone earned on
 evidence, never a development milestone claimed on a replacement's existence.
 
+### The Mirror Integrity Rule
+
+A **nineteenth** standard, set by CEO directive on the review of **Directive #015 LR1** (registry-native
+authoring; independent CTO review). The preceding migration standards govern a transition's *data* (the
+fourteenth), its *behaviour* (the fifteenth), its *order* — shadow, then switch (the sixteenth), its
+*rollback* (the seventeenth) and its *deletion* (the eighteenth). This one governs the **interim** those
+standards create — the stretch in which the new authoritative model and the old, retained model
+**coexist** — and fixes how the retained model must be treated for as long as it is kept:
+
+> **Whenever data is mirrored between an authoritative model and a compatibility model, the mirror must
+> be treated as a derived representation. The derived representation must never be edited directly. Only
+> the authoritative model may accept user-initiated writes. Mirror updates must be deterministic,
+> atomic, and reproducible.**
+
+It is the **coexistence** standard of the migration arc. The Rollback Readiness Rule keeps the prior
+model **present** after the switch, and the Evidence Before Deletion Rule keeps it present until deletion
+is **earned**; while it is present it is a **compatibility mirror**, not a second source of truth — and a
+mirror that still accepts its own writes is exactly the divergence the Single Source of Authority Rule
+forbids, reintroduced through the back door. The rule binds three things. First, **directionality**: a
+user-initiated write may land on the authoritative model only; the compatibility model receives the
+change solely as a **derivation** of that write, never as an independent edit. Second, **derivation
+discipline**: the mirror update must be **deterministic** (the same authoritative state always yields the
+same mirror), **atomic** (it commits in the same transaction as the authoritative write, so the two can
+never be observed out of step) and **reproducible** (it can be regenerated from the authoritative model
+alone — the mirror holds no information its source does not). Third, the corollary: any **remaining**
+direct write path to the mirror is a defect to be **closed**, not a surface to be maintained. The rule's
+force is that **editing a compatibility mirror directly — or mirroring non-deterministically,
+non-atomically, or irreproducibly — is a standards violation**, so a retained legacy model can never
+silently re-acquire authority while it waits to be removed.
+
+This is the principle Directive #015's LR1 began and LR2 completes. **LR1** gave the Capability Registry
+a native write path and reduced the legacy `ai_employees` columns to a parity-faithful mirror, written
+only as a deterministic, atomic split **inside** the authoring RPC (one transaction, no divergence
+window) — but the pre-registry authoring paths that still wrote those columns directly remained. **LR2**
+closes them: every user-initiated capability write is routed through registry-native authoring, the
+legacy columns accept no direct edit, and their content is henceforth **purely derived** — without
+removing the columns, the mirror, the rollback or the parity verification (those are later,
+separately-authorised increments under the Evidence Before Deletion Rule). Generalised beyond #015, the
+rule is permanent: whenever a migration keeps an old model as a compatibility mirror of a new
+authoritative one, the mirror is **derived and read-only to users** for its whole retained life — written
+only as a deterministic, atomic, reproducible function of the source it shadows.
+
 ---
 
 ## 3. The contract map
