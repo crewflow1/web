@@ -3,30 +3,34 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * The Capability Registry — R3 + R4 (runtime resolver + the authority SWITCH) security
+ * The Capability Registry — R3 + R4 + LR3 (runtime resolver + the authority SWITCH) security
  * invariants.
  *
  * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md
  * (Decision 5). Governing rules: the Single Source of Authority Rule (13th §2 standard),
  * the Migration Parity Rule (14th), the Behaviour Preservation Rule (15th), the Shadow
- * Validation Rule (16th).
+ * Validation Rule (16th), and the Registry Completeness Rule (20th — whose SERVING clause
+ * LR3 advances).
  *
  * R3 stood the registry up as a continuously-verified, FAIL-OPEN shadow (the legacy model
- * stayed authoritative and was served). R4 performs the authorised SWITCH: the registry
- * becomes the authoritative source of an employee's served capabilities, with the legacy
- * model RETAINED as the rollback / fail-safe path. These assertions pin — as a matter of
- * SOURCE, not discipline — the facts that would be a hole in the switch's safety if they
- * ever silently flipped:
+ * stayed authoritative and was served). R4 performed the authorised SWITCH for TOKENS: the
+ * registry became the authoritative source of an employee's served capabilities. LR3 extends
+ * that switch to EVERY authority dimension — posture and memory scope, the last runtime reads
+ * R4 left on the legacy model — so the identity now serves tokens, posture AND memory scope
+ * from the registry, with the legacy model RETAINED as the rollback / fail-safe path. These
+ * assertions pin — as a matter of SOURCE, not discipline — the facts that would be a hole in
+ * the switch's safety if they ever silently flipped:
  *   • the pure resolver is dependency-free (no client, no IO, no server-only) — both the
  *     composition law AND the serving decision law carry no request-path side effect;
  *   • the server-only bridge reads the registry READ-ONLY and reuses the canonical legacy
  *     resolvers (so the legacy side of the comparison, and the fallback, can never drift);
- *   • verifyRegistryParity stays STRICTLY fail-open (RETAINED through R4);
- *   • resolveServedCapabilities — the switch — serves the registry but is STRICTLY
- *     non-throwing and ALWAYS falls back to the retained legacy model (it can never strand
- *     an employee), and is gated by the rollback control;
- *   • the services now serve the SWITCH (assign its result), no longer the bare legacy
- *     resolver — this is the authorised behavioural transition;
+ *   • verifyRegistryParity stays STRICTLY fail-open (RETAINED through R4 + LR3);
+ *   • resolveServedAuthority — the switch — serves EVERY dimension (tokens, posture, memory
+ *     scope) from the registry but is STRICTLY non-throwing and ALWAYS falls back to the
+ *     retained legacy model (it can never strand an employee), and is gated by the rollback
+ *     control; resolveServedCapabilities is RETAINED as its tokens-only projection;
+ *   • the services now serve the FULL SWITCH (assign capabilities + posture + memory scope),
+ *     no longer the bare legacy resolver — this is the authorised behavioural transition;
  *   • NOTHING is removed — the legacy resolvers, the parity verification, and the rollback
  *     control are all present (legacy removal is a later, separately-authorised phase).
  *
@@ -158,11 +162,11 @@ describe("registry R3+R4 — the bridge is server-only and read-only", () => {
 
 describe("registry R3+R4 — the standalone parity gate stays fail-open", () => {
   const code = codeOf(read(PARITY));
-  // verifyRegistryParity sits before resolveServedCapabilities; slice between them.
+  // verifyRegistryParity sits before the ServedAuthority switch; slice up to it.
   const verify = (() => {
     const start = code.indexOf("export async function verifyRegistryParity");
-    expect(start, "verifyRegistryParity not found (must be RETAINED through R4)").toBeGreaterThanOrEqual(0);
-    const end = code.indexOf("export async function resolveServedCapabilities", start);
+    expect(start, "verifyRegistryParity not found (must be RETAINED through R4 + LR3)").toBeGreaterThanOrEqual(0);
+    const end = code.indexOf("export interface ServedAuthority", start);
     return end > start ? code.slice(start, end) : code.slice(start);
   })();
 
@@ -182,23 +186,38 @@ describe("registry R3+R4 — the standalone parity gate stays fail-open", () => 
 });
 
 // =====================================================================
-// 4. resolveServedCapabilities — the R4 switch: registry authoritative,
-//    legacy retained, never throws, gated by the rollback control.
+// 4. resolveServedAuthority — the LR3 switch: registry authoritative on
+//    EVERY dimension (tokens, posture, memory scope), legacy retained,
+//    never throws, gated by the rollback control. resolveServedCapabilities
+//    is RETAINED as its tokens-only projection.
 // =====================================================================
 
-describe("registry R4 — the authority switch serves the registry, retains legacy", () => {
+describe("registry LR3 — the authority switch serves EVERY dimension, retains legacy", () => {
   const code = codeOf(read(PARITY));
+  // The full switch slice: from resolveServedAuthority up to its capabilities projection.
   const serve = (() => {
-    const start = code.indexOf("export async function resolveServedCapabilities");
-    expect(start, "resolveServedCapabilities not found").toBeGreaterThanOrEqual(0);
-    return code.slice(start);
+    const start = code.indexOf("export async function resolveServedAuthority");
+    expect(start, "resolveServedAuthority not found (the LR3 full switch)").toBeGreaterThanOrEqual(0);
+    const end = code.indexOf("export async function resolveServedCapabilities", start);
+    return end > start ? code.slice(start, end) : code.slice(start);
   })();
 
-  it("serves the registry as the authoritative source (the behavioural transition)", () => {
+  it("serves the registry's TOKENS as authoritative (the R4 dimension, carried into LR3)", () => {
     // The switch returns the registry's tokens AND its provenance — `source` flips to
-    // "registry" (composeGrants stamps it), the one observable change R4 makes.
+    // "registry" (composeGrants stamps it).
     expect(serve).toMatch(/tokens: registry\.tokens/);
     expect(serve).toMatch(/source: registry\.source/);
+  });
+
+  it("serves the registry's POSTURE as authoritative (the LR3 dimension — the doorman's layer 1)", () => {
+    // The execution lock now flows from the registry: a silent flip here would let the gate's
+    // deny-by-default floor be sourced from the wrong place.
+    expect(serve).toMatch(/canExecute: registry\.canExecute/);
+    expect(serve).toMatch(/requiresApproval: registry\.requiresApproval/);
+  });
+
+  it("serves the registry's MEMORY SCOPE as authoritative (the LR3 dimension), coerced to the vocabulary", () => {
+    expect(serve).toMatch(/memoryScope: coerceMemoryScope\(registry\.memoryScope\)/);
   });
 
   it("delegates the choice to the PURE decision law (no re-implemented switch logic)", () => {
@@ -211,8 +230,10 @@ describe("registry R4 — the authority switch serves the registry, retains lega
   });
 
   it("RETAINS the legacy model as the fallback — it can never strand an employee", () => {
-    expect(serve).toMatch(/resolveEmployeeCapabilities\(emp\)/);
-    expect(serve).toMatch(/return legacyCapabilities/);
+    // Every non-registry branch returns the legacy SERVED set, built from the canonical legacy
+    // resolvers (so the fallback can never drift from what the runtime enforces today).
+    expect(serve).toMatch(/legacyServedAuthority\(emp\)/);
+    expect(serve).toMatch(/return legacy\b/);
   });
 
   it("is STRICTLY non-throwing (the switch fails SAFE to legacy, never to an error)", () => {
@@ -220,26 +241,42 @@ describe("registry R4 — the authority switch serves the registry, retains lega
     expect(serve).toMatch(/catch\b/);
     expect(serve).not.toMatch(/\bthrow\b/);
   });
+
+  it("RETAINS resolveServedCapabilities as the tokens-only projection of the full switch", () => {
+    const shim = code.slice(code.indexOf("export async function resolveServedCapabilities"));
+    expect(shim, "resolveServedCapabilities must be RETAINED").toContain(
+      "export async function resolveServedCapabilities",
+    );
+    // It delegates to the one switch and returns its capabilities — no second copy of the law.
+    expect(shim).toMatch(/await resolveServedAuthority\(emp, opts\)/);
+    expect(shim).toMatch(/\.capabilities/);
+  });
 });
 
 // =====================================================================
-// 5. The services SERVE the switch — the authorised behavioural transition.
+// 5. The services SERVE the full switch — the authorised behavioural transition.
+//    Every dimension (capabilities, posture, memory scope) now flows from the registry.
 // =====================================================================
 
-describe("registry R4 — the services serve registry-derived authority", () => {
+describe("registry LR3 — the services serve registry-derived authority on every dimension", () => {
   for (const svc of SERVICES) {
     const code = codeOf(read(svc));
 
-    it(`${svc}: assigns the SWITCH result into identity (authority now flows from the registry)`, () => {
+    it(`${svc}: assigns the FULL SWITCH result into identity (authority now flows from the registry)`, () => {
       expect(importSpecifiers(code)).toContain("@/server/sdk/registry-parity");
-      expect(code).toMatch(/identity\.capabilities\s*=\s*await\s+resolveServedCapabilities\(emp\)/);
+      expect(code).toMatch(/const\s+served\s*=\s*await\s+resolveServedAuthority\(emp\)/);
+      // All three runtime read dimensions are now served from the switch, not the legacy model.
+      expect(code).toMatch(/identity\.capabilities\s*=\s*served\.capabilities/);
+      expect(code).toMatch(/identity\.posture\s*=\s*served\.posture/);
+      expect(code).toMatch(/identity\.memoryScope\s*=\s*served\.memoryScope/);
     });
 
     it(`${svc}: no longer serves the bare legacy resolver directly (the switch is the one seam)`, () => {
       // The legacy resolution is RETAINED — but inside the switch (the bridge), not in the
-      // service. The service must route capabilities through resolveServedCapabilities.
+      // service. The service must route ALL authority through resolveServedAuthority.
       expect(code).not.toMatch(/identity\.capabilities\s*=\s*resolveEmployeeCapabilities/);
       expect(code).not.toMatch(/resolveEmployeeCapabilities/);
+      expect(code).not.toMatch(/resolveEmployeePosture/);
     });
   }
 });

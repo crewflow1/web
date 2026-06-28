@@ -1,9 +1,11 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { MEMORY_SCOPES, type MemoryScope } from "@/lib/ai-employees/model";
 import {
   resolveEmployeeCapabilities,
   resolveEmployeePosture,
+  type EmploymentPosture,
   type ResolvedCapabilitySet,
 } from "@/server/sdk/tasks";
 import {
@@ -25,31 +27,37 @@ import {
  * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md.
  * Governing rules: the Single Source of Authority Rule (13th §2 standard), the Migration
  * Parity Rule (14th), the Behaviour Preservation Rule (15th), the Shadow Validation Rule
- * (16th — set on the R3 review).
+ * (16th — set on the R3 review), and the Registry Completeness Rule (20th — set on the LR2
+ * review), whose SERVING clause this increment (LR3) advances.
  *
  * This is the SERVER-ONLY half of the resolver: it reads the RLS:hq registry with the
  * service-role client and bridges the legacy model to the pure composition law
- * (server/sdk/registry-resolver.ts). Three responsibilities:
+ * (server/sdk/registry-resolver.ts). Four responsibilities:
  *
  *   1. {@link resolveAuthorityFromRegistry} — fetch an employee's applicable grants from
  *      `hq_capability_grants` and compose them (ADR 0010 Decision 5). The runtime capability
  *      resolver the directive calls for.
  *   2. {@link verifyRegistryParity} — the continuously-verifiable, request-path parity check:
  *      it resolves BOTH the registry authority and the legacy authority and compares them,
- *      surfacing any divergence. RETAINED through R4 as the standalone parity gate.
- *   3. {@link resolveServedCapabilities} — the R4 runtime authority SWITCH: serve the
- *      registry-resolved capabilities (the registry is now authoritative), with the legacy
- *      model retained as the fail-safe / rollback path.
+ *      surfacing any divergence. RETAINED through R4 + LR3 as the standalone parity gate.
+ *   3. {@link resolveServedAuthority} — the LR3 runtime authority SWITCH: serve EVERY authority
+ *      dimension (tokens, posture AND memory scope) from the now-authoritative registry, with
+ *      the legacy model retained as the fail-safe / rollback path.
+ *   4. {@link resolveServedCapabilities} — the R4 capabilities projection of that switch,
+ *      RETAINED as the focused tokens-only seam (it delegates to {@link resolveServedAuthority}).
  *
- * THE TRANSITION (R3 → R4). R3 stood the registry up as a continuously-verified SHADOW: the
- * legacy model stayed authoritative and was served, while {@link verifyRegistryParity} proved
- * equivalence on the request path, strictly fail-open (the Behaviour Preservation Rule). R4 is
- * the SWITCH the shadow earned (the Shadow Validation Rule): {@link resolveServedCapabilities}
- * serves the registry as the authoritative source (`ResolvedCapabilitySet.source: "registry"`),
- * folding the shadow comparison onto the very value it serves. The legacy model is RETAINED —
- * as the deliberate rollback (`CAPABILITY_AUTHORITY_SOURCE=legacy`) and the automatic fail-safe
- * (a registry read error or a subject the registry is silent about both fall back to legacy) —
- * so the switch can never strand an employee. Removal of the legacy model is a later,
+ * THE TRANSITION (R3 → R4 → LR3). R3 stood the registry up as a continuously-verified SHADOW:
+ * the legacy model stayed authoritative and was served, while {@link verifyRegistryParity}
+ * proved equivalence on the request path, strictly fail-open (the Behaviour Preservation Rule).
+ * R4 was the SWITCH the shadow earned (the Shadow Validation Rule) — but only for TOKENS: it
+ * served the registry's tokens while the bridge still discarded the registry-resolved posture
+ * and memory scope, so the identity served those two from the legacy model. LR3 closes that gap
+ * — the last runtime READ paths still depending on legacy authority — by serving every
+ * dimension from the ONE source the decision chooses ({@link resolveServedAuthority}), folding
+ * the shadow comparison onto all four served dimensions. The legacy model is RETAINED — as the
+ * deliberate rollback (`CAPABILITY_AUTHORITY_SOURCE=legacy`) and the automatic fail-safe (a
+ * registry read error or a subject the registry is silent about both fall back to legacy) — so
+ * the switch can never strand an employee. Removal of the legacy model is a later,
  * separately-authorised phase, not this one.
  */
 
@@ -179,24 +187,77 @@ export async function verifyRegistryParity(emp: LegacyEmployee): Promise<Registr
 }
 
 /**
- * The R4 runtime authority switch (CEO Directive #015 / D-05, R4): resolve the capabilities
- * to SERVE for an employee, with the Capability Registry as the AUTHORITATIVE source and the
- * legacy `ai_employees` model RETAINED as the fail-safe / rollback path.
+ * The FULL authority served for an employee — tokens, posture AND memory scope, EVERY
+ * dimension resolved from the ONE source the serving decision chose. The pure resolver
+ * already composes all of them ({@link composeGrants} → {@link ResolvedAuthority}); LR3 stops
+ * the bridge discarding the posture and memory scope it used to drop (R4 served tokens only).
+ */
+export interface ServedAuthority {
+  /** The opaque capability tokens (the R4 dimension). */
+  readonly capabilities: ResolvedCapabilitySet;
+  /** The coarse autonomy stance the doorman reads as layer 1 (the LR3 dimension). */
+  readonly posture: EmploymentPosture;
+  /** The memory scope the memory facet binds to (the LR3 dimension; informational). */
+  readonly memoryScope: MemoryScope;
+  /** Which side served every dimension above — the registry, or the retained legacy model. */
+  readonly source: "registry" | "ai_employees";
+}
+
+/** Coerce a raw memory_scope string to the {@link MemoryScope} vocabulary, else the floor. */
+function coerceMemoryScope(value: string | null | undefined): MemoryScope {
+  return value != null && (MEMORY_SCOPES as readonly string[]).includes(value)
+    ? (value as MemoryScope)
+    : MEMORY_SCOPE_FLOOR;
+}
+
+/**
+ * The legacy model's FULL served authority for an employee, in the served shape — the
+ * retained fallback EVERY non-registry branch returns (rollback, registry read error, a
+ * silent registry, or an unexpected failure). Reuses the canonical legacy resolvers
+ * ({@link resolveEmployeeCapabilities} / {@link resolveEmployeePosture}) so the fallback can
+ * never drift from what the runtime enforces today (the Single Source of Authority Rule),
+ * with memory_scope coerced to the vocabulary over the safe `isolated` floor.
+ */
+function legacyServedAuthority(emp: LegacyEmployee): ServedAuthority {
+  return Object.freeze({
+    capabilities: resolveEmployeeCapabilities(emp),
+    posture: resolveEmployeePosture(emp),
+    memoryScope: coerceMemoryScope(emp.memory_scope),
+    source: "ai_employees" as const,
+  });
+}
+
+/**
+ * The LR3 runtime authority switch (CEO Directive #015 / D-05, Legacy Removal increment 3):
+ * resolve the FULL authority to SERVE for an employee — tokens, posture AND memory scope —
+ * with the Capability Registry as the AUTHORITATIVE source and the legacy `ai_employees`
+ * model RETAINED as the fail-safe / rollback path.
  *
- * This is the seam the identity assembly calls in place of the bare legacy
- * {@link resolveEmployeeCapabilities}. It:
+ * This is the seam the identity assembly calls in place of the bare legacy resolvers. R4
+ * switched TOKENS to the registry but the bridge still discarded the registry-resolved
+ * posture and memory scope, so the identity served those two from the legacy model (posture
+ * defaulted to the locked floor; memory scope to the legacy column). LR3 closes that gap by
+ * serving every dimension from the ONE source {@link decideServedAuthority} chooses — tokens,
+ * posture and memory scope therefore come from the same side coherently; the registry can
+ * never serve tokens while the legacy model serves posture. It:
  *   • reads the `CAPABILITY_AUTHORITY_SOURCE` control (default `registry`);
- *   • on a deliberate rollback (`legacy`) serves the legacy capabilities and never touches
- *     the registry — a clean escape hatch independent of registry availability;
+ *   • on a deliberate rollback (`legacy`) serves the retained legacy authority and never
+ *     touches the registry — a clean escape hatch independent of registry availability;
  *   • otherwise resolves the registry authority and CONTINUOUSLY COMPARES it to the legacy
  *     baseline (the shadow verification of the Behaviour Preservation Rule, now folded onto
- *     the very value it serves so there is no gap between what is verified and what is
- *     served), then serves the registry (`ResolvedCapabilitySet.source: "registry"`);
- *   • falls back to the retained legacy capabilities (`source: "ai_employees"`) when the
- *     registry read fails or the registry is silent for the subject (no grants — e.g. a
- *     backfill gap), so the switch can NEVER strand an employee.
+ *     ALL FOUR served dimensions, not just tokens), then serves the registry;
+ *   • falls back to the retained legacy authority when the registry read fails or the registry
+ *     is silent for the subject (no grants — e.g. a backfill gap), so the switch can NEVER
+ *     strand an employee.
  *
- * STRICTLY non-throwing: any unexpected error degrades to the legacy capabilities (the
+ * BEHAVIOUR-PRESERVING at the cut: while the R2 flat mirror holds, the registry resolves to
+ * the same authority as the legacy model, so the served posture equals the legacy posture (the
+ * locked floor for the execution-locked reference employees — Directive 001) and the served
+ * memory scope equals the legacy column. Memory scope on the identity is informational (the
+ * memory SQL still enforces server-side off the deterministically-mirrored legacy column);
+ * serving it from the registry only makes that informational field agree with the grant.
+ *
+ * STRICTLY non-throwing: any unexpected error degrades to the retained legacy authority (the
  * platform's proven floor). Divergence and every fallback are logged for parity monitoring.
  * The decision law itself is the PURE {@link decideServedAuthority}; this function only
  * supplies the IO (the env control, the registry read) and the monitoring side effects.
@@ -205,16 +266,16 @@ export async function verifyRegistryParity(emp: LegacyEmployee): Promise<Registr
  * {@link resolveAuthorityFromRegistry}'s injectable client; production passes neither, so the
  * control is the env and the client is the service-role admin client.
  */
-export async function resolveServedCapabilities(
+export async function resolveServedAuthority(
   emp: LegacyEmployee,
   opts: { client?: GrantReadClient; control?: AuthoritySource } = {},
-): Promise<ResolvedCapabilitySet> {
-  const legacyCapabilities = resolveEmployeeCapabilities(emp);
+): Promise<ServedAuthority> {
+  const legacy = legacyServedAuthority(emp);
   try {
     const control = opts.control ?? env.CAPABILITY_AUTHORITY_SOURCE;
 
     // Deliberate rollback: serve the legacy model and do not depend on the registry at all.
-    if (control === "legacy") return legacyCapabilities;
+    if (control === "legacy") return legacy;
 
     // Registry authoritative: resolve it (fail-open to null), then let the pure law decide.
     let registry: ResolvedAuthority | null = null;
@@ -241,7 +302,16 @@ export async function resolveServedCapabilities(
           )} — serving the registry (legacy retained for rollback)`,
         );
       }
-      return Object.freeze({ tokens: registry.tokens, source: registry.source });
+      // Serve EVERY dimension from the registry: tokens (R4), posture and memory scope (LR3).
+      return Object.freeze({
+        capabilities: Object.freeze({ tokens: registry.tokens, source: registry.source }),
+        posture: Object.freeze({
+          canExecute: registry.canExecute,
+          requiresApproval: registry.requiresApproval,
+        }),
+        memoryScope: coerceMemoryScope(registry.memoryScope),
+        source: "registry" as const,
+      });
     }
 
     // Served the retained legacy model. A silent registry (`empty`) is worth a monitoring
@@ -251,12 +321,26 @@ export async function resolveServedCapabilities(
         `[capability-authority] registry is silent for ${emp.slug} (no grants) — serving retained legacy (migration fallthrough)`,
       );
     }
-    return legacyCapabilities;
+    return legacy;
   } catch (err) {
     console.warn(
       `[capability-authority] resolution failed for ${emp?.slug ?? "?"} — serving retained legacy:`,
       err instanceof Error ? err.message : String(err),
     );
-    return legacyCapabilities;
+    return legacy;
   }
+}
+
+/**
+ * The R4 capabilities projection of the {@link resolveServedAuthority} switch — RETAINED as
+ * the focused "served capabilities" seam (the tokens dimension only). It delegates to the full
+ * switch and returns its `capabilities`, so the registry / rollback / fail-safe discipline is
+ * defined in exactly ONE place and the tokens served here can never diverge from the tokens
+ * the full authority serves. `opts.client` / `opts.control` exist for tests.
+ */
+export async function resolveServedCapabilities(
+  emp: LegacyEmployee,
+  opts: { client?: GrantReadClient; control?: AuthoritySource } = {},
+): Promise<ResolvedCapabilitySet> {
+  return (await resolveServedAuthority(emp, opts)).capabilities;
 }
