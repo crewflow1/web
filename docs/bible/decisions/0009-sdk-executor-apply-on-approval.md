@@ -1,9 +1,12 @@
 # ADR 0009 — SDK Executor and Apply-on-Approval Runtime
 
-> **Status:** **Proposed · held for CEO review** — Directive #014 **Phase C** is **gated** on
-> this ADR: no executor code is written until this decision is reviewed and approved · **Date:**
-> 2026-06-28 · **Directive:** CEO Directive #014 / D-04 (the AI SDK Envelope), **Phase C — the
-> executor** · **Supersedes:** none · **Superseded by:** none · **Builds on:**
+> **Status:** **Accepted** *(CEO independent CTO review, 2026-06-28)* — Directive #014 **Phase C
+> implementation authorised** in small reviewable increments **C1 → C2 → C3 → C4** (phases not
+> merged together); on acceptance the CEO set the permanent **Executor Boundary Rule** (recorded
+> in the acceptance note below and homed in the
+> [Kernel Contract Map](../governance/kernel-contract-map.md) §2). · **Date:** 2026-06-28 ·
+> **Directive:** CEO Directive #014 / D-04 (the AI SDK Envelope), **Phase C — the executor** ·
+> **Supersedes:** none · **Superseded by:** none · **Builds on:**
 > [ADR 0008](./0008-ai-sdk-envelope.md),
 > [ADR 0007](./0007-runcontext-runtime-contract.md),
 > [ADR 0004](./0004-generic-task-engine.md),
@@ -356,30 +359,47 @@ the Architecture Freeze (§4 row 3) **and** the Kernel Contract Map (the AI SDK 
 PR**. The five architectural rulings recorded here are **standing** for the rest of the directive.
 
 **Numbering.** This is ADR **0009** ([`../governance/numbering.md`](../governance/numbering.md)
-§5); ADR numbers are monotonic and never reused. The number is **reserved on creation**; this ADR
-is **Proposed · held for CEO review**, so it is registered in §5 as *Proposed* and the next free
-ADR number advances to **`0010`**. Per the Architecture Freeze §2, the architectural-review
-sign-off for the *contract change itself* travels with the implementation PR(s) that carry the
-Phase C code; this decision record — once **accepted** by the CEO — is those PRs' prerequisite, and
-**no Phase C implementation begins before that acceptance.**
+§5); ADR numbers are monotonic and never reused. The number was **reserved on creation**; this ADR
+is now **Accepted**, so it is registered in §5 as *Accepted* and the next free ADR number stands at
+**`0010`**. Per the Architecture Freeze §2, the architectural-review sign-off for the *contract
+change itself* travels with the implementation PR(s) that carry the Phase C code; this **accepted**
+decision record is those PRs' prerequisite, and the C1 → C4 implementation increments now build
+upon it.
 
-**Acceptance & implementation gate.** **No Phase C code is written until this ADR is reviewed and
-approved.** On acceptance, implementation follows the approved small-increment plan — **C1** (tool
-registry contract) → **C2** (executor contract) → **C3** (apply-on-approval marker) → **C4**
-(Reference Path execution test) — each its own reviewable PR under the full six-gate validation
-discipline, with **no broad executor rollout, no new employee migration, no Capability Registry,
-and no API Gateway** in Phase C, and **full validation discipline maintained** throughout. Phase D
-(the API gateway + live cost metering) does not begin until Phase C has a completion record and CEO
-review; Directive #015 stays out of scope until #014 is complete.
+**Acceptance & implementation authorisation (CEO independent CTO review, 2026-06-28).** ADR 0009
+is **accepted** — *"ADR 0009 correctly defines the SDK Executor and Apply-on-Approval Runtime …
+This is the correct structure"* — and **Directive #014 Phase C implementation is authorised**, to
+proceed in **small reviewable increments**: **C1** (tool registry contract) → **C2** (executor
+contract) → **C3** (apply-on-approval marker) → **C4** (Reference Path execution test), each its own
+reviewable PR under the full six-gate validation discipline. The CEO's standing constraints: **do
+not merge phases together**; **do not begin Phase D**; **do not introduce the API Gateway**; **do
+not introduce the Capability Registry**; **do not reopen the Approval Engine state machine**; **do
+not add a sixth approval state**; and **continue applying the full validation gates**. On acceptance
+the CEO set **one new permanent engineering rule**, the **Executor Boundary Rule**, homed in the
+[Kernel Contract Map](../governance/kernel-contract-map.md) §2 alongside the Policy vs Mechanism and
+Runtime Composition Rules:
+
+> **The executor applies only actions that have already passed the gate. The executor must not
+> decide whether an action is allowed. The executor must not request approval. The executor must
+> not bypass the Task Engine. The executor is mechanism only. Policy remains with the gate. Approval
+> remains with the Approval Engine. Lifecycle remains with the Task Engine.**
+
+This is the execution-seam completion of the rule stack (Facet Isolation → Policy vs Mechanism →
+Runtime Composition → **Executor Boundary**): it ratifies Decisions 1, 3, and 11 as a standing
+constraint — the executor is the *apply* mechanism, and it owns neither policy, nor approval, nor
+task lifecycle. Phase D (the API gateway + live cost metering) does not begin until Phase C has a
+completion record and CEO review; Directive #015 stays out of scope until #014 is complete.
 
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed by
 this record. Authored ahead of implementation under the document-before-you-build rule at the
-CEO's direction, and **held for CEO review**: no Directive #014 Phase C implementation begins
-before this ADR is accepted. Prepared for CEO Directive #014 / D-04 (the AI SDK Envelope), **Phase
-C — the executor**; it formalises the CEO-approved [Phase C architecture
+CEO's direction, and **accepted by the CEO on independent CTO review (2026-06-28)**: Directive #014
+Phase C implementation is authorised in small reviewable increments **C1 → C2 → C3 → C4** (phases
+not merged together), and on acceptance the CEO set the permanent **Executor Boundary Rule**.
+Prepared for CEO Directive #014 / D-04 (the AI SDK Envelope), **Phase C — the executor**; it
+formalises the CEO-approved [Phase C architecture
 proposal](../governance/directive-014-phase-c-executor-proposal.md) and the five architectural
 rulings the review returned — out-of-band apply-on-approval, a separate applied marker, inherited
 re-checking at the execution boundary, granular failure records, and clear event sequencing —
-encoded above, and is the prerequisite the now-gated implementation PRs build upon.*
+encoded above, and is the prerequisite the authorised implementation PRs build upon.*

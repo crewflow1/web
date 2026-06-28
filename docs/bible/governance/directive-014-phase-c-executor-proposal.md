@@ -1,11 +1,12 @@
 # CrewFlow Governance — Directive #014 (D-04) **Phase C** Architecture Proposal: the Executor
 
-> **Status:** **Approved** *(CEO independent CTO review)* — Phase C implementation **authorised
-> but gated**: it does **not** begin until **[ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md)
-> (SDK Executor and Apply-on-Approval Runtime)** has been written, reviewed and approved; see
-> **§9** for the outcome, the five **architectural rulings** (out-of-band apply-on-approval ·
-> separate applied marker · inherited re-check at the execution boundary · granular failure
-> records · clear event sequencing), and the small-increment implementation gate. This document
+> **Status:** **Approved** *(CEO independent CTO review)*; **[ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md)
+> (SDK Executor and Apply-on-Approval Runtime)** subsequently **accepted** (2026-06-28) — Phase C
+> implementation **authorised**, to proceed in small reviewable increments **C1 → C2 → C3 → C4**
+> (phases not merged together); see **§9** for the outcome, the five **architectural rulings**
+> (out-of-band apply-on-approval · separate applied marker · inherited re-check at the execution
+> boundary · granular failure records · clear event sequencing), the small-increment implementation
+> gate, and the **Executor Boundary Rule** the CEO set on accepting ADR 0009. This document
 > presents the architecture for **Directive #014 / D-04, Phase C — the executor: the typed tool
 > registry, the step that *applies* a permitted action, and the approval-completion flow that
 > applies an action a human has granted.** It was the step the CEO authorised after Phase B
@@ -676,7 +677,8 @@ B, which rode ADR 0008, Phase C gets its own decision record under the strict
 *document-before-you-build* rule (as for ADRs 0007/0008).
 [**ADR 0009**](../decisions/0009-sdk-executor-apply-on-approval.md) records the executor
 contract, the idempotency model, and the apply-on-approval mechanics; it is registered in
-[numbering.md](./numbering.md) §5 and is itself **held for CEO review** before any Phase C code.
+[numbering.md](./numbering.md) §5 and was **subsequently accepted** by the CEO on independent CTO
+review (2026-06-28) — see the **acceptance follow-up** at the close of this section.
 
 **Approved direction (the load-bearing architecture).** Each thesis-level decision is approved
 explicitly: the **typed tool registry**; the **executor as a runtime-owned mechanism** (not a
@@ -710,8 +712,9 @@ The two boundary instructions are standing: **do not reopen the Approval Engine 
 external provider call, no Capability Registry).
 
 **Implementation gate — small reviewable increments, after ADR 0009.** Implementation begins
-**only after ADR 0009 is approved**, then proceeds *"in small reviewable increments … the
-smallest safe slice,"* which maps to the proposal's within-Phase-C phasing (§6):
+**only after ADR 0009 is approved** (now **satisfied** — ADR 0009 accepted 2026-06-28), then
+proceeds *"in small reviewable increments … the smallest safe slice,"* which maps to the
+proposal's within-Phase-C phasing (§6):
 
 1. **Tool registry contract** (C1) — the typed registry over `tools_allowed`, descriptive only.
 2. **Executor contract** (C2) — the autonomous apply + the `SECURITY DEFINER` re-check +
@@ -725,6 +728,28 @@ migration, no Capability Registry, no API Gateway**, and **maintain full validat
 (the six-gate bar, §3.10). **Phase D (the API gateway + live cost metering) does not begin until
 Phase C has a completion record and CEO review.**
 
+**Acceptance follow-up — ADR 0009 accepted, Phase C authorised (CEO independent CTO review,
+2026-06-28).** The ADR this review required was written, reviewed and **accepted** — *"ADR 0009
+correctly defines the SDK Executor and Apply-on-Approval Runtime … This is the correct structure"*
+— and **Directive #014 Phase C implementation is authorised**, to proceed in small reviewable
+increments **C1** (tool registry contract) → **C2** (executor contract) → **C3** (apply-on-approval
+marker) → **C4** (Reference Path execution test), each its own PR. The standing constraints carry
+through: **do not merge phases together**, **do not begin Phase D**, **do not introduce the API
+Gateway**, **do not introduce the Capability Registry**, **do not reopen the Approval Engine state
+machine**, **do not add a sixth approval state**, and **continue applying the full validation
+gates**. On acceptance the CEO set **one new permanent engineering rule**, the **Executor Boundary
+Rule**, homed in the [Kernel Contract Map](./kernel-contract-map.md) §2 (the seventh written
+standard, alongside the Policy vs Mechanism and Runtime Composition Rules):
+
+> **The executor applies only actions that have already passed the gate. The executor must not
+> decide whether an action is allowed. The executor must not request approval. The executor must
+> not bypass the Task Engine. The executor is mechanism only. Policy remains with the gate. Approval
+> remains with the Approval Engine. Lifecycle remains with the Task Engine.**
+
+It is the execution-seam completion of the rule stack (Facet Isolation → Policy vs Mechanism →
+Runtime Composition → **Executor Boundary**) and ratifies ADR 0009 Decisions 1, 3 and 11 as a
+standing constraint.
+
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed by this
@@ -735,5 +760,6 @@ comms + the output envelope), and the Phase-B doorman (the pure gate + `proposeA
 Approval-Engine hand-off). It implements ADR 0008 Decision 6 and the execution half of Decision 8,
 and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
-and Runtime Composition Rules, and the Reference Path Rule (PR #217, merged). The CEO's
-review outcome is recorded in §9.*
+Runtime Composition, and (set on the acceptance of ADR 0009) **Executor Boundary** Rules, and the
+Reference Path Rule (PR #217, merged). The CEO's review outcome — and the subsequent acceptance of
+ADR 0009 — is recorded in §9.*

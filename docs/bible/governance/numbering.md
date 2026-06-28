@@ -119,14 +119,16 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0006`](../decisions/0006-memory-task-binding.md) | Shared Memory ⇄ Task Engine binding (the `bound_task_id` FK) | #012 (D-02), PR-D |
 | [`0007`](../decisions/0007-runcontext-runtime-contract.md) | The RunContext Runtime Contract | #013 (D-03) |
 | [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Accepted)* | #014 (D-04) |
-| [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Proposed)* | #014 (D-04), Phase C |
+| [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Accepted)* | #014 (D-04), Phase C |
 
 **Next free ADR number: `0010`.** ADR numbers are also monotonic and never reused. ADR
 `0008` is **Accepted** (CEO independent CTO review, 2026-06-27); Directive #014
 implementation is **authorised** under per-phase review gates (Phases A and B merged). ADR
-`0009` (SDK Executor and Apply-on-Approval Runtime) is **Proposed · held for CEO review** —
-Directive #014 **Phase C** is gated on its acceptance: no executor code is written until it is
-reviewed and approved.
+`0009` (SDK Executor and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO
+review, 2026-06-28); Directive #014 **Phase C** is **authorised**, to be built in small
+reviewable increments **C1 → C2 → C3 → C4** (phases not merged together). On acceptance the CEO
+set the permanent **Executor Boundary Rule**, homed in the [Kernel Contract
+Map](./kernel-contract-map.md) §2.
 
 ---
 
