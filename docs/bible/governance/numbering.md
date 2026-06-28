@@ -150,7 +150,8 @@ of Authority Rule** as the directive's governing principle; on the **R1 (Registr
 **Migration Parity Rule**; on the **R2 (Backfill + Parity Gate)** review the **Behaviour
 Preservation Rule**; on the **R3 (runtime resolver + SDK read integration)** review the **Shadow
 Validation Rule**; on the **R4 (runtime authority switch)** review the **Rollback Readiness Rule**;
-and on the **Legacy Removal Proposal** review the **Evidence Before Deletion Rule** (all six homed in
+on the **Legacy Removal Proposal** review the **Evidence Before Deletion Rule**; and on the **LR1
+(registry-native authoring)** review the **Mirror Integrity Rule** (all seven homed in
 the [Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds
 slice by slice, each gated on review of the last — **R1 (Registry Schema), R2 (Backfill + Parity
 Gate), R3 (runtime capability resolver + SDK read integration) and R4 (runtime authority switch —
@@ -158,8 +159,11 @@ registry authoritative, legacy retained for rollback) are established**. The rem
 **legacy-removal phase**, whose **design proposal** — production-confidence requirements, removal
 criteria, rollback-retirement conditions, migration-cleanup sequence, operational safety checks —
 has been **reviewed and approved**; the phase now proceeds in **independently-reviewed removal
-increments** (registry-native authoring first), each separately authorised and removing nothing
-until the Evidence Before Deletion Rule's conditions are met.
+increments**, each separately authorised and removing nothing until the Evidence Before Deletion
+Rule's conditions are met: **LR1 (registry-native authoring)** is **merged** (PR #239), and **LR2**
+(route every administrative capability write through registry-native authoring; close the direct
+legacy authoring paths — the **Mirror Integrity Rule**) is **authorised**. Legacy storage, rollback
+and parity tooling remain in place until later, separately-authorised removal phases.
 Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion (after
 the legacy-removal phase).
 
