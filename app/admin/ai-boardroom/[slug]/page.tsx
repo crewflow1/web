@@ -25,6 +25,7 @@ import {
   addAiEmployeeTask,
   addAiEmployeeMemory,
   authorAiEmployeeCapabilities,
+  authorAiEmployeeMemoryScope,
 } from "../actions";
 import {
   getEmployeeMemoryFeed,
@@ -324,25 +325,24 @@ export default async function AiEmployeeDetailPage({
           </Section>
         </div>
 
-        {/* Configuration panel (safe fields) */}
-        <Section title="Configuration" subtitle="Edits are audit-logged. Safe fields only — no execution toggle.">
-          <form action={updateAiEmployeeConfig} className="space-y-4">
+        {/* Memory scope — registry-native authoring (Directive #015 / D-05, LR2) */}
+        <Section
+          title="Memory scope"
+          subtitle="Authored at the Capability Registry. The grant is authoritative; the legacy model is a derived mirror (Mirror Integrity Rule)."
+        >
+          <p className="mb-3 text-xs text-slate-500">
+            How widely this employee may read shared memory. Saving authors the
+            scope at the registry and deterministically mirrors it to the legacy
+            model in one atomic write — the legacy column is never edited directly.{" "}
+            {MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}
+          </p>
+          <form
+            action={authorAiEmployeeMemoryScope}
+            className="flex flex-wrap items-end gap-3"
+          >
             <input type="hidden" name="id" value={e.id} />
             <input type="hidden" name="slug" value={e.slug} />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Status">
-                <select
-                  name="status"
-                  defaultValue={e.status}
-                  className={selectCls}
-                >
-                  {AI_EMPLOYEE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            <div className="min-w-[12rem] flex-1 sm:max-w-xs">
               <Field label="Memory scope">
                 <select
                   name="memory_scope"
@@ -352,6 +352,35 @@ export default async function AiEmployeeDetailPage({
                   {MEMORY_SCOPES.map((s) => (
                     <option key={s} value={s}>
                       {MEMORY_SCOPE_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <button
+              type="submit"
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            >
+              Save memory scope
+            </button>
+          </form>
+        </Section>
+
+        {/* Configuration panel (safe fields) */}
+        <Section title="Configuration" subtitle="Edits are audit-logged. Safe fields only — no execution toggle.">
+          <form action={updateAiEmployeeConfig} className="space-y-4">
+            <input type="hidden" name="id" value={e.id} />
+            <input type="hidden" name="slug" value={e.slug} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Status">
+                <select
+                  name="status"
+                  defaultValue={e.status}
+                  className={selectCls}
+                >
+                  {AI_EMPLOYEE_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_LABELS[s]}
                     </option>
                   ))}
                 </select>
@@ -761,6 +790,8 @@ function prettySaved(saved: string): string {
       return "Memory entry added.";
     case "capabilities":
       return "Capabilities authored at the registry.";
+    case "memory_scope":
+      return "Memory scope authored at the registry.";
     default:
       return "Saved.";
   }
