@@ -546,6 +546,46 @@ once production confidence has accrued. Generalised beyond #015, the rule is per
 replacement of a runtime authority source — not only the Capability Registry — must pass through the
 same shadow-then-switch gate.
 
+### The Rollback Readiness Rule
+
+A **seventeenth** standard, set by CEO directive on the review of **Directive #015 R4** (the runtime
+authority switch; independent CTO review). The fourteenth makes a transition's *data* verifiable, the
+fifteenth makes its *behaviour* invisible, the sixteenth fixes the *order of operations* by which the
+swap is performed (shadow, then switch). This one governs what must remain **after** the switch —
+the **rollback path** — until the replacement has proven itself on real production traffic:
+
+> **Any architectural migration that changes the runtime source of truth must retain an immediately
+> usable rollback path until the replacement has demonstrated sustained production stability. Rollback
+> capability is considered part of the implementation itself, not an optional operational feature.
+> Removal of the rollback path is a separate engineering phase requiring independent review.**
+
+It is the **post-cutover** complement to the Shadow Validation Rule. Where the sixteenth governs how a
+replacement authority source earns its way *into* service (running in shadow until parity holds), this
+one governs the period *after* it is serving: the incumbent it replaced may not be torn out the moment
+the switch is thrown. The prior source must be kept **immediately usable** — a control that restores
+it without a code change or a redeploy, not a revert that has to be written, reviewed and shipped
+under incident pressure — for as long as it takes the replacement to demonstrate **sustained**
+production stability (not a single green deploy, but confidence accrued over time on real traffic).
+The rule binds two things. First, the rollback path is **part of the implementation**: a migration
+that switches the source of truth without retaining a usable rollback is **incomplete**, not merely
+risky — the rollback is a deliverable of the same phase, never a follow-up. Second, **retiring** the
+rollback is its own phase: the prior path may be removed only under a **separate, independently
+reviewed** authorisation, never folded silently into the switch or a later unrelated change. The
+rule's force is that **shipping a runtime-source-of-truth switch without an immediately usable
+rollback, or removing that rollback without independent review, is a standards violation** — so the
+platform always has a proven way back until the replacement has earned its place.
+
+This is the principle Directive #015's R4 already embodies, and the gate the legacy-removal phase must
+pass. **R4** retained the legacy `ai_employees` resolution as both the automatic fail-safe (a registry
+read error or a subject the registry is silent about falls back to it) and the deliberate,
+**immediately usable** rollback (`CAPABILITY_AUTHORITY_SOURCE=legacy` restores the pre-switch posture
+with no redeploy) — so the switch can never strand an employee and can be reversed instantly. Under
+this rule that rollback path may **not** be removed until the registry has demonstrated sustained
+production stability, and its removal is the **separately-authorised** legacy-removal phase — whose
+proposal must state the **rollback-retirement conditions** the rule requires. Generalised beyond #015,
+the rule is permanent: any future migration that changes a runtime source of truth carries its
+rollback path as part of the work, and sheds it only under independent review.
+
 ---
 
 ## 3. The contract map
