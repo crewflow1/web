@@ -147,11 +147,13 @@ strategy · runtime resolution model · interaction with the Tool Registry · in
 interaction with the API Gateway), and accepted on independent CTO review with one amendment (the
 **Approval Ratchet Rule**). On the #015 architecture review the CEO set the permanent **Single Source
 of Authority Rule** as the directive's governing principle; on the **R1 (Registry Schema)** review the
-**Migration Parity Rule**; and on the **R2 (Backfill + Parity Gate)** review the **Behaviour
-Preservation Rule** (all three homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
-Implementation proceeds slice by slice, each gated on review of the last — **R1 (Registry Schema) and
-R2 (Backfill + Parity Gate) are established**; R3 (the runtime capability resolver and SDK read
-integration — behaviour-preserving, with runtime parity continuously verified) is authorised next.
+**Migration Parity Rule**; on the **R2 (Backfill + Parity Gate)** review the **Behaviour
+Preservation Rule**; and on the **R3 (runtime resolver + SDK read integration)** review the **Shadow
+Validation Rule** (all four homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
+Implementation proceeds slice by slice, each gated on review of the last — **R1 (Registry Schema),
+R2 (Backfill + Parity Gate) and R3 (runtime capability resolver + SDK read integration) are
+established**; R4 (the runtime authority switch — the registry becomes authoritative while the legacy
+model is retained for rollback and continuous shadow verification) is authorised next.
 Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion.
 
 ---

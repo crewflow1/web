@@ -457,8 +457,11 @@ provably resolves to the *same* authority for every employee, and that proof is 
 
 It sequences Directive #015's remaining slices: **R2 populates and proves parity** (the registry is
 filled from the legacy model and a deterministic parity check is established — the legacy model stays
-authoritative), **R3 repoints** the runtime seam to the proven source, and **R4 removes** the legacy
-columns once parity has been demonstrated. The rule's force is that removing a legacy authority source
+authoritative), **R3 introduces the runtime resolver and reads it as a continuously-verified shadow**
+(the legacy model stays authoritative), **R4 switches** the runtime onto the registry as the
+authoritative source while **retaining** the legacy model for rollback and continuous shadow
+verification, and a **later, separately-authorised phase removes** the legacy columns once sufficient
+production confidence in parity has accrued. The rule's force is that removing a legacy authority source
 *before* continuous parity is demonstrated is a **standards violation**, not merely premature — so the
 cutover the directive performs can neither strand the platform between two authorities nor collapse
 onto an unproven one.
@@ -498,11 +501,50 @@ R2-proven mirror, must yield the same `ResolvedCapabilitySet` the legacy path yi
 must **continue to verify that parity** as it serves. Where the Migration Parity Rule made parity
 verifiable *offline* (the migration-time gate, the re-runnable parity function), this rule extends the
 obligation *onto the request path*: during the transition the runtime itself proves equivalence, so a
-divergence is caught the instant it would be observed, never after. Removal of the legacy model (R4)
-and any deliberate behavioural transition remain **later, separately-authorised** acts; R3 changes how
-the answer is computed, never the answer. The rule's force is that an externally observable
-behavioural change shipped *inside* a migration phase — however well-intentioned — is a **standards
-violation**, so the cutover can replace the engine without ever changing what the platform does.
+divergence is caught the instant it would be observed, never after. The behavioural transition —
+switching the runtime onto the registry (R4) — and the later removal of the legacy model remain
+**separately-authorised** acts; R3 changes how the answer is computed, never the answer. The rule's
+force is that an externally observable behavioural change shipped *inside* a migration phase — however
+well-intentioned — is a **standards violation**, so the cutover can replace the engine without ever
+changing what the platform does.
+
+### The Shadow Validation Rule
+
+A **sixteenth** standard, set by CEO directive on the review of **Directive #015 R3** (the runtime
+capability resolver + SDK read integration; independent CTO review). The fourteenth governs the *data*
+of a transition (the new model must resolve to the same authority, continuously and verifiably); the
+fifteenth governs its *observable behaviour* (nothing a caller can see may change until the transition
+is authorised). This one governs the **procedure of the cutover itself** — *how* a replacement runtime
+authority source is brought into service — so that production authority is never switched onto an
+unproven engine:
+
+> **Whenever a new runtime authority source replaces an existing one, the new source must first
+> operate in shadow mode. The shadow implementation must independently resolve authority. Its output
+> must be continuously compared against the production authority source. Production authority may
+> switch only after parity has been continuously demonstrated.**
+
+It is the **operational** complement to the other two: where the fourteenth makes parity *verifiable*
+and the fifteenth makes the transition *invisible*, this one fixes the *order of operations* by which
+the swap is performed. A replacement authority source earns production trust by **running alongside**
+the incumbent — independently resolving the same question, on the same request path, with its answer
+**continuously compared** against the authoritative one — and only after that comparison has held may
+it be promoted. The shadow must be a genuine *independent* resolution (not a copy of the incumbent's
+answer), or the comparison proves nothing; and the comparison must be **continuous** (on the live
+path, every time authority is resolved), not a one-off audit, so a divergence is caught the instant it
+would matter. The rule's force is that **switching production authority onto a source that has not
+continuously demonstrated parity in shadow is a standards violation**, not merely risky — so a cutover
+can never strand the platform on an unvalidated engine.
+
+This is the principle Directive #015 follows to the letter. **R3** stood the registry resolver up as a
+shadow: it independently resolves authority (the ADR 0010 Decision 5 composition), runs on the SDK
+read path, and its output is continuously compared against the legacy model (`compareAuthority` /
+`verifyRegistryParity`), strictly fail-open so the shadow can never disturb the incumbent. **R4** is
+the **switch** the shadow earns: the registry becomes the authoritative source, the legacy model is
+**retained for rollback**, the shadow verification **remains** (now guarding the live registry against
+the retained legacy), and the legacy model is removed only in a **later, separately-authorised** phase
+once production confidence has accrued. Generalised beyond #015, the rule is permanent: any future
+replacement of a runtime authority source — not only the Capability Registry — must pass through the
+same shadow-then-switch gate.
 
 ---
 
