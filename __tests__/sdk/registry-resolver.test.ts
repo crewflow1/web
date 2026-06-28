@@ -4,18 +4,20 @@ import {
   AUTHORITY_FLOOR,
   compareAuthority,
   composeGrants,
+  decideServedAuthority,
   MEMORY_SCOPE_FLOOR,
   type ComparableAuthority,
   type GrantRow,
+  type ResolvedAuthority,
 } from "@/server/sdk/registry-resolver";
 
 /**
- * The Capability Registry — R3 runtime resolver, PURE composition law unit proof.
+ * The Capability Registry — R3 + R4 runtime resolver, PURE law unit proof.
  *
  * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md
  * (Decision 5, the inheritance model). Governing rules: the Single Source of Authority
  * Rule (13th §2 standard), the Migration Parity Rule (14th), the Behaviour Preservation
- * Rule (15th).
+ * Rule (15th), the Shadow Validation Rule (16th).
  *
  * The resolution behaviour the CEO kept in the runtime is a PURE function — so the ADR
  * 0010 Decision 5 inheritance law is proven the same way the doorman's is: a table of
@@ -24,6 +26,11 @@ import {
  * match the legacy normalisation exactly (`can_execute === true` / `requires_approval !==
  * false`) — if either silently flipped, the registry would manufacture or leak authority
  * the legacy model never gave and R2's proven parity would break.
+ *
+ * §10 adds the R4 SERVING law ({@link decideServedAuthority}): which source is served, with
+ * the registry authoritative and the legacy model retained as the rollback / fail-safe — also
+ * a PURE function, so the switch's safety (it can never strand an employee, and never serves
+ * the registry under a rollback) is proven by a table of inputs, not by discipline.
  */
 
 /** A grant that, alone, composes to a clean PERMITS baseline (one employee-scoped row). */
@@ -309,5 +316,88 @@ describe("compareAuthority — divergence detection", () => {
     const d = compareAuthority(comparable({ tokens: ["a"] }), comparable({ tokens: ["b"] }));
     expect(d?.dimensions).not.toContain("budget");
     expect(d?.dimensions).not.toContain("budgetDefault");
+  });
+});
+
+// =====================================================================
+// 10. decideServedAuthority — the R4 serving law (the runtime authority switch).
+// =====================================================================
+
+/** A registry-resolved authority that, alone, would be served (source "registry"). */
+const resolved = (over: Partial<ResolvedAuthority> = {}): ResolvedAuthority => ({
+  tokens: [],
+  canExecute: false,
+  requiresApproval: true,
+  budgetDefault: null,
+  memoryScope: MEMORY_SCOPE_FLOOR,
+  source: "registry",
+  ...over,
+});
+
+describe("decideServedAuthority — the runtime authority switch (R4)", () => {
+  it("serves the AUTHORITATIVE registry when control=registry and the registry spoke", () => {
+    const legacy = comparable({ tokens: ["read.web"] });
+    const registry = resolved({ tokens: ["read.web"], source: "registry" });
+    const d = decideServedAuthority({ control: "registry", registry, legacy });
+    expect(d.basis).toBe("registry");
+    expect(d.reason).toBeUndefined();
+    expect(d.divergence).toBeUndefined(); // in parity
+  });
+
+  it("still serves the registry when it DIVERGES — divergence is monitored, not a fallback", () => {
+    // The registry is authoritative: a disagreement with the legacy baseline is recorded for
+    // parity monitoring, but the registry is what gets served (this is the whole point of R4).
+    const legacy = comparable({ tokens: ["read.web"] });
+    const registry = resolved({ tokens: ["read.web", "lead.qualify"], source: "registry" });
+    const d = decideServedAuthority({ control: "registry", registry, legacy });
+    expect(d.basis).toBe("registry");
+    expect(d.divergence?.dimensions).toEqual(["tokens"]);
+  });
+
+  it("ROLLS BACK to legacy when control=legacy, even if the registry would have served", () => {
+    // The deliberate rollback lever: legacy wins regardless of what the registry holds — and
+    // the registry value is NOT consulted for the decision (no divergence is computed).
+    const legacy = comparable({ tokens: ["read.web"] });
+    const registry = resolved({ tokens: ["everything"], source: "registry" });
+    const d = decideServedAuthority({ control: "legacy", registry, legacy });
+    expect(d.basis).toBe("legacy");
+    expect(d.reason).toBe("rollback");
+    expect(d.divergence).toBeUndefined();
+  });
+
+  it("FAIL-SAFE to legacy when the registry read failed (registry=null)", () => {
+    const d = decideServedAuthority({ control: "registry", registry: null, legacy: comparable() });
+    expect(d.basis).toBe("legacy");
+    expect(d.reason).toBe("error");
+  });
+
+  it("FALLS THROUGH to legacy when the registry is silent for the subject (source 'none')", () => {
+    // No applicable grants → AUTHORITY_FLOOR (source 'none'). During the migration window the
+    // retained legacy model stands in (a backfill gap can never strand the employee).
+    const d = decideServedAuthority({
+      control: "registry",
+      registry: AUTHORITY_FLOOR,
+      legacy: comparable({ tokens: ["read.web"] }),
+    });
+    expect(d.basis).toBe("legacy");
+    expect(d.reason).toBe("empty");
+  });
+
+  it("checks the read-error before the silent-registry case (null is never 'empty')", () => {
+    const d = decideServedAuthority({ control: "registry", registry: null, legacy: comparable() });
+    expect(d.reason).toBe("error");
+    expect(d.reason).not.toBe("empty");
+  });
+
+  it("is TOTAL and deny-safe — legacy is the fallback in every non-registry branch", () => {
+    // Whatever the failure, the switch resolves to a served source; it never throws and never
+    // resolves to "nothing" (the legacy model is always the floor it falls back to).
+    for (const d of [
+      decideServedAuthority({ control: "legacy", registry: null, legacy: comparable() }),
+      decideServedAuthority({ control: "registry", registry: null, legacy: comparable() }),
+      decideServedAuthority({ control: "registry", registry: AUTHORITY_FLOOR, legacy: comparable() }),
+    ]) {
+      expect(d.basis).toBe("legacy");
+    }
   });
 });

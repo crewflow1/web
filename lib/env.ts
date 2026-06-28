@@ -132,6 +132,27 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
 
+  // -- Capability authority source (Directive #015 / D-05, R4) -----------
+  // The runtime authority switch + its rollback control. The Capability Registry
+  // R4 makes the registry the AUTHORITATIVE source of an AI employee's resolved
+  // capabilities; this var selects that source and is the operator's rollback lever.
+  //
+  //   "registry" (default) — the registry is authoritative. The runtime serves the
+  //     registry-resolved capabilities (`ResolvedCapabilitySet.source: "registry"`).
+  //     The legacy `ai_employees` resolution is RETAINED as the fail-safe: if the
+  //     registry read errors, or the registry is silent for a subject (no grants —
+  //     e.g. a backfill gap), serving falls back to the legacy resolution, so the
+  //     switch can never strand an employee.
+  //   "legacy" — ROLL BACK to the pre-R4 behaviour with no code change: the runtime
+  //     serves the legacy resolution (`source: "ai_employees"`) and the registry is
+  //     consulted only as the continuously-verified shadow (the R3 posture).
+  //
+  // Server-only (NOT NEXT_PUBLIC_): an authority control is never shipped to the
+  // browser. Continuous shadow verification + parity monitoring run regardless of
+  // the setting — this var changes only WHICH side is served, never whether parity
+  // is checked (the Behaviour Preservation + Shadow Validation Rules).
+  CAPABILITY_AUTHORITY_SOURCE: z.enum(["registry", "legacy"]).default("registry"),
+
   // -- Vercel system vars (populated automatically) -----------------------
   VERCEL_GIT_COMMIT_SHA: z.string().optional(),
   VERCEL_GIT_COMMIT_AUTHOR_DATE: z.string().optional(),
