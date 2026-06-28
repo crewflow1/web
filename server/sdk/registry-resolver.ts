@@ -290,3 +290,125 @@ export function decideServedAuthority(input: {
   const divergence = compareAuthority(input.legacy, input.registry);
   return divergence ? { basis: "registry", divergence } : { basis: "registry" };
 }
+
+// ---------------------------------------------------------------------
+// LR4 — the production-confidence law (the Bank-Confidence instrument, PURE)
+// ---------------------------------------------------------------------
+
+/**
+ * The confidence classification of ONE employee's {@link ServingDecision} — the unit the
+ * LR4 production-confidence sweep aggregates. Derived PURELY from the decision the runtime
+ * actually takes, so the audit's verdict can never diverge from what the serve path does:
+ *   • `registry-parity`    — served the registry, IN PARITY with the legacy baseline. The
+ *                            ONLY confident outcome: authority is registry-sourced and the
+ *                            retained legacy mirror still agrees.
+ *   • `registry-divergent` — served the registry, but it DIVERGED from the legacy baseline.
+ *                            Per the proposal §4.2 every divergence must be ACCOUNTED FOR
+ *                            (an intended registry-native authoring change) — never silent.
+ *   • `backfill-gap`       — the registry was silent for the subject (no grant), so the
+ *                            retained legacy model was served. Proposal §4.4 requires this
+ *                            to be ZERO before any removal: a gap means the subject still
+ *                            depends on legacy.
+ *   • `registry-error`     — the registry read failed; the retained legacy model was the
+ *                            fail-safe. Confidence requires the registry to be reliably
+ *                            readable, so this must be zero across the window.
+ *   • `rolled-back`        — the control selected legacy (a deliberate rollback). Confidence
+ *                            is not accruing while rolled back (the §4 window resets).
+ */
+export type ConfidenceOutcome =
+  | "registry-parity"
+  | "registry-divergent"
+  | "backfill-gap"
+  | "registry-error"
+  | "rolled-back";
+
+/**
+ * Classify a serving decision into its confidence outcome (PURE, TOTAL). This is the LR4
+ * read over the R4/LR3 serving law: it re-uses {@link decideServedAuthority}'s own verdict
+ * rather than re-deriving authority, so a sweep measures exactly what the runtime serves.
+ */
+export function classifyServingConfidence(decision: ServingDecision): ConfidenceOutcome {
+  if (decision.basis === "registry") {
+    return decision.divergence ? "registry-divergent" : "registry-parity";
+  }
+  switch (decision.reason) {
+    case "empty":
+      return "backfill-gap";
+    case "error":
+      return "registry-error";
+    case "rollback":
+    default:
+      return "rolled-back";
+  }
+}
+
+/**
+ * The aggregate confidence of a roster sweep — the measurable signal the proposal §4
+ * ("Production-confidence requirements") and the Compatibility Layer Rule's "measurable exit
+ * criteria" / "continuous parity validation" attributes require, so the observation window
+ * is MEASURED, not merely elapsed.
+ */
+export interface ConfidenceSummary {
+  /** Employees swept. */
+  readonly total: number;
+  /** Served the registry in parity (the confident outcome). */
+  readonly registryParity: number;
+  /** Served the registry but it diverged from legacy (must each be accounted for — §4.2). */
+  readonly registryDivergent: number;
+  /** Registry silent → served legacy (the backfill gaps §4.4 requires to be zero). */
+  readonly backfillGaps: number;
+  /** Registry read failed → served legacy fail-safe (must be zero across the window). */
+  readonly registryErrors: number;
+  /** Served legacy by a deliberate rollback (confidence not accruing). */
+  readonly rolledBack: number;
+  /**
+   * The §4 confidence bar as ONE boolean: EVERY employee served the registry in parity — no
+   * divergence, no backfill gap, no read error, no rollback. The registry-only runtime is
+   * demonstrably whole at THIS instant. (The time WINDOW over which it must hold continuously
+   * is operational — set by the CEO; this law measures the instant, the ops cadence measures
+   * the window.) An empty roster is NOT ready — there is nothing to be confident about.
+   */
+  readonly registryOnlyReady: boolean;
+}
+
+/**
+ * Aggregate per-employee outcomes into a {@link ConfidenceSummary} (PURE, deterministic,
+ * frozen). The whole confidence verdict is a fold over the outcomes, so it is unit-testable
+ * without any IO and can never drift from {@link classifyServingConfidence}.
+ */
+export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): ConfidenceSummary {
+  let registryParity = 0;
+  let registryDivergent = 0;
+  let backfillGaps = 0;
+  let registryErrors = 0;
+  let rolledBack = 0;
+  for (const o of outcomes) {
+    switch (o) {
+      case "registry-parity":
+        registryParity++;
+        break;
+      case "registry-divergent":
+        registryDivergent++;
+        break;
+      case "backfill-gap":
+        backfillGaps++;
+        break;
+      case "registry-error":
+        registryErrors++;
+        break;
+      case "rolled-back":
+        rolledBack++;
+        break;
+    }
+  }
+  const total = outcomes.length;
+  return Object.freeze({
+    total,
+    registryParity,
+    registryDivergent,
+    backfillGaps,
+    registryErrors,
+    rolledBack,
+    registryOnlyReady: total > 0 && registryParity === total,
+  });
+}
