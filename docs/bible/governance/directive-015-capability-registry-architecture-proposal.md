@@ -1,8 +1,11 @@
 # CrewFlow Governance — Directive #015 (D-05) Architecture Proposal: the Capability Registry
 
-> **Status:** **Architecture proposal — for review.** *Not* a decision; it renumbers
-> nothing, changes no code, schema, migration, configuration, or git history. It is
-> authored under the *document-before-you-build* rule in its **strictest** form: the CEO
+> **Status:** **Reviewed — approved with one amendment; formalised as
+> [ADR 0010](../decisions/0010-capability-registry.md) (Accepted).** The CEO's review outcome is
+> recorded in **§14**; the decisions now live in the accepted ADR 0010 and the
+> [Kernel Contract Map](./kernel-contract-map.md) §2. As presented it was a proposal — *not* a
+> decision; it renumbered nothing and changed no code, schema, migration, configuration, or git
+> history. It is authored under the *document-before-you-build* rule in its **strictest** form: the CEO
 > directed, on completing Directive #014, that *"before writing any code, present the
 > complete Directive #015 architecture proposal for review,"* and that *"no implementation
 > is authorised until that proposal has been reviewed and approved."* This document presents
@@ -385,6 +388,13 @@ This would be the #015 analogue of the Tool Registry's Immutability Rule — the
 the consolidation consolidated, so the scatter the #012 audit named cannot silently re-accrete.
 It is offered as a candidate, **not** self-adopted.
 
+> **Disposition (CEO review).** The CEO **set** this rule — in a broader form. It is now the
+> **thirteenth §2 standard** in the [Kernel Contract Map](./kernel-contract-map.md), the *Single
+> Source of Authority Rule*, named by the CEO *"the governing principle of Directive #015":* every
+> runtime authorisation decision must derive from exactly one authoritative source; read models,
+> caches, and projections may be many, but authority itself never lives in more than one place. See
+> §14.
+
 ---
 
 ## 12. Open questions for the CEO to rule on
@@ -403,6 +413,14 @@ It is offered as a candidate, **not** self-adopted.
 6. **ADR.** Confirm #015 warrants its own **ADR 0010** (the registry introduces net-new
    persistence and a contract graduation, as the executor did with ADR 0009) — to be written and
    accepted **before** implementation, per the strict document-before-you-build gate.
+
+> **Disposition (CEO review).** All six are resolved by **[ADR 0010](../decisions/0010-capability-registry.md)
+> (Accepted)** — see §14: (1) DB table **`hq_capability_grants`**; (2) **CEO / Boardroom-authorised,
+> never self-service**, read/resolve + seed/migration administration only; (3) **mirror-then-drop**;
+> (4) surface-collapse **sequenced within #015**; (5) the rule is **set** (the Single Source of
+> Authority Rule, §11); (6) **confirmed** — ADR 0010 written, reviewed, and Accepted before
+> implementation. The CEO additionally **amended** the inheritance model with the *Approval Ratchet
+> Rule* (ADR 0010 Decision 5).
 
 ---
 
@@ -424,6 +442,13 @@ PR under full validation and per-increment CEO review):
 
 Each increment is gated; **no increment is authorised by this document.**
 
+> **CEO refinement (on ADR 0010 acceptance).** The authorised first slice is **narrower** than the
+> R1 sketched above: **R1 — Registry Schema** is *schema only* — the capability-definition table, the
+> grant table, the inheritance scope model, immutable audit fields, and database constraints — with
+> **no resolver, no SDK wiring, and no legacy-column migration**; the resolver + reference
+> implementation move to a later increment. R2 does not begin until R1 is implemented, validated and
+> reviewed. See §14.
+
 ---
 
 *Documentation only. No code, schema, migration, configuration, numbering, or git history was
@@ -433,13 +458,69 @@ by the [dependency-ordering analysis](./directive-013-dependency-ordering-analys
 upon the now-Established RunContext (#013) and AI SDK (#014) contracts, consolidating the
 authority data named by the [platform-independence audit](./directive-012-platform-independence-audit.md).
 It is governed by the engineering standards homed in the
-[Kernel Contract Map](./kernel-contract-map.md) §2. No implementation is authorised until this
-proposal has been reviewed and approved; on approval, an ADR 0010 is written and accepted before
-any code is built. A section for the CEO's review outcome is reserved below.*
+[Kernel Contract Map](./kernel-contract-map.md) §2. This proposal has now been **reviewed and
+approved** (with one amendment); ADR 0010 was written and **accepted before any code is built**. The
+CEO's review outcome is recorded in **§14** below.*
 
 ---
 
 ## 14. CEO review outcome
 
-*Reserved for the CEO's review decision (approve / revise / hold), any rulings on the §12 open
-questions, and the disposition of the §11 proposed rule.*
+**Reviewed — approved with one amendment; formalised as
+[ADR 0010](../decisions/0010-capability-registry.md), now Accepted.** *(CEO independent CTO review,
+2026-06-28.)*
+
+The CEO reviewed this proposal, directed it be formalised as a decision record, and on reviewing that
+record ruled: *"Approved with one amendment. ADR 0010 correctly defines the Capability Registry as
+the declarative source of authority for runtime capabilities. The direction is approved."* ADR 0010
+is now **Accepted** and merged; this proposal is reconciled to it and closed out.
+
+**The §11 proposed rule was set — in a broader form.** The *Single Source of Authority Rule* is now
+the **thirteenth §2 standard** in the [Kernel Contract Map](./kernel-contract-map.md), in the CEO's
+own wording, named *"the governing principle of Directive #015":*
+
+> Every runtime authorisation decision must ultimately derive from exactly one authoritative source.
+> The platform may expose multiple read models. The platform may expose caches. The platform may
+> expose projections. Authority itself must never exist in more than one place. This rule becomes the
+> governing principle of Directive #015.
+
+**The §12 open questions are all resolved by ADR 0010 (Accepted):**
+
+1. **Storage form →** a DB table, **`hq_capability_grants`**, keyed by scope level + scope key (ADR
+   0010 Decision 4). *Accepted (the recommended option).*
+2. **Grant administration authority →** **CEO / Boardroom-authorised, never self-service**; #015
+   builds the read/resolve path plus seed/migration administration, not an employee-facing write
+   surface (Decision 4). *Accepted.*
+3. **Legacy columns →** **mirror-then-drop** in a later cleanup (Decision 10). *Accepted (the
+   recommended option).*
+4. **Surface-collapse scope →** **sequenced within #015** (Decisions 10, 12). *Accepted.*
+5. **The proposed rule →** **set** (adopted as the Single Source of Authority Rule, above).
+   *Accepted.*
+6. **ADR →** **confirmed**; ADR 0010 was written, reviewed, and **Accepted before any code**
+   (Decision 12). *Accepted.*
+
+**The required amendment — the Approval Ratchet Rule.** The CEO amended the inheritance model (ADR
+0010 Decision 5) with one ruling, the stricter rule chosen over most-specific-wins:
+
+> If any inherited grant requires approval, the resolved capability requires approval. Approval
+> posture must ratchet upward, never downward. A lower-level grant may add stricter controls. A
+> lower-level grant may not silently weaken approval requirements inherited from a broader scope.
+
+So inherited **approval posture uses the Approval Ratchet Rule** (`requires_approval` by logical OR
+across scope levels); **capability tokens resolve by union**; **budgets compose by the stricter /
+effective minimum**; **memory scope (and other non-security metadata) stays most-specific** where
+appropriate; and **no weaker grant may silently override a stronger approval requirement.**
+
+**Implementation authorisation.** With ADR 0010 Accepted, the CEO authorised #015 implementation to
+begin at *"the smallest safe slice: **R1 — Registry Schema**"* — the capability-definition table, the
+capability-grant table, the inheritance scope model, immutable audit fields, and database
+constraints, with **no runtime resolver, no SDK wiring, and no legacy-column migration yet**. This
+**refines** the §13 R1 sketch (which bundled the resolver + reference implementation) to a
+**schema-first** first slice; the resolver moves to a later increment. **R2 does not begin until R1
+is implemented, validated and reviewed**, under the full six-gate validation discipline; the API
+gateway + cost metering remain out of #015 scope.
+
+**Status of this proposal:** reconciled and closed; its architecture and rulings live in the accepted
+[ADR 0010](../decisions/0010-capability-registry.md) and the
+[Kernel Contract Map](./kernel-contract-map.md) §2. Architecture-Freeze contract **#8 (Capability
+Registry)** graduates Reserved → Established only on #015 completion.
