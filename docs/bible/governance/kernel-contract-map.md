@@ -264,13 +264,47 @@ completes the executor triad — the executor is *mechanism only* (Boundary), th
 *metadata only* (Immutability), and every application is *safe to repeat* (Idempotency) — so the
 execution seam stays deterministic, reproducible, and retry-safe together.
 
+### The Application Atomicity Rule
+
+A **tenth** standard, set by CEO directive on the review of **Directive #014 Phase C C3** (the
+apply-on-approval marker; independent CTO review). The Executor Idempotency Rule makes a re-attempt
+*safe* by reading the application record **before** crossing the boundary — but that read is only
+sound if the record never lies. This one governs the **record itself**, so that "applied" always
+means applied:
+
+> **Every successful application record must represent exactly one completed application. Application
+> records must never be written before successful execution. Failed execution must never appear as
+> applied. If persistence cannot accurately represent the outcome, the operation must fail rather
+> than recording an ambiguous state.**
+
+Atomicity is the **precondition** the Idempotency Rule depends on. Read-before-apply treats an
+"applied" marker as proof to skip — a *no-op success* — so a marker written **before** the effect,
+or left behind by a *failed* effect, would make idempotency skip an action that never happened
+(silent loss) and re-skip it forever. The order is therefore fixed: **cross the boundary first,
+record only on success** — exactly the shape of `applyOnce`, which calls the injected `apply()` and
+*then* persists an `AppliedApplicationRecord`, while a failure persists a `FailedApplicationRecord`
+(the action stays unapplied and safe to re-attempt) and **never** an applied marker. Applied and
+failed are **distinct, non-overlapping outcomes**: `status: "applied"` carries the result,
+`status: "failed"` carries the error and the escalation, and there is no third "maybe" state. If the
+store cannot record the true outcome — a write that might leave the record neither honestly applied
+nor honestly failed — the operation must **fail loudly** rather than persist an ambiguous marker, so
+recovery stays deterministic: the next sweep re-attempts a truly-unapplied action and skips a
+truly-applied one, never the reverse. This sharpens [ADR
+0009](../decisions/0009-sdk-executor-apply-on-approval.md) Decisions 5 and 9 (the separate
+application record; granular failure capture) into a standing constraint, and it joins the executor
+family as the **record-honesty** complement to the seam: the executor is *mechanism only* (Boundary),
+the registry is *metadata only* (Immutability), every application is *safe to repeat* (Idempotency),
+and — the precondition that makes that repetition safe — every application record is *honest* about
+what happened (Atomicity), so replay safety and deterministic recovery hold by construction.
+
 ### The Reference Path Rule
 
-A **tenth** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
-Reference Employee acceptance; independent CTO review). The nine standards above are **structural**
+An **eleventh** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
+Reference Employee acceptance; independent CTO review). The ten standards above are **structural**
 — they say what the kernel *must be* (a stable surface, a layering guarantee, isolated facets, a
 policy/mechanism split, runtime-owned composition, an execution-seam boundary, immutable tool
-metadata, and idempotent application). This one is **evidentiary** — it says how a
+metadata, idempotent application, and atomic application records). This one is **evidentiary** — it
+says how a
 kernel capability is *proven* to honour them, and how that proof is kept honest as the platform
 grows:
 

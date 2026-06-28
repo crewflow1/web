@@ -750,8 +750,8 @@ It is the execution-seam completion of the rule stack (Facet Isolation → Polic
 Runtime Composition → **Executor Boundary**) and ratifies ADR 0009 Decisions 1, 3 and 11 as a
 standing constraint.
 
-**C1 / C2 follow-up — the registry and the executor contract shipped, C3 authorised (CEO
-independent CTO review, 2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
+**C1 / C2 / C3 follow-up — the registry, the executor contract and the apply-on-approval marker
+shipped, C4 authorised (CEO independent CTO review, 2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
 (`label`, `permission`, `argSchema`, `costEstimator`, `reversibilityClass`; `defineTool` /
 `createToolRegistry`; the reference tools), **descriptive only**, with unit and source-level
 trust-boundary tests — and was reviewed, **approved**, and **merged** (PR #219). On the C1 review the
@@ -778,10 +778,26 @@ Map](./kernel-contract-map.md) §2 as the third member of the executor triad (Bo
 > and approval re-processing must be safe. The idempotency key should derive from stable execution
 > identity — task id · approval id · tool label · action id · correlation id.**
 
-**C3** (the **apply-on-approval marker** — applied/failure persistence and the idempotency key
-strategy, with **no** executor rollout, **no** API Gateway, **no** Capability Registry, **no**
-employee migration) is now **authorised**; **C4 must not begin until C3 has been implemented,
-reviewed and approved.**
+**C3** was implemented as `server/sdk/application.ts` — the **apply-on-approval marker**
+(`deriveIdempotencyKey`, the separate applied/failed `ApplicationRecord`, `resolveAppliedPayload`,
+the injected `ApplicationStore` / `createInMemoryApplicationStore`, and `applyOnce`; applied/failure
+persistence + the deterministic idempotency key strategy, with **no** executor rollout, **no** API
+Gateway, **no** Capability Registry, **no** employee migration, **no** runner wiring or migration),
+with unit and source-level trust-boundary tests — and was reviewed, **approved**, and **merged**
+(PR #223). On the C3 review the CEO set **one new permanent engineering rule**, the **Application
+Atomicity Rule** — the tenth written standard, homed in the [Kernel Contract
+Map](./kernel-contract-map.md) §2 as the record-honesty complement of the executor family (Boundary
+→ Immutability → Idempotency → Atomicity):
+
+> **Every successful application record must represent exactly one completed application. Application
+> records must never be written before successful execution. Failed execution must never appear as
+> applied. If persistence cannot accurately represent the outcome, the operation must fail rather
+> than recording an ambiguous state.**
+
+**C4** (the **Reference Path execution validation** — the extended Reference Employee exercising the
+executor end-to-end, with replay, idempotency and failure-recovery verification, plus documentation
+reconciliation, and with **no** Phase D, **no** API Gateway, **no** Capability Registry, **no**
+employee migration, **no** SDK expansion) is now **authorised** as the final Phase C increment.
 
 ---
 
@@ -794,6 +810,6 @@ Approval-Engine hand-off). It implements ADR 0008 Decision 6 and the execution h
 and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
 Runtime Composition, (set on the acceptance of ADR 0009) **Executor Boundary**, (set on the C1
-review) **Registry Immutability**, and (set on the C2 review) **Executor Idempotency** Rules, and the
-Reference Path Rule (PR #217, merged). The CEO's
+review) **Registry Immutability**, (set on the C2 review) **Executor Idempotency**, and (set on the
+C3 review) **Application Atomicity** Rules, and the Reference Path Rule (PR #217, merged). The CEO's
 review outcome — and the subsequent acceptance of ADR 0009 — is recorded in §9.*
