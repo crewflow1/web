@@ -172,12 +172,40 @@ pure gate's **policy** (`evaluateAction → GateVerdict`) with two **mechanisms*
 facet's audit emit for an autonomous verdict, the Approval Engine's `requestApproval` for a
 non-autonomous one — into the higher-level *doorman* behaviour. That composition lives in the
 runner, never in a facet, which is the same structural reason the gate is not a facet and
-`proposeActions` is not a facet (§4.2; the Policy vs Mechanism Rule). The three horizontal rules
+`proposeActions` is not a facet (§4.2; the Policy vs Mechanism Rule). These horizontal rules
 **stack**: **Facet Isolation** forbids sideways coupling, **Policy vs Mechanism** separates
-deciding from doing, and **Runtime Composition** names the one place the two are recombined — the
-OS. A facet that orchestrated another would not merely couple two primitives (the Facet Isolation
-breach) but relocate *operating-system behaviour* into a capability provider, re-introducing the
-per-employee forking the kernel exists to prevent.
+deciding from doing, **Runtime Composition** names the one place the two are recombined — the
+OS — and the **Executor Boundary Rule** (below) closes the stack at the execution seam, where a
+gate-cleared action is finally applied. A facet that orchestrated another would not merely couple
+two primitives (the Facet Isolation breach) but relocate *operating-system behaviour* into a
+capability provider, re-introducing the per-employee forking the kernel exists to prevent.
+
+### The Executor Boundary Rule
+
+A **seventh** standard, set by CEO directive on the **acceptance** of [ADR
+0009](../decisions/0009-sdk-executor-apply-on-approval.md) (the SDK Executor and Apply-on-Approval
+Runtime; Directive #014 **Phase C**; independent CTO review). Where the Policy vs Mechanism Rule
+separates *deciding what is permitted* from *carrying it out*, this one governs the **carrying-out**
+side — the **executor**, the runtime step that *applies* an action the gate has already cleared:
+
+> **The executor applies only actions that have already passed the gate. The executor must not
+> decide whether an action is allowed. The executor must not request approval. The executor must
+> not bypass the Task Engine. The executor is mechanism only. Policy remains with the gate.
+> Approval remains with the Approval Engine. Lifecycle remains with the Task Engine.**
+
+The executor (Phase C) is the **apply** mechanism — it resolves a cleared action to its registered
+tool, re-asserts permission at the tool's `SECURITY DEFINER` boundary, invokes, captures the
+result, and audits — and it is **runtime-composed beside `ctx.proposeActions`**, not a facet (it
+orchestrates; §4.2). It is the structural mirror of the doorman: where `proposeActions` *classifies
+and routes*, the executor *applies what was cleared*. The rule keeps three reservations intact —
+**policy** stays with the pure gate (the executor never re-decides allowance), **approval** stays
+with the Approval Engine (it never requests its own), and **lifecycle** stays with the Task Engine
+(it never moves a task itself) — so the executor adds **mechanism, not authority**. This is the
+execution-seam completion of the horizontal stack (Facet Isolation → Policy vs Mechanism → Runtime
+Composition → **Executor Boundary**); it ratifies [ADR
+0009](../decisions/0009-sdk-executor-apply-on-approval.md) Decisions 1, 3 and 11, and is the §4.4
+line *"Approval decides; the Task Engine gates; the executor applies"* stated as a standing
+engineering constraint.
 
 ### The Reference Path Rule
 
@@ -323,9 +351,12 @@ the kernel fork into per-employee special cases:
    never reaches for a facet, and `proposeActions` (the composition) lives in the runner.
 3. **The Event Spine observes; it does not own meaning.** Producers own verb semantics;
    the Spine guarantees only that the record is append-only and the vocabulary is closed.
-4. **Approval decides; the Task Engine gates.** An approval outcome is a decision
-   record; turning that decision into a held-or-released task is the Task Engine's
-   reserved seam — neither layer absorbs the other.
+4. **Approval decides; the Task Engine gates; the executor applies.** An approval outcome
+   is a decision record; turning that decision into a held-or-released task is the Task
+   Engine's reserved seam; and turning a *gate-cleared* action into a real effect is the
+   **executor's** reserved seam (Phase C, [ADR
+   0009](../decisions/0009-sdk-executor-apply-on-approval.md)) — none of the three absorbs
+   another.
 
 ---
 
