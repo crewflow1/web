@@ -28,6 +28,13 @@
 > envelope but does not complete it**, so #3 stays **Partial** until Phase D lands `ctx.api`.
 > This document changes no code, schema, migration, configuration, or git history.
 
+**Update (2026-06-28, on the C4 review completing Phase C):** the trajectory in the summary above —
+*#3 stays Partial until Phase D lands `ctx.api`* — was **revised** by the CEO. **Directive #014 is
+complete at Phase C**; contract #3 graduates **Partial → Established** now, with the API gateway
+(`ctx.api`) + cost metering deferred to a future **extension** of the established contract rather than
+a graduation precondition. Status of record: [architecture-freeze.md](../governance/architecture-freeze.md)
+§4 row 3 and the [Kernel Contract Map](../governance/kernel-contract-map.md) §2–§3.
+
 ---
 
 ## Context
@@ -357,6 +364,12 @@ occurs when **Phase D completes the envelope**; per the synchronisation rule ins
 [Kernel Contract Map](../governance/kernel-contract-map.md), that graduation will update **both**
 the Architecture Freeze (§4 row 3) **and** the Kernel Contract Map (the AI SDK row) **in the same
 PR**. The five architectural rulings recorded here are **standing** for the rest of the directive.
+**Update (2026-06-28, C4 review):** this Phase-D-triggered prediction was **superseded** — the CEO
+ruled Directive #014 **complete at Phase C**, so contract #3 graduated **Partial → Established** on
+Phase C completion (not at Phase D). This completion-record PR makes that graduation update **both**
+the Architecture Freeze §4 row 3 **and** the Kernel Contract Map in one PR, exactly as the
+synchronisation rule above requires; the API gateway + cost metering are now a deferred future
+**extension**, not a graduation precondition.
 
 **Numbering.** This is ADR **0009** ([`../governance/numbering.md`](../governance/numbering.md)
 §5); ADR numbers are monotonic and never reused. The number was **reserved on creation**; this ADR
