@@ -420,10 +420,48 @@ It composes with the enforcement rules rather than replacing them: **#013 thread
 source**. The registry is therefore *data, not judge* (it does not decide — the gate does) and *the
 single source, not a second decision engine* (it does not duplicate authority — it consolidates it).
 Its decision record is [ADR 0010](../decisions/0010-capability-registry.md) (the Capability Registry;
-**Proposed**), which defines the registry as a **declarative database of authority** the runtime
+**Accepted**), which defines the registry as a **declarative database of authority** the runtime
 *queries* — no runtime behaviour migrating into it — with capability inheritance composed by the
 runtime over the default-deny floor. On #015 completion, contract #8 graduates Reserved → Established
 and this rule stands as the directive's governing principle.
+
+### The Migration Parity Rule
+
+A **fourteenth** standard, set by CEO directive on the review of **Directive #015 R1** (the Capability
+Registry schema; independent CTO review). The thirteenth fixes that authority must derive from **one**
+source; this one governs the **transition** to that source — the window in which authority is being
+moved from the legacy model to the registry — so that *"exactly one authoritative source"* holds
+**continuously, including mid-migration**:
+
+> **During authority migration there must always be exactly one authoritative source. Migration
+> phases may temporarily mirror data. Mirrored data must never become independently authoritative.
+> Before any legacy authority source is removed, parity between the legacy model and the new model
+> must be continuously verifiable. Removal may occur only after parity has been demonstrated.**
+
+It is to the Single Source of Authority Rule what the **Reference Implementation Rule** is to the
+**Reference Path Rule** — its **temporal** clause. Where the thirteenth names *where* authority lives,
+this one names *how* authority may be relocated without there ever being two homes for it: the legacy
+model (the four `ai_employees` columns and the four registration surfaces) stays **the** authoritative
+source while the registry is populated as a **mirror**; the mirror is a projection *of* the legacy
+source, never a second judge; parity between the two must be **continuously verifiable** (a
+mechanical, deterministic check — not a one-off audit); and only **after** parity is demonstrated may
+the legacy source be removed. Three obligations fall out. **One source throughout** — at every instant
+of the migration there is a single answer to *"what may employee X do?"*, so the scatter the
+[#012 audit](./directive-012-platform-independence-audit.md) §5 named is never *doubled* on the way to
+being *consolidated*. **The mirror is never authoritative** — populating `hq_capability_grants` from
+the legacy columns creates a read model, and nothing may read authority from it until the seam is
+repointed *after* parity holds; a mirror that silently became a second authority would itself violate
+the thirteenth. **Parity before removal** — the legacy columns are dropped only once the new model
+provably resolves to the *same* authority for every employee, and that proof is **continuous**
+(re-runnable on demand), not a single sign-off.
+
+It sequences Directive #015's remaining slices: **R2 populates and proves parity** (the registry is
+filled from the legacy model and a deterministic parity check is established — the legacy model stays
+authoritative), **R3 repoints** the runtime seam to the proven source, and **R4 removes** the legacy
+columns once parity has been demonstrated. The rule's force is that removing a legacy authority source
+*before* continuous parity is demonstrated is a **standards violation**, not merely premature — so the
+cutover the directive performs can neither strand the platform between two authorities nor collapse
+onto an unproven one.
 
 ---
 
