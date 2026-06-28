@@ -586,6 +586,44 @@ proposal must state the **rollback-retirement conditions** the rule requires. Ge
 the rule is permanent: any future migration that changes a runtime source of truth carries its
 rollback path as part of the work, and sheds it only under independent review.
 
+### The Evidence Before Deletion Rule
+
+An **eighteenth** standard, set by CEO directive on the review of the **Directive #015 Legacy
+Removal Proposal** (independent CTO review). The fourteenth makes a transition's *data* verifiable,
+the fifteenth makes its *behaviour* invisible, the sixteenth fixes the *order* of the cutover
+(shadow, then switch), and the seventeenth keeps the *rollback* until the replacement has proven
+itself. This one governs the final act those four lead to — the **deletion** of the system that was
+replaced — and fixes that a replacement's mere existence is never sufficient cause to remove what it
+replaced:
+
+> **No production system may be removed solely because a replacement exists. Removal requires
+> objective evidence that: the replacement has demonstrated sustained production stability;
+> rollback is no longer required; operational monitoring confirms equivalent behaviour; and all
+> dependent systems have been migrated. Deletion is an engineering milestone, not a development
+> milestone.**
+
+It is the **completion** of the migration-standards arc: where the Rollback Readiness Rule says the
+prior system must be *retained* until the replacement earns trust, this one says it may be *deleted*
+only on **objective evidence**, never on the development-time fact that a replacement was built and
+shipped. "A replacement exists" is a *development* milestone; "the replacement has demonstrably and
+sustainably taken over, rollback is no longer needed, monitoring confirms equivalent behaviour, and
+every dependent has migrated" is the *engineering* milestone the rule requires — and only the latter
+authorises deletion. The four conditions are **conjunctive**: each must be demonstrated with
+evidence (a sustained-stability window on real traffic, a confirmed end of the rollback need,
+monitoring that shows equivalent behaviour, and a verified-empty set of un-migrated dependents), not
+asserted. The rule's force is that **deleting a production system on the strength of a replacement's
+existence — without the four evidentiary conditions — is a standards violation**, so the platform
+never tears out a working system on optimism, only on proof.
+
+This is the gate Directive #015's legacy-removal phase is built to pass. The **Legacy Removal
+Proposal** already embodies it: it removes nothing on the strength of R4's switch alone, defers
+every deletion behind a measurable production-confidence window, a closed-out rollback, continuous
+parity monitoring, and a complete set of migrated serve sites — and sequences deletion as its own
+reviewed increments once that evidence is banked. Generalised beyond #015, the rule is permanent:
+any future removal of a production system — not only the legacy authority model — must clear the
+same four evidentiary conditions, and deletion is always an engineering milestone earned on
+evidence, never a development milestone claimed on a replacement's existence.
+
 ---
 
 ## 3. The contract map

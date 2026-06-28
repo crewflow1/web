@@ -149,14 +149,17 @@ interaction with the API Gateway), and accepted on independent CTO review with o
 of Authority Rule** as the directive's governing principle; on the **R1 (Registry Schema)** review the
 **Migration Parity Rule**; on the **R2 (Backfill + Parity Gate)** review the **Behaviour
 Preservation Rule**; on the **R3 (runtime resolver + SDK read integration)** review the **Shadow
-Validation Rule**; and on the **R4 (runtime authority switch)** review the **Rollback Readiness Rule**
-(all five homed in the [Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds
+Validation Rule**; on the **R4 (runtime authority switch)** review the **Rollback Readiness Rule**;
+and on the **Legacy Removal Proposal** review the **Evidence Before Deletion Rule** (all six homed in
+the [Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds
 slice by slice, each gated on review of the last — **R1 (Registry Schema), R2 (Backfill + Parity
 Gate), R3 (runtime capability resolver + SDK read integration) and R4 (runtime authority switch —
 registry authoritative, legacy retained for rollback) are established**. The remaining work is the
-**legacy-removal phase**, which begins with a **design proposal** — production-confidence
-requirements, removal criteria, rollback-retirement conditions, migration-cleanup sequence,
-operational safety checks — with no implementation until that proposal is reviewed and approved.
+**legacy-removal phase**, whose **design proposal** — production-confidence requirements, removal
+criteria, rollback-retirement conditions, migration-cleanup sequence, operational safety checks —
+has been **reviewed and approved**; the phase now proceeds in **independently-reviewed removal
+increments** (registry-native authoring first), each separately authorised and removing nothing
+until the Evidence Before Deletion Rule's conditions are met.
 Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion (after
 the legacy-removal phase).
 
