@@ -1,12 +1,12 @@
 # ADR 0010 — The Capability Registry
 
-> **Status:** **Proposed — for CEO review.** This decision record is authored under the
-> [`../README.md`](../README.md) *document-before-you-build* rule in its **strictest** form: on
-> approving the [Directive #015 architecture
-> proposal](../governance/directive-015-capability-registry-architecture-proposal.md) the CEO ruled
-> *"Do not begin implementation until ADR 0010 has been written and approved … Implementation
-> remains gated on ADR 0010 approval."* **No #015 implementation begins until this ADR is reviewed
-> and accepted.** · **Date:** 2026-06-28 · **Directive:** CEO Directive **#015 / D-05** (*The
+> **Status:** **Accepted** *(CEO independent CTO review, 2026-06-28 — approved with one amendment:
+> the **Approval Ratchet Rule** for inherited approval posture, recorded in Decision 5).* This
+> decision record was authored under the [`../README.md`](../README.md) *document-before-you-build*
+> rule in its **strictest** form — the CEO ruled implementation *"remains gated on ADR 0010
+> approval"* — and is now accepted, **authorising Directive #015 implementation to begin** in small
+> reviewable increments, starting with the smallest safe slice **R1 (Registry Schema)**; R2 does not
+> begin until R1 is implemented, validated and reviewed. · **Date:** 2026-06-28 · **Directive:** CEO Directive **#015 / D-05** (*The
 > Capability Registry*) · **Supersedes:** none · **Superseded by:** none · **Builds on:**
 > [ADR 0008](./0008-ai-sdk-envelope.md) (the AI SDK Envelope — Tool Registry Principle, the
 > authorisation split), [ADR 0007](./0007-runcontext-runtime-contract.md) (RunContext — canonical
@@ -132,8 +132,9 @@ verbatim).** The registry **owns**:
   posture (`can_execute`, `requires_approval`), memory scope, department, the budget *default*, and
   the registration metadata that today scatters across the four manifest surfaces;
 - **capability inheritance** — the declared semantics by which scoped grants compose (Decision 5);
-- **capability resolution** — the resolution *contract* (the `ResolvedCapabilitySet` shape and the
-  inheritance rules), read and executed by the runtime per Decision 2.
+- **capability resolution inputs** — the grant data and the declared inheritance semantics the
+  runtime reads to resolve authority; the resolution *behaviour* itself is the runtime's (the CEO's
+  refinement, Decision 2).
 
 The registry **does not own**:
 
@@ -196,23 +197,43 @@ authority, **over the default-deny floor as the irreducible base**:
   a broader scope can only *grant* capability, never remove it, and every token held is traceable to
   an explicit recorded grant at some level. This is the §3 *grants-are-additive-over-the-floor*
   invariant extended across scopes.
-- **Posture, memory scope, and budget default compose *most-specific-wins* over the floor.** The
-  base is the Built default-deny floor (`can_execute: false`, `requires_approval: true`, memory scope
-  `isolated`, a conservative budget default). The **most specific applicable level that explicitly
-  sets a value wins** (employee overrides department overrides organisation overrides global),
-  exactly the precedence the `memory_scope` enum already implies. Because the base is deny and every
-  override is an **explicit recorded grant**, no inheritance path yields authority absent an explicit
-  grant — the floor invariant (Decision 4) holds **by construction**.
+- **Approval posture ratchets toward strict — the *Approval Ratchet Rule* (set by the CEO on the
+  ADR 0010 review, the stricter rule chosen over most-specific-wins).**
+
+  > If any inherited grant requires approval, the resolved capability requires approval. Approval
+  > posture must ratchet upward, never downward. A lower-level grant may add stricter controls. A
+  > lower-level grant may not silently weaken approval requirements inherited from a broader scope.
+
+  So `requires_approval` resolves as the **logical OR** across all applicable levels over the floor's
+  `true`: a more-specific grant may *add* an approval requirement (stricter), but **may not silently
+  clear** one a broader scope set. Autonomous execution (`requires_approval=false`) is possible only
+  when **no** applicable level — and not the floor — requires approval. This is **safer than
+  most-specific-wins** for the security-critical flag, making the invariant *no weaker grant may
+  silently override a stronger approval requirement* hold by construction.
+- **Execution posture (`can_execute`) resolves *deny-wins*** — the security companion to the ratchet.
+  `can_execute=false` is the strict floor value; a more-specific grant may **restrict** (set false),
+  and a denial at any applicable level is never silently widened, so execution is enabled only when
+  it is explicitly granted and **not** denied at any applicable scope. (The floor's `false` is the
+  *default when unspecified*, not a grant of false — so an explicit grant still enables execution,
+  while any explicit denial wins.)
+- **Budget default composes by *effective minimum*** — the **lowest** ceiling among the applicable
+  levels (the stricter bound). A narrower scope can tighten a broader, more generous budget; it can
+  never silently raise a tighter inherited ceiling.
+- **Memory scope composes *most-specific-wins*** over the safe `isolated` default — it is local
+  configuration, not an approval control, so the most specific applicable level wins (employee
+  overrides department overrides organisation overrides global), the precedence the `memory_scope`
+  enum already implies. Most-specific-wins stays available for other **non-security metadata**
+  (display / local configuration); it is **not** used for approval posture.
 - **Composition fails closed.** If any applicable level is missing, malformed, or unavailable,
   resolution falls back to the floor — it never silently widens.
 
 Inheritance composition is **resolution behaviour** (Decision 2): the registry *stores* the scoped
 grant rows; the runtime *reads and composes* them at claim. The result is still a single opaque,
 sorted, frozen `ResolvedCapabilitySet` + posture — the contract a handler sees does not change
-(Decision 6). *(One genuine security fork is surfaced for the CEO in "Alternatives weighed": whether
-`requires_approval` should instead accumulate by OR across levels — a "sticky-approval" ratchet —
-rather than most-specific-wins. This ADR proposes most-specific-wins for predictability, with
-default-deny preserved by the floor base; the CEO may set the ratchet.)*
+(Decision 6). Because the base is default-deny, every token / execute grant is an **explicit recorded
+grant**, and approval **ratchets up, never down**, no inheritance path yields authority — least of
+all weaker approval — absent an explicit grant: the floor invariant (Decision 4) and the Approval
+Ratchet Rule hold **by construction**.
 
 **6. Runtime resolution model — resolve-once-at-claim, frozen onto `ctx`, fail-closed, ABI-stable.**
 The runtime resolves the effective grant **once**, when the runner builds the context at claim time,
@@ -361,14 +382,15 @@ settles it; the registry keys to it); tool definitions (the Tool Registry owns t
   service … No runtime behaviour should migrate into the registry."* The registry is queried data;
   the resolution behaviour stays at the runtime seam. (This revises the proposal's "the registry owns
   the resolver" wording to "owns the resolution *contract and data*.")
-- **Pure most-restrictive (AND / OR) posture inheritance.** **Rejected** — ANDing `can_execute` over
-  a default-deny floor would make `can_execute=false` globally dominant, so authority could never be
-  *granted* at any level. Most-specific-wins over the floor (Decision 5) lets authority be granted
-  and inherited while default-deny is preserved by the floor base. **Surfaced as a CEO fork:** a
-  middle reading — `requires_approval` accumulates by **OR** across levels (a "sticky-approval"
-  ratchet a more-specific grant cannot silently clear) while `can_execute` is most-specific-wins.
-  This ADR proposes uniform most-specific-wins for predictability; the CEO may set the ratchet if a
-  stricter approval-monotonicity is preferred.
+- **Uniform most-specific-wins for posture.** **Rejected on the CEO's ADR 0010 review** in favour of
+  the **Approval Ratchet Rule** (Decision 5): for the security-critical approval flag,
+  most-specific-wins would let a narrower grant *silently weaken* an approval requirement a broader
+  scope set — unsafe. Approval posture therefore ratchets **upward only** (OR across levels),
+  `can_execute` resolves deny-wins, and budget uses the effective minimum; only **non-security**
+  metadata (memory scope, display / local configuration) uses most-specific-wins. (Pure **AND** over
+  `can_execute` was also rejected — it would make the floor's `false` globally dominant and forbid
+  any grant; the floor is the *default when unspecified*, not a grant of false, so explicit grants
+  enable execution while denials still win.)
 - **Resolve-per-`invoke` (re-read the registry on every action).** **Rejected** — it reopens the
   frozen-context model #013/#014 protect; resolution is once-at-claim, frozen onto `ctx` (Decision
   6).
@@ -435,12 +457,26 @@ sign-off for the *contract change itself* travels with the implementation PRs th
 code; this decision record — once **accepted** — is those PRs' prerequisite, and the R1 → R5
 increments build upon it.
 
-**Acceptance & implementation authorisation.** *Reserved for the CEO's review decision (accept /
-revise / hold), any rulings on the decisions submitted for ratification (storage form = DB table,
-grant administration = CEO / Boardroom only, legacy columns = mirror-then-drop, surface-collapse =
-sequenced within #015), and the disposition of the one surfaced security fork (most-specific-wins vs
-the `requires_approval` OR-ratchet for posture inheritance). No #015 implementation begins until this
-ADR is accepted.*
+**Acceptance & implementation authorisation (CEO independent CTO review, 2026-06-28).** ADR 0010 is
+**accepted** — *"ADR 0010 correctly defines the Capability Registry as the declarative source of
+authority for runtime capabilities … The direction is approved"* — **with one amendment**: inherited
+**approval posture uses the Approval Ratchet Rule** (Decision 5), the stricter rule the CEO chose
+over most-specific-wins, so *capability tokens are still resolved by union; budgets may use the
+stricter / effective minimum; memory scope remains most-specific where appropriate; and no weaker
+grant may silently override a stronger approval requirement.* The decisions submitted for
+ratification stand as accepted (storage = the `hq_capability_grants` table; grant administration =
+CEO / Boardroom-authorised, never self-service; legacy columns = mirror-then-drop; surface-collapse =
+sequenced within #015). On acceptance the CEO **authorised Directive #015 implementation to begin**,
+in small reviewable increments, starting with the smallest safe slice:
+
+> **R1 — Registry Schema.** The capability-definition table, the capability-grant table, the
+> inheritance scope model, immutable audit fields, and database constraints — **no runtime resolver
+> yet, no SDK wiring yet, no migration away from the legacy columns yet.** R2 does not begin until
+> R1 has been implemented, validated and reviewed, under the full validation discipline.
+
+The CEO's standing constraints carry forward: implement the smallest safe slice; do not begin the
+next increment until the current one is reviewed; maintain the six-gate validation discipline; and
+the API gateway + cost metering remain a deferred future extension, out of #015 scope.
 
 ---
 
@@ -454,5 +490,6 @@ audit](../governance/directive-012-platform-independence-audit.md). It formalise
 [architecture proposal](../governance/directive-015-capability-registry-architecture-proposal.md)
 and the rulings the review returned — the declarative-database-of-authority refinement, the owns /
 does-not-own list, the inheritance model, and the **Single Source of Authority Rule** the CEO set as
-the governing principle of the directive — and is the prerequisite the authorised implementation PRs
-will build upon once it is accepted.*
+the governing principle of the directive — and, now **accepted** (with the Approval Ratchet Rule
+amendment), is the prerequisite the authorised implementation PRs build upon, beginning with **R1
+(Registry Schema)**.*
