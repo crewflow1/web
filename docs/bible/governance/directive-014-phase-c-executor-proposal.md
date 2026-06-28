@@ -750,8 +750,9 @@ It is the execution-seam completion of the rule stack (Facet Isolation → Polic
 Runtime Composition → **Executor Boundary**) and ratifies ADR 0009 Decisions 1, 3 and 11 as a
 standing constraint.
 
-**C1 / C2 / C3 follow-up — the registry, the executor contract and the apply-on-approval marker
-shipped, C4 authorised (CEO independent CTO review, 2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
+**C1 / C2 / C3 / C4 follow-up — the registry, the executor contract, the apply-on-approval marker
+and the Reference Path all shipped; Phase C complete and Directive #014 complete (CEO independent
+CTO review, 2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
 (`label`, `permission`, `argSchema`, `costEstimator`, `reversibilityClass`; `defineTool` /
 `createToolRegistry`; the reference tools), **descriptive only**, with unit and source-level
 trust-boundary tests — and was reviewed, **approved**, and **merged** (PR #219). On the C1 review the
@@ -794,10 +795,31 @@ Map](./kernel-contract-map.md) §2 as the record-honesty complement of the execu
 > applied. If persistence cannot accurately represent the outcome, the operation must fail rather
 > than recording an ambiguous state.**
 
-**C4** (the **Reference Path execution validation** — the extended Reference Employee exercising the
-executor end-to-end, with replay, idempotency and failure-recovery verification, plus documentation
-reconciliation, and with **no** Phase D, **no** API Gateway, **no** Capability Registry, **no**
-employee migration, **no** SDK expansion) is now **authorised** as the final Phase C increment.
+**C4** was implemented as `__tests__/sdk/reference-path-execution.test.ts` — the executor **Reference
+Path**, composing the real C1 registry → Phase-B gate → C2 executor → C3 application **end-to-end with
+no mock** (the envelope is pure up to the injected boundary, so purity is proven by composition),
+exercising autonomous apply, the parked-then-cleared irreversible path with approver attribution and
+an edited payload, replay (`already_applied` on both the autonomous and approval identities),
+deterministic path-namespaced idempotency, and failure recovery (a thrown boundary records a
+*failure* never an application; transient-then-success recovers to exactly one application;
+ceiling-exhaustion escalates without re-crossing) — and was reviewed, **approved**, and **merged**
+(PR #225; the Application Atomicity Rule docs landed first as PR #224). **C4 completed Phase C, and
+Phase C completes Directive #014.** On the C4 review the CEO set **one new permanent engineering
+rule**, the **Reference Implementation Rule** — the twelfth written standard and the **second
+evidentiary standard** (the completion-and-sequencing complement of the Reference Path Rule), homed in
+the [Kernel Contract Map](./kernel-contract-map.md) §2:
+
+> **Every new kernel capability must have exactly one canonical reference implementation that
+> exercises the complete intended lifecycle. The reference implementation exists to prove contract
+> correctness, runtime composition, replay behaviour, recovery behaviour, and architectural
+> boundaries. Platform expansion should always occur after the reference implementation has been
+> proven.**
+
+With Phase C merged, **Directive #014 is complete** and Architecture-Freeze contract **#3 (AI SDK)**
+graduates **Partial → Established**. The executor rollout into the live run loop and the API gateway +
+cost metering (originally envisaged as Phase D) are a deferred future **extension** of the
+now-established contract — governed by the SDK Stability + ABI rules (*extend before replace*), not a
+precondition of its establishment.
 
 ---
 
@@ -811,5 +833,6 @@ and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
 Runtime Composition, (set on the acceptance of ADR 0009) **Executor Boundary**, (set on the C1
 review) **Registry Immutability**, (set on the C2 review) **Executor Idempotency**, and (set on the
-C3 review) **Application Atomicity** Rules, and the Reference Path Rule (PR #217, merged). The CEO's
-review outcome — and the subsequent acceptance of ADR 0009 — is recorded in §9.*
+C3 review) **Application Atomicity** Rules, the Reference Path Rule (PR #217, merged), and (set on the
+C4 review) the **Reference Implementation Rule**. The CEO's review outcome — and the subsequent
+acceptance of ADR 0009 — is recorded in §9.*

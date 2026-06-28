@@ -354,8 +354,76 @@ deterministic, path-namespaced function of execution identity; and a failed boun
 **failure**, never an application (the marker's write-only-on-success discipline), safe to re-attempt
 below the retry ceiling and **escalated** — never auto-retried — once it is exhausted. It consumes
 the registry read-only throughout (the Registry Immutability Rule). It is the Reference Path Rule's
-first deliverable use after the doorman — the regression Phase D must not break before the platform
-expands.
+first deliverable use after the doorman — the regression any later expansion must not break before
+the platform grows on top of it.
+
+### The Reference Implementation Rule
+
+A **twelfth** standard, set by CEO directive on the review of **Directive #014 Phase C C4** (the
+Reference Path execution validation that completed Phase C; independent CTO review). It is the
+**second evidentiary standard** — the completion-and-sequencing complement to the Reference Path
+Rule above. Where the eleventh names the living **regression gate** (the one path that must not
+break), this one names what that artifact must **be** before the platform builds on it, and **when**
+that expansion may begin:
+
+> **Every new kernel capability must have exactly one canonical reference implementation that
+> exercises the complete intended lifecycle. The reference implementation exists to prove contract
+> correctness, runtime composition, replay behaviour, recovery behaviour, and architectural
+> boundaries. Platform expansion should always occur after the reference implementation has been
+> proven.**
+
+Three obligations fall out, each already met by Phase C's executor path. **Exactly one** — a
+capability has a *single* canonical reference, not a scatter of partial demonstrations, so there is
+one unambiguous answer to "does this compose?" (the executor's is
+`__tests__/sdk/reference-path-execution.test.ts`). **The complete lifecycle** — the reference does
+not stop at the happy path; it exercises the capability end-to-end *and* through its failure modes
+(the executor path proves apply, replay, idempotency, recovery, and escalation — not merely a single
+successful application). **Proven before expansion** — the reference is the **precondition** for
+whatever builds next: a capability is built upon only after its one canonical implementation has been
+proven, so the executor's whole lifecycle was proven by C4 *before* any later platform expansion is
+taken up. It is *extend before replace*
+([Architecture Freeze](./architecture-freeze.md) §2.4) given a **temporal** clause: where the
+Reference Path Rule says *what* proof a frozen contract's extension must clear, this rule says that
+proof must exist and **pass before** the expansion it guards is begun. The kernel stays frozen and
+the employees stay simple (the §2 principle) because no capability is built upon until one canonical
+implementation has shown — across its **entire** lifecycle — that the floor beneath it holds.
+
+### The Single Source of Authority Rule
+
+A **thirteenth** standard, set by CEO directive on the review of the **Directive #015 architecture
+proposal** (the Capability Registry; independent CTO review). The twelve standards above govern the
+SDK surface, the execution seam, and how a kernel capability is proven. This one governs
+**authority** — *where* an authorisation decision is allowed to come from — and the CEO set it as
+*"the governing principle of Directive #015":*
+
+> **Every runtime authorisation decision must ultimately derive from exactly one authoritative
+> source. The platform may expose multiple read models. The platform may expose caches. The platform
+> may expose projections. Authority itself must never exist in more than one place. This rule becomes
+> the governing principle of Directive #015.**
+
+It is the **culmination of the "one source of truth" theme** the rule stack has built toward. The
+SDK ABI Principle keeps the *interface* singular; the Registry Immutability Rule keeps *tool
+metadata* singular and fixed; this rule keeps **authority** singular. Today an employee's authority
+exists in **eight** places — the four `ai_employees` columns (`tools_allowed`, `permissions`,
+`memory_scope`, `department`) and the four registration surfaces the [platform-independence
+audit](./directive-012-platform-independence-audit.md) §5 named — so the platform has no single
+answer to *"what may employee X do?"*: the precise condition this rule forbids. Directive #015
+resolves it by making the **Capability Registry** that one authoritative source; everything else —
+the gate's in-memory view, a process-start cache, an operator read model, the legacy columns mirrored
+during cutover — becomes a **read model / cache / projection** *of* that source, never a second home
+for authority. The rule's force is that a second authority home is thereby a **standards violation**,
+not merely untidy, so the scatter the #012 audit named **cannot silently re-accrete**.
+
+It composes with the enforcement rules rather than replacing them: **#013 threads · #014 enforces ·
+#015 sources** — RunContext threads the resolved set onto `ctx`, the gate (Policy vs Mechanism)
+*decides* over it, and this rule fixes that the set the gate reads **derives from exactly one
+source**. The registry is therefore *data, not judge* (it does not decide — the gate does) and *the
+single source, not a second decision engine* (it does not duplicate authority — it consolidates it).
+Its decision record is [ADR 0010](../decisions/0010-capability-registry.md) (the Capability Registry;
+**Proposed**), which defines the registry as a **declarative database of authority** the runtime
+*queries* — no runtime behaviour migrating into it — with capability inheritance composed by the
+runtime over the default-deny floor. On #015 completion, contract #8 graduates Reserved → Established
+and this rule stands as the directive's governing principle.
 
 ---
 
@@ -412,11 +480,11 @@ forking — what it **explicitly does not own**. Build status is tagged honestly
 | **Consumes** | The Task Engine (claim / heartbeat / `hq_ai_task_cancel` — the signal aborts off the *existing* heartbeat, **no new query**) and its inert columns bound to fields; Shared Memory (binds `ctx.memory`); the roster / identity (resolves the settled slug). |
 | **Does *not* own** | Execution state (the OS owns it — RunContext **exposes**, never mutates); capability enforcement or sourcing (#014 enforces · #015 sources); cost *metering* (it exposes the ceiling read-only; #014 meters); the comms/events/tools/api facets (deferred to #014). |
 
-### AI SDK — contract #3 · *Partial*
+### AI SDK — contract #3 · *Established*
 
 | | |
 |---|---|
-| **Owns** | *Today* the **memory**, **events**, and **comms** facets (`createMemory`/`BoundMemory`, `createEvents`/`BoundEvents`, `createComms`/`BoundComms`), the **output envelope** (`server/sdk/output.ts`), the runner's **evidence-drain** hook — shipped under **D-04 / #014 Phase A** ([ADR 0008](../decisions/0008-ai-sdk-envelope.md)) — and the **permission doorman + P4**: the pure gate (`server/sdk/gate.ts` — `evaluateAction → GateVerdict`), the runtime composition `ctx.proposeActions`, `resolveEmployeePosture`, and the `ai.action_permitted` audit verb — shipped under **D-04 / #014 Phase B** ([ADR 0008](../decisions/0008-ai-sdk-envelope.md) Decisions 4 & 8). The remaining envelope (the typed tool registry, the API gateway + cost metering — Phases C–D) is **owned by D-04 / #014**. |
+| **Owns** | *Today* the **memory**, **events**, and **comms** facets (`createMemory`/`BoundMemory`, `createEvents`/`BoundEvents`, `createComms`/`BoundComms`), the **output envelope** (`server/sdk/output.ts`), the runner's **evidence-drain** hook — shipped under **D-04 / #014 Phase A** ([ADR 0008](../decisions/0008-ai-sdk-envelope.md)); the **permission doorman + P4**: the pure gate (`server/sdk/gate.ts` — `evaluateAction → GateVerdict`), the runtime composition `ctx.proposeActions`, `resolveEmployeePosture`, and the `ai.action_permitted` audit verb — shipped under **D-04 / #014 Phase B** ([ADR 0008](../decisions/0008-ai-sdk-envelope.md) Decisions 4 & 8); and the **typed tool registry → executor → application contract**: the pure tool registry (`server/sdk/tools.ts` — `REFERENCE_TOOL_REGISTRY`, `parseToolArgs`, `estimateToolCostMicros`), the pure executor (`server/sdk/executor.ts` — `planExecution`/`executePlan`/`createExecutor`, which refuses an uncleared verdict and never lets a boundary throw escape), and the idempotent, atomic application contract (`server/sdk/application.ts` — `applyOnce`/`deriveIdempotencyKey`, write-on-success-only with bounded retry then escalation), proven end-to-end by the executor **Reference Path** (`__tests__/sdk/reference-path-execution.test.ts`) — shipped under **D-04 / #014 Phase C** ([ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md)). With Phase C merged, **Directive #014 is complete** and contract #3 graduates **Partial → Established**. The runner wiring that rolls the executor into the live run loop, and the **API gateway + cost metering**, are a deferred future **extension** of the now-established contract — governed by the §2 SDK Stability + ABI rules, *extend before replace*, not a precondition of its establishment. |
 | **Exposes** | Today the memory, events, and comms facets + the output envelope + the doorman (`ctx.proposeActions`), delivered *through* the frozen `ctx`; *intended* — the single employee-facing **door**: every facet (`memory`, `tasks`, `events`, `comms`, …tools/api) over one `ctx`. Each facet is **independently composable** — the runtime composes them, they do not compose each other (§2 Facet Isolation Rule). The gate is a **pure policy leaf** and `proposeActions` is the **runtime composition** of that policy with mechanism — neither is a facet (§2 Policy vs Mechanism Rule). |
 | **Consumes** | RunContext (its facets ride inside the immutable envelope); Shared Memory; the Task Engine (`ctx.tasks` = `BoundTasks`); the Event Spine (`ctx.events` binds `emitEvent`); the Communication Layer (`ctx.comms` binds `deliverDraft`); the **Approval Engine** (`ctx.proposeActions` hands a non-autonomous verdict to `requestApproval`); *(intended)* the API gateway, the Capability Registry. |
 | **Does *not* own** | The envelope *shape* (RunContext owns it — the SDK populates facets *into* it); execution state; **cross-facet orchestration** (the runtime composes capability — §4.2 — so a facet never sequences another); the **mechanism** behind a verdict (the gate states *what is permitted*; the runtime requests approval or emits the audit — §2 Policy vs Mechanism Rule); the kernel primitives themselves (the SDK is their employee-facing **facade**, not their owner); capability enforcement (#014, sourced by #015). |

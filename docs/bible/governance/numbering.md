@@ -78,14 +78,14 @@ canonical scheme and records every other label as an alias.
 | **011** | Governance, Numbering & Scope Reconciliation | **This directive.** The canonical numbering ledger, the Architecture Freeze, and the Version 1.0 Constitution. Documentation only. | Issued · in progress | Master Roadmap **D-01**. |
 | **012** | Generic Task Engine | One durable, crash-safe, audited work queue (`hq_ai_tasks`) every AI employee runs on — plus the runner SDK, `task.*` spine emission, the memory↔task binding, the reference + second employee migrations, and the unified operator read model. ADRs `0004`–`0006`. | Issued · **architecturally complete** — PR-A…PR-G merged to the `#011` integration branch; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-02**. Branches `directive/012-*`. Completion record: [`directive-012-completion-report.md`](./directive-012-completion-report.md). |
 | **013** | RunContext Runtime Contract | The per-employee runtime contract the runner assembles at claim and threads through every invocation: identity, correlation, budget, deadline, cancellation, and the permission/capability hooks the SDK enforces. Graduates Architecture-Freeze contract **#4 (RunContext)** Partial → Established; **settles** the canonical runtime-identity decision deferred from D-01. ADR `0007`. | Issued · **architecturally complete** — implementation + tests on **PR #206** (base `#011` integration branch); RunContext graduated **Partial → Established**, the qualification three-way split resolved to `lead-qualification`; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-03**. Previously D-04 bundled RunContext with the SDK; Option B split them, runtime contract first. Completion record: [`directive-013-completion-report.md`](./directive-013-completion-report.md). |
-| **014** | AI SDK Envelope | The full per-employee SDK envelope (`comms`/`events`/`tools`/`api` facets) assembled over the frozen RunContext, reading the existing `ai_employees` scope columns. Graduates contract **#3 (AI SDK)** Partial → Established. | **Planned · approved (D-04)** | Master Roadmap **D-04**. The canon's long-standing "AI SDK directive (D-04 / #014)"; the RunContext contract and the identity decision now precede it at **#013**. |
+| **014** | AI SDK Envelope | The per-employee SDK envelope assembled over the frozen RunContext, reading the existing `ai_employees` scope columns: the `memory`/`events`/`comms` facets + output envelope (Phase A), the permission **doorman** + P4 gate (Phase B), and the typed **tool registry → executor → application** contract (Phase C). Graduates contract **#3 (AI SDK)** Partial → Established. | Issued · **complete** — Phases **A → B → C** merged to the `#011` integration branch (Phase C on **ADR 0009**; C1–C4 PRs #219/#221/#223/#225, atomicity-rule docs #224). Contract **#3** graduated **Partial → Established** (CEO review, 2026-06-28). The executor rollout into the live run loop and the API gateway + cost metering are a deferred future **extension** of the now-established contract, not part of the complete directive. | Master Roadmap **D-04**. The canon's long-standing "AI SDK directive (D-04 / #014)"; the RunContext contract and the identity decision precede it at **#013**. |
 | **015** | Capability Registry | One declarative source of truth + resolver consolidating the scattered employee scope/capability data (`tools_allowed`, `permissions`, `memory_scope`, `department`) and the four registration surfaces named by the platform-independence audit. Graduates contract **#8 (Capability Registry)** Reserved → Established. | **Planned · approved (D-05)** | Master Roadmap **D-05**. Sequenced **last** by the dependency analysis: it consolidates what #013/#014 settle. |
 | **016 – 029** | *(reserved)* | Master Roadmap **D-06 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
 
 **Next free number beyond the current roadmap: `#030`.** (Within the roadmap, D-02 =
-**#012** and D-03 = **#013** are issued and architecturally complete; the next directive
-to be *issued* is D-04 = **#014** — the AI SDK Envelope, assembled over the now-frozen
-RunContext.)
+**#012**, D-03 = **#013** and D-04 = **#014** are issued — #012/#013 architecturally
+complete, **#014 complete**; the next directive to be *issued* is D-05 = **#015** — the
+Capability Registry, which consolidates what #013/#014 settle.)
 
 ---
 
@@ -120,19 +120,34 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0007`](../decisions/0007-runcontext-runtime-contract.md) | The RunContext Runtime Contract | #013 (D-03) |
 | [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Accepted)* | #014 (D-04) |
 | [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Accepted)* | #014 (D-04), Phase C |
+| [`0010`](../decisions/0010-capability-registry.md) | The Capability Registry *(Proposed)* | #015 (D-05) |
 
-**Next free ADR number: `0010`.** ADR numbers are also monotonic and never reused. ADR
-`0008` is **Accepted** (CEO independent CTO review, 2026-06-27); Directive #014
-implementation is **authorised** under per-phase review gates (Phases A and B merged). ADR
-`0009` (SDK Executor and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO
-review, 2026-06-28); Directive #014 **Phase C** is **authorised**, to be built in small
-reviewable increments **C1 → C2 → C3 → C4** (phases not merged together); **C1** (the typed tool
-registry contract, PR #219), **C2** (the executor contract, PR #221) and **C3** (the apply-on-approval
-marker, PR #223) are **merged** (2026-06-28), and **C4** (Reference Path execution validation) is
-**authorised**. On acceptance the CEO set the permanent **Executor Boundary Rule**; on the **C1**
-review the permanent **Registry Immutability Rule**; on the **C2** review the permanent **Executor
-Idempotency Rule**; and on the **C3** review the permanent **Application Atomicity Rule** — all homed
-in the [Kernel Contract Map](./kernel-contract-map.md) §2.
+**Next free ADR number: `0011`.** ADR numbers are also monotonic and never reused. ADR
+`0008` is **Accepted** (CEO independent CTO review, 2026-06-27) and ADR `0009` (SDK Executor
+and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO review, 2026-06-28);
+Directive #014 shipped under per-phase review gates as Phases **A → B → C**, all **merged**.
+Phase C was built in small reviewable increments **C1 → C2 → C3 → C4** (phases not merged
+together): **C1** (the typed tool registry contract, PR #219), **C2** (the executor contract,
+PR #221), **C3** (the apply-on-approval marker, PR #223) and **C4** (the executor **Reference
+Path** validation, PR #225 — plus the Application Atomicity Rule docs #224) are **all merged**
+(2026-06-28). **C4 completed Phase C, and Phase C completes Directive #014** (CEO review,
+2026-06-28); contract **#3** graduated **Partial → Established**. The executor rollout into the
+live run loop and the API gateway + cost metering are a deferred future **extension** of the
+now-established contract. On acceptance the CEO set the permanent **Executor Boundary Rule**; on
+the **C1** review the **Registry Immutability Rule**; on the **C2** review the **Executor
+Idempotency Rule**; on the **C3** review the **Application Atomicity Rule**; and on the **C4**
+review the **Reference Implementation Rule** (the completion-and-sequencing complement to the
+earlier **Reference Path Rule**) — all homed in the [Kernel Contract Map](./kernel-contract-map.md)
+§2.
+
+ADR `0010` (the **Capability Registry**, Directive **#015 / D-05**) is **Proposed** — written under
+the strict *document-before-you-build* gate ahead of any #015 code, defining the nine areas the CEO
+required (authority ownership · registry boundaries · grant model · inheritance model · migration
+strategy · runtime resolution model · interaction with the Tool Registry · interaction with the SDK ·
+interaction with the API Gateway). **#015 implementation is gated on ADR 0010's acceptance.** On the
+#015 architecture review the CEO set the permanent **Single Source of Authority Rule** as the
+directive's governing principle (homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
+Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion.
 
 ---
 
