@@ -463,6 +463,47 @@ columns once parity has been demonstrated. The rule's force is that removing a l
 cutover the directive performs can neither strand the platform between two authorities nor collapse
 onto an unproven one.
 
+### The Behaviour Preservation Rule
+
+A **fifteenth** standard, set by CEO directive on the review of **Directive #015 R2** (the Capability
+Registry backfill + parity gate; independent CTO review). The fourteenth governs the *data* of the
+transition — that the new model resolves to the **same authority** the legacy model does, continuously
+and verifiably. This one governs the *behaviour* of the transition — that introducing the new model
+and reading through it changes **nothing a caller can observe** — so the migration can refactor the
+engine without the platform's runtime ever shifting beneath it:
+
+> **Migration phases must preserve externally observable behaviour. Internal implementation may
+> change. Stored representation may change. Performance characteristics may change. Externally
+> observable runtime behaviour must remain unchanged until the behavioural transition phase is
+> explicitly authorised.**
+
+It is the **behavioural complement** to the Migration Parity Rule, exactly as that rule is the
+**temporal** complement to the Single Source of Authority Rule. The fourteenth fixes that the
+mirror's *data* equals the legacy source's; this one fixes that swapping the runtime onto that mirror
+keeps every *decision* identical — the same resolved tokens, the same posture (`can_execute` /
+`requires_approval`), the same effective budget, the same memory scope — so a behaviour-preserving
+migration phase is invisible from outside the kernel. It deliberately **licenses** what *may* change:
+the implementation behind the seam (a real resolver replacing the legacy read), the stored
+representation (the registry tables rather than the four `ai_employees` columns), and the performance
+profile (a different query shape) are all free to move. What may **not** move is the externally
+observable result — and only until a phase whose explicit purpose *is* a behavioural change (for
+example activating inheritance, or factoring authority up a scope level so resolution genuinely
+diverges from the flat legacy set) is **separately authorised**.
+
+This is what makes **R3** safe to build. R3 introduces the **runtime capability resolver**
+(inheritance composition, the approval ratchet, effective-budget minimisation, memory-scope
+most-specific-wins) and repoints the **SDK read seam** onto it — a substantial internal change — but
+under this rule that change must be a **null behavioural change**: the resolver, run against the
+R2-proven mirror, must yield the same `ResolvedCapabilitySet` the legacy path yields, and the runtime
+must **continue to verify that parity** as it serves. Where the Migration Parity Rule made parity
+verifiable *offline* (the migration-time gate, the re-runnable parity function), this rule extends the
+obligation *onto the request path*: during the transition the runtime itself proves equivalence, so a
+divergence is caught the instant it would be observed, never after. Removal of the legacy model (R4)
+and any deliberate behavioural transition remain **later, separately-authorised** acts; R3 changes how
+the answer is computed, never the answer. The rule's force is that an externally observable
+behavioural change shipped *inside* a migration phase — however well-intentioned — is a **standards
+violation**, so the cutover can replace the engine without ever changing what the platform does.
+
 ---
 
 ## 3. The contract map

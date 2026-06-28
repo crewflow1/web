@@ -120,7 +120,7 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0007`](../decisions/0007-runcontext-runtime-contract.md) | The RunContext Runtime Contract | #013 (D-03) |
 | [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Accepted)* | #014 (D-04) |
 | [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Accepted)* | #014 (D-04), Phase C |
-| [`0010`](../decisions/0010-capability-registry.md) | The Capability Registry *(Proposed)* | #015 (D-05) |
+| [`0010`](../decisions/0010-capability-registry.md) | The Capability Registry *(Accepted)* | #015 (D-05) |
 
 **Next free ADR number: `0011`.** ADR numbers are also monotonic and never reused. ADR
 `0008` is **Accepted** (CEO independent CTO review, 2026-06-27) and ADR `0009` (SDK Executor
@@ -147,11 +147,12 @@ strategy · runtime resolution model · interaction with the Tool Registry · in
 interaction with the API Gateway), and accepted on independent CTO review with one amendment (the
 **Approval Ratchet Rule**). On the #015 architecture review the CEO set the permanent **Single Source
 of Authority Rule** as the directive's governing principle; on the **R1 (Registry Schema)** review the
-CEO set the permanent **Migration Parity Rule** (both homed in the
-[Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds slice by slice, each
-gated on review of the last — **R1 (Registry Schema) is established**; R2 (populate the registry from
-the legacy model and prove continuous parity) is authorised next. Contract **#8 (Capability
-Registry)** graduates Reserved → Established only on #015 completion.
+**Migration Parity Rule**; and on the **R2 (Backfill + Parity Gate)** review the **Behaviour
+Preservation Rule** (all three homed in the [Kernel Contract Map](./kernel-contract-map.md) §2).
+Implementation proceeds slice by slice, each gated on review of the last — **R1 (Registry Schema) and
+R2 (Backfill + Parity Gate) are established**; R3 (the runtime capability resolver and SDK read
+integration — behaviour-preserving, with runtime parity continuously verified) is authorised next.
+Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion.
 
 ---
 
