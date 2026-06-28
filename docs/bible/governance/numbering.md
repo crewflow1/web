@@ -127,11 +127,12 @@ implementation is **authorised** under per-phase review gates (Phases A and B me
 `0009` (SDK Executor and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO
 review, 2026-06-28); Directive #014 **Phase C** is **authorised**, to be built in small
 reviewable increments **C1 → C2 → C3 → C4** (phases not merged together); **C1** (the typed tool
-registry contract, PR #219) and **C2** (the executor contract, PR #221) are **merged**
-(2026-06-28), and **C3** (the apply-on-approval marker) is **authorised**. On acceptance the CEO set
-the permanent **Executor Boundary Rule**; on the **C1** review the permanent **Registry Immutability
-Rule**; and on the **C2** review the permanent **Executor Idempotency Rule** — all homed in the
-[Kernel Contract Map](./kernel-contract-map.md) §2.
+registry contract, PR #219), **C2** (the executor contract, PR #221) and **C3** (the apply-on-approval
+marker, PR #223) are **merged** (2026-06-28), and **C4** (Reference Path execution validation) is
+**authorised**. On acceptance the CEO set the permanent **Executor Boundary Rule**; on the **C1**
+review the permanent **Registry Immutability Rule**; on the **C2** review the permanent **Executor
+Idempotency Rule**; and on the **C3** review the permanent **Application Atomicity Rule** — all homed
+in the [Kernel Contract Map](./kernel-contract-map.md) §2.
 
 ---
 
