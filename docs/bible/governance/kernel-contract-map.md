@@ -304,6 +304,25 @@ canonical path, and defend it there.** (Distinct from, and complementary to, the
 Rule* of Bible Volume XIII §22, which governs employee **migration** conformance; this rule governs
 kernel-**capability** validation.)
 
+The executor's reference path is the **Reference Path execution test**
+(`__tests__/sdk/reference-path-execution.test.ts`, Phase C C4): the same Lead Qualification AI now
+**applies** both verdicts, composing the real Phase-C contracts end-to-end — the typed tool registry
+(C1) feeds the doorman's verdict (Phase B), which the executor (C2) carries across the execution
+seam, recorded by the apply-on-approval marker (C3). Because the envelope is pure up to a single
+injected boundary, the path drives the genuine `REFERENCE_TOOL_REGISTRY`, `evaluateAction`,
+`REFERENCE_EXECUTOR`, and `applyOnce` with **no mock** — purity proven by composition, not asserted.
+It pins the executor's boundaries end-to-end: a reversible write the gate clears is applied
+autonomously and recorded once; an irreversible send is parked (`needs_approval`), **refused** by the
+executor while uncleared (the Executor Boundary Rule — `not_cleared`), then applied exactly once on a
+human grant, with the reviewer's edited payload and the approver attributed; a replay is a no-op
+success that never re-crosses the boundary (the Executor Idempotency Rule); the idempotency key is a
+deterministic, path-namespaced function of execution identity; and a failed boundary records a
+**failure**, never an application (the marker's write-only-on-success discipline), safe to re-attempt
+below the retry ceiling and **escalated** — never auto-retried — once it is exhausted. It consumes
+the registry read-only throughout (the Registry Immutability Rule). It is the Reference Path Rule's
+first deliverable use after the doorman — the regression Phase D must not break before the platform
+expands.
+
 ---
 
 ## 3. The contract map
