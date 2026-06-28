@@ -207,12 +207,39 @@ Composition → **Executor Boundary**); it ratifies [ADR
 line *"Approval decides; the Task Engine gates; the executor applies"* stated as a standing
 engineering constraint.
 
+### The Registry Immutability Rule
+
+An **eighth** standard, set by CEO directive on the review of **Directive #014 Phase C C1** (the
+typed tool registry contract; independent CTO review). Where the Executor Boundary Rule governs
+*who* applies a cleared action, this one governs the *metadata that application consumes* — the
+**tool registry** (`server/sdk/tools.ts`, C1), where tools are **registered as data** (Bible
+Volume XIII §12) that forms a fixed platform contract, never runtime-mutable state:
+
+> **Tool definitions are immutable platform metadata. Tool registration occurs during platform
+> initialisation. Runtime execution must consume the registry. Runtime execution must never mutate
+> the registry. This preserves determinism and reproducibility across every AI employee.**
+
+The registry is **built once, read forever**: `createToolRegistry` freezes its index and its
+listings, so a registered tool is descriptive, immutable data — a `label`, a `permission`, an
+`argSchema`, a `costEstimator`, a `reversibilityClass` — that does not change after initialisation.
+The executor (Phase C C2) is a **consumer**: it *resolves* a tool to apply a gate-cleared action; it
+never adds, removes, or rewrites one. That is what keeps the apply-seam **deterministic and
+reproducible** — every employee resolves the same `memory.write` to the same contract, so the same
+proposed action yields the same P4 facts (reversibility → atom 1, cost → atom 5) and the same gate
+verdict, run after run, employee after employee. It is the complement of the Executor Boundary Rule:
+the executor is *mechanism only* (it does not decide), and the registry is *metadata only* (it does
+not change) — together they keep the execution seam pure. This sharpens [ADR
+0009](../decisions/0009-sdk-executor-apply-on-approval.md) Decision 2 (the registry *describes*
+capability and "must never become the authorisation system") with its run-time corollary: it must
+never become mutable *state* either.
+
 ### The Reference Path Rule
 
-A **seventh** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
-Reference Employee acceptance; independent CTO review). The six standards above are **structural**
+A **ninth** standard, set by CEO directive on the review of **Directive #014 Phase B B3** (the
+Reference Employee acceptance; independent CTO review). The eight standards above are **structural**
 — they say what the kernel *must be* (a stable surface, a layering guarantee, isolated facets, a
-policy/mechanism split, runtime-owned composition). This one is **evidentiary** — it says how a
+policy/mechanism split, runtime-owned composition, an execution-seam boundary, and immutable tool
+metadata). This one is **evidentiary** — it says how a
 kernel capability is *proven* to honour them, and how that proof is kept honest as the platform
 grows:
 

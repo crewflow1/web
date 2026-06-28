@@ -750,6 +750,24 @@ It is the execution-seam completion of the rule stack (Facet Isolation → Polic
 Runtime Composition → **Executor Boundary**) and ratifies ADR 0009 Decisions 1, 3 and 11 as a
 standing constraint.
 
+**C1 follow-up — the typed tool registry shipped, C2 authorised (CEO independent CTO review,
+2026-06-28).** **C1** was implemented as `server/sdk/tools.ts` — the typed tool registry contract
+(`label`, `permission`, `argSchema`, `costEstimator`, `reversibilityClass`; `defineTool` /
+`createToolRegistry`; the reference tools), **descriptive only**, with unit and source-level
+trust-boundary tests — and was reviewed, **approved**, and **merged** (PR #219). On the C1 review the
+CEO set **one new permanent engineering rule**, the **Registry Immutability Rule** — the eighth
+written standard, homed in the [Kernel Contract Map](./kernel-contract-map.md) §2 as the complement
+of the Executor Boundary Rule:
+
+> **Tool definitions are immutable platform metadata. Tool registration occurs during platform
+> initialisation. Runtime execution must consume the registry. Runtime execution must never mutate
+> the registry. This preserves determinism and reproducibility across every AI employee.**
+
+**C2** (the **executor contract** — registry consumption and the execution boundary, with **no**
+apply-on-approval runtime, **no** API Gateway, **no** Capability Registry, **no** employee
+migration) is now **authorised**; **C3 must not begin until C2 has been implemented, reviewed and
+approved.**
+
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed by this
@@ -760,6 +778,6 @@ comms + the output envelope), and the Phase-B doorman (the pure gate + `proposeA
 Approval-Engine hand-off). It implements ADR 0008 Decision 6 and the execution half of Decision 8,
 and is governed by the engineering standards homed in the
 [Kernel Contract Map](./kernel-contract-map.md) §2 — the Facet Isolation, Policy vs Mechanism,
-Runtime Composition, and (set on the acceptance of ADR 0009) **Executor Boundary** Rules, and the
-Reference Path Rule (PR #217, merged). The CEO's review outcome — and the subsequent acceptance of
-ADR 0009 — is recorded in §9.*
+Runtime Composition, (set on the acceptance of ADR 0009) **Executor Boundary**, and (set on the C1
+review) **Registry Immutability** Rules, and the Reference Path Rule (PR #217, merged). The CEO's
+review outcome — and the subsequent acceptance of ADR 0009 — is recorded in §9.*
