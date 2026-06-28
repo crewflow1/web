@@ -97,7 +97,7 @@ import {
   type RunContext,
   type TaskHandler,
 } from "@/server/sdk/tasks";
-import { resolveServedCapabilities } from "@/server/sdk/registry-parity";
+import { resolveServedAuthority } from "@/server/sdk/registry-parity";
 
 const RESEARCH_AI_SLUG = "research-ai";
 /** The durable task_type this employee drains off the generic engine. */
@@ -314,15 +314,21 @@ async function researchIdentity(): Promise<EmployeeIdentity> {
     employeeId: emp?.id ?? RESEARCH_AI_SLUG,
     slug: RESEARCH_AI_SLUG,
   };
-  // R4 runtime authority switch (CEO Directive #015 / D-05): serve the capabilities from the
-  // now-AUTHORITATIVE Capability Registry (`source: "registry"`), with the legacy resolution
-  // RETAINED as the rollback / fail-safe path — resolveServedCapabilities falls back to it on
-  // a deliberate rollback (CAPABILITY_AUTHORITY_SOURCE=legacy), a registry read error, or a
-  // subject the registry is silent about, so the switch can never strand the employee. The
-  // continuous shadow verification (the Shadow Validation Rule) is folded onto the served
-  // value. Token-for-token identical to the legacy resolution while the flat mirror holds —
-  // only `source` flips (the authorised behavioural transition).
-  if (emp) identity.capabilities = await resolveServedCapabilities(emp);
+  // LR3 runtime authority switch (CEO Directive #015 / D-05): serve EVERY authority dimension
+  // — capabilities, posture AND memory scope — from the now-AUTHORITATIVE Capability Registry,
+  // with the legacy resolution RETAINED as the rollback / fail-safe path. resolveServedAuthority
+  // falls back to legacy on a deliberate rollback (CAPABILITY_AUTHORITY_SOURCE=legacy), a
+  // registry read error, or a subject the registry is silent about, so the switch can never
+  // strand the employee, and folds the continuous shadow verification (the Shadow Validation
+  // Rule) onto the served value. Behaviour-preserving while the flat mirror holds: the served
+  // posture equals the legacy locked floor (Directive 001) and the served memory scope equals
+  // the legacy column — R4 moved tokens, LR3 moves the remaining two runtime reads.
+  if (emp) {
+    const served = await resolveServedAuthority(emp);
+    identity.capabilities = served.capabilities;
+    identity.posture = served.posture;
+    identity.memoryScope = served.memoryScope;
+  }
   return identity;
 }
 
