@@ -712,6 +712,60 @@ removing the legacy model. Generalised beyond #015, the rule is permanent: a rep
 and its predecessor removable, only when every read, write, validation, and operational path depends on
 the replacement alone — never on the mere existence of data within it.
 
+### The Compatibility Layer Rule
+
+A **twenty-first** standard, set by CEO directive on the review of **Directive #015 LR3** (the runtime
+read-path migration that completed the registry's *serving* clause; independent CTO review). The
+migration standards to here govern the *phases* of a transition — its data (the fourteenth), its
+behaviour (the fifteenth), its order (the sixteenth), its rollback (the seventeenth), its deletion gate
+(the eighteenth), the coexistence discipline of the retained model (the nineteenth) and the structural
+completeness that makes removal contemplatable (the twentieth). This one governs the **retained model
+itself as a standing entity** — what a compatibility layer *is*, and the accountability it must carry
+for its whole life — so that a layer kept for safety can never quietly harden into permanent
+architecture:
+
+> **A compatibility layer exists only to protect production stability during migration. It must never
+> become a permanent dependency. Every compatibility layer must have: a documented owner, measurable
+> exit criteria, continuous parity validation, and an approved retirement plan. Compatibility is
+> temporary architecture.**
+
+It is the **lifecycle** standard of the migration arc. The Rollback Readiness Rule keeps the prior model
+*present* after the switch, the Mirror Integrity Rule keeps it *derived* while it is present, and the
+Evidence Before Deletion and Registry Completeness Rules fix *when* it may be removed; this rule fixes
+what it *is* in the meantime — **temporary architecture**, never a destination. A compatibility layer
+left to linger without a plan becomes the very thing the Single Source of Authority Rule forbids: a
+second model the platform quietly grows to depend on — re-accreted not as a second *authority* but as a
+second *load-bearing structure*. So the rule binds four accountability attributes, **conjunctively**, to
+every compatibility layer for its whole retained life. A **documented owner** — a named party
+accountable for the layer's removal, so it can never become an orphan no one is charged with retiring.
+**Measurable exit criteria** — the objective conditions whose satisfaction *ends* the layer, fixed in
+advance (not "when we get to it"), so "temporary" has a defined terminus rather than an open one.
+**Continuous parity validation** — the layer's equivalence to the authoritative model is proven on an
+ongoing basis (the request-path parity the migration already runs), so it never silently diverges while
+it waits. **An approved retirement plan** — a reviewed path to the layer's removal exists *before* the
+layer is leaned upon, so retirement is a planned engineering act, not an afterthought improvised under
+pressure. The rule's force is that **maintaining a compatibility layer without an owner, measurable exit
+criteria, continuous parity validation, and an approved retirement plan — or treating it as a permanent
+dependency — is a standards violation**, so a safety scaffold can never become the foundation.
+
+This is the principle Directive #015's legacy model is now held to, and the discipline **LR4** is built
+to satisfy. After LR3 the legacy `ai_employees` authority model is *exactly* a compatibility layer:
+administrative authority is registry-authored (LR1, LR2), runtime authority is registry-served (R4,
+LR3), and the legacy columns remain solely as a **deterministic compatibility representation** for
+**rollback** and **parity**. Under this rule that layer carries its four obligations explicitly — its
+**owner** is named, its **exit criteria** are the Evidence Before Deletion Rule's four conditions made
+measurable, its **parity** is continuously validated (the retained `verifyRegistryParity` shadow on the
+live path), and its **retirement plan** is the separately-authorised legacy-removal phase the Evidence
+Before Deletion and Registry Completeness Rules already gate. **LR4** is the phase that *gathers* that
+accountability: it demonstrates sustained production confidence, keeps parity monitoring and rollback
+readiness live, validates the registry-only runtime under production conditions, and prepares the
+compatibility-retirement evidence — so the layer's exit criteria can be shown met *before* any removal
+is contemplated, never inferred from the replacement's mere existence (the Evidence Before Deletion
+Rule). Generalised beyond #015, the rule is permanent: every compatibility layer the platform ever
+introduces is **temporary architecture** from the moment it is created — owned, bounded by measurable
+exit criteria, continuously validated against the model it shadows, and carrying an approved plan for
+its own removal — so compatibility always stays a bridge, never a foundation.
+
 ---
 
 ## 3. The contract map
