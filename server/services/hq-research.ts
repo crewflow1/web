@@ -98,6 +98,7 @@ import {
   type RunContext,
   type TaskHandler,
 } from "@/server/sdk/tasks";
+import { verifyRegistryParity } from "@/server/sdk/registry-parity";
 
 const RESEARCH_AI_SLUG = "research-ai";
 /** The durable task_type this employee drains off the generic engine. */
@@ -315,6 +316,13 @@ async function researchIdentity(): Promise<EmployeeIdentity> {
     slug: RESEARCH_AI_SLUG,
   };
   if (emp) identity.capabilities = resolveEmployeeCapabilities(emp);
+  // R3 SDK read integration (CEO Directive #015 / D-05): consult the Capability Registry as
+  // a continuously-verified shadow on the request path — the runtime "continues to verify
+  // parity during the transition". Strictly fail-open and side-effect-free beyond a log
+  // line: it does NOT touch `identity`, so the authority served stays the legacy resolution
+  // above, byte-for-byte (the Behaviour Preservation Rule). Serving authority FROM the
+  // registry is the later, separately-authorised behavioural transition (R4), not this.
+  if (emp) await verifyRegistryParity(emp);
   return identity;
 }
 
