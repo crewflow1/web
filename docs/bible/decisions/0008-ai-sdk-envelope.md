@@ -286,7 +286,11 @@ Partial until this ADR is accepted and implemented**; on implementation it gradu
 the Architecture Freeze (§4 row 3) **and** the Kernel Contract Map (the AI SDK row) **in the
 same PR**. The three CTO-review decisions are **standing**: the API-Gateway/SDK boundary and
 the Tool-Registry/authorisation split bind #015 and every later facet, and the SDK Stability
-Rule binds every future SDK change.
+Rule binds every future SDK change. **Update (2026-06-28):** implementation is now complete through
+**Phase C** (the CEO ruled Directive #014 complete at Phase C; C1–C4 merged), so the graduation
+predicted here has **occurred** — contract #3 is now **Established** (this completion-record PR
+updates the Architecture Freeze §4 row 3 and the Kernel Contract Map together, honouring the
+synchronisation rule above).
 
 **Numbering.** This is ADR **0008**
 ([`../governance/numbering.md`](../governance/numbering.md) §5); ADR numbers are monotonic
