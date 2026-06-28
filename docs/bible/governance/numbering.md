@@ -126,9 +126,10 @@ records *one* major architectural decision (the "document before you build" rule
 implementation is **authorised** under per-phase review gates (Phases A and B merged). ADR
 `0009` (SDK Executor and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO
 review, 2026-06-28); Directive #014 **Phase C** is **authorised**, to be built in small
-reviewable increments **C1 → C2 → C3 → C4** (phases not merged together). On acceptance the CEO
-set the permanent **Executor Boundary Rule**, homed in the [Kernel Contract
-Map](./kernel-contract-map.md) §2.
+reviewable increments **C1 → C2 → C3 → C4** (phases not merged together); **C1** (the typed tool
+registry contract) is **merged** (PR #219, 2026-06-28). On acceptance the CEO set the permanent
+**Executor Boundary Rule**, and on the **C1** review the permanent **Registry Immutability Rule** —
+both homed in the [Kernel Contract Map](./kernel-contract-map.md) §2.
 
 ---
 
