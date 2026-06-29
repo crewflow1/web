@@ -344,3 +344,167 @@ export async function resolveServedCapabilities(
 ): Promise<ResolvedCapabilitySet> {
   return (await resolveServedAuthority(emp, opts)).capabilities;
 }
+
+// ---------------------------------------------------------------------
+// LR5.2 — the ADMINISTRATIVE read migration (the Read Migration Rule, 24th §2 standard)
+// ---------------------------------------------------------------------
+//
+// CEO Directive #015 / D-05, Legacy Removal increment 5.2. Governing standards (Kernel
+// Contract Map §2): the Read Migration Rule (24th — set on the LR5.1 review): "No read path
+// should be removed until all remaining consumers have been identified, migrated, and
+// independently validated"; the Single Source of Authority Rule (13th); the Behaviour
+// Preservation Rule (15th); the Rollback Readiness Rule (17th).
+//
+// LR5.1 retired the CAPABILITY mirror — `ai_employees.tools_allowed` / `permissions` went
+// INERT (frozen, written by nothing, still readable). The runtime authority reads were
+// migrated long before (R4/LR3 — the runner identity calls {@link resolveServedAuthority}).
+// What still read those now-inert columns DIRECTLY were the ADMINISTRATIVE surfaces: the AI
+// Boardroom employee page (the capability-editor pre-fill + the permissions panel) and the
+// authoring audit's before-snapshot. LR5.2 migrates those last reads onto the registry — the
+// two seams below — so every runtime AND administrative consumer of the inert columns reads
+// SERVED authority (registry-authoritative, legacy retained only as the rollback / fail-safe).
+// It removes NO column, NO rollback, NO parity tooling, NO confidence audit. memory_scope is
+// deliberately OUT OF SCOPE: its mirror is still LIVE (LR2), so per the Removal Sequencing
+// Rule its readers migrate only after its writes are retired — a later increment.
+
+/** A `hq_capabilities` catalogue row, as the kind split reads it. */
+type CatalogueRow = { token: string; kind: string };
+type CatalogueQueryResult = { data: CatalogueRow[] | null; error: { message: string } | null };
+interface CatalogueSelect {
+  in(column: string, values: readonly string[]): PromiseLike<CatalogueQueryResult>;
+}
+/**
+ * The minimal catalogue read surface the kind split needs. `hq_capabilities` is a
+ * service-role-only HQ internal not in the generated `Database` types, so callers cast their
+ * typed client onto this — the catalogue counterpart of {@link GrantReadClient}.
+ */
+export interface CatalogueReadClient {
+  from(table: string): { select(columns: string): CatalogueSelect };
+}
+
+/**
+ * The served capability authority projected for ADMINISTRATIVE display — the served token set
+ * SPLIT by catalogue kind, plus the served approval stance. The registry-native replacement
+ * for the AI Boardroom page reading the now-inert `ai_employees.tools_allowed` /
+ * `permissions.scopes` / `permissions.requires_approval` directly (the Read Migration Rule).
+ * Every field is sourced through {@link resolveServedAuthority}, so the admin UI shows exactly
+ * what the runtime serves — registry-authoritative, honouring the rollback lever, and never
+ * stranding an employee.
+ */
+export interface ServedCapabilityView {
+  /** The complete served token set — the union the authoring editor pre-fills and replaces. */
+  readonly tokens: readonly string[];
+  /** The non-scope-kind tokens (tool permissions + forward-compat api scopes). */
+  readonly toolsAllowed: readonly string[];
+  /** The scope-kind tokens — what the legacy `permissions.scopes` view used to show. */
+  readonly scopes: readonly string[];
+  /** The served approval stance (the legacy `permissions.requires_approval` view). */
+  readonly requiresApproval: boolean;
+  /** Which side served the authority — the registry, or the retained legacy model. */
+  readonly source: "registry" | "ai_employees";
+}
+
+/**
+ * Partition served tokens into the scope-kind half (catalogue `kind = 'scope'`) and the rest,
+ * by reading the catalogue — the SAME classification the authoring RPC applies in step 5
+ * (`c.kind <> 'scope'` → tools_allowed; `= 'scope'` → scopes), so the admin display matches
+ * what authoring records. A token the catalogue does not know falls into `toolsAllowed` (the
+ * RPC's "everything else" bucket), so the two halves always PARTITION the input — their union
+ * equals `tokens`. Both halves are sorted-distinct. Throws on a query error (the caller fails
+ * open). An empty token set needs no query.
+ */
+async function splitTokensByCatalogueKind(
+  tokens: readonly string[],
+  catalogue: CatalogueReadClient,
+): Promise<{ toolsAllowed: string[]; scopes: string[] }> {
+  if (tokens.length === 0) return { toolsAllowed: [], scopes: [] };
+  const res = await catalogue.from("hq_capabilities").select("token, kind").in("token", [...tokens]);
+  if (res.error) throw new Error(res.error.message);
+  const kindOf = new Map((res.data ?? []).map((r) => [r.token, r.kind] as const));
+  const toolsAllowed: string[] = [];
+  const scopes: string[] = [];
+  for (const t of tokens) {
+    if (kindOf.get(t) === "scope") scopes.push(t);
+    else toolsAllowed.push(t);
+  }
+  return { toolsAllowed: toolsAllowed.sort(), scopes: scopes.sort() };
+}
+
+/**
+ * Resolve an employee's SERVED capability authority for administrative display (LR5.2). It
+ * delegates the authority resolution to {@link resolveServedAuthority} — so the rollback lever,
+ * the fail-safe fallback and the shadow comparison are defined in exactly ONE place and the
+ * admin view can never diverge from what the runtime serves — then splits the served tokens by
+ * catalogue kind for the tools/scopes presentation.
+ *
+ * FAIL-OPEN on the split: a catalogue read error costs only the tools/scopes partition (the
+ * whole served set is shown as tools, nothing dropped), never the page. `opts.client` /
+ * `opts.catalogue` / `opts.control` exist for tests; production passes none, so the grant and
+ * catalogue reads use the service-role admin client and the control is the env.
+ */
+export async function resolveServedCapabilityView(
+  emp: LegacyEmployee,
+  opts: { client?: GrantReadClient; catalogue?: CatalogueReadClient; control?: AuthoritySource } = {},
+): Promise<ServedCapabilityView> {
+  const served = await resolveServedAuthority(emp, { client: opts.client, control: opts.control });
+  const tokens = served.capabilities.tokens;
+
+  let toolsAllowed: readonly string[] = [...tokens];
+  let scopes: readonly string[] = [];
+  try {
+    const catalogue = opts.catalogue ?? (createAdminClient() as unknown as CatalogueReadClient);
+    const split = await splitTokensByCatalogueKind(tokens, catalogue);
+    toolsAllowed = split.toolsAllowed;
+    scopes = split.scopes;
+  } catch (err) {
+    console.warn(
+      `[capability-view] catalogue split failed for ${emp.slug} — showing the full served set as tools (fail-open):`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  return Object.freeze({
+    tokens,
+    toolsAllowed,
+    scopes,
+    requiresApproval: served.posture.requiresApproval,
+    source: served.source,
+  });
+}
+
+/**
+ * The tokens currently held on an employee's OWN registry grant (employee scope only — NOT the
+ * composed inheritance), read straight from `hq_capability_grants`. The LR5.2 replacement for
+ * the authoring audit's before-snapshot, which used to union the now-inert legacy columns: this
+ * reads the authoritative employee grant so the audit's before/after are SYMMETRIC — both the
+ * employee-scoped token set the authoring RPC replaces — and rollback-independent (authoring
+ * always writes the registry; the rollback lever governs only reads). Returns `[]` when the
+ * employee has no grant yet (a fresh author / backfill gap). FAIL-OPEN: the before-snapshot is
+ * best-effort audit metadata, so a read error degrades to `[]` rather than blocking the write.
+ * Sorted-distinct, matching the grant's stored normal form. `opts.client` exists for tests.
+ */
+export async function readEmployeeGrantTokens(
+  slug: string,
+  opts: { client?: GrantReadClient } = {},
+): Promise<string[]> {
+  try {
+    if (!SAFE_KEY.test(slug)) return [];
+    const client = opts.client ?? (createAdminClient() as unknown as GrantReadClient);
+    const res = await client
+      .from("hq_capability_grants")
+      .select(GRANT_COLUMNS)
+      .or(`and(scope_level.eq.employee,scope_key.eq.${slug})`);
+    if (res.error) throw new Error(res.error.message);
+    const row = ((res.data ?? []) as GrantRow[])[0];
+    const tokens = (row?.tokens ?? []).filter(
+      (t): t is string => typeof t === "string" && t.length > 0,
+    );
+    return [...new Set(tokens)].sort();
+  } catch (err) {
+    console.warn(
+      `[capability-authoring] prior grant read failed for ${slug} (audit before-snapshot, fail-open):`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}

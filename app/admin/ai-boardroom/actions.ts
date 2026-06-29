@@ -11,6 +11,7 @@ import {
   authorEmployeeCapabilities,
   authorEmployeeMemoryScope,
 } from "@/server/sdk/registry-authoring";
+import { readEmployeeGrantTokens } from "@/server/sdk/registry-parity";
 import {
   AI_EMPLOYEE_STATUSES,
   MEMORY_SCOPES,
@@ -268,15 +269,17 @@ export async function addAiEmployeeMemory(formData: FormData): Promise<void> {
 }
 
 // --------------------------------------------------------------------
-// Author capabilities — registry-native authoring (Directive #015 / D-05, LR1)
+// Author capabilities — registry-native authoring (Directive #015 / D-05, LR1; reads LR5.2)
 // --------------------------------------------------------------------
 //
 // The token SET only. Authority is authored AT the Capability Registry through the
 // atomic SECURITY DEFINER RPC (server/sdk/registry-authoring.ts), which defines new
-// tokens, upserts the employee-scoped grant, and mirrors the parity-faithful split
-// back to the retained legacy ai_employees columns in ONE transaction. Posture
-// (`can_execute`) is deliberately NOT touched here — the execution lock stays where
-// the legacy model has it (Directive 001), exactly as updateAiEmployeeConfig.
+// tokens and upserts the employee-scoped grant (tokens only). The legacy ai_employees
+// mirror is RETIRED (LR5.1 — tools_allowed / permissions are inert), so authoring no longer
+// writes it, and the audit's before-snapshot now reads the registry grant rather than the
+// inert columns (LR5.2 — the Read Migration Rule). Posture (`can_execute`) is deliberately
+// NOT touched here — the execution lock stays where the model has it (Directive 001), exactly
+// as updateAiEmployeeConfig.
 
 // The catalogue token shape (hq_capabilities.token): lowercase segments joined by
 // a single '.', '_' or '-'. Validated here for a clean message; the RPC + the table
@@ -318,22 +321,13 @@ export async function authorAiEmployeeCapabilities(formData: FormData): Promise<
   }
 
   const d = parsed.data;
-  const supabase = createAdminClient();
 
-  // Snapshot the legacy token set BEFORE authoring so the audit entry carries
-  // before → after (the immutable admin_activity_log is the LR1 audit trail).
-  const { data: prev } = await supabase
-    .from("ai_employees" as never)
-    .select("tools_allowed, permissions")
-    .eq("id", d.id)
-    .maybeSingle();
-  const prevRow = prev as unknown as {
-    tools_allowed: string[] | null;
-    permissions: { scopes?: string[] | null } | null;
-  } | null;
-  const beforeTokens = Array.from(
-    new Set([...(prevRow?.tools_allowed ?? []), ...(prevRow?.permissions?.scopes ?? [])]),
-  ).sort();
+  // Snapshot the employee grant's CURRENT token set BEFORE authoring so the audit entry
+  // carries before → after (the immutable admin_activity_log is the audit trail). Read from
+  // the AUTHORITATIVE registry grant — NOT the now-inert legacy columns LR5.1 froze
+  // (Directive #015 / D-05, LR5.2 — the Read Migration Rule). before/after are then symmetric:
+  // both the employee-scoped token set the authoring RPC replaces.
+  const beforeTokens = await readEmployeeGrantTokens(d.slug);
 
   const result = await authorEmployeeCapabilities({
     slug: d.slug,
