@@ -79,7 +79,7 @@ canonical scheme and records every other label as an alias.
 | **012** | Generic Task Engine | One durable, crash-safe, audited work queue (`hq_ai_tasks`) every AI employee runs on — plus the runner SDK, `task.*` spine emission, the memory↔task binding, the reference + second employee migrations, and the unified operator read model. ADRs `0004`–`0006`. | Issued · **architecturally complete** — PR-A…PR-G merged to the `#011` integration branch; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-02**. Branches `directive/012-*`. Completion record: [`directive-012-completion-report.md`](./directive-012-completion-report.md). |
 | **013** | RunContext Runtime Contract | The per-employee runtime contract the runner assembles at claim and threads through every invocation: identity, correlation, budget, deadline, cancellation, and the permission/capability hooks the SDK enforces. Graduates Architecture-Freeze contract **#4 (RunContext)** Partial → Established; **settles** the canonical runtime-identity decision deferred from D-01. ADR `0007`. | Issued · **architecturally complete** — implementation + tests on **PR #206** (base `#011` integration branch); RunContext graduated **Partial → Established**, the qualification three-way split resolved to `lead-qualification`; cutover to `main` + the production migration are CEO-gated | Master Roadmap **D-03**. Previously D-04 bundled RunContext with the SDK; Option B split them, runtime contract first. Completion record: [`directive-013-completion-report.md`](./directive-013-completion-report.md). |
 | **014** | AI SDK Envelope | The per-employee SDK envelope assembled over the frozen RunContext, reading the existing `ai_employees` scope columns: the `memory`/`events`/`comms` facets + output envelope (Phase A), the permission **doorman** + P4 gate (Phase B), and the typed **tool registry → executor → application** contract (Phase C). Graduates contract **#3 (AI SDK)** Partial → Established. | Issued · **complete** — Phases **A → B → C** merged to the `#011` integration branch (Phase C on **ADR 0009**; C1–C4 PRs #219/#221/#223/#225, atomicity-rule docs #224). Contract **#3** graduated **Partial → Established** (CEO review, 2026-06-28). The executor rollout into the live run loop and the API gateway + cost metering are a deferred future **extension** of the now-established contract, not part of the complete directive. | Master Roadmap **D-04**. The canon's long-standing "AI SDK directive (D-04 / #014)"; the RunContext contract and the identity decision precede it at **#013**. |
-| **015** | Capability Registry | One declarative source of truth + resolver consolidating the scattered employee scope/capability data (`tools_allowed`, `permissions`, `memory_scope`, `department`) and the four registration surfaces named by the platform-independence audit. Graduates contract **#8 (Capability Registry)** Reserved → Established. | **In progress (D-05) · R1–R4 established; legacy-removal phase under way in independently-reviewed increments — LR1–LR4 merged; the LR5 Proposal (legacy-removal sequence) reviewed, approved and merged; LR5.1 (retire compatibility writes) authorised as the first removal increment** | Master Roadmap **D-05**. Sequenced **last** by the dependency analysis: it consolidates what #013/#014 settle. |
+| **015** | Capability Registry | One declarative source of truth + resolver consolidating the scattered employee scope/capability data (`tools_allowed`, `permissions`, `memory_scope`, `department`) and the four registration surfaces named by the platform-independence audit. Graduates contract **#8 (Capability Registry)** Reserved → Established. | **In progress (D-05) · R1–R4 established; legacy-removal phase under way in independently-reviewed increments — LR1–LR4 merged; the LR5 Proposal (legacy-removal sequence) reviewed, approved and merged; LR5.1 (retire compatibility writes) merged; LR5.2 (migrate the legacy read paths) authorised as the second removal increment** | Master Roadmap **D-05**. Sequenced **last** by the dependency analysis: it consolidates what #013/#014 settle. |
 | **016 – 029** | *(reserved)* | Master Roadmap **D-06 … D-19** (see §7). | Planned | Reserved by the Master Roadmap; not yet issued. |
 
 **Next free number beyond the current roadmap: `#030`.** (Within the roadmap, D-02 =
@@ -154,8 +154,9 @@ on the **Legacy Removal Proposal** review the **Evidence Before Deletion Rule**;
 (registry-native authoring)** review the **Mirror Integrity Rule**; on the **LR2 (registry-native
 memory scope)** review the **Registry Completeness Rule**; on the **LR3 (runtime read-path
 migration)** review the **Compatibility Layer Rule**; on the **LR4 (production-confidence
-audit)** review the **Retirement Readiness Rule**; and on the **LR5 Proposal (the legacy-removal
-sequence)** review the **Removal Sequencing Rule** (all eleven homed in
+audit)** review the **Retirement Readiness Rule**; on the **LR5 Proposal (the legacy-removal
+sequence)** review the **Removal Sequencing Rule**; and on the **LR5.1 (retire the capability
+mirror)** review the **Read Migration Rule** (all twelve homed in
 the [Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds
 slice by slice, each gated on review of the last — **R1 (Registry Schema), R2 (Backfill + Parity
 Gate), R3 (runtime capability resolver + SDK read integration) and R4 (runtime authority switch —
@@ -177,11 +178,17 @@ confidence audit — removing nothing; and the **LR5 Proposal** (design only: th
 compatibility-retirement sequence, the rollback-retirement sequence, the legacy-column removal order,
 cleanup validation, and final migration-completion criteria) is **reviewed, approved and merged** (PR
 #247). On its review the CEO set the **Removal Sequencing Rule** (the order a teardown must follow —
-writes, then rollback, then stored data, then tooling, then completion) and authorised **LR5.1 (retire
-the compatibility writes: stop the mirror so `ai_employees.tools_allowed` / `permissions` go inert,
-while retaining the columns, the legacy reads, rollback, the confidence audit and the parity tooling)**
-as the **first removal increment**. Legacy storage, rollback and parity tooling remain in place until
-later, separately-authorised removal phases.
+writes, then rollback, then stored data, then tooling, then completion; PR #248) and authorised the
+first removal increment: **LR5.1 (retire the compatibility writes: stop the mirror so
+`ai_employees.tools_allowed` / `permissions` go inert, while retaining the columns, the legacy reads,
+rollback, the confidence audit and the parity tooling)**, now **merged** (PR #249). On the **LR5.1**
+review the CEO set the **Read Migration Rule** (during retirement, write paths migrate before read paths;
+no read path is removed until every remaining consumer has been identified, migrated and independently
+validated; reader migration is evidence-driven, not assumption-driven) and authorised **LR5.2 (migrate
+the remaining legacy read paths — every runtime and administrative consumer of the now-inert columns —
+onto the registry, while preserving rollback, parity verification, confidence monitoring and the
+compatibility instrumentation)** as the **second removal increment**. Legacy storage, rollback and parity
+tooling remain in place until later, separately-authorised removal phases.
 Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion (after
 the legacy-removal phase).
 
