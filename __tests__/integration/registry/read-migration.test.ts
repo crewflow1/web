@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import { describeIntegration, serviceClient } from "../_harness";
 import {
-  legacyAuthorityOf,
   readEmployeeGrantTokens,
   resolveAuthorityFromRegistry,
   resolveServedCapabilityView,
@@ -17,25 +16,30 @@ import {
  * Governing standards (Kernel Contract Map §2): the Read Migration Rule (24th — "no read path
  * should be removed until all remaining consumers have been identified, migrated, and
  * INDEPENDENTLY VALIDATED"), the Single Source of Authority Rule (13th), the Behaviour
- * Preservation Rule (15th) and the Rollback Readiness Rule (17th).
+ * Preservation Rule (15th) and — this increment (LR5.4B, the FINAL removal) — the Data Removal
+ * Rule (26th) and the Legacy Independence Rule (28th): the migration the 24th rule required is
+ * what made the legacy authority columns safe to DROP, which LR5.4B has now done. The registry is
+ * the SOLE source of served authority; the automatic fail-safe is the default-deny FLOOR.
  *
  * The security tier pins the LR5.2 CONTRACT against source text (the admin surfaces no longer
- * read the inert `ai_employees.tools_allowed` / `permissions` columns). This tier proves the
+ * read the now-removed `ai_employees.tools_allowed` / `permissions` columns). This tier proves the
  * BEHAVIOUR that text can't — that the two migrated read seams resolve correctly against a live
  * registry:
  *
  *   {@link resolveServedCapabilityView} (the AI Boardroom page's editor pre-fill + permissions
  *   panel) —
- *     1. PARITY — every employee is served the REGISTRY (`source: "registry"`); the served
- *        tokens equal the legacy resolution (the flat mirror at the cut); the served approval
- *        stance equals the legacy stance; and the tools/scopes split PARTITIONS the served
- *        tokens (their union is the token set; they are disjoint).
+ *     1. FAITHFUL — every employee is served the REGISTRY (`source: "registry"`); the served
+ *        tokens equal what the pure resolver composes from the grants; the served approval stance
+ *        equals the composed stance; and the tools/scopes split PARTITIONS the served tokens (their
+ *        union is the token set; they are disjoint). LR5.4B removed the legacy baseline, so this is
+ *        the registry-native replacement for the old legacy comparison.
  *     2. KIND-FAITHFUL — the split matches the catalogue ground truth: a token shown under
  *        Scopes is catalogue `kind = 'scope'`; everything else is a tool. This is the same
  *        partition the authoring RPC applies, so the admin display agrees with what authoring
  *        records.
- *     3. FAIL-SAFE — a subject the registry is silent about (no grant) is still served its
- *        retained legacy view via the automatic fail-safe, never stranded, never a broken page.
+ *     3. FAIL-SAFE — a subject the registry is silent about (no grant) is served the default-deny
+ *        FLOOR view (no tokens, an empty split, the locked approval stance), never stranded, never
+ *        a broken page. LR5.4B replaced the retained legacy view with the safe floor.
  *
  *   {@link readEmployeeGrantTokens} (the authoring audit's before-snapshot) —
  *     4. EMPLOYEE GRANT — returns exactly the employee-scoped grant's stored token set
@@ -45,7 +49,7 @@ import {
  *        snapshots the empty set, never throws.
  *
  * LR5.3 (the Rollback Independence Rule) retired the rollback control: resolveServedCapabilityView
- * no longer takes a `control` opt, and the legacy view is reached only through the automatic
+ * no longer takes a `control` opt, and the floor view is reached only through the automatic
  * fail-safe (a registry read error or a subject the registry is silent about), never an operator
  * switch.
  *
@@ -71,16 +75,15 @@ const svc = (): DbClient => serviceClient() as unknown as DbClient;
 const grantClient = (): GrantReadClient => serviceClient() as unknown as GrantReadClient;
 const catalogueClient = (): CatalogueReadClient =>
   serviceClient() as unknown as CatalogueReadClient;
-const EMP_COLUMNS = "slug, department, tools_allowed, permissions, memory_scope";
+// LR5.4B dropped ai_employees.tools_allowed / permissions / memory_scope; the resolver reads only
+// the subject's slug + department to query the registry.
+const EMP_COLUMNS = "slug, department";
 
 /** Coerce a raw ai_employees row into the LegacyEmployee shape the bridge reads. */
 function toLegacy(r: Record<string, unknown>): LegacyEmployee {
   return {
     slug: r.slug as string,
     department: (r.department as string | null) ?? null,
-    tools_allowed: (r.tools_allowed as string[] | null) ?? null,
-    permissions: (r.permissions as LegacyEmployee["permissions"]) ?? null,
-    memory_scope: (r.memory_scope as string | null) ?? null,
   };
 }
 
@@ -131,7 +134,7 @@ async function kindMap(tokens: readonly string[]): Promise<Map<string, string>> 
 }
 
 describeIntegration("Capability Registry · LR5.2 served capability view (D-05)", () => {
-  it("serves the REGISTRY view, preserving token + approval parity and a clean tools/scopes partition for every employee", async () => {
+  it("serves the REGISTRY view, FAITHFULLY projecting the composed tokens + approval stance and a clean tools/scopes partition for every employee", async () => {
     const emps = await roster();
     expect(emps.length, "the seeded roster must be present").toBeGreaterThan(0);
 
@@ -147,14 +150,20 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
         drift.push(`${emp.slug}: served ${view.source}, not registry`);
         continue;
       }
-      const legacy = legacyAuthorityOf(emp);
-      // Token parity through the switch (the flat mirror at the cut).
-      if (!sortedEq(view.tokens, legacy.tokens)) {
-        drift.push(`${emp.slug}: served tokens diverge from the legacy resolution`);
+      // With the legacy columns gone there is no baseline to compare against; the view must
+      // FAITHFULLY project what the pure resolver composes from the grants (the registry-native
+      // replacement for the old legacy comparison).
+      const resolved = await resolveAuthorityFromRegistry(gc, {
+        slug: emp.slug,
+        department: emp.department,
+      });
+      // Token parity with the composed registry authority.
+      if (!sortedEq(view.tokens, resolved.tokens)) {
+        drift.push(`${emp.slug}: served tokens diverge from the composed registry tokens`);
       }
-      // Approval-stance parity (the migrated permissions panel).
-      if (view.requiresApproval !== legacy.requiresApproval) {
-        drift.push(`${emp.slug}: requiresApproval diverges from legacy`);
+      // Approval-stance parity (the migrated permissions panel) with the composed stance.
+      if (view.requiresApproval !== resolved.requiresApproval) {
+        drift.push(`${emp.slug}: requiresApproval diverges from the composed registry stance`);
       }
       // The split PARTITIONS the served tokens: union equals the set …
       if (!sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens)) {
@@ -164,7 +173,7 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
       const overlap = view.toolsAllowed.filter((t) => view.scopes.includes(t));
       if (overlap.length) drift.push(`${emp.slug}: tool/scope overlap [${overlap.join(", ")}]`);
     }
-    expect(drift, `LR5.2 view out of parity: ${drift.join(" | ")}`).toHaveLength(0);
+    expect(drift, `LR5.2 view out of projection: ${drift.join(" | ")}`).toHaveLength(0);
   });
 
   it("splits the served set FAITHFULLY to the catalogue — Scopes are kind 'scope', everything else is a tool", async () => {
@@ -198,17 +207,10 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
     expect(classified, "the split must have classified at least one token").toBeGreaterThan(0);
   });
 
-  it("FAIL-SAFE — a subject the registry is silent about is served its retained legacy view (never stranded)", async () => {
-    // A synthetic employee with NO registry grant (a backfill gap). SAFE_KEY-clean so the
-    // resolver issues the employee-scope query; the flat mirror means no global/department grant
-    // catches it, so the registry is silent (source "none").
-    const phantom: LegacyEmployee = {
-      slug: "lr5_2_phantom_no_grant",
-      department: null,
-      tools_allowed: ["tasks.read", "memory.read"],
-      permissions: { scopes: ["comms.send"], requires_approval: true },
-      memory_scope: null,
-    };
+  it("FAIL-SAFE — a subject the registry is silent about is served the default-deny FLOOR view (never stranded)", async () => {
+    // A synthetic employee with NO registry grant (a backfill gap). SAFE_KEY-clean so the resolver
+    // issues the employee-scope query; nothing catches it, so the registry is silent (source "none").
+    const phantom: LegacyEmployee = { slug: "lr5_2_phantom_no_grant", department: null };
 
     // Precondition: the registry really is silent for the phantom (pins the fail-safe scenario).
     const registry = await resolveAuthorityFromRegistry(grantClient(), {
@@ -221,13 +223,13 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
       client: grantClient(),
       catalogue: catalogueClient(),
     });
-    const legacy = legacyAuthorityOf(phantom);
-    // Served the retained legacy view, not stranded — and the split still partitions it.
-    expect(view.source, "a silent registry must fall back to legacy").toBe("ai_employees");
-    expect(sortedEq(view.tokens, legacy.tokens)).toBe(true);
-    expect(view.tokens.length, "the phantom keeps its own tokens").toBeGreaterThan(0);
-    expect(view.requiresApproval).toBe(legacy.requiresApproval);
-    expect(sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens)).toBe(true);
+    // LR5.4B replaced the retained legacy view with the default-deny floor: the silent registry
+    // serves the floor view — no tokens, an empty split, the locked approval stance — never stranded.
+    expect(view.source, "a silent registry must serve the default-deny floor").toBe("floor");
+    expect([...view.tokens], "the floor grants no capabilities").toHaveLength(0);
+    expect([...view.toolsAllowed], "the floor has no tools").toHaveLength(0);
+    expect([...view.scopes], "the floor has no scopes").toHaveLength(0);
+    expect(view.requiresApproval, "the floor view always requires approval").toBe(true);
   });
 });
 

@@ -3,7 +3,7 @@ import type { BoundEvents } from "@/server/sdk/events";
 import type { EmploymentPosture, ProposedAction } from "@/server/sdk/gate";
 
 /**
- * Unit proof for the doorman RUNTIME — `resolveEmployeePosture` + the `ctx.proposeActions`
+ * Unit proof for the doorman RUNTIME — the `ctx.proposeActions`
  * composition (server/sdk/tasks.ts)
  * (CEO Directive #014 / D-04, Phase B; ADR 0008 Decisions 4 & 8; Bible Volume XIII §8/§16).
  *
@@ -11,9 +11,6 @@ import type { EmploymentPosture, ProposedAction } from "@/server/sdk/gate";
  * (the Policy vs Mechanism rule — Kernel Contract Map §2). The gate is proven by a table in
  * gate.test.ts; here we pin exactly what the runtime ADDS on top of a verdict:
  *
- *   - resolveEmployeePosture mirrors `normalizePermissions` EXACTLY — deny-by-default:
- *     can_execute is true only for literal `true`, requires_approval false only for literal
- *     `false`; an absent/garbage stance stays LOCKED. The result is frozen.
  *   - proposeActions ROUTES by verdict (CEO §11): an `autonomous` action emits one audit
  *     event (`ai.action_permitted`) and NO approval row; a `needs_approval` action calls
  *     requestApproval ONCE, threading the run's correlation, and emits NO audit event.
@@ -38,7 +35,6 @@ vi.mock("@/lib/ai/embeddings", () => ({ embedText: vi.fn(), embedTexts: vi.fn() 
 
 import {
   createProposeActions,
-  resolveEmployeePosture,
   LOCKED_POSTURE,
   EMPTY_CAPABILITIES,
   type EmployeeIdentity,
@@ -84,50 +80,6 @@ const passing = (over: Partial<ProposedAction> = {}): ProposedAction => ({
 beforeEach(() => {
   requestApprovalMock.mockReset();
   requestApprovalMock.mockResolvedValue({ ok: true, approval: { id: "appr-1" } });
-});
-
-// =====================================================================
-// resolveEmployeePosture — mirrors normalizePermissions, deny-by-default
-// =====================================================================
-
-describe("resolveEmployeePosture — the coarse stance, resolved deny-by-default", () => {
-  it("an absent permissions block is the LOCKED floor", () => {
-    expect(resolveEmployeePosture({})).toEqual(LOCKED_POSTURE);
-    expect(resolveEmployeePosture({ permissions: null })).toEqual(LOCKED_POSTURE);
-    expect(resolveEmployeePosture({ permissions: {} })).toEqual({
-      canExecute: false,
-      requiresApproval: true,
-    });
-  });
-
-  it("can_execute is true ONLY for literal true; requires_approval false ONLY for literal false", () => {
-    expect(resolveEmployeePosture({ permissions: { can_execute: true, requires_approval: false } })).toEqual({
-      canExecute: true,
-      requiresApproval: false,
-    });
-    // can_execute set but approval still required → still gated
-    expect(resolveEmployeePosture({ permissions: { can_execute: true } })).toEqual({
-      canExecute: true,
-      requiresApproval: true,
-    });
-    // approval waived but execution not granted → cannot act autonomously
-    expect(resolveEmployeePosture({ permissions: { requires_approval: false } })).toEqual({
-      canExecute: false,
-      requiresApproval: false,
-    });
-  });
-
-  it("garbage values never grant autonomy (only the exact booleans move the floor)", () => {
-    const p = resolveEmployeePosture({
-      // non-boolean truthy must NOT be read as permission
-      permissions: { can_execute: 1 as unknown as boolean, requires_approval: 0 as unknown as boolean },
-    });
-    expect(p).toEqual({ canExecute: false, requiresApproval: true });
-  });
-
-  it("returns a frozen posture", () => {
-    expect(Object.isFrozen(resolveEmployeePosture({ permissions: { can_execute: true } }))).toBe(true);
-  });
 });
 
 // =====================================================================

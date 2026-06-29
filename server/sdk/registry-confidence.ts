@@ -9,7 +9,6 @@ import {
   type ResolvedAuthority,
 } from "@/server/sdk/registry-resolver";
 import {
-  legacyAuthorityOf,
   resolveAuthorityFromRegistry,
   type GrantReadClient,
   type LegacyEmployee,
@@ -33,22 +32,22 @@ import {
  * WHAT THIS IS — and what it is NOT. This is a READ-ONLY observability instrument: a roster
  * sweep that, for every live employee, runs the SAME pure serving decision the runtime serves
  * ({@link decideServedAuthority}) and classifies the outcome ({@link classifyServingConfidence}),
- * then aggregates a measurable {@link ConfidenceSummary}. It makes the §4 window MEASURED, not
- * merely elapsed. It REMOVES NOTHING, MUTATES NOTHING (it must never alter authority while
- * measuring it), and changes no served behaviour — the legacy columns, the deterministic
- * mirror and the parity verification all remain (LR5.3 later retired the rollback control).
- * Removal of any of those is a later, separately-authorised phase (C5–C7), which LR4
- * only prepares the EVIDENCE for; it does not begin it.
+ * then aggregates a measurable {@link ConfidenceSummary}. It REMOVES NOTHING, MUTATES NOTHING
+ * (it must never alter authority while measuring it) and changes no served behaviour. LR4 stood
+ * it up to bank the §4 confidence that AUTHORISED the removal increments; the evidence it
+ * gathered is PRESERVED (the Data Removal Rule, 26th §2 standard, retains production-confidence
+ * evidence). It now reads the registry-SOLE end state — LR5.4B removed the legacy columns, the
+ * deterministic mirror and the shadow-parity machinery — so the sweep measures registry serving
+ * HEALTH, not a shadow comparison: there is no legacy baseline left to diverge from.
  *
- * The §4 bar this measures, as one boolean ({@link ConfidenceSummary.registryOnlyReady}):
- * EVERY employee is served the registry IN PARITY — zero divergence, zero backfill gaps
- * (§4.4), zero read errors. The instant is measured here; the sustained
- * WINDOW over which it must hold continuously is operational (the CEO sets the duration —
- * proposal §9 fork B) and is gathered by running this sweep on an ops/CI cadence.
+ * The bar this measures, as one boolean ({@link ConfidenceSummary.registryOnlyReady}): EVERY
+ * employee is SERVED the registry — zero backfill gaps (a silent registry falls to the
+ * default-deny floor), zero read errors. The instant is measured here; the sustained WINDOW
+ * over which it must hold continuously is operational (an ops/CI cadence runs this sweep).
  */
 
-/** The columns the legacy resolver needs to resolve an employee's authority (the roster read). */
-const EMP_COLUMNS = "slug, department, tools_allowed, permissions, memory_scope";
+/** The columns the resolver needs to query the registry for an employee (the roster read). */
+const EMP_COLUMNS = "slug, department";
 
 /**
  * The minimal read surface needed to enumerate the roster. `ai_employees` is a
@@ -66,9 +65,6 @@ function toLegacyEmployee(row: Record<string, unknown>): LegacyEmployee {
   return {
     slug: row.slug as string,
     department: (row.department as string | null) ?? null,
-    tools_allowed: (row.tools_allowed as string[] | null) ?? null,
-    permissions: (row.permissions as LegacyEmployee["permissions"]) ?? null,
-    memory_scope: (row.memory_scope as string | null) ?? null,
   };
 }
 
@@ -88,31 +84,26 @@ async function readRoster(client: RosterReadClient): Promise<LegacyEmployee[]> {
 export interface EmployeeConfidence {
   readonly slug: string;
   readonly outcome: ConfidenceOutcome;
-  /** The divergent dimensions, present only when `outcome` is `registry-divergent`. */
-  readonly divergence?: readonly string[];
 }
 
 /** The full production-confidence report: the aggregate signal plus the per-employee detail. */
 export interface RegistryConfidenceReport {
   /** The measurable aggregate — the §4 confidence signal. */
   readonly summary: ConfidenceSummary;
-  /** Every employee's verdict, so a divergence or gap can be named and accounted for (§4.2). */
+  /** Every employee's verdict, so a backfill gap or read error can be named and accounted for (§4.2). */
   readonly employees: readonly EmployeeConfidence[];
 }
 
 /**
  * Sweep the roster and produce the production-confidence report (LR4 / Legacy Removal Proposal
  * C4). For each employee it resolves the registry authority (fail-soft to a read error, which
- * is itself a measured signal), composes the legacy baseline via the canonical legacy resolver
- * ({@link legacyAuthorityOf}, so the comparison can never drift from what the runtime
- * enforces), and runs the PURE serving decision to classify the outcome — exactly what the
- * serve path would do for that employee.
+ * is itself a measured signal) and runs the PURE serving decision to classify the outcome —
+ * exactly what the serve path would do for that employee.
  *
  * READ-ONLY and side-effect-free: it issues only `.select()`/`.or()` reads (never writes the
- * mirror, the grants, or the legacy columns — you must not mutate authority while measuring
- * it). A per-employee registry-read failure is CAUGHT and classified as `registry-error`
- * (evidence, not an exception); only a roster-read failure throws (the instrument could not
- * run).
+ * grants — you must not mutate authority while measuring it). A per-employee registry-read
+ * failure is CAUGHT and classified as `registry-error` (evidence, not an exception); only a
+ * roster-read failure throws (the instrument could not run).
  *
  * `opts` mirrors {@link import("./registry-parity").resolveServedAuthority}'s injectable
  * seams: production passes none (the clients are the service-role admin client, the roster is
@@ -143,13 +134,9 @@ export async function auditRegistryConfidence(
       registry = null;
     }
 
-    const decision = decideServedAuthority({ registry, legacy: legacyAuthorityOf(emp) });
+    const decision = decideServedAuthority({ registry });
     const outcome = classifyServingConfidence(decision);
-    employees.push(
-      decision.divergence
-        ? { slug: emp.slug, outcome, divergence: decision.divergence.dimensions }
-        : { slug: emp.slug, outcome },
-    );
+    employees.push({ slug: emp.slug, outcome });
   }
 
   return Object.freeze({

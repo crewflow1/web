@@ -3,16 +3,13 @@ import {
   applicableGrants,
   AUTHORITY_FLOOR,
   classifyServingConfidence,
-  compareAuthority,
   composeGrants,
   decideServedAuthority,
   MEMORY_SCOPE_FLOOR,
   summarizeConfidence,
-  type ComparableAuthority,
   type ConfidenceOutcome,
   type GrantRow,
   type ResolvedAuthority,
-  type ServingDecision,
 } from "@/server/sdk/registry-resolver";
 
 /**
@@ -20,23 +17,23 @@ import {
  *
  * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md
  * (Decision 5, the inheritance model). Governing rules: the Single Source of Authority
- * Rule (13th §2 standard), the Migration Parity Rule (14th), the Behaviour Preservation
- * Rule (15th), the Shadow Validation Rule (16th).
+ * Rule (13th §2 standard) and the Behaviour Preservation Rule (15th).
  *
  * The resolution behaviour the CEO kept in the runtime is a PURE function — so the ADR
  * 0010 Decision 5 inheritance law is proven the same way the doorman's is: a table of
  * grants → resolved authority, with no mocks and no transport. These pin every dimension
- * of the law and, critically, the two parity-load-bearing edges where the registry MUST
- * match the legacy normalisation exactly (`can_execute === true` / `requires_approval !==
- * false`) — if either silently flipped, the registry would manufacture or leak authority
- * the legacy model never gave and R2's proven parity would break.
+ * of the law and, critically, the two load-bearing DENY edges (`can_execute === true` /
+ * `requires_approval !== false`) — if either silently flipped, the registry would
+ * manufacture or leak the authority the default-deny floor must never grant.
  *
- * §10 adds the R4 SERVING law ({@link decideServedAuthority}): which source is served, with
- * the registry authoritative and the legacy model retained only as the automatic fail-safe —
- * also a PURE function, so the decision's safety (it can never strand an employee) is proven by
- * a table of inputs, not by discipline. LR5.3 (the Rollback Independence Rule) retired the
- * operator rollback control: the registry is now the SOLE authority, reached for every subject
- * the registry can speak for, with legacy served only on a read error or a silent subject.
+ * §9 adds the R4 SERVING law ({@link decideServedAuthority}): which source is served. The
+ * registry is the SOLE authority; the only fail-safe is the default-deny floor
+ * ({@link AUTHORITY_FLOOR}), served automatically when the registry read fails or is silent
+ * for a subject. LR5.3 (the Rollback Independence Rule) retired the operator rollback control
+ * and LR5.4B (the Data Removal Rule, 26th §2 standard) removed the legacy authority columns
+ * and the shadow-comparison machinery — so there is no legacy baseline left to compare
+ * against. Like {@link composeGrants} it is PURE, so the decision's safety (it can never
+ * strand an employee) is proven by a table of inputs, not by discipline.
  */
 
 /** A grant that, alone, composes to a clean PERMITS baseline (one employee-scoped row). */
@@ -48,14 +45,6 @@ const grant = (over: Partial<GrantRow> = {}): GrantRow => ({
   requires_approval: false,
   memory_scope: null,
   budget_default: null,
-  ...over,
-});
-
-const comparable = (over: Partial<ComparableAuthority> = {}): ComparableAuthority => ({
-  tokens: [],
-  canExecute: false,
-  requiresApproval: true,
-  memoryScope: MEMORY_SCOPE_FLOOR,
   ...over,
 });
 
@@ -288,45 +277,10 @@ describe("applicableGrants — scope matching", () => {
 });
 
 // =====================================================================
-// 9. compareAuthority — the runtime-callable parity analogue.
-// =====================================================================
-
-describe("compareAuthority — divergence detection", () => {
-  it("returns null when the two authorities agree on all four dimensions", () => {
-    const a = comparable({ tokens: ["x", "y"], canExecute: true, requiresApproval: false, memoryScope: "department" });
-    expect(compareAuthority(a, comparable({ tokens: ["x", "y"], canExecute: true, requiresApproval: false, memoryScope: "department" }))).toBeNull();
-  });
-
-  it("treats tokens as order-independent sets", () => {
-    expect(compareAuthority(comparable({ tokens: ["a", "b"] }), comparable({ tokens: ["b", "a"] }))).toBeNull();
-  });
-
-  it("names exactly the dimension that differs", () => {
-    expect(compareAuthority(comparable(), comparable({ tokens: ["x"] }))?.dimensions).toEqual(["tokens"]);
-    expect(compareAuthority(comparable(), comparable({ canExecute: true }))?.dimensions).toEqual(["canExecute"]);
-    expect(compareAuthority(comparable(), comparable({ requiresApproval: false }))?.dimensions).toEqual(["requiresApproval"]);
-    expect(compareAuthority(comparable(), comparable({ memoryScope: "global" }))?.dimensions).toEqual(["memoryScope"]);
-  });
-
-  it("reports every divergent dimension at once, and carries both sides", () => {
-    const legacy = comparable({ tokens: ["a"], canExecute: false, requiresApproval: true, memoryScope: "isolated" });
-    const registry = comparable({ tokens: ["b"], canExecute: true, requiresApproval: false, memoryScope: "global" });
-    const d = compareAuthority(legacy, registry);
-    expect(d?.dimensions).toEqual(["tokens", "canExecute", "requiresApproval", "memoryScope"]);
-    expect(d?.legacy).toBe(legacy);
-    expect(d?.registry).toBe(registry);
-  });
-
-  it("never compares budget — it is registry-only forward metadata with no legacy counterpart", () => {
-    // ComparableAuthority carries no budget, so the dimension can never appear.
-    const d = compareAuthority(comparable({ tokens: ["a"] }), comparable({ tokens: ["b"] }));
-    expect(d?.dimensions).not.toContain("budget");
-    expect(d?.dimensions).not.toContain("budgetDefault");
-  });
-});
-
-// =====================================================================
-// 10. decideServedAuthority — the R4 serving law (the runtime authority switch).
+// 9. decideServedAuthority — the R4 serving law (the runtime authority
+//    switch). Registry-or-floor: LR5.3 retired the operator rollback and
+//    LR5.4B removed the legacy baseline, so the default-deny floor is the
+//    sole automatic fail-safe.
 // =====================================================================
 
 /** A registry-resolved authority that, alone, would be served (source "registry"). */
@@ -340,117 +294,82 @@ const resolved = (over: Partial<ResolvedAuthority> = {}): ResolvedAuthority => (
   ...over,
 });
 
-describe("decideServedAuthority — the runtime serving decision (R4; rollback retired LR5.3)", () => {
+describe("decideServedAuthority — the runtime serving decision (registry-or-floor)", () => {
   it("serves the AUTHORITATIVE registry when the registry spoke", () => {
-    const legacy = comparable({ tokens: ["read.web"] });
-    const registry = resolved({ tokens: ["read.web"], source: "registry" });
-    const d = decideServedAuthority({ registry, legacy });
+    const d = decideServedAuthority({ registry: resolved({ tokens: ["read.web"] }) });
     expect(d.basis).toBe("registry");
     expect(d.reason).toBeUndefined();
-    expect(d.divergence).toBeUndefined(); // in parity
   });
 
-  it("still serves the registry when it DIVERGES — divergence is monitored, not a fallback", () => {
-    // The registry is authoritative: a disagreement with the legacy baseline is recorded for
-    // parity monitoring, but the registry is what gets served (this is the whole point of R4).
-    const legacy = comparable({ tokens: ["read.web"] });
-    const registry = resolved({ tokens: ["read.web", "lead.qualify"], source: "registry" });
-    const d = decideServedAuthority({ registry, legacy });
-    expect(d.basis).toBe("registry");
-    expect(d.divergence?.dimensions).toEqual(["tokens"]);
-  });
-
-  it("FAIL-SAFE to legacy when the registry read failed (registry=null)", () => {
-    const d = decideServedAuthority({ registry: null, legacy: comparable() });
-    expect(d.basis).toBe("legacy");
+  it("FAIL-SAFE to the floor when the registry read failed (registry=null)", () => {
+    const d = decideServedAuthority({ registry: null });
+    expect(d.basis).toBe("floor");
     expect(d.reason).toBe("error");
   });
 
-  it("FALLS THROUGH to legacy when the registry is silent for the subject (source 'none')", () => {
-    // No applicable grants → AUTHORITY_FLOOR (source 'none'). During the migration window the
-    // retained legacy model stands in (a backfill gap can never strand the employee).
-    const d = decideServedAuthority({
-      registry: AUTHORITY_FLOOR,
-      legacy: comparable({ tokens: ["read.web"] }),
-    });
-    expect(d.basis).toBe("legacy");
+  it("FALLS THROUGH to the floor when the registry is silent for the subject (source 'none')", () => {
+    // No applicable grants → AUTHORITY_FLOOR (source 'none'). The default-deny floor stands in;
+    // a backfill gap can never strand the employee (the floor denies by default).
+    const d = decideServedAuthority({ registry: AUTHORITY_FLOOR });
+    expect(d.basis).toBe("floor");
     expect(d.reason).toBe("empty");
   });
 
   it("checks the read-error before the silent-registry case (null is never 'empty')", () => {
-    const d = decideServedAuthority({ registry: null, legacy: comparable() });
+    const d = decideServedAuthority({ registry: null });
     expect(d.reason).toBe("error");
     expect(d.reason).not.toBe("empty");
   });
 
-  it("is TOTAL and deny-safe — legacy is the fail-safe in every non-registry branch", () => {
+  it("is TOTAL and deny-safe — the floor is the fail-safe in every non-registry branch", () => {
     // Whatever the failure, the decision resolves to a served source; it never throws and never
-    // resolves to "nothing" (the legacy model is always the floor it falls back to).
+    // resolves to "nothing" (the default-deny floor is always what it falls back to).
     for (const d of [
-      decideServedAuthority({ registry: null, legacy: comparable() }),
-      decideServedAuthority({ registry: AUTHORITY_FLOOR, legacy: comparable() }),
+      decideServedAuthority({ registry: null }),
+      decideServedAuthority({ registry: AUTHORITY_FLOOR }),
     ]) {
-      expect(d.basis).toBe("legacy");
+      expect(d.basis).toBe("floor");
     }
   });
 });
 
 // =====================================================================
-// 11. The LR4 production-confidence law (classify + summarize), PURE.
+// 10. The LR4 production-confidence law (classify + summarize), PURE.
 //     The Bank-Confidence instrument's verdict is a fold over the SAME
 //     serving decisions the runtime serves — proposal §4 made measurable.
+//     LR5.4B collapsed the former parity/divergent pair into the single
+//     registry-served: with no legacy baseline, registry health IS the signal.
 // =====================================================================
 
 describe("classifyServingConfidence — one decision → one confidence outcome", () => {
-  it("served registry IN PARITY → registry-parity (the only confident outcome)", () => {
-    expect(classifyServingConfidence({ basis: "registry" })).toBe("registry-parity");
-  });
-
-  it("served registry but DIVERGED → registry-divergent (must be accounted for, §4.2)", () => {
-    const decision: ServingDecision = {
-      basis: "registry",
-      divergence: {
-        dimensions: ["tokens"],
-        legacy: comparable(),
-        registry: comparable({ tokens: ["x"] }),
-      },
-    };
-    expect(classifyServingConfidence(decision)).toBe("registry-divergent");
+  it("served registry → registry-served (the only confident outcome)", () => {
+    expect(classifyServingConfidence({ basis: "registry" })).toBe("registry-served");
   });
 
   it("registry silent (reason 'empty') → backfill-gap (§4.4 must be zero)", () => {
-    expect(classifyServingConfidence({ basis: "legacy", reason: "empty" })).toBe("backfill-gap");
+    expect(classifyServingConfidence({ basis: "floor", reason: "empty" })).toBe("backfill-gap");
   });
 
   it("registry read failed (reason 'error') → registry-error", () => {
-    expect(classifyServingConfidence({ basis: "legacy", reason: "error" })).toBe("registry-error");
+    expect(classifyServingConfidence({ basis: "floor", reason: "error" })).toBe("registry-error");
   });
 
-  it("is TOTAL — a legacy basis with no reason still classifies (defensive default)", () => {
-    // With the rollback control retired (LR5.3), a legacy basis is only ever the automatic
-    // fail-safe; a reason-less legacy decision defends to registry-error, never silent success.
-    expect(classifyServingConfidence({ basis: "legacy" })).toBe("registry-error");
+  it("is TOTAL — a floor basis with no reason still classifies (defensive default)", () => {
+    // The floor is only ever the automatic fail-safe; a reason-less floor decision defends to
+    // registry-error, never silent success.
+    expect(classifyServingConfidence({ basis: "floor" })).toBe("registry-error");
   });
 
   it("composes with decideServedAuthority — the audit measures what the runtime serves", () => {
     // The whole point: the classification is taken from the runtime's OWN decision law, so a
     // sweep's verdict can never diverge from what the serve path does.
-    const inParity = decideServedAuthority({
-      registry: resolved({ tokens: ["read.web"] }),
-      legacy: comparable({ tokens: ["read.web"] }),
-    });
-    expect(classifyServingConfidence(inParity)).toBe("registry-parity");
+    const served = decideServedAuthority({ registry: resolved({ tokens: ["read.web"] }) });
+    expect(classifyServingConfidence(served)).toBe("registry-served");
 
-    const gap = decideServedAuthority({
-      registry: AUTHORITY_FLOOR,
-      legacy: comparable({ tokens: ["read.web"] }),
-    });
+    const gap = decideServedAuthority({ registry: AUTHORITY_FLOOR });
     expect(classifyServingConfidence(gap)).toBe("backfill-gap");
 
-    const failSafe = decideServedAuthority({
-      registry: null,
-      legacy: comparable({ tokens: ["read.web"] }),
-    });
+    const failSafe = decideServedAuthority({ registry: null });
     expect(classifyServingConfidence(failSafe)).toBe("registry-error");
   });
 });
@@ -458,17 +377,15 @@ describe("classifyServingConfidence — one decision → one confidence outcome"
 describe("summarizeConfidence — the measurable §4 aggregate", () => {
   it("counts every class and is frozen", () => {
     const outcomes: ConfidenceOutcome[] = [
-      "registry-parity",
-      "registry-parity",
-      "registry-divergent",
+      "registry-served",
+      "registry-served",
       "backfill-gap",
       "registry-error",
     ];
     const s = summarizeConfidence(outcomes);
     expect(s).toEqual({
-      total: 5,
-      registryParity: 2,
-      registryDivergent: 1,
+      total: 4,
+      registryServed: 2,
       backfillGaps: 1,
       registryErrors: 1,
       registryOnlyReady: false,
@@ -476,11 +393,11 @@ describe("summarizeConfidence — the measurable §4 aggregate", () => {
     expect(Object.isFrozen(s)).toBe(true);
   });
 
-  it("registryOnlyReady is true ONLY when every employee is served registry in parity", () => {
-    expect(summarizeConfidence(["registry-parity", "registry-parity"]).registryOnlyReady).toBe(true);
-    // A single non-parity outcome of any kind defeats readiness.
-    for (const spoiler of ["registry-divergent", "backfill-gap", "registry-error"] as const) {
-      expect(summarizeConfidence(["registry-parity", spoiler]).registryOnlyReady).toBe(false);
+  it("registryOnlyReady is true ONLY when every employee is served the registry", () => {
+    expect(summarizeConfidence(["registry-served", "registry-served"]).registryOnlyReady).toBe(true);
+    // A single non-served outcome of any kind defeats readiness.
+    for (const spoiler of ["backfill-gap", "registry-error"] as const) {
+      expect(summarizeConfidence(["registry-served", spoiler]).registryOnlyReady).toBe(false);
     }
   });
 
@@ -491,7 +408,7 @@ describe("summarizeConfidence — the measurable §4 aggregate", () => {
   });
 
   it("is deterministic — the same outcomes always summarise identically", () => {
-    const outcomes: ConfidenceOutcome[] = ["registry-parity", "backfill-gap", "registry-parity"];
+    const outcomes: ConfidenceOutcome[] = ["registry-served", "backfill-gap", "registry-served"];
     expect(summarizeConfidence(outcomes)).toEqual(summarizeConfidence(outcomes));
   });
 });

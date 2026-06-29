@@ -95,18 +95,21 @@ export interface EmployeeIdentity {
   memoryScope?: MemoryScope;
   /**
    * The opaque capability tokens this employee holds, resolved once at identity
-   * assembly (see {@link resolveEmployeeCapabilities}). Optional on the identity so a
-   * caller may omit it; the runner defaults `ctx.capabilities` to
+   * assembly from the Capability Registry (D-05 — see
+   * {@link import("./registry-parity").resolveServedAuthority}). Optional on the identity
+   * so a caller may omit it; the runner defaults `ctx.capabilities` to
    * {@link EMPTY_CAPABILITIES} when absent. D-03 only THREADS it; the AI SDK (D-04)
    * enforces and the Capability Registry (D-05) sources it.
    */
   capabilities?: ResolvedCapabilitySet;
   /**
-   * The employee's coarse autonomy stance, resolved once at identity assembly (see
-   * {@link resolveEmployeePosture}). Optional so a caller may omit it; the doorman
-   * (`ctx.proposeActions`) defaults to {@link LOCKED_POSTURE} — the Built default-locked
-   * floor — when absent, so a missing posture is deny-by-default. The gate (D-04 Phase B)
-   * reads it as layer 1; #015 may repoint its source without changing this contract.
+   * The employee's coarse autonomy stance, resolved once at identity assembly from the
+   * Capability Registry (D-05 — see
+   * {@link import("./registry-parity").resolveServedAuthority}). Optional so a caller may
+   * omit it; the doorman (`ctx.proposeActions`) defaults to {@link LOCKED_POSTURE} — the
+   * Built default-locked floor — when absent, so a missing posture is deny-by-default. The
+   * gate (D-04 Phase B) reads it as layer 1; #015 repointed its source to the registry
+   * without changing this contract.
    */
   posture?: EmploymentPosture;
 }
@@ -120,8 +123,11 @@ export interface EmployeeIdentity {
  * READ-ONLY, source-indifferent set. D-03 only THREADS it onto `ctx.capabilities` —
  * it does NOT interpret, match, or enforce a token (that is the AI SDK, D-04), and it
  * does NOT decide where tokens come from (that is the Capability Registry, D-05).
- * `source` records where this set was resolved, so the D-05 swap from the employee
- * row to the registry is observable WITHOUT changing the contract a handler sees.
+ * `source` records where this set was resolved. The D-05 swap repointed it to the
+ * registry WITHOUT changing the contract a handler sees: a runtime set is sourced
+ * `registry`, or `none` for the empty default. The legacy `ai_employees` value remains
+ * in the union for contract stability — LR5.4B removed the employee-row authority
+ * columns, so production no longer produces it.
  */
 export interface ResolvedCapabilitySet {
   readonly tokens: readonly string[];
@@ -134,67 +140,21 @@ export const EMPTY_CAPABILITIES: ResolvedCapabilitySet = Object.freeze({
   source: "none",
 });
 
-/**
- * Resolve an employee's capability tokens from the ONE source D-03 is allowed to read
- * — the `ai_employees` row itself: the union of `tools_allowed` and
- * `permissions.scopes`. Structurally typed (NOT bound to the `AiEmployee` model) so
- * the SDK keeps no dependency on the employee module, and so D-05 can repoint the
- * source to the Capability Registry by changing ONLY this function — the
- * {@link ResolvedCapabilitySet} every handler sees stays byte-for-byte identical.
- * Tokens are de-duplicated and sorted for a stable, comparable set.
- */
-export function resolveEmployeeCapabilities(emp: {
-  tools_allowed?: readonly string[] | null;
-  permissions?: { scopes?: readonly string[] | null } | null;
-}): ResolvedCapabilitySet {
-  const tokens = new Set<string>();
-  for (const t of emp.tools_allowed ?? []) {
-    if (typeof t === "string" && t.length > 0) tokens.add(t);
-  }
-  for (const s of emp.permissions?.scopes ?? []) {
-    if (typeof s === "string" && s.length > 0) tokens.add(s);
-  }
-  if (tokens.size === 0) return EMPTY_CAPABILITIES;
-  return Object.freeze({
-    tokens: Object.freeze([...tokens].sort()) as readonly string[],
-    source: "ai_employees",
-  });
-}
-
 // ---------------------------------------------------------------------
 // Posture — the coarse autonomy stance (ADR 0008; the doorman's layer 1)
 // ---------------------------------------------------------------------
 
 /**
- * The Built default-locked posture — `can_execute=false`, `requires_approval=true`
- * (`lib/ai-employees/model.ts` `normalizePermissions`). The safe, frozen default the
- * doorman uses when an identity carries no posture: a missing stance is deny-by-default,
- * so every proposed action routes to approval until a posture is explicitly resolved.
+ * The Built default-locked posture — `can_execute=false`, `requires_approval=true`: the
+ * deny-by-default floor. The safe, frozen default the doorman uses when an identity carries
+ * no posture, and the posture the registry bridge serves as its fail-safe (see
+ * {@link import("./registry-parity").resolveServedAuthority}): a missing stance is
+ * deny-by-default, so every proposed action routes to approval until a posture is resolved.
  */
 export const LOCKED_POSTURE: EmploymentPosture = Object.freeze({
   canExecute: false,
   requiresApproval: true,
 });
-
-/**
- * Resolve an employee's coarse autonomy stance from the ONE source D-04 reads — the
- * `ai_employees.permissions` jsonb — mirroring `normalizePermissions` EXACTLY so the SDK
- * and the employee model never disagree on the floor: `can_execute` is true only when set
- * to literal `true`, and `requires_approval` is false only when set to literal `false`
- * (so an absent/garbage value stays locked). Structurally typed (NOT bound to the
- * `AiEmployee` model), the sibling of {@link resolveEmployeeCapabilities}: #015 can
- * repoint the source by changing ONLY this function, leaving the {@link EmploymentPosture}
- * the gate reads byte-for-byte identical. The result is frozen.
- */
-export function resolveEmployeePosture(emp: {
-  permissions?: { can_execute?: boolean | null; requires_approval?: boolean | null } | null;
-}): EmploymentPosture {
-  const p = emp.permissions ?? {};
-  return Object.freeze({
-    canExecute: p.can_execute === true,
-    requiresApproval: p.requires_approval !== false,
-  });
-}
 
 /**
  * The in-handler `ctx.tasks` facet. Bound to BOTH the employee identity and the
@@ -512,7 +472,7 @@ function createTasks(
  * and budget are pre-resolved by {@link buildContext} (LOCKED_POSTURE / EMPTY_CAPABILITIES
  * when the identity carries none), so a missing input routes to approval, never autonomy.
  * Exported as the runtime-composition seam the unit suite drives directly (the sibling of
- * {@link resolveEmployeePosture} / {@link createTasks}).
+ * {@link createTasks}).
  */
 export function createProposeActions(deps: {
   identity: EmployeeIdentity;

@@ -66,7 +66,6 @@ async function makeEmployee(slug: string, department: string): Promise<string> {
       slug,
       role: "Integration fixture",
       department,
-      permissions: { can_execute: true, requires_approval: false, scopes: ["read"] },
     })
     .select("id");
   expect(ins.error, ins.error?.message).toBeNull();

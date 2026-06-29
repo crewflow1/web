@@ -168,34 +168,41 @@ describe("registry LR5.2 — the read seams reuse the one switch (no parallel au
 });
 
 // =====================================================================
-// 4. LR5.2 boundary — preserves parity / confidence / legacy reads; removes no
-//    column; memory_scope reads deliberately retained. (Rollback retired in LR5.3.)
+// 4. LR5.2 → LR5.4B boundary. LR5.2 itself preserved the legacy surface (it migrated
+//    administrative READS only — the Removal Sequencing Rule). LR5.4B (the Data Removal
+//    Rule, 26th) has SINCE removed the legacy authority columns, the legacy resolvers and
+//    the shadow-parity comparator: the registry is the SOLE authority. The SURVIVING
+//    memory_scope (shared platform data) and the migration history are retained.
 // =====================================================================
 
-describe("registry LR5.2 — preserves everything authorised-to-keep, removes no column", () => {
-  it("preserves the runtime served-authority switch + shadow parity (authority unchanged)", () => {
+describe("registry LR5.2 — the read seams survive; the legacy authority surface is removed (LR5.4B)", () => {
+  it("preserves the runtime served-authority switch; the shadow parity is retired (LR5.4B)", () => {
     expect(parity).toMatch(/export async function resolveServedAuthority/);
     expect(parity).toMatch(/export async function resolveServedCapabilities/);
-    expect(parity).toMatch(/export async function verifyRegistryParity/);
+    // The shadow-parity comparator is gone — no legacy baseline left to compare against.
+    expect(parity).not.toMatch(/verifyRegistryParity/);
   });
 
-  it("preserves the legacy resolvers (the fail-safe / parity bridge reads)", () => {
+  it("the legacy resolvers are removed (LR5.4B — the registry is the SOLE authority)", () => {
     const tasks = codeOf(read(TASKS_REL));
-    expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
-    expect(tasks).toMatch(/export function resolveEmployeePosture/);
+    expect(tasks).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(tasks).not.toMatch(/resolveEmployeePosture/);
   });
 
-  it("preserves the confidence audit, which reads the legacy columns BY DESIGN", () => {
+  it("preserves the confidence audit, now reading only the registry query columns (no legacy column)", () => {
     const confidence = codeOf(read(CONFIDENCE_REL));
     expect(confidence).toMatch(/export async function auditRegistryConfidence/);
-    expect(confidence).toMatch(/tools_allowed, permissions, memory_scope/);
+    // LR5.4B dropped ai_employees.tools_allowed / permissions; the audit reads only slug +
+    // department to query the registry — never a legacy authority column.
+    expect(confidence).not.toMatch(/tools_allowed/);
+    expect(confidence).toMatch(/"slug, department"/);
   });
 
-  it("removes NO column — the model still carries the (now-inert) legacy columns", () => {
+  it("removes the legacy authority columns from the model; the surviving memory_scope stays", () => {
     const aiemp = codeOf(read(AIEMP_REL));
-    expect(aiemp).toMatch(/"tools_allowed"/);
-    expect(aiemp).toMatch(/"permissions"/);
-    expect(aiemp).toMatch(/"memory_scope"/);
+    expect(aiemp).not.toMatch(/"tools_allowed"/);
+    expect(aiemp).not.toMatch(/"permissions"/);
+    expect(aiemp).toMatch(/"memory_scope"/); // shared platform data — out of scope for the drop
   });
 
   it("keeps the migration history intact (LR5.1 mirror retirement + the memory_scope mirror)", () => {

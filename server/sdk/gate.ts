@@ -33,16 +33,16 @@ import type { ResolvedCapabilitySet } from "./tasks";
  */
 
 /**
- * The acting employee's coarse stance — resolved from `ai_employees.permissions` (Built,
- * default-locked: `can_execute=false`, `requires_approval=true`; `lib/ai-employees/model.ts`).
- * The runtime resolves it (Phase B B2, a `resolveEmployeePosture` sibling to the existing
- * `resolveEmployeeCapabilities`) and HANDS it to the gate. `permissions.scopes` already fold
- * into the resolved capability set, so posture carries only the two booleans layer 1 reads.
+ * The acting employee's coarse stance — the Built, default-locked floor (`can_execute=false`,
+ * `requires_approval=true`). The runtime resolves it from the Capability Registry (#015 / D-05,
+ * via {@link import("./registry-parity").resolveServedAuthority}, with the default-deny floor as
+ * the automatic fail-safe) and HANDS it to the gate. Scope tokens fold into the resolved
+ * capability set, so posture carries only the two booleans layer 1 reads.
  */
 export interface EmploymentPosture {
-  /** `ai_employees.permissions.can_execute` — `false` by the Built default (the floor). */
+  /** The registry-served execute stance — `false` by the Built default (the floor). */
   canExecute: boolean;
-  /** `ai_employees.permissions.requires_approval` — `true` by the Built default. */
+  /** The registry-served approval stance — `true` by the Built default. */
   requiresApproval: boolean;
 }
 

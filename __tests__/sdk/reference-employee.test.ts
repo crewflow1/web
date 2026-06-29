@@ -51,22 +51,23 @@ vi.mock("@/server/services/hq-approvals", () => ({ requestApproval: requestAppro
 // Import-safety only: the run-loop pulls in the memory facet, which reaches for embeddings.
 vi.mock("@/lib/ai/embeddings", () => ({ getEmbeddingProvider: vi.fn() }));
 
-import { runReadyTask, resolveEmployeePosture } from "@/server/sdk/tasks";
+import { runReadyTask } from "@/server/sdk/tasks";
 
 const EMP = "22222222-2222-2222-2222-222222222222";
 const CORR = "corr-ref-1";
 
 /**
  * The Reference Employee — the Lead Qualification AI as an SDK instance (Volume XIII §22).
- * A permitting posture by default (resolved through the REAL resolveEmployeePosture, so the
- * test cannot drift from the floor the gate reads) and the two capability tokens its actions
- * name; `over` lets a case drop the posture to prove the LOCKED default.
+ * A permitting posture by default (a literal { canExecute, requiresApproval } stance — the
+ * registry resolution that DERIVES a posture from grants is proven in registry-resolver.test.ts;
+ * here we only need a posture that permits) and the two capability tokens its actions name;
+ * `over` lets a case drop the posture to prove the LOCKED default.
  */
 const referenceIdentity = (over: Partial<EmployeeIdentity> = {}): EmployeeIdentity => ({
   employeeId: EMP,
   slug: "lead-qualification-ai",
   capabilities: { tokens: ["memory.write", "comm.send"], source: "ai_employees" },
-  posture: resolveEmployeePosture({ permissions: { can_execute: true, requires_approval: false } }),
+  posture: { canExecute: true, requiresApproval: false },
   ...over,
 });
 
