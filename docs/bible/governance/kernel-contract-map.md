@@ -864,6 +864,59 @@ never a convenient deletion that pulls the floor from under a part still standin
 
 ---
 
+### The Read Migration Rule
+
+A **twenty-fourth** standard, set by CEO directive on the review of **Directive #015 LR5.1** (the
+increment that retired the compatibility writes — stopped the mirror so the legacy columns went inert;
+independent CTO review). The Removal Sequencing Rule (the twenty-third) fixes the *order* a legacy layer
+comes down in — writes, then rollback, then stored data, then tooling, then closure. This one governs the
+**most dangerous span of that order**: the gap between *stopping the writes* and *removing the data*,
+where the legacy store sits inert but is still **read**. It fixes how the readers come off it — that they
+migrate before the data is removed, that *every* one of them does, and that this is established by
+evidence rather than belief:
+
+> **During retirement, write paths must migrate before read paths. No read path should be removed until
+> all remaining consumers have been identified, migrated, and independently validated. Reader migration
+> must be evidence-driven rather than assumption-driven.**
+
+The rule binds three disciplines. **Write paths migrate before read paths** — the producer is retired
+first (the Removal Sequencing Rule's "first remove writes"), which freezes the legacy store at a stable
+last value; only against that frozen baseline is it safe to move readers, one increment at a time, onto
+the new authority. Migrating reads while writes still flow chases a moving target; migrating writes first
+makes the reader migration a migration *from a constant*. **No read path is removed until every remaining
+consumer has been identified, migrated, and independently validated** — removal of a legacy read (and,
+downstream, of the data it reads) is gated on a *complete* consumer census: each reader located, each
+switched to the new authority, each proven correct by a check that does not depend on the migration's own
+author being right. A single un-migrated reader is enough to turn the later data removal into a silent
+breakage. **Reader migration is evidence-driven, not assumption-driven** — "we have found them all" is a
+claim that must be *demonstrated* (an exhaustive search of runtime and administrative consumers,
+recorded), never assumed from familiarity with the code. The rule's force is that **removing or
+repointing a legacy read path on the belief that its consumers are known — rather than on evidence that
+they are *all* known, migrated and independently validated — is a standards violation**, because the
+failure mode it guards against is precisely the reader nobody remembered.
+
+It is the consumer-side complement to the Removal Sequencing Rule's producer-side ordering, and it
+protects that rule's third step: the legacy data may be removed only once **nothing reads it**, and
+"nothing reads it" is true only when an evidenced census says so. It draws on the standards before it —
+the Behaviour Preservation Rule (the fifteenth) requires each migrated read to serve identical behaviour;
+the Shadow Validation Rule (the sixteenth) and the Evidence Before Deletion Rule (the eighteenth) supply
+the "independently validated" and "evidence-driven" disciplines this rule aims specifically at readers.
+
+For Directive #015 this governs **LR5.2**. LR5.1 retired the writes — the legacy
+`ai_employees.tools_allowed` / `permissions` columns are now inert. LR5.2 must therefore **migrate the
+remaining legacy read paths** onto the Capability Registry — every runtime *and* administrative consumer
+of those frozen columns — having first **identified them all from evidence** (an exhaustive census of the
+reads, not a recollection), migrated each, and validated each independently; rollback, parity
+verification, confidence monitoring and the compatibility instrumentation are all **preserved** (they are
+themselves evidence-bearing readers retained by design), and no legacy column is dropped. Only once LR5.2
+has migrated and independently validated *every* non-rollback reader is the Removal Sequencing Rule's
+"remove stored legacy data" step (a later increment) reachable. Generalised beyond #015, the rule is
+permanent: whenever the platform retires a data source, the readers come off it before it comes down — all
+of them, proven by evidence — so a retirement never removes a store that some forgotten consumer still
+quietly depends on.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
