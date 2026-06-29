@@ -1093,6 +1093,63 @@ beyond #015, the rule is permanent: a runtime consumer in the database is a runt
 irreversible migration proceeds until the census has reached the database tier and proven it migrated,
 by the same evidence and the same independent review an application reader demands.
 
+### The Legacy Independence Rule
+
+A **twenty-eighth** standard, set by CEO directive on the review of **Directive #015 LR5.4A** — on
+accepting the migration that brought the last hidden reader onto the registry, and authorising the
+final destructive increment. The standards that govern a teardown had accumulated one at a time, each
+naming a single dependency a legacy structure must shed before it can come down: the Compatibility
+Layer Rule (the twenty-first) and LR5.1 retired the *writes*; the Read Migration Rule (the
+twenty-fourth) and LR5.2 retired the application *reads*; the Hidden Read Path Rule (the
+twenty-seventh) and LR5.4A retired the *database* read; the Rollback Independence Rule (the
+twenty-fifth) and LR5.3 retired the *rollback* lever. Each was correct, and each was partial — a
+structure free of write dependencies may still be read; one free of read dependencies may still back a
+rollback; one free of rollback may still be consulted by an operational fail-safe. This standard names
+the conjunction the others approached a dimension at a time:
+
+> **Physical legacy structures may only be removed after they have become completely independent of
+> runtime execution. Independence requires: no write dependencies, no read dependencies, no hidden SQL
+> dependencies, no rollback dependencies, no operational dependencies. Deletion is authorised only
+> after independence has been independently demonstrated and reviewed.**
+
+The rule turns "all dependencies retired" from a checklist accumulated across reviews into *a single
+precondition with five faces*, every one of which must hold at the moment of deletion. **No write
+dependency** — nothing still authors the structure (the mirror is retired; the Compatibility Layer
+Rule). **No read dependency** — nothing in the application tier resolves authority from it (the Read
+Migration Rule). **No hidden SQL dependency** — nothing in the database tier reads it: no SQL function,
+`security definer` procedure, trigger or stored routine (the Hidden Read Path Rule — the dimension the
+census almost missed). **No rollback dependency** — no rollback path restores it or resolves through it
+(the Rollback Independence Rule). **No operational dependency** — nothing in the running system
+consults it as a fail-safe, a parity oracle, a confidence audit or any other live mechanism; the
+structure is touched by no code path that executes in production. Only when all five hold at once is
+the structure *dormant* — present as data, absent from execution — and only a dormant structure may be
+dropped.
+
+The rule's force is that **independence is a property of the structure, demonstrated — not a sequence
+of steps, assumed**. The Removal Sequencing Rule (the twenty-third) fixes the *order* a teardown
+follows; this standard fixes the *state* the order must reach before the irreversible step. They are
+complementary: sequencing without a final independence proof can still drop a column while one face of
+the dependency remains (the very failure the Hidden Read Path Rule caught mid-sequence); an
+independence proof restores the guarantee the sequence was meant to deliver. And independence must be
+**independently demonstrated and reviewed** — the same evidentiary discipline the Evidence Before
+Deletion Rule (the eighteenth) set for the deletion itself, now carried back to its precondition: the
+five-fold absence is shown by test and audit against the running system, and confirmed by a second
+party, before deletion is authorised. The Data Removal Rule (the twenty-sixth) fixed *when* in the
+lifecycle deletion may happen (last, after confidence); the Legacy Independence Rule fixes *what must
+be true of the thing being deleted* — total runtime independence — at that moment.
+
+For Directive #015 this is the gate on **LR5.4B**, the final implementation increment. The legacy
+authority columns `ai_employees.tools_allowed` and `permissions` may be dropped only once every face of
+the dependency is closed: writes retired (LR5.1), application reads migrated (LR5.2), the rollback
+lever retired (LR5.3), the hidden SQL read migrated (LR5.4A), and the last operational dependency — the
+runtime fail-safe — re-pointed off the columns to a default-deny floor so no executing path consults
+them. LR5.4B removes the obsolete compatibility helpers, the parity oracle, the mirror infrastructure
+and the migration scaffolding alongside the columns, and preserves the migration, audit, confidence and
+governance histories — the dormant *record* of the legacy structure, which the rule never touches.
+Generalised beyond #015, the standard is permanent: a structure is deletable only when it has become
+inert to execution along every dimension at once, and that inertness is proven and reviewed before the
+irreversible step — independence is the precondition deletion earns, not the outcome deletion assumes.
+
 ---
 
 ## 3. The contract map
