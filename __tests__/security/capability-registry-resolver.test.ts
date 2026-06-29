@@ -13,27 +13,28 @@ import { resolve } from "node:path";
  * LR3 advances).
  *
  * R3 stood the registry up as a continuously-verified, FAIL-OPEN shadow (the legacy model
- * stayed authoritative and was served). R4 performed the authorised SWITCH for TOKENS: the
- * registry became the authoritative source of an employee's served capabilities. LR3 extends
- * that switch to EVERY authority dimension — posture and memory scope, the last runtime reads
- * R4 left on the legacy model — so the identity now serves tokens, posture AND memory scope
- * from the registry, with the legacy model RETAINED only as the automatic fail-safe path. These
- * assertions pin — as a matter of SOURCE, not discipline — the facts that would be a hole in
- * the switch's safety if they ever silently flipped:
+ * stayed authoritative and was served). R4 performed the authorised SWITCH for TOKENS; LR3
+ * extended it to EVERY authority dimension — posture and memory scope. LR5.4B (the Data Removal
+ * Rule, 26th §2 standard; sequenced last by the Legacy Independence Rule, 28th) then REMOVED the
+ * legacy authority columns and the entire shadow-comparison machinery: the registry is now the
+ * SOLE source of served authority, and the automatic fail-safe is the default-deny FLOOR (no
+ * tokens, locked posture, isolated memory) — never a fallback to a legacy model. These assertions
+ * pin — as a matter of SOURCE, not discipline — the facts that would be a hole in the switch's
+ * safety if they ever silently flipped:
  *   • the pure resolver is dependency-free (no client, no IO, no server-only) — both the
  *     composition law AND the serving decision law carry no request-path side effect;
- *   • the server-only bridge reads the registry READ-ONLY and reuses the canonical legacy
- *     resolvers (so the legacy side of the comparison, and the fallback, can never drift);
- *   • verifyRegistryParity stays STRICTLY fail-open (RETAINED through R4 + LR3);
+ *   • the server-only bridge reads the registry READ-ONLY and no longer reuses any legacy
+ *     resolver (LR5.4B removed them) — it still imports the SHARED floor constants/types;
+ *   • the shadow-parity comparator (verifyRegistryParity / compareAuthority) is RETIRED — there
+ *     is no legacy baseline left to compare the registry against;
  *   • resolveServedAuthority — the switch — serves EVERY dimension (tokens, posture, memory
- *     scope) from the registry but is STRICTLY non-throwing and ALWAYS falls back to the
- *     retained legacy model (it can never strand an employee); LR5.3 retired the operator
- *     rollback control, so legacy is reached only via the automatic fail-safe;
+ *     scope) from the registry, is STRICTLY non-throwing, and ALWAYS falls back to the default-deny
+ *     FLOOR (it can never strand an employee); LR5.3 retired the operator rollback control;
  *     resolveServedCapabilities is RETAINED as its tokens-only projection;
- *   • the services now serve the FULL SWITCH (assign capabilities + posture + memory scope),
- *     no longer the bare legacy resolver — this is the authorised behavioural transition;
- *   • the legacy resolvers and the parity verification are RETAINED (legacy-column removal is a
- *     later, separately-authorised phase); the rollback control is RETIRED (LR5.3).
+ *   • the services serve the FULL SWITCH (assign capabilities + posture + memory scope), no
+ *     longer the bare legacy resolver — the authorised behavioural transition;
+ *   • the legacy resolvers and the parity verification are REMOVED (LR5.4B); the rollback control
+ *     stays RETIRED (LR5.3).
  *
  * Comment text is stripped first, so the prose that DOCUMENTS the contract can neither
  * satisfy a positive match nor trip a negative one.
@@ -107,15 +108,15 @@ describe("registry R3+R4 — the resolver core is pure", () => {
     expect(code).toMatch(/Math\.min\(/); // budget is the effective minimum
   });
 
-  it("encodes the R4 serving-decision law purely, folding in the parity comparison", () => {
+  it("encodes the serving-decision law purely — registry-or-floor, no legacy comparison (LR5.4B)", () => {
     expect(code).toMatch(/export function decideServedAuthority/);
-    // The serving law reuses the pure comparison — the continuous shadow verification is
-    // computed from the same module, never re-implemented and never via IO.
-    expect(code).toMatch(/compareAuthority\(/);
-    // It is deny-safe: every non-registry branch resolves to the legacy basis, with a
-    // named reason; the registry is served only when it actually spoke.
+    // LR5.4B removed the legacy baseline, so the law no longer folds in a parity comparison.
+    expect(code).not.toMatch(/compareAuthority/);
+    // It is deny-safe: the registry is served only when it actually spoke; otherwise the
+    // default-deny FLOOR (with a named reason), never a legacy basis.
     expect(code).toMatch(/basis: "registry"/);
-    expect(code).toMatch(/basis: "legacy"/);
+    expect(code).toMatch(/basis: "floor"/);
+    expect(code).not.toMatch(/basis: "legacy"/);
     for (const reason of ['"error"', '"empty"']) {
       expect(code, `the serving law must name the ${reason} fallback`).toContain(reason);
     }
@@ -133,17 +134,18 @@ describe("registry R3+R4 — the bridge is server-only and read-only", () => {
     expect(code).toContain("server-only");
   });
 
-  it("reuses the CANONICAL legacy resolvers, so the legacy side can never drift", () => {
+  it("no longer reuses the legacy resolvers (LR5.4B removed them — the registry is the SOLE authority)", () => {
+    // The bridge still imports the SHARED floor constants/types from tasks (EMPTY_CAPABILITIES,
+    // the locked posture), but the legacy authority resolvers themselves are gone.
     expect(importSpecifiers(code)).toContain("@/server/sdk/tasks");
-    expect(code).toMatch(/resolveEmployeeCapabilities/);
-    expect(code).toMatch(/resolveEmployeePosture/);
+    expect(code).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(code).not.toMatch(/resolveEmployeePosture/);
   });
 
   it("composes via the pure law (it does not re-implement Decision 5 or the switch)", () => {
     expect(importSpecifiers(code)).toContain("@/server/sdk/registry-resolver");
     expect(code).toMatch(/composeGrants/);
     expect(code).toMatch(/applicableGrants/);
-    expect(code).toMatch(/compareAuthority/);
     expect(code).toMatch(/decideServedAuthority/);
   });
 
@@ -158,42 +160,29 @@ describe("registry R3+R4 — the bridge is server-only and read-only", () => {
 });
 
 // =====================================================================
-// 3. verifyRegistryParity is STRICTLY fail-open — RETAINED through R4.
+// 3. The shadow-parity comparator is RETIRED (LR5.4B) — no legacy baseline left.
 // =====================================================================
 
-describe("registry R3+R4 — the standalone parity gate stays fail-open", () => {
+describe("registry LR5.4B — the shadow-parity comparator is removed from the bridge", () => {
   const code = codeOf(read(PARITY));
-  // verifyRegistryParity sits before the ServedAuthority switch; slice up to it.
-  const verify = (() => {
-    const start = code.indexOf("export async function verifyRegistryParity");
-    expect(start, "verifyRegistryParity not found (must be RETAINED through R4 + LR3)").toBeGreaterThanOrEqual(0);
-    const end = code.indexOf("export interface ServedAuthority", start);
-    return end > start ? code.slice(start, end) : code.slice(start);
-  })();
 
-  it("wraps its work in try/catch", () => {
-    expect(verify).toMatch(/try\s*\{/);
-    expect(verify).toMatch(/catch\b/);
-  });
-
-  it("swallows every error — the verification NEVER throws", () => {
-    expect(verify).not.toMatch(/\bthrow\b/);
-  });
-
-  it("the failure path is fail-open (returns a skipped/ok outcome, not a rejection)", () => {
-    expect(verify).toMatch(/skipped:\s*true/);
-    expect(verify).toMatch(/ok:\s*true/);
+  it("verifyRegistryParity / compareAuthority are gone (the Data Removal Rule, 26th)", () => {
+    // LR5.4B removed the legacy authority columns, so there is no baseline to compare the
+    // registry against — the R3 shadow-parity machinery is retired with it.
+    expect(code).not.toMatch(/verifyRegistryParity/);
+    expect(code).not.toMatch(/compareAuthority/);
   });
 });
 
 // =====================================================================
-// 4. resolveServedAuthority — the LR3 switch: registry authoritative on
-//    EVERY dimension (tokens, posture, memory scope), legacy retained as the
-//    automatic fail-safe, never throws; LR5.3 retired the rollback control.
-//    resolveServedCapabilities is RETAINED as its tokens-only projection.
+// 4. resolveServedAuthority — the switch: registry authoritative on EVERY
+//    dimension (tokens, posture, memory scope), the default-deny FLOOR as the
+//    automatic fail-safe (LR5.4B removed the legacy fallback), never throws;
+//    LR5.3 retired the rollback control. resolveServedCapabilities is RETAINED
+//    as its tokens-only projection.
 // =====================================================================
 
-describe("registry LR3 — the authority switch serves EVERY dimension, retains legacy", () => {
+describe("registry LR3 — the authority switch serves EVERY dimension, floor fail-safe (LR5.4B)", () => {
   const code = codeOf(read(PARITY));
   // The full switch slice: from resolveServedAuthority up to its capabilities projection.
   const serve = (() => {
@@ -232,14 +221,15 @@ describe("registry LR3 — the authority switch serves EVERY dimension, retains 
     expect(serve).not.toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
   });
 
-  it("RETAINS the legacy model as the fallback — it can never strand an employee", () => {
-    // Every non-registry branch returns the legacy SERVED set, built from the canonical legacy
-    // resolvers (so the fallback can never drift from what the runtime enforces today).
-    expect(serve).toMatch(/legacyServedAuthority\(emp\)/);
-    expect(serve).toMatch(/return legacy\b/);
+  it("serves the default-deny FLOOR as the fail-safe — it can never strand an employee (LR5.4B)", () => {
+    // LR5.4B (the Data Removal Rule) removed the legacy columns: every non-registry branch now
+    // returns the default-deny FLOOR (no tokens, locked posture), never a legacy SERVED set.
+    expect(serve).toMatch(/floorServedAuthority/);
+    expect(serve).not.toMatch(/legacyServedAuthority/);
+    expect(serve).not.toMatch(/return legacy\b/);
   });
 
-  it("is STRICTLY non-throwing (the switch fails SAFE to legacy, never to an error)", () => {
+  it("is STRICTLY non-throwing (the switch fails SAFE to the floor, never to an error)", () => {
     expect(serve).toMatch(/try\s*\{/);
     expect(serve).toMatch(/catch\b/);
     expect(serve).not.toMatch(/\bthrow\b/);
@@ -285,27 +275,29 @@ describe("registry LR3 — the services serve registry-derived authority on ever
 });
 
 // =====================================================================
-// 6. R4 boundary — legacy retained, parity retained; the rollback control is RETIRED (LR5.3).
-//    (CEO: do NOT remove legacy authority / parity verification; the automatic fail-safe stays.)
+// 6. LR5.4B boundary — the legacy authority surface is REMOVED (legacy resolvers, parity
+//    comparator, legacy fail-safe); the rollback control stays RETIRED (LR5.3). The registry
+//    is the SOLE authority; the fail-safe is the default-deny floor.
 // =====================================================================
 
-describe("registry R4 — legacy + parity retained; rollback retired (LR5.3)", () => {
-  it("keeps the canonical legacy resolvers in place (legacy authority retained)", () => {
+describe("registry LR5.4B — the legacy authority surface is removed; rollback stays retired", () => {
+  it("removes the canonical legacy resolvers (the registry is the SOLE authority)", () => {
     const tasks = codeOf(read(TASKS));
-    expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
-    expect(tasks).toMatch(/export function resolveEmployeePosture/);
+    expect(tasks).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(tasks).not.toMatch(/resolveEmployeePosture/);
   });
 
-  it("retains the parity verification AND consumes the legacy model in the bridge", () => {
+  it("removes the parity comparator AND the legacy consumption from the bridge", () => {
     const code = codeOf(read(PARITY));
-    expect(code).toMatch(/export async function verifyRegistryParity/);
-    expect(code).toMatch(/resolveEmployeeCapabilities/);
+    expect(code).not.toMatch(/verifyRegistryParity/);
+    expect(code).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(code).not.toMatch(/legacyServedAuthority/);
   });
 
-  it("RETIRES the rollback control (LR5.3 — env no longer defines an authority source)", () => {
+  it("keeps the rollback control RETIRED (LR5.3 — env defines no authority source)", () => {
     const env = codeOf(read(ENV));
     // The operator lever is gone from the executable env contract (the registry is the SOLE
-    // authority); legacy is reached only through the automatic fail-safe, never a switch.
+    // authority); the floor is reached only through the automatic fail-safe, never a switch.
     expect(env).not.toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
     expect(env).not.toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)/);
   });

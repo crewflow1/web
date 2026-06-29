@@ -307,22 +307,22 @@ export async function startResearch(
 async function researchIdentity(): Promise<EmployeeIdentity> {
   const emp = await researchEmployee();
   // The seeded research-ai row id when present; the stable slug as a last-resort
-  // opaque identity (lease owner only) if the employee was never seeded. Capabilities
-  // resolve from the row (tools_allowed ∪ permissions.scopes) — left absent when
-  // unseeded, so the runner defaults ctx.capabilities to the empty set.
+  // opaque identity (lease owner only) if the employee was never seeded. Authority
+  // resolves from the Capability Registry (below) — left absent when unseeded, so the
+  // runner defaults ctx.capabilities to the empty set.
   const identity: EmployeeIdentity = {
     employeeId: emp?.id ?? RESEARCH_AI_SLUG,
     slug: RESEARCH_AI_SLUG,
   };
-  // LR3 runtime authority switch (CEO Directive #015 / D-05): serve EVERY authority dimension
-  // — capabilities, posture AND memory scope — from the now-AUTHORITATIVE Capability Registry,
-  // with the legacy resolution RETAINED only as the automatic fail-safe. resolveServedAuthority
-  // falls back to legacy on a registry read error or a subject the registry is silent about, so
-  // the switch can never strand the employee, and folds the continuous shadow verification (the
-  // Shadow Validation Rule) onto the served value. LR5.3 (the Rollback Independence Rule) retired
-  // the operator rollback lever, so the registry is the SOLE authority. Behaviour-preserving
-  // while the flat mirror holds: the served posture equals the legacy locked floor (Directive
-  // 001) and the served memory scope equals the legacy column — R4 moved tokens, LR3 the rest.
+  // Runtime authority switch (CEO Directive #015 / D-05): serve EVERY authority dimension
+  // — capabilities, posture AND memory scope — from the now-SOLE-authoritative Capability
+  // Registry, with the default-deny FLOOR as the automatic fail-safe. resolveServedAuthority
+  // returns the floor (no tokens, locked posture, isolated memory) on a registry read error or
+  // a subject the registry is silent about, so the switch can never strand the employee. R4
+  // moved tokens, LR3 posture + memory scope; LR5.3 (the Rollback Independence Rule) retired the
+  // operator rollback lever; LR5.4B (the Data Removal Rule) removed the legacy authority columns
+  // and the shadow-comparison machinery, so the registry is the SOLE source — there is no legacy
+  // model left to fall back to or compare against.
   if (emp) {
     const served = await resolveServedAuthority(emp);
     identity.capabilities = served.capabilities;

@@ -28,11 +28,16 @@
  * default-deny and approval only ratchets up, no inheritance path can manufacture
  * authority.
  *
- * R3 BOUNDARY (the Behaviour Preservation Rule): introducing this resolver changes no
- * externally observable behaviour. The legacy model stays authoritative; this resolver is
- * consulted as a continuously-verified shadow (see {@link compareAuthority} and
- * server/sdk/registry-parity.ts). The behavioural transition — serving authority FROM the
- * registry — is a later, separately-authorised slice.
+ * EVOLUTION (R3 → LR5.4B). R3 stood this resolver up as a continuously-verified SHADOW of the
+ * legacy model (the Behaviour Preservation Rule); R4/LR3 switched the runtime to serve it; LR5.4A
+ * migrated the last hidden SQL reader (hq_memory_write) onto the registry; and LR5.4B — the FINAL
+ * removal increment, authorised under the Legacy Independence Rule (28th §2 standard: physical
+ * legacy structures may be removed only once completely independent of runtime execution) and
+ * sequenced last by the Data Removal Rule (26th) — removed the legacy authority columns and the
+ * shadow-comparison machinery entirely. The registry is now the SOLE source of served authority:
+ * there is no legacy baseline left to compare against, and the runtime fail-safe is the
+ * default-deny floor below ({@link AUTHORITY_FLOOR}), reached only when the registry cannot be
+ * read or is silent for a subject — never a fallback to a legacy model.
  */
 
 /** The default-deny memory floor (ADR 0010 Decision 4; mirrors the grant column default). */
@@ -176,123 +181,64 @@ export function applicableGrants(
   });
 }
 
-/** The shape the parity comparison comments on — the dimensions the legacy model also has. */
-export interface ComparableAuthority {
-  readonly tokens: readonly string[];
-  readonly canExecute: boolean;
-  readonly requiresApproval: boolean;
-  readonly memoryScope: string;
-}
-
-/** A recorded divergence between the legacy authority and the registry authority. */
-export interface AuthorityDivergence {
-  /** The dimensions that differ (e.g. `["tokens", "requiresApproval"]`). Never empty. */
-  readonly dimensions: readonly string[];
-  readonly legacy: ComparableAuthority;
-  readonly registry: ComparableAuthority;
-}
-
-/** Order-independent equality of two token sets (both are expected sorted-distinct). */
-function tokensEqual(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((t) => set.has(t));
-}
-
-/**
- * Compare the legacy-resolved authority to the registry-resolved authority across the
- * dimensions the legacy model carries (tokens, can_execute, requires_approval,
- * memory_scope). Budget is excluded: the legacy model has no per-employee budget, so
- * `budget_default` is registry-only forward metadata with no legacy counterpart to verify.
- *
- * Returns the divergence (the offending dimensions) or `null` when the two are in parity.
- * PURE — this is the deterministic, runtime-callable analogue of the R2 SQL parity
- * function, and the mechanism by which the runtime "continuously verifies parity during
- * the transition" (the Behaviour Preservation Rule).
- */
-export function compareAuthority(
-  legacy: ComparableAuthority,
-  registry: ComparableAuthority,
-): AuthorityDivergence | null {
-  const dimensions: string[] = [];
-  if (!tokensEqual(legacy.tokens, registry.tokens)) dimensions.push("tokens");
-  if (legacy.canExecute !== registry.canExecute) dimensions.push("canExecute");
-  if (legacy.requiresApproval !== registry.requiresApproval) dimensions.push("requiresApproval");
-  if (legacy.memoryScope !== registry.memoryScope) dimensions.push("memoryScope");
-  if (dimensions.length === 0) return null;
-  return { dimensions, legacy, registry };
-}
-
 // ---------------------------------------------------------------------
-// R4 — the runtime authority switch (the serving decision, PURE)
+// R4 → LR5.4B — the runtime authority switch (the serving decision, PURE)
 // ---------------------------------------------------------------------
 
 /**
  * Which source served an employee's authority — the `basis` a {@link ServingDecision}
  * records:
  *   • `registry` — the registry was authoritative and served (the steady state).
- *   • `legacy`   — the retained legacy model served as the AUTOMATIC fail-safe (the registry
- *                  read failed, or was silent for the subject).
+ *   • `floor`    — the default-deny floor ({@link AUTHORITY_FLOOR}) served as the AUTOMATIC
+ *                  fail-safe (the registry read failed, or was silent for the subject).
  *
- * LR5.3 (the Rollback Independence Rule, 25th §2 standard) retired the operator rollback lever
- * (`CAPABILITY_AUTHORITY_SOURCE`), so `legacy` is no longer operator-selectable — it is reached
- * ONLY by the fail-safe, never by a deliberate rollback.
+ * LR5.4B (the Data Removal Rule, 26th §2 standard) removed the legacy authority columns, so the
+ * fail-safe is no longer a legacy model — it is the safe default-deny floor. (LR5.3 had already
+ * retired the operator rollback lever, so `floor` is reached ONLY by the automatic fail-safe.)
  */
-export type AuthoritySource = "registry" | "legacy";
+export type AuthoritySource = "registry" | "floor";
 
 /**
- * The serving decision the runtime takes for ONE employee: which source's authority is
- * served and — when the legacy model is served — why. PURE metadata the bridge maps onto
- * the served {@link import("./tasks").ResolvedCapabilitySet} and logs for parity
- * monitoring; it carries any divergence so the monitor can report it.
+ * The serving decision the runtime takes for ONE employee: which source's authority is served
+ * and — when the floor is served — why. PURE metadata the bridge maps onto the served
+ * {@link import("./tasks").ResolvedCapabilitySet} and logs for fail-safe monitoring.
  */
 export interface ServingDecision {
   /** The source whose authority is served. */
   readonly basis: AuthoritySource;
   /**
-   * Why the legacy model was served (only set when `basis` is `legacy`) — both reasons are the
-   * AUTOMATIC fail-safe (LR5.3 retired the deliberate-rollback reason):
-   *   • `error` — the registry read failed; the retained legacy model is the fail-safe.
-   *   • `empty` — the registry is silent for the subject (no grants — e.g. a backfill
-   *               gap); the retained legacy model stands in during the migration window.
+   * Why the default-deny floor was served (only set when `basis` is `floor`) — both reasons are
+   * the AUTOMATIC fail-safe:
+   *   • `error` — the registry read failed; the floor is the fail-safe.
+   *   • `empty` — the registry is silent for the subject (no grants — e.g. a backfill gap); the
+   *               floor stands in. Confidence (§4.4) requires this to be ZERO before removal.
    */
   readonly reason?: "error" | "empty";
-  /**
-   * The divergence between the legacy baseline and the registry authority, when the
-   * registry was both authoritative and resolved with grants but disagreed. Recorded for
-   * parity monitoring; `undefined` when the two are in parity or the registry was not the
-   * served side.
-   */
-  readonly divergence?: AuthorityDivergence;
 }
 
 /**
  * Decide which source's authority to serve for one employee (ADR 0010 Decision 2; the runtime
  * authority switch). PURE and TOTAL — same inputs → same decision, no IO — so the switch's law
  * is unit-testable in isolation, exactly like {@link composeGrants}. The server-only bridge
- * supplies the IO (the registry read, the legacy resolution) and acts on the decision (see
- * server/sdk/registry-parity.ts).
+ * supplies the IO (the registry read) and acts on the decision (see server/sdk/registry-parity.ts).
  *
  * Order of precedence, each step safe by construction:
- *   1. registry read failed    → serve legacy (the fail-safe; the registry could not answer).
- *   2. registry silent (`none`)→ serve legacy (the migration-window fallthrough; no grants).
- *   3. otherwise               → serve the authoritative registry, recording any divergence
- *                                from the legacy baseline for parity monitoring.
+ *   1. registry read failed     → serve the floor (the fail-safe; the registry could not answer).
+ *   2. registry silent (`none`) → serve the floor (the migration-window fallthrough; no grants).
+ *   3. otherwise                → serve the authoritative registry.
  *
- * The registry is the SOLE authority — LR5.3 (the Rollback Independence Rule, 25th §2 standard)
- * retired the operator rollback control, so there is no deliberate path back to legacy. The
- * legacy model is RETAINED only as the AUTOMATIC fail-safe in steps 1–2, so the switch can
- * never strand an employee on a registry that is unreachable or not yet authored.
+ * The registry is the SOLE authority. LR5.3 retired the operator rollback control and LR5.4B
+ * removed the legacy columns, so there is no path back to a legacy model: the fail-safe in
+ * steps 1–2 is the default-deny floor, which can never strand an employee on a registry that is
+ * unreachable or not yet authored (it denies by default, the safe stance).
  */
 export function decideServedAuthority(input: {
   /** The registry-resolved authority, or `null` when the registry read failed. */
   registry: ResolvedAuthority | null;
-  legacy: ComparableAuthority;
 }): ServingDecision {
-  if (input.registry === null) return { basis: "legacy", reason: "error" };
-  if (input.registry.source === "none") return { basis: "legacy", reason: "empty" };
-  const divergence = compareAuthority(input.legacy, input.registry);
-  return divergence ? { basis: "registry", divergence } : { basis: "registry" };
+  if (input.registry === null) return { basis: "floor", reason: "error" };
+  if (input.registry.source === "none") return { basis: "floor", reason: "empty" };
+  return { basis: "registry" };
 }
 
 // ---------------------------------------------------------------------
@@ -303,28 +249,22 @@ export function decideServedAuthority(input: {
  * The confidence classification of ONE employee's {@link ServingDecision} — the unit the
  * LR4 production-confidence sweep aggregates. Derived PURELY from the decision the runtime
  * actually takes, so the audit's verdict can never diverge from what the serve path does:
- *   • `registry-parity`    — served the registry, IN PARITY with the legacy baseline. The
- *                            ONLY confident outcome: authority is registry-sourced and the
- *                            retained legacy mirror still agrees.
- *   • `registry-divergent` — served the registry, but it DIVERGED from the legacy baseline.
- *                            Per the proposal §4.2 every divergence must be ACCOUNTED FOR
- *                            (an intended registry-native authoring change) — never silent.
- *   • `backfill-gap`       — the registry was silent for the subject (no grant), so the
- *                            retained legacy model was served. Proposal §4.4 requires this
- *                            to be ZERO before any removal: a gap means the subject still
- *                            depends on legacy.
- *   • `registry-error`     — the registry read failed; the retained legacy model was the
- *                            fail-safe. Confidence requires the registry to be reliably
- *                            readable, so this must be zero across the window.
+ *   • `registry-served` — served the registry (the steady state). The ONLY confident outcome:
+ *                         authority is registry-sourced. LR5.4B removed the legacy baseline, so
+ *                         there is no longer a parity-vs-divergent distinction to draw — being
+ *                         served by the registry IS the confidence signal.
+ *   • `backfill-gap`    — the registry was silent for the subject (no grant), so the default-deny
+ *                         floor was served. Proposal §4.4 requires this to be ZERO before any
+ *                         removal: a gap means the subject would be stranded on the floor.
+ *   • `registry-error`  — the registry read failed; the default-deny floor was the fail-safe.
+ *                         Confidence requires the registry to be reliably readable, so this must
+ *                         be zero across the window.
  *
- * LR5.3 retired the deliberate-rollback outcome (`rolled-back`): with no operator rollback
- * lever, the audit can only observe the four outcomes above.
+ * LR5.4B (the Data Removal Rule) collapsed the former `registry-parity` / `registry-divergent`
+ * pair into the single `registry-served`: with the legacy columns gone there is nothing to
+ * compare the registry against, so the audit measures registry-only HEALTH, not parity.
  */
-export type ConfidenceOutcome =
-  | "registry-parity"
-  | "registry-divergent"
-  | "backfill-gap"
-  | "registry-error";
+export type ConfidenceOutcome = "registry-served" | "backfill-gap" | "registry-error";
 
 /**
  * Classify a serving decision into its confidence outcome (PURE, TOTAL). This is the LR4
@@ -332,11 +272,9 @@ export type ConfidenceOutcome =
  * rather than re-deriving authority, so a sweep measures exactly what the runtime serves.
  */
 export function classifyServingConfidence(decision: ServingDecision): ConfidenceOutcome {
-  if (decision.basis === "registry") {
-    return decision.divergence ? "registry-divergent" : "registry-parity";
-  }
-  // basis === "legacy": the AUTOMATIC fail-safe — the registry was silent for the subject
-  // (a backfill gap) or could not be read. (LR5.3 retired the deliberate-rollback reason.)
+  if (decision.basis === "registry") return "registry-served";
+  // basis === "floor": the AUTOMATIC fail-safe — the registry was silent for the subject
+  // (a backfill gap) or could not be read.
   return decision.reason === "empty" ? "backfill-gap" : "registry-error";
 }
 
@@ -349,20 +287,18 @@ export function classifyServingConfidence(decision: ServingDecision): Confidence
 export interface ConfidenceSummary {
   /** Employees swept. */
   readonly total: number;
-  /** Served the registry in parity (the confident outcome). */
-  readonly registryParity: number;
-  /** Served the registry but it diverged from legacy (must each be accounted for — §4.2). */
-  readonly registryDivergent: number;
-  /** Registry silent → served legacy (the backfill gaps §4.4 requires to be zero). */
+  /** Served the registry (the confident outcome). */
+  readonly registryServed: number;
+  /** Registry silent → served the floor (the backfill gaps §4.4 requires to be zero). */
   readonly backfillGaps: number;
-  /** Registry read failed → served legacy fail-safe (must be zero across the window). */
+  /** Registry read failed → served the floor fail-safe (must be zero across the window). */
   readonly registryErrors: number;
   /**
-   * The §4 confidence bar as ONE boolean: EVERY employee served the registry in parity — no
-   * divergence, no backfill gap, no read error. The registry-only runtime is
-   * demonstrably whole at THIS instant. (The time WINDOW over which it must hold continuously
-   * is operational — set by the CEO; this law measures the instant, the ops cadence measures
-   * the window.) An empty roster is NOT ready — there is nothing to be confident about.
+   * The §4 confidence bar as ONE boolean: EVERY employee served the registry — no backfill gap,
+   * no read error. The registry-only runtime is demonstrably whole at THIS instant. (The time
+   * WINDOW over which it must hold continuously is operational — set by the CEO; this law
+   * measures the instant, the ops cadence measures the window.) An empty roster is NOT ready —
+   * there is nothing to be confident about.
    */
   readonly registryOnlyReady: boolean;
 }
@@ -373,17 +309,13 @@ export interface ConfidenceSummary {
  * without any IO and can never drift from {@link classifyServingConfidence}.
  */
 export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): ConfidenceSummary {
-  let registryParity = 0;
-  let registryDivergent = 0;
+  let registryServed = 0;
   let backfillGaps = 0;
   let registryErrors = 0;
   for (const o of outcomes) {
     switch (o) {
-      case "registry-parity":
-        registryParity++;
-        break;
-      case "registry-divergent":
-        registryDivergent++;
+      case "registry-served":
+        registryServed++;
         break;
       case "backfill-gap":
         backfillGaps++;
@@ -396,10 +328,9 @@ export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): Con
   const total = outcomes.length;
   return Object.freeze({
     total,
-    registryParity,
-    registryDivergent,
+    registryServed,
     backfillGaps,
     registryErrors,
-    registryOnlyReady: total > 0 && registryParity === total,
+    registryOnlyReady: total > 0 && registryServed === total,
   });
 }

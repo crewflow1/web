@@ -503,7 +503,9 @@ export type WriteDecision = {
 /**
  * The capability scope that lets an employee write SHARED company knowledge
  * without an approval checkpoint (Volume X §6; Volume XIII capability model).
- * Held in `ai_employees.permissions.scopes` until the capability volume lands.
+ * Held as a token on the employee's Capability Registry grant (Directive #015
+ * / D-05); the legacy `ai_employees.permissions.scopes` column it used to live
+ * on was removed in LR5.4B.
  */
 export const SHARED_WRITE_SCOPE = "memory.write.shared";
 

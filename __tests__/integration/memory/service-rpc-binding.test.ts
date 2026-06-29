@@ -39,7 +39,6 @@ async function makeEmployee(): Promise<string> {
       slug: `it-svc-${stamp}`,
       role: "Integration fixture",
       department: "sales",
-      permissions: { can_execute: true, requires_approval: false, scopes: ["read"] },
     } as never)
     .select("id");
   const id = (ins.data as IdRow[] | null)?.[0]?.id;

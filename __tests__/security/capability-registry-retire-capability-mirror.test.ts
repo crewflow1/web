@@ -241,10 +241,13 @@ describe("registry LR5.1 — removes nothing else (the Removal Sequencing Rule)"
     expect(read(R2_REL)).toMatch(/hq_capability_registry_parity/);
   });
 
-  it("keeps the R4 runtime authority switch + shadow parity in place (authority unchanged)", () => {
+  it("keeps the R4 runtime authority switch in place; the shadow parity is retired (LR5.4B)", () => {
     const parity = codeOf(read(PARITY_REL));
     expect(parity).toMatch(/export async function resolveServedCapabilities/);
-    expect(parity).toMatch(/export async function verifyRegistryParity/);
+    // LR5.1 itself removed nothing else. The shadow-parity verification (verifyRegistryParity) was
+    // SINCE retired by LR5.4B (the Data Removal Rule, 26th): with the legacy authority columns gone
+    // there is no baseline left to compare the registry against.
+    expect(parity).not.toMatch(/verifyRegistryParity/);
   });
 
   it("keeps the confidence audit in place (the §4 instrument NOT removed)", () => {

@@ -305,12 +305,15 @@ describe("registry LR2 — removes nothing authorised-to-keep", () => {
     expect(read(R2_REL)).toMatch(/hq_capability_registry_parity/);
   });
 
-  it("keeps the R4 runtime authority switch + shadow parity in place (authority unchanged)", () => {
+  it("keeps the R4 runtime authority switch in place; the shadow parity is retired (LR5.4B)", () => {
     const parity = codeOf(read(PARITY_REL));
     expect(parity).toMatch(/export async function resolveServedCapabilities/);
-    expect(parity).toMatch(/export async function verifyRegistryParity/);
-    // memory_scope is still SERVED from the legacy model — runtime resolution unchanged.
-    expect(parity).toMatch(/emp\.memory_scope/);
+    // LR2 itself removed nothing. The shadow-parity verification (verifyRegistryParity) was SINCE
+    // retired by LR5.4B (the Data Removal Rule, 26th): with the legacy columns gone there is no
+    // baseline to compare against. memory_scope is now SERVED from the registry (the LR3 switch /
+    // LR5.4B end state), not read off the employee row, so the bridge no longer reads emp.memory_scope.
+    expect(parity).not.toMatch(/verifyRegistryParity/);
+    expect(parity).not.toMatch(/emp\.memory_scope/);
   });
 
   it("keeps the LR1 token authoring path intact (LR2 is additive)", () => {

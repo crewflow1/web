@@ -116,12 +116,12 @@ describe("registry LR4 — the audit delegates, never re-implements", () => {
     expect(code).toMatch(/decideServedAuthority\(/);
   });
 
-  it("reuses the canonical bridge for the registry read AND the legacy baseline", () => {
+  it("reuses the canonical bridge for the registry read (no legacy baseline — LR5.4B)", () => {
     expect(specs).toContain("@/server/sdk/registry-parity");
     expect(code).toMatch(/resolveAuthorityFromRegistry\(/);
-    // The legacy side comes from the canonical resolver (via the bridge), so it can never
-    // drift from what the runtime actually enforces today.
-    expect(code).toMatch(/legacyAuthorityOf\(/);
+    // LR5.4B (the Data Removal Rule, 26th) removed the legacy authority columns, so there is no
+    // legacy baseline to read: the audit measures registry serving HEALTH, not a shadow comparison.
+    expect(code).not.toMatch(/legacyAuthorityOf\(/);
   });
 
   it("NO LONGER reads a rollback control (LR5.3 — it measures the registry-only serve path)", () => {
@@ -149,22 +149,25 @@ describe("registry LR4 — a registry read failure is measured, never fatal to t
 });
 
 // =====================================================================
-// 4. LR4 boundary — the instrument REMOVES NOTHING (it only measures).
-//    (CEO: do NOT remove legacy authority / mirroring / parity tooling. LR5.3 later retired the
-//    operator rollback lever — separately authorised — so this boundary no longer pins it.)
+// 4. LR4 → LR5.4B boundary. LR4 itself REMOVED NOTHING (it only measures). LR5.4B (the Data
+//    Removal Rule, 26th) has SINCE removed the legacy resolvers, the legacy fail-safe and the
+//    shadow-parity comparator — the registry is the SOLE authority, the fail-safe is the
+//    default-deny FLOOR. The §4 instrument and its PURE law are retained (preserved evidence).
 // =====================================================================
 
-describe("registry LR4 — nothing authorised-to-keep is removed", () => {
-  it("the canonical legacy resolvers are still in place (legacy authority retained)", () => {
+describe("registry LR4 — the §4 instrument survives; the legacy machinery is removed (LR5.4B)", () => {
+  it("the legacy resolvers are removed (LR5.4B — the registry is the SOLE authority)", () => {
     const tasks = codeOf(read("server/sdk/tasks.ts"));
-    expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
-    expect(tasks).toMatch(/export function resolveEmployeePosture/);
+    expect(tasks).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(tasks).not.toMatch(/resolveEmployeePosture/);
   });
 
-  it("the parity verification AND the legacy fail-safe are still in the bridge", () => {
+  it("the shadow-parity comparator AND the legacy fail-safe are removed from the bridge (LR5.4B)", () => {
     const parity = codeOf(read(PARITY));
-    expect(parity).toMatch(/export async function verifyRegistryParity/);
-    expect(parity).toMatch(/legacyServedAuthority\(/);
+    expect(parity).not.toMatch(/verifyRegistryParity/);
+    expect(parity).not.toMatch(/legacyServedAuthority/);
+    // The fail-safe is now the default-deny FLOOR, not a legacy model.
+    expect(parity).toMatch(/source: "floor"/);
   });
 
   it("the pure resolver still hosts the confidence law as PURE (no IO leaked into the core)", () => {

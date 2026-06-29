@@ -43,7 +43,7 @@ import { MemoryCard, buildTypeMap } from "../../memory/_components";
  *
  * FRAMEWORK ONLY. The configuration panel edits SAFE descriptive fields
  * (status, role, description, planned model, memory scope, current task,
- * system prompt). Execution is locked: `permissions.can_execute` is shown
+ * system prompt). Execution is locked: the served approval stance is shown
  * read-only and there is no action anywhere that enables it.
  */
 
@@ -73,10 +73,10 @@ export default async function AiEmployeeDetailPage({
 
   // The SERVED capability authority (Directive #015 / D-05, LR5.2 — the Read Migration Rule).
   // The capability editor + permissions panel below read what the runtime SERVES from the
-  // now-authoritative Capability Registry — with the legacy model retained only as the automatic
-  // fail-safe — NOT the now-inert ai_employees.tools_allowed / permissions columns LR5.1
-  // froze. Resolved alongside the read-only shared-memory feed (CEO Directive 002), a
-  // permission-aware slice this employee may READ; both are best-effort and degrade to a safe
+  // now-SOLE-authoritative Capability Registry — with the default-deny floor as the automatic
+  // fail-safe (LR5.4B removed the legacy ai_employees.tools_allowed / permissions columns the
+  // page used to read). Resolved alongside the read-only shared-memory feed (CEO Directive 002),
+  // a permission-aware slice this employee may READ; both are best-effort and degrade to a safe
   // default rather than breaking the profile.
   const [served, memoryFeed, memoryTypes] = await Promise.all([
     resolveServedCapabilityView(e),

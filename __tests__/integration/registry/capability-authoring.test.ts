@@ -2,27 +2,30 @@ import { expect, it } from "vitest";
 import { anonClient, describeIntegration, serviceClient } from "../_harness";
 
 /**
- * The Capability Registry — registry-native authoring, post-LR5.1 (the mirror retired),
- * real-Postgres proof.
+ * The Capability Registry — registry-native capability authoring, at the registry-SOLE end
+ * state (LR5.4B), real-Postgres proof.
  *
- * CEO Directive #015 / D-05. The authoring RPC was introduced by LR1 (Legacy Removal
- * increment 1, migration 20260808000000) and REDEFINED by LR5.1 (increment 5.1, migration
- * 20260810000000), which retired the legacy mirror — the first step of the Removal Sequencing
- * Rule (23rd §2 standard): "first remove writes". ADR:
+ * CEO Directive #015 / D-05. The authoring RPC was introduced by LR1 (Legacy Removal increment
+ * 1, migration 20260808000000), REDEFINED by LR5.1 (increment 5.1, migration 20260810000000)
+ * which retired the legacy mirror — the first step of the Removal Sequencing Rule (23rd §2
+ * standard: "first remove writes") — and RE-POINTED by LR5.4B (increment 5.4B, migration
+ * 20260812000000) OFF the now-dropped `ai_employees.permissions` column (the Legacy Independence
+ * Rule, 28th; the Hidden Read Path Rule, 27th). ADR:
  * docs/bible/decisions/0010-capability-registry.md.
  *
- * The security tier pins each migration's CONTRACT against source text (the LR1 mirror stays
- * pinned PRESENT in the immutable 808; LR5.1's 810 is pinned mirror-ABSENT); this tier proves
- * the BEHAVIOUR the live RPC exhibits NOW that text can't ("mocks prove intent; real
- * infrastructure proves behaviour"): that the atomic authoring RPC defines tokens, writes the
- * employee grant authoritatively (tokens only), PRESERVES posture, and — post-LR5.1 — NO
- * LONGER mirrors to ai_employees.tools_allowed / permissions, leaving those columns INERT
- * (frozen at their last value, written by nothing, still readable). The return envelope STILL
- * reports the parity-faithful kind split (it backs the admin activity log), even though it is
- * no longer written to a column. Because the mirror is retired, the platform's OWN parity
- * oracle (hq_capability_registry_parity) now reports a freshly-authored employee DIVERGING
- * from its frozen legacy columns: that divergence is the EXPECTED, benign signature of LR5.1,
- * not a regression. The service-role lockdown still denies anon. All in a live database.
+ * The security tier pins each migration's CONTRACT against source text; this tier proves the
+ * BEHAVIOUR the live RPC exhibits NOW that text can't ("mocks prove intent; real infrastructure
+ * proves behaviour"): that the atomic authoring RPC defines tokens, writes the employee grant
+ * authoritatively (tokens only), PRESERVES posture + memory scope on re-authoring, and — post
+ * LR5.4B — seeds a FRESH grant's posture from the DENY FLOOR (it reads no dropped column; the
+ * floor is identical to the default-locked legacy value it replaced, so behaviour is preserved).
+ * The return envelope still reports the catalogue-faithful kind split (it backs the admin
+ * activity log). The service-role lockdown still denies anon. All in a live database.
+ *
+ * THE LEGACY COLUMNS ARE GONE. LR5.4B dropped `ai_employees.tools_allowed` / `permissions` and
+ * the parity oracle that compared them to the registry, so the former "the mirror stays inert" /
+ * "the oracle reports the expected divergence" assertions are retired — there is nothing left to
+ * mirror to or compare against. The grant IS the authority.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no
  * database, FAILED loudly in CI if the database is missing.
@@ -70,14 +73,6 @@ function author(args: AuthorArgs, role: "svc" | "anon" = "svc") {
   return client.rpc("hq_author_employee_capabilities", args);
 }
 
-/** The parity oracle's row for one employee (or undefined if absent). */
-async function parityOf(slug: string): Promise<Record<string, unknown> | undefined> {
-  const client = serviceClient() as unknown as { rpc: RpcFn };
-  const { data, error } = await client.rpc("hq_capability_registry_parity");
-  expect(error, error?.message).toBeNull();
-  return (data as Record<string, unknown>[]).find((r) => r.slug === slug);
-}
-
 /** Define a capability token of a given kind; caller cleans it up. */
 async function defineCapability(
   token: string,
@@ -87,10 +82,10 @@ async function defineCapability(
   expect(res.error, res.error?.message).toBeNull();
 }
 
-/** Create an ai_employee fixture; returns its id. */
+/** Create an ai_employee fixture; returns its id. LR5.4B dropped tools_allowed / permissions. */
 async function createEmployee(
   slug: string,
-  opts: { tools_allowed?: string[]; permissions?: Record<string, unknown>; memory_scope?: string } = {},
+  opts: { memory_scope?: string } = {},
 ): Promise<string> {
   const res = await svc()
     .from("ai_employees")
@@ -99,8 +94,6 @@ async function createEmployee(
       slug,
       role: "Integration fixture",
       department: "engineering",
-      tools_allowed: opts.tools_allowed ?? [],
-      permissions: opts.permissions ?? { can_execute: false, requires_approval: true, scopes: [] },
       memory_scope: opts.memory_scope ?? "isolated",
     })
     .select("id")
@@ -120,22 +113,13 @@ async function cleanup(opts: { slugs?: string[]; tokens?: string[] }) {
   }
 }
 
-describeIntegration("Capability Registry · registry-native authoring, post-LR5.1 mirror retired (D-05)", () => {
-  it("authors a fresh employee — defines tokens, writes the grant, and does NOT mirror (the columns stay inert)", async () => {
+describeIntegration("Capability Registry · registry-native authoring, post-LR5.4B (D-05)", () => {
+  it("authors a fresh employee — defines tokens, writes the grant (tokens-only), seeds the deny-floor posture; reads no dropped column", async () => {
     const slug = mkSlug();
     const tTok = mkToken(); // a tool permission (the RPC defines it as tool_permission)
     const sTok = mkToken(); // a scope (pre-defined with kind = 'scope')
     await createEmployee(slug);
     await defineCapability(sTok, "scope");
-
-    // Snapshot the legacy columns BEFORE authoring — LR5.1 must leave them untouched.
-    const before = await svc()
-      .from("ai_employees")
-      .select("tools_allowed, permissions")
-      .eq("slug", slug)
-      .single();
-    expect(before.error, before.error?.message).toBeNull();
-    const b = before.data as Record<string, unknown>;
 
     const res = await author({
       p_slug: slug,
@@ -150,8 +134,9 @@ describeIntegration("Capability Registry · registry-native authoring, post-LR5.
 
     const expectedTokens = [sTok, tTok].sort();
 
-    // The grant holds the sorted-distinct authored set at the employee scope — the
-    // AUTHORITATIVE write, unchanged by LR5.1.
+    // The grant holds the sorted-distinct authored set at the employee scope — the AUTHORITATIVE
+    // write. Its posture is the DENY FLOOR (LR5.4B seeds a fresh grant from the floor, not the
+    // removed legacy permissions) and its memory_scope is the employee's surviving column value.
     const grant = await svc()
       .from("hq_capability_grants")
       .select("tokens, can_execute, requires_approval, memory_scope")
@@ -160,38 +145,14 @@ describeIntegration("Capability Registry · registry-native authoring, post-LR5.
     expect(grant.error, grant.error?.message).toBeNull();
     const g = grant.data as Record<string, unknown>;
     expect(g.tokens).toEqual(expectedTokens);
-    expect(g.can_execute).toBe(false); // posture seeded from the locked legacy floor
+    expect(g.can_execute).toBe(false); // deny floor (Directive 001 — born locked)
     expect(g.requires_approval).toBe(true);
-    expect(g.memory_scope).toBe("isolated");
+    expect(g.memory_scope).toBe("isolated"); // seeded from the surviving ai_employees.memory_scope
 
-    // The return envelope STILL reports the parity-faithful kind split (it backs the admin
-    // activity log) — even though LR5.1 no longer writes it to a column.
+    // The return envelope reports the catalogue-faithful kind split (it backs the admin activity
+    // log), sourced from hq_capabilities — never a legacy column.
     expect(env.tools_allowed).toEqual([tTok]); // kind <> 'scope' → tools_allowed
     expect(env.scopes).toEqual([sTok]); // kind = 'scope' → scopes
-
-    // THE MIRROR IS RETIRED: the legacy columns are INERT — byte-identical to their
-    // pre-authoring snapshot (written by nothing, frozen at their last value).
-    const after = await svc()
-      .from("ai_employees")
-      .select("tools_allowed, permissions")
-      .eq("slug", slug)
-      .single();
-    expect(after.error, after.error?.message).toBeNull();
-    const e = after.data as Record<string, unknown>;
-    const perms = e.permissions as { scopes?: string[]; can_execute?: boolean; requires_approval?: boolean };
-    expect(e.tools_allowed).toEqual(b.tools_allowed); // unchanged…
-    expect(e.tools_allowed).toEqual([]); // …still its created (empty) value
-    expect(e.permissions).toEqual(b.permissions); // posture + empty scopes untouched
-    expect(perms.scopes ?? []).toEqual([]);
-    expect(perms.can_execute).toBe(false);
-    expect(perms.requires_approval).toBe(true);
-
-    // PARITY now shows the EXPECTED, benign divergence of the retired mirror: the grant
-    // carries the authored tokens while the frozen legacy columns carry none, so the
-    // platform's own oracle reports the freshly-authored employee DIVERGING — not a
-    // regression, but the defined signature of LR5.1.
-    const parity = await parityOf(slug);
-    expect(parity?.parity_ok, JSON.stringify(parity)).toBe(false);
 
     // The new tool token is now defined in the catalogue as a tool_permission.
     const cat = await svc().from("hq_capabilities").select("kind").eq("token", tTok).single();
@@ -201,20 +162,28 @@ describeIntegration("Capability Registry · registry-native authoring, post-LR5.
     await cleanup({ slugs: [slug], tokens: [tTok, sTok] });
   });
 
-  it("re-authoring replaces the token set (update path), preserves a non-default posture, and never touches the inert columns", async () => {
+  it("re-authoring replaces the token set (update path) and preserves the grant's posture + memory scope (tokens-only authoring)", async () => {
     const slug = mkSlug();
     const tokA = mkToken();
     const tokB = mkToken();
-    // A distinctive posture + memory scope the authoring path must leave untouched.
-    await createEmployee(slug, {
-      permissions: { can_execute: false, requires_approval: false, scopes: [] },
-      memory_scope: "department",
-    });
+    await createEmployee(slug, { memory_scope: "department" });
 
+    // First author → a fresh grant, born at the deny floor with the employee's memory_scope.
     const first = await author({ p_slug: slug, p_tokens: [tokA], p_actor_email: "it@crewflow.uk" });
     expect(first.error, first.error?.message).toBeNull();
     expect((first.data as Record<string, unknown>).action).toBe("created");
 
+    // Set a DISTINCTIVE, non-default posture on the grant directly — the value tokens-only
+    // re-authoring must leave untouched. The registry is now the SOLE authority, so this is set
+    // on the grant itself (there is no legacy column to seed it from).
+    const posture = await svc()
+      .from("hq_capability_grants")
+      .update({ requires_approval: false })
+      .eq("scope_level", "employee")
+      .eq("scope_key", slug);
+    expect(posture.error, posture.error?.message).toBeNull();
+
+    // Re-author with a different token set → the UPDATE path (tokens replaced, posture preserved).
     const second = await author({ p_slug: slug, p_tokens: [tokB], p_actor_email: "it@crewflow.uk" });
     expect(second.error, second.error?.message).toBeNull();
     expect((second.data as Record<string, unknown>).action).toBe("updated");
@@ -228,24 +197,8 @@ describeIntegration("Capability Registry · registry-native authoring, post-LR5.
     expect(g.tokens).toEqual([tokB]); // the set is REPLACED, not merged
     // Posture + memory scope preserved across the update (tokens-only authoring).
     expect(g.can_execute).toBe(false);
-    expect(g.requires_approval).toBe(false);
+    expect(g.requires_approval).toBe(false); // the non-default value we set — untouched
     expect(g.memory_scope).toBe("department");
-
-    // The legacy columns are INERT — the mirror is retired, so re-authoring leaves
-    // tools_allowed at its created (empty) value and the posture untouched. memory_scope is
-    // mirrored by a SEPARATE RPC that LR5.1 does not touch, so it keeps its created value.
-    const emp = await svc().from("ai_employees").select("tools_allowed, permissions, memory_scope").eq("slug", slug).single();
-    const e = emp.data as Record<string, unknown>;
-    const perms = e.permissions as { can_execute?: boolean; requires_approval?: boolean };
-    expect(e.tools_allowed).toEqual([]); // frozen — NOT [tokB]: the mirror is gone
-    expect(perms.can_execute).toBe(false);
-    expect(perms.requires_approval).toBe(false);
-    expect(e.memory_scope).toBe("department");
-
-    // PARITY shows the expected, benign divergence: the grant carries [tokB] while the
-    // frozen tools_allowed carries none.
-    const parity = await parityOf(slug);
-    expect(parity?.parity_ok, JSON.stringify(parity)).toBe(false);
 
     await cleanup({ slugs: [slug], tokens: [tokA, tokB] });
   });

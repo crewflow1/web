@@ -86,6 +86,7 @@ const R2_MIG = `${MIG_DIR}/20260807000000_capability_registry_backfill.sql`;
 const LR1_MIG = `${MIG_DIR}/20260808000000_capability_registry_native_authoring.sql`;
 const MEMSCOPE_MIG = `${MIG_DIR}/20260809000000_capability_registry_native_memory_scope.sql`;
 const LR51_MIG = `${MIG_DIR}/20260810000000_capability_registry_retire_capability_mirror.sql`;
+const LR54B_MIG = `${MIG_DIR}/20260812000000_lr5_4b_remove_legacy_authority_columns.sql`;
 
 /** The whole migration corpus, SQL-comment-stripped — for "no column is ever dropped" scans. */
 function migrationCorpus(): string {
@@ -147,17 +148,20 @@ describe("registry LR5.3 — decideServedAuthority retires rollback, keeps the f
     expect(resolver).not.toMatch(/"rollback"/);
   });
 
-  it("KEEPS the automatic fail-safe — the error / silent-subject branches still serve legacy", () => {
+  it("KEEPS the automatic fail-safe — the error / silent-subject branches serve the default-deny floor", () => {
     // These are NOT rollback: they are the registry's own fail-safe, protecting every employee
-    // independently of any operator action (the 25th standard's "removable independently").
-    expect(decide).toMatch(/reason:\s*"error"/); // registry read failed → legacy
-    expect(decide).toMatch(/reason:\s*"empty"/); // registry silent (backfill gap) → legacy
+    // independently of any operator action (the 25th standard's "removable independently"). LR5.4B
+    // removed the legacy columns, so the fail-safe lands on the default-deny FLOOR, not a legacy model.
+    expect(decide).toMatch(/reason:\s*"error"/); // registry read failed → floor
+    expect(decide).toMatch(/reason:\s*"empty"/); // registry silent (backfill gap) → floor
     expect(decide).toMatch(/basis:\s*"registry"/); // registry served when it actually spoke
-    expect(decide).toMatch(/basis:\s*"legacy"/); // the fail-safe floor remains
+    expect(decide).toMatch(/basis:\s*"floor"/); // the default-deny fail-safe floor remains
+    expect(decide).not.toMatch(/basis:\s*"legacy"/); // no legacy model left to fall back to (LR5.4B)
   });
 
-  it("still folds in the parity comparison (shadow monitoring is untouched)", () => {
-    expect(decide).toMatch(/compareAuthority\(/);
+  it("no longer folds in a parity comparison (LR5.4B retired the shadow monitoring)", () => {
+    // The shadow-parity comparator is gone — no legacy baseline left to compare the registry to.
+    expect(resolver).not.toMatch(/compareAuthority/);
   });
 });
 
@@ -180,14 +184,15 @@ describe("registry LR5.3 — the bridge serves registry-only, legacy reachable v
     expect(serve).not.toMatch(/===\s*"legacy"/);
   });
 
-  it("resolveServedAuthority PRESERVES the automatic fail-safe (non-throwing, always lands on legacy)", () => {
+  it("resolveServedAuthority PRESERVES the automatic fail-safe (non-throwing, always lands on the floor)", () => {
     const serve = sliceExport(parity, "export async function resolveServedAuthority");
     expect(serve).toMatch(/decideServedAuthority\(/); // delegates to the pure law
-    expect(serve).toMatch(/legacyServedAuthority\(emp\)/); // the retained legacy floor is built
-    expect(serve).toMatch(/return legacy\b/); // and served when the registry can't be
+    expect(serve).toMatch(/floorServedAuthority/); // the default-deny floor is served (LR5.4B)
+    expect(serve).not.toMatch(/legacyServedAuthority/); // the legacy fallback was removed
+    expect(serve).not.toMatch(/return legacy\b/);
     expect(serve).toMatch(/try\s*\{/);
     expect(serve).toMatch(/catch\b/);
-    expect(serve).not.toMatch(/\bthrow\b/); // fails SAFE to legacy, never to an error
+    expect(serve).not.toMatch(/\bthrow\b/); // fails SAFE to the floor, never to an error
   });
 
   it("resolveServedCapabilityView threads only the client (no rollback control)", () => {
@@ -216,48 +221,56 @@ describe("registry LR5.3 — the confidence audit is preserved, no longer contro
     expect(confidence).not.toMatch(/\brolledBack\b/);
   });
 
-  it("still reads the legacy columns BY DESIGN (the audit measures legacy vs registry)", () => {
-    expect(confidence).toMatch(/tools_allowed, permissions, memory_scope/);
+  it("no longer reads the legacy columns (LR5.4B — the audit measures registry serving health)", () => {
+    // With the legacy columns dropped there is no baseline to compare against; the audit reads
+    // only slug + department to query the registry, never a legacy authority column.
+    expect(confidence).not.toMatch(/tools_allowed/);
+    expect(confidence).toMatch(/"slug, department"/);
   });
 });
 
 // =====================================================================
-// 4. INDEPENDENCE — the legacy implementation rollback protected is WHOLLY
-//    intact (25th standard: rollback removable independently of legacy).
+// 4. LR5.3 → LR5.4B boundary. LR5.3 retired the rollback INDEPENDENTLY of the legacy
+//    implementation it protected (25th standard), leaving that implementation intact. LR5.4B
+//    (the Legacy Independence Rule, 28th; the Data Removal Rule, 26th) has SINCE removed it — the
+//    legacy resolvers, the shadow-parity comparator and the legacy authority columns. The
+//    surviving memory_scope, the parity-backfill HISTORY and the migration history all remain.
 // =====================================================================
 
-describe("registry LR5.3 — the legacy implementation is preserved INDEPENDENTLY of the rollback", () => {
-  it("keeps the canonical legacy resolvers (legacy authority retained)", () => {
+describe("registry LR5.3 → LR5.4B — the legacy implementation rollback protected is now removed", () => {
+  it("removes the canonical legacy resolvers (LR5.4B — the registry is the SOLE authority)", () => {
     const tasks = codeOf(read(TASKS));
-    expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
-    expect(tasks).toMatch(/export function resolveEmployeePosture/);
+    expect(tasks).not.toMatch(/resolveEmployeeCapabilities/);
+    expect(tasks).not.toMatch(/resolveEmployeePosture/);
   });
 
-  it("keeps the parity tooling (verification + the R2 backfill migration)", () => {
-    expect(codeOf(read(PARITY))).toMatch(/export async function verifyRegistryParity/);
+  it("removes the parity comparator from the bridge; the R2 backfill migration is PRESERVED", () => {
+    expect(codeOf(read(PARITY))).not.toMatch(/verifyRegistryParity/);
+    // The historical R2 backfill migration is governance history — untouched.
     expect(existsSync(resolve(ROOT, R2_MIG))).toBe(true);
     expect(read(R2_MIG)).toMatch(/hq_capability_registry_parity/);
   });
 
-  it("keeps the (now-inert) legacy authority columns on the model (CEO: do NOT remove columns)", () => {
+  it("removes the legacy authority columns from the model; the surviving memory_scope stays", () => {
     const aiemp = codeOf(read(AIEMP));
-    expect(aiemp).toMatch(/tools_allowed/);
-    expect(aiemp).toMatch(/permissions/);
-    expect(aiemp).toMatch(/memory_scope/);
+    expect(aiemp).not.toMatch(/tools_allowed/);
+    expect(aiemp).not.toMatch(/permissions/);
+    expect(aiemp).toMatch(/memory_scope/); // shared platform data — out of scope for the drop
   });
 
-  it("NO migration EVER drops a legacy authority column (columns remain physically present)", () => {
-    // The CEO's bar: "Legacy authority columns remain physically present until rollback
-    // retirement has been independently validated and approved." LR5.3 ships no DB change.
-    expect(migrationCorpus()).not.toMatch(
-      /drop\s+column[^;]*\b(tools_allowed|permissions|memory_scope)\b/i,
-    );
+  it("the LR5.4B migration DROPS the legacy authority columns; memory_scope is NEVER dropped", () => {
+    const lr54b = stripSql(read(LR54B_MIG));
+    expect(lr54b).toMatch(/drop\s+column\s+tools_allowed/i);
+    expect(lr54b).toMatch(/drop\s+column\s+permissions/i);
+    // memory_scope (and department) survive — no migration ever drops them.
+    expect(migrationCorpus()).not.toMatch(/drop\s+column[^;]*\bmemory_scope\b/i);
   });
 
-  it("keeps the migration history intact (LR1 808, memory_scope 809, LR5.1 810 all present)", () => {
+  it("keeps the migration history intact (LR1 808, memory_scope 809, LR5.1 810, LR5.4B 812 all present)", () => {
     expect(existsSync(resolve(ROOT, LR1_MIG))).toBe(true);
     expect(existsSync(resolve(ROOT, MEMSCOPE_MIG))).toBe(true);
     expect(existsSync(resolve(ROOT, LR51_MIG))).toBe(true);
+    expect(existsSync(resolve(ROOT, LR54B_MIG))).toBe(true);
   });
 });
 
