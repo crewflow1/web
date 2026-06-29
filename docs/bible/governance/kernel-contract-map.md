@@ -917,6 +917,65 @@ quietly depends on.
 
 ---
 
+### The Rollback Independence Rule
+
+A **twenty-fifth** standard, set by CEO directive on the review of **Directive #015 LR5.2** (the
+increment that migrated the legacy read paths — every runtime and administrative consumer of the
+now-inert columns — onto the registry; independent CTO review). The Removal Sequencing Rule (the
+twenty-third) places "then remove rollback" as the *second* teardown step — after the writes are
+stopped, before the stored data is dropped; the Rollback Readiness Rule (the seventeenth) required
+that rollback **exist** and be retirable **as its own phase**. This standard governs *how that
+second step is taken safely* — what must be true before the rollback path itself comes down:
+
+> **Rollback mechanisms must be removable independently of the legacy implementation they protect.
+> Before rollback infrastructure is retired, the production system must demonstrate that continued
+> operation no longer depends on rollback activation. Rollback retirement must itself be
+> independently reviewed and validated.**
+
+The rule binds three disciplines. **Rollback is removable independently of the legacy implementation
+it protects** — the rollback lever and the legacy code-path it falls back to are *separate* teardown
+units. Retiring the lever must not require touching, and must not drag down, the legacy store or
+resolvers it reads; the legacy data is not what this step removes. This is what makes "then remove
+rollback" a step distinct from "then remove stored legacy data": were the two entangled — could you
+not retire the rollback without also dropping the data, or the reverse — the dependency-ordered
+descent the twenty-third rule mandates would collapse into one irreversible move. **Production must
+demonstrate that continued operation no longer depends on rollback activation** *before* the rollback
+is retired — the evidence that the new authority has run as the sole served source, in production,
+without ever needing the fallback (the parity instrumentation showing no divergence that would invoke
+it; the confidence audit showing the new source serving correctly) is the precondition for removal. A
+rollback is a safety net, and a safety net is removed only after the thing it caught is shown to no
+longer fall. **Rollback retirement is itself independently reviewed and validated** — removing the
+escape hatch is exactly the high-consequence change that must not rest on the implementer's own
+confidence: it is its own reviewed, shippable increment, gated on evidence checked by someone other
+than its author (the Evidence Before Deletion Rule, the eighteenth, applied to the rollback path).
+
+The rule's force is that **retiring a rollback mechanism while production still depends on its
+activation — or in a way that cannot be done without also removing the legacy implementation it
+guards, or without independent validation — is a standards violation**, because the failure mode it
+guards against is the removal of the one escape hatch that was still, quietly, in use. It is the
+safety complement to the Removal Sequencing Rule's second step, and it draws on the standards before
+it: the Rollback Readiness Rule (the seventeenth) built the rollback as a retirable phase; the Shadow
+Validation Rule (the sixteenth) and the Retirement Readiness Rule (the twenty-second) supply the
+continuous-parity and sustained-confidence evidence by which "no longer depends on rollback" is
+*demonstrated* rather than assumed; and the Read Migration Rule (the twenty-fourth) is its sibling —
+that one proved every *reader* had left the legacy store before it could come down, this one proves
+the *rollback* is no longer leaned on before it does.
+
+For Directive #015 this governs **LR5.3**. LR5.1 retired the writes; LR5.2 migrated every
+non-rollback reader onto the registry. The legacy `ai_employees.tools_allowed` / `permissions`
+columns are now inert and read only by the retained rollback path, the confidence audit and the
+parity tooling. LR5.3 must therefore **retire the rollback mechanism** — the `CAPABILITY_AUTHORITY_SOURCE`
+lever and the on-demand legacy-serving path it gates — having first **demonstrated that production
+runs without dependence on rollback activation**, while **preserving** the confidence auditing, the
+parity instrumentation, the legacy columns and the migration history; no legacy column is dropped in
+this step. The legacy authority columns remain physically present until rollback retirement has itself
+been independently validated and approved; only then is the Removal Sequencing Rule's "remove stored
+legacy data" step (a later increment) reachable. Generalised beyond #015, the rule is permanent:
+whenever the platform retires a rollback, it comes down as its own unit, after — and only after —
+production has proven it no longer needs it, with that proof independently checked.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
