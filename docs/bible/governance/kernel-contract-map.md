@@ -1095,6 +1095,66 @@ by the same evidence and the same independent review an application reader deman
 
 ---
 
+### The Final Removal Rule
+
+A **twenty-eighth** standard, set by CEO directive on the review that **completed Directive #015**
+— the review of **LR5.4B**, the physical removal of the legacy authority columns and the final
+implementation increment of the Capability Registry. It is the **capstone** of the removal
+sequence: where the twenty-third through twenty-seventh standards each governed *one face* of a
+safe teardown — the **Removal Sequencing Rule** (the order: writes, then rollback, then data, then
+tooling, then completion), the **Read Migration Rule** (writes migrate before reads; no read path
+removed until every consumer is migrated and validated), the **Rollback Independence Rule**
+(rollback is removable independently of what it protects, and only once production no longer
+depends on it), the **Data Removal Rule** (physical deletion is the *final* step, after every read
+and write path and rollback are retired and confidence is demonstrated), and the **Hidden Read
+Path Rule** (the census of consumers reaches into the database) — this standard names the **whole
+bar** that all of them serve, and the *spirit* that makes deletion safe rather than merely
+sequenced:
+
+> **A migration may permanently remove infrastructure only after all of the following have been
+> independently demonstrated: behavioural equivalence, runtime independence, rollback independence,
+> operational independence, production confidence, successful completion of the full validation
+> discipline. Deletion is the final confirmation of replacement, never the mechanism used to
+> achieve it.**
+
+The rule binds **six independence faces**, each demonstrated *separately* — not inferred from one
+another, and not from the migration tooling reporting "safe". For Directive #015 they map onto the
+evidence the increments banked: **behavioural equivalence** (the registry ran as a
+continuously-verified *shadow* of the legacy model — the Behaviour Preservation and Shadow
+Validation Rules, the fourteenth–sixteenth); **runtime independence** (every runtime read served
+by the registry, application *and* database — the Read Migration and Hidden Read Path Rules, LR3 /
+LR5.2 / LR5.4A); **rollback independence** (the operator rollback lever retired on its own evidence
+— the Rollback Independence Rule, LR5.3); **operational independence** (production demonstrated it
+no longer depends on the legacy store, the mirror or the parity tooling); **production confidence**
+(the read-only confidence audit's `registryOnlyReady` — every employee served the registry, zero
+backfill gaps, zero read errors — the Retirement Readiness Rule, LR4); and the **full validation
+discipline** (the six-gate bar green on every increment). Only when all six were *independently*
+green did LR5.4B drop the columns.
+
+The rule's force is the second sentence: **deletion is a confirmation, not a mechanism.** A teardown
+that *uses* the drop to achieve the cutover — that flips behaviour and deletes the old store in one
+motion — has inverted the order, because it can no longer prove the replacement was complete
+*before* the irreversible step; the proof and the deletion have collapsed into a single
+unreviewable event. The Capability Registry *replaced* `ai_employees.tools_allowed` / `permissions`
+increments before LR5.4B ran — R4 switched the serve path, LR1–LR3 migrated the writes and reads,
+LR5.1–LR5.3 retired the mirror and rollback, LR5.4A migrated the last SQL reader — so that dropping
+the columns changed *no behaviour at all*: it only confirmed an independence already demonstrated on
+all six faces. A migration that cannot make that claim has not earned the drop.
+
+This standard was anticipated by the LR5.4A and LR5.4B implementation under the working title **the
+Legacy Independence Rule** (*"physical legacy structures may be removed only once completely
+independent of runtime execution"*) — that label appears in the increment code, migrations and tests
+as the twenty-eighth standard. Per [`numbering.md`](./numbering.md) Rule 4 (history is immutable;
+the ledger is authoritative; older labels are recorded as aliases), those artifacts stand as
+written: **the canonical name is the Final Removal Rule**, and "the Legacy Independence Rule" is its
+recorded working-title alias — the same standard, the twenty-eighth, now stated in the CEO's formal
+terms. Generalised beyond #015, the rule is permanent and platform-wide: **no** future directive
+removes **any** infrastructure — a column, a table, a function, a service, a queue — until the six
+faces are independently demonstrated and the replacement is proven complete; deletion is always the
+last confirmation, never the act that does the work.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
