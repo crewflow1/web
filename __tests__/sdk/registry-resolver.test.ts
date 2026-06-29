@@ -2,13 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   applicableGrants,
   AUTHORITY_FLOOR,
+  classifyServingConfidence,
   compareAuthority,
   composeGrants,
   decideServedAuthority,
   MEMORY_SCOPE_FLOOR,
+  summarizeConfidence,
   type ComparableAuthority,
+  type ConfidenceOutcome,
   type GrantRow,
   type ResolvedAuthority,
+  type ServingDecision,
 } from "@/server/sdk/registry-resolver";
 
 /**
@@ -399,5 +403,113 @@ describe("decideServedAuthority — the runtime authority switch (R4)", () => {
     ]) {
       expect(d.basis).toBe("legacy");
     }
+  });
+});
+
+// =====================================================================
+// 11. The LR4 production-confidence law (classify + summarize), PURE.
+//     The Bank-Confidence instrument's verdict is a fold over the SAME
+//     serving decisions the runtime serves — proposal §4 made measurable.
+// =====================================================================
+
+describe("classifyServingConfidence — one decision → one confidence outcome", () => {
+  it("served registry IN PARITY → registry-parity (the only confident outcome)", () => {
+    expect(classifyServingConfidence({ basis: "registry" })).toBe("registry-parity");
+  });
+
+  it("served registry but DIVERGED → registry-divergent (must be accounted for, §4.2)", () => {
+    const decision: ServingDecision = {
+      basis: "registry",
+      divergence: {
+        dimensions: ["tokens"],
+        legacy: comparable(),
+        registry: comparable({ tokens: ["x"] }),
+      },
+    };
+    expect(classifyServingConfidence(decision)).toBe("registry-divergent");
+  });
+
+  it("registry silent (reason 'empty') → backfill-gap (§4.4 must be zero)", () => {
+    expect(classifyServingConfidence({ basis: "legacy", reason: "empty" })).toBe("backfill-gap");
+  });
+
+  it("registry read failed (reason 'error') → registry-error", () => {
+    expect(classifyServingConfidence({ basis: "legacy", reason: "error" })).toBe("registry-error");
+  });
+
+  it("deliberate rollback (reason 'rollback') → rolled-back (confidence not accruing)", () => {
+    expect(classifyServingConfidence({ basis: "legacy", reason: "rollback" })).toBe("rolled-back");
+  });
+
+  it("is TOTAL — a legacy basis with no reason still classifies (defensive default)", () => {
+    expect(classifyServingConfidence({ basis: "legacy" })).toBe("rolled-back");
+  });
+
+  it("composes with decideServedAuthority — the audit measures what the runtime serves", () => {
+    // The whole point: the classification is taken from the runtime's OWN decision law, so a
+    // sweep's verdict can never diverge from what the serve path does.
+    const inParity = decideServedAuthority({
+      control: "registry",
+      registry: resolved({ tokens: ["read.web"] }),
+      legacy: comparable({ tokens: ["read.web"] }),
+    });
+    expect(classifyServingConfidence(inParity)).toBe("registry-parity");
+
+    const gap = decideServedAuthority({
+      control: "registry",
+      registry: AUTHORITY_FLOOR,
+      legacy: comparable({ tokens: ["read.web"] }),
+    });
+    expect(classifyServingConfidence(gap)).toBe("backfill-gap");
+
+    const rolledBack = decideServedAuthority({
+      control: "legacy",
+      registry: resolved({ tokens: ["read.web"] }),
+      legacy: comparable({ tokens: ["read.web"] }),
+    });
+    expect(classifyServingConfidence(rolledBack)).toBe("rolled-back");
+  });
+});
+
+describe("summarizeConfidence — the measurable §4 aggregate", () => {
+  it("counts every class and is frozen", () => {
+    const outcomes: ConfidenceOutcome[] = [
+      "registry-parity",
+      "registry-parity",
+      "registry-divergent",
+      "backfill-gap",
+      "registry-error",
+      "rolled-back",
+    ];
+    const s = summarizeConfidence(outcomes);
+    expect(s).toEqual({
+      total: 6,
+      registryParity: 2,
+      registryDivergent: 1,
+      backfillGaps: 1,
+      registryErrors: 1,
+      rolledBack: 1,
+      registryOnlyReady: false,
+    });
+    expect(Object.isFrozen(s)).toBe(true);
+  });
+
+  it("registryOnlyReady is true ONLY when every employee is served registry in parity", () => {
+    expect(summarizeConfidence(["registry-parity", "registry-parity"]).registryOnlyReady).toBe(true);
+    // A single non-parity outcome of any kind defeats readiness.
+    for (const spoiler of ["registry-divergent", "backfill-gap", "registry-error", "rolled-back"] as const) {
+      expect(summarizeConfidence(["registry-parity", spoiler]).registryOnlyReady).toBe(false);
+    }
+  });
+
+  it("an EMPTY roster is NOT ready — there is nothing to be confident about", () => {
+    const s = summarizeConfidence([]);
+    expect(s.total).toBe(0);
+    expect(s.registryOnlyReady).toBe(false);
+  });
+
+  it("is deterministic — the same outcomes always summarise identically", () => {
+    const outcomes: ConfidenceOutcome[] = ["registry-parity", "backfill-gap", "registry-parity"];
+    expect(summarizeConfidence(outcomes)).toEqual(summarizeConfidence(outcomes));
   });
 });
