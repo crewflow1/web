@@ -766,6 +766,59 @@ introduces is **temporary architecture** from the moment it is created — owned
 exit criteria, continuously validated against the model it shadows, and carrying an approved plan for
 its own removal — so compatibility always stays a bridge, never a foundation.
 
+### The Retirement Readiness Rule
+
+A **twenty-second** standard, set by CEO directive on the review of **Directive #015 LR4** (the
+production-confidence audit that banked the migration's operational evidence; independent CTO review).
+The migration standards to here govern a compatibility layer's whole life — its data (the fourteenth),
+its behaviour (the fifteenth), its order (the sixteenth), its rollback (the seventeenth), its deletion
+gate (the eighteenth), the coexistence discipline of the retained model (the nineteenth), the
+structural completeness that makes removal contemplatable (the twentieth), and the accountability the
+retained layer carries for its whole life (the twenty-first). This one governs the **moment of
+transition** those standards lead to — when a compatibility layer may **enter retirement** at all —
+and fixes that the trigger is *objective operational evidence*, independently reviewed, never elapsed
+time nor a sense that the replacement "seems fine":
+
+> **A compatibility layer may enter retirement only when objective operational evidence demonstrates
+> that it is no longer required. Retirement readiness requires: sustained production stability, zero
+> unresolved parity divergence, successful rollback validation, complete operational observability, and
+> documented retirement evidence. Retirement is authorised only after these conditions have been
+> independently reviewed.**
+
+It is the **go/no-go** standard of the migration arc — the hinge between *keeping* a compatibility
+layer and *removing* it. The Compatibility Layer Rule (the twenty-first) requires the retained layer to
+carry measurable exit criteria and an approved retirement plan; this rule fixes **when that plan may be
+executed** — the objective bar the exit criteria must be shown to have met before retirement begins,
+and the independent review that must confirm it. It sits *before* the Evidence Before Deletion Rule
+(the eighteenth), not in its place: the Retirement Readiness Rule authorises **entering** the
+retirement phase at all; the Evidence Before Deletion Rule then gates **each individual deletion**
+within it. The rule binds five conditions, **conjunctively**, behind a review gate. **Sustained
+production stability** — the replacement has run authoritative on real traffic for the defined window
+without incident (the Rollback Readiness Rule's bar, now measured). **Zero unresolved parity
+divergence** — every divergence the parity instruments surfaced is accounted for, none left open.
+**Successful rollback validation** — the rollback path has been *exercised and proven to work*, not
+merely kept present, so the safety net is known-good for the retirement itself. **Complete operational
+observability** — the window was *measured*, not merely elapsed: the instruments that watch parity,
+fallback, and readiness are in place and reporting. **Documented retirement evidence** — the evidence
+is recorded as a reviewable artefact (a ledger), not a recollection. And the final clause is a hard
+gate: even with all five met, retirement **begins only after independent review** authorises it. The
+rule's force is that **entering a compatibility layer's retirement without objective operational
+evidence of the five conditions, or without independent review of that evidence, is a standards
+violation** — so retirement is always triggered by proof, never by patience or optimism.
+
+This is the gate Directive #015's legacy-removal phase must clear before it begins. **LR4** gathered
+exactly this evidence: the production-confidence audit renders the readiness bar as one measurable
+signal (`registryOnlyReady`), the [LR4 evidence ledger](./directive-015-lr4-production-confidence-evidence.md)
+records the Compatibility Layer Rule's four attributes met, the rollback control is retained and its
+honest measurement proven, and parity monitoring stays live throughout. Under this rule, the legacy
+`ai_employees` model may **enter retirement** — the sequence the **LR5 Proposal** is authorised to
+*design* — only once those five conditions are demonstrated on production traffic over the CEO-set
+window and **independently reviewed**; the LR5 Proposal is **design only**, and no retirement
+implementation begins until it has been reviewed and approved. Generalised beyond #015, the rule is
+permanent: every compatibility layer the platform retires crosses the same threshold — objective
+operational evidence that it is no longer required, recorded and independently reviewed — so retirement
+is always an earned, evidenced engineering act, never a quiet drift into removal.
+
 ---
 
 ## 3. The contract map
