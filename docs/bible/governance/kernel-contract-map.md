@@ -1036,6 +1036,65 @@ is where a migration ends, never where it economises.
 
 ---
 
+### The Hidden Read Path Rule
+
+A **twenty-seventh** standard, set by CEO directive on the review of **Directive #015 LR5.4** —
+specifically on the *halt* of LR5.4, when planning the column drop surfaced a live reader the prior
+census had missed. The Read Migration Rule (the twenty-fourth) had required that every consumer of
+the legacy store be identified, migrated and independently validated before any read path came down,
+and the Data Removal Rule (the twenty-sixth) had made "all read paths are retired" a precondition of
+physical deletion. LR5.2 executed that census and reported every reader migrated — but the census had
+swept the *application* tier alone. A `security definer` SQL function, `hq_memory_write` (migration
+`20260723000000`), was still reading `ai_employees.permissions -> 'scopes'` to decide whether a
+shared-memory write could proceed autonomously: a genuine, live read path, invisible to a census that
+looked only at TypeScript. Dropping the column would not have failed at migration time — PostgreSQL
+records no dependency from a PL/pgSQL function body to the columns it names — but would have broken the
+gate at its next call, in production. This standard fixes *the scope of "every consumer"*:
+
+> **No destructive migration may proceed until every runtime consumer—including SQL functions,
+> SECURITY DEFINER procedures, triggers, and stored routines—has been independently verified as
+> migrated. Database code is production code and receives the same migration discipline as application
+> code.**
+
+The rule binds two disciplines the earlier standards assumed but never named. **The census of
+consumers must reach into the database.** "All readers identified" (the twenty-fourth) and "all read
+paths retired" (the twenty-sixth) are satisfied only when the search has covered SQL functions,
+`security definer` procedures, triggers and stored routines — not the application tier alone; a reader
+that lives in the database is still a reader, and a census that cannot see it is incomplete, not
+clean. **Database code receives the same migration discipline as application code.** A SQL routine
+that reads the legacy store must be identified, migrated to the new source, and *independently
+verified* as migrated before a destructive migration proceeds — exactly as an application reader must;
+the discipline does not weaken at the language boundary. Together they close the gap the discovery
+exposed: the descent the Removal Sequencing Rule (the twenty-third) mandates is dependency-ordered,
+and a dependency the census never saw is one the ordering never severed.
+
+The rule's force is that **proceeding with a destructive migration while any runtime consumer —
+application *or* database — remains unmigrated and unverified is a standards violation**, regardless of
+whether the migration tooling reports the change as safe. The danger is precisely that it *does*
+report safe: a column dropped under a PL/pgSQL reader passes the migration, then fails at the reader's
+next call, turning a teardown into a production incident with no fallback — the Data Removal Rule's
+deletion has no undo, and the Single Source of Authority Rule (the thirteenth) forbids re-deriving the
+dropped store. "Database code is production code" is the premise that makes the census honest: the
+boundary between application and database is an implementation detail, not a discipline boundary, and a
+standard that stopped at that boundary could be satisfied while a live read path remained.
+
+For Directive #015 this **splits LR5.4**. The discovery is a genuine remaining read path, so a
+security-gate migration may not be bundled with irreversible schema deletion. LR5.4 becomes two
+increments. **LR5.4A** migrates `hq_memory_write` to resolve the `memory.write.shared` authority
+*exclusively* from the Capability Registry — behaviour-preserving (the token is already folded into
+every grant by the backfill, so no production employee's decision changes), no schema deletion,
+validated independently. **LR5.4B** then drops the legacy authority columns, removes the obsolete
+parity oracle and the compatibility helpers, and preserves the migration, audit and confidence
+histories — the teardown the Data Removal Rule authorised, now correctly gated behind the migration of
+*this* reader and begun only after LR5.4A is reviewed and approved. This reconciles the twenty-sixth
+standard's account: its "LR5.4" is now **LR5.4B**, and its "LR5.2 migrated every reader" held for the
+application tier but missed this SQL reader — the gap this rule names and LR5.4A closes. Generalised
+beyond #015, the rule is permanent: a runtime consumer in the database is a runtime consumer, and no
+irreversible migration proceeds until the census has reached the database tier and proven it migrated,
+by the same evidence and the same independent review an application reader demands.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,

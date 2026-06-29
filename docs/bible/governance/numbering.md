@@ -158,7 +158,8 @@ audit)** review the **Retirement Readiness Rule**; on the **LR5 Proposal (the le
 sequence)** review the **Removal Sequencing Rule**; on the **LR5.1 (retire the capability
 mirror)** review the **Read Migration Rule**; and on the **LR5.2 (migrate the legacy read paths)**
 review the **Rollback Independence Rule**; and on the **LR5.3 (retire the rollback mechanism)** review
-the **Data Removal Rule** (all fourteen homed in
+the **Data Removal Rule**; and on the **LR5.4 (legacy authority column removal)** review the **Hidden
+Read Path Rule** (all fifteen homed in
 the [Kernel Contract Map](./kernel-contract-map.md) §2). Implementation proceeds
 slice by slice, each gated on review of the last — **R1 (Registry Schema), R2 (Backfill + Parity
 Gate), R3 (runtime capability resolver + SDK read integration) and R4 (runtime authority switch —
@@ -207,6 +208,20 @@ the production-confidence evidence and the operational audit history, and retain
 `department`)** as the **fourth removal increment**. The legacy authority columns come down in LR5.4 as
 the final implementation step; the parity tooling and the final migration validation follow, and gate
 the directive's completion.
+On planning **LR5.4** a hidden read path surfaced: `hq_memory_write` — a `security definer` SQL
+function (migration `20260723000000`) — still read `ai_employees.permissions -> 'scopes'` to gate the
+`memory.write.shared` autonomy decision, a live reader the LR5.2 census had missed because it sweeps
+application code, not database code. The CEO ratified the halt as correct, set the **Hidden Read Path
+Rule** (no destructive migration proceeds until every runtime consumer — SQL functions, SECURITY
+DEFINER procedures, triggers and stored routines included — has been independently verified as
+migrated; database code is production code) and **split LR5.4**: **LR5.4A** migrates `hq_memory_write`
+to resolve `memory.write.shared` exclusively from the registry — behaviour-preserving (the token is
+already in every grant), no schema deletion, independently validated — and **LR5.4B** then performs
+the physical removal the Data Removal Rule authorised (drop the columns, remove the obsolete parity
+oracle and the compatibility helpers, preserve the migration, audit and confidence histories),
+authorised only after LR5.4A is reviewed and approved. The "LR5.4" authorised above is accordingly
+**LR5.4B**; the column removal remains the final implementation step, now correctly gated behind the
+migration of this last reader.
 Contract **#8 (Capability Registry)** graduates Reserved → Established only on #015 completion (after
 the legacy-removal phase).
 
