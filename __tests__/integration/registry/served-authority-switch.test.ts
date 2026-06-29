@@ -27,18 +27,17 @@ import { resolveEmployeeCapabilities } from "@/server/sdk/tasks";
  *   1. SWITCH PRESERVES PARITY — with the registry authoritative, every live employee is
  *      served the registry (`source: "registry"`) AND the served tokens equal the legacy
  *      tokens (the flat mirror): the transition is behaviour-preserving at the cut.
- *   2. ROLLBACK SERVES LEGACY — with the control rolled back to "legacy", every employee is
- *      served the legacy resolution VERBATIM and the registry is not served.
- *   3. FAIL-SAFE NEVER STRANDS — under registry authority, a subject the registry is silent
- *      about (no grant — a backfill gap) is still served its retained legacy capabilities.
- *   4. REGISTRY IS TRULY AUTHORITATIVE — under registry authority, an out-of-band divergence
+ *   2. FAIL-SAFE NEVER STRANDS — a subject the registry is silent about (no grant — a backfill
+ *      gap) is still served its retained legacy capabilities. (LR5.3 retired the deliberate
+ *      rollback; the registry is the SOLE authority, with legacy as the AUTOMATIC fail-safe.)
+ *   3. REGISTRY IS TRULY AUTHORITATIVE — under registry authority, an out-of-band divergence
  *      is SERVED from the registry (monitored, not silently repaired, not a fallback),
  *      proving the registry — not the legacy model — is the served source.
  *
- * The LR3 block below proves the SAME four behaviours for the FULL served authority
+ * The LR3 block below proves the SAME behaviours for the FULL served authority
  * (resolveServedAuthority) — extending the switch from tokens to posture AND memory scope,
  * the last runtime reads R4 left on the legacy model: every dimension is served from the
- * registry in parity, rolls back together, and fails safe together.
+ * registry in parity and fails safe together.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no database,
  * FAILED loudly in CI if the database is missing.
@@ -90,7 +89,7 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
     const gc = grantClient();
     const drift: string[] = [];
     for (const emp of emps) {
-      const served = await resolveServedCapabilities(emp, { client: gc, control: "registry" });
+      const served = await resolveServedCapabilities(emp, { client: gc });
       // The served source is the registry (the R4 transition) and the served tokens equal
       // the legacy tokens (parity preserved through the switch — the flat mirror).
       if (served.source !== "registry") {
@@ -104,23 +103,6 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
       if (!same) drift.push(`${emp.slug}: tokens diverge through the switch`);
     }
     expect(drift, `R4 switch out of parity: ${drift.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("ROLLBACK (control 'legacy') serves the legacy resolution VERBATIM and never the registry", async () => {
-    const emps = await roster();
-    expect(emps.length).toBeGreaterThan(0);
-
-    const gc = grantClient();
-    for (const emp of emps) {
-      const served = await resolveServedCapabilities(emp, { client: gc, control: "legacy" });
-      const legacy = resolveEmployeeCapabilities(emp);
-      // Rolled back: the served set IS the legacy resolution (tokens AND source), and the
-      // registry is never the served source even though the control still consults it as a
-      // shadow.
-      expect(served.source, `${emp.slug}: rollback served the registry`).not.toBe("registry");
-      expect(served.source).toBe(legacy.source);
-      expect([...served.tokens], `${emp.slug}: rollback tokens drift`).toEqual([...legacy.tokens]);
-    }
   });
 
   it("FAIL-SAFE — under registry authority, a subject the registry is silent about is served its retained legacy capabilities (never stranded)", async () => {
@@ -146,7 +128,6 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
     // Registry authoritative, yet the phantom is served its legacy capabilities, not stranded.
     const served = await resolveServedCapabilities(phantom, {
       client: grantClient(),
-      control: "registry",
     });
     const legacy = resolveEmployeeCapabilities(phantom);
     expect(served.source, "a silent registry must fall back to legacy").toBe(legacy.source);
@@ -163,7 +144,6 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
 
     const before = await resolveServedCapabilities(sample, {
       client: grantClient(),
-      control: "registry",
     });
     expect(before.source).toBe("registry");
     expect(before.tokens.length, "need a token to drop").toBeGreaterThan(0);
@@ -178,7 +158,6 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
     expect(broke.error, broke.error?.message).toBeNull();
     const afterBreak = await resolveServedCapabilities(sample, {
       client: grantClient(),
-      control: "registry",
     });
 
     // Repair it BEFORE asserting, so the roster is always left back in parity.
@@ -190,7 +169,6 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
     expect(repaired.error, repaired.error?.message).toBeNull();
     const afterRepair = await resolveServedCapabilities(sample, {
       client: grantClient(),
-      control: "registry",
     });
 
     // The diverged value is SERVED FROM THE REGISTRY — still source "registry" (not a legacy
@@ -219,16 +197,14 @@ describeIntegration("Capability Registry · R4 served-authority switch (D-05)", 
  * LR3 — the FULL served authority (resolveServedAuthority). R4 (above) switched TOKENS to the
  * registry; LR3 extends the switch to the last runtime reads R4 left on the legacy model —
  * POSTURE and MEMORY SCOPE — by serving every dimension from the ONE source the serving
- * decision chooses. These four tests prove the SAME four behaviours the R4 block proves for
- * tokens, now for tokens AND posture AND memory scope together:
+ * decision chooses. These tests prove the SAME behaviours the R4 block proves for tokens, now
+ * for tokens AND posture AND memory scope together:
  *
  *   1. SWITCH PRESERVES PARITY — every dimension is served from the registry and equals the
  *      legacy resolution (the flat mirror): behaviour-preserving at the cut.
- *   2. ROLLBACK SERVES LEGACY — control "legacy" serves the legacy resolution on every
- *      dimension and never the registry.
- *   3. FAIL-SAFE NEVER STRANDS — a subject the registry is silent about is served its retained
- *      legacy authority on every dimension.
- *   4. REGISTRY IS TRULY AUTHORITATIVE — an out-of-band posture + memory_scope divergence is
+ *   2. FAIL-SAFE NEVER STRANDS — a subject the registry is silent about is served its retained
+ *      legacy authority on every dimension. (LR5.3 retired the deliberate rollback.)
+ *   3. REGISTRY IS TRULY AUTHORITATIVE — an out-of-band posture + memory_scope divergence is
  *      SERVED from the registry (monitored, not silently repaired), proving the registry — not
  *      the legacy model — is the served source for the LR3 dimensions too.
  */
@@ -240,7 +216,7 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
     const gc = grantClient();
     const drift: string[] = [];
     for (const emp of emps) {
-      const served = await resolveServedAuthority(emp, { client: gc, control: "registry" });
+      const served = await resolveServedAuthority(emp, { client: gc });
       if (served.source !== "registry") {
         drift.push(`${emp.slug}: served ${served.source}, not registry`);
         continue;
@@ -260,30 +236,6 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
       if (mismatch.length) drift.push(`${emp.slug}: ${mismatch.join(", ")} diverge through the switch`);
     }
     expect(drift, `LR3 switch out of parity: ${drift.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("ROLLBACK (control 'legacy') serves the legacy resolution on EVERY dimension and never the registry", async () => {
-    const emps = await roster();
-    expect(emps.length).toBeGreaterThan(0);
-
-    const gc = grantClient();
-    for (const emp of emps) {
-      const served = await resolveServedAuthority(emp, { client: gc, control: "legacy" });
-      const legacy = legacyAuthorityOf(emp);
-      // Rolled back: every served dimension IS the legacy resolution, and the top-level source
-      // is the legacy model (never the registry, even though the control still shadows it).
-      expect(served.source, `${emp.slug}: rollback served the registry`).toBe("ai_employees");
-      expect([...served.capabilities.tokens], `${emp.slug}: rollback tokens drift`).toEqual([
-        ...legacy.tokens,
-      ]);
-      expect(served.posture.canExecute, `${emp.slug}: rollback canExecute drift`).toBe(
-        legacy.canExecute,
-      );
-      expect(served.posture.requiresApproval, `${emp.slug}: rollback requiresApproval drift`).toBe(
-        legacy.requiresApproval,
-      );
-      expect(served.memoryScope, `${emp.slug}: rollback memoryScope drift`).toBe(legacy.memoryScope);
-    }
   });
 
   it("FAIL-SAFE — under registry authority, a subject the registry is silent about is served its retained legacy authority on EVERY dimension (never stranded)", async () => {
@@ -309,7 +261,6 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
     // Registry authoritative, yet the phantom is served its legacy authority on every dimension.
     const served = await resolveServedAuthority(phantom, {
       client: grantClient(),
-      control: "registry",
     });
     const legacy = legacyAuthorityOf(phantom);
     expect(served.source, "a silent registry must fall back to legacy").toBe("ai_employees");
@@ -341,7 +292,6 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
 
     const before = await resolveServedAuthority(sample, {
       client: grantClient(),
-      control: "registry",
     });
     expect(before.source).toBe("registry");
 
@@ -358,7 +308,6 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
     expect(broke.error, broke.error?.message).toBeNull();
     const afterBreak = await resolveServedAuthority(sample, {
       client: grantClient(),
-      control: "registry",
     });
 
     // Repair to the EXACT originals BEFORE asserting, so the roster is always left in parity.
@@ -370,7 +319,6 @@ describeIntegration("Capability Registry · LR3 served authority — posture + m
     expect(repaired.error, repaired.error?.message).toBeNull();
     const afterRepair = await resolveServedAuthority(sample, {
       client: grantClient(),
-      control: "registry",
     });
 
     // The diverged posture AND memory scope are SERVED FROM THE REGISTRY — still source

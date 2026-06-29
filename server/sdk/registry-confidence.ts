@@ -1,11 +1,9 @@
 import "server-only";
-import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   classifyServingConfidence,
   decideServedAuthority,
   summarizeConfidence,
-  type AuthoritySource,
   type ConfidenceOutcome,
   type ConfidenceSummary,
   type ResolvedAuthority,
@@ -38,13 +36,13 @@ import {
  * then aggregates a measurable {@link ConfidenceSummary}. It makes the §4 window MEASURED, not
  * merely elapsed. It REMOVES NOTHING, MUTATES NOTHING (it must never alter authority while
  * measuring it), and changes no served behaviour — the legacy columns, the deterministic
- * mirror, the rollback control, and the parity verification all remain exactly as LR3 left
- * them. Removal of any of those is a later, separately-authorised phase (C5–C7), which LR4
+ * mirror and the parity verification all remain (LR5.3 later retired the rollback control).
+ * Removal of any of those is a later, separately-authorised phase (C5–C7), which LR4
  * only prepares the EVIDENCE for; it does not begin it.
  *
  * The §4 bar this measures, as one boolean ({@link ConfidenceSummary.registryOnlyReady}):
  * EVERY employee is served the registry IN PARITY — zero divergence, zero backfill gaps
- * (§4.4), zero read errors, zero rollback. The instant is measured here; the sustained
+ * (§4.4), zero read errors. The instant is measured here; the sustained
  * WINDOW over which it must hold continuously is operational (the CEO sets the duration —
  * proposal §9 fork B) and is gathered by running this sweep on an ops/CI cadence.
  */
@@ -96,8 +94,6 @@ export interface EmployeeConfidence {
 
 /** The full production-confidence report: the aggregate signal plus the per-employee detail. */
 export interface RegistryConfidenceReport {
-  /** Which source the sweep measured against (the env control, or an injected override). */
-  readonly control: AuthoritySource;
   /** The measurable aggregate — the §4 confidence signal. */
   readonly summary: ConfidenceSummary;
   /** Every employee's verdict, so a divergence or gap can be named and accounted for (§4.2). */
@@ -119,18 +115,15 @@ export interface RegistryConfidenceReport {
  * run).
  *
  * `opts` mirrors {@link import("./registry-parity").resolveServedAuthority}'s injectable
- * seams: production passes none (the control is the env, the clients are the service-role
- * admin client, the roster is read live); tests inject `roster` / `client` / `control`.
+ * seams: production passes none (the clients are the service-role admin client, the roster is
+ * read live); tests inject `roster` / `client`.
  */
 export async function auditRegistryConfidence(
   opts: {
     roster?: readonly LegacyEmployee[];
     client?: GrantReadClient;
-    control?: AuthoritySource;
   } = {},
 ): Promise<RegistryConfidenceReport> {
-  const control = opts.control ?? env.CAPABILITY_AUTHORITY_SOURCE;
-
   // One admin client serves both reads when not injected; skip it entirely if both are given.
   const admin = !opts.roster || !opts.client ? createAdminClient() : null;
   const grantClient = opts.client ?? (admin as unknown as GrantReadClient);
@@ -150,7 +143,7 @@ export async function auditRegistryConfidence(
       registry = null;
     }
 
-    const decision = decideServedAuthority({ control, registry, legacy: legacyAuthorityOf(emp) });
+    const decision = decideServedAuthority({ registry, legacy: legacyAuthorityOf(emp) });
     const outcome = classifyServingConfidence(decision);
     employees.push(
       decision.divergence
@@ -160,7 +153,6 @@ export async function auditRegistryConfidence(
   }
 
   return Object.freeze({
-    control,
     summary: summarizeConfidence(employees.map((e) => e.outcome)),
     employees: Object.freeze(employees),
   });

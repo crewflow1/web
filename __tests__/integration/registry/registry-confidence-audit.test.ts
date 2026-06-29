@@ -28,15 +28,17 @@ import {
  *      + live roster + live grants) reports EVERY live employee served the registry IN PARITY:
  *      registryOnlyReady, zero backfill gaps (§4.4), zero divergence, zero read errors. This is
  *      the first banked evidence snapshot that the registry-only runtime is whole.
- *   2. ROLLBACK IS HONESTLY MEASURED — under the `legacy` control the sweep reports every
- *      employee `rolled-back` and registryOnlyReady=false: confidence is NOT accruing while
- *      rolled back (the §4 window resets), and the instrument says so.
- *   3. A BACKFILL GAP IS DETECTED — a subject the registry is silent about is classified
+ *   2. A BACKFILL GAP IS DETECTED — a subject the registry is silent about is classified
  *      `backfill-gap` and defeats readiness (the §4.4 "every employee has an authored grant"
  *      check the removal phase depends on).
- *   4. A DIVERGENCE IS DETECTED AND NAMED — an out-of-band grant change is classified
+ *   3. A DIVERGENCE IS DETECTED AND NAMED — an out-of-band grant change is classified
  *      `registry-divergent` with the offending dimension named (§4.2 "every divergence must be
  *      accounted for"), then parity is restored — leaving no trace.
+ *
+ * LR5.3 (the Rollback Independence Rule, 25th §2 standard) retired the rollback control, so the
+ * audit no longer takes a `control` opt and `rolled-back` is no longer a measurable outcome. The
+ * automatic fail-safe (registry read error / a subject the registry is silent about) and the
+ * whole confidence instrument remain — this audit is the very evidence the rule demands.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no database, FAILED
  * loudly in CI if the database is missing.
@@ -84,9 +86,8 @@ describeIntegration("Capability Registry · LR4 production-confidence audit (D-0
   it("CONFIDENCE BANKED — the full production sweep reports every employee served registry IN PARITY", async () => {
     // The production path: no injection, so the audit builds its own service-role admin client,
     // reads the live roster, and reads the live grants — proving the instrument end to end.
-    const report = await auditRegistryConfidence({ control: "registry" });
+    const report = await auditRegistryConfidence();
 
-    expect(report.control).toBe("registry");
     expect(report.summary.total, "the seeded roster must be present").toBeGreaterThan(0);
 
     // The §4 confidence bar, as one boolean: the registry-only runtime is whole at this instant.
@@ -101,25 +102,6 @@ describeIntegration("Capability Registry · LR4 production-confidence audit (D-0
     expect(report.summary.backfillGaps, "§4.4: no employee may rely on the silent fallback").toBe(0);
     expect(report.summary.registryDivergent, "§4.2: zero unexplained divergence").toBe(0);
     expect(report.summary.registryErrors, "the registry must be reliably readable").toBe(0);
-    expect(report.summary.rolledBack).toBe(0);
-  });
-
-  it("ROLLBACK IS HONESTLY MEASURED — under the legacy control every employee is rolled-back, not ready", async () => {
-    const emps = await roster();
-    expect(emps.length).toBeGreaterThan(0);
-
-    const report = await auditRegistryConfidence({
-      control: "legacy",
-      roster: emps,
-      client: grantClient(),
-    });
-
-    expect(report.control).toBe("legacy");
-    expect(report.summary.rolledBack).toBe(emps.length);
-    expect(report.summary.registryParity).toBe(0);
-    // Confidence is not accruing while rolled back, and the instrument says so.
-    expect(report.summary.registryOnlyReady).toBe(false);
-    expect(report.employees.every((e) => e.outcome === "rolled-back")).toBe(true);
   });
 
   it("A BACKFILL GAP IS DETECTED — a subject the registry is silent about defeats readiness (§4.4)", async () => {
@@ -141,7 +123,6 @@ describeIntegration("Capability Registry · LR4 production-confidence audit (D-0
     expect(registry.source, "phantom must have no applicable grant").toBe("none");
 
     const report = await auditRegistryConfidence({
-      control: "registry",
       roster: [phantom],
       client: grantClient(),
     });
@@ -179,7 +160,6 @@ describeIntegration("Capability Registry · LR4 production-confidence audit (D-0
 
     try {
       const report = await auditRegistryConfidence({
-        control: "registry",
         roster: [sample],
         client: grantClient(),
       });
@@ -201,7 +181,6 @@ describeIntegration("Capability Registry · LR4 production-confidence audit (D-0
 
     // After repair the sweep is back to parity for the sample.
     const after = await auditRegistryConfidence({
-      control: "registry",
       roster: [sample],
       client: grantClient(),
     });

@@ -29,12 +29,13 @@ import { resolve } from "node:path";
  *     now-inert e.tools_allowed / e.permissions.scopes / e.permissions.requires_approval;
  *   • the AUDIT before-snapshot reads the REGISTRY grant — not the inert columns;
  *   • the seams REUSE the one switch — resolveServedCapabilityView delegates authority to
- *     resolveServedAuthority (so rollback / fail-safe / shadow live in ONE place), threads the
- *     rollback control, and fails open; readEmployeeGrantTokens reads the EMPLOYEE grant only;
+ *     resolveServedAuthority (so the fail-safe + shadow live in ONE place) and fails open;
+ *     readEmployeeGrantTokens reads the EMPLOYEE grant only (LR5.3 later retired the rollback
+ *     control, so the view no longer threads one — legacy is the automatic fail-safe);
  *   • NOTHING authorised-to-keep is removed — the runtime switch, the legacy resolvers, the
- *     confidence audit (which reads legacy BY DESIGN), the rollback control and the migration
- *     history all remain; NO column is dropped; and memory_scope reads are DELIBERATELY
- *     retained (its mirror is still live — out of the LR5.2 sequence).
+ *     confidence audit (which reads legacy BY DESIGN) and the migration history all remain; NO
+ *     column is dropped; and memory_scope reads are DELIBERATELY retained (its mirror is still
+ *     live — out of the LR5.2 sequence). The rollback control is RETIRED (LR5.3).
  *
  * Comment text (TS block/line + JSX comments) is stripped first, so the prose that DOCUMENTS
  * the contract can neither satisfy a positive match nor trip a negative one (this file's own
@@ -65,7 +66,6 @@ const ACTIONS_REL = "app/admin/ai-boardroom/actions.ts";
 const TASKS_REL = "server/sdk/tasks.ts";
 const CONFIDENCE_REL = "server/sdk/registry-confidence.ts";
 const AIEMP_REL = "server/services/ai-employees.ts";
-const ENV_REL = "lib/env.ts";
 const LR51_MIG_REL = "supabase/migrations/20260810000000_capability_registry_retire_capability_mirror.sql";
 const MEMSCOPE_MIG_REL = "supabase/migrations/20260809000000_capability_registry_native_memory_scope.sql";
 
@@ -144,9 +144,11 @@ describe("registry LR5.2 — the read seams reuse the one switch (no parallel au
     expect(fn).toMatch(/resolveServedAuthority\(/);
   });
 
-  it("threads the rollback control through to the switch (rollback honoured)", () => {
+  it("NO LONGER threads a rollback control to the switch (LR5.3 retired the lever)", () => {
     const fn = sliceExport(parity, "export async function resolveServedCapabilityView");
-    expect(fn).toMatch(/control:\s*opts\.control/);
+    expect(fn).not.toMatch(/control:\s*opts\.control/);
+    // It passes only the injectable client through to the one authority seam.
+    expect(fn).toMatch(/resolveServedAuthority\(emp,\s*\{\s*client:\s*opts\.client\s*\}\)/);
   });
 
   it("the catalogue split fails open (a split error never breaks the admin page)", () => {
@@ -166,8 +168,8 @@ describe("registry LR5.2 — the read seams reuse the one switch (no parallel au
 });
 
 // =====================================================================
-// 4. LR5.2 boundary — preserves rollback / parity / confidence / legacy
-//    reads; removes no column; memory_scope reads deliberately retained.
+// 4. LR5.2 boundary — preserves parity / confidence / legacy reads; removes no
+//    column; memory_scope reads deliberately retained. (Rollback retired in LR5.3.)
 // =====================================================================
 
 describe("registry LR5.2 — preserves everything authorised-to-keep, removes no column", () => {
@@ -177,7 +179,7 @@ describe("registry LR5.2 — preserves everything authorised-to-keep, removes no
     expect(parity).toMatch(/export async function verifyRegistryParity/);
   });
 
-  it("preserves the legacy resolvers (the rollback / fail-safe / parity bridge reads)", () => {
+  it("preserves the legacy resolvers (the fail-safe / parity bridge reads)", () => {
     const tasks = codeOf(read(TASKS_REL));
     expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
     expect(tasks).toMatch(/export function resolveEmployeePosture/);
@@ -187,12 +189,6 @@ describe("registry LR5.2 — preserves everything authorised-to-keep, removes no
     const confidence = codeOf(read(CONFIDENCE_REL));
     expect(confidence).toMatch(/export async function auditRegistryConfidence/);
     expect(confidence).toMatch(/tools_allowed, permissions, memory_scope/);
-  });
-
-  it("preserves the rollback control (CAPABILITY_AUTHORITY_SOURCE — rollback NOT retired)", () => {
-    const env = codeOf(read(ENV_REL));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
   });
 
   it("removes NO column — the model still carries the (now-inert) legacy columns", () => {

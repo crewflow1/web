@@ -1,5 +1,4 @@
 import "server-only";
-import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MEMORY_SCOPES, type MemoryScope } from "@/lib/ai-employees/model";
 import {
@@ -15,7 +14,6 @@ import {
   decideServedAuthority,
   MEMORY_SCOPE_FLOOR,
   type AuthorityDivergence,
-  type AuthoritySource,
   type ComparableAuthority,
   type GrantRow,
   type ResolvedAuthority,
@@ -42,7 +40,7 @@ import {
  *      surfacing any divergence. RETAINED through R4 + LR3 as the standalone parity gate.
  *   3. {@link resolveServedAuthority} — the LR3 runtime authority SWITCH: serve EVERY authority
  *      dimension (tokens, posture AND memory scope) from the now-authoritative registry, with
- *      the legacy model retained as the fail-safe / rollback path.
+ *      the legacy model retained only as the automatic fail-safe.
  *   4. {@link resolveServedCapabilities} — the R4 capabilities projection of that switch,
  *      RETAINED as the focused tokens-only seam (it delegates to {@link resolveServedAuthority}).
  *
@@ -54,11 +52,11 @@ import {
  * and memory scope, so the identity served those two from the legacy model. LR3 closes that gap
  * — the last runtime READ paths still depending on legacy authority — by serving every
  * dimension from the ONE source the decision chooses ({@link resolveServedAuthority}), folding
- * the shadow comparison onto all four served dimensions. The legacy model is RETAINED — as the
- * deliberate rollback (`CAPABILITY_AUTHORITY_SOURCE=legacy`) and the automatic fail-safe (a
- * registry read error or a subject the registry is silent about both fall back to legacy) — so
- * the switch can never strand an employee. Removal of the legacy model is a later,
- * separately-authorised phase, not this one.
+ * the shadow comparison onto all four served dimensions. The legacy model is RETAINED — since
+ * LR5.3 (the Rollback Independence Rule) retired the operator rollback lever — ONLY as the
+ * automatic fail-safe (a registry read error or a subject the registry is silent about both
+ * fall back to legacy), so the switch can never strand an employee. Removal of the legacy model
+ * is a later, separately-authorised phase, not this one.
  */
 
 /** The columns the resolver reads from `hq_capability_grants`. */
@@ -212,8 +210,8 @@ function coerceMemoryScope(value: string | null | undefined): MemoryScope {
 
 /**
  * The legacy model's FULL served authority for an employee, in the served shape — the
- * retained fallback EVERY non-registry branch returns (rollback, registry read error, a
- * silent registry, or an unexpected failure). Reuses the canonical legacy resolvers
+ * retained fallback EVERY non-registry branch returns (a registry read error, a silent
+ * registry, or an unexpected failure). Reuses the canonical legacy resolvers
  * ({@link resolveEmployeeCapabilities} / {@link resolveEmployeePosture}) so the fallback can
  * never drift from what the runtime enforces today (the Single Source of Authority Rule),
  * with memory_scope coerced to the vocabulary over the safe `isolated` floor.
@@ -231,7 +229,7 @@ function legacyServedAuthority(emp: LegacyEmployee): ServedAuthority {
  * The LR3 runtime authority switch (CEO Directive #015 / D-05, Legacy Removal increment 3):
  * resolve the FULL authority to SERVE for an employee — tokens, posture AND memory scope —
  * with the Capability Registry as the AUTHORITATIVE source and the legacy `ai_employees`
- * model RETAINED as the fail-safe / rollback path.
+ * model RETAINED only as the automatic fail-safe.
  *
  * This is the seam the identity assembly calls in place of the bare legacy resolvers. R4
  * switched TOKENS to the registry but the bridge still discarded the registry-resolved
@@ -240,15 +238,13 @@ function legacyServedAuthority(emp: LegacyEmployee): ServedAuthority {
  * serving every dimension from the ONE source {@link decideServedAuthority} chooses — tokens,
  * posture and memory scope therefore come from the same side coherently; the registry can
  * never serve tokens while the legacy model serves posture. It:
- *   • reads the `CAPABILITY_AUTHORITY_SOURCE` control (default `registry`);
- *   • on a deliberate rollback (`legacy`) serves the retained legacy authority and never
- *     touches the registry — a clean escape hatch independent of registry availability;
- *   • otherwise resolves the registry authority and CONTINUOUSLY COMPARES it to the legacy
- *     baseline (the shadow verification of the Behaviour Preservation Rule, now folded onto
- *     ALL FOUR served dimensions, not just tokens), then serves the registry;
+ *   • resolves the registry authority and CONTINUOUSLY COMPARES it to the legacy baseline (the
+ *     shadow verification of the Behaviour Preservation Rule, folded onto ALL FOUR served
+ *     dimensions, not just tokens), then serves the registry;
  *   • falls back to the retained legacy authority when the registry read fails or the registry
  *     is silent for the subject (no grants — e.g. a backfill gap), so the switch can NEVER
- *     strand an employee.
+ *     strand an employee — the AUTOMATIC fail-safe. LR5.3 (the Rollback Independence Rule)
+ *     retired the operator rollback lever, so there is no deliberate path back to legacy.
  *
  * BEHAVIOUR-PRESERVING at the cut: while the R2 flat mirror holds, the registry resolves to
  * the same authority as the legacy model, so the served posture equals the legacy posture (the
@@ -260,23 +256,17 @@ function legacyServedAuthority(emp: LegacyEmployee): ServedAuthority {
  * STRICTLY non-throwing: any unexpected error degrades to the retained legacy authority (the
  * platform's proven floor). Divergence and every fallback are logged for parity monitoring.
  * The decision law itself is the PURE {@link decideServedAuthority}; this function only
- * supplies the IO (the env control, the registry read) and the monitoring side effects.
+ * supplies the IO (the registry read) and the monitoring side effects.
  *
- * `opts.client` / `opts.control` exist for tests — they mirror
- * {@link resolveAuthorityFromRegistry}'s injectable client; production passes neither, so the
- * control is the env and the client is the service-role admin client.
+ * `opts.client` exists for tests — it mirrors {@link resolveAuthorityFromRegistry}'s injectable
+ * client; production passes none, so the client is the service-role admin client.
  */
 export async function resolveServedAuthority(
   emp: LegacyEmployee,
-  opts: { client?: GrantReadClient; control?: AuthoritySource } = {},
+  opts: { client?: GrantReadClient } = {},
 ): Promise<ServedAuthority> {
   const legacy = legacyServedAuthority(emp);
   try {
-    const control = opts.control ?? env.CAPABILITY_AUTHORITY_SOURCE;
-
-    // Deliberate rollback: serve the legacy model and do not depend on the registry at all.
-    if (control === "legacy") return legacy;
-
     // Registry authoritative: resolve it (fail-open to null), then let the pure law decide.
     let registry: ResolvedAuthority | null = null;
     try {
@@ -292,14 +282,14 @@ export async function resolveServedAuthority(
       );
     }
 
-    const decision = decideServedAuthority({ control, registry, legacy: legacyAuthorityOf(emp) });
+    const decision = decideServedAuthority({ registry, legacy: legacyAuthorityOf(emp) });
 
     if (decision.basis === "registry" && registry) {
       if (decision.divergence) {
         console.warn(
           `[capability-authority] registry authoritative for ${emp.slug} but DIVERGES from the legacy baseline on ${decision.divergence.dimensions.join(
             ", ",
-          )} — serving the registry (legacy retained for rollback)`,
+          )} — serving the registry (legacy retained as the fail-safe)`,
         );
       }
       // Serve EVERY dimension from the registry: tokens (R4), posture and memory scope (LR3).
@@ -314,8 +304,8 @@ export async function resolveServedAuthority(
       });
     }
 
-    // Served the retained legacy model. A silent registry (`empty`) is worth a monitoring
-    // line (likely a backfill gap); a deliberate rollback was handled above.
+    // Served the retained legacy model via the AUTOMATIC fail-safe. A silent registry
+    // (`empty`) is worth a monitoring line (likely a backfill gap).
     if (decision.reason === "empty") {
       console.warn(
         `[capability-authority] registry is silent for ${emp.slug} (no grants) — serving retained legacy (migration fallthrough)`,
@@ -334,13 +324,13 @@ export async function resolveServedAuthority(
 /**
  * The R4 capabilities projection of the {@link resolveServedAuthority} switch — RETAINED as
  * the focused "served capabilities" seam (the tokens dimension only). It delegates to the full
- * switch and returns its `capabilities`, so the registry / rollback / fail-safe discipline is
- * defined in exactly ONE place and the tokens served here can never diverge from the tokens
- * the full authority serves. `opts.client` / `opts.control` exist for tests.
+ * switch and returns its `capabilities`, so the registry / fail-safe discipline is defined in
+ * exactly ONE place and the tokens served here can never diverge from the tokens the full
+ * authority serves. `opts.client` exists for tests.
  */
 export async function resolveServedCapabilities(
   emp: LegacyEmployee,
-  opts: { client?: GrantReadClient; control?: AuthoritySource } = {},
+  opts: { client?: GrantReadClient } = {},
 ): Promise<ResolvedCapabilitySet> {
   return (await resolveServedAuthority(emp, opts)).capabilities;
 }
@@ -362,7 +352,7 @@ export async function resolveServedCapabilities(
 // Boardroom employee page (the capability-editor pre-fill + the permissions panel) and the
 // authoring audit's before-snapshot. LR5.2 migrates those last reads onto the registry — the
 // two seams below — so every runtime AND administrative consumer of the inert columns reads
-// SERVED authority (registry-authoritative, legacy retained only as the rollback / fail-safe).
+// SERVED authority (registry-authoritative, legacy retained only as the automatic fail-safe).
 // It removes NO column, NO rollback, NO parity tooling, NO confidence audit. memory_scope is
 // deliberately OUT OF SCOPE: its mirror is still LIVE (LR2), so per the Removal Sequencing
 // Rule its readers migrate only after its writes are retired — a later increment.
@@ -388,8 +378,7 @@ export interface CatalogueReadClient {
  * for the AI Boardroom page reading the now-inert `ai_employees.tools_allowed` /
  * `permissions.scopes` / `permissions.requires_approval` directly (the Read Migration Rule).
  * Every field is sourced through {@link resolveServedAuthority}, so the admin UI shows exactly
- * what the runtime serves — registry-authoritative, honouring the rollback lever, and never
- * stranding an employee.
+ * what the runtime serves — registry-authoritative and never stranding an employee.
  */
 export interface ServedCapabilityView {
   /** The complete served token set — the union the authoring editor pre-fills and replaces. */
@@ -432,21 +421,21 @@ async function splitTokensByCatalogueKind(
 
 /**
  * Resolve an employee's SERVED capability authority for administrative display (LR5.2). It
- * delegates the authority resolution to {@link resolveServedAuthority} — so the rollback lever,
- * the fail-safe fallback and the shadow comparison are defined in exactly ONE place and the
- * admin view can never diverge from what the runtime serves — then splits the served tokens by
- * catalogue kind for the tools/scopes presentation.
+ * delegates the authority resolution to {@link resolveServedAuthority} — so the fail-safe
+ * fallback and the shadow comparison are defined in exactly ONE place and the admin view can
+ * never diverge from what the runtime serves — then splits the served tokens by catalogue kind
+ * for the tools/scopes presentation.
  *
  * FAIL-OPEN on the split: a catalogue read error costs only the tools/scopes partition (the
  * whole served set is shown as tools, nothing dropped), never the page. `opts.client` /
- * `opts.catalogue` / `opts.control` exist for tests; production passes none, so the grant and
- * catalogue reads use the service-role admin client and the control is the env.
+ * `opts.catalogue` exist for tests; production passes none, so the grant and catalogue reads
+ * use the service-role admin client.
  */
 export async function resolveServedCapabilityView(
   emp: LegacyEmployee,
-  opts: { client?: GrantReadClient; catalogue?: CatalogueReadClient; control?: AuthoritySource } = {},
+  opts: { client?: GrantReadClient; catalogue?: CatalogueReadClient } = {},
 ): Promise<ServedCapabilityView> {
-  const served = await resolveServedAuthority(emp, { client: opts.client, control: opts.control });
+  const served = await resolveServedAuthority(emp, { client: opts.client });
   const tokens = served.capabilities.tokens;
 
   let toolsAllowed: readonly string[] = [...tokens];
@@ -477,8 +466,8 @@ export async function resolveServedCapabilityView(
  * composed inheritance), read straight from `hq_capability_grants`. The LR5.2 replacement for
  * the authoring audit's before-snapshot, which used to union the now-inert legacy columns: this
  * reads the authoritative employee grant so the audit's before/after are SYMMETRIC — both the
- * employee-scoped token set the authoring RPC replaces — and rollback-independent (authoring
- * always writes the registry; the rollback lever governs only reads). Returns `[]` when the
+ * employee-scoped token set the authoring RPC replaces — and independent of the served source
+ * (authoring always writes the registry). Returns `[]` when the
  * employee has no grant yet (a fresh author / backfill gap). FAIL-OPEN: the before-snapshot is
  * best-effort audit metadata, so a read error degrades to `[]` rather than blocking the write.
  * Sorted-distinct, matching the grant's stored normal form. `opts.client` exists for tests.

@@ -27,8 +27,9 @@ import { resolve } from "node:path";
  *     what the runtime actually serves;
  *   • a per-employee registry read failure is CAUGHT (a measured `registry-error` signal),
  *     never an abort of the sweep;
- *   • it REMOVES NOTHING — legacy resolvers, the rollback control, and the parity
- *     verification are untouched (removal is a later, separately-authorised phase).
+ *   • it REMOVES NOTHING — legacy resolvers and the parity verification are untouched
+ *     (removal is a later, separately-authorised phase; LR5.3 since retired the rollback
+ *     control, leaving the automatic fail-safe and this audit intact).
  *
  * Comment text is stripped first, so the prose that DOCUMENTS the contract can neither
  * satisfy a positive match nor trip a negative one.
@@ -123,9 +124,11 @@ describe("registry LR4 — the audit delegates, never re-implements", () => {
     expect(code).toMatch(/legacyAuthorityOf\(/);
   });
 
-  it("honours the rollback control (it measures what is ACTUALLY served, env by default)", () => {
-    expect(specs).toContain("@/lib/env");
-    expect(code).toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
+  it("NO LONGER reads a rollback control (LR5.3 — it measures the registry-only serve path)", () => {
+    // With the operator lever retired, the audit no longer imports env or reads an authority
+    // source; it measures the ONE decision the runtime now serves, unconditionally.
+    expect(specs).not.toContain("@/lib/env");
+    expect(code).not.toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
   });
 });
 
@@ -147,7 +150,8 @@ describe("registry LR4 — a registry read failure is measured, never fatal to t
 
 // =====================================================================
 // 4. LR4 boundary — the instrument REMOVES NOTHING (it only measures).
-//    (CEO: do NOT remove legacy authority / mirroring / rollback / parity tooling.)
+//    (CEO: do NOT remove legacy authority / mirroring / parity tooling. LR5.3 later retired the
+//    operator rollback lever — separately authorised — so this boundary no longer pins it.)
 // =====================================================================
 
 describe("registry LR4 — nothing authorised-to-keep is removed", () => {
@@ -157,16 +161,10 @@ describe("registry LR4 — nothing authorised-to-keep is removed", () => {
     expect(tasks).toMatch(/export function resolveEmployeePosture/);
   });
 
-  it("the parity verification AND the rollback fallback are still in the bridge", () => {
+  it("the parity verification AND the legacy fail-safe are still in the bridge", () => {
     const parity = codeOf(read(PARITY));
     expect(parity).toMatch(/export async function verifyRegistryParity/);
     expect(parity).toMatch(/legacyServedAuthority\(/);
-  });
-
-  it("the rollback control is still shipped (registry-default authority source)", () => {
-    const env = codeOf(read("lib/env.ts"));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
   });
 
   it("the pure resolver still hosts the confidence law as PURE (no IO leaked into the core)", () => {
