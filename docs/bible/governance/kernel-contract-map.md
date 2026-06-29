@@ -976,6 +976,66 @@ production has proven it no longer needs it, with that proof independently check
 
 ---
 
+### The Data Removal Rule
+
+A **twenty-sixth** standard, set by CEO directive on the review of **Directive #015 LR5.3** (the
+increment that retired the rollback mechanism — the `CAPABILITY_AUTHORITY_SOURCE` lever and the
+on-demand legacy-serving path it gated — having first demonstrated stable registry-only operation;
+independent CTO review). The Removal Sequencing Rule (the twenty-third) places "then remove stored
+legacy data" as the *third* teardown step — after the writes are stopped and the rollback is retired,
+before the tooling is cleaned up; the Evidence Before Deletion Rule (the eighteenth) required that no
+store come down until its non-use is proven by independently-reviewed evidence. This standard fixes
+*the complete set of preconditions* that gate that third step, and *where in the implementation it
+must fall*:
+
+> **Data may be physically removed only after: all write paths are retired, all read paths are
+> retired, rollback has been retired, production confidence has been demonstrated, retirement
+> evidence has been independently reviewed. Physical deletion is always the final implementation
+> step.**
+
+The rule gathers five preconditions and one ordering law, each homed in a standard before it. **All
+write paths are retired** — the first teardown step of the Removal Sequencing Rule (the
+twenty-third); nothing may still be writing the store when it is dropped, or the drop races a live
+producer. **All read paths are retired** — the Read Migration Rule (the twenty-fourth), which proved
+every reader had left the legacy store before it could come down; a column dropped under a live reader
+is a runtime failure, not a cleanup. **Rollback has been retired** — the Rollback Independence Rule
+(the twenty-fifth); the escape hatch that fell back to the legacy store must be gone first, because
+data that some rollback path can still demand is data still in use. **Production confidence has been
+demonstrated** — the Retirement Readiness Rule (the twenty-second) and the Shadow Validation Rule (the
+sixteenth) supply the sustained-stability and continuous-parity evidence that the new source has
+served alone, correctly, long enough to trust. **Retirement evidence has been independently
+reviewed** — the Evidence Before Deletion Rule (the eighteenth); the highest-consequence,
+least-reversible change of all rests on proof checked by someone other than its author. And the
+ordering law: **physical deletion is always the final implementation step** — the store comes down
+last, after every dependency on it has been provably severed, never interleaved with the migrations
+that sever them.
+
+The rule's force is that **physically removing data before all five preconditions hold — or as
+anything other than the last implementation step — is a standards violation**, because deletion is the
+one teardown move with no fallback: a stopped write can be restarted, a migrated reader re-pointed, a
+retired rollback re-armed, but a dropped column is gone, and the Single Source of Authority Rule (the
+thirteenth) forbids re-deriving it from anywhere else — the registry is *the* source, so a store
+deleted while anything still depended on it cannot be reconstructed. It is the capstone of the
+dependency-ordered descent the Removal Sequencing Rule mandates: writes, then rollback, then *this* —
+the stored data — and only then the tooling and the completion. Every standard from the eighteenth on
+builds toward it; this one states the bar that the final, irreversible step must clear.
+
+For Directive #015 this governs **LR5.4**. LR5.1 retired the writes; LR5.2 migrated every reader;
+LR5.3 retired the rollback. The legacy `ai_employees.tools_allowed` / `permissions` columns are now
+inert — no writer, no reader, no rollback path depends on them — and the production-confidence
+evidence is banked and independently reviewed. LR5.4 is therefore the increment that may, at last,
+**physically remove** them — drop the inert columns and the obsolete registry-mirror and
+compatibility code as the **final implementation step**, re-pointing the runtime fail-safe to a
+default-deny floor now that the legacy store it once fell back to is gone — while **preserving** the
+migration history, the production-confidence evidence and the operational audit history (the record of
+*how* the removal was earned is not itself removed), and **retaining** `memory_scope` and
+`department`, whose mirrors remain live and so sit outside this drop. Generalised beyond #015, the
+rule is permanent: stored data is the last thing a retirement removes, removed only once every write,
+read and rollback dependency on it has been severed and that severance independently proven — deletion
+is where a migration ends, never where it economises.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
