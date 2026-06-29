@@ -11,9 +11,11 @@ import { decideMemoryWrite, type MemoryClass } from "@/lib/memory/model";
  * that `hq_memory_write` actually commits owned experience atomically (row +
  * version + per-memory event + a memory.asserted Pulse event, in ONE
  * transaction), WITHHOLDS a shared-knowledge proposal so the company brain is
- * never written without the capability, honours the capability waiver, raises
- * on every §6 denial, and is closed to JWT clients — and that the SQL gate
- * agrees with the pure predicate across the §6 matrix.
+ * never written without the capability, honours the capability waiver — now
+ * resolved from the Capability Registry, not the retired legacy
+ * `permissions.scopes` column (LR5.4A) — raises on every §6 denial, and is
+ * closed to JWT clients — and that the SQL gate agrees with the pure predicate
+ * across the §6 matrix.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no
  * database, FAILED loudly in CI if the database is missing.
@@ -50,8 +52,11 @@ const anon = (): MemClient => anonClient() as unknown as MemClient;
 
 const SHARED_SCOPE = "memory.write.shared";
 const createdMemories: string[] = [];
-let aliceId = ""; // no shared scope
-let carolId = ""; // holds memory.write.shared
+let aliceId = ""; // no shared capability, no registry grant
+let carolId = ""; // holds memory.write.shared via a registry grant ONLY
+let carolSlug = ""; // the employee-scope grant key for carol
+let daveId = ""; // holds memory.write.shared in legacy permissions ONLY (no grant)
+let tokenPreexisted = false; // did the catalogue already carry the token?
 
 /** Create a disposable AI employee and return its generated id. */
 async function makeEmployee(slug: string, scopes: string[]): Promise<string> {
@@ -82,17 +87,43 @@ describeIntegration("Shared Memory · AI write path (hq_memory_write, PR2)", () 
   beforeAll(async () => {
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     aliceId = await makeEmployee(`it-mem-alice-${stamp}`, ["read"]);
-    carolId = await makeEmployee(`it-mem-carol-${stamp}`, ["read", SHARED_SCOPE]);
+    // carol's memory.write.shared authority comes PURELY from a registry grant —
+    // permissions.scopes deliberately omits it, so the committed shared write
+    // below proves the gate reads the registry (LR5.4A), not the legacy column.
+    carolSlug = `it-mem-carol-${stamp}`;
+    carolId = await makeEmployee(carolSlug, ["read"]);
+    // dave is the mirror image: the scope lives ONLY in the legacy permissions
+    // column, with NO registry grant — so the gate must IGNORE it post-LR5.4A.
+    daveId = await makeEmployee(`it-mem-dave-${stamp}`, ["read", SHARED_SCOPE]);
+
+    // Seed the capability token into the catalogue (idempotent across reruns; the
+    // grant-validate trigger requires tokens ⊆ hq_capabilities), then grant it to
+    // carol at employee scope — the registry is now the only source of authority.
+    const existing = await svc().from("hq_capabilities").select("token").eq("token", SHARED_SCOPE);
+    tokenPreexisted = (existing.data ?? []).length > 0;
+    if (!tokenPreexisted) {
+      const cap = await svc().from("hq_capabilities").insert({ token: SHARED_SCOPE });
+      expect(cap.error, cap.error?.message).toBeNull();
+    }
+    const grant = await svc()
+      .from("hq_capability_grants")
+      .insert({ scope_level: "employee", scope_key: carolSlug, tokens: [SHARED_SCOPE] });
+    expect(grant.error, grant.error?.message).toBeNull();
   });
 
   afterAll(async () => {
     // Delete memories first (cascades to versions + per-memory events), then the
+    // registry grant (so the catalogue token is unreferenced — the block-
+    // referenced-delete trigger), then any catalogue token we seeded, then the
     // employees. The append-only hq_events rows are intentionally left behind.
     for (const id of createdMemories) {
       await svc().from("hq_memories").delete().eq("id", id);
     }
+    if (carolSlug) await svc().from("hq_capability_grants").delete().eq("scope_key", carolSlug);
+    if (!tokenPreexisted) await svc().from("hq_capabilities").delete().eq("token", SHARED_SCOPE);
     if (aliceId) await svc().from("ai_employees").delete().eq("id", aliceId);
     if (carolId) await svc().from("ai_employees").delete().eq("id", carolId);
+    if (daveId) await svc().from("ai_employees").delete().eq("id", daveId);
   });
 
   it("autonomous owned write: commits memory + version + per-memory event + a memory.asserted Pulse event, atomically", async () => {
@@ -168,9 +199,9 @@ describeIntegration("Shared Memory · AI write path (hq_memory_write, PR2)", () 
     expect(mem.data ?? [], "nothing is written to the company brain").toHaveLength(0);
   });
 
-  it("the memory.write.shared capability waives the checkpoint: a shared write commits", async () => {
+  it("a registry grant waives the checkpoint: a shared write commits when the capability is held via the registry", async () => {
     const res = await write({
-      p_employee_id: carolId, // holds memory.write.shared
+      p_employee_id: carolId, // holds memory.write.shared via a registry grant ONLY
       p_class: "semantic",
       p_type: "company",
       p_title: `IT shared committed ${crypto.randomUUID()}`,
@@ -188,6 +219,28 @@ describeIntegration("Shared Memory · AI write path (hq_memory_write, PR2)", () 
     expect(mem.data?.[0]?.visibility).toBe("public_hq");
     expect(mem.data?.[0]?.owner_employee_id).toBeNull();
     expect(mem.data?.[0]?.source).toBe("ai_employee");
+  });
+
+  it("ignores the legacy permissions.scopes column: a shared write authorised ONLY by the legacy column (no registry grant) is withheld (LR5.4A)", async () => {
+    // dave carries memory.write.shared in permissions.scopes but holds NO
+    // registry grant. Post-LR5.4A the gate resolves the capability from the
+    // registry alone, so the legacy column must NOT waive the checkpoint — the
+    // decisive proof that the hidden read path is migrated, not merely shadowed.
+    const title = `IT source-switch ${crypto.randomUUID()}`;
+    const res = await write({
+      p_employee_id: daveId, // scope ONLY in legacy permissions
+      p_class: "semantic",
+      p_type: "company",
+      p_title: title,
+      p_visibility: "public_hq",
+      p_owner: null,
+    });
+    // A proposal is VALID (not an error) — it is simply not committed.
+    expect(res.error, res.error?.message).toBeNull();
+    expect(res.data, "the legacy permissions column must not grant the capability").toBeNull();
+
+    const mem = await svc().from("hq_memories").select("id").eq("title", title);
+    expect(mem.data ?? [], "nothing is written to the company brain").toHaveLength(0);
   });
 
   it("denials RAISE (never silently commit): system, another employee's private memory, unknown employee, invalid class", async () => {
@@ -246,6 +299,10 @@ describeIntegration("Shared Memory · AI write path (hq_memory_write, PR2)", () 
 
     for (const c of cases) {
       const empId = c.emp === "alice" ? aliceId : carolId;
+      // The pure predicate is the oracle; `scopes` is the authority it is told to
+      // assume. The SQL gate now sources that authority from the registry, so the
+      // two agree because carol's registry grant mirrors these scopes exactly
+      // (alice holds neither the scope nor a grant).
       const scopes = c.emp === "alice" ? ["read"] : ["read", SHARED_SCOPE];
       const ownerId =
         c.owner === "self" ? empId : c.owner === "other" ? (c.emp === "alice" ? carolId : aliceId) : null;
