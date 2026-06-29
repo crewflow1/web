@@ -1,0 +1,293 @@
+import { expect, it } from "vitest";
+import { describeIntegration, serviceClient } from "../_harness";
+import {
+  legacyAuthorityOf,
+  readEmployeeGrantTokens,
+  resolveAuthorityFromRegistry,
+  resolveServedCapabilityView,
+  type CatalogueReadClient,
+  type GrantReadClient,
+  type LegacyEmployee,
+} from "@/server/sdk/registry-parity";
+
+/**
+ * The Capability Registry — LR5.2 (Migrate the Legacy Read Paths) real-Postgres behaviour proof.
+ *
+ * CEO Directive #015 / D-05. ADR: docs/bible/decisions/0010-capability-registry.md.
+ * Governing standards (Kernel Contract Map §2): the Read Migration Rule (24th — "no read path
+ * should be removed until all remaining consumers have been identified, migrated, and
+ * INDEPENDENTLY VALIDATED"), the Single Source of Authority Rule (13th), the Behaviour
+ * Preservation Rule (15th) and the Rollback Readiness Rule (17th).
+ *
+ * The security tier pins the LR5.2 CONTRACT against source text (the admin surfaces no longer
+ * read the inert `ai_employees.tools_allowed` / `permissions` columns). This tier proves the
+ * BEHAVIOUR that text can't — that the two migrated read seams resolve correctly against a live
+ * registry:
+ *
+ *   {@link resolveServedCapabilityView} (the AI Boardroom page's editor pre-fill + permissions
+ *   panel) —
+ *     1. PARITY — every employee is served the REGISTRY (`source: "registry"`); the served
+ *        tokens equal the legacy resolution (the flat mirror at the cut); the served approval
+ *        stance equals the legacy stance; and the tools/scopes split PARTITIONS the served
+ *        tokens (their union is the token set; they are disjoint).
+ *     2. KIND-FAITHFUL — the split matches the catalogue ground truth: a token shown under
+ *        Scopes is catalogue `kind = 'scope'`; everything else is a tool. This is the same
+ *        partition the authoring RPC applies, so the admin display agrees with what authoring
+ *        records.
+ *     3. ROLLBACK — with the control rolled back to "legacy", the view is served from the
+ *        legacy model (`source: "ai_employees"`) VERBATIM, and the split still partitions it.
+ *     4. FAIL-SAFE — under registry authority a subject the registry is silent about (no grant)
+ *        is still served its retained legacy view, never stranded, never a broken page.
+ *
+ *   {@link readEmployeeGrantTokens} (the authoring audit's before-snapshot) —
+ *     5. EMPLOYEE GRANT — returns exactly the employee-scoped grant's stored token set
+ *        (sorted-distinct), matching the raw `hq_capability_grants` row — the symmetric
+ *        before-image of the set the authoring RPC replaces.
+ *     6. NO GRANT → [] — a subject with no employee grant (a fresh author / backfill gap)
+ *        snapshots the empty set, never throws.
+ *
+ * Runs only against a live DB (describeIntegration): skipped locally with no database, FAILED
+ * loudly in CI if the database is missing.
+ *
+ * ai_employees / hq_capability_grants / hq_capabilities are service-role-only HQ internals not
+ * in the generated Database types, so — like the R1/R2/R3/R4 suites — the typed client is cast
+ * to the minimal surface exercised here.
+ */
+
+type QueryResult<T> = { data: T | null; error: { message: string } | null };
+type Term<T> = PromiseLike<QueryResult<T>>;
+type Filterable<T> = Term<T> & {
+  eq(column: string, value: unknown): Filterable<T>;
+  select(columns?: string): Filterable<T>;
+};
+type DbClient = {
+  from(table: string): { select(columns?: string): Filterable<Record<string, unknown>[]> };
+};
+
+const svc = (): DbClient => serviceClient() as unknown as DbClient;
+const grantClient = (): GrantReadClient => serviceClient() as unknown as GrantReadClient;
+const catalogueClient = (): CatalogueReadClient =>
+  serviceClient() as unknown as CatalogueReadClient;
+const EMP_COLUMNS = "slug, department, tools_allowed, permissions, memory_scope";
+
+/** Coerce a raw ai_employees row into the LegacyEmployee shape the bridge reads. */
+function toLegacy(r: Record<string, unknown>): LegacyEmployee {
+  return {
+    slug: r.slug as string,
+    department: (r.department as string | null) ?? null,
+    tools_allowed: (r.tools_allowed as string[] | null) ?? null,
+    permissions: (r.permissions as LegacyEmployee["permissions"]) ?? null,
+    memory_scope: (r.memory_scope as string | null) ?? null,
+  };
+}
+
+/** The live roster, in the LegacyEmployee shape (asserts the fetch succeeds). */
+async function roster(): Promise<LegacyEmployee[]> {
+  const res = await svc().from("ai_employees").select(EMP_COLUMNS);
+  expect(res.error, res.error?.message).toBeNull();
+  return ((res.data ?? []) as Record<string, unknown>[]).map(toLegacy);
+}
+
+/** Order-insensitive string-array equality. */
+function sortedEq(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.every((v, i) => v === y[i]);
+}
+
+/**
+ * The employee-scoped grant's stored tokens (sorted-distinct), read straight from
+ * `hq_capability_grants` — the ground truth {@link readEmployeeGrantTokens} must reproduce.
+ * `null` when the employee has no grant.
+ */
+async function rawEmployeeGrantTokens(slug: string): Promise<string[] | null> {
+  const res = await svc()
+    .from("hq_capability_grants")
+    .select("tokens")
+    .eq("scope_level", "employee")
+    .eq("scope_key", slug);
+  expect(res.error, res.error?.message).toBeNull();
+  const row = (res.data ?? [])[0];
+  if (!row) return null;
+  const tokens = ((row.tokens as string[] | null) ?? []).filter(
+    (t): t is string => typeof t === "string" && t.length > 0,
+  );
+  return [...new Set(tokens)].sort();
+}
+
+/** The catalogue kind for each requested token (absent tokens omitted). */
+async function kindMap(tokens: readonly string[]): Promise<Map<string, string>> {
+  if (tokens.length === 0) return new Map();
+  const res = await catalogueClient()
+    .from("hq_capabilities")
+    .select("token, kind")
+    .in("token", [...tokens]);
+  expect(res.error, res.error?.message).toBeNull();
+  return new Map((res.data ?? []).map((r) => [r.token, r.kind] as const));
+}
+
+describeIntegration("Capability Registry · LR5.2 served capability view (D-05)", () => {
+  it("serves the REGISTRY view, preserving token + approval parity and a clean tools/scopes partition for every employee", async () => {
+    const emps = await roster();
+    expect(emps.length, "the seeded roster must be present").toBeGreaterThan(0);
+
+    const gc = grantClient();
+    const cc = catalogueClient();
+    const drift: string[] = [];
+    for (const emp of emps) {
+      const view = await resolveServedCapabilityView(emp, {
+        client: gc,
+        catalogue: cc,
+        control: "registry",
+      });
+      if (view.source !== "registry") {
+        drift.push(`${emp.slug}: served ${view.source}, not registry`);
+        continue;
+      }
+      const legacy = legacyAuthorityOf(emp);
+      // Token parity through the switch (the flat mirror at the cut).
+      if (!sortedEq(view.tokens, legacy.tokens)) {
+        drift.push(`${emp.slug}: served tokens diverge from the legacy resolution`);
+      }
+      // Approval-stance parity (the migrated permissions panel).
+      if (view.requiresApproval !== legacy.requiresApproval) {
+        drift.push(`${emp.slug}: requiresApproval diverges from legacy`);
+      }
+      // The split PARTITIONS the served tokens: union equals the set …
+      if (!sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens)) {
+        drift.push(`${emp.slug}: tools ∪ scopes ≠ tokens (not a partition)`);
+      }
+      // … and the two halves are DISJOINT.
+      const overlap = view.toolsAllowed.filter((t) => view.scopes.includes(t));
+      if (overlap.length) drift.push(`${emp.slug}: tool/scope overlap [${overlap.join(", ")}]`);
+    }
+    expect(drift, `LR5.2 view out of parity: ${drift.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("splits the served set FAITHFULLY to the catalogue — Scopes are kind 'scope', everything else is a tool", async () => {
+    const emps = await roster();
+    const gc = grantClient();
+    const cc = catalogueClient();
+    const drift: string[] = [];
+    let classified = 0;
+    for (const emp of emps) {
+      const view = await resolveServedCapabilityView(emp, {
+        client: gc,
+        catalogue: cc,
+        control: "registry",
+      });
+      if (view.source !== "registry") continue;
+      const kinds = await kindMap(view.tokens);
+      for (const t of view.scopes) {
+        classified++;
+        if (kinds.get(t) !== "scope") {
+          drift.push(`${emp.slug}: scope '${t}' is catalogue kind ${kinds.get(t) ?? "absent"}`);
+        }
+      }
+      for (const t of view.toolsAllowed) {
+        classified++;
+        // A tool may be 'tool_permission', a forward-compat 'api_scope', or absent — never 'scope'.
+        if (kinds.get(t) === "scope") {
+          drift.push(`${emp.slug}: tool '${t}' is catalogue kind 'scope' (mis-split)`);
+        }
+      }
+    }
+    expect(drift, `catalogue-kind mis-split: ${drift.join(" | ")}`).toHaveLength(0);
+    expect(classified, "the split must have classified at least one token").toBeGreaterThan(0);
+  });
+
+  it("ROLLBACK (control 'legacy') serves the LEGACY view verbatim, still partitioned, never the registry", async () => {
+    const emps = await roster();
+    expect(emps.length).toBeGreaterThan(0);
+
+    const gc = grantClient();
+    const cc = catalogueClient();
+    for (const emp of emps) {
+      const view = await resolveServedCapabilityView(emp, {
+        client: gc,
+        catalogue: cc,
+        control: "legacy",
+      });
+      const legacy = legacyAuthorityOf(emp);
+      expect(view.source, `${emp.slug}: rollback served the registry`).toBe("ai_employees");
+      expect(sortedEq(view.tokens, legacy.tokens), `${emp.slug}: rollback tokens drift`).toBe(true);
+      expect(view.requiresApproval, `${emp.slug}: rollback requiresApproval drift`).toBe(
+        legacy.requiresApproval,
+      );
+      // The catalogue split is authority-source-independent: it still partitions the served set.
+      expect(
+        sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens),
+        `${emp.slug}: rollback split is not a partition`,
+      ).toBe(true);
+    }
+  });
+
+  it("FAIL-SAFE — under registry authority, a subject the registry is silent about is served its retained legacy view (never stranded)", async () => {
+    // A synthetic employee with NO registry grant (a backfill gap). SAFE_KEY-clean so the
+    // resolver issues the employee-scope query; the flat mirror means no global/department grant
+    // catches it, so the registry is silent (source "none").
+    const phantom: LegacyEmployee = {
+      slug: "lr5_2_phantom_no_grant",
+      department: null,
+      tools_allowed: ["tasks.read", "memory.read"],
+      permissions: { scopes: ["comms.send"], requires_approval: true },
+      memory_scope: null,
+    };
+
+    // Precondition: the registry really is silent for the phantom (pins the fail-safe scenario).
+    const registry = await resolveAuthorityFromRegistry(grantClient(), {
+      slug: phantom.slug,
+      department: phantom.department,
+    });
+    expect(registry.source, "phantom must have no applicable grant").toBe("none");
+
+    const view = await resolveServedCapabilityView(phantom, {
+      client: grantClient(),
+      catalogue: catalogueClient(),
+      control: "registry",
+    });
+    const legacy = legacyAuthorityOf(phantom);
+    // Served the retained legacy view, not stranded — and the split still partitions it.
+    expect(view.source, "a silent registry must fall back to legacy").toBe("ai_employees");
+    expect(sortedEq(view.tokens, legacy.tokens)).toBe(true);
+    expect(view.tokens.length, "the phantom keeps its own tokens").toBeGreaterThan(0);
+    expect(view.requiresApproval).toBe(legacy.requiresApproval);
+    expect(sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens)).toBe(true);
+  });
+});
+
+describeIntegration("Capability Registry · LR5.2 authoring before-snapshot (D-05)", () => {
+  it("reads the EMPLOYEE grant's stored tokens (sorted-distinct), matching the raw grant row for every employee", async () => {
+    const emps = await roster();
+    expect(emps.length, "the seeded roster must be present").toBeGreaterThan(0);
+
+    const gc = grantClient();
+    const drift: string[] = [];
+    let checked = 0;
+    for (const emp of emps) {
+      const raw = await rawEmployeeGrantTokens(emp.slug);
+      if (raw === null) {
+        drift.push(`${emp.slug}: no employee grant (the R2 backfill should have created one)`);
+        continue;
+      }
+      checked++;
+      const got = await readEmployeeGrantTokens(emp.slug, { client: gc });
+      if (!sortedEq(got, raw)) {
+        drift.push(`${emp.slug}: snapshot [${got.join(", ")}] ≠ grant [${raw.join(", ")}]`);
+      }
+    }
+    expect(drift, `before-snapshot drift: ${drift.join(" | ")}`).toHaveLength(0);
+    expect(checked, "must have checked at least one employee grant").toBeGreaterThan(0);
+  });
+
+  it("snapshots the EMPTY set for an employee with no grant (a fresh author / backfill gap), never throwing", async () => {
+    const phantomSlug = "lr5_2_phantom_no_grant";
+    // Precondition: this slug really has no employee grant.
+    const raw = await rawEmployeeGrantTokens(phantomSlug);
+    expect(raw, "the phantom must have no employee grant").toBeNull();
+
+    const got = await readEmployeeGrantTokens(phantomSlug, { client: grantClient() });
+    expect(got).toEqual([]);
+  });
+});
