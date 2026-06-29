@@ -821,6 +821,49 @@ is always an earned, evidenced engineering act, never a quiet drift into removal
 
 ---
 
+### The Removal Sequencing Rule
+
+A **twenty-third** standard, set by CEO directive on the review of the **Directive #015 LR5 Proposal**
+(the legacy-removal sequence design; independent CTO review). The Retirement Readiness Rule (the
+twenty-second) fixes *whether* a compatibility layer may enter retirement; this one fixes *in what order
+its parts come down* once it may. It is the mirror image of the order a migration is **built** in: the
+new model is stood up in dependency order — schema, then backfill, then shadow resolver, then the
+authority switch (Directive #015's R1→R4) — and the old model must be **torn down** in the reverse,
+safest dependency order, never the order that is merely convenient:
+
+> **Removal must happen in the safest dependency order. First remove writes; then remove rollback; then
+> remove stored legacy data; then remove obsolete tooling; finally record completion. Deletion must
+> follow proven dependency order, not convenience.**
+
+The five steps are a dependency chain retired from the most isolated to the most irreversible. **First
+remove writes** — stop the authoring path from producing the legacy data (stop the mirror). This is the
+safest first move because it strands no reader: it removes no safety net and drops no data — the legacy
+store goes *inert*, frozen at its last value and still readable, so every remaining consumer keeps
+working against a stable baseline. **Then remove rollback** — the rollback is the consumer that *falls
+back to* the legacy data, so it is retired (as its own phase, per the seventeenth) **before** the data
+it reads, never after; dropping the data first would leave a rollback that silently fails. **Then remove
+stored legacy data** — with nothing writing it and nothing falling back to it, the legacy columns can be
+dropped. **Then remove obsolete tooling** — the parity oracle and migration instrumentation that existed
+only to validate the coexistence are retired once the coexistence is gone. **Finally record completion**
+— the migration is closed, and the contract graduated, only when nothing legacy remains. The rule's
+force is that **removing a legacy element while something else still depends on it — dropping data a
+rollback still reads, or removing a safety net before the thing it guards is proven standalone — is a
+standards violation**, even when it is the convenient or obvious next edit. Each step is its own
+reviewed, shippable increment (the Evidence Before Deletion Rule, the eighteenth, gates each deletion
+*within* the sequence); the ordering guarantees no step removes the ground a later step still stands on.
+
+For Directive #015 this fixes the LR5 increment order. **LR5.1 retires the compatibility writes** — the
+authoring RPC stops mirroring to `ai_employees.tools_allowed` / `permissions`, which go inert but are
+**retained** and still read for rollback and parity. A later increment retires the rollback path; then
+the legacy columns are dropped; then the parity oracle and migration tooling are retired; and only then
+is #015 recorded complete and Architecture-Freeze contract **#8** graduated — each its own PR under full
+validation and independent review, **none combined**. Generalised beyond #015, the rule is permanent:
+every legacy teardown the platform performs comes down in the same proven order — producer, then safety
+net, then stored data, then tooling, then closure — so removal is always a dependency-ordered descent,
+never a convenient deletion that pulls the floor from under a part still standing.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
