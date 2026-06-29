@@ -32,9 +32,11 @@ import {
  * the legacy model never gave and R2's proven parity would break.
  *
  * §10 adds the R4 SERVING law ({@link decideServedAuthority}): which source is served, with
- * the registry authoritative and the legacy model retained as the rollback / fail-safe — also
- * a PURE function, so the switch's safety (it can never strand an employee, and never serves
- * the registry under a rollback) is proven by a table of inputs, not by discipline.
+ * the registry authoritative and the legacy model retained only as the automatic fail-safe —
+ * also a PURE function, so the decision's safety (it can never strand an employee) is proven by
+ * a table of inputs, not by discipline. LR5.3 (the Rollback Independence Rule) retired the
+ * operator rollback control: the registry is now the SOLE authority, reached for every subject
+ * the registry can speak for, with legacy served only on a read error or a silent subject.
  */
 
 /** A grant that, alone, composes to a clean PERMITS baseline (one employee-scoped row). */
@@ -338,11 +340,11 @@ const resolved = (over: Partial<ResolvedAuthority> = {}): ResolvedAuthority => (
   ...over,
 });
 
-describe("decideServedAuthority — the runtime authority switch (R4)", () => {
-  it("serves the AUTHORITATIVE registry when control=registry and the registry spoke", () => {
+describe("decideServedAuthority — the runtime serving decision (R4; rollback retired LR5.3)", () => {
+  it("serves the AUTHORITATIVE registry when the registry spoke", () => {
     const legacy = comparable({ tokens: ["read.web"] });
     const registry = resolved({ tokens: ["read.web"], source: "registry" });
-    const d = decideServedAuthority({ control: "registry", registry, legacy });
+    const d = decideServedAuthority({ registry, legacy });
     expect(d.basis).toBe("registry");
     expect(d.reason).toBeUndefined();
     expect(d.divergence).toBeUndefined(); // in parity
@@ -353,24 +355,13 @@ describe("decideServedAuthority — the runtime authority switch (R4)", () => {
     // parity monitoring, but the registry is what gets served (this is the whole point of R4).
     const legacy = comparable({ tokens: ["read.web"] });
     const registry = resolved({ tokens: ["read.web", "lead.qualify"], source: "registry" });
-    const d = decideServedAuthority({ control: "registry", registry, legacy });
+    const d = decideServedAuthority({ registry, legacy });
     expect(d.basis).toBe("registry");
     expect(d.divergence?.dimensions).toEqual(["tokens"]);
   });
 
-  it("ROLLS BACK to legacy when control=legacy, even if the registry would have served", () => {
-    // The deliberate rollback lever: legacy wins regardless of what the registry holds — and
-    // the registry value is NOT consulted for the decision (no divergence is computed).
-    const legacy = comparable({ tokens: ["read.web"] });
-    const registry = resolved({ tokens: ["everything"], source: "registry" });
-    const d = decideServedAuthority({ control: "legacy", registry, legacy });
-    expect(d.basis).toBe("legacy");
-    expect(d.reason).toBe("rollback");
-    expect(d.divergence).toBeUndefined();
-  });
-
   it("FAIL-SAFE to legacy when the registry read failed (registry=null)", () => {
-    const d = decideServedAuthority({ control: "registry", registry: null, legacy: comparable() });
+    const d = decideServedAuthority({ registry: null, legacy: comparable() });
     expect(d.basis).toBe("legacy");
     expect(d.reason).toBe("error");
   });
@@ -379,7 +370,6 @@ describe("decideServedAuthority — the runtime authority switch (R4)", () => {
     // No applicable grants → AUTHORITY_FLOOR (source 'none'). During the migration window the
     // retained legacy model stands in (a backfill gap can never strand the employee).
     const d = decideServedAuthority({
-      control: "registry",
       registry: AUTHORITY_FLOOR,
       legacy: comparable({ tokens: ["read.web"] }),
     });
@@ -388,18 +378,17 @@ describe("decideServedAuthority — the runtime authority switch (R4)", () => {
   });
 
   it("checks the read-error before the silent-registry case (null is never 'empty')", () => {
-    const d = decideServedAuthority({ control: "registry", registry: null, legacy: comparable() });
+    const d = decideServedAuthority({ registry: null, legacy: comparable() });
     expect(d.reason).toBe("error");
     expect(d.reason).not.toBe("empty");
   });
 
-  it("is TOTAL and deny-safe — legacy is the fallback in every non-registry branch", () => {
-    // Whatever the failure, the switch resolves to a served source; it never throws and never
+  it("is TOTAL and deny-safe — legacy is the fail-safe in every non-registry branch", () => {
+    // Whatever the failure, the decision resolves to a served source; it never throws and never
     // resolves to "nothing" (the legacy model is always the floor it falls back to).
     for (const d of [
-      decideServedAuthority({ control: "legacy", registry: null, legacy: comparable() }),
-      decideServedAuthority({ control: "registry", registry: null, legacy: comparable() }),
-      decideServedAuthority({ control: "registry", registry: AUTHORITY_FLOOR, legacy: comparable() }),
+      decideServedAuthority({ registry: null, legacy: comparable() }),
+      decideServedAuthority({ registry: AUTHORITY_FLOOR, legacy: comparable() }),
     ]) {
       expect(d.basis).toBe("legacy");
     }
@@ -437,37 +426,32 @@ describe("classifyServingConfidence — one decision → one confidence outcome"
     expect(classifyServingConfidence({ basis: "legacy", reason: "error" })).toBe("registry-error");
   });
 
-  it("deliberate rollback (reason 'rollback') → rolled-back (confidence not accruing)", () => {
-    expect(classifyServingConfidence({ basis: "legacy", reason: "rollback" })).toBe("rolled-back");
-  });
-
   it("is TOTAL — a legacy basis with no reason still classifies (defensive default)", () => {
-    expect(classifyServingConfidence({ basis: "legacy" })).toBe("rolled-back");
+    // With the rollback control retired (LR5.3), a legacy basis is only ever the automatic
+    // fail-safe; a reason-less legacy decision defends to registry-error, never silent success.
+    expect(classifyServingConfidence({ basis: "legacy" })).toBe("registry-error");
   });
 
   it("composes with decideServedAuthority — the audit measures what the runtime serves", () => {
     // The whole point: the classification is taken from the runtime's OWN decision law, so a
     // sweep's verdict can never diverge from what the serve path does.
     const inParity = decideServedAuthority({
-      control: "registry",
       registry: resolved({ tokens: ["read.web"] }),
       legacy: comparable({ tokens: ["read.web"] }),
     });
     expect(classifyServingConfidence(inParity)).toBe("registry-parity");
 
     const gap = decideServedAuthority({
-      control: "registry",
       registry: AUTHORITY_FLOOR,
       legacy: comparable({ tokens: ["read.web"] }),
     });
     expect(classifyServingConfidence(gap)).toBe("backfill-gap");
 
-    const rolledBack = decideServedAuthority({
-      control: "legacy",
-      registry: resolved({ tokens: ["read.web"] }),
+    const failSafe = decideServedAuthority({
+      registry: null,
       legacy: comparable({ tokens: ["read.web"] }),
     });
-    expect(classifyServingConfidence(rolledBack)).toBe("rolled-back");
+    expect(classifyServingConfidence(failSafe)).toBe("registry-error");
   });
 });
 
@@ -479,16 +463,14 @@ describe("summarizeConfidence — the measurable §4 aggregate", () => {
       "registry-divergent",
       "backfill-gap",
       "registry-error",
-      "rolled-back",
     ];
     const s = summarizeConfidence(outcomes);
     expect(s).toEqual({
-      total: 6,
+      total: 5,
       registryParity: 2,
       registryDivergent: 1,
       backfillGaps: 1,
       registryErrors: 1,
-      rolledBack: 1,
       registryOnlyReady: false,
     });
     expect(Object.isFrozen(s)).toBe(true);
@@ -497,7 +479,7 @@ describe("summarizeConfidence — the measurable §4 aggregate", () => {
   it("registryOnlyReady is true ONLY when every employee is served registry in parity", () => {
     expect(summarizeConfidence(["registry-parity", "registry-parity"]).registryOnlyReady).toBe(true);
     // A single non-parity outcome of any kind defeats readiness.
-    for (const spoiler of ["registry-divergent", "backfill-gap", "registry-error", "rolled-back"] as const) {
+    for (const spoiler of ["registry-divergent", "backfill-gap", "registry-error"] as const) {
       expect(summarizeConfidence(["registry-parity", spoiler]).registryOnlyReady).toBe(false);
     }
   });

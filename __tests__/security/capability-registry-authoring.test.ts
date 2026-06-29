@@ -30,8 +30,8 @@ import { resolve } from "node:path";
  *   • the admin action is superadmin-gated, audited, and likewise never touches the
  *     execution lock;
  *   • NOTHING authorised-to-keep is removed — no legacy column dropped, the R2 parity
- *     tooling + the R4 switch + the rollback control all remain (each later removal
- *     increment is separately authorised under the Evidence Before Deletion Rule).
+ *     tooling + the R4 switch remain (each later removal increment is separately authorised
+ *     under the Evidence Before Deletion Rule; LR5.3 since retired the rollback control).
  *
  * Comment text (SQL line comments and TS block/line comments) is stripped first, so
  * the prose that DOCUMENTS the contract can neither satisfy a positive match nor trip
@@ -73,7 +73,6 @@ const MIG_REL = "supabase/migrations/20260808000000_capability_registry_native_a
 const MODULE_REL = "server/sdk/registry-authoring.ts";
 const ACTIONS_REL = "app/admin/ai-boardroom/actions.ts";
 const PARITY_REL = "server/sdk/registry-parity.ts";
-const ENV_REL = "lib/env.ts";
 const R2_REL = "supabase/migrations/20260807000000_capability_registry_backfill.sql";
 
 const exec = stripSql(read(MIG_REL));
@@ -286,11 +285,5 @@ describe("registry LR1 — removes nothing (Evidence Before Deletion Rule)", () 
     const parity = codeOf(read(PARITY_REL));
     expect(parity).toMatch(/export async function resolveServedCapabilities/);
     expect(parity).toMatch(/export async function verifyRegistryParity/);
-  });
-
-  it("keeps the rollback control in place (rollback NOT retired)", () => {
-    const env = codeOf(read(ENV_REL));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
   });
 });

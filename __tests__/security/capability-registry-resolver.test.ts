@@ -17,7 +17,7 @@ import { resolve } from "node:path";
  * registry became the authoritative source of an employee's served capabilities. LR3 extends
  * that switch to EVERY authority dimension — posture and memory scope, the last runtime reads
  * R4 left on the legacy model — so the identity now serves tokens, posture AND memory scope
- * from the registry, with the legacy model RETAINED as the rollback / fail-safe path. These
+ * from the registry, with the legacy model RETAINED only as the automatic fail-safe path. These
  * assertions pin — as a matter of SOURCE, not discipline — the facts that would be a hole in
  * the switch's safety if they ever silently flipped:
  *   • the pure resolver is dependency-free (no client, no IO, no server-only) — both the
@@ -27,12 +27,13 @@ import { resolve } from "node:path";
  *   • verifyRegistryParity stays STRICTLY fail-open (RETAINED through R4 + LR3);
  *   • resolveServedAuthority — the switch — serves EVERY dimension (tokens, posture, memory
  *     scope) from the registry but is STRICTLY non-throwing and ALWAYS falls back to the
- *     retained legacy model (it can never strand an employee), and is gated by the rollback
- *     control; resolveServedCapabilities is RETAINED as its tokens-only projection;
+ *     retained legacy model (it can never strand an employee); LR5.3 retired the operator
+ *     rollback control, so legacy is reached only via the automatic fail-safe;
+ *     resolveServedCapabilities is RETAINED as its tokens-only projection;
  *   • the services now serve the FULL SWITCH (assign capabilities + posture + memory scope),
  *     no longer the bare legacy resolver — this is the authorised behavioural transition;
- *   • NOTHING is removed — the legacy resolvers, the parity verification, and the rollback
- *     control are all present (legacy removal is a later, separately-authorised phase).
+ *   • the legacy resolvers and the parity verification are RETAINED (legacy-column removal is a
+ *     later, separately-authorised phase); the rollback control is RETIRED (LR5.3).
  *
  * Comment text is stripped first, so the prose that DOCUMENTS the contract can neither
  * satisfy a positive match nor trip a negative one.
@@ -115,7 +116,7 @@ describe("registry R3+R4 — the resolver core is pure", () => {
     // named reason; the registry is served only when it actually spoke.
     expect(code).toMatch(/basis: "registry"/);
     expect(code).toMatch(/basis: "legacy"/);
-    for (const reason of ['"rollback"', '"error"', '"empty"']) {
+    for (const reason of ['"error"', '"empty"']) {
       expect(code, `the serving law must name the ${reason} fallback`).toContain(reason);
     }
   });
@@ -187,9 +188,9 @@ describe("registry R3+R4 — the standalone parity gate stays fail-open", () => 
 
 // =====================================================================
 // 4. resolveServedAuthority — the LR3 switch: registry authoritative on
-//    EVERY dimension (tokens, posture, memory scope), legacy retained,
-//    never throws, gated by the rollback control. resolveServedCapabilities
-//    is RETAINED as its tokens-only projection.
+//    EVERY dimension (tokens, posture, memory scope), legacy retained as the
+//    automatic fail-safe, never throws; LR5.3 retired the rollback control.
+//    resolveServedCapabilities is RETAINED as its tokens-only projection.
 // =====================================================================
 
 describe("registry LR3 — the authority switch serves EVERY dimension, retains legacy", () => {
@@ -224,9 +225,11 @@ describe("registry LR3 — the authority switch serves EVERY dimension, retains 
     expect(serve).toMatch(/decideServedAuthority\(/);
   });
 
-  it("is gated by the rollback control (the env-backed authority source)", () => {
-    expect(importSpecifiers(code)).toContain("@/lib/env");
-    expect(serve).toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
+  it("is NO LONGER gated by a rollback control (LR5.3 retired the env-backed authority source)", () => {
+    // The registry is the SOLE authority: the serve path reads no operator lever and the bridge
+    // no longer imports the env module for one. Legacy is reached only via the automatic fail-safe.
+    expect(importSpecifiers(code)).not.toContain("@/lib/env");
+    expect(serve).not.toMatch(/env\.CAPABILITY_AUTHORITY_SOURCE/);
   });
 
   it("RETAINS the legacy model as the fallback — it can never strand an employee", () => {
@@ -282,11 +285,11 @@ describe("registry LR3 — the services serve registry-derived authority on ever
 });
 
 // =====================================================================
-// 6. R4 boundary — legacy retained, parity retained, rollback control present.
-//    (CEO: do NOT remove legacy authority / parity verification / rollback path.)
+// 6. R4 boundary — legacy retained, parity retained; the rollback control is RETIRED (LR5.3).
+//    (CEO: do NOT remove legacy authority / parity verification; the automatic fail-safe stays.)
 // =====================================================================
 
-describe("registry R4 — nothing authorised-to-keep is removed", () => {
+describe("registry R4 — legacy + parity retained; rollback retired (LR5.3)", () => {
   it("keeps the canonical legacy resolvers in place (legacy authority retained)", () => {
     const tasks = codeOf(read(TASKS));
     expect(tasks).toMatch(/export function resolveEmployeeCapabilities/);
@@ -299,11 +302,11 @@ describe("registry R4 — nothing authorised-to-keep is removed", () => {
     expect(code).toMatch(/resolveEmployeeCapabilities/);
   });
 
-  it("ships the rollback control as a server-only, registry-default authority source", () => {
+  it("RETIRES the rollback control (LR5.3 — env no longer defines an authority source)", () => {
     const env = codeOf(read(ENV));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
-    // An authority control is never shipped to the browser.
-    expect(env).not.toMatch(/NEXT_PUBLIC_CAPABILITY_AUTHORITY_SOURCE/);
+    // The operator lever is gone from the executable env contract (the registry is the SOLE
+    // authority); legacy is reached only through the automatic fail-safe, never a switch.
+    expect(env).not.toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
+    expect(env).not.toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)/);
   });
 });

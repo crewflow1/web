@@ -34,17 +34,20 @@ import {
  *        Scopes is catalogue `kind = 'scope'`; everything else is a tool. This is the same
  *        partition the authoring RPC applies, so the admin display agrees with what authoring
  *        records.
- *     3. ROLLBACK — with the control rolled back to "legacy", the view is served from the
- *        legacy model (`source: "ai_employees"`) VERBATIM, and the split still partitions it.
- *     4. FAIL-SAFE — under registry authority a subject the registry is silent about (no grant)
- *        is still served its retained legacy view, never stranded, never a broken page.
+ *     3. FAIL-SAFE — a subject the registry is silent about (no grant) is still served its
+ *        retained legacy view via the automatic fail-safe, never stranded, never a broken page.
  *
  *   {@link readEmployeeGrantTokens} (the authoring audit's before-snapshot) —
- *     5. EMPLOYEE GRANT — returns exactly the employee-scoped grant's stored token set
+ *     4. EMPLOYEE GRANT — returns exactly the employee-scoped grant's stored token set
  *        (sorted-distinct), matching the raw `hq_capability_grants` row — the symmetric
  *        before-image of the set the authoring RPC replaces.
- *     6. NO GRANT → [] — a subject with no employee grant (a fresh author / backfill gap)
+ *     5. NO GRANT → [] — a subject with no employee grant (a fresh author / backfill gap)
  *        snapshots the empty set, never throws.
+ *
+ * LR5.3 (the Rollback Independence Rule) retired the rollback control: resolveServedCapabilityView
+ * no longer takes a `control` opt, and the legacy view is reached only through the automatic
+ * fail-safe (a registry read error or a subject the registry is silent about), never an operator
+ * switch.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no database, FAILED
  * loudly in CI if the database is missing.
@@ -139,7 +142,6 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
       const view = await resolveServedCapabilityView(emp, {
         client: gc,
         catalogue: cc,
-        control: "registry",
       });
       if (view.source !== "registry") {
         drift.push(`${emp.slug}: served ${view.source}, not registry`);
@@ -175,7 +177,6 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
       const view = await resolveServedCapabilityView(emp, {
         client: gc,
         catalogue: cc,
-        control: "registry",
       });
       if (view.source !== "registry") continue;
       const kinds = await kindMap(view.tokens);
@@ -197,33 +198,7 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
     expect(classified, "the split must have classified at least one token").toBeGreaterThan(0);
   });
 
-  it("ROLLBACK (control 'legacy') serves the LEGACY view verbatim, still partitioned, never the registry", async () => {
-    const emps = await roster();
-    expect(emps.length).toBeGreaterThan(0);
-
-    const gc = grantClient();
-    const cc = catalogueClient();
-    for (const emp of emps) {
-      const view = await resolveServedCapabilityView(emp, {
-        client: gc,
-        catalogue: cc,
-        control: "legacy",
-      });
-      const legacy = legacyAuthorityOf(emp);
-      expect(view.source, `${emp.slug}: rollback served the registry`).toBe("ai_employees");
-      expect(sortedEq(view.tokens, legacy.tokens), `${emp.slug}: rollback tokens drift`).toBe(true);
-      expect(view.requiresApproval, `${emp.slug}: rollback requiresApproval drift`).toBe(
-        legacy.requiresApproval,
-      );
-      // The catalogue split is authority-source-independent: it still partitions the served set.
-      expect(
-        sortedEq([...view.toolsAllowed, ...view.scopes], view.tokens),
-        `${emp.slug}: rollback split is not a partition`,
-      ).toBe(true);
-    }
-  });
-
-  it("FAIL-SAFE — under registry authority, a subject the registry is silent about is served its retained legacy view (never stranded)", async () => {
+  it("FAIL-SAFE — a subject the registry is silent about is served its retained legacy view (never stranded)", async () => {
     // A synthetic employee with NO registry grant (a backfill gap). SAFE_KEY-clean so the
     // resolver issues the employee-scope query; the flat mirror means no global/department grant
     // catches it, so the registry is silent (source "none").
@@ -245,7 +220,6 @@ describeIntegration("Capability Registry · LR5.2 served capability view (D-05)"
     const view = await resolveServedCapabilityView(phantom, {
       client: grantClient(),
       catalogue: catalogueClient(),
-      control: "registry",
     });
     const legacy = legacyAuthorityOf(phantom);
     // Served the retained legacy view, not stranded — and the split still partitions it.

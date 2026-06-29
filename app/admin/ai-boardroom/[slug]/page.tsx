@@ -73,8 +73,8 @@ export default async function AiEmployeeDetailPage({
 
   // The SERVED capability authority (Directive #015 / D-05, LR5.2 — the Read Migration Rule).
   // The capability editor + permissions panel below read what the runtime SERVES from the
-  // now-authoritative Capability Registry — rollback-aware, with the legacy model retained only
-  // as the fail-safe — NOT the now-inert ai_employees.tools_allowed / permissions columns LR5.1
+  // now-authoritative Capability Registry — with the legacy model retained only as the automatic
+  // fail-safe — NOT the now-inert ai_employees.tools_allowed / permissions columns LR5.1
   // froze. Resolved alongside the read-only shared-memory feed (CEO Directive 002), a
   // permission-aware slice this employee may READ; both are best-effort and degrade to a safe
   // default rather than breaking the profile.

@@ -228,10 +228,15 @@ export function compareAuthority(
 // ---------------------------------------------------------------------
 
 /**
- * The control that selects which source is authoritative — the R4 rollback lever,
- * surfaced as the `CAPABILITY_AUTHORITY_SOURCE` env in the server-only bridge:
- *   • `registry` — the registry is authoritative (the R4 default; the switch).
- *   • `legacy`   — rolled back to the legacy model (the pre-R4 / R3 shadow posture).
+ * Which source served an employee's authority — the `basis` a {@link ServingDecision}
+ * records:
+ *   • `registry` — the registry was authoritative and served (the steady state).
+ *   • `legacy`   — the retained legacy model served as the AUTOMATIC fail-safe (the registry
+ *                  read failed, or was silent for the subject).
+ *
+ * LR5.3 (the Rollback Independence Rule, 25th §2 standard) retired the operator rollback lever
+ * (`CAPABILITY_AUTHORITY_SOURCE`), so `legacy` is no longer operator-selectable — it is reached
+ * ONLY by the fail-safe, never by a deliberate rollback.
  */
 export type AuthoritySource = "registry" | "legacy";
 
@@ -245,13 +250,13 @@ export interface ServingDecision {
   /** The source whose authority is served. */
   readonly basis: AuthoritySource;
   /**
-   * Why the legacy model was served (only set when `basis` is `legacy`):
-   *   • `rollback` — the control selected legacy (a DELIBERATE rollback, not a fallback).
-   *   • `error`    — the registry read failed; the retained legacy model is the fail-safe.
-   *   • `empty`    — the registry is silent for the subject (no grants — e.g. a backfill
-   *                  gap); the retained legacy model stands in during the migration window.
+   * Why the legacy model was served (only set when `basis` is `legacy`) — both reasons are the
+   * AUTOMATIC fail-safe (LR5.3 retired the deliberate-rollback reason):
+   *   • `error` — the registry read failed; the retained legacy model is the fail-safe.
+   *   • `empty` — the registry is silent for the subject (no grants — e.g. a backfill
+   *               gap); the retained legacy model stands in during the migration window.
    */
-  readonly reason?: "rollback" | "error" | "empty";
+  readonly reason?: "error" | "empty";
   /**
    * The divergence between the legacy baseline and the registry authority, when the
    * registry was both authoritative and resolved with grants but disagreed. Recorded for
@@ -262,29 +267,28 @@ export interface ServingDecision {
 }
 
 /**
- * Decide which source's authority to serve for one employee (ADR 0010 Decision 2; the R4
- * runtime authority switch). PURE and TOTAL — same inputs → same decision, no IO — so the
- * switch's law is unit-testable in isolation, exactly like {@link composeGrants}. The
- * server-only bridge supplies the IO (the env control, the registry read, the legacy
- * resolution) and acts on the decision (see server/sdk/registry-parity.ts).
+ * Decide which source's authority to serve for one employee (ADR 0010 Decision 2; the runtime
+ * authority switch). PURE and TOTAL — same inputs → same decision, no IO — so the switch's law
+ * is unit-testable in isolation, exactly like {@link composeGrants}. The server-only bridge
+ * supplies the IO (the registry read, the legacy resolution) and acts on the decision (see
+ * server/sdk/registry-parity.ts).
  *
  * Order of precedence, each step safe by construction:
- *   1. control `legacy`        → serve legacy (a deliberate rollback).
- *   2. registry read failed    → serve legacy (the fail-safe; the registry could not answer).
- *   3. registry silent (`none`)→ serve legacy (the migration-window fallthrough; no grants).
- *   4. otherwise               → serve the authoritative registry, recording any divergence
+ *   1. registry read failed    → serve legacy (the fail-safe; the registry could not answer).
+ *   2. registry silent (`none`)→ serve legacy (the migration-window fallthrough; no grants).
+ *   3. otherwise               → serve the authoritative registry, recording any divergence
  *                                from the legacy baseline for parity monitoring.
  *
- * The legacy model is RETAINED as the fallback in steps 1–3, so the switch can never strand
- * an employee on a registry that is rolled back, unreachable, or not yet authored.
+ * The registry is the SOLE authority — LR5.3 (the Rollback Independence Rule, 25th §2 standard)
+ * retired the operator rollback control, so there is no deliberate path back to legacy. The
+ * legacy model is RETAINED only as the AUTOMATIC fail-safe in steps 1–2, so the switch can
+ * never strand an employee on a registry that is unreachable or not yet authored.
  */
 export function decideServedAuthority(input: {
-  control: AuthoritySource;
   /** The registry-resolved authority, or `null` when the registry read failed. */
   registry: ResolvedAuthority | null;
   legacy: ComparableAuthority;
 }): ServingDecision {
-  if (input.control === "legacy") return { basis: "legacy", reason: "rollback" };
   if (input.registry === null) return { basis: "legacy", reason: "error" };
   if (input.registry.source === "none") return { basis: "legacy", reason: "empty" };
   const divergence = compareAuthority(input.legacy, input.registry);
@@ -312,34 +316,28 @@ export function decideServedAuthority(input: {
  *   • `registry-error`     — the registry read failed; the retained legacy model was the
  *                            fail-safe. Confidence requires the registry to be reliably
  *                            readable, so this must be zero across the window.
- *   • `rolled-back`        — the control selected legacy (a deliberate rollback). Confidence
- *                            is not accruing while rolled back (the §4 window resets).
+ *
+ * LR5.3 retired the deliberate-rollback outcome (`rolled-back`): with no operator rollback
+ * lever, the audit can only observe the four outcomes above.
  */
 export type ConfidenceOutcome =
   | "registry-parity"
   | "registry-divergent"
   | "backfill-gap"
-  | "registry-error"
-  | "rolled-back";
+  | "registry-error";
 
 /**
  * Classify a serving decision into its confidence outcome (PURE, TOTAL). This is the LR4
- * read over the R4/LR3 serving law: it re-uses {@link decideServedAuthority}'s own verdict
+ * read over the runtime serving law: it re-uses {@link decideServedAuthority}'s own verdict
  * rather than re-deriving authority, so a sweep measures exactly what the runtime serves.
  */
 export function classifyServingConfidence(decision: ServingDecision): ConfidenceOutcome {
   if (decision.basis === "registry") {
     return decision.divergence ? "registry-divergent" : "registry-parity";
   }
-  switch (decision.reason) {
-    case "empty":
-      return "backfill-gap";
-    case "error":
-      return "registry-error";
-    case "rollback":
-    default:
-      return "rolled-back";
-  }
+  // basis === "legacy": the AUTOMATIC fail-safe — the registry was silent for the subject
+  // (a backfill gap) or could not be read. (LR5.3 retired the deliberate-rollback reason.)
+  return decision.reason === "empty" ? "backfill-gap" : "registry-error";
 }
 
 /**
@@ -359,11 +357,9 @@ export interface ConfidenceSummary {
   readonly backfillGaps: number;
   /** Registry read failed → served legacy fail-safe (must be zero across the window). */
   readonly registryErrors: number;
-  /** Served legacy by a deliberate rollback (confidence not accruing). */
-  readonly rolledBack: number;
   /**
    * The §4 confidence bar as ONE boolean: EVERY employee served the registry in parity — no
-   * divergence, no backfill gap, no read error, no rollback. The registry-only runtime is
+   * divergence, no backfill gap, no read error. The registry-only runtime is
    * demonstrably whole at THIS instant. (The time WINDOW over which it must hold continuously
    * is operational — set by the CEO; this law measures the instant, the ops cadence measures
    * the window.) An empty roster is NOT ready — there is nothing to be confident about.
@@ -381,7 +377,6 @@ export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): Con
   let registryDivergent = 0;
   let backfillGaps = 0;
   let registryErrors = 0;
-  let rolledBack = 0;
   for (const o of outcomes) {
     switch (o) {
       case "registry-parity":
@@ -396,9 +391,6 @@ export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): Con
       case "registry-error":
         registryErrors++;
         break;
-      case "rolled-back":
-        rolledBack++;
-        break;
     }
   }
   const total = outcomes.length;
@@ -408,7 +400,6 @@ export function summarizeConfidence(outcomes: readonly ConfidenceOutcome[]): Con
     registryDivergent,
     backfillGaps,
     registryErrors,
-    rolledBack,
     registryOnlyReady: total > 0 && registryParity === total,
   });
 }

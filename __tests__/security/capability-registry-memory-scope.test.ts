@@ -31,7 +31,8 @@ import { resolve } from "node:path";
  *   • the write module authors EXCLUSIVELY through the RPC (never a direct table write);
  *   • the admin action is superadmin-gated, audited, and never touches the execution lock;
  *   • NOTHING authorised-to-keep is removed — no legacy column dropped, the R2 parity
- *     tooling + the R4 switch + the rollback control all remain.
+ *     tooling + the R4 switch remain (LR5.3 later retired the rollback control, separately
+ *     authorised; the automatic fail-safe stays).
  *
  * Comment text (SQL line comments and TS block/line comments) is stripped first, so the
  * prose that DOCUMENTS the contract can neither satisfy a positive match nor trip a
@@ -74,7 +75,6 @@ const LR1_MIG_REL = "supabase/migrations/20260808000000_capability_registry_nati
 const MODULE_REL = "server/sdk/registry-authoring.ts";
 const ACTIONS_REL = "app/admin/ai-boardroom/actions.ts";
 const PARITY_REL = "server/sdk/registry-parity.ts";
-const ENV_REL = "lib/env.ts";
 const R2_REL = "supabase/migrations/20260807000000_capability_registry_backfill.sql";
 
 const exec = stripSql(read(MIG_REL));
@@ -311,12 +311,6 @@ describe("registry LR2 — removes nothing authorised-to-keep", () => {
     expect(parity).toMatch(/export async function verifyRegistryParity/);
     // memory_scope is still SERVED from the legacy model — runtime resolution unchanged.
     expect(parity).toMatch(/emp\.memory_scope/);
-  });
-
-  it("keeps the rollback control in place (rollback NOT removed)", () => {
-    const env = codeOf(read(ENV_REL));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
   });
 
   it("keeps the LR1 token authoring path intact (LR2 is additive)", () => {

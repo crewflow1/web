@@ -31,9 +31,9 @@ import { resolve } from "node:path";
  *     (the split backs the admin activity log, it is simply no longer written to a column);
  *   • NOTHING ELSE authorised-to-keep is removed — no legacy column dropped; the LR1 mirror
  *     stays pinned in the IMMUTABLE 808; the memory_scope mirror (809), the R2 parity
- *     tooling, the R4 runtime switch, the rollback control and the confidence audit all
- *     remain (each later removal increment is separately authorised under the Removal
- *     Sequencing Rule — "then remove rollback … then remove stored legacy data").
+ *     tooling, the R4 runtime switch and the confidence audit all remain (each later removal
+ *     increment is separately authorised under the Removal Sequencing Rule — "then remove
+ *     rollback … then remove stored legacy data"; LR5.3 has since taken that rollback step).
  *
  * Comment text (SQL line comments and TS block/line comments) is stripped first, so the
  * prose that DOCUMENTS the contract can neither satisfy a positive match nor trip a
@@ -66,7 +66,6 @@ const MEMSCOPE_MIG_REL = "supabase/migrations/20260809000000_capability_registry
 const R2_REL = "supabase/migrations/20260807000000_capability_registry_backfill.sql";
 const PARITY_REL = "server/sdk/registry-parity.ts";
 const CONFIDENCE_REL = "server/sdk/registry-confidence.ts";
-const ENV_REL = "lib/env.ts";
 
 const exec = stripSql(read(MIG_REL));
 
@@ -251,11 +250,5 @@ describe("registry LR5.1 — removes nothing else (the Removal Sequencing Rule)"
   it("keeps the confidence audit in place (the §4 instrument NOT removed)", () => {
     const confidence = codeOf(read(CONFIDENCE_REL));
     expect(confidence).toMatch(/export async function auditRegistryConfidence/);
-  });
-
-  it("keeps the rollback control in place (rollback NOT retired — that is the 2nd step)", () => {
-    const env = codeOf(read(ENV_REL));
-    expect(env).toMatch(/CAPABILITY_AUTHORITY_SOURCE/);
-    expect(env).toMatch(/z\.enum\(\["registry",\s*"legacy"\]\)\.default\("registry"\)/);
   });
 });

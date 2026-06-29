@@ -232,13 +232,13 @@ async function qualificationIdentity(): Promise<EmployeeIdentity> {
   };
   // LR3 runtime authority switch (CEO Directive #015 / D-05): serve EVERY authority dimension
   // — capabilities, posture AND memory scope — from the now-AUTHORITATIVE Capability Registry,
-  // with the legacy resolution RETAINED as the rollback / fail-safe path. resolveServedAuthority
-  // falls back to legacy on a deliberate rollback (CAPABILITY_AUTHORITY_SOURCE=legacy), a
-  // registry read error, or a subject the registry is silent about, so the switch can never
-  // strand the employee, and folds the continuous shadow verification (the Shadow Validation
-  // Rule) onto the served value. Behaviour-preserving while the flat mirror holds: the served
-  // posture equals the legacy locked floor (Directive 001) and the served memory scope equals
-  // the legacy column — R4 moved tokens, LR3 moves the remaining two runtime reads.
+  // with the legacy resolution RETAINED only as the automatic fail-safe. resolveServedAuthority
+  // falls back to legacy on a registry read error or a subject the registry is silent about, so
+  // the switch can never strand the employee, and folds the continuous shadow verification (the
+  // Shadow Validation Rule) onto the served value. LR5.3 (the Rollback Independence Rule) retired
+  // the operator rollback lever, so the registry is the SOLE authority. Behaviour-preserving
+  // while the flat mirror holds: the served posture equals the legacy locked floor (Directive
+  // 001) and the served memory scope equals the legacy column — R4 moved tokens, LR3 the rest.
   if (emp) {
     const served = await resolveServedAuthority(emp);
     identity.capabilities = served.capabilities;
