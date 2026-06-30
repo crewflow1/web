@@ -126,6 +126,22 @@ system is, the governance records describe *how decisions about it are tracked*.
   Metering** (the **split**, per the #013 precedent — *the evidence fixes the order; the packaging into
   one directive or two is the CEO's call*), then Task-Engine completion · Boardroom · Comms Protocol. It
   **informs the #016 subject the CEO must confirm** before the Architecture Proposal is written.
+- **[`directive-016-live-executor-rollout-architecture-proposal.md`](./directive-016-live-executor-rollout-architecture-proposal.md)** —
+  the **architecture proposal** (design only; **held** pending CEO review; no implementation) for
+  **Directive #016 / D-06 — the Live Executor Rollout**: wiring the already-built, **C4-proven** SDK
+  Executor into the **live** AI-employee run loop so a permitted decision becomes an applied effect in
+  production. Answers the CEO's ten required definitions one-by-one — **purpose · scope · non-goals ·
+  architecture · contracts · ADR requirements · rollout strategy · validation strategy · rollback strategy ·
+  completion criteria** — then surfaces five forks for the CEO to rule on. Its thesis: #016 introduces
+  **no new contract and no new policy** — it composes the proven `registry → gate → executor → application`
+  chain into the runner's autonomous branch (`server/sdk/tasks.ts:504-513`, today **audit-only**), making
+  **four Established contracts** (#3 AI SDK · #4 RunContext · #6 Approval · #8 Registry) **load-bearing
+  together** for the first time; its only genuinely net-new build is the **durable application store + the
+  out-of-band apply-on-approval sweep** that C3 deferred to *"the executor rollout"* (`server/sdk/application.ts`),
+  plus the **migration of the two live employees** onto the kernel executor. It requires **ADR 0011** (the
+  rollout decision, building on ADR 0009), keeps the **API Gateway + Cost Metering** out (deferred to **#017**
+  per the CEO's packaging ruling), and proposes a shadow-first, slice-by-slice rollout (**R1 → R6**) under the
+  full six-gate discipline. Follows the accepted dependency-ordering analysis above (PR #260).
 
 ## Related, outside this directory
 
