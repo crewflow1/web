@@ -40,6 +40,11 @@ import {
   type EmployeeIdentity,
 } from "@/server/sdk/tasks";
 import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
+import {
+  createInMemoryShadowObservationStore,
+  type ShadowObservationRecord,
+  type ShadowObservationStore,
+} from "@/server/sdk/shadow";
 
 const CORR = "corr-run-1";
 
@@ -309,5 +314,114 @@ describe("ctx.proposeActions — the R1 executor shadow, ON, observes without cr
     expect(plan).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
     expect(requestApprovalMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =====================================================================
+// proposeActions — the R2 durable shadow store (CEO Directive #016 / D-06; ADR 0011)
+//
+// R2 gives the shadow's observation a FIRST-CLASS durable home: an INJECTED, append-only store of
+// EXPLICITLY shadow-labelled records (`kind: "executor_shadow"`, never an `applied` status — the
+// Shadow Truthfulness Rule). The store is a SEAM: absent, nothing is persisted (R1 in-band only);
+// present, each autonomous observation is recorded durably AND the in-band audit fragment is
+// preserved (planned · shadow-observed both keyed identically). It is best-effort and never the
+// application store.
+// =====================================================================
+
+/** A store that fails every write (the contract's best-effort failure mode: returns, never throws). */
+function failingStore(): ShadowObservationStore {
+  return { record: vi.fn().mockResolvedValue({ ok: false, error: "shadow_store_down" }) };
+}
+
+describe("ctx.proposeActions — the R2 durable shadow store records explicit shadow-labelled facts", () => {
+  it("a plannable autonomous action records ONE shadow-labelled record beside the in-band fragment", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built, emit } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    const recorded = store.recorded();
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toEqual({
+      kind: "executor_shadow",
+      outcome: "planned",
+      source: "autonomous",
+      correlationId: CORR,
+      taskId: "task-1",
+      actionId: "lead:lead_1:memory.write",
+      toolLabel: "memory.write",
+      idempotencyKey: "autonomous·task-1·memory.write·lead%3Alead_1%3Amemory.write·corr-run-1",
+      reason: null,
+      detail: "",
+    });
+    // the in-band audit fragment is still emitted (R1 behaviour preserved, additive)
+    expect(emit.mock.calls[0]![0]!.payload).toMatchObject({ shadow: { outcome: "planned" } });
+  });
+
+  it("the durable record's key EQUALS the in-band fragment's key (planned · shadow-observed, one key)", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built, emit } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    const inBand = (emit.mock.calls[0]![0]!.payload as { shadow: { idempotencyKey: string } }).shadow;
+    expect(store.recorded()[0]!.idempotencyKey).toBe(inBand.idempotencyKey);
+  });
+
+  it("a REFUSED observation is recorded too — shadow-observed, with a null idempotency key", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+    await createProposeActions(built)([passing()]); // no payload → invalid_args refusal
+    const rec = store.recorded()[0]!;
+    expect(rec).toMatchObject({
+      kind: "executor_shadow",
+      outcome: "refused",
+      reason: "invalid_args",
+      toolLabel: null,
+      idempotencyKey: null,
+    });
+  });
+
+  it("records one shadow-labelled fact per AUTONOMOUS action in a batch — never for the approval one", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+    await createProposeActions(built)([
+      passing({ payload: { verdict: "qualified" } }), // autonomous → recorded (planned)
+      passing({ reversible: false }), //                  needs_approval → NOT recorded
+      passing(), //                                       autonomous → recorded (refused)
+    ]);
+    const recorded: readonly ShadowObservationRecord[] = store.recorded();
+    expect(recorded.map((r) => r.outcome)).toEqual(["planned", "refused"]);
+    expect(recorded.every((r) => r.kind === "executor_shadow")).toBe(true);
+  });
+
+  it("shadow ON but NO store injected → nothing durable, the in-band fragment still rides the audit", async () => {
+    const { built, emit } = deps({ shadow: true, taskId: "task-1" }); // no shadowStore
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    // The store is optional; absent, the durable write simply does not happen (no throw, no record).
+    expect(emit.mock.calls[0]![0]!.payload).toMatchObject({ shadow: { outcome: "planned" } });
+  });
+
+  it("shadow OFF but a store injected → the store is NEVER written (the kill-switch gates persistence)", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built, emit } = deps({ shadow: false, taskId: "task-1", shadowStore: store });
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    expect(store.recorded()).toHaveLength(0);
+    // and the payload stays byte-identical to the pre-shadow shape
+    expect(emit.mock.calls[0]![0]!.payload).toEqual({ action: "memory.write", capability: null });
+  });
+
+  it("a needs-approval action records NOTHING durable (the store rides only the autonomous branch)", async () => {
+    const store = createInMemoryShadowObservationStore();
+    const { built } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+    await createProposeActions(built)([passing({ reversible: false })]); // → needs_approval
+    expect(store.recorded()).toHaveLength(0);
+    expect(requestApprovalMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("BEST-EFFORT: a failing store never breaks the run — the verdict still resolves", async () => {
+    const store = failingStore();
+    const { built } = deps({ shadow: true, taskId: "task-1", shadowStore: store });
+    const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    expect(verdict!.decision).toBe("autonomous"); // resolved, not thrown
+    expect(store.record).toHaveBeenCalledTimes(1);
   });
 });

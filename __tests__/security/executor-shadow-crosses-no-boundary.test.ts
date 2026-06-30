@@ -6,24 +6,28 @@ import type { EmploymentPosture, ProposedAction, GateVerdict } from "@/server/sd
 import type { Executor, ExecutionPlanResult } from "@/server/sdk/executor";
 
 /**
- * CrewFlow HQ — the R1 executor-shadow trust boundary
- * (CEO Directive #016 / D-06, increment R1; ADR 0011; the Executor Boundary Rule + the Runtime
- * Composition Rule — Kernel Contract Map §2).
+ * CrewFlow HQ — the executor-shadow trust boundary (increments R1 + R2)
+ * (CEO Directive #016 / D-06; ADR 0011; the Executor Boundary Rule + the Runtime Composition Rule +
+ * the Shadow Truthfulness Rule — Kernel Contract Map §2).
  *
- * R1 wires the proven `plan → key` composition into the runner's autonomous branch SHADOW-FIRST:
+ * R1 wired the proven `plan → key` composition into the runner's autonomous branch SHADOW-FIRST:
  * default-off, and even ON it only OBSERVES — it must never cross the execution boundary (no
- * `apply`, no `execute`, no real effect, no application-store write). This file proves that as a
- * matter of BEHAVIOUR and of SOURCE, so a future edit that quietly turns the shadow into a live
- * apply — or flips the kill-switch default — fails here.
+ * `apply`, no `execute`, no real effect). R2 gives that observation a durable home, but ONLY as an
+ * EXPLICIT shadow-labelled record through a store structurally separate from the application store
+ * (the Shadow Truthfulness Rule) — never an `applied` marker a real execution is indistinguishable
+ * from. This file proves both as a matter of BEHAVIOUR and of SOURCE, so a future edit that quietly
+ * turns the shadow into a live apply — flips the kill-switch default, or persists an application
+ * record — fails here.
  *
  * What breaks if a fact silently flips:
  *   • the kill-switch default flips on → the shadow would run in production unbidden. Asserted off.
  *   • the shadow calls executor.apply/execute → an autonomous decision becomes an APPLIED effect
- *     with no approval flow and no cut-over decision (the very thing R1 excludes). Asserted never.
+ *     with no approval flow and no cut-over decision (the very thing the shadow excludes). Never.
  *   • the shadow rides the needs-approval branch → it would observe an action a human must see
  *     before any mechanism runs. Asserted: only the autonomous branch shadows.
- *   • the shadow writes an application record → it would poison the idempotency guarantee a later
- *     real apply depends on (store.put is deferred). Asserted: the runner wires no store in R1.
+ *   • the shadow writes an APPLICATION record → it would poison the idempotency guarantee a later
+ *     real apply depends on. Asserted: the runner persists ONLY through the shadow store
+ *     (`kind: "executor_shadow"`), never the application / apply-once path.
  *
  * The Approval Engine is the one service the doorman hands off to, so we mock IT and inject a fake
  * events facet; the admin client + embeddings are stubbed only so the runner's module graph imports
@@ -162,12 +166,14 @@ describe("R1 executor shadow — ON, it observes without crossing the execution 
 });
 
 // =====================================================================
-// 3. Source-level — the runner observes, it does not apply or persist.
+// 3. Source-level — the runner observes and persists ONLY a shadow-labelled
+//    record; it never applies, and never writes an application record.
 //    Comments are stripped first so the prose that DOCUMENTS the boundary
-//    (which names apply/execute to explain what it does NOT do) cannot trip a match.
+//    (which names apply/execute/application to explain what it does NOT do)
+//    cannot trip a match.
 // =====================================================================
 
-describe("R1 executor shadow — the source observes, it neither applies nor persists", () => {
+describe("R1+R2 executor shadow — the source observes and persists ONLY a shadow-labelled record", () => {
   const ROOT = resolve(__dirname, "..", "..");
   const code = readFileSync(resolve(ROOT, "server/sdk/tasks.ts"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "") // block comments (incl. JSDoc)
@@ -179,10 +185,20 @@ describe("R1 executor shadow — the source observes, it neither applies nor per
     expect(code).not.toContain("executor.execute(");
   });
 
-  it("derives the idempotency key but wires NO application store (store.put is deferred past R1)", () => {
+  it("persists durably ONLY through the SHADOW store — never an application / apply-once record", () => {
+    // It derives the key the real apply WOULD use…
     expect(code).toContain("deriveIdempotencyKey(");
+    // …and in R2 it DOES persist — but ONLY as an explicit shadow-labelled record, through the
+    // durable shadow store (the Shadow Truthfulness Rule made source).
+    expect(code).toContain("shadowObservationRecord(");
+    expect(code).toContain("shadowStore.record(");
+    expect(code).toContain("createDurableShadowObservationStore");
+    // …NEVER through the application store or the apply-once path: writing an `applied` marker in
+    // shadow would be indistinguishable from a real execution, the exact thing the rule forbids.
     expect(code).not.toContain("createInMemoryApplicationStore");
     expect(code).not.toContain("createApplicationStore");
+    expect(code).not.toContain("applyOnce");
+    expect(code).not.toContain("appliedRecord");
     expect(code).not.toContain(".put(");
   });
 });

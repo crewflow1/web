@@ -16,8 +16,14 @@ import { createEvents } from "@/server/sdk/events";
 import { createComms } from "@/server/sdk/comms";
 import { drainEvidenceInto } from "@/server/sdk/output";
 import { evaluateAction } from "@/server/sdk/gate";
-import { REFERENCE_EXECUTOR, type Executor, type ExecutionRefusalReason } from "@/server/sdk/executor";
+import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
 import { deriveIdempotencyKey } from "@/server/sdk/application";
+import {
+  shadowObservationRecord,
+  type ExecutorShadowObservation,
+  type ShadowObservationStore,
+} from "@/server/sdk/shadow";
+import { createDurableShadowObservationStore } from "@/server/services/executor-shadow";
 import { requestApproval } from "@/server/services/hq-approvals";
 import type { BoundEvents } from "@/server/sdk/events";
 import type { BoundComms } from "@/server/sdk/comms";
@@ -475,20 +481,15 @@ export function executorShadowEnabled(
 }
 
 /**
- * A side-effect-free observation of what the executor WOULD do with a cleared action — the
- * shadow's only product (R1 is shadow-only: "shadow execution, audit continuity. No production
- * cut-over"). It is DATA appended to the audit payload, never an applied effect:
- *
- *   • `planned`  — the executor produced a plan; we carry the resolved tool label and the
- *                  derived idempotency key (the application-store KEYING contract, wired but
- *                  never written — `store.put` is deferred to a later increment).
- *   • `refused`  — the executor declined at its own boundary (an {@link ExecutionRefusalReason}).
- *   • `error`    — observing threw; recorded, never raised (best-effort, like the emit itself).
+ * The shadow's only product — a side-effect-free observation of what the executor WOULD do with a
+ * cleared action. R2 moves the canonical definition to the pure {@link
+ * import("@/server/sdk/shadow").ExecutorShadowObservation} contract, so the runner that PRODUCES the
+ * observation and the durable store that PERSISTS it share ONE shape; re-exported here for the
+ * runner's existing consumers. It is DATA — `planned` / `refused` / `error` — never an applied
+ * effect, and in R2 it gets a first-class durable home under an explicit shadow label (the Shadow
+ * Truthfulness Rule), never an application record.
  */
-export type ExecutorShadowObservation =
-  | { readonly outcome: "planned"; readonly toolLabel: string; readonly idempotencyKey: string }
-  | { readonly outcome: "refused"; readonly reason: ExecutionRefusalReason; readonly detail: string }
-  | { readonly outcome: "error"; readonly detail: string };
+export type { ExecutorShadowObservation };
 
 /**
  * Run the executor shadow for one cleared action: PLAN it (pure — {@link Executor.plan} never
@@ -550,12 +551,15 @@ export function createProposeActions(deps: {
   budget: number;
   correlationId: string;
   events: BoundEvents;
-  // R1 executor shadow (CEO Directive #016 / D-06) — all OPTIONAL with safe, inert defaults so
-  // the doorman's existing callers and tests are unchanged. `shadow` defaults OFF; `executor`
-  // defaults to the reference handle; `taskId` keys the (unwritten) application record.
+  // Executor shadow (CEO Directive #016 / D-06) — all OPTIONAL with safe, inert defaults so the
+  // doorman's existing callers and tests are unchanged. `shadow` defaults OFF; `executor` defaults
+  // to the reference handle; `taskId` keys the shadow record. R2 adds `shadowStore`: the durable,
+  // explicitly shadow-labelled observation store (the Shadow Truthfulness Rule) — INJECTED, so the
+  // doorman records WITHOUT knowing where it lands, and absent (undefined) it persists nothing.
   taskId?: string;
   executor?: Executor;
   shadow?: boolean;
+  shadowStore?: ShadowObservationStore;
 }): (actions: ProposedAction[]) => Promise<GateVerdict[]> {
   const {
     identity,
@@ -567,6 +571,7 @@ export function createProposeActions(deps: {
     taskId = "",
     executor = REFERENCE_EXECUTOR,
     shadow = false,
+    shadowStore,
   } = deps;
   return async function proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]> {
     const verdicts: GateVerdict[] = [];
@@ -589,7 +594,7 @@ export function createProposeActions(deps: {
       } else {
         // MECHANISM (autonomous): audit the permitted decision. Best-effort — a failed
         // append is logged by the facet, never raised, so the spine cannot block the work.
-        // R1 executor shadow (default-OFF): when enabled, COMPOSE the executor's plan + the
+        // Executor shadow (default-OFF): when enabled, COMPOSE the executor's plan + the
         // application key and record the observation on this SAME event (additive payload,
         // backward-compatible — no boundary crossed, no new verb). Off, the payload is
         // byte-identical to before (audit continuity).
@@ -606,6 +611,25 @@ export function createProposeActions(deps: {
             ...(shadowObservation ? { shadow: shadowObservation } : {}),
           },
         });
+        // R2 (CEO Directive #016 / D-06): give that observation a FIRST-CLASS durable home — an
+        // EXPLICIT shadow-labelled record (`kind: "executor_shadow"`, never an `applied` status) in
+        // a store STRUCTURALLY separate from the application store, so it can never poison the
+        // idempotency ground truth a later real apply depends on (the Shadow Truthfulness Rule).
+        // Best-effort, like the emit above: the store never throws, so a failed shadow write can
+        // never break the run it observes. No store injected (default) ⇒ nothing is persisted.
+        if (shadowObservation && shadowStore) {
+          await shadowStore.record(
+            shadowObservationRecord(
+              {
+                source: "autonomous",
+                correlationId,
+                taskId,
+                actionId: `${action.subjectType}:${action.subjectId}:${action.type}`,
+              },
+              shadowObservation,
+            ),
+          );
+        }
       }
       verdicts.push(verdict);
     }
@@ -639,6 +663,9 @@ function buildContext(
   const events = createEvents({ slug: identity.slug }, task.correlation_id);
   const capabilities = identity.capabilities ?? EMPTY_CAPABILITIES;
   const budget = task.cost_budget_micros ?? 0;
+  // Read the default-off kill-switch ONCE: it gates both whether the shadow runs and whether a
+  // durable store is wired, so a single read keeps the two decisions consistent within this build.
+  const shadowOn = executorShadowEnabled();
   const ctx: RunContext = {
     task,
     identity,
@@ -653,11 +680,14 @@ function buildContext(
       budget,
       correlationId: task.correlation_id,
       events,
-      // R1: thread the task id (keys the unwritten application record) and read the default-off
-      // kill-switch. The executor defaults to REFERENCE_EXECUTOR — per-employee executor binding
-      // is a later increment; R1 only proves the composition shadow-first.
+      // Thread the task id (keys the shadow record) and the default-off kill-switch. The executor
+      // defaults to REFERENCE_EXECUTOR — per-employee executor binding is a later increment.
       taskId: task.id,
-      shadow: executorShadowEnabled(),
+      shadow: shadowOn,
+      // R2: when the shadow is enabled, give it a DURABLE home — the explicit shadow-labelled
+      // observation store (server-only, service-role-only, SECURITY DEFINER). Off, no store is
+      // wired and nothing is persisted, exactly as before. It is NEVER the application store.
+      shadowStore: shadowOn ? createDurableShadowObservationStore() : undefined,
     }),
     correlationId: task.correlation_id,
     budget,
