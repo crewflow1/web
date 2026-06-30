@@ -39,6 +39,7 @@ import {
   EMPTY_CAPABILITIES,
   type EmployeeIdentity,
 } from "@/server/sdk/tasks";
+import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
 
 const CORR = "corr-run-1";
 
@@ -196,5 +197,117 @@ describe("ctx.proposeActions — batch routing preserves order and routes each i
     expect(await proposeActions([])).toEqual([]);
     expect(emit).not.toHaveBeenCalled();
     expect(requestApprovalMock).not.toHaveBeenCalled();
+  });
+});
+
+// =====================================================================
+// proposeActions — the R1 executor shadow (CEO Directive #016 / D-06; ADR 0011)
+//
+// R1 COMPOSES the proven `plan → key` chain onto the autonomous branch, SHADOW-FIRST: default-OFF,
+// and even ON it only OBSERVES — it threads a side-effect-free observation onto the SAME
+// `ai.action_permitted` event and crosses NO tool boundary (the Runtime Composition Rule: "the
+// runtime composes established components; composition is orchestration, not duplication").
+// =====================================================================
+
+/** A spying executor whose `plan` delegates to `planImpl`; `apply`/`execute` are spies that must
+ *  never be reached by the shadow (R1 is observe-only). Typed as {@link Executor} for the deps. */
+function spyExecutor(planImpl: Executor["plan"]) {
+  const plan = vi.fn(planImpl);
+  const apply = vi.fn();
+  const execute = vi.fn();
+  return { executor: { plan, apply, execute } as unknown as Executor, plan, apply, execute };
+}
+
+describe("ctx.proposeActions — the R1 executor shadow is OFF by default (audit continuity)", () => {
+  it("with no shadow flag, the autonomous payload is byte-identical to before (no `shadow` key)", async () => {
+    const { built, emit } = deps(); // shadow defaults false
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    // EXACT equality (not toMatchObject): the payload carries ONLY the historical fields.
+    expect(emit.mock.calls[0]![0]!.payload).toEqual({ action: "memory.write", capability: null });
+  });
+
+  it("explicit shadow:false is identical to the default — still no observation", async () => {
+    const { built, emit } = deps({ shadow: false });
+    await createProposeActions(built)([passing()]);
+    expect(emit.mock.calls[0]![0]!.payload).toEqual({ action: "memory.write", capability: null });
+  });
+});
+
+describe("ctx.proposeActions — the R1 executor shadow, ON, observes without crossing the boundary", () => {
+  it("a plannable action records a `planned` observation: tool label + the derived idempotency key", async () => {
+    const { built, emit } = deps({ shadow: true, taskId: "task-1" });
+
+    const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(verdict!.decision).toBe("autonomous");
+    expect(emit.mock.calls[0]![0]!.payload).toEqual({
+      action: "memory.write",
+      capability: null,
+      shadow: {
+        outcome: "planned",
+        toolLabel: "memory.write",
+        // autonomous · taskId · toolLabel · actionId(subjectType:subjectId:type) · correlationId
+        idempotencyKey: "autonomous·task-1·memory.write·lead%3Alead_1%3Amemory.write·corr-run-1",
+      },
+    });
+  });
+
+  it("the derived key is DETERMINISTIC — the same action yields the same key every run", async () => {
+    const run = async () => {
+      const { built, emit } = deps({ shadow: true, taskId: "task-1" });
+      await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+      return (emit.mock.calls[0]![0]!.payload as { shadow: { idempotencyKey: string } }).shadow.idempotencyKey;
+    };
+    expect(await run()).toBe(await run());
+  });
+
+  it("an action the executor REFUSES records a `refused` observation (invalid_args — memory.write needs a verdict)", async () => {
+    const { built, emit } = deps({ shadow: true, taskId: "task-1" });
+    await createProposeActions(built)([passing()]); // no payload → fails the tool's argSchema
+    const payload = emit.mock.calls[0]![0]!.payload as { shadow: { outcome: string; reason: string } };
+    expect(payload.shadow.outcome).toBe("refused");
+    expect(payload.shadow.reason).toBe("invalid_args");
+  });
+
+  it("an unknown tool records a `refused` observation with reason unknown_tool", async () => {
+    const { built, emit } = deps({ shadow: true, taskId: "task-1" });
+    await createProposeActions(built)([passing({ type: "memory.append" })]); // resolves to no reference tool
+    const payload = emit.mock.calls[0]![0]!.payload as { shadow: { outcome: string; reason: string } };
+    expect(payload.shadow.outcome).toBe("refused");
+    expect(payload.shadow.reason).toBe("unknown_tool");
+  });
+
+  it("BEST-EFFORT: a throwing executor is captured as an `error` observation, never breaking the run", async () => {
+    const { executor, apply, execute } = spyExecutor(() => {
+      throw new Error("boom");
+    });
+    const { built, emit } = deps({ shadow: true, taskId: "task-1", executor });
+
+    const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(verdict!.decision).toBe("autonomous"); // resolved, not thrown
+    const payload = emit.mock.calls[0]![0]!.payload as { shadow: { outcome: string; detail: string } };
+    expect(payload.shadow.outcome).toBe("error");
+    expect(payload.shadow.detail).toBe("boom");
+    expect(apply).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("NEVER crosses the boundary — apply/execute are untouched while plan is called once", async () => {
+    const { executor, plan, apply, execute } = spyExecutor((a, v) => REFERENCE_EXECUTOR.plan(a, v));
+    const { built } = deps({ shadow: true, taskId: "task-1", executor });
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+    expect(plan).toHaveBeenCalledTimes(1);
+    expect(apply).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("the shadow rides ONLY the autonomous branch — a needs-approval action is never planned", async () => {
+    const { executor, plan } = spyExecutor((a, v) => REFERENCE_EXECUTOR.plan(a, v));
+    const { built, emit } = deps({ shadow: true, taskId: "task-1", executor });
+    await createProposeActions(built)([passing({ reversible: false })]); // → needs_approval
+    expect(plan).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+    expect(requestApprovalMock).toHaveBeenCalledTimes(1);
   });
 });
