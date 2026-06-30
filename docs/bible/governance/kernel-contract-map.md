@@ -180,6 +180,30 @@ gate-cleared action is finally applied. A facet that orchestrated another would 
 two primitives (the Facet Isolation breach) but relocate *operating-system behaviour* into a
 capability provider, re-introducing the per-employee forking the kernel exists to prevent.
 
+**Reaffirmed and generalised on the [ADR 0011](../decisions/0011-live-executor-rollout.md) review
+(Directive #016 — the Live Executor Rollout; independent CTO review).** Where the original
+articulation governs the **SDK facets** — no facet may orchestrate a sibling — the rollout restates
+the same principle for *every* established component the runtime now composes into one production
+execution path, and makes explicit the **anti-duplication** clause the live runner makes
+load-bearing:
+
+> **The runtime composes established components. It does not reimplement them. Each component
+> continues to own exactly one responsibility. Composition is orchestration, not duplication.
+> Directive #016 exists to compose previously completed work into one production execution path.**
+
+This is **not a new standard and not a new ordinal** — it is the sixth standard read at the
+granularity Directive #016 requires. The components it now names are the ones the rollout wires
+together: the **Capability Registry** stays authoritative, the **gate** stays declarative, the
+**executor** stays mechanism only, the **Application Store** stays durable state, the **runner**
+owns orchestration, and **employees never own execution** (the Execution Ownership Rule, below).
+"Composition is orchestration, not duplication" is the positive form of the **anti-fork** clause
+the original closes on: a runner that *reimplemented* a component — re-deriving permission instead
+of reading the registry, re-classifying instead of calling the gate, re-applying instead of
+invoking the executor — would relocate that component's single responsibility into the orchestrator,
+the same structural breach as a facet orchestrating a sibling, one layer up. The rule therefore
+binds the runner exactly as it binds the facets: the runtime is the one place capabilities are
+recombined, and recombination must never become re-implementation.
+
 ### The Executor Boundary Rule
 
 A **seventh** standard, set by CEO directive on the **acceptance** of [ADR

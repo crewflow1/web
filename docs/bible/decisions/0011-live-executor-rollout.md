@@ -1,6 +1,8 @@
 # ADR 0011 — Live Executor Rollout
 
-> **Status:** **Proposed — held for CEO independent CTO review.** · **Date:** 2026-06-30 ·
+> **Status:** **Accepted** *(CEO independent CTO review)* — the **governing architectural decision**
+> for Directive **#016 / D-06**; on acceptance the CEO **authorised R1 only** (R1 scope amended — see
+> Decision 11, *Acceptance amendment*) and **gated R2 → R6** on independent review. · **Date:** 2026-06-30 ·
 > **Directive:** CEO Directive **#016 / D-06** (*the Live Executor Rollout*) · **Supersedes:** none ·
 > **Superseded by:** none · **Builds on:**
 > [ADR 0009](./0009-sdk-executor-apply-on-approval.md) (the SDK Executor and Apply-on-Approval
@@ -294,6 +296,18 @@ change (#015 is consumed read-only); any Task-Engine seam activation (`depends_o
 `verifying`, `approval_status`, the verification seam stay reserved-inert); any reopening of the
 Approval Engine state machine; any saga/2PC. **Do not begin R1 until this ADR is reviewed and approved.**
 
+**Acceptance amendment (CEO independent CTO review).** On approving this ADR the CEO **authorised
+implementation of R1 only** and **fixed R1's scope** to a single shadow increment combining what this
+decision authored as **R1 + R2** — *runner composition, executor invocation, application-store wiring,
+execution-ownership enforcement, shadow execution, and audit continuity* — while **excluding**
+everything from the authored R3 onward: **no employee migration, no approval sweep, no production
+cut-over, no behavioural expansion, no policy change** (and, as already scoped out above, no API Gateway
+and no Cost Metering — **#017**). The authored R1→R6 ladder stands as the rollout map; the amendment
+merges its first two rungs into the one authorised increment and re-labels the live cut-over (authored
+R3) and beyond as the **gated** remainder: *no later increment begins until R1 has been independently
+reviewed and approved.* R1 stays **shadow** — it records what it *would* apply and crosses **no** tool
+boundary.
+
 ---
 
 ## Alternatives weighed
@@ -378,28 +392,30 @@ Boundary → **Execution Ownership**) by naming the *whole* separation the other
 directive that touches the execution path, not only #016.
 
 **Numbering.** This is ADR **0011** ([`../governance/numbering.md`](../governance/numbering.md) §5); ADR
-numbers are monotonic and never reused. The number is **reserved on creation** and registered in §5 as
-**Proposed**; on acceptance the §5 row moves to *Accepted* and the next free ADR number stands at
+numbers are monotonic and never reused. The number was **reserved on creation** and registered in §5;
+on the CEO's independent review the §5 row moved to **Accepted** and the next free ADR number stands at
 **`0012`**. Per the Architecture Freeze §2, the architectural-review sign-off for the *contract change
 itself* travels with the implementation PR(s) that carry the #016 code; this decision record is those
-PRs' **prerequisite** — the R1 → R6 increments build upon it, and **none begins until it is accepted.**
+PRs' **prerequisite** — the R1 → R6 increments build upon it, and with the ADR now accepted **R1 is
+authorised; no later increment begins until R1 has been independently reviewed and approved.**
 
-**The implementation gate (the CEO's standing constraint).** Implementation is **not yet authorised.**
-After this ADR is independently reviewed and approved, implementation proceeds in **small reviewable
-increments** (R1 → R6), each its own PR under the full six-gate discipline, no later slice beginning
-until the current has passed and received CEO approval. **Do not begin R1 until this ADR has been
-reviewed and approved.** The API Gateway + Cost Metering remain **Directive #017**, opened only after
-the executor is live.
+**The implementation gate (the CEO's standing constraint).** On approving this ADR the CEO
+**authorised implementation of R1 only** (scope fixed — Decision 11, *Acceptance amendment*).
+Implementation proceeds in **small reviewable increments** (R1 → R6), each its own PR under the full
+six-gate discipline, **no later slice beginning until the current has passed and received CEO
+approval.** **No R2–R6 increment begins until R1 has been independently reviewed and approved.** The
+API Gateway + Cost Metering remain **Directive #017**, opened only after the executor is live.
 
 ---
 
 *Documentation only. No code, schema, migration, configuration, or git history was changed by this
 record. Authored ahead of implementation under the document-before-you-build rule at the CEO's
-direction, and **held for CEO independent CTO review** — no #016 implementation (R1 included) begins
-until it is reviewed and approved. Prepared for CEO Directive **#016 / D-06** (the Live Executor
+direction and **accepted on CEO independent CTO review** — it is the **governing architectural
+decision** for Directive #016, with **R1 authorised** (scope fixed by the acceptance amendment) and
+**R2 → R6 gated** on independent review. Prepared for CEO Directive **#016 / D-06** (the Live Executor
 Rollout); it formalises the CEO-approved
 [#016 architecture proposal](../governance/directive-016-live-executor-rollout-architecture-proposal.md)
 (PR #261), builds on [ADR 0009](./0009-sdk-executor-apply-on-approval.md) (the executor it rolls out,
 not re-decides), and records as the directive's governing principle the new permanent **Execution
 Ownership Rule** the CEO set on the proposal review, homed in the
-[Kernel Contract Map](../governance/kernel-contract-map.md) §2 in this same PR.*
+[Kernel Contract Map](../governance/kernel-contract-map.md) §2 alongside this record (PR #262).*
