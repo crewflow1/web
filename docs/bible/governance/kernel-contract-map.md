@@ -1162,6 +1162,49 @@ last confirmation, never the act that does the work.
 
 ---
 
+### The Execution Ownership Rule
+
+A **twenty-ninth** standard, set by CEO directive on the review of the **Directive #016 Architecture
+Proposal** (the Live Executor Rollout; independent CTO review), and named by the CEO as the rule that
+**governs Directive #016.** Where the execution-seam rules above each govern *one face* of the apply
+path — the **Policy vs Mechanism Rule** (the gate decides; the runtime carries out), the **Runtime
+Composition Rule** (the runner composes facets; facets do not compose one another), and the **Executor
+Boundary Rule** (the executor applies only what the gate cleared, owning neither policy nor approval nor
+lifecycle) — this standard names the **whole separation** they serve, and fixes **who owns the decision
+to execute**:
+
+> **Only the runtime may execute approved or autonomous actions. Employees may propose actions. The
+> gate may classify actions. The Approval Engine may approve actions. The executor may apply actions.
+> But the runtime owns the decision to execute. No employee handler may bypass the runtime execution
+> path.**
+
+It draws a **five-actor separation** along the apply path — *propose* (the employee handler) ·
+*classify* (the gate, `server/sdk/gate.ts`) · *approve* (the Approval Engine,
+`server/services/hq-approvals.ts`) · *apply* (the executor mechanism, `server/sdk/executor.ts`) ·
+**own the decision to execute** (the runtime/runner, `server/sdk/tasks.ts`) — and assigns the final
+authority to the **runner**. This is the structural reason the apply orchestration lives in the runner
+and **never** in a facet or an employee handler: an employee *proposes* an action, but it **cannot
+reach the executor** — the runtime composes `registry → gate → executor → application`, so there is
+**no employee-bypass surface** to begin with. It is the **capstone** of the execution-seam rule stack
+(Facet Isolation → Policy vs Mechanism → Runtime Composition → Executor Boundary → **Execution
+Ownership**): the Executor Boundary Rule says *the executor only applies what was cleared*; the
+Execution Ownership Rule says, from the other side, *only the runtime decides to execute, and nothing
+routes around it.* The two are **one boundary seen from its two ends.**
+
+For Directive #016 the rule is **load-bearing at exactly the seam the rollout fills**: the runner's
+autonomous branch (`server/sdk/tasks.ts:504–513`, today audit-only) is extended to **apply+audit** by
+the **runner** composing the executor — not by any employee handler gaining an apply path. It is why
+#016 introduces **no employee-side execution code** at all: `lead-qualification` and `research-ai`
+*lose* their bespoke action handling and *propose* through the same door every employee shares, while
+the runtime owns the apply (the Platform-Reuse-Index thesis on the execution path). Generalised beyond
+#016, it is **permanent and platform-wide**: every future directive that adds an execution path adds it
+**in the runtime**, behind the gate and the Approval Engine, with the executor as mechanism — **never**
+as a handler-reachable bypass. Its design basis is
+[ADR 0011](../decisions/0011-live-executor-rollout.md) (Decision 1); it builds on the **Executor
+Boundary Rule** set on [ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md).
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,

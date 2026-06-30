@@ -122,8 +122,13 @@ records *one* major architectural decision (the "document before you build" rule
 | [`0008`](../decisions/0008-ai-sdk-envelope.md) | The AI SDK Envelope *(Accepted)* | #014 (D-04) |
 | [`0009`](../decisions/0009-sdk-executor-apply-on-approval.md) | SDK Executor and Apply-on-Approval Runtime *(Accepted)* | #014 (D-04), Phase C |
 | [`0010`](../decisions/0010-capability-registry.md) | The Capability Registry *(Accepted)* | #015 (D-05) |
+| [`0011`](../decisions/0011-live-executor-rollout.md) | Live Executor Rollout *(Proposed — held for CEO review)* | #016 (D-06) |
 
-**Next free ADR number: `0011`.** ADR numbers are also monotonic and never reused. ADR
+**Next free ADR number: `0012`.** ADR numbers are also monotonic and never reused. ADR `0011`
+(the **Live Executor Rollout**, Directive #016 / D-06) is **Proposed** — reserved on creation, authored
+ahead of any #016 code under the strict document-before-you-build gate, and held for independent CEO
+review (see below); on acceptance its §5 row moves to *Accepted* and the next free number stands at
+`0012`. ADR
 `0008` is **Accepted** (CEO independent CTO review, 2026-06-27) and ADR `0009` (SDK Executor
 and Apply-on-Approval Runtime) is **Accepted** (CEO independent CTO review, 2026-06-28);
 Directive #014 shipped under per-phase review gates as Phases **A → B → C**, all **merged**.
@@ -232,6 +237,26 @@ LR5.4A/LR5.4B increments anticipated under the working-title alias *the Legacy I
 **declared Directive #015 complete**, and **graduated contract #8 (Capability Registry) Reserved →
 Established** as the permanent production authority model. The full arc is recorded in the
 [completion report](./directive-015-completion-report.md).
+
+ADR `0011` (the **Live Executor Rollout**, Directive **#016 / D-06**) is **Proposed — held for CEO
+independent review.** It is the next ADR after the Capability Registry, authored under the strict
+*document-before-you-build* gate **ahead of any #016 code**: on approving the
+[#016 architecture proposal](./directive-016-live-executor-rollout-architecture-proposal.md) (PR #261)
+the CEO ruled *"No implementation begins before ADR 0011 has been independently reviewed and
+approved … Do not begin R1 until ADR 0011 has been reviewed and approved."* It defines the ten
+elements the CEO required — authority/**execution ownership** · runner responsibilities · executor
+boundaries · application persistence · approval application flow · shadow rollout strategy ·
+operational kill-switch · rollback strategy · validation strategy · completion criteria — **builds on**
+[ADR 0009](../decisions/0009-sdk-executor-apply-on-approval.md) (the executor it *rolls out*, not
+re-decides), and records as the directive's **governing principle** the new permanent **Execution
+Ownership Rule** the CEO set on the proposal review (homed in the
+[Kernel Contract Map](./kernel-contract-map.md) §2 as the **twenty-ninth** §2 standard). Directive #016
+**graduates no contract**: it makes four Established contracts (**#3** AI SDK · **#4** RunContext ·
+**#6** Approval · **#8** Registry) **load-bearing together** for the first time and **advances** #5
+(Task Engine, Partial) without activating a reserved seam. On acceptance this row moves to *Accepted*,
+the next free ADR number stands at **`0012`**, and implementation proceeds in small reviewable
+increments **R1 → R6**; **no #016 implementation (R1 included) begins until ADR 0011 is reviewed and
+approved.**
 
 ---
 
