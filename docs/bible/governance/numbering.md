@@ -261,6 +261,19 @@ independently reviewed and approved* — and set the permanent **Runtime Composi
 (*"the runtime composes established components … composition is orchestration, not duplication"*),
 reaffirmed and generalised in the [Kernel Contract Map](./kernel-contract-map.md) §2 as the
 **sixth** §2 standard.
+On the **R1** review — the executor shadow composed into the runner's autonomous branch (default-off,
+observe-only: it `plan`s and derives the idempotency key but crosses **no** execution boundary and
+writes **no** application record; PRs **#263** [ADR 0011 accepted into canon + the Runtime Composition
+Rule reaffirmation] and **#264** [the R1 shadow code] now **merged**) — the CEO **approved R1**, set the
+permanent **Shadow Truthfulness Rule** (the **thirtieth** §2 standard, homed in the
+[Kernel Contract Map](./kernel-contract-map.md) §2: *shadow execution must never record state that
+implies a real side effect occurred; shadow mode may observe, classify, plan, compare and audit but must
+not write durable application records indistinguishable from real execution; a shadow record persisted
+in a later phase must be explicitly labelled as shadow; truthfulness of operational records outranks
+early persistence*), and **authorised R2 only** — the durable shadow observation store under explicit
+shadow labelling, preserving the **planned · shadow-observed · applied** distinction, with no real tool
+application, approval sweep, employee migration, API Gateway, cost metering or live cut-over — *no R3
+increment begins until R2 has been independently reviewed and approved.*
 
 ---
 
