@@ -112,6 +112,20 @@ system is, the governance records describe *how decisions about it are tracked*.
   one genuinely net-new chokepoint. Recommends **phasing within #014** and surfaces five
   scope forks (notably whether the API gateway splits into its own directive) for the CEO
   to rule on.
+- **[`directive-016-dependency-ordering-analysis.md`](./directive-016-dependency-ordering-analysis.md)** —
+  a **dependency analysis & recommendation** (not a decision; renumbers nothing) that, with
+  **#013/#014/#015 complete** (contracts **#3/#4/#8** all Established), answers **which thing-name
+  takes the next free directive number #016 / D-06, and in what order the remaining platform-contract
+  frontiers follow**. Every conclusion is `file:line`-backed. The dependency is **asymmetric** again:
+  the **Live Executor Rollout** — wiring the already-built, **C4-proven** executor (`server/sdk/executor.ts`,
+  unwired into the runner `server/sdk/tasks.ts`) into the live run loop — depends **only** on contracts
+  already **Established** (#3 AI SDK · #4 RunContext · #6 Approval · #8 Registry), while every other open
+  frontier (**API gateway + cost metering**, **Task-Engine verification**, the **Boardroom write/act**
+  interface, the **agent-to-agent protocol**) depends, directly or transitively, on the executor being
+  **live**. So it recommends **#016 = the Live Executor Rollout**, then **#017 = API Gateway + Cost
+  Metering** (the **split**, per the #013 precedent — *the evidence fixes the order; the packaging into
+  one directive or two is the CEO's call*), then Task-Engine completion · Boardroom · Comms Protocol. It
+  **informs the #016 subject the CEO must confirm** before the Architecture Proposal is written.
 
 ## Related, outside this directory
 
