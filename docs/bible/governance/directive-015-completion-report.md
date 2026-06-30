@@ -302,6 +302,15 @@ Tracked honestly; none of it is load-bearing on the platform's correctness.
   `{ slug, department? }` (no legacy authority fields remain), but the name is
   retained as the stable cross-module import surface. A rename is cosmetic,
   deliberately out of LR5.4B's minimal footprint.
+- **Stale capability-mirror comments in `server/sdk/registry-authoring.ts`.** The
+  module header and the `authorEmployeeCapabilities` doc-comment still describe
+  mirroring the capability split "back to the retained legacy columns" — prose LR5.4B
+  made obsolete when it dropped `tools_allowed` / `permissions`. The *code* is correct:
+  the re-pointed RPC seeds a fresh grant's posture from the deny floor, and the
+  `tools_allowed` it returns is a catalogue-kind split of the grant tokens (a display
+  value), **not** a column read. Only the comments are stale; the surviving
+  `memory_scope` mirror comments remain accurate (that column was preserved). Cosmetic,
+  out of LR5.4B's minimal footprint — a comment-only housekeeping pass.
 - **Doc-narrative slippage in `numbering.md` §5.** The §5 prose names the LR1–LR4
   rules one increment off the authoritative ordinal mapping in the ADR-0010
   acceptance paragraph (which the code comments agree with: 13th Single Source …
@@ -346,9 +355,10 @@ No **high-likelihood** risk remains open. The dominant residual risk is operatio
    is what let the increments land small and reviewable. Maintain the same ADR
    workflow, the same incremental implementation model, and the same per-increment
    review gates used throughout #014 and #015.
-5. **Run the `numbering.md` §5 prose-alignment + the `LegacyEmployee` rename as
-   doc/cosmetic housekeeping passes** outside the critical path, so the canon's words
-   match its authoritative ordinals and the code's names match its post-removal shape.
+5. **Run the `numbering.md` §5 prose-alignment, the `LegacyEmployee` rename, and the
+   `registry-authoring.ts` stale-comment cleanup as doc/cosmetic housekeeping passes**
+   outside the critical path, so the canon's words match its authoritative ordinals and
+   the code's names and comments match its post-removal shape.
 
 ---
 
@@ -376,11 +386,11 @@ No **high-likelihood** risk remains open. The dominant residual risk is operatio
    and approval only ratchets up, an unreachable or unauthored registry can only ever
    grant *less* — the switch is safe by construction, not by hoping the registry is
    always up.
-6. **Deletion is the final confirmation of replacement, never the mechanism used to
-   achieve it.** The directive's capstone lesson, now standing canon as the Final
-   Removal Rule (28th): the registry *replaced* the legacy columns increments before
-   they were dropped; dropping them only confirmed a replacement already complete and
-   independently demonstrated on six faces.
+6. **Deletion is the final confirmation of replacement. It is never the mechanism used
+   to achieve replacement.** The directive's capstone lesson, now standing canon as the
+   Final Removal Rule (28th): the registry *replaced* the legacy columns increments
+   before they were dropped; dropping them only confirmed a replacement already complete
+   and independently demonstrated on six faces.
 
 ---
 

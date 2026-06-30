@@ -227,7 +227,7 @@ On the **LR5.4B** review — the review that **completed Directive #015** — th
 Removal Rule** (the twenty-eighth §2 standard: infrastructure is removed only after behavioural
 equivalence, runtime independence, rollback independence, operational independence, production
 confidence and the full validation discipline are each independently demonstrated; *deletion is the
-final confirmation of replacement, never the mechanism used to achieve it*) — the standard the
+final confirmation of replacement; it is never the mechanism used to achieve replacement*) — the standard the
 LR5.4A/LR5.4B increments anticipated under the working-title alias *the Legacy Independence Rule* —
 **declared Directive #015 complete**, and **graduated contract #8 (Capability Registry) Reserved →
 Established** as the permanent production authority model. The full arc is recorded in the

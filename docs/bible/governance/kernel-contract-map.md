@@ -1111,11 +1111,18 @@ Path Rule** (the census of consumers reaches into the database) — this standar
 bar** that all of them serve, and the *spirit* that makes deletion safe rather than merely
 sequenced:
 
-> **A migration may permanently remove infrastructure only after all of the following have been
-> independently demonstrated: behavioural equivalence, runtime independence, rollback independence,
-> operational independence, production confidence, successful completion of the full validation
-> discipline. Deletion is the final confirmation of replacement, never the mechanism used to
-> achieve it.**
+> Infrastructure may be permanently removed only after independent evidence exists that the
+> replacement has achieved:
+>
+> - behavioural equivalence,
+> - runtime independence,
+> - rollback independence,
+> - operational independence,
+> - production confidence,
+> - successful completion of the full validation discipline.
+>
+> **Deletion is the final confirmation of replacement. It is never the mechanism used to achieve
+> replacement.**
 
 The rule binds **six independence faces**, each demonstrated *separately* — not inferred from one
 another, and not from the migration tooling reporting "safe". For Directive #015 they map onto the
