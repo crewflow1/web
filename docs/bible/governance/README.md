@@ -42,6 +42,17 @@ system is, the governance records describe *how decisions about it are tracked*.
   Architecture-Freeze contract **#4 Partial → Established**; the canonical runtime identity
   is settled ([`runtime-identity.md`](./runtime-identity.md) §7). Authority: [ADR
   0007](../decisions/0007-runcontext-runtime-contract.md).
+- **[`directive-015-completion-report.md`](./directive-015-completion-report.md)** —
+  the permanent **engineering record** of a completed directive: CEO Directive
+  **#015** (Master Roadmap **D-05**), *The Capability Registry*. Records the full arc — the
+  build phase (R1 schema → R2 backfill + parity → R3 pure-resolver shadow → R4 authority switch)
+  and the legacy-removal phase (LR1 → … → LR5.4B) — with objectives achieved, deferred work,
+  architectural decisions, the runtime-authority summary, implementation + validation summaries,
+  technical debt, risks, recommendations for #016, and lessons learned. The Capability Registry
+  graduates Architecture-Freeze contract **#8 Reserved → Established** as the permanent production
+  authority model; the scattered legacy authority columns (`tools_allowed` / `permissions`) are
+  physically removed and the registry is the sole runtime authority. Records the **Final Removal
+  Rule** (the 28th §2 standard). Authority: [ADR 0010](../decisions/0010-capability-registry.md).
 - **[`directive-012-platform-independence-audit.md`](./directive-012-platform-independence-audit.md)** —
   the closing **verification audit** of Directive **#012**: a four-question check,
   each backed by `file:line` repository evidence, proving the Task Engine substrate is

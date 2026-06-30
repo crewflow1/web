@@ -79,8 +79,9 @@ distinction R3/R4 are designed to expose.
 |---|---|---|---|---|---|
 | **#012 / D-02** — Generic Task Engine | **+6 capabilities** (~2 086 LOC substrate) | **5 prior capabilities** reused (queue, spine, memory, roster, CI/auth) | migration #1 ≈ 376 LOC churn · migration #2 **0 net new platform** | **3** bespoke mechanisms deleted | **platform ↑ · employee ↓** ✅ |
 | **#013 / D-03** — RunContext Runtime Contract | **+2 capabilities** (cooperative cancellation + the frozen runtime contract; ~362 LOC: 148 SQL + 214 SDK) | **the whole #012 Task Engine** reused (7 entry points, guard, lease, heartbeat, reaper, the `cancelled` status + every inert seam) + Event Spine + registry | **0 new employee modules · 0 new migrations** for the 2 live employees (identity-shape churn ≈ 43 LOC) | **1** identity ambiguity removed (optional-slug `RunnerIdentity`) | **platform ↑ · employee ↓** ✅ |
+| **#015 / D-05** — Capability Registry | **+3 capabilities** (the `hq_capabilities` / `hq_capability_grants` declarative authority model; the pure resolver + serving switch `registry-resolver.ts`, 337 LOC; the production-confidence audit `registry-confidence.ts`) | the `ai_employees` roster, the `ctx.capabilities` seam (**#013 threads · #015 sources**), the **#014** SDK gate, the Event Spine, the six-gate CI | **0 new employee modules · 0 new employees** — a platform-consolidation directive | **5** bespoke authority mechanisms removed (2 legacy columns + the parity oracle + the comparator + the legacy resolvers + the rollback lever/mirror) | **platform ↑ · employee ↓↓** ✅ *(net-deletion)* |
 
-*(Future directives #014… append below as they merge.)*
+*(The #014 AI SDK Envelope entry is a known gap — its completion did not append here; recording it is a future doc-only housekeeping pass. Future directives append below as they merge.)*
 
 ---
 
@@ -207,6 +208,80 @@ contract** — is the maturity signal: the operating system grew, the employees 
 
 ---
 
+### Directive #015 / D-05 — The Capability Registry
+
+Evidence base: the [completion report](./directive-015-completion-report.md) and
+[ADR 0010](../decisions/0010-capability-registry.md). Figures verified on the integration
+branch; the legacy-removal increments are PRs **#239–#258**.
+
+**The shape of this directive: consolidate, then delete.** #015's defining metric is **R4** —
+it is a net-*deletion* directive. It replaced four scattered authority surfaces with one
+declarative registry, then physically removed the legacy store: the final increment (LR5.4B,
+PR #258) alone was **+1501 / −1524**, a negative diff. The headline is that the platform's
+authority model got *smaller and more declarative* while gaining capability.
+
+**R1 — Platform capabilities added (3 new pieces of shared substrate):**
+
+1. **The declarative authority model** — `hq_capabilities` (the catalogue: what authority
+   exists, `kind`-classified) + `hq_capability_grants` (who holds it, scoped `global ⊇
+   organization ⊇ department ⊇ employee`). The single source of truth the
+   [platform-independence audit](./directive-012-platform-independence-audit.md) found missing.
+   ADR 0010.
+2. **The pure resolver + serving switch** — `server/sdk/registry-resolver.ts` (337 LOC:
+   `composeGrants`, `applicableGrants`, `decideServedAuthority`, the confidence law) + the
+   server-only IO bridge `server/sdk/registry-parity.ts` (425 LOC). A **pure, total**,
+   unit-testable composition law over a default-deny floor.
+3. **The production-confidence instrument** — `server/sdk/registry-confidence.ts`
+   (`auditRegistryConfidence`): a read-only sweep that folds every employee's serving decision
+   into one `registryOnlyReady` boolean — confidence **measured, not elapsed**.
+
+**R2 — Existing platform capabilities reused (reuse before build):**
+
+1. The **`ai_employees` roster** — the registry keys to the existing slug + department; no new
+   identity table.
+2. The **`ctx.capabilities` seam** #013 froze and threaded — #015 *sources* it from the
+   registry, exactly the **#013 threads · #014 enforces · #015 sources** split the RunContext
+   contract reserved. No new SDK plumbing.
+3. The **#014 permission doorman** — the registry feeds the gate the posture it already
+   consumes; no new enforcement layer.
+4. The **Event Spine** + the **six-gate CI** + the **single HQ admin chokepoint** — reused
+   unchanged.
+5. The **backfill + shadow-validation discipline** — the registry stood up as a verified
+   shadow before any switch, reusing the migration pattern, not inventing one.
+
+**R3 — Employee-specific code added:**
+
+- **None.** #015 is a platform-consolidation directive — it adds no new employee. It touched
+  shared surfaces only (the admin Boardroom page's served-authority read, the `hq_memory_write`
+  gate), and every live employee inherited the new authority model with **0 new employee
+  modules, 0 new migrations, 0 new crons**.
+
+**R4 — Infrastructure removed (the headline — a net-deletion directive):**
+
+1. The **two scattered legacy authority columns** — `ai_employees.tools_allowed` +
+   `permissions` — dropped (LR5.4B).
+2. The **four ad-hoc registration surfaces** — consolidated into the one registry the
+   platform-independence audit called for.
+3. The **parity oracle** `hq_capability_registry_parity()` — dropped (its shadow-validation
+   job done).
+4. The **parity comparator + legacy fallback** — `verifyRegistryParity` /
+   `legacyServedAuthority` removed from the bridge; the floor is the fail-safe.
+5. The **legacy resolvers** — `resolveEmployeeCapabilities` / `resolveEmployeePosture` deleted;
+   the registry is the sole authority.
+6. The **operator rollback lever + the capability mirror** — `CAPABILITY_AUTHORITY_SOURCE` and
+   the dual-write retired (LR5.1 / LR5.3).
+
+**R5 — Platform vs employee trend:** **platform ↑ · employee ↓↓.** The platform gained a
+declarative authority registry, a pure resolver, and a confidence instrument while *reusing* the
+roster, the `ctx.capabilities` seam, the gate, the spine and the CI; per-employee complexity
+**fell to its floor** — no employee carries authority code at all any more, it is inherited from
+one registry. And uniquely among the directives so far, #015 closed in the *negative*: the final
+increment **deleted more than it added**. The thesis holds at its strongest: *platform capability
+grew, employee complexity shrank, and the scattered machinery it replaced is gone.*
+
+---
+
 *Documentation only. No code, schema, configuration, or git history was changed by this
 record. Instituted under CEO Directive #011 (Master Roadmap D-01); inaugurated with the
-CEO Directive #012 (D-02) entry; extended with the CEO Directive #013 (D-03) entry.*
+CEO Directive #012 (D-02) entry; extended with the CEO Directive #013 (D-03) and #015 (D-05)
+entries.*
