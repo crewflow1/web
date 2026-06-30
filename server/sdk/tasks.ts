@@ -16,6 +16,8 @@ import { createEvents } from "@/server/sdk/events";
 import { createComms } from "@/server/sdk/comms";
 import { drainEvidenceInto } from "@/server/sdk/output";
 import { evaluateAction } from "@/server/sdk/gate";
+import { REFERENCE_EXECUTOR, type Executor, type ExecutionRefusalReason } from "@/server/sdk/executor";
+import { deriveIdempotencyKey } from "@/server/sdk/application";
 import { requestApproval } from "@/server/services/hq-approvals";
 import type { BoundEvents } from "@/server/sdk/events";
 import type { BoundComms } from "@/server/sdk/comms";
@@ -454,6 +456,73 @@ function createTasks(
   };
 }
 
+// ---------------------------------------------------------------------
+// Executor shadow — R1 of the Live Executor Rollout (CEO Directive #016 / D-06; ADR 0011)
+// ---------------------------------------------------------------------
+
+/**
+ * The R1 kill-switch for the executor shadow. DEFAULT-OFF: the shadow runs only when
+ * `CREWFLOW_EXECUTOR_SHADOW` is exactly `"on"`. Off, the autonomous branch behaves
+ * byte-for-byte as before (audit continuity); on, it additionally COMPOSES the proven
+ * `plan → key` chain and records the observation on the SAME `ai.action_permitted` event —
+ * crossing no tool boundary (the Runtime Composition Rule: "Composition is orchestration,
+ * not duplication"). Exported so the runner and the unit suite read the same switch.
+ */
+export function executorShadowEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.CREWFLOW_EXECUTOR_SHADOW === "on";
+}
+
+/**
+ * A side-effect-free observation of what the executor WOULD do with a cleared action — the
+ * shadow's only product (R1 is shadow-only: "shadow execution, audit continuity. No production
+ * cut-over"). It is DATA appended to the audit payload, never an applied effect:
+ *
+ *   • `planned`  — the executor produced a plan; we carry the resolved tool label and the
+ *                  derived idempotency key (the application-store KEYING contract, wired but
+ *                  never written — `store.put` is deferred to a later increment).
+ *   • `refused`  — the executor declined at its own boundary (an {@link ExecutionRefusalReason}).
+ *   • `error`    — observing threw; recorded, never raised (best-effort, like the emit itself).
+ */
+export type ExecutorShadowObservation =
+  | { readonly outcome: "planned"; readonly toolLabel: string; readonly idempotencyKey: string }
+  | { readonly outcome: "refused"; readonly reason: ExecutionRefusalReason; readonly detail: string }
+  | { readonly outcome: "error"; readonly detail: string };
+
+/**
+ * Run the executor shadow for one cleared action: PLAN it (pure — {@link Executor.plan} never
+ * applies) and, when a plan is produced, derive the idempotency key the durable store WOULD file
+ * it under. This composes three established contracts — the gate's verdict, the executor's plan,
+ * the application module's keying — WITHOUT crossing the execution boundary: {@link Executor.apply}
+ * and {@link Executor.execute} are never called here. It never throws; any fault becomes an
+ * `error` observation, so a shadow fault can never break the run (the emit is best-effort too).
+ */
+function observeExecutorShadow(
+  executor: Executor,
+  action: ProposedAction,
+  verdict: GateVerdict,
+  taskId: string,
+  correlationId: string,
+): ExecutorShadowObservation {
+  try {
+    const planned = executor.plan(action, verdict);
+    if (!planned.ok) {
+      return { outcome: "refused", reason: planned.refusal.reason, detail: planned.refusal.detail };
+    }
+    const idempotencyKey = deriveIdempotencyKey({
+      source: "autonomous",
+      correlationId,
+      taskId,
+      toolLabel: planned.plan.tool.label,
+      actionId: `${action.subjectType}:${action.subjectId}:${action.type}`,
+    });
+    return { outcome: "planned", toolLabel: planned.plan.tool.label, idempotencyKey };
+  } catch (err) {
+    return { outcome: "error", detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /**
  * Build the in-handler `ctx.proposeActions` doorman, bound to this run's policy inputs and
  * its events facet (#014 / D-04, Phase B). For each proposed action it asks the PURE gate
@@ -481,8 +550,24 @@ export function createProposeActions(deps: {
   budget: number;
   correlationId: string;
   events: BoundEvents;
+  // R1 executor shadow (CEO Directive #016 / D-06) — all OPTIONAL with safe, inert defaults so
+  // the doorman's existing callers and tests are unchanged. `shadow` defaults OFF; `executor`
+  // defaults to the reference handle; `taskId` keys the (unwritten) application record.
+  taskId?: string;
+  executor?: Executor;
+  shadow?: boolean;
 }): (actions: ProposedAction[]) => Promise<GateVerdict[]> {
-  const { identity, posture, capabilities, budget, correlationId, events } = deps;
+  const {
+    identity,
+    posture,
+    capabilities,
+    budget,
+    correlationId,
+    events,
+    taskId = "",
+    executor = REFERENCE_EXECUTOR,
+    shadow = false,
+  } = deps;
   return async function proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]> {
     const verdicts: GateVerdict[] = [];
     for (const action of actions) {
@@ -504,11 +589,22 @@ export function createProposeActions(deps: {
       } else {
         // MECHANISM (autonomous): audit the permitted decision. Best-effort — a failed
         // append is logged by the facet, never raised, so the spine cannot block the work.
+        // R1 executor shadow (default-OFF): when enabled, COMPOSE the executor's plan + the
+        // application key and record the observation on this SAME event (additive payload,
+        // backward-compatible — no boundary crossed, no new verb). Off, the payload is
+        // byte-identical to before (audit continuity).
+        const shadowObservation = shadow
+          ? observeExecutorShadow(executor, action, verdict, taskId, correlationId)
+          : undefined;
         await events.emit({
           verb: "ai.action_permitted",
           objectType: action.subjectType,
           objectId: action.subjectId,
-          payload: { action: action.type, capability: action.capability ?? null },
+          payload: {
+            action: action.type,
+            capability: action.capability ?? null,
+            ...(shadowObservation ? { shadow: shadowObservation } : {}),
+          },
         });
       }
       verdicts.push(verdict);
@@ -557,6 +653,11 @@ function buildContext(
       budget,
       correlationId: task.correlation_id,
       events,
+      // R1: thread the task id (keys the unwritten application record) and read the default-off
+      // kill-switch. The executor defaults to REFERENCE_EXECUTOR — per-employee executor binding
+      // is a later increment; R1 only proves the composition shadow-first.
+      taskId: task.id,
+      shadow: executorShadowEnabled(),
     }),
     correlationId: task.correlation_id,
     budget,
