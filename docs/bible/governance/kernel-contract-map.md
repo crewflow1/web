@@ -1229,6 +1229,48 @@ Boundary Rule** set on [ADR 0009](../decisions/0009-sdk-executor-apply-on-approv
 
 ---
 
+### The Shadow Truthfulness Rule
+
+A **thirtieth** standard, set by CEO directive on the review of **Directive #016 R1** (the executor
+shadow composition wired into the runner, default-off; independent CTO review). Where the **Shadow
+Validation Rule** (the sixteenth) governs *how a shadow earns a cutover* — independent resolution,
+continuous comparison, parity before promotion — this one governs *what a shadow may record while it
+runs*, and fixes the **integrity of the operational record itself**:
+
+> **Shadow execution must never record state that implies a real side effect occurred. Shadow mode
+> may observe, classify, plan, compare, and audit. Shadow mode must not write durable application
+> records that would be indistinguishable from real execution. A shadow record must be explicitly
+> labelled as shadow if persisted in a later phase. Truthfulness of operational records is more
+> important than early persistence.**
+
+It is the **record-truthfulness** complement to the execution-seam rules that treat an application
+record as ground truth. The **Executor Idempotency Rule** (the ninth) makes a re-attempt safe by
+keying every application on a deterministic idempotency key, and the **Application Atomicity Rule**
+(the tenth) makes the apply path read-before-write so an `applied` marker is laid down exactly once;
+both rely on an `applied` record meaning **a side effect actually happened**. A shadow that wrote that
+same record would **poison that ground truth** — a later real apply, an idempotency check, or an audit
+would read `applied` for an effect that **never occurred**. The rule forbids exactly that: a shadow
+may compute everything a real apply computes — it may `plan`, it may derive the idempotency key, it
+may compare and audit — but it may **not** lay down a durable record a real apply is indistinguishable
+from. Its force is the last clause — **truthfulness over early persistence**: a shadow that could only
+persist by lying about what happened must persist **nothing durable** instead.
+
+This is the principle Directive #016 follows from R1 onward, and it draws a three-way distinction the
+rollout must preserve — **planned · shadow-observed · applied**. **R1** (the shadow composition,
+default-off) computes `executor.plan(action, verdict)` and `deriveIdempotencyKey(...)` **purely**,
+threads the observation onto the existing `ai.action_permitted` audit event, and **writes no
+application record at all**: `store.put` is deferred precisely because, in shadow, no applied effect
+occurred to record — the action is *planned*, observed in-band, and nothing durable is claimed. **R2**
+(the durable shadow observation store) may persist that observation durably, but **only under an
+explicit shadow label** distinct from the `applied` / `failed` application statuses — a
+*shadow-observed* record a reader can never mistake for a real *applied* one. Only at the live
+cut-over does an **applied** record — a real side effect — get written. Generalised beyond #016, the
+rule is **permanent and platform-wide**: no shadow of any subsystem — an executor, an authority
+source, a comms path — may ever persist a record indistinguishable from the real operation it shadows;
+if it persists at all, it persists as **explicitly shadow**.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
