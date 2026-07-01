@@ -37,14 +37,22 @@ import {
   createProposeActions,
   LOCKED_POSTURE,
   EMPTY_CAPABILITIES,
+  EMPTY_TOOL_BOUNDARY,
+  NonRetryableError,
   type EmployeeIdentity,
+  type ToolBoundaryResolver,
 } from "@/server/sdk/tasks";
-import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
+import { REFERENCE_EXECUTOR, type Executor, type ToolImplementation } from "@/server/sdk/executor";
 import {
   createInMemoryShadowObservationStore,
   type ShadowObservationRecord,
   type ShadowObservationStore,
 } from "@/server/sdk/shadow";
+import {
+  createInMemoryApplicationStore,
+  deriveIdempotencyKey,
+  failedRecord,
+} from "@/server/sdk/application";
 
 const CORR = "corr-run-1";
 
@@ -423,5 +431,261 @@ describe("ctx.proposeActions — the R2 durable shadow store records explicit sh
     const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
     expect(verdict!.decision).toBe("autonomous"); // resolved, not thrown
     expect(store.record).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =====================================================================
+// proposeActions — R3 controlled LIVE autonomous execution (CEO Directive #016 / D-06; ADR 0011)
+//
+// R3 turns the autonomous branch into a controlled LIVE apply behind its OWN default-off kill-switch:
+// when `live` is on AND a durable application store + a tool boundary are injected, the runtime
+// CROSSES the executor boundary via applyOnce over the store — apply EXACTLY ONCE (the Executor
+// Idempotency Rule) — and audits `ai.tool_called` AFTER `ai.action_permitted` (ADR 0009 Decision 10).
+// The shadow is RETAINED (comparison, not replacement). TWO independent safety layers gate a cross:
+// the kill-switch AND the tool boundary (an unbound tool ⇒ nothing crosses — the R3 production
+// default). The application store is NEVER the shadow store (the Shadow Isolation Rule).
+// =====================================================================
+
+/** The idempotency key the live apply of the canonical `passing()` action files under (taskId task-1). */
+const APPLIED_KEY = deriveIdempotencyKey({
+  source: "autonomous",
+  correlationId: CORR,
+  taskId: "task-1",
+  toolLabel: "memory.write",
+  actionId: "lead:lead_1:memory.write",
+});
+
+/** A tool boundary that RESOLVES to an implementation returning `result` — records every crossing. */
+function boundaryReturning(result: unknown) {
+  const invoke = vi.fn(async () => result);
+  const resolve: ToolBoundaryResolver = () => invoke as unknown as ToolImplementation;
+  return { resolve, invoke };
+}
+
+/** A tool boundary whose implementation THROWS — the executor captures it as a `failed` outcome. */
+function boundaryThrowing(message: string) {
+  const invoke = vi.fn(async () => {
+    throw new Error(message);
+  });
+  const resolve: ToolBoundaryResolver = () => invoke as unknown as ToolImplementation;
+  return { resolve, invoke };
+}
+
+/** The identity the seeded failure record is keyed by (matches the canonical `passing()` action). */
+const APPLIED_IDENTITY = {
+  source: "autonomous",
+  correlationId: CORR,
+  taskId: "task-1",
+  toolLabel: "memory.write",
+  actionId: "lead:lead_1:memory.write",
+} as const;
+
+describe("ctx.proposeActions — R3 live execution is OFF by default and gated by BOTH seams", () => {
+  it("live OFF (default): even with a store and boundary injected, nothing crosses (the kill-switch gates)", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({ live: false, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted"]); // no tool_called
+    expect(await store.get(APPLIED_KEY)).toBeUndefined();
+  });
+
+  it("live ON but the tool boundary is EMPTY (R3 production default): unbound ⇒ nothing crosses", async () => {
+    const store = createInMemoryApplicationStore();
+    const { built, emit } = deps({
+      live: true,
+      taskId: "task-1",
+      applicationStore: store,
+      resolveTool: EMPTY_TOOL_BOUNDARY,
+    });
+
+    const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(verdict!.decision).toBe("autonomous");
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted"]); // no tool_called
+    expect(await store.get(APPLIED_KEY)).toBeUndefined(); // applyOnce never reached
+  });
+
+  it("live ON but no application store injected → nothing crosses (BOTH seams are required)", async () => {
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({ live: true, taskId: "task-1", resolveTool: resolve }); // no applicationStore
+
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted"]);
+  });
+});
+
+describe("ctx.proposeActions — R3 live, ON and bound, crosses the boundary EXACTLY once", () => {
+  it("crosses once, records an APPLIED record, and audits ai.tool_called AFTER ai.action_permitted", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    const [verdict] = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(verdict!.decision).toBe("autonomous");
+    expect(invoke).toHaveBeenCalledTimes(1); // the ONE boundary crossing
+    // audit ORDER: action_permitted THEN tool_called (ADR 0009 Decision 10)
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted", "ai.tool_called"]);
+    expect(emit.mock.calls[1]![0]).toMatchObject({
+      verb: "ai.tool_called",
+      objectType: "lead",
+      objectId: "lead_1",
+      payload: {
+        action: "memory.write",
+        tool: "memory.write",
+        status: "applied",
+        idempotencyKey: APPLIED_KEY,
+      },
+    });
+    // the durable record is APPLIED, filed under the idempotency key, carrying the tool's result
+    const rec = await store.get(APPLIED_KEY);
+    expect(rec).toMatchObject({
+      status: "applied",
+      key: APPLIED_KEY,
+      label: "memory.write",
+      attempts: 1,
+      result: { wrote: true },
+    });
+  });
+
+  it("is IDEMPOTENT: a re-run under the same identity re-applies nothing and emits no second tool_called", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+
+    // first run — crosses once
+    await createProposeActions(
+      deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve }).built,
+    )([passing({ payload: { verdict: "qualified" } })]);
+    expect(invoke).toHaveBeenCalledTimes(1);
+
+    // second run — SAME identity, SAME store — a no-op success (already_applied)
+    const { built: b2, emit: e2 } = deps({
+      live: true,
+      taskId: "task-1",
+      applicationStore: store,
+      resolveTool: resolve,
+    });
+    await createProposeActions(b2)([passing({ payload: { verdict: "qualified" } })]);
+
+    expect(invoke).toHaveBeenCalledTimes(1); // unchanged — the boundary was NOT crossed again
+    expect(e2.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted"]); // no second tool_called
+  });
+
+  it("live rides ONLY the autonomous branch — a needs-approval action never crosses the boundary", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    await createProposeActions(built)([passing({ reversible: false })]); // → needs_approval
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+    expect(requestApprovalMock).toHaveBeenCalledTimes(1);
+    expect(await store.get(APPLIED_KEY)).toBeUndefined();
+  });
+
+  it("an executor refusal (gate cleared, executor declines) crosses nothing and audits no tool_called", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    const [verdict] = await createProposeActions(built)([passing()]); // no payload → invalid_args refusal
+
+    expect(verdict!.decision).toBe("autonomous");
+    expect(invoke).not.toHaveBeenCalled(); // executor.plan refused before any cross
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted"]); // no tool_called
+    expect(await store.get(APPLIED_KEY)).toBeUndefined();
+  });
+});
+
+describe("ctx.proposeActions — R3 live failure is captured, never recorded as applied", () => {
+  it("a failing tool records a FAILED record, audits ai.tool_called(status:failed), and THROWS (retryable)", async () => {
+    const store = createInMemoryApplicationStore();
+    const { resolve, invoke } = boundaryThrowing("db exploded");
+    const { built, emit } = deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    const err = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]).catch(
+      (e: unknown) => e,
+    );
+
+    // THROW-BASED ABI: a failed apply surfaces so the runner fails + re-attempts (idempotency-safe)
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NonRetryableError); // a plain failure is RETRYABLE
+    expect((err as Error).message).toMatch(/live apply failed for memory\.write: db exploded/);
+    expect(invoke).toHaveBeenCalledTimes(1); // it DID cross, and the tool threw
+
+    // the failure is a durable FAILED record — never an applied one (the Application Atomicity Rule)
+    const rec = await store.get(APPLIED_KEY);
+    expect(rec).toMatchObject({ status: "failed", error: "db exploded", escalated: false, attempts: 1 });
+
+    // a tool WAS invoked, so ai.tool_called is audited (status failed), after ai.action_permitted
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted", "ai.tool_called"]);
+    expect(emit.mock.calls[1]![0]!.payload).toMatchObject({ status: "failed", error: "db exploded" });
+  });
+
+  it("an apply that exhausts the retry ceiling ESCALATES: throws NonRetryableError and audits escalated:true", async () => {
+    const store = createInMemoryApplicationStore();
+    // seed a prior failed record at attempts=2 (default ceiling 3): the next failure escalates
+    await store.put(
+      failedRecord({
+        key: APPLIED_KEY,
+        identity: APPLIED_IDENTITY,
+        label: "memory.write",
+        error: "prior failure",
+        escalated: false,
+        attempts: 2,
+      }),
+    );
+    const { resolve } = boundaryThrowing("still broken");
+    const { built, emit } = deps({ live: true, taskId: "task-1", applicationStore: store, resolveTool: resolve });
+
+    const err = await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(NonRetryableError); // a human owns it — do NOT auto-retry
+    const rec = await store.get(APPLIED_KEY);
+    expect(rec).toMatchObject({ status: "failed", escalated: true, attempts: 3 });
+    expect(emit.mock.calls[1]![0]!.payload).toMatchObject({ status: "failed", escalated: true });
+  });
+});
+
+describe("ctx.proposeActions — R3 RETAINS the shadow beside live (comparison preserved)", () => {
+  it("shadow records the observation AND the boundary is crossed — both keyed identically", async () => {
+    const appStore = createInMemoryApplicationStore();
+    const shadowStore = createInMemoryShadowObservationStore();
+    const { resolve, invoke } = boundaryReturning({ wrote: true });
+    const { built, emit } = deps({
+      shadow: true,
+      live: true,
+      taskId: "task-1",
+      shadowStore,
+      applicationStore: appStore,
+      resolveTool: resolve,
+    });
+
+    await createProposeActions(built)([passing({ payload: { verdict: "qualified" } })]);
+
+    // shadow-observed (planned) AND applied — the three-way distinction preserved
+    expect(shadowStore.recorded()).toHaveLength(1);
+    expect(shadowStore.recorded()[0]).toMatchObject({
+      kind: "executor_shadow",
+      outcome: "planned",
+      idempotencyKey: APPLIED_KEY,
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const applied = await appStore.get(APPLIED_KEY);
+    expect(applied).toMatchObject({ status: "applied" });
+    // the SAME idempotency key threads shadow-observed AND applied (future cut-over comparison)
+    expect(applied!.key).toBe(shadowStore.recorded()[0]!.idempotencyKey);
+    // action_permitted carries the shadow fragment; tool_called follows it
+    expect(emit.mock.calls.map((c) => c[0]!.verb)).toEqual(["ai.action_permitted", "ai.tool_called"]);
+    expect(emit.mock.calls[0]![0]!.payload).toMatchObject({ shadow: { outcome: "planned" } });
   });
 });

@@ -16,14 +16,21 @@ import { createEvents } from "@/server/sdk/events";
 import { createComms } from "@/server/sdk/comms";
 import { drainEvidenceInto } from "@/server/sdk/output";
 import { evaluateAction } from "@/server/sdk/gate";
-import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
-import { deriveIdempotencyKey } from "@/server/sdk/application";
+import { REFERENCE_EXECUTOR, type Executor, type ToolImplementation } from "@/server/sdk/executor";
+import {
+  applyOnce,
+  deriveIdempotencyKey,
+  type ApplicationStore,
+  type ApplyOnceResult,
+  type ExecutionIdentity,
+} from "@/server/sdk/application";
 import {
   shadowObservationRecord,
   type ExecutorShadowObservation,
   type ShadowObservationStore,
 } from "@/server/sdk/shadow";
 import { createDurableShadowObservationStore } from "@/server/services/executor-shadow";
+import { createDurableApplicationStore } from "@/server/services/executor-application";
 import { requestApproval } from "@/server/services/hq-approvals";
 import type { BoundEvents } from "@/server/sdk/events";
 import type { BoundComms } from "@/server/sdk/comms";
@@ -481,6 +488,23 @@ export function executorShadowEnabled(
 }
 
 /**
+ * The R3 kill-switch for controlled LIVE autonomous execution (CEO Directive #016 / D-06; ADR
+ * 0011 Decision 7). DEFAULT-OFF and INDEPENDENT of the shadow switch: live apply runs only when
+ * `CREWFLOW_EXECUTOR_LIVE` is exactly `"on"`. Off, the autonomous branch behaves exactly as R2
+ * (audit + shadow only, no boundary crossed). On, the runtime additionally crosses the executor
+ * boundary through `applyOnce` over the DURABLE application store — apply exactly once, idempotently
+ * — while the shadow observation is RETAINED (comparison, not replacement). It is the FIRST of two
+ * independent safety layers; the second is {@link EMPTY_TOOL_BOUNDARY} (no employee tool is bound in
+ * R3, so even live-on crosses nothing in production until R5 migrates employees). Exported so the
+ * runner and the unit suite read the same switch.
+ */
+export function executorLiveEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.CREWFLOW_EXECUTOR_LIVE === "on";
+}
+
+/**
  * The shadow's only product — a side-effect-free observation of what the executor WOULD do with a
  * cleared action. R2 moves the canonical definition to the pure {@link
  * import("@/server/sdk/shadow").ExecutorShadowObservation} contract, so the runner that PRODUCES the
@@ -524,6 +548,87 @@ function observeExecutorShadow(
   }
 }
 
+// ---------------------------------------------------------------------
+// Live execution — R3 of the Live Executor Rollout (CEO Directive #016 / D-06; ADR 0011)
+// ---------------------------------------------------------------------
+
+/**
+ * Resolve the {@link ToolImplementation} bound to a registered tool label — the runtime's INJECTED
+ * tool boundary, "the one place an effect happens" (the Execution Ownership Rule: only the runtime
+ * decides to execute). Returns `undefined` when no implementation is bound, so the runtime crosses
+ * nothing for that tool. It is a seam, exactly like the injected executor and application store: the
+ * doorman applies WITHOUT knowing which subsystem the label maps to.
+ */
+export type ToolBoundaryResolver = (toolLabel: string) => ToolImplementation | undefined;
+
+/**
+ * The R3 production tool boundary — deliberately EMPTY. R3 does NOT bind any registered tool to a
+ * real subsystem (memory.write → the memory facet, comm.send → the Communication Layer): that is R5
+ * employee migration, explicitly OUT of R3 scope ("no employee migration"). So in production every
+ * live apply resolves to `undefined` and crosses nothing — the live-execution MECHANISM is fully
+ * wired and proven end-to-end by tests that inject a real boundary, but inert in production. This is
+ * the second safety layer beside the {@link executorLiveEnabled} kill-switch: even with live ON, an
+ * autonomous action cannot cross the boundary until a reviewed later increment binds a real tool.
+ */
+export const EMPTY_TOOL_BOUNDARY: ToolBoundaryResolver = () => undefined;
+
+/** What {@link applyExecutorLive} concluded — the apply-once outcome, or a pre-boundary skip. */
+type LiveApplyResult =
+  /** The executor refused to plan a gate-cleared action (its own deny-by-default) — no apply. */
+  | { readonly status: "refused" }
+  /** No {@link ToolImplementation} is bound for the planned tool — nothing to cross (R3 default). */
+  | { readonly status: "unbound" }
+  | ApplyOnceResult;
+
+/**
+ * Cross the executor boundary for one cleared autonomous action, EXACTLY ONCE (CEO Directive #016 /
+ * D-06, R3; the Executor Idempotency Rule; ADR 0009 Decisions 5, 6). It PLANs (pure), resolves the
+ * injected tool boundary, and — only when a real implementation is bound — applies through {@link
+ * applyOnce} over the DURABLE application store, so a retry re-applies nothing. It composes the same
+ * established contracts the shadow observes (gate verdict · executor plan · application keying) but,
+ * unlike the shadow, it CROSSES: {@link Executor.apply} runs the injected implementation. It returns
+ * a discriminated outcome the doorman audits and branches on; it never re-classifies the gate's
+ * verdict (that is the gate's alone — the Policy vs Mechanism rule).
+ */
+async function applyExecutorLive(
+  executor: Executor,
+  resolveTool: ToolBoundaryResolver,
+  store: ApplicationStore,
+  action: ProposedAction,
+  verdict: GateVerdict,
+  taskId: string,
+  correlationId: string,
+): Promise<LiveApplyResult> {
+  const planned = executor.plan(action, verdict);
+  if (!planned.ok) {
+    // The gate cleared it but the executor's own boundary declined (unknown_tool / invalid_args /
+    // permission_mismatch). The shadow already recorded this as a `refused` observation; live
+    // crosses nothing.
+    return { status: "refused" };
+  }
+  const invoke = resolveTool(planned.plan.tool.label);
+  if (!invoke) {
+    // No real implementation bound (the R3 production default via EMPTY_TOOL_BOUNDARY) — the
+    // mechanism is wired but there is nothing to cross for this tool.
+    return { status: "unbound" };
+  }
+  const identity: ExecutionIdentity = {
+    source: "autonomous",
+    correlationId,
+    taskId,
+    toolLabel: planned.plan.tool.label,
+    actionId: `${action.subjectType}:${action.subjectId}:${action.type}`,
+  };
+  // The ONE boundary crossing — through applyOnce, which consults the durable store BEFORE crossing
+  // (an already-applied key is a no-op success) and files the outcome after. The injected `apply`
+  // is the only place an effect happens.
+  return applyOnce({
+    store,
+    identity,
+    apply: () => executor.apply(planned.plan, invoke),
+  });
+}
+
 /**
  * Build the in-handler `ctx.proposeActions` doorman, bound to this run's policy inputs and
  * its events facet (#014 / D-04, Phase B). For each proposed action it asks the PURE gate
@@ -560,6 +665,15 @@ export function createProposeActions(deps: {
   executor?: Executor;
   shadow?: boolean;
   shadowStore?: ShadowObservationStore;
+  // Live execution (CEO Directive #016 / D-06, R3) — OPTIONAL with safe, inert defaults, so the
+  // doorman's existing callers and tests are unchanged. `live` defaults OFF; when ON *and* both
+  // `applicationStore` and `resolveTool` are injected, the doorman crosses the executor boundary via
+  // applyOnce over the DURABLE application store (NEVER the shadow store). Any absent ⇒ nothing
+  // crosses. The store and boundary are separate seams so live can be driven with an in-memory store
+  // and a test boundary, exactly as the shadow is driven with an in-memory shadow store.
+  live?: boolean;
+  applicationStore?: ApplicationStore;
+  resolveTool?: ToolBoundaryResolver;
 }): (actions: ProposedAction[]) => Promise<GateVerdict[]> {
   const {
     identity,
@@ -572,6 +686,9 @@ export function createProposeActions(deps: {
     executor = REFERENCE_EXECUTOR,
     shadow = false,
     shadowStore,
+    live = false,
+    applicationStore,
+    resolveTool,
   } = deps;
   return async function proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]> {
     const verdicts: GateVerdict[] = [];
@@ -630,6 +747,62 @@ export function createProposeActions(deps: {
             ),
           );
         }
+        // R3 (CEO Directive #016 / D-06): controlled LIVE autonomous execution. Behind the
+        // default-off `CREWFLOW_EXECUTOR_LIVE` kill-switch, and ONLY when a durable application
+        // store AND a tool boundary are wired, the runtime crosses the executor boundary through
+        // applyOnce over the durable store — apply EXACTLY ONCE, idempotently (the Executor
+        // Idempotency Rule). The shadow above is RETAINED (comparison, not replacement). In R3
+        // production the boundary is EMPTY_TOOL_BOUNDARY, so every apply resolves `unbound` and
+        // nothing crosses; the mechanism is fully wired and proven by tests that inject a boundary.
+        if (live && applicationStore && resolveTool) {
+          const applied = await applyExecutorLive(
+            executor,
+            resolveTool,
+            applicationStore,
+            action,
+            verdict,
+            taskId,
+            correlationId,
+          );
+          // Audit a boundary crossing AFTER `ai.action_permitted` (ADR 0009 Decision 10 / ADR 0011
+          // Decision 2): `ai.tool_called` records that a tool was invoked THIS run — keyed by the
+          // same idempotency key as the application record and the shadow observation, so a reviewer
+          // can correlate all three. `already_applied` (no-op success), `unbound` and `refused`
+          // crossed nothing, so they emit no tool-call event. Best-effort, like the emit above.
+          if (
+            applied.status === "applied" ||
+            applied.status === "failed" ||
+            applied.status === "escalated"
+          ) {
+            await events.emit({
+              verb: "ai.tool_called",
+              objectType: action.subjectType,
+              objectId: action.subjectId,
+              payload: {
+                action: action.type,
+                tool: applied.record.label,
+                idempotencyKey: applied.key,
+                status: applied.status === "applied" ? "applied" : "failed",
+                ...(applied.status !== "applied" ? { error: applied.record.error } : {}),
+                ...(applied.status === "escalated" ? { escalated: true } : {}),
+              },
+            });
+          }
+          // A failed apply leaves the action UNAPPLIED (a retryable failure record in the store);
+          // surface it so the runner fails the task and re-attempts. The idempotency guard makes an
+          // already-applied sibling a no-op on retry (apply A, fail B ⇒ never re-apply A). An
+          // escalated apply is terminal — a human owns it — so fail NON-retryably.
+          if (applied.status === "failed") {
+            throw new Error(
+              `ctx.proposeActions: live apply failed for ${action.type}: ${applied.record.error}`,
+            );
+          }
+          if (applied.status === "escalated") {
+            throw new NonRetryableError(
+              `ctx.proposeActions: live apply escalated for ${action.type}: ${applied.record.error}`,
+            );
+          }
+        }
       }
       verdicts.push(verdict);
     }
@@ -663,9 +836,12 @@ function buildContext(
   const events = createEvents({ slug: identity.slug }, task.correlation_id);
   const capabilities = identity.capabilities ?? EMPTY_CAPABILITIES;
   const budget = task.cost_budget_micros ?? 0;
-  // Read the default-off kill-switch ONCE: it gates both whether the shadow runs and whether a
-  // durable store is wired, so a single read keeps the two decisions consistent within this build.
+  // Read each default-off kill-switch ONCE: `shadowOn` gates the shadow + its durable store;
+  // `liveOn` gates live execution + its durable application store and tool boundary. Independent
+  // switches (R3 retains the shadow beside live), each read once so its two decisions stay
+  // consistent within this build.
   const shadowOn = executorShadowEnabled();
+  const liveOn = executorLiveEnabled();
   const ctx: RunContext = {
     task,
     identity,
@@ -688,6 +864,14 @@ function buildContext(
       // observation store (server-only, service-role-only, SECURITY DEFINER). Off, no store is
       // wired and nothing is persisted, exactly as before. It is NEVER the application store.
       shadowStore: shadowOn ? createDurableShadowObservationStore() : undefined,
+      // R3: when live is enabled, wire the DURABLE application store (a table STRUCTURALLY
+      // separate from the shadow store — the Shadow Isolation Rule) and the tool boundary. The
+      // boundary is EMPTY_TOOL_BOUNDARY: R3 binds no employee tool (that is R5), so live-on
+      // crosses nothing in production — the kill-switch and the empty boundary are two independent
+      // safety layers. Off, neither is wired and the branch behaves exactly as R2.
+      live: liveOn,
+      applicationStore: liveOn ? createDurableApplicationStore() : undefined,
+      resolveTool: liveOn ? EMPTY_TOOL_BOUNDARY : undefined,
     }),
     correlationId: task.correlation_id,
     budget,
