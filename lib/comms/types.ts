@@ -122,9 +122,10 @@ export type SmsMessage = {
  * provider returns AT acceptance (Twilio: "queued" / "accepted" / "sending"), which
  * the transport records against the message id (Directive #018 R6, "record provider
  * outcomes where supported"). The ASYNCHRONOUS terminal receipt (delivered / failed /
- * undelivered) arrives later via a status-callback webhook — a public ingress surface
- * deliberately deferred; this optional field carries only what the send call resolves
- * with, correlated by `providerMessageId`.
+ * undelivered) arrives later via the status-callback webhook the R7 receiver route
+ * ingests — which the R8 send asks Twilio to POST by setting a `statusCallback` on the
+ * request; this optional field carries only what the send call resolves with,
+ * correlated by `providerMessageId`.
  */
 export type SmsAcceptance = {
   /** The provider's id for this message — the correlation key for delivery events. */
