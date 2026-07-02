@@ -52,6 +52,15 @@ export type InboundEnquiryInput = {
   raw_text?: string | null;
   /** Caller identifier — phone number, Instagram handle, etc. */
   caller?: string | null;
+  /**
+   * A STABLE per-inbound-event id supplied by the channel adapter (e.g. Twilio's
+   * `CallSid`). Threaded to the missed-call text-back's idempotency key (Directive
+   * #018 R6), so repeated webhook deliveries of the SAME missed call cannot send a
+   * second customer message. Absent ⇒ dedup falls back to the freshly-minted enquiry
+   * id, which still bounds a single ingestion but cannot correlate replays. Read-only
+   * ingestion behaviour is otherwise unchanged.
+   */
+  dedup_key?: string | null;
 };
 
 export type InboundExtraction = {

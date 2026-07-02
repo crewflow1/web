@@ -16,10 +16,10 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
  * normalised shape this route accepts.
  *
  * Body schema:
- *   { org_id, channel, raw_text?, caller? }
+ *   { org_id, channel, raw_text?, caller?, dedup_key? }
  *
  * Returns:
- *   200 { ok:true, enquiry_id, lead_id }
+ *   200 { ok:true, enquiry_id, lead_id, textback }
  *   401 { ok:false, error:"unauthorized" }
  *   422 { ok:false, error:string }
  *   500 { ok:false, error:string }
@@ -30,6 +30,14 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
  *   - notifications row (customer audience, priority by urgency)
  *   - admin_activity_log row
  *   - automation dispatch
+ *
+ * Side effect (Directive #018 R6, GATED — default OFF):
+ *   - when NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK="true" AND this is a MISSED
+ *     CALL (channel='phone') with a caller to answer, the caller is texted back
+ *     through the ONE canonical outbound pipeline (Compose → Enforce → Audit →
+ *     Transport). The `textback` field reports whether that path ran. With the flag
+ *     OFF the response and every side effect above are byte-for-byte their pre-R6
+ *     selves.
  */
 
 export const runtime = "nodejs";
@@ -40,6 +48,10 @@ const bodySchema = z.object({
   channel: z.enum(INBOUND_CHANNELS),
   raw_text: z.string().max(20_000).optional().nullable(),
   caller: z.string().max(500).optional().nullable(),
+  // A STABLE per-inbound-event id from the channel adapter (e.g. Twilio's CallSid).
+  // Optional. Threaded to the missed-call text-back idempotency key so repeated
+  // webhook deliveries of one missed call cannot send a second SMS (Directive #018 R6).
+  dedup_key: z.string().max(200).optional().nullable(),
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -79,6 +91,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       channel: parsed.data.channel,
       raw_text: parsed.data.raw_text ?? null,
       caller: parsed.data.caller ?? null,
+      dedup_key: parsed.data.dedup_key ?? null,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

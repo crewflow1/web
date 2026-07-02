@@ -118,11 +118,19 @@ export type SmsMessage = {
 /**
  * The provider ACCEPTED the SMS for delivery — acceptance, NOT receipt. The
  * `providerMessageId` is the correlation key a later delivery receipt would carry
- * back. Mirrors `EmailAcceptance` exactly.
+ * back. Mirrors `EmailAcceptance`, plus the synchronous lifecycle `status` the
+ * provider returns AT acceptance (Twilio: "queued" / "accepted" / "sending"), which
+ * the transport records against the message id (Directive #018 R6, "record provider
+ * outcomes where supported"). The ASYNCHRONOUS terminal receipt (delivered / failed /
+ * undelivered) arrives later via a status-callback webhook — a public ingress surface
+ * deliberately deferred; this optional field carries only what the send call resolves
+ * with, correlated by `providerMessageId`.
  */
 export type SmsAcceptance = {
   /** The provider's id for this message — the correlation key for delivery events. */
   providerMessageId: string;
+  /** The provider's synchronous lifecycle status at acceptance, when it reports one. */
+  status?: string | null;
 };
 
 /**

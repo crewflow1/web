@@ -452,7 +452,12 @@ async function transportReply(args: {
       cost_usd: smsCostUsd(provider.info),
       latency_ms: Date.now() - startedAt,
       dedup_key: args.dedup_key,
-      metadata: baseMeta,
+      // Record the provider's synchronous acceptance status against the message id
+      // when it reports one (Directive #018 R6, "record provider outcomes where
+      // supported"). The async terminal receipt is a later increment.
+      metadata: acceptance.status
+        ? { ...baseMeta, provider_status: acceptance.status }
+        : baseMeta,
     });
     return {
       attempted: true,
@@ -579,6 +584,94 @@ export async function dispatchReceptionistReply(
   });
 }
 
+// =====================================================================
+// CONTROLLED LIVE EXECUTION (CEO Directive #018, R6).
+//
+// R5 built the ONE outbound pipeline (Compose → Enforce → Audit → Transport) and proved
+// it end to end, but left it a CALLABLE PRIMITIVE — nothing triggered it from a real
+// inbound event. R6 arms exactly ONE real customer-facing behaviour, the missed-call SMS
+// text-back, behind a feature flag that DEFAULTS OFF, and wires it into the existing
+// inbound processor. It introduces NO new execution path: the live send REUSES
+// `dispatchReceptionistReply` verbatim, so every customer message still flows Draft →
+// Canonical Enforcement → Mandatory Audit → Transport Ledger → Provider — no exceptions,
+// no parallel path, no bypass.
+// =====================================================================
+
+/**
+ * Is the missed-call SMS text-back cleared for LIVE execution?
+ *
+ * The single runtime gate for R6's controlled activation. Reads
+ * `NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK` — schema-validated to "true" | "false" with
+ * DEFAULT "false" at boot by lib/env.ts — at CALL TIME (the same convention this service
+ * already uses for `process.env.ANTHROPIC_API_KEY`), so the switch is a genuine runtime
+ * toggle rather than a value frozen at import. Unset or "false" ⇒ OFF ⇒ the inbound flow
+ * is byte-for-byte its pre-R6 self and NO outbound SMS is attempted; only an explicit
+ * "true" arms the canonical dispatch.
+ */
+export function isMissedCallTextbackLive(): boolean {
+  return process.env.NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK === "true";
+}
+
+/**
+ * The outcome of the (flag-gated) missed-call text-back side-effect, surfaced on the
+ * inbound result so a caller — or a test — can see whether the live path ran and why.
+ * `attempted:false` names the reason it stayed inert; `attempted:true` carries either the
+ * full canonical dispatch outcome or the error that was swallowed to protect ingestion.
+ */
+export type MissedCallTextbackResult =
+  | { attempted: false; reason: "flag_off" | "unsupported_channel" | "no_destination" }
+  | { attempted: true; dispatch: ReceptionistDispatchOutcome }
+  | { attempted: true; error: string };
+
+/**
+ * The R6 wiring: when armed, text a MISSED CALL back through the ONE canonical pipeline.
+ *
+ * Three gates, in order, decide whether a send is even considered — each a plain early
+ * return, never a throw:
+ *   1. the live-execution FLAG (default OFF) — off ⇒ `flag_off`, nothing happens;
+ *   2. the CHANNEL — R6 activates ONLY the missed-call (phone) text-back; every other
+ *      inbound channel is an explicit non-goal and stays unchanged (`unsupported_channel`);
+ *   3. a DESTINATION — a text-back needs a number to answer (`no_destination`).
+ *
+ * Past the gates it delegates to {@link dispatchReceptionistReply} — the SAME primitive
+ * R5 shipped, which composes the acknowledgement, enforces the policy, writes the
+ * mandatory audit, runs the deny-by-default gate, files the transport, and short-circuits
+ * a duplicate. It adds NO new door to a provider. The whole delegation is wrapped so an
+ * outbound failure can NEVER corrupt inbound ingestion: the enquiry and lead are already
+ * durably recorded, so a throw here is logged, captured on the result, and swallowed.
+ */
+async function maybeTextBackMissedCall(input: {
+  org_id: string;
+  channel: InboundChannel;
+  enquiry_id: string;
+  lead_id: string | null;
+  caller: string | null;
+  dedup_key: string | null;
+}): Promise<MissedCallTextbackResult> {
+  if (!isMissedCallTextbackLive()) return { attempted: false, reason: "flag_off" };
+  if (input.channel !== "phone") return { attempted: false, reason: "unsupported_channel" };
+  const destination = input.caller?.trim();
+  if (!destination) return { attempted: false, reason: "no_destination" };
+
+  try {
+    const dispatch = await dispatchReceptionistReply({
+      org_id: input.org_id,
+      channel: input.channel, // "phone" → the voice-shaped acknowledgement, carried over SMS
+      enquiry_id: input.enquiry_id,
+      lead_id: input.lead_id,
+      customer_ref: destination,
+      // A stable per-call id (CallSid) dedupes webhook replays; absent, the dispatch
+      // falls back to the enquiry id for idempotency.
+      metadata: input.dedup_key ? { dedup_key: input.dedup_key } : {},
+    });
+    return { attempted: true, dispatch };
+  } catch (err) {
+    // NEVER let an outbound failure fail the inbound event — ingestion is already durable.
+    console.error("[receptionist] missed-call text-back failed", err);
+    return { attempted: true, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /**
  * Phase A — AI Receptionist processor.
  *
@@ -607,7 +700,7 @@ export async function dispatchReceptionistReply(
 
 export async function processInboundEnquiry(
   input: InboundEnquiryInput,
-): Promise<{ enquiry_id: string; lead_id: string | null }> {
+): Promise<{ enquiry_id: string; lead_id: string | null; textback: MissedCallTextbackResult }> {
   const admin = createAdminClient();
 
   // Step 1 — record raw enquiry.
@@ -729,7 +822,22 @@ export async function processInboundEnquiry(
     }).catch((e) => console.error("[receptionist] automation failed", e));
   }
 
-  return { enquiry_id: enquiryId, lead_id: leadId };
+  // Step 6 — CONTROLLED LIVE EXECUTION (CEO Directive #018, R6). Behind the default-OFF
+  // NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK flag, a MISSED CALL (channel 'phone') with a
+  // caller to answer is texted back through the ONE canonical outbound pipeline. Placed
+  // AFTER — and independent of — lead creation: the missed CALL is the trigger, so a
+  // caller is acknowledged even if extraction produced no lead. It NEVER throws, so it
+  // cannot disturb the ingestion contract above; with the flag OFF it is wholly inert.
+  const textback = await maybeTextBackMissedCall({
+    org_id: input.org_id,
+    channel: input.channel,
+    enquiry_id: enquiryId,
+    lead_id: leadId,
+    caller: input.caller ?? null,
+    dedup_key: input.dedup_key ?? null,
+  });
+
+  return { enquiry_id: enquiryId, lead_id: leadId, textback };
 }
 
 // ---------------------------------------------------------------------

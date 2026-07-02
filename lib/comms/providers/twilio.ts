@@ -54,7 +54,11 @@ export function createTwilioSmsProvider(): SmsProvider {
       if (!res.sid) {
         throw new Error("twilio: send returned no message sid");
       }
-      return { providerMessageId: res.sid };
+      // Surface Twilio's synchronous lifecycle status (e.g. "queued"/"accepted")
+      // alongside the sid, so the transport records the provider's outcome at
+      // acceptance, correlated by the message id (Directive #018 R6). The terminal
+      // delivery receipt arrives asynchronously and is out of this send's scope.
+      return { providerMessageId: res.sid, status: res.status ?? null };
     },
   };
 }
