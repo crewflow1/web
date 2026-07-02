@@ -11,8 +11,11 @@ import {
   type GuardrailResult,
   type GuardrailVerdict,
 } from "@/lib/receptionist/policy";
+import { composeReceptionistReply } from "@/lib/receptionist/reply";
+import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
+  InboundChannel,
   InboundEnquiryInput,
   InboundExtraction,
   InboundUrgency,
@@ -75,6 +78,132 @@ export function enforceReceptionistReply(draft: string): ReceptionistReplyDecisi
     safeText: result.safeText,
     result,
   };
+}
+
+// =====================================================================
+// THE CANONICAL REPLY PRODUCTION & AUDIT PIPELINE (CEO Directive #018, R4).
+// =====================================================================
+
+/**
+ * The anchors that thread one attempted reply to the organisation, conversation
+ * and customer it concerns — captured on every audit record so a reply is
+ * traceable end to end.
+ */
+export type ReplyAuditContext = {
+  /** The organisation the reply is drafted on behalf of. */
+  org_id: string;
+  /** The inbound channel the reply answers. */
+  channel: InboundChannel;
+  /** The conversation — the originating `inbound_enquiries.id`, if known. */
+  enquiry_id?: string | null;
+  /** The customer — the `leads.id`, if a lead exists. */
+  lead_id?: string | null;
+  /** The caller identifier (phone / handle / email), if known. */
+  customer_ref?: string | null;
+  /** The end-to-end trace id; a fresh one is minted when omitted. */
+  correlation_id?: string | null;
+  /** Free-form execution metadata (producer path, dedup key, …). */
+  metadata?: Record<string, unknown>;
+};
+
+/** The outcome of one Draft → Enforce → Audit pass. */
+export type ReceptionistReplyOutcome = {
+  /** The id of the MANDATORY, append-only audit record this attempt produced. */
+  audit_id: string;
+  /** The trace this attempt was recorded under. */
+  correlation_id: string;
+  /** The draft that was enforced and audited, verbatim. */
+  draft: string;
+  /** The enforcement decision, from the R3 seam. */
+  decision: ReceptionistReplyDecision;
+};
+
+// `record_ai_reply_audit` is a service-role-only SECURITY DEFINER primitive and is
+// not in the generated Database types — cast past the typed client (the same
+// `as unknown as` convention as the HQ Event Spine's `emitEvent`).
+type RecordReplyAuditRpc = (
+  fn: "record_ai_reply_audit",
+  args: Record<string, unknown>,
+) => Promise<{ data: string | null; error: { message: string } | null }>;
+
+/**
+ * Enforce the canonical policy over one AI-drafted reply AND record the MANDATORY,
+ * append-only audit of the attempt — the SINGLE chokepoint through which every
+ * attempted reply passes on its way out of the pipeline.
+ *
+ *   1. ENFORCE — the verdict is taken by the R3 seam {@link enforceReceptionistReply}
+ *      (which delegates to the harvested guardrail): deny by default.
+ *   2. AUDIT — the attempt is written to `ai_reply_audits` through the
+ *      service-role-only `record_ai_reply_audit` primitive, capturing the
+ *      organisation, conversation, customer, AI employee, the draft, the full
+ *      enforcement decision (verdict / allowed / categories / reason / safe text),
+ *      the correlation id and execution metadata.
+ *
+ * The audit is MANDATORY. Unlike the best-effort event spine (which never throws)
+ * and the error-swallowing admin activity log, a failed audit write THROWS here —
+ * so a reply whose attempt could not be recorded does NOT proceed. There is no
+ * configuration, and no branch, by which a reply leaves this function without a
+ * durable audit record.
+ */
+export async function enforceAndAuditReply(
+  input: ReplyAuditContext & { draft: string },
+): Promise<ReceptionistReplyOutcome> {
+  const decision = enforceReceptionistReply(input.draft);
+  const correlationId = input.correlation_id ?? crypto.randomUUID();
+
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as RecordReplyAuditRpc;
+  const { data: auditId, error } = await rpc("record_ai_reply_audit", {
+    p_org_id: input.org_id,
+    p_employee_slug: RECEPTIONIST_EMPLOYEE_SLUG,
+    p_channel: input.channel,
+    p_correlation_id: correlationId,
+    p_draft: input.draft,
+    p_verdict: decision.verdict,
+    p_allowed: decision.allowed,
+    p_reason: decision.reason,
+    p_categories: decision.categories,
+    p_safe_text: decision.safeText,
+    p_enquiry_id: input.enquiry_id ?? null,
+    p_lead_id: input.lead_id ?? null,
+    p_customer_ref: input.customer_ref ?? null,
+    p_metadata: input.metadata ?? {},
+  });
+
+  // MANDATORY, not best-effort, not configurable: a reply whose attempt cannot be
+  // recorded must NOT proceed. Fail loudly — never swallow, never continue unaudited.
+  if (error || !auditId) {
+    throw new Error(
+      "ai_reply_audits write failed — a receptionist reply may not proceed unaudited: " +
+        (error?.message ?? "no audit id returned"),
+    );
+  }
+
+  return {
+    audit_id: auditId,
+    correlation_id: correlationId,
+    draft: input.draft,
+    decision,
+  };
+}
+
+/**
+ * The full canonical pipeline: Draft → Enforce → Audit. Composes the deterministic
+ * acknowledgement ({@link composeReceptionistReply}) for the enquiry's channel and
+ * hands it to {@link enforceAndAuditReply}, so the produced draft is enforced by the
+ * R3 seam and its attempt is audited — with no path that produces a reply without
+ * both. This is INTERNAL only: the outcome is a decision plus its audit record,
+ * never a customer send (transport is a later increment, deliberately absent here).
+ */
+export async function produceAndEnforceReply(
+  input: ReplyAuditContext,
+): Promise<ReceptionistReplyOutcome> {
+  const draft = composeReceptionistReply({ channel: input.channel });
+  return enforceAndAuditReply({
+    ...input,
+    draft,
+    metadata: { ...(input.metadata ?? {}), producer: "deterministic_acknowledgement" },
+  });
 }
 
 /**

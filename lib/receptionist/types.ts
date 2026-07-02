@@ -34,6 +34,15 @@ export const INBOUND_STATUSES = [
 ] as const;
 export type InboundStatus = (typeof INBOUND_STATUSES)[number];
 
+/**
+ * The Voice Receptionist AI's canonical employee slug — the identity seeded in the
+ * Capability Registry (migration 20260814000000_voice_receptionist_ai_employee.sql)
+ * and stamped onto every reply audit record so the ledger names the AI employee it
+ * concerns. Kept here, beside the receptionist's shared vocabulary, as the single
+ * TypeScript source of truth for the slug.
+ */
+export const RECEPTIONIST_EMPLOYEE_SLUG = "voice-receptionist-ai";
+
 export type InboundEnquiryInput = {
   org_id: string;
   channel: InboundChannel;
