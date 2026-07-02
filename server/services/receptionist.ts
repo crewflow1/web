@@ -4,12 +4,78 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { isAiConfigured } from "@/lib/ai/safety";
+import {
+  evaluateReply,
+  isAutoSendable,
+  type GuardrailCategory,
+  type GuardrailResult,
+  type GuardrailVerdict,
+} from "@/lib/receptionist/policy";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
   InboundEnquiryInput,
   InboundExtraction,
   InboundUrgency,
 } from "@/lib/receptionist/types";
+
+// =====================================================================
+// THE CANONICAL RECEPTIONIST REPLY GATE (CEO Directive #018, R3).
+// =====================================================================
+
+/**
+ * The verdict of the single reply-safety enforcement chokepoint: whether an
+ * AI-drafted customer reply may proceed, and why.
+ */
+export type ReceptionistReplyDecision = {
+  /**
+   * DENY BY DEFAULT. `true` ONLY when the guardrail returns `allow` (the §9 A1
+   * bounded-acknowledgement exception). A `review`, a `block`, an empty draft —
+   * anything that is not a clean `allow` — is `false`: it may NOT auto-proceed.
+   */
+  allowed: boolean;
+  /** The harvested guardrail's verdict — `allow` | `review` | `block`. */
+  verdict: GuardrailVerdict;
+  /** The concern classes the guardrail detected, in canonical order. */
+  categories: GuardrailCategory[];
+  /** The human-readable justification for the verdict. */
+  reason: string;
+  /** The auto-sendable remainder when the policy offers one, else `null`. */
+  safeText: string | null;
+  /** The full guardrail result, carried through intact for audit / inspection. */
+  result: GuardrailResult;
+};
+
+/**
+ * Enforce the canonical receptionist policy over one AI-drafted customer reply —
+ * the SINGLE, load-bearing chokepoint through which every AI-generated
+ * customer-facing reply (Voice, SMS, WhatsApp, Email, Customer Portal, and any
+ * future channel) must pass before it can proceed to a send.
+ *
+ * It DELEGATES the verdict to the harvested guardrail
+ * ({@link import("@/lib/receptionist/policy").evaluateReply}) — it neither
+ * re-implements nor weakens a single rule — and applies the enforcement
+ * decision: deny by default. Only a policy `allow` clears (`allowed === true`);
+ * a commitment held for a human (`review`), a refused prohibition (`block`), or
+ * an empty draft does not.
+ *
+ * This seam is the SOLE server-side caller of the policy, a fact pinned as a
+ * matter of SOURCE by `__tests__/security/receptionist-enforcement-invariants`:
+ * there is exactly one enforcement path and no module may bypass it. It DECIDES;
+ * it does not transmit, persist, or produce a reply — the reply producer, the
+ * `ai_reply_audits` ledger, and the outbound send seams are deferred to later
+ * increments, and are structurally forced through this gate when they land.
+ */
+export function enforceReceptionistReply(draft: string): ReceptionistReplyDecision {
+  const result = evaluateReply(draft);
+  return {
+    allowed: isAutoSendable(result),
+    verdict: result.verdict,
+    categories: result.categories,
+    reason: result.reason,
+    safeText: result.safeText,
+    result,
+  };
+}
 
 /**
  * Phase A — AI Receptionist processor.
