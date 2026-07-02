@@ -28,6 +28,11 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_API_KEY_SID: z.string().optional(),
   TWILIO_API_KEY_SECRET: z.string().optional(),
+  // The outbound SMS sender — the Twilio phone number (E.164) or Messaging
+  // Service SID that missed-call text-backs are sent FROM. Optional at boot;
+  // its absence (even with the account creds present) is what makes the SMS
+  // provider seam return null, so CI sends nothing. (Directive #018 R5.)
+  TWILIO_SMS_FROM: z.string().optional(),
   VAPI_API_KEY: z.string().optional(),
   VAPI_WEBHOOK_SECRET: z.string().optional(),
 
@@ -69,6 +74,16 @@ const envSchema = z.object({
   // configuration only — no application code changes. Free string (not an enum)
   // so a new provider needs zero env-schema edits.
   COMMS_EMAIL_PROVIDER: z.string().optional(),
+
+  // -- Communication Layer: SMS provider (Directive #018 R5) --------------
+  // Names the active outbound SMS provider for the receptionist's first
+  // outbound transport (missed-call text-back). Default "auto": use Twilio when
+  // its account creds AND a sender (TWILIO_SMS_FROM) are all set, else off.
+  // Identical PLUG-IN doctrine to the email seam: with no provider configured
+  // the transport records a terminal `failed`/no_provider attempt and SENDS
+  // NOTHING — the path CI exercises. Free string (not an enum) so a new provider
+  // needs zero env-schema edits.
+  COMMS_SMS_PROVIDER: z.string().optional(),
 
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The

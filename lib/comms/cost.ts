@@ -20,6 +20,10 @@
  */
 const PRICE_PER_MESSAGE_USD: Readonly<Record<string, number>> = {
   "resend:email": 0,
+  // Metered per-segment SMS (Directive #018 R5). Twilio UK outbound long-code
+  // SMS is ~$0.04 per segment; recorded per accepted message for cost
+  // observability — never a gate. Values current as of 2026-06.
+  "twilio:sms": 0.04,
 };
 
 /**
@@ -29,6 +33,17 @@ const PRICE_PER_MESSAGE_USD: Readonly<Record<string, number>> = {
  * `textCostUsd` exactly.
  */
 export function emailCostUsd(info: { provider: string; channel: string }): number | null {
+  const price = PRICE_PER_MESSAGE_USD[`${info.provider}:${info.channel}`];
+  return price ?? null;
+}
+
+/**
+ * Cost in USD for one accepted SMS against a provider/channel. Returns `null`
+ * when the pairing's price is unknown — cost is OBSERVABILITY, never a gate, so an
+ * unpriced provider still delivers; its cost is recorded as unknown. Reuses the
+ * one shared ledger; mirrors `emailCostUsd` exactly.
+ */
+export function smsCostUsd(info: { provider: string; channel: string }): number | null {
   const price = PRICE_PER_MESSAGE_USD[`${info.provider}:${info.channel}`];
   return price ?? null;
 }

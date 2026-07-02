@@ -21,8 +21,9 @@ import "server-only";
  */
 
 import { env } from "@/lib/env";
-import type { EmailProvider } from "./types";
+import type { EmailProvider, SmsProvider } from "./types";
 import { createResendEmailProvider } from "./providers/resend";
+import { createTwilioSmsProvider } from "./providers/twilio";
 
 export type {
   EmailProvider,
@@ -30,8 +31,12 @@ export type {
   EmailAcceptance,
   CommProviderInfo,
   CommChannel,
+  SmsProvider,
+  SmsMessage,
+  SmsAcceptance,
+  SmsProviderInfo,
 } from "./types";
-export { emailCostUsd } from "./cost";
+export { emailCostUsd, smsCostUsd } from "./cost";
 
 /**
  * Resolve the configured email provider, or `null` when none is usable.
@@ -75,4 +80,56 @@ export function getEmailProvider(): EmailProvider | null {
 /** Cheap presence check, mirroring `isTextConfigured()`. True iff a provider is configured. */
 export function isEmailConfigured(): boolean {
   return getEmailProvider() !== null;
+}
+
+/**
+ * Resolve the configured SMS provider, or `null` when none is usable.
+ *
+ * The receptionist's first outbound transport (Directive #018 R5). Same seam
+ * doctrine as `getEmailProvider`: an unknown provider name or missing credentials
+ * degrade to `null` (outbound SMS off) rather than crashing — the transport then
+ * records a terminal `failed`/no_provider attempt and SENDS NOTHING, the path CI
+ * exercises (CI sets no Twilio credentials). Construction is cheap and network-free.
+ * Twilio is "configured" only when the account SID, auth token AND the sender
+ * (TWILIO_SMS_FROM) are all present.
+ */
+export function getSmsProvider(): SmsProvider | null {
+  const name = (env.COMMS_SMS_PROVIDER ?? "auto").trim().toLowerCase();
+
+  const twilioConfigured = Boolean(
+    env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_SMS_FROM,
+  );
+
+  switch (name) {
+    case "auto": {
+      if (twilioConfigured) return createTwilioSmsProvider();
+      return null;
+    }
+
+    case "twilio": {
+      if (!twilioConfigured) return null;
+      return createTwilioSmsProvider();
+    }
+
+    // Future SMS providers slot in here — configuration only:
+    //   case "messagebird": ...
+    //   case "vonage":      ...
+
+    case "":
+    case "none":
+    case "off":
+    case "disabled":
+      return null;
+
+    default:
+      // Unknown name → degrade, don't crash. Outbound SMS stays off until the
+      // configuration is corrected.
+      console.warn(`[comms] unknown COMMS_SMS_PROVIDER="${name}" — outbound SMS disabled`);
+      return null;
+  }
+}
+
+/** Cheap presence check, mirroring `isEmailConfigured()`. True iff an SMS provider is configured. */
+export function isSmsConfigured(): boolean {
+  return getSmsProvider() !== null;
 }

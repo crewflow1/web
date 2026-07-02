@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toInternationalDigits, whatsAppHref } from "@/lib/phone";
+import { toE164, toInternationalDigits, whatsAppHref } from "@/lib/phone";
 
 describe("toInternationalDigits", () => {
   it("converts a UK national number (07…) to +44 international digits", () => {
@@ -52,5 +52,32 @@ describe("whatsAppHref", () => {
     expect(whatsAppHref(null)).toBeNull();
     expect(whatsAppHref("")).toBeNull();
     expect(whatsAppHref("abc")).toBeNull();
+  });
+});
+
+describe("toE164", () => {
+  it("prefixes a + onto the international digits (the SMS destination shape)", () => {
+    expect(toE164("07700 900000")).toBe("+447700900000");
+    expect(toE164("07700900000")).toBe("+447700900000");
+  });
+
+  it("normalises E.164, 00-access and bare-UK input to a single canonical +form", () => {
+    expect(toE164("+44 7700 900000")).toBe("+447700900000");
+    expect(toE164("0044 7700 900000")).toBe("+447700900000");
+    expect(toE164("447700900000")).toBe("+447700900000");
+    expect(toE164("(07700) 900-000")).toBe("+447700900000");
+  });
+
+  it("preserves a non-UK international number", () => {
+    expect(toE164("+1 (415) 555-0123")).toBe("+14155550123");
+  });
+
+  it("returns null for empty or undialable input (the transport records invalid_destination)", () => {
+    expect(toE164(null)).toBeNull();
+    expect(toE164(undefined)).toBeNull();
+    expect(toE164("")).toBeNull();
+    expect(toE164("   ")).toBeNull();
+    expect(toE164("abc")).toBeNull();
+    expect(toE164("+")).toBeNull();
   });
 });

@@ -82,3 +82,62 @@ export interface EmailProvider {
    */
   send(message: EmailMessage): Promise<EmailAcceptance>;
 }
+
+// ---------------------------------------------------------------------
+// SMS (Directive #018 R5 — the FIRST outbound transport). The receptionist's
+// missed-call text-back rides this seam. It mirrors the email shapes exactly — a
+// provider+channel identity, one assembled message, an acceptance carrying the
+// provider's correlation id, and the one `send`-or-throw interface — so the
+// canonical service depends on the INTERFACE, never on Twilio. Kept as a SEPARATE
+// `channel: "sms"`-literal family rather than widening COMM_CHANNELS, because that
+// email channel union is welded to the hq_communications delivery state machine
+// (approval-gated, email-only CHECK); the receptionist transport is its own
+// append-only ledger (ai_reply_transports) and must not perturb that contract.
+// ---------------------------------------------------------------------
+
+/** The stable identity of an SMS provider. Recorded per attempt for observability. */
+export type SmsProviderInfo = {
+  /** Vendor id, lowercase. e.g. "twilio". */
+  provider: string;
+  /** Always "sms" — the literal that keeps this family distinct from email. */
+  channel: "sms";
+};
+
+/**
+ * One outbound SMS, already assembled from an ENFORCED, auto-sendable reply. Pure
+ * data — the provider turns this into a vendor API call. `to` is the E.164
+ * destination; `body` is the message text; `from` is an optional per-send sender
+ * override (the provider defaults it to TWILIO_SMS_FROM).
+ */
+export type SmsMessage = {
+  to: string;
+  body: string;
+  from?: string;
+};
+
+/**
+ * The provider ACCEPTED the SMS for delivery — acceptance, NOT receipt. The
+ * `providerMessageId` is the correlation key a later delivery receipt would carry
+ * back. Mirrors `EmailAcceptance` exactly.
+ */
+export type SmsAcceptance = {
+  /** The provider's id for this message — the correlation key for delivery events. */
+  providerMessageId: string;
+};
+
+/**
+ * The one interface the SMS transport knows. The implementation lives behind the
+ * config-driven factory (./index `getSmsProvider`); the service never imports a
+ * vendor SDK directly, so swapping Twilio for another vendor is configuration + a
+ * sibling file, never a change to the service.
+ */
+export interface SmsProvider {
+  /** Identity of what this provider sends — drives the per-attempt metadata. */
+  readonly info: SmsProviderInfo;
+  /**
+   * Hand one assembled SMS to the provider. Resolves with the provider's
+   * acceptance (a message id), or THROWS on any provider failure (network, auth,
+   * rate-limit, rejection) so the service records a `failed` attempt and owns retry.
+   */
+  send(message: SmsMessage): Promise<SmsAcceptance>;
+}

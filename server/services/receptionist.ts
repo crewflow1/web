@@ -13,6 +13,8 @@ import {
 } from "@/lib/receptionist/policy";
 import { composeReceptionistReply } from "@/lib/receptionist/reply";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
+import { getSmsProvider, smsCostUsd } from "@/lib/comms";
+import { toE164 } from "@/lib/phone";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
   InboundChannel,
@@ -200,6 +202,377 @@ export async function produceAndEnforceReply(
 ): Promise<ReceptionistReplyOutcome> {
   const draft = composeReceptionistReply({ channel: input.channel });
   return enforceAndAuditReply({
+    ...input,
+    draft,
+    metadata: { ...(input.metadata ?? {}), producer: "deterministic_acknowledgement" },
+  });
+}
+
+// =====================================================================
+// THE FIRST OUTBOUND TRANSPORT (CEO Directive #018, R5).
+//
+// R4 closed the INTERNAL loop — Draft → Enforce → Audit. R5 carries an enforced,
+// audited, AUTO-SENDABLE reply out through exactly ONE transport: SMS (missed-call
+// text-back), over the reused lib/comms provider seam. The law the directive sets is
+// absolute and is enforced here AND in the database (ai_reply_transports_guard):
+//
+//   "There must be no execution path capable of reaching a transport adapter without
+//    first passing through both the canonical enforcement seam and the mandatory
+//    audit ledger."
+//
+// So the ONLY way to a provider is `dispatchReply` → `enforceAndAuditReply` (the R4
+// mandatory chokepoint) → the `decision.allowed` gate → `transportReply`. A reply
+// that is not a clean `allow` is audited and STOPS; it never reaches a provider. And
+// every transport OUTCOME — a clean send, an undialable destination, an absent
+// provider, a provider that threw — is itself recorded in the append-only
+// `ai_reply_transports` ledger through the mandatory, throw-on-failure
+// `record_ai_reply_transport` primitive. Failed attempts are as fully recorded as
+// successful ones.
+// =====================================================================
+
+/** The outbound transport channel R5 ships. The DB CHECK pins the same single value. */
+const RECEPTIONIST_TRANSPORT_CHANNEL = "sms" as const;
+
+/** The outcome of the outbound TRANSPORT stage for one reply. */
+export type TransportResult = {
+  /** Whether an attempt actually reached the transport stage (false when the reply was held/refused, or a duplicate short-circuited). */
+  attempted: boolean;
+  /** True when a prior SENT transport for the same dedup key short-circuited this send (no new audit, no new send). */
+  duplicate: boolean;
+  /** The append-only `ai_reply_transports` record id, when one was written (or the pre-existing SENT row on a duplicate). */
+  transport_id: string | null;
+  /** `sent` — a provider accepted it; `failed` — an attempt was made and recorded failed; `skipped` — no attempt (not auto-sendable / duplicate). */
+  status: "sent" | "failed" | "skipped";
+  /** The provider's message id on a clean send, else null. */
+  provider_message_id: string | null;
+  /** Why a failed/skipped transport ended where it did (no_provider / invalid_destination / provider_error / not_auto_sendable / duplicate), else null. */
+  failure_reason: string | null;
+};
+
+/** The outcome of the full canonical dispatch: Draft → Enforce → Audit → Transport. */
+export type ReceptionistDispatchOutcome = {
+  /** The audit id, or null when a duplicate short-circuited before any audit/send. */
+  audit_id: string | null;
+  /** The trace, or null on a pre-audit duplicate short-circuit. */
+  correlation_id: string | null;
+  /** The enforced + audited draft, or null on a pre-audit duplicate short-circuit. */
+  draft: string | null;
+  /** The enforcement decision, or null on a pre-audit duplicate short-circuit. */
+  decision: ReceptionistReplyDecision | null;
+  /** The transport stage outcome. */
+  transport: TransportResult;
+};
+
+// `record_ai_reply_transport` is a service-role-only SECURITY DEFINER primitive and
+// is not in the generated Database types — cast past the typed client, the same
+// `as unknown as` convention as `record_ai_reply_audit` above.
+type RecordReplyTransportRpc = (
+  fn: "record_ai_reply_transport",
+  args: Record<string, unknown>,
+) => Promise<{ data: string | null; error: { message: string } | null }>;
+
+// The minimal read shape for the dedup probe — a chainable filter that terminates in
+// the awaited result. Cast past the generated types (ai_reply_transports is RLS:hq
+// and not in the typed client's row map).
+type TransportProbeFilter = {
+  eq: (column: string, value: unknown) => TransportProbeFilter;
+  limit: (count: number) => Promise<{ data: { id: string }[] | null }>;
+};
+type TransportProbe = {
+  select: (cols: string) => TransportProbeFilter;
+};
+
+/**
+ * The idempotency key for one dispatch. Prefers an explicit `metadata.dedup_key`
+ * (a channel's own message id), else falls back to the conversation (`enquiry_id`)
+ * so a single inbound event yields at most one successful outbound. Null → no dedup
+ * key, so the caller opts out of the short-circuit (the DB still allows the send).
+ */
+function transportDedupKey(input: ReplyAuditContext): string | null {
+  const fromMeta = input.metadata?.dedup_key;
+  if (typeof fromMeta === "string" && fromMeta.trim()) return fromMeta.trim();
+  return input.enquiry_id ?? null;
+}
+
+/**
+ * File one transport attempt into the append-only `ai_reply_transports` ledger via
+ * the service-role-only `record_ai_reply_transport` primitive. MANDATORY: like the
+ * audit write, a transport that cannot be recorded THROWS — no send is acknowledged
+ * without its durable record, and the DB's allowed-audit gate runs inside this write.
+ */
+async function recordTransport(args: {
+  reply_audit_id: string;
+  org_id: string;
+  channel: typeof RECEPTIONIST_TRANSPORT_CHANNEL;
+  to_ref: string;
+  status: "sent" | "failed";
+  correlation_id: string;
+  provider?: string | null;
+  provider_message_id?: string | null;
+  failure_reason?: string | null;
+  cost_usd?: number | null;
+  latency_ms?: number | null;
+  dedup_key?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<string> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as RecordReplyTransportRpc;
+  const { data: transportId, error } = await rpc("record_ai_reply_transport", {
+    p_reply_audit_id: args.reply_audit_id,
+    p_org_id: args.org_id,
+    p_employee_slug: RECEPTIONIST_EMPLOYEE_SLUG,
+    p_channel: args.channel,
+    p_to_ref: args.to_ref,
+    p_status: args.status,
+    p_correlation_id: args.correlation_id,
+    p_provider: args.provider ?? null,
+    p_provider_message_id: args.provider_message_id ?? null,
+    p_failure_reason: args.failure_reason ?? null,
+    p_cost_usd: args.cost_usd ?? null,
+    p_latency_ms: args.latency_ms ?? null,
+    p_attempt: 1,
+    p_dedup_key: args.dedup_key ?? null,
+    p_metadata: args.metadata ?? {},
+  });
+
+  // MANDATORY, not best-effort: a transport attempt that cannot be recorded must fail
+  // loudly, exactly as the audit write does. Never swallow, never acknowledge unrecorded.
+  if (error || !transportId) {
+    throw new Error(
+      "ai_reply_transports write failed — a receptionist transport may not be acknowledged unrecorded: " +
+        (error?.message ?? "no transport id returned"),
+    );
+  }
+  return transportId;
+}
+
+/**
+ * The NO-DUPLICATE read: is there already a SENT transport for this org + dedup key?
+ * Returns its id when one exists. The partial unique index `(dedup_key) where
+ * status='sent'` is the database backstop; this read is the application guard that
+ * stops a second attempt from ever reaching a provider.
+ */
+async function findSentTransport(orgId: string, dedupKey: string): Promise<string | null> {
+  const admin = createAdminClient();
+  const probe = admin.from("ai_reply_transports" as never) as unknown as TransportProbe;
+  const { data } = await probe
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("dedup_key", dedupKey)
+    .eq("status", "sent")
+    .limit(1);
+  const rows = (data as { id: string }[] | null) ?? [];
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Carry ONE enforced, audited, auto-sendable reply out over the SMS seam, recording
+ * the outcome — success OR failure — in the append-only ledger. Every branch records:
+ *   • an undialable destination → `failed`/invalid_destination (never reached a provider);
+ *   • no configured provider    → `failed`/no_provider (the graceful-degradation path CI runs);
+ *   • the provider threw         → `failed`/provider_error;
+ *   • the provider accepted      → `sent` with its message id, cost and latency.
+ * It is called ONLY from `dispatchReply`, and only after the `decision.allowed` gate.
+ */
+async function transportReply(args: {
+  reply_audit_id: string;
+  org_id: string;
+  correlation_id: string;
+  destination: string | null;
+  body: string;
+  dedup_key: string | null;
+}): Promise<TransportResult> {
+  const baseMeta: Record<string, unknown> = { producer: "missed_call_text_back" };
+  const e164 = toE164(args.destination);
+
+  // (a) Undialable destination — a real attempt that never reaches a provider.
+  if (!e164) {
+    const transportId = await recordTransport({
+      reply_audit_id: args.reply_audit_id,
+      org_id: args.org_id,
+      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      to_ref: args.destination ?? "",
+      status: "failed",
+      correlation_id: args.correlation_id,
+      provider: null,
+      failure_reason: "invalid_destination",
+      dedup_key: args.dedup_key,
+      metadata: baseMeta,
+    });
+    return {
+      attempted: true,
+      duplicate: false,
+      transport_id: transportId,
+      status: "failed",
+      provider_message_id: null,
+      failure_reason: "invalid_destination",
+    };
+  }
+
+  // (b) No configured provider — graceful degradation. The seam returns null; we record
+  //     a terminal failed/no_provider attempt and SEND NOTHING. This is the CI path.
+  const provider = getSmsProvider();
+  if (!provider) {
+    const transportId = await recordTransport({
+      reply_audit_id: args.reply_audit_id,
+      org_id: args.org_id,
+      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      to_ref: e164,
+      status: "failed",
+      correlation_id: args.correlation_id,
+      provider: null,
+      failure_reason: "no_provider",
+      dedup_key: args.dedup_key,
+      metadata: baseMeta,
+    });
+    return {
+      attempted: true,
+      duplicate: false,
+      transport_id: transportId,
+      status: "failed",
+      provider_message_id: null,
+      failure_reason: "no_provider",
+    };
+  }
+
+  // (c) A real send. The seam resolves with the provider's acceptance or THROWS; either
+  //     way the attempt is recorded (sent with the message id, or failed/provider_error).
+  const startedAt = Date.now();
+  try {
+    const acceptance = await provider.send({ to: e164, body: args.body });
+    const transportId = await recordTransport({
+      reply_audit_id: args.reply_audit_id,
+      org_id: args.org_id,
+      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      to_ref: e164,
+      status: "sent",
+      correlation_id: args.correlation_id,
+      provider: provider.info.provider,
+      provider_message_id: acceptance.providerMessageId,
+      cost_usd: smsCostUsd(provider.info),
+      latency_ms: Date.now() - startedAt,
+      dedup_key: args.dedup_key,
+      metadata: baseMeta,
+    });
+    return {
+      attempted: true,
+      duplicate: false,
+      transport_id: transportId,
+      status: "sent",
+      provider_message_id: acceptance.providerMessageId,
+      failure_reason: null,
+    };
+  } catch (err) {
+    const transportId = await recordTransport({
+      reply_audit_id: args.reply_audit_id,
+      org_id: args.org_id,
+      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      to_ref: e164,
+      status: "failed",
+      correlation_id: args.correlation_id,
+      provider: provider.info.provider,
+      failure_reason: "provider_error",
+      latency_ms: Date.now() - startedAt,
+      dedup_key: args.dedup_key,
+      metadata: { ...baseMeta, error: err instanceof Error ? err.message : String(err) },
+    });
+    return {
+      attempted: true,
+      duplicate: false,
+      transport_id: transportId,
+      status: "failed",
+      provider_message_id: null,
+      failure_reason: "provider_error",
+    };
+  }
+}
+
+/**
+ * Draft → Enforce → Audit → Transport for a reply whose draft is already in hand.
+ * ENFORCE + AUDIT run first ({@link enforceAndAuditReply}, the R4 mandatory
+ * chokepoint), so the attempt is durably audited BEFORE any transport is considered.
+ * Then the deny-by-default gate: only a clean `allow` (`decision.allowed`) is carried
+ * to {@link transportReply}; a `review`, `block`, or empty draft is audited and STOPS
+ * — it never reaches a provider. This is a CALLABLE PRIMITIVE: nothing invokes it on a
+ * timer. The auto-sendable remainder (`safeText`) rides the wire when present, else the
+ * draft itself.
+ */
+export async function dispatchReply(
+  input: ReplyAuditContext & { draft: string; destination?: string | null },
+): Promise<ReceptionistDispatchOutcome> {
+  const outcome = await enforceAndAuditReply(input);
+
+  // Deny by default. A held/refused/empty reply is audited (above) and goes no further.
+  if (!outcome.decision.allowed) {
+    return {
+      audit_id: outcome.audit_id,
+      correlation_id: outcome.correlation_id,
+      draft: outcome.draft,
+      decision: outcome.decision,
+      transport: {
+        attempted: false,
+        duplicate: false,
+        transport_id: null,
+        status: "skipped",
+        provider_message_id: null,
+        failure_reason: "not_auto_sendable",
+      },
+    };
+  }
+
+  const transport = await transportReply({
+    reply_audit_id: outcome.audit_id,
+    org_id: input.org_id,
+    correlation_id: outcome.correlation_id,
+    destination: input.destination ?? input.customer_ref ?? null,
+    body: outcome.decision.safeText ?? outcome.draft,
+    dedup_key: transportDedupKey(input),
+  });
+
+  return {
+    audit_id: outcome.audit_id,
+    correlation_id: outcome.correlation_id,
+    draft: outcome.draft,
+    decision: outcome.decision,
+    transport,
+  };
+}
+
+/**
+ * The full canonical outbound path for the receptionist: compose the deterministic
+ * acknowledgement, then run it through {@link dispatchReply} (Enforce → Audit →
+ * Transport). Guarded at the very top by the NO-DUPLICATE short-circuit: if a message
+ * for this idempotency key has already gone out (a SENT transport exists), it returns
+ * immediately WITHOUT composing, enforcing, auditing, or sending again. A CALLABLE
+ * PRIMITIVE — the inbound webhook does NOT invoke it automatically in R5 (auto-wiring
+ * behind the missed-call-text-back flag is the R6 recommendation).
+ */
+export async function dispatchReceptionistReply(
+  input: ReplyAuditContext & { destination?: string | null },
+): Promise<ReceptionistDispatchOutcome> {
+  const dedupKey = transportDedupKey(input);
+  if (dedupKey) {
+    const existing = await findSentTransport(input.org_id, dedupKey);
+    if (existing) {
+      return {
+        audit_id: null,
+        correlation_id: null,
+        draft: null,
+        decision: null,
+        transport: {
+          attempted: false,
+          duplicate: true,
+          transport_id: existing,
+          status: "skipped",
+          provider_message_id: null,
+          failure_reason: "duplicate",
+        },
+      };
+    }
+  }
+
+  const draft = composeReceptionistReply({ channel: input.channel });
+  return dispatchReply({
     ...input,
     draft,
     metadata: { ...(input.metadata ?? {}), producer: "deterministic_acknowledgement" },

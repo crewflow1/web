@@ -44,7 +44,10 @@ import {
 // reaching for `any`.
 type RpcResult<T> = { data: T | null; error: { message: string } | null };
 type Term<T> = PromiseLike<RpcResult<T>>;
-type Filterable<T> = Term<T> & { eq(column: string, value: unknown): Term<T> };
+// `eq` is chainable (Supabase filter builders return themselves), so it yields a
+// `Filterable<T>`, not a bare `Term<T>` — this is what lets `rowsFor` below return a
+// `select().eq()` under the `Filterable` annotation and lets filters compose.
+type Filterable<T> = Term<T> & { eq(column: string, value: unknown): Filterable<T> };
 type AuditTable = {
   select(columns?: string): Filterable<Record<string, unknown>[]>;
   insert(row: Record<string, unknown>): Filterable<null>;
