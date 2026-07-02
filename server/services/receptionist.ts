@@ -14,6 +14,7 @@ import {
 import { composeReceptionistReply } from "@/lib/receptionist/reply";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
+import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
@@ -838,6 +839,120 @@ export async function processInboundEnquiry(
   });
 
   return { enquiry_id: enquiryId, lead_id: leadId, textback };
+}
+
+// =====================================================================
+// ASYNC DELIVERY RECEIPTS (CEO Directive #018, R7).
+//
+// R5/R6 recorded the provider's SYNCHRONOUS acceptance (`sent` + the acceptance
+// status). Acceptance is not delivery: "There must never be an unknown final state
+// once the provider has reported it." R7 completes the lifecycle by ingesting the
+// provider's ASYNCHRONOUS terminal status over an authenticated status-callback
+// webhook and recording it — WITHOUT mutating the append-only transport row.
+//
+// The transport ledger is hard append-only, so a delivery status is recorded as a
+// NEW, correlated receipt row (`ai_reply_delivery_receipts`), never an in-place edit.
+// The delivery lifecycle of a message is the transport PLUS its ordered receipts. This
+// is the ONE persistence path for a receipt: it reuses the same service-role-only
+// SECURITY DEFINER + throw-on-failure discipline as the audit and transport writes,
+// introduces NO new transport and NO new provider send, and does NOT touch the
+// best-effort event spine — the append-only ledger IS the audit of record (the R4
+// separation), so a receipt row is itself the durable delivery event.
+// =====================================================================
+
+// `record_ai_reply_delivery_receipt` is a service-role-only SECURITY DEFINER primitive
+// that RETURNS A TABLE (one outcome row), and is not in the generated Database types —
+// cast past the typed client, the same `as unknown as` convention as the audit and
+// transport writes above.
+type DeliveryReceiptRpcRow = {
+  receipt_id: string | null;
+  transport_id: string | null;
+  reply_audit_id: string | null;
+  org_id: string | null;
+  is_terminal: boolean | null;
+  was_duplicate: boolean;
+  transport_found: boolean;
+};
+type RecordDeliveryReceiptRpc = (
+  fn: "record_ai_reply_delivery_receipt",
+  args: Record<string, unknown>,
+) => Promise<{ data: DeliveryReceiptRpcRow[] | null; error: { message: string } | null }>;
+
+/**
+ * The outcome of ingesting one async delivery receipt.
+ *   • `recorded:false`/`unknown_message` — the provider message id correlates to no
+ *     SENT transport this ledger ever produced; NOTHING was recorded (the webhook
+ *     rejects an unknown identifier).
+ *   • `recorded:true` — a receipt exists for this (message id, status). `duplicate`
+ *     is true when a prior identical callback had already recorded it (idempotent
+ *     no-op); `terminal` marks a final delivery state.
+ */
+export type SmsDeliveryReceiptResult =
+  | { recorded: false; reason: "unknown_message" }
+  | {
+      recorded: true;
+      duplicate: boolean;
+      receipt_id: string;
+      transport_id: string;
+      reply_audit_id: string;
+      org_id: string;
+      status: SmsDeliveryStatus;
+      terminal: boolean;
+    };
+
+/**
+ * Correlate one provider delivery receipt to the transport it belongs to and record
+ * it — the SINGLE server-side persistence path for R7, called ONLY by the
+ * authenticated Twilio status-callback route.
+ *
+ * It delegates the whole TRANSPORT LOOKUP → CORRELATION → IDEMPOTENT APPEND to the
+ * service-role-only `record_ai_reply_delivery_receipt` primitive, which resolves the
+ * SENT transport by the provider message id, copies the org / audit / employee /
+ * channel / provider FROM that authoritative row (never trusting the caller), and
+ * inserts a new receipt `on conflict (provider_message_id, status) do nothing`. So an
+ * unknown message id records nothing (returns `unknown_message`), and a duplicate
+ * callback is an idempotent no-op that returns the existing receipt.
+ *
+ * MANDATORY, throw-on-failure, exactly like the audit and transport writes: a receipt
+ * whose write ERRORED is a loud failure the webhook surfaces (so the provider retries),
+ * never a swallowed no-op. A "no transport found" is NOT an error — it is a recorded
+ * decision the route answers cleanly.
+ */
+export async function recordSmsDeliveryReceipt(
+  receipt: SmsDeliveryReceipt,
+): Promise<SmsDeliveryReceiptResult> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as RecordDeliveryReceiptRpc;
+  const { data, error } = await rpc("record_ai_reply_delivery_receipt", {
+    p_provider_message_id: receipt.providerMessageId,
+    p_status: receipt.status,
+    p_provider_status: receipt.providerStatus ?? null,
+    p_error_code: receipt.errorCode ?? null,
+    p_metadata: {},
+  });
+
+  if (error) {
+    throw new Error(
+      "ai_reply_delivery_receipts write failed — a delivery receipt could not be recorded: " +
+        error.message,
+    );
+  }
+
+  const row = data?.[0];
+  if (!row || !row.transport_found || !row.receipt_id) {
+    return { recorded: false, reason: "unknown_message" };
+  }
+
+  return {
+    recorded: true,
+    duplicate: row.was_duplicate,
+    receipt_id: row.receipt_id,
+    transport_id: row.transport_id as string,
+    reply_audit_id: row.reply_audit_id as string,
+    org_id: row.org_id as string,
+    status: receipt.status,
+    terminal: Boolean(row.is_terminal),
+  };
 }
 
 // ---------------------------------------------------------------------

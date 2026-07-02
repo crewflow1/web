@@ -33,6 +33,12 @@ const envSchema = z.object({
   // its absence (even with the account creds present) is what makes the SMS
   // provider seam return null, so CI sends nothing. (Directive #018 R5.)
   TWILIO_SMS_FROM: z.string().optional(),
+  // The PUBLIC status-callback URL Twilio is configured to POST delivery receipts to
+  // (Directive #018 R7). Twilio signs THIS exact URL, so when set it is the canonical
+  // value the webhook verifies the X-Twilio-Signature against — authoritative behind a
+  // proxy that rewrites host/proto. Optional: absent, the route reconstructs the URL
+  // from the forwarded request headers. Not a secret; carries no credential.
+  TWILIO_STATUS_CALLBACK_URL: z.string().optional(),
   VAPI_API_KEY: z.string().optional(),
   VAPI_WEBHOOK_SECRET: z.string().optional(),
 

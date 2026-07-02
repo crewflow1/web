@@ -149,3 +149,83 @@ export interface SmsProvider {
    */
   send(message: SmsMessage): Promise<SmsAcceptance>;
 }
+
+// ---------------------------------------------------------------------
+// ASYNC DELIVERY RECEIPTS (Directive #018 R7). Acceptance (above) is not delivery:
+// the provider reports the message's TERMINAL fate asynchronously, over a status
+// callback, correlated by the same `providerMessageId` the acceptance returned. This
+// is the provider-neutral vocabulary of that lifecycle — pure data, so the adapter,
+// the service, the ledger and the tests share ONE set of status literals and depend
+// on the INTERFACE, never on Twilio's raw strings.
+// ---------------------------------------------------------------------
+
+/**
+ * The canonical SMS delivery lifecycle. Provider-neutral, ordered from acceptance to
+ * a terminal fate, instantiated by the Twilio adapter (Twilio's own MessageStatus
+ * values map 1:1). The append-only receipt ledger's CHECK pins this exact set, so an
+ * unrecognised status can never be recorded — the adapter rejects it upstream as a
+ * malformed callback.
+ */
+export const SMS_DELIVERY_STATUSES = [
+  "accepted",
+  "scheduled",
+  "queued",
+  "sending",
+  "sent",
+  "delivered",
+  "undelivered",
+  "failed",
+  "canceled",
+] as const;
+export type SmsDeliveryStatus = (typeof SMS_DELIVERY_STATUSES)[number];
+
+/**
+ * The TERMINAL delivery states — the provider will not transition out of these. The
+ * directive's "known final state" set (delivered / undelivered / failed / canceled).
+ * Kept as a subset of {@link SMS_DELIVERY_STATUSES} so the ledger's generated
+ * `terminal` column and this constant cannot drift.
+ */
+export const TERMINAL_SMS_DELIVERY_STATUSES = [
+  "delivered",
+  "undelivered",
+  "failed",
+  "canceled",
+] as const;
+export type TerminalSmsDeliveryStatus = (typeof TERMINAL_SMS_DELIVERY_STATUSES)[number];
+
+/** Narrow an arbitrary string to a canonical SMS delivery status. */
+export function isSmsDeliveryStatus(value: unknown): value is SmsDeliveryStatus {
+  return (
+    typeof value === "string" &&
+    (SMS_DELIVERY_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/** True when a status is a terminal (final) delivery state. */
+export function isTerminalSmsDeliveryStatus(
+  value: unknown,
+): value is TerminalSmsDeliveryStatus {
+  return (
+    typeof value === "string" &&
+    (TERMINAL_SMS_DELIVERY_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * One async delivery receipt, parsed from a provider's status callback. Pure data —
+ * the provider-specific adapter (e.g. Twilio) translates its raw callback params into
+ * this shape, and the canonical service correlates it to the transport it belongs to.
+ * `providerMessageId` is the correlation key (the acceptance's id); `status` is the
+ * canonical lifecycle status; `providerStatus` preserves the raw string when it
+ * differs; `errorCode` carries the provider's failure code when a delivery fails.
+ */
+export type SmsDeliveryReceipt = {
+  /** The provider's message id — the correlation key back to the transport. */
+  providerMessageId: string;
+  /** The canonical lifecycle status the provider reported. */
+  status: SmsDeliveryStatus;
+  /** The provider's raw status string, when it differs from the canonical form. */
+  providerStatus?: string | null;
+  /** The provider's error code for a non-delivery, when it reports one. */
+  errorCode?: string | null;
+};

@@ -35,6 +35,15 @@ export type {
   SmsMessage,
   SmsAcceptance,
   SmsProviderInfo,
+  SmsDeliveryStatus,
+  TerminalSmsDeliveryStatus,
+  SmsDeliveryReceipt,
+} from "./types";
+export {
+  SMS_DELIVERY_STATUSES,
+  TERMINAL_SMS_DELIVERY_STATUSES,
+  isSmsDeliveryStatus,
+  isTerminalSmsDeliveryStatus,
 } from "./types";
 export { emailCostUsd, smsCostUsd } from "./cost";
 
