@@ -11,6 +11,13 @@ import "server-only";
  *   - the provider degraded (misconfig / vendor error / no sid) → THROW, so the
  *     canonical service records a terminal `failed` attempt and owns retry.
  *
+ * The send also REQUESTS the message's asynchronous delivery receipts by setting a
+ * `statusCallback` on the Twilio request (Directive #018 R8) — the public URL of the
+ * R7 receiver route — so Twilio POSTs each lifecycle transition (delivered / failed /
+ * undelivered) back, correlated by that same sid. That closes the Provider → Delivery
+ * Receipt edge; the receipt's authentication and ingestion live in the two helpers
+ * below and the receiver route, not in this send.
+ *
  * "Prefer extension over replacement" (a permanent engineering rule): Twilio is a
  * plug-in behind the factory (./index `getSmsProvider`), never imported by the
  * service. The SDK is loaded LAZILY (dynamic import, exactly as lib/email/send.ts
@@ -29,6 +36,70 @@ import type {
 } from "../types";
 
 const INFO: SmsProviderInfo = { provider: "twilio", channel: "sms" };
+
+/**
+ * The path Twilio POSTs delivery receipts to — the R7 receiver route
+ * (`app/api/webhooks/twilio/sms-status/route.ts`). Kept as ONE constant so the
+ * send-side callback URL and the route it points at can never silently drift.
+ */
+export const SMS_STATUS_CALLBACK_PATH = "/api/webhooks/twilio/sms-status";
+
+/**
+ * Resolve the PUBLIC URL Twilio should POST this message's delivery receipts to, or
+ * NULL when no public origin is knowable (Directive #018 R8).
+ *
+ * This is the send-side twin of the receiver route's `callbackUrl()`, and it MUST
+ * resolve to the identical string that route verifies against: Twilio signs the exact
+ * URL we hand it here, and the route authenticates that same URL on the way back, so
+ * the two share ONE precedence and a mismatch would fail the signature check:
+ *   1. `TWILIO_STATUS_CALLBACK_URL` (trimmed) — the authoritative public URL behind a
+ *      proxy that rewrites host/proto. When set, send and verify use it verbatim, so
+ *      the signature match is guaranteed.
+ *   2. else `NEXT_PUBLIC_APP_URL` (trailing slash stripped) + the callback path — which
+ *      equals the route's header-reconstructed URL whenever the app's public origin is
+ *      the host Twilio reaches (the production case).
+ *   3. else NULL — no `statusCallback` is requested; the send still succeeds, we simply
+ *      do not ask for receipts (there is no route we could truthfully name).
+ *
+ * Read from `process.env` at CALL TIME (not the frozen env singleton), the same
+ * runtime-toggle convention `verifyTwilioSignature` and the route's `callbackUrl` use,
+ * so a deploy can set it and a test can drive it via `vi.stubEnv`.
+ */
+export function resolveTwilioStatusCallbackUrl(): string | null {
+  const configured = process.env.TWILIO_STATUS_CALLBACK_URL?.trim();
+  if (configured) return configured;
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (appUrl) return `${appUrl.replace(/\/+$/, "")}${SMS_STATUS_CALLBACK_PATH}`;
+
+  return null;
+}
+
+/**
+ * Build the exact param object handed to `client.messages.create`. Pure and
+ * side-effect-free (no SDK, no I/O) so what we ask Twilio to do is unit-testable
+ * without the vendor present — it is the ONE place that decides the send's shape.
+ *
+ * The `statusCallback` is included ONLY when a public URL is resolvable
+ * ({@link resolveTwilioStatusCallbackUrl}); its presence is precisely what makes Twilio
+ * POST the asynchronous delivery receipts the R7 receiver ingests (Directive #018 R8),
+ * closing the Provider → Delivery Receipt edge. When no public origin is knowable the
+ * field is omitted and the send still succeeds — we decline to point Twilio at a URL
+ * that cannot receive, rather than fail the send.
+ */
+export function twilioSendPayload(message: {
+  to: string;
+  from: string;
+  body: string;
+}): { to: string; from: string; body: string; statusCallback?: string } {
+  const statusCallback = resolveTwilioStatusCallbackUrl();
+  return {
+    to: message.to,
+    from: message.from,
+    body: message.body,
+    ...(statusCallback ? { statusCallback } : {}),
+  };
+}
 
 export function createTwilioSmsProvider(): SmsProvider {
   return {
@@ -50,11 +121,12 @@ export function createTwilioSmsProvider(): SmsProvider {
       const { default: twilio } = await import("twilio");
       const client = twilio(accountSid, authToken);
 
-      const res = await client.messages.create({
-        to: message.to,
-        from,
-        body: message.body,
-      });
+      // Build the request through the pure payload builder — it embeds the
+      // `statusCallback` (when a public URL is resolvable) that asks Twilio to POST the
+      // asynchronous delivery receipts back to the R7 receiver (Directive #018 R8).
+      const res = await client.messages.create(
+        twilioSendPayload({ to: message.to, from, body: message.body }),
+      );
 
       // The provider must hand back a message sid (the correlation key). Its
       // absence is a degraded acceptance — throw so the service records `failed`.
@@ -64,7 +136,9 @@ export function createTwilioSmsProvider(): SmsProvider {
       // Surface Twilio's synchronous lifecycle status (e.g. "queued"/"accepted")
       // alongside the sid, so the transport records the provider's outcome at
       // acceptance, correlated by the message id (Directive #018 R6). The terminal
-      // delivery receipt arrives asynchronously and is out of this send's scope.
+      // delivery receipt arrives asynchronously at the `statusCallback` the payload
+      // requested (Directive #018 R8), correlated by this same sid; this send returns
+      // only the acceptance.
       return { providerMessageId: res.sid, status: res.status ?? null };
     },
   };
