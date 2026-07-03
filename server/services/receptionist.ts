@@ -7,6 +7,7 @@ import { isAiConfigured } from "@/lib/ai/safety";
 import {
   evaluateReply,
   isAutoSendable,
+  clearForHumanSend,
   type GuardrailCategory,
   type GuardrailResult,
   type GuardrailVerdict,
@@ -161,29 +162,49 @@ type RecordReplyAuditRpc = (
  * configuration, and no branch, by which a reply leaves this function without a
  * durable audit record.
  */
-export async function enforceAndAuditReply(
-  input: ReplyAuditContext & { draft: string },
-): Promise<ReceptionistReplyOutcome> {
-  const decision = enforceReceptionistReply(input.draft);
-  const correlationId = input.correlation_id ?? crypto.randomUUID();
-
+/**
+ * The MANDATORY audit write — file ONE row into the append-only `ai_reply_audits` ledger through
+ * the service-role-only `record_ai_reply_audit` primitive, and THROW if it cannot be recorded.
+ * This is the SINGLE place the audit RPC is invoked: both the autonomous chokepoint
+ * ({@link enforceAndAuditReply}) and the human-reviewed send seam
+ * ({@link dispatchHumanReviewedReply}) file their attempt here, so there is exactly one audit of
+ * record and one throw-on-failure contract. Persists the conversation link (R14) so a held reply
+ * can be threaded to its conversation by the review inbox. Returns the new audit id.
+ */
+async function writeReplyAudit(params: {
+  org_id: string;
+  channel: InboundChannel;
+  correlation_id: string;
+  draft: string;
+  verdict: GuardrailVerdict;
+  allowed: boolean;
+  reason: string;
+  categories: readonly GuardrailCategory[];
+  safe_text: string | null;
+  enquiry_id?: string | null;
+  lead_id?: string | null;
+  customer_ref?: string | null;
+  conversation_id?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<string> {
   const admin = createAdminClient();
   const rpc = admin.rpc.bind(admin) as unknown as RecordReplyAuditRpc;
   const { data: auditId, error } = await rpc("record_ai_reply_audit", {
-    p_org_id: input.org_id,
+    p_org_id: params.org_id,
     p_employee_slug: RECEPTIONIST_EMPLOYEE_SLUG,
-    p_channel: input.channel,
-    p_correlation_id: correlationId,
-    p_draft: input.draft,
-    p_verdict: decision.verdict,
-    p_allowed: decision.allowed,
-    p_reason: decision.reason,
-    p_categories: decision.categories,
-    p_safe_text: decision.safeText,
-    p_enquiry_id: input.enquiry_id ?? null,
-    p_lead_id: input.lead_id ?? null,
-    p_customer_ref: input.customer_ref ?? null,
-    p_metadata: input.metadata ?? {},
+    p_channel: params.channel,
+    p_correlation_id: params.correlation_id,
+    p_draft: params.draft,
+    p_verdict: params.verdict,
+    p_allowed: params.allowed,
+    p_reason: params.reason,
+    p_categories: params.categories,
+    p_safe_text: params.safe_text,
+    p_enquiry_id: params.enquiry_id ?? null,
+    p_lead_id: params.lead_id ?? null,
+    p_customer_ref: params.customer_ref ?? null,
+    p_conversation_id: params.conversation_id ?? null,
+    p_metadata: params.metadata ?? {},
   });
 
   // MANDATORY, not best-effort, not configurable: a reply whose attempt cannot be
@@ -194,6 +215,31 @@ export async function enforceAndAuditReply(
         (error?.message ?? "no audit id returned"),
     );
   }
+  return auditId;
+}
+
+export async function enforceAndAuditReply(
+  input: ReplyAuditContext & { draft: string },
+): Promise<ReceptionistReplyOutcome> {
+  const decision = enforceReceptionistReply(input.draft);
+  const correlationId = input.correlation_id ?? crypto.randomUUID();
+
+  const auditId = await writeReplyAudit({
+    org_id: input.org_id,
+    channel: input.channel,
+    correlation_id: correlationId,
+    draft: input.draft,
+    verdict: decision.verdict,
+    allowed: decision.allowed,
+    reason: decision.reason,
+    categories: decision.categories,
+    safe_text: decision.safeText,
+    enquiry_id: input.enquiry_id,
+    lead_id: input.lead_id,
+    customer_ref: input.customer_ref,
+    conversation_id: input.conversation_id,
+    metadata: input.metadata,
+  });
 
   return {
     audit_id: auditId,
@@ -423,8 +469,13 @@ async function transportReply(args: {
   destination: string | null;
   body: string;
   dedup_key: string | null;
+  /** Transport provenance label. Defaults to the R6 missed-call path; the R14 human-reviewed send
+   *  passes its own so the transport row names the seam that produced it. */
+  producer?: string;
 }): Promise<TransportResult> {
-  const baseMeta: Record<string, unknown> = { producer: "missed_call_text_back" };
+  const baseMeta: Record<string, unknown> = {
+    producer: args.producer ?? "missed_call_text_back",
+  };
   const e164 = toE164(args.destination);
 
   // (a) Undialable destination — a real attempt that never reaches a provider.
@@ -630,6 +681,168 @@ export async function dispatchReceptionistReply(
     draft: gen.draft,
     metadata: draftProvenance(input.metadata, gen),
   });
+}
+
+// =====================================================================
+// THE HUMAN-REVIEWED SEND SEAM (CEO Directive #018, R14).
+//
+// R3's policy has three verdicts; R5/R6 built the outbound path for exactly ONE — the
+// auto-sendable `allow`. The other actionable verdict, `review` ("the AI drafts, a HUMAN sends"),
+// had no send path: a review reply was drafted, enforced and audited, then STOPPED at the
+// deny-by-default gate in `dispatchReply`. This seam is that missing path — and it is NOT a second
+// pipeline. It REUSES the same chain: the mandatory audit writer ({@link writeReplyAudit}), the same
+// append-only `ai_reply_transports` ledger via {@link transportReply}, and the same unbypassable DB
+// transport gate (which admits a transport ONLY for an `allowed = true` audit).
+//
+// THE HUMAN IS THE ENFORCEMENT AUTHORITY FOR `review`. A `review` verdict means the automatic
+// guardrail declined to auto-send and deferred to a human. When a human reviews a held reply and
+// chooses to send, THEY clear it — so the send is filed as an `allow` audit (the only class the DB
+// gate will carry), with full provenance: the ORIGINAL automatic verdict, the held reply it
+// resolves, and the reviewer. No information is lost — this audit's metadata and the resolution
+// ledger jointly record that a human, not the classifier, authorised the send.
+//
+// THE ABSOLUTE `block` PROHIBITION REMAINS UNBYPASSABLE. A `block` is "never safe to send, not even
+// by a human". So this seam RE-EVALUATES the policy over the (possibly edited) text and, if it is a
+// `block`, records the refused attempt (mandatory audit, verdict='block', allowed=false) and
+// transports NOTHING. A human can edit a review or send it verbatim, but can never push a prohibited
+// claim through this door.
+// =====================================================================
+
+/** The producer label stamped on the audit + transport of a human-reviewed send. */
+export const HUMAN_REVIEWED_PRODUCER = "human_reviewed_send";
+
+/** The failure_reason recorded when a human-reviewed send is refused because the text is a `block`. */
+export const HUMAN_REVIEWED_BLOCKED_REASON = "blocked_prohibited";
+
+/** The inputs the human-reviewed send seam needs beyond the shared reply context. */
+export type HumanReviewedSendInput = ReplyAuditContext & {
+  /** The text the human is sending — the proposed draft as-is, or an edited version. */
+  draft: string;
+  /** The held reply this send resolves — the review-verdict `ai_reply_audits` id (provenance). */
+  review_audit_id: string;
+  /** The HQ user id that authorised the send (provenance; recorded in the audit metadata). */
+  reviewed_by: string;
+  /** Where the reply is sent (resolved to E.164 downstream); falls back to `customer_ref`. */
+  destination?: string | null;
+};
+
+/**
+ * Send ONE human-reviewed reply out through the canonical Enforce → Audit → Transport chain.
+ *
+ * Policy is STILL evaluated: the (possibly edited) text is classified by the R3 seam. A `block` is
+ * refused absolutely — audited (mandatory) and never transported. Otherwise the human is the
+ * authority that clears the `review`, so the send is filed as an ALLOWED audit (with provenance: the
+ * automatic verdict, the held reply, the reviewer) and carried by {@link transportReply} — the SAME
+ * transport seam, ledger and DB gate the autonomous path uses. Returns the standard dispatch outcome
+ * so callers observe the audit id, the decision, and the transport result uniformly. It writes NO
+ * resolution row — recording the human decision is the orchestrating service's job.
+ */
+export async function dispatchHumanReviewedReply(
+  input: HumanReviewedSendInput,
+): Promise<ReceptionistDispatchOutcome> {
+  // (1) POLICY IS STILL EVALUATED — classify the human's text (to enforce the absolute block).
+  const classification = enforceReceptionistReply(input.draft);
+  const correlationId = input.correlation_id ?? crypto.randomUUID();
+  const automaticVerdict = classification.verdict;
+
+  const baseMeta: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+    producer: HUMAN_REVIEWED_PRODUCER,
+    reviewed_by: input.reviewed_by,
+    review_audit_id: input.review_audit_id,
+    automatic_verdict: automaticVerdict,
+  };
+
+  // (2) ABSOLUTE PROHIBITION: a `block` is never sendable, not even by a human. Record the refused
+  //     attempt (mandatory audit, deny-by-default) and transport nothing.
+  if (automaticVerdict === "block") {
+    const auditId = await writeReplyAudit({
+      org_id: input.org_id,
+      channel: input.channel,
+      correlation_id: correlationId,
+      draft: input.draft,
+      verdict: "block",
+      allowed: false,
+      reason: classification.reason,
+      categories: classification.categories,
+      safe_text: classification.safeText,
+      enquiry_id: input.enquiry_id,
+      lead_id: input.lead_id,
+      customer_ref: input.customer_ref,
+      conversation_id: input.conversation_id,
+      metadata: baseMeta,
+    });
+    return {
+      audit_id: auditId,
+      correlation_id: correlationId,
+      draft: input.draft,
+      decision: classification,
+      transport: {
+        attempted: false,
+        duplicate: false,
+        transport_id: null,
+        status: "skipped",
+        provider_message_id: null,
+        failure_reason: HUMAN_REVIEWED_BLOCKED_REASON,
+      },
+    };
+  }
+
+  // (3) The human CLEARS the `review` (or the text is already an `allow`). Fold the automatic
+  //     verdict under HUMAN REVIEW AUTHORITY (the reviewer is the §9 A4 enforcement authority) and
+  //     read the send decision back through the SAME `isAutoSendable` predicate the autonomous path
+  //     uses — so `allowed` is DERIVED here, never asserted (deny-by-default is unbroken; the block
+  //     above already refused the one verdict human authority cannot clear). File the resulting
+  //     ALLOWED audit — the only class the DB transport gate carries — with full provenance; the
+  //     raw guardrail evidence is preserved in `decision.result` for inspection.
+  const cleared = clearForHumanSend(classification.result);
+  const sendAllowed = isAutoSendable(cleared);
+  const auditId = await writeReplyAudit({
+    org_id: input.org_id,
+    channel: input.channel,
+    correlation_id: correlationId,
+    draft: input.draft,
+    verdict: cleared.verdict,
+    allowed: sendAllowed,
+    reason: cleared.reason,
+    categories: cleared.categories,
+    // The whole draft is the sent text on a human-approved send (not an acknowledgement remainder).
+    safe_text: cleared.safeText,
+    enquiry_id: input.enquiry_id,
+    lead_id: input.lead_id,
+    customer_ref: input.customer_ref,
+    conversation_id: input.conversation_id,
+    metadata: baseMeta,
+  });
+
+  // (4) TRANSPORT — the SAME seam, ledger and DB gate the autonomous path uses. The idempotency key
+  //     is the held reply itself, so the partial-unique `(dedup_key) where status='sent'` index is
+  //     the database backstop against a double human send of the same held reply (belt to the
+  //     resolution ledger's UNIQUE(review_audit_id) braces).
+  const transport = await transportReply({
+    reply_audit_id: auditId,
+    org_id: input.org_id,
+    correlation_id: correlationId,
+    destination: input.destination ?? input.customer_ref ?? null,
+    body: input.draft,
+    dedup_key: input.review_audit_id,
+    producer: HUMAN_REVIEWED_PRODUCER,
+  });
+
+  return {
+    audit_id: auditId,
+    correlation_id: correlationId,
+    draft: input.draft,
+    decision: {
+      allowed: sendAllowed,
+      verdict: cleared.verdict,
+      categories: cleared.categories,
+      reason: cleared.reason,
+      safeText: cleared.safeText,
+      result: cleared,
+    },
+    transport,
+  };
 }
 
 // =====================================================================

@@ -302,3 +302,38 @@ export function evaluateReply(draft: string): GuardrailResult {
 export function isAutoSendable(result: GuardrailResult): boolean {
   return result.verdict === "allow";
 }
+
+/**
+ * Fold an automatic verdict under HUMAN REVIEW AUTHORITY (R14 — human handoff).
+ *
+ * R3's policy holds every `review` for a human ("the AI drafts, a human sends"). When a reviewer
+ * OPENS a held reply, reads the reconstructed conversation, and sends it, THEY are the enforcement
+ * authority for that customer commitment (§9 A4) — so the reply they clear carries an `allow`
+ * verdict. But §12's ABSOLUTE prohibitions are beyond ANY authority, a human included: a `block`
+ * is returned UNCHANGED and can never be cleared. So the fold is:
+ *
+ *   • `block`  → `block`   — absolute; a prohibited claim is never sendable, not even by a human.
+ *   • `review` → `allow`   — the reviewer clears the human-gated hold; the reply may now send.
+ *   • `allow`  → `allow`   — already auto-sendable; the reviewer simply confirms it.
+ *
+ * PURE, like the rest of this arbiter, and DERIVED not asserted: the caller reads the send verdict
+ * back through {@link isAutoSendable} exactly as the autonomous path does, so `allowed` is never
+ * manufactured and deny-by-default holds (a human CLEARS a hold; a human does not fabricate a
+ * send). The absolute `block` cannot be folded away — its refusal survives human authority.
+ */
+export function clearForHumanSend(automatic: GuardrailResult): GuardrailResult {
+  // §12 — an absolute prohibition is beyond even a human reviewer's authority: unchanged, refused.
+  if (automatic.verdict === "block") return automatic;
+  // §9 A4 — the reviewer is the authority who clears the hold. The whole (possibly substantive)
+  // draft is the sent text, so no partial `safeText` remainder is offered.
+  return {
+    verdict: "allow",
+    categories: automatic.categories,
+    findings: automatic.findings,
+    reason:
+      automatic.verdict === "allow"
+        ? automatic.reason
+        : "Cleared by a human reviewer (§9 A4): the AI drafted, a human sends.",
+    safeText: null,
+  };
+}
