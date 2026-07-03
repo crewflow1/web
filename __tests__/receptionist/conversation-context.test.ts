@@ -104,6 +104,7 @@ function summary(overrides: Partial<ConversationSummary> = {}): ConversationSumm
     contact_ref: "+447700900000",
     contact_name: null,
     status: "active",
+    runtime_state: "awaiting_customer",
     message_count: 0,
     first_message_at: "2026-01-01T10:00:00.000Z",
     last_message_at: "2026-01-01T10:00:00.000Z",

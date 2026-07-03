@@ -94,6 +94,10 @@ export type ConversationSummary = {
   contact_ref: string;
   contact_name: string | null;
   status: string;
+  /** The MINIMAL conversation runtime state — which party owes the next turn (R15). A coarse
+   *  ownership marker the runtime advances after each turn; one of the values in
+   *  lib/receptionist/runtime.ts::CONVERSATION_STATES. */
+  runtime_state: string;
   message_count: number;
   first_message_at: string;
   last_message_at: string;
@@ -123,7 +127,7 @@ const TIMELINE_COLUMNS =
 
 const LIST_COLUMNS =
   "conversation_id, org_id, employee_slug, channel, contact_ref, contact_name, status, " +
-  "message_count, first_message_at, last_message_at, created_at, updated_at, " +
+  "runtime_state, message_count, first_message_at, last_message_at, created_at, updated_at, " +
   "last_direction, last_event_at";
 
 // The two views are not in the generated Database types — cast past the typed client to the

@@ -298,7 +298,9 @@ describe("receptionist conversation substrate — threading is best-effort and b
   it("the outbound is threaded ONLY when a reply was actually audited (no phantom entries)", () => {
     // The outbound append is gated on a real audit_id — a flag-off / unsupported-channel /
     // duplicate dispatch produces none, so the timeline records real attempts, never phantoms.
-    expect(service).toMatch(/textback\.dispatch\.audit_id[\s\S]{0,400}appendConversationMessage/);
+    // (R15: this gate now lives in the runtime `runConversationTurn`, which OWNS the outbound
+    // append; the `)` anchors to the `if (… && dispatch.audit_id)` guard, not the classify fact.)
+    expect(service).toMatch(/dispatch\.audit_id\)[\s\S]{0,200}appendConversationMessage/);
   });
 
   it("the TS contact fold is a COPY of the DB rule, so the resolved identity cannot drift", () => {
