@@ -21,6 +21,16 @@ import {
   resolveConversation,
   appendConversationMessage,
 } from "@/server/services/receptionist-conversations";
+import { getConversation } from "@/server/services/receptionist-conversation-reads";
+import { getConversationContext } from "@/server/services/receptionist-conversation-context";
+import {
+  INITIAL_CONVERSATION_STATE,
+  coerceConversationState,
+  classifyTurn,
+  nextConversationState,
+  type ConversationState,
+  type TurnRouting,
+} from "@/lib/receptionist/runtime";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -684,6 +694,203 @@ export async function dispatchReceptionistReply(
 }
 
 // =====================================================================
+// THE MULTI-TURN CONVERSATION RUNTIME — THE SINGLE ORCHESTRATION LAYER
+// (CEO Directive #018, R15: MULTI-TURN CONVERSATION RUNTIME).
+//
+// R1–R14 built a ONE-SHOT responder: `dispatchReceptionistReply` above is a single, self-contained
+// Generate → Enforce → Audit → Transport dispatch with no notion of a TURN or a continuing dialogue.
+// R15 makes the receptionist a CONVERSATION RUNTIME: `runConversationTurn` is the ONE orchestration
+// layer through which every AI conversation turn flows. For an inbound reply it performs the nine
+// canonical steps IN ORDER — and it RE-USES every existing layer, recreating none:
+//
+//   1. RESOLVE the existing conversation — the R10 substrate id threaded in by the caller.
+//   2. LOAD the canonical timeline       — through the R12 seam `getConversationContext`, which
+//                                          reconstructs via the R11 read model. Never independently.
+//   3. ASSEMBLE the canonical context    — that SAME seam folds it (the single server-side assembly
+//                                          path); the runtime consumes the seam, never re-assembling.
+//   4. DETERMINE the current state       — `coerceConversationState` over the persisted
+//                                          `runtime_state` (the R15 marker).
+//   5. GENERATE the next draft           — inside `dispatchReceptionistReply`, the R13 generator.
+//   6. POLICY                            — inside `dispatchReceptionistReply`, the R3 seam.
+//   7. AUDIT                             — inside `dispatchReceptionistReply`, the R4 ledger.
+//   8. ROUTE (allow→transport, review→Reply Review Inbox, block→blocked flow) — UNCHANGED, all inside
+//                                          `dispatchReceptionistReply` / `dispatchReply`.
+//   9. ADVANCE the conversation state    — the pure fold in lib/receptionist/runtime.ts, persisted
+//                                          through the org-scoped writer below.
+//
+// IT ADDS NO SECOND ENFORCEMENT, GENERATION, OR TRANSPORT PATH. Steps 5–8 are delegated WHOLE to
+// `dispatchReceptionistReply` — the runtime NEVER re-drafts, re-enforces, re-audits or re-sends; it
+// ORCHESTRATES the canonical pipeline and then ADVANCES a coarse ownership marker. The marker is a
+// persisted OBSERVABLE, never a gate: no turn is ever branched on it (a formal conversation state
+// machine, slot filling and intent progression are EXPLICIT R16+ non-goals). DETERMINISTIC: the same
+// conversation and the same dispatch outcome always advance to the same state.
+// =====================================================================
+
+// `set_receptionist_conversation_runtime_state` is a service-role-only SECURITY DEFINER primitive
+// (migration 20260822000000) and is not in the generated Database types — cast past the typed client,
+// the same `as unknown as` convention as `record_ai_reply_audit` / `record_ai_reply_transport` above.
+type SetRuntimeStateRpc = (
+  fn: "set_receptionist_conversation_runtime_state",
+  args: Record<string, unknown>,
+) => Promise<{ error: { message: string } | null }>;
+
+/**
+ * Persist a conversation's ADVANCED runtime state through the SINGLE validated, org-scoped writer
+ * (the R15 SECURITY DEFINER function). Throw-on-failure, like the audit and transport writes: the
+ * runtime never silently corrupts the marker. Org-scoped in-DDL, so a caller can only ever advance
+ * its OWN conversation. Idempotent — persisting the same state is a no-op update.
+ */
+async function setConversationRuntimeState(args: {
+  conversation_id: string;
+  org_id: string;
+  runtime_state: ConversationState;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as SetRuntimeStateRpc;
+  const { error } = await rpc("set_receptionist_conversation_runtime_state", {
+    p_conversation_id: args.conversation_id,
+    p_org_id: args.org_id,
+    p_runtime_state: args.runtime_state,
+  });
+  if (error) {
+    throw new Error(
+      "set_receptionist_conversation_runtime_state failed: " + error.message,
+    );
+  }
+}
+
+/**
+ * The observable outcome of one conversation turn the runtime folded — the prior and next runtime
+ * state, how the turn ROUTED (the pure classification), whether the state actually advanced, the
+ * canonical context boundaries the runtime assembled, and the full underlying dispatch outcome. A
+ * pure record of what the ONE orchestration layer did; it carries no new enforcement surface.
+ */
+export type ConversationTurnResult = {
+  /** The conversation this turn ran on, or null when the caller supplied no conversation id. */
+  conversation_id: string | null;
+  /** The runtime state BEFORE the turn (the persisted marker, coerced deny-unknown). */
+  prior_state: ConversationState;
+  /** How the turn resolved — the pure classification of its dispatch facts. */
+  routing: TurnRouting;
+  /** The runtime state AFTER the turn (equals prior_state on a `noop`). */
+  next_state: ConversationState;
+  /** True when the persisted state actually changed (a durable advance was written). */
+  state_advanced: boolean;
+  /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
+  context: { total_message_count: number; included_message_count: number } | null;
+  /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
+  dispatch: ReceptionistDispatchOutcome;
+};
+
+/**
+ * Run ONE conversation turn — THE single orchestration entry point for an AI receptionist reply.
+ *
+ * Performs the nine canonical steps in order (see the section header): RESOLVE the conversation, LOAD
+ * its timeline, ASSEMBLE its context, DETERMINE its current state, then GENERATE → POLICY → AUDIT →
+ * ROUTE by delegating WHOLE to {@link dispatchReceptionistReply} (so there is exactly one enforcement,
+ * generation and transport path), and finally ADVANCE the coarse runtime-state marker with the pure
+ * fold in lib/receptionist/runtime.ts. Steps 1–4 are best-effort OBSERVATION that never gate the turn:
+ * a missing conversation simply leaves the state at its initial value and the context null; the
+ * dispatch still runs. The state advance and the outbound timeline append are best-effort side-effects
+ * — a failure is logged and swallowed so a durable, audited reply is never undone by a bookkeeping
+ * write. DETERMINISTIC: the same conversation and the same dispatch outcome always yield the same
+ * routing and the same next state.
+ */
+export async function runConversationTurn(
+  input: ReplyAuditContext & { destination?: string | null },
+): Promise<ConversationTurnResult> {
+  const conversationId = input.conversation_id ?? null;
+
+  // Steps 1–4 — RESOLVE the conversation (the R10 substrate id threaded in by the caller), LOAD its
+  // canonical timeline + ASSEMBLE its canonical context through the R12 SEAM (`getConversationContext`
+  // — the SINGLE server-side assembly path, which reconstructs via the R11 read model then folds; the
+  // runtime consumes the seam and never re-assembles independently), and DETERMINE its current state
+  // from the persisted R15 marker (the R11 summary read, coerced deny-unknown). Pure OBSERVATION: it
+  // never gates the turn — an absent conversation leaves the initial state + null context, and the
+  // dispatch still runs.
+  let priorState: ConversationState = INITIAL_CONVERSATION_STATE;
+  let context: ConversationTurnResult["context"] = null;
+  if (conversationId) {
+    const assembled = await getConversationContext({
+      org_id: input.org_id,
+      conversation_id: conversationId,
+    });
+    if (assembled) {
+      context = {
+        total_message_count: assembled.boundaries.total_message_count,
+        included_message_count: assembled.boundaries.included_message_count,
+      };
+    }
+    const summary = await getConversation({
+      org_id: input.org_id,
+      conversation_id: conversationId,
+    });
+    if (summary) {
+      priorState = coerceConversationState(summary.runtime_state);
+    }
+  }
+
+  // Steps 5–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
+  // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13), enforces
+  // the policy (R3), writes the mandatory audit (R4), and routes the outcome (allow→transport,
+  // review→held for the Reply Review Inbox, block→refused) exactly as it always has.
+  const dispatch = await dispatchReceptionistReply(input);
+
+  // Step 9 — ADVANCE the conversation state by the pure, deterministic fold. Classify the turn from
+  // its dispatch facts, compute the next state, and persist it ONLY when it actually changed and a
+  // conversation exists. Best-effort: a failed advance is logged, never thrown — a durable, audited
+  // reply is never undone by a bookkeeping write.
+  const routing = classifyTurn({
+    verdict: dispatch.decision?.verdict ?? null,
+    duplicate: dispatch.transport.duplicate,
+    auditProduced: dispatch.audit_id !== null,
+  });
+  const nextState = nextConversationState(routing);
+  let stateAdvanced = false;
+  if (conversationId && nextState && nextState !== priorState) {
+    try {
+      await setConversationRuntimeState({
+        org_id: input.org_id,
+        conversation_id: conversationId,
+        runtime_state: nextState,
+      });
+      stateAdvanced = true;
+    } catch (e) {
+      console.error("[receptionist] runtime state advance failed", e);
+    }
+  }
+
+  // Thread the OUTBOUND reply onto the same conversation timeline — but ONLY when a reply was actually
+  // produced and audited (an `audit_id` exists). The entry REFERENCES that `ai_reply_audits` row (its
+  // draft + decision IS the content; no copy), keeping exactly one source of truth. A duplicate /
+  // no-audit dispatch threads nothing. Best-effort, like every substrate write. (Relocated here from
+  // `processInboundEnquiry` so the runtime OWNS the outbound append.)
+  if (conversationId && dispatch.audit_id) {
+    try {
+      await appendConversationMessage({
+        conversation_id: conversationId,
+        org_id: input.org_id,
+        direction: "outbound",
+        channel: input.channel,
+        audit_id: dispatch.audit_id,
+      });
+    } catch (e) {
+      console.error("[receptionist] outbound message append failed", e);
+    }
+  }
+
+  return {
+    conversation_id: conversationId,
+    prior_state: priorState,
+    routing,
+    next_state: nextState ?? priorState,
+    state_advanced: stateAdvanced,
+    context,
+    dispatch,
+  };
+}
+
+// =====================================================================
 // THE HUMAN-REVIEWED SEND SEAM (CEO Directive #018, R14).
 //
 // R3's policy has three verdicts; R5/R6 built the outbound path for exactly ONE — the
@@ -894,12 +1101,14 @@ export type MissedCallTextbackResult =
  *      inbound channel is an explicit non-goal and stays unchanged (`unsupported_channel`);
  *   3. a DESTINATION — a text-back needs a number to answer (`no_destination`).
  *
- * Past the gates it delegates to {@link dispatchReceptionistReply} — the SAME primitive
- * R5 shipped, which composes the acknowledgement, enforces the policy, writes the
- * mandatory audit, runs the deny-by-default gate, files the transport, and short-circuits
- * a duplicate. It adds NO new door to a provider. The whole delegation is wrapped so an
- * outbound failure can NEVER corrupt inbound ingestion: the enquiry and lead are already
- * durably recorded, so a throw here is logged, captured on the result, and swallowed.
+ * Past the gates it delegates to {@link runConversationTurn} — the R15 CONVERSATION RUNTIME,
+ * the single orchestration layer, which resolves the conversation, loads its timeline, assembles
+ * its context, determines its state, then runs the SAME canonical pipeline R5 shipped WHOLE through
+ * {@link dispatchReceptionistReply} (compose the acknowledgement, enforce the policy, write the
+ * mandatory audit, run the deny-by-default gate, file the transport, short-circuit a duplicate),
+ * and finally advances the runtime-state marker. It adds NO new door to a provider. The whole
+ * delegation is wrapped so an outbound failure can NEVER corrupt inbound ingestion: the enquiry and
+ * lead are already durably recorded, so a throw here is logged, captured on the result, and swallowed.
  */
 async function maybeTextBackMissedCall(input: {
   org_id: string;
@@ -916,7 +1125,12 @@ async function maybeTextBackMissedCall(input: {
   if (!destination) return { attempted: false, reason: "no_destination" };
 
   try {
-    const dispatch = await dispatchReceptionistReply({
+    // Route through the R15 CONVERSATION RUNTIME — the single orchestration layer. It resolves this
+    // conversation, loads its timeline, assembles its context, determines its state, then delegates
+    // GENERATE → POLICY → AUDIT → ROUTE WHOLE to `dispatchReceptionistReply` (the SAME canonical
+    // pipeline R5/R6 shipped — no new door to a provider), and finally advances the runtime-state
+    // marker. We surface only the underlying dispatch so this result's shape is unchanged.
+    const turn = await runConversationTurn({
       org_id: input.org_id,
       channel: input.channel, // "phone" → the voice-shaped acknowledgement, carried over SMS
       // The R13 generator reasons over this conversation's canonical R12 context (which already
@@ -929,7 +1143,7 @@ async function maybeTextBackMissedCall(input: {
       // falls back to the enquiry id for idempotency.
       metadata: input.dedup_key ? { dedup_key: input.dedup_key } : {},
     });
-    return { attempted: true, dispatch };
+    return { attempted: true, dispatch: turn.dispatch };
   } catch (err) {
     // NEVER let an outbound failure fail the inbound event — ingestion is already durable.
     console.error("[receptionist] missed-call text-back failed", err);
@@ -1149,30 +1363,11 @@ export async function processInboundEnquiry(
     dedup_key: input.dedup_key ?? null,
   });
 
-  // Thread the OUTBOUND reply onto the same conversation timeline — but ONLY when a reply was
-  // actually produced and audited (an `audit_id` exists). The entry REFERENCES that
-  // `ai_reply_audits` row (its draft + decision IS the content; no copy), keeping exactly one
-  // source of truth. A flag-off / unsupported-channel / duplicate dispatch produces no audit,
-  // so there is nothing to thread and none is threaded — the timeline records real reply
-  // attempts, never phantom ones. Best-effort, like every substrate write here.
-  if (
-    conversationId &&
-    textback.attempted &&
-    "dispatch" in textback &&
-    textback.dispatch.audit_id
-  ) {
-    try {
-      await appendConversationMessage({
-        conversation_id: conversationId,
-        org_id: input.org_id,
-        direction: "outbound",
-        channel: input.channel,
-        audit_id: textback.dispatch.audit_id,
-      });
-    } catch (e) {
-      console.error("[receptionist] outbound message append failed", e);
-    }
-  }
+  // The OUTBOUND reply is threaded onto the conversation timeline by the R15 CONVERSATION RUNTIME
+  // ({@link runConversationTurn}), which `maybeTextBackMissedCall` now delegates to — so the runtime
+  // OWNS the outbound append (alongside advancing the runtime-state marker), keeping the whole turn
+  // in the single orchestration layer. There is no append here: the inbound processor threads only
+  // the INBOUND turn (step 0 above) and hands the turn to the runtime.
 
   return { enquiry_id: enquiryId, lead_id: leadId, conversation_id: conversationId, textback };
 }

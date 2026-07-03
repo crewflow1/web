@@ -148,21 +148,26 @@ describe("receptionist live execution — the flag defaults OFF in the env schem
 describe("receptionist live execution — the wiring is gated, phone-only and never-throw", () => {
   const code = codeOf(read(SERVICE));
 
+  // NOTE (R15): the live wiring no longer calls `dispatchReceptionistReply` directly — it delegates
+  // to the single orchestration layer `runConversationTurn`, which performs GENERATE → POLICY →
+  // AUDIT → ROUTE via that same canonical dispatch. So each gate below is faithfully re-anchored to
+  // `runConversationTurn(` (the thing that now dispatches). The intent is unchanged: the send is
+  // flag-gated, phone-only, and wrapped so an outbound failure never breaks ingestion.
   it("checks the live-execution flag BEFORE it would ever dispatch", () => {
     expect(code).toMatch(
-      /async function maybeTextBackMissedCall\([\s\S]*?isMissedCallTextbackLive\(\)[\s\S]*?dispatchReceptionistReply\(/,
+      /async function maybeTextBackMissedCall\([\s\S]*?isMissedCallTextbackLive\(\)[\s\S]*?runConversationTurn\(/,
     );
   });
 
   it("activates ONLY the missed-call (phone) channel — every other channel is inert", () => {
     expect(code).toMatch(
-      /async function maybeTextBackMissedCall\([\s\S]*?channel\s*!==\s*["']phone["'][\s\S]*?dispatchReceptionistReply\(/,
+      /async function maybeTextBackMissedCall\([\s\S]*?channel\s*!==\s*["']phone["'][\s\S]*?runConversationTurn\(/,
     );
   });
 
   it("wraps the dispatch in try/catch so an outbound failure NEVER breaks ingestion", () => {
     expect(code).toMatch(
-      /async function maybeTextBackMissedCall\([\s\S]*?try\s*\{[\s\S]*?dispatchReceptionistReply\([\s\S]*?\}\s*catch/,
+      /async function maybeTextBackMissedCall\([\s\S]*?try\s*\{[\s\S]*?runConversationTurn\([\s\S]*?\}\s*catch/,
     );
   });
 });
