@@ -96,6 +96,11 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 
 const SERVICE = "server/services/receptionist.ts";
 const PRODUCER = "lib/receptionist/reply.ts";
+// R13 (CEO Directive #018) replaced the fixed acknowledgement composer, at both pipeline draft sites,
+// with the conversation-aware draft generator. The deterministic producer above is now that
+// generator's FALLBACK, so its single consumer is the draft-generation seam — not the service, which
+// now reaches it only THROUGH the generator.
+const DRAFT_GENERATOR = "server/services/receptionist-draft.ts";
 const MIGRATION = "supabase/migrations/20260815000000_ai_reply_audits.sql";
 
 /** The ledger's write primitive — the function an auditor would call to file a row. */
@@ -165,8 +170,10 @@ describe("receptionist reply audit — the producer is pure and captive", () => 
     .map(rel)
     .sort();
 
-  it("the producer is consumed by EXACTLY ONE module — the canonical service", () => {
-    expect(producerReachers).toEqual([SERVICE]);
+  it("the producer is consumed by EXACTLY ONE module — the R13 draft-generation seam (its fallback)", () => {
+    // Post-R13 the deterministic composer is the generator's fallback, so its sole consumer is the
+    // draft seam. If this list ever grows, the fixed acknowledgement has leaked a second consumer.
+    expect(producerReachers).toEqual([DRAFT_GENERATOR]);
   });
 
   const pcode = codeOf(read(PRODUCER));
@@ -207,8 +214,10 @@ describe("receptionist reply audit — enforcement and audit are inseparable", (
     expect(code).toMatch(/enforceReceptionistReply\([\s\S]{0,1200}record_ai_reply_audit/);
   });
 
-  it("the producer path composes the draft and routes it through the audited seam", () => {
-    expect(code).toMatch(/produceAndEnforceReply[\s\S]{0,800}composeReceptionistReply\(/);
+  it("the producer path generates the draft and routes it through the audited seam", () => {
+    // R13: the draft is GENERATED (through the conversation-aware generator, which owns the
+    // deterministic fallback) and then routed through the mandatory enforce+audit seam — in that order.
+    expect(code).toMatch(/produceAndEnforceReply[\s\S]{0,800}generateReplyDraft\(/);
     expect(code).toMatch(/produceAndEnforceReply[\s\S]{0,800}enforceAndAuditReply\(/);
   });
 
