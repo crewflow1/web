@@ -19,13 +19,15 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
  *   { org_id, channel, raw_text?, caller?, dedup_key? }
  *
  * Returns:
- *   200 { ok:true, enquiry_id, lead_id, textback }
+ *   200 { ok:true, enquiry_id, lead_id, conversation_id, textback }
  *   401 { ok:false, error:"unauthorized" }
  *   422 { ok:false, error:string }
  *   500 { ok:false, error:string }
  *
  * Side effects (always):
  *   - inbound_enquiries row inserted (status received → qualified)
+ *   - receptionist_conversations row resolved/created + linked; an inbound
+ *     receptionist_messages entry threaded (Directive #018 R10, best-effort)
  *   - leads row created (status='new')
  *   - notifications row (customer audience, priority by urgency)
  *   - admin_activity_log row
