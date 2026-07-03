@@ -13,6 +13,10 @@ import {
 } from "@/lib/receptionist/policy";
 import { composeReceptionistReply } from "@/lib/receptionist/reply";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
+import {
+  resolveConversation,
+  appendConversationMessage,
+} from "@/server/services/receptionist-conversations";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -679,7 +683,12 @@ async function maybeTextBackMissedCall(input: {
  * The single entry-point every channel adapter (phone webhook, SMS
  * webhook, WhatsApp Business, Instagram DM, Facebook DM) feeds.
  *
- *   1. INSERT raw row into `inbound_enquiries` (status='received').
+ *   0. RESOLVE the persistent conversation this contact belongs to and
+ *      thread the inbound + any outbound message onto its timeline
+ *      (Directive #018 R10 substrate). BEST-EFFORT — sits beneath the
+ *      pipeline, never disturbs ingestion or the deterministic reply.
+ *   1. INSERT raw row into `inbound_enquiries` (status='received'),
+ *      linked to the resolved conversation.
  *   2. If AI is configured: extract structured fields from raw_text.
  *      Otherwise: deterministic fallback (keyword urgency, postcode
  *      regex, no AI summary).
@@ -701,8 +710,31 @@ async function maybeTextBackMissedCall(input: {
 
 export async function processInboundEnquiry(
   input: InboundEnquiryInput,
-): Promise<{ enquiry_id: string; lead_id: string | null; textback: MissedCallTextbackResult }> {
+): Promise<{
+  enquiry_id: string;
+  lead_id: string | null;
+  conversation_id: string | null;
+  textback: MissedCallTextbackResult;
+}> {
   const admin = createAdminClient();
+
+  // Step 0 — CONVERSATION SUBSTRATE (CEO Directive #018, R10). Resolve (or create) the
+  // persistent conversation this contact belongs to BEFORE the enquiry is recorded, so the
+  // raw row can be linked to its thread on insert. A repeat contact on the same channel folds
+  // into the SAME conversation; an absent identifier resolves to null (no contact ⇒ no thread).
+  // BEST-EFFORT: the substrate sits BENEATH the pipeline as shared infrastructure — a resolve
+  // failure is logged and swallowed so it can NEVER disturb the durable ingestion contract or
+  // change one byte of the deterministic reply behaviour.
+  let conversationId: string | null = null;
+  try {
+    conversationId = await resolveConversation({
+      org_id: input.org_id,
+      channel: input.channel,
+      contact_ref: input.caller,
+    });
+  } catch (e) {
+    console.error("[receptionist] conversation resolve failed", e);
+  }
 
   // Step 1 — record raw enquiry.
   const { data: enquiryRow, error: insErr } = await (
@@ -723,6 +755,7 @@ export async function processInboundEnquiry(
       raw_text: input.raw_text ?? null,
       caller: input.caller ?? null,
       status: "received",
+      conversation_id: conversationId,
     })
     .select("id")
     .single();
@@ -730,6 +763,23 @@ export async function processInboundEnquiry(
     throw new Error(`inbound_enquiries insert failed: ${insErr?.message ?? "no id"}`);
   }
   const enquiryId = enquiryRow.id;
+
+  // Thread the inbound message onto the conversation timeline — an entry that REFERENCES the
+  // enquiry just recorded (its raw_text IS the content; no copy). Best-effort, exactly as the
+  // resolve above: a threading failure is logged and swallowed, never surfaced to ingestion.
+  if (conversationId) {
+    try {
+      await appendConversationMessage({
+        conversation_id: conversationId,
+        org_id: input.org_id,
+        direction: "inbound",
+        channel: input.channel,
+        enquiry_id: enquiryId,
+      });
+    } catch (e) {
+      console.error("[receptionist] inbound message append failed", e);
+    }
+  }
 
   // Step 2 — AI extraction (or deterministic fallback).
   const extraction = await extractFields(input.raw_text ?? "");
@@ -838,7 +888,32 @@ export async function processInboundEnquiry(
     dedup_key: input.dedup_key ?? null,
   });
 
-  return { enquiry_id: enquiryId, lead_id: leadId, textback };
+  // Thread the OUTBOUND reply onto the same conversation timeline — but ONLY when a reply was
+  // actually produced and audited (an `audit_id` exists). The entry REFERENCES that
+  // `ai_reply_audits` row (its draft + decision IS the content; no copy), keeping exactly one
+  // source of truth. A flag-off / unsupported-channel / duplicate dispatch produces no audit,
+  // so there is nothing to thread and none is threaded — the timeline records real reply
+  // attempts, never phantom ones. Best-effort, like every substrate write here.
+  if (
+    conversationId &&
+    textback.attempted &&
+    "dispatch" in textback &&
+    textback.dispatch.audit_id
+  ) {
+    try {
+      await appendConversationMessage({
+        conversation_id: conversationId,
+        org_id: input.org_id,
+        direction: "outbound",
+        channel: input.channel,
+        audit_id: textback.dispatch.audit_id,
+      });
+    } catch (e) {
+      console.error("[receptionist] outbound message append failed", e);
+    }
+  }
+
+  return { enquiry_id: enquiryId, lead_id: leadId, conversation_id: conversationId, textback };
 }
 
 // =====================================================================
