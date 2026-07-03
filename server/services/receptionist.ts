@@ -11,7 +11,10 @@ import {
   type GuardrailResult,
   type GuardrailVerdict,
 } from "@/lib/receptionist/policy";
-import { composeReceptionistReply } from "@/lib/receptionist/reply";
+import {
+  generateReplyDraft,
+  type GeneratedReplyDraft,
+} from "@/server/services/receptionist-draft";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
 import {
   resolveConversation,
@@ -101,6 +104,12 @@ export type ReplyAuditContext = {
   org_id: string;
   /** The inbound channel the reply answers. */
   channel: InboundChannel;
+  /**
+   * The persistent conversation this reply belongs to (R10 substrate). Threaded to the R13 draft
+   * generator so it can fetch the canonical R12 context to reason over; null (no contact ⇒ no
+   * thread) drafts the deterministic acknowledgement. Not persisted to the audit ledger.
+   */
+  conversation_id?: string | null;
   /** The conversation — the originating `inbound_enquiries.id`, if known. */
   enquiry_id?: string | null;
   /** The customer — the `leads.id`, if a lead exists. */
@@ -195,21 +204,49 @@ export async function enforceAndAuditReply(
 }
 
 /**
- * The full canonical pipeline: Draft → Enforce → Audit. Composes the deterministic
- * acknowledgement ({@link composeReceptionistReply}) for the enquiry's channel and
- * hands it to {@link enforceAndAuditReply}, so the produced draft is enforced by the
- * R3 seam and its attempt is audited — with no path that produces a reply without
- * both. This is INTERNAL only: the outcome is a decision plus its audit record,
- * never a customer send (transport is a later increment, deliberately absent here).
+ * Fold one generated draft's provenance into audit metadata — the producer path, the model, the
+ * fallback reason (why the deterministic leg ran, or null), and the deterministic cost/token/latency
+ * accounting. Merged OVER the caller's metadata so a dedup key or call id is preserved. This records
+ * HOW the draft was produced; it changes nothing about how it is enforced or audited.
+ */
+function draftProvenance(
+  incoming: Record<string, unknown> | undefined,
+  gen: GeneratedReplyDraft,
+): Record<string, unknown> {
+  return {
+    ...(incoming ?? {}),
+    producer: gen.producer,
+    model: gen.model,
+    fallback_reason: gen.fallback_reason,
+    input_tokens: gen.input_tokens,
+    output_tokens: gen.output_tokens,
+    cost_usd: gen.cost_usd,
+    latency_ms: gen.latency_ms,
+  };
+}
+
+/**
+ * The full canonical pipeline: Draft → Enforce → Audit. GENERATES the draft through the R13
+ * conversation-aware generator ({@link generateReplyDraft}) — which consumes ONLY the canonical R12
+ * context and reaches the model ONLY through the existing abstraction, degrading to the deterministic
+ * acknowledgement when there is no provider / no conversation / no context — then hands the draft to
+ * {@link enforceAndAuditReply}, so it is enforced by the R3 seam and its attempt is audited, with no
+ * path that produces a reply without both. This is INTERNAL only: the outcome is a decision plus its
+ * audit record, never a customer send (transport is `dispatchReceptionistReply`, deliberately absent
+ * here).
  */
 export async function produceAndEnforceReply(
   input: ReplyAuditContext,
 ): Promise<ReceptionistReplyOutcome> {
-  const draft = composeReceptionistReply({ channel: input.channel });
+  const gen = await generateReplyDraft({
+    org_id: input.org_id,
+    channel: input.channel,
+    conversation_id: input.conversation_id ?? null,
+  });
   return enforceAndAuditReply({
     ...input,
-    draft,
-    metadata: { ...(input.metadata ?? {}), producer: "deterministic_acknowledgement" },
+    draft: gen.draft,
+    metadata: draftProvenance(input.metadata, gen),
   });
 }
 
@@ -549,13 +586,15 @@ export async function dispatchReply(
 }
 
 /**
- * The full canonical outbound path for the receptionist: compose the deterministic
- * acknowledgement, then run it through {@link dispatchReply} (Enforce → Audit →
- * Transport). Guarded at the very top by the NO-DUPLICATE short-circuit: if a message
- * for this idempotency key has already gone out (a SENT transport exists), it returns
- * immediately WITHOUT composing, enforcing, auditing, or sending again. A CALLABLE
- * PRIMITIVE — the inbound webhook does NOT invoke it automatically in R5 (auto-wiring
- * behind the missed-call-text-back flag is the R6 recommendation).
+ * The full canonical outbound path for the receptionist: GENERATE the draft through the R13
+ * conversation-aware generator ({@link generateReplyDraft}), then run it through {@link dispatchReply}
+ * (Enforce → Audit → Transport). Guarded at the very top by the NO-DUPLICATE short-circuit: if a
+ * message for this idempotency key has already gone out (a SENT transport exists), it returns
+ * immediately WITHOUT generating, enforcing, auditing, or sending again. A CALLABLE PRIMITIVE — the
+ * inbound webhook invokes it only behind the default-OFF missed-call-text-back flag (R6). The
+ * generator consumes ONLY the canonical R12 context and reaches the model ONLY through the existing
+ * abstraction; when no provider / no conversation / no context is available it degrades to the
+ * deterministic acknowledgement, so this path is byte-for-byte its pre-R13 self in CI.
  */
 export async function dispatchReceptionistReply(
   input: ReplyAuditContext & { destination?: string | null },
@@ -581,11 +620,15 @@ export async function dispatchReceptionistReply(
     }
   }
 
-  const draft = composeReceptionistReply({ channel: input.channel });
+  const gen = await generateReplyDraft({
+    org_id: input.org_id,
+    channel: input.channel,
+    conversation_id: input.conversation_id ?? null,
+  });
   return dispatchReply({
     ...input,
-    draft,
-    metadata: { ...(input.metadata ?? {}), producer: "deterministic_acknowledgement" },
+    draft: gen.draft,
+    metadata: draftProvenance(input.metadata, gen),
   });
 }
 
@@ -648,6 +691,7 @@ export type MissedCallTextbackResult =
 async function maybeTextBackMissedCall(input: {
   org_id: string;
   channel: InboundChannel;
+  conversation_id: string | null;
   enquiry_id: string;
   lead_id: string | null;
   caller: string | null;
@@ -662,6 +706,9 @@ async function maybeTextBackMissedCall(input: {
     const dispatch = await dispatchReceptionistReply({
       org_id: input.org_id,
       channel: input.channel, // "phone" → the voice-shaped acknowledgement, carried over SMS
+      // The R13 generator reasons over this conversation's canonical R12 context (which already
+      // includes the just-threaded inbound turn); absent, it drafts the deterministic acknowledgement.
+      conversation_id: input.conversation_id,
       enquiry_id: input.enquiry_id,
       lead_id: input.lead_id,
       customer_ref: destination,
@@ -882,6 +929,7 @@ export async function processInboundEnquiry(
   const textback = await maybeTextBackMissedCall({
     org_id: input.org_id,
     channel: input.channel,
+    conversation_id: conversationId,
     enquiry_id: enquiryId,
     lead_id: leadId,
     caller: input.caller ?? null,

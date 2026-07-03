@@ -203,9 +203,11 @@ describe("receptionist transport — the send is gated behind enforce + audit", 
     expect(code).toMatch(/record_ai_reply_transport[\s\S]{0,1200}throw new Error/);
   });
 
-  it("dispatchReceptionistReply short-circuits a duplicate BEFORE composing or sending", () => {
+  it("dispatchReceptionistReply short-circuits a duplicate BEFORE generating or sending", () => {
+    // R13: the draft is generated (generateReplyDraft) rather than composed inline; the duplicate
+    // short-circuit still precedes it, so a duplicate spends no generation and reaches no provider.
     expect(code).toMatch(
-      /export async function dispatchReceptionistReply\([\s\S]*?findSentTransport\([\s\S]*?duplicate:\s*true[\s\S]*?composeReceptionistReply\(/,
+      /export async function dispatchReceptionistReply\([\s\S]*?findSentTransport\([\s\S]*?duplicate:\s*true[\s\S]*?generateReplyDraft\(/,
     );
   });
 
