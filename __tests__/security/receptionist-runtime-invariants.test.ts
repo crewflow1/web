@@ -145,6 +145,13 @@ const INFORMATION_MIGRATION =
   "supabase/migrations/20260825000000_receptionist_conversation_information.sql";
 /** The information engine's write primitive — the only door that persists a conversation's information (R20). */
 const INFORMATION_WRITE_FN = /\bset_receptionist_conversation_information\b/;
+const GAP_CORE = "lib/receptionist/conversation-gap.ts";
+/** The read model — the single canonical reader over the conversation substrate (R11), which DERIVES the
+ *  R21 gap on read. */
+const READS = "server/services/receptionist-conversation-reads.ts";
+/** A gap write primitive would be the shape of `set_receptionist_conversation_gap` — asserted NEVER to
+ *  exist, because the R21 gap is DERIVED, never persisted (no column, no writer, no migration). */
+const GAP_WRITE_FN = /\bset_receptionist_conversation_gap\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -891,29 +898,34 @@ describe("receptionist runtime — R19: the conversation goal engine is a govern
     expect(consumers).toEqual([SERVICE]);
   });
 
-  it("has EXACTLY TWO importers — the orchestrating service and the R20 information engine (type-only)", () => {
-    // R19 shipped with a SINGLE importer (the service). R20's information engine sits ON TOP of the goal
-    // engine, so it imports the goal module — but ONLY for the `ConversationGoal` TYPE it keys its slot
-    // schema on (a type-only import), NEVER for a runtime value. The goal engine's AUTHORITY is therefore
-    // undiminished: its resolver and its turn-driven planner STILL have exactly the one consumer each (the
-    // service, asserted just above), and the information engine names neither. The module-import set is
-    // EXACTLY these two and nothing more — no third module reaches into the goal engine.
+  it("has EXACTLY FOUR importers — the service, the R20 information engine (type-only), the R21 gap engine (type-only), and the read model (the coercer only)", () => {
+    // R19 shipped with a SINGLE importer (the service). Three layers now sit ON TOP of the goal engine and
+    // import the goal module, but NONE of them reaches its resolver or planner:
+    //   • the R20 information engine — ONLY the `ConversationGoal` TYPE it keys its slot schema on (type-only);
+    //   • the R21 gap engine — ONLY the `ConversationGoal` TYPE it keys the gap on (type-only);
+    //   • the R11 read model — ONLY the deny-unknown `coerceConversationGoal`, to DERIVE the gap on read.
+    // The goal engine's AUTHORITY is therefore undiminished: its resolver and its turn-driven planner STILL
+    // have exactly the one consumer each (the service, asserted just above), and none of the three new
+    // importers names either. The module-import set is EXACTLY these four and nothing more.
     const importers = walkSources(SOURCE_ROOTS)
       .filter((full) =>
         importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-goal"),
       )
       .map(rel)
       .sort();
-    expect(importers).toEqual([INFORMATION_CORE, SERVICE]);
-    // The second importer is TYPE-ONLY: it consumes the goal VOCABULARY type, not the resolver or planner.
-    const infoCore = codeOf(read(INFORMATION_CORE));
-    expect(/\bresolveGoal\b/.test(infoCore), "information engine does not consume the goal resolver").toBe(
-      false,
-    );
-    expect(
-      /\bplanGoalProgression\b/.test(infoCore),
-      "information engine does not consume the goal planner",
-    ).toBe(false);
+    expect(importers).toEqual([GAP_CORE, INFORMATION_CORE, READS, SERVICE]);
+    // None of the three non-service importers consumes the goal RESOLVER or the goal PLANNER — they take the
+    // vocabulary type (info/gap engines) or the coercer (read model), never the authority.
+    for (const importer of [INFORMATION_CORE, GAP_CORE, READS] as const) {
+      const src = codeOf(read(importer));
+      expect(/\bresolveGoal\b/.test(src), `${importer} does not consume the goal resolver`).toBe(
+        false,
+      );
+      expect(
+        /\bplanGoalProgression\b/.test(src),
+        `${importer} does not consume the goal planner`,
+      ).toBe(false);
+    }
   });
 
   it("the goal writer is named by EXACTLY ONE module — the canonical service", () => {
@@ -1317,5 +1329,229 @@ describe("receptionist runtime — R20: the information field vocabulary is sing
       expect(core, `engine names ${field}`).toContain(`"${field}"`);
       expect(sql, `migration names ${field}`).toContain(`'${field}'`);
     }
+  });
+});
+
+// =====================================================================
+// 19. R21 — THE CONVERSATION GAP ENGINE: a FIFTH pure leaf that sits ON TOP of the R20 information
+//     engine — it DERIVES conversational COMPLETENESS (what is MISSING, which item is MOST important,
+//     is the objective SATISFIED, is another turn REQUIRED) from the ALREADY-persisted goal + information.
+//     It is the FIRST layer that persists NOTHING: no column, no writer, no migration — the gap is a total,
+//     deterministic PROJECTION of two persisted observations, so a second source of truth can never drift
+//     from them. Single-sourced, REUSING R20's completeness surface (it forks no "what's missing" logic),
+//     DUPLICATING no context assembly, no intent/goal resolution AND no information extraction, and NEVER
+//     moving any marker beneath it. It DERIVES; it never ACTS (booking / scheduling / slot-prompting are
+//     explicit R21 non-goals a future capability performs by CONSUMING this gap).
+// =====================================================================
+
+describe("receptionist runtime — R21: the conversation gap engine is a governed, single-sourced, DERIVED pure leaf", () => {
+  const core = codeOf(read(GAP_CORE));
+  const service = codeOf(read(SERVICE));
+  const reads = codeOf(read(READS));
+
+  // The whole gap-engine surface: the priority vocabulary, the priority sort, the missing-info list, the
+  // next-required selector, the two completeness predicates, and the single composed entry point. The
+  // analogue of §16's INFORMATION_SYMBOLS, for the gap layer.
+  const GAP_SYMBOLS: readonly RegExp[] = [
+    /export const FIELD_PRIORITY\b/,
+    /export function prioritiseFields\(/,
+    /export function missingInformation\(/,
+    /export function nextRequiredInformation\(/,
+    /export function isGoalSatisfied\(/,
+    /export function isTurnRequired\(/,
+    /export function detectGap\(/,
+  ];
+
+  it(`ships the pure gap engine ${GAP_CORE}, exporting the whole derived surface`, () => {
+    expect(existsSync(resolve(ROOT, GAP_CORE)), GAP_CORE).toBe(true);
+    for (const re of GAP_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly TWO pure layers and NOTHING else — the R19 goal TYPE and the R20 information engine", () => {
+    // Its ENTIRE import surface is the R19 goal module (the `ConversationGoal` TYPE it keys the gap on) and
+    // the R20 information module (the completeness SURFACE it reads + its types). It reaches no third module
+    // — no context, no policy, no provider, no ledger, no DB, no clock, no model — so it cannot fork any
+    // enforcement, generation or transport path.
+    expect(importSpecifiers(core).sort()).toEqual([
+      "@/lib/receptionist/conversation-goal",
+      "@/lib/receptionist/conversation-information",
+    ]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent / goal / information / gap write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+    expect(GOAL_WRITE_FN.test(core)).toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core)).toBe(false);
+    expect(GAP_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("DUPLICATES no context assembly, no intent / goal resolution AND NO INFORMATION EXTRACTION — the cardinal R21 boundary", () => {
+    // The gap engine consumes an ALREADY-resolved goal and ALREADY-extracted information; it never
+    // re-assembles context, re-resolves intent/goal, or RE-EXTRACTS information. In executable source it
+    // names none of the context assembler, the intent/goal resolvers or planners, or the information
+    // extractor / update planner — so it re-implements no layer beneath it, exactly as the directive requires
+    // ("must NOT duplicate ... information extraction"). The goal + information modules are imported for the
+    // TYPE / completeness surface ALONE.
+    expect(/\bassembleConversationContext\b/.test(core), "never names the context assembler").toBe(false);
+    expect(/\bresolveIntent\b/.test(core), "never names the intent resolver").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never names the intent planner").toBe(false);
+    expect(/\bresolveGoal\b/.test(core), "never names the goal resolver").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never names the goal planner").toBe(false);
+    expect(/\bextractInformation\b/.test(core), "never names the information extractor").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never names the information update planner").toBe(false);
+  });
+
+  it("REUSES R20's completeness authority rather than forking it — it NAMES the slot surface and DEFINES none of it", () => {
+    // "What does this goal need / what is outstanding / is it complete" is R20's single authority. The gap
+    // engine READS it (it names `outstandingSlots` and `isInformationComplete`) and re-implements NEITHER —
+    // so there is exactly ONE completeness definition, exactly as the directive requires ("No feature may
+    // implement independent completeness logic").
+    expect(/\boutstandingSlots\b/.test(core), "reuses R20 outstandingSlots").toBe(true);
+    expect(/\bisInformationComplete\b/.test(core), "reuses R20 isInformationComplete").toBe(true);
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    expect(definersOf(/export function outstandingSlots\(/)).toEqual([INFORMATION_CORE]);
+    expect(definersOf(/export function isInformationComplete\(/)).toEqual([INFORMATION_CORE]);
+  });
+
+  it("DERIVES ONLY — it re-orchestrates no runtime and executes no business action (booking / scheduling are R21 non-goals)", () => {
+    // The engine derives completeness and stops; ACTING on the gap is a future capability that CONSUMES it.
+    // In executable source it names neither the turn orchestrator nor the canonical dispatch — so it can
+    // neither re-run the runtime nor send / book / schedule anything.
+    expect(/\brunConversationTurn\b/.test(core), "never re-orchestrates the runtime").toBe(false);
+    expect(/\bdispatchReceptionistReply\b/.test(core), "never dispatches a reply").toBe(false);
+  });
+
+  it("is NOT server-only and touches no admin client — a model-free derivation usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole gap surface in the pure engine — no other module DEFINES any member", () => {
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of GAP_SYMBOLS) expect(definersOf(re), re.source).toEqual([GAP_CORE]);
+  });
+
+  it("the gap detector has EXACTLY the two authorised consumers — the runtime service and the read model", () => {
+    // detectGap is named by the engine (its definition), the orchestrating service (it surfaces the gap on
+    // the turn result) and the read model (it derives the gap on read) — and NOTHING else: no feature
+    // computes conversational completeness independently.
+    const consumers = namersOf(/\bdetectGap\b/).filter((p) => p !== GAP_CORE);
+    expect(consumers).toEqual([READS, SERVICE]);
+  });
+
+  it("PERSISTS NOTHING — the R21 divergence: no gap column, no gap writer, no gap migration (the gap is DERIVED)", () => {
+    // Unlike R15 / R17 / R18 / R19 / R20, the gap layer ships NO migration and NO writer: the gap is a total
+    // function of the ALREADY-persisted goal + information, and persisting it would create a second,
+    // driftable source of truth. Proof — there is no gap migration file; no module in the source tree names a
+    // gap write primitive; and no migration adds a gap column or projects one onto the R11 list view (the way
+    // the R20 migration added `c.information`).
+    const migrations = readdirSync(resolve(ROOT, "supabase/migrations")).filter((f) =>
+      f.endsWith(".sql"),
+    );
+    expect(migrations.some((f) => /gap/i.test(f)), "no gap migration file exists").toBe(false);
+    expect(namersOf(GAP_WRITE_FN), "no module names a gap write primitive").toEqual([]);
+    for (const f of migrations) {
+      const sql = sqlCodeOf(read(`supabase/migrations/${f}`));
+      expect(GAP_WRITE_FN.test(sql), `${f} defines no gap writer`).toBe(false);
+      expect(/\bc\.gap\b/i.test(sql), `${f} projects no gap column onto the list view`).toBe(false);
+      expect(/add column[^;]*\bgap\b/i.test(sql), `${f} adds no gap column`).toBe(false);
+    }
+  });
+
+  it("DERIVES the gap in the runtime from (nextGoal, nextInformation) — the seam that proves Context → Intent → Goal → Information → Gap", () => {
+    // The runtime derives the gap from the goal the R19 engine JUST resolved (`nextGoal`) and the information
+    // the R20 engine JUST accumulated (`nextInformation`) — NOT a second read, NOT a model call. This is the
+    // linear stack, one layer taller.
+    expect(service).toMatch(/detectGap\(nextGoal,\s*nextInformation\)/);
+  });
+
+  it("DERIVES the gap on READ from the persisted (goal, information), persisting nothing", () => {
+    // The read model computes the gap FRESH on every read — coercing the persisted goal + information
+    // deny-unknown, then deriving through the ONE authority — and writes nothing. So the read exposure is a
+    // projection, never a stored column, and the read model names NO write primitive of any layer.
+    expect(reads).toMatch(
+      /detectGap\(\s*coerceConversationGoal\(row\.goal\),\s*coerceConversationInformation\(row\.information\)/,
+    );
+    expect(GAP_WRITE_FN.test(reads), "read model persists no gap").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(reads), "read model persists no information").toBe(false);
+    expect(GOAL_WRITE_FN.test(reads), "read model persists no goal").toBe(false);
+  });
+
+  it("NEVER moves the ownership, intent, goal OR information marker — a FIFTH observation that bypasses no layer beneath it", () => {
+    // The engine writes NOTHING; in executable source it names none of the four write primitives or their
+    // planners. And the layers beneath are UNDISTURBED: the R17 state, R18 intent, R19 goal and R20
+    // information writers are STILL each named by exactly the service. So `runtime_state`, `intent`, `goal`
+    // and `information` remain four independent, separately-guarded doors — deriving the gap can move none of
+    // them (or bypass their governance).
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "never names the state writer").toBe(false);
+    expect(INTENT_WRITE_FN.test(core), "never names the intent writer").toBe(false);
+    expect(GOAL_WRITE_FN.test(core), "never names the goal writer").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core), "never names the information writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "never reaches the state machine").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never reaches the intent planner").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never reaches the goal planner").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never reaches the information planner").toBe(false);
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(GOAL_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INFORMATION_WRITE_FN)).toEqual([SERVICE]);
+  });
+});
+
+// =====================================================================
+// 20. R21 — THE PRIORITY VOCABULARY IS SINGLE-SOURCED AND INDEPENDENT — defined ONCE in the gap engine,
+//     ranking exactly the R20 field vocabulary in a DIFFERENT order (the gap engine's own semantic), never
+//     in the information engine.
+// =====================================================================
+
+describe("receptionist runtime — R21: the priority vocabulary is single-sourced and independent", () => {
+  const core = codeOf(read(GAP_CORE));
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  it("defines the priority ordering in exactly one file — the gap engine", () => {
+    expect(definersOf(/export const FIELD_PRIORITY/)).toEqual([GAP_CORE]);
+  });
+
+  it("does NOT define the priority ordering in the information engine — priority is a GAP concern, not an information one", () => {
+    const infoCore = codeOf(read(INFORMATION_CORE));
+    expect(/FIELD_PRIORITY/.test(infoCore), "the information engine names no priority ordering").toBe(
+      false,
+    );
+  });
+
+  it("ranks exactly the R20 field vocabulary (lock-step) — no out-of-vocabulary field gains a rank", () => {
+    // FIELD_PRIORITY names the SAME four fields the R20 vocabulary defines, so a priority rank exists for
+    // every field the schema can ask for and for no other. (That it is a genuine PERMUTATION — same set,
+    // different order, here the exact reverse — is proven at runtime in the unit tier.)
+    for (const field of ["email_address", "phone_number", "postcode", "job_type"]) {
+      expect(core, `priority names ${field}`).toContain(`"${field}"`);
+    }
+  });
+
+  it("orders the priority INDEPENDENTLY of the vocabulary's declaration order (job_type first, not last)", () => {
+    // In the gap engine's executable source the ONLY place the field names appear is FIELD_PRIORITY, and it
+    // ranks job_type BEFORE email_address; the information engine's INFORMATION_FIELDS declares them in the
+    // OPPOSITE order (email_address before job_type). So the priority is a distinct ordering, not a copy of
+    // the vocabulary.
+    const jt = core.indexOf('"job_type"');
+    const em = core.indexOf('"email_address"');
+    expect(jt, "gap engine names job_type").toBeGreaterThanOrEqual(0);
+    expect(em, "gap engine ranks job_type before email_address").toBeGreaterThan(jt);
+    const infoCore = codeOf(read(INFORMATION_CORE));
+    expect(
+      infoCore.indexOf('"email_address"'),
+      "information engine declares email_address before job_type",
+    ).toBeLessThan(infoCore.indexOf('"job_type"'));
   });
 });

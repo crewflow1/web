@@ -6,7 +6,8 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
  * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE), R18 (CONVERSATION
- * INTENT ENGINE), R19 (CONVERSATION GOAL ENGINE) and R20 (CONVERSATION INFORMATION ENGINE).
+ * INTENT ENGINE), R19 (CONVERSATION GOAL ENGINE), R20 (CONVERSATION INFORMATION ENGINE) and R21
+ * (CONVERSATION GAP ENGINE).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -60,6 +61,14 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     nothing for, and the record is MONOTONIC (a known field is never dropped). The information NEVER moves
  *     `runtime_state`, `intent` OR `goal`, so its accumulation can never bypass any layer beneath it — and it
  *     only EXTRACTS: it books nothing, schedules nothing, prompts nothing (all R20 non-goals).
+ *   • THE GAP IS DERIVED, NEVER PERSISTED (R21) — ON TOP of the information engine, every turn DERIVES the
+ *     conversational GAP: what the resolved goal still needs, in PRIORITY order; the highest-priority NEXT
+ *     required item; whether the goal is SATISFIED; and whether another turn is REQUIRED. Unlike the four
+ *     markers beneath it the gap is a FIFTH observation with NO column and NO writer — a pure function of
+ *     (goal, information), surfaced live as `turn.gap` and DERIVED AFRESH on every read from the persisted
+ *     (goal, information). The runtime and the read model derive the IDENTICAL gap from the SAME inputs, so
+ *     it needs no store of its own; it moves NO marker beneath it and executes NO business action (booking /
+ *     scheduling are R21 non-goals) — it identifies missing information only.
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -348,6 +357,20 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       {},
     );
 
+    // Step 7 (R21) — ON TOP of the information engine, the gap engine DERIVES what the resolved goal
+    // (provide_quote) still needs. This seed states the objective but provides NONE of its four slots, so the
+    // gap is the FULL outstanding set in PRIORITY order (job_type first, email last), the highest-priority item
+    // is the NEXT required, the goal is NOT satisfied and another turn IS required. The gap is DERIVED — it has
+    // no column and no writer — a pure function of (goal, information) surfaced live on the turn result. It is a
+    // FIFTH observation that moves NO marker beneath it and executes NO business action (an R21 non-goal).
+    expect(turn.gap).toEqual({
+      goal: "provide_quote",
+      missing: ["job_type", "postcode", "phone_number", "email_address"],
+      nextRequired: "job_type",
+      satisfied: false,
+      turnRequired: true,
+    });
+
     // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read model
     // surfaces ALL FOUR independent markers (the ownership state, the R18 intent, the R19 goal AND the R20
     // information — empty here, since this turn provided no structured facts).
@@ -357,6 +380,10 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(summary?.intent, "the read model surfaces the resolved intent").toBe("quote_request");
     expect(summary?.goal, "the read model surfaces the resolved goal").toBe("provide_quote");
     expect(summary?.information, "the read model surfaces the (empty) information").toEqual({});
+
+    // R21 — the read model DERIVES the IDENTICAL gap from the PERSISTED (goal, information): same pure
+    // function, same inputs, same result. The gap needs no store of its own — the turn and the read agree.
+    expect(summary?.gap, "getConversation derives the gap on read, identical to the turn's").toEqual(turn.gap);
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -605,6 +632,20 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(summary?.intent).toBe("quote_request");
     expect(summary?.goal).toBe("provide_quote");
 
+    // R21 — the gap engine DERIVES, from the resolved goal (provide_quote) and the extracted facts, what the
+    // objective still needs. All four slots are now filled, so the gap is SATISFIED: nothing missing, no next
+    // required item, no further turn required. The gap is DERIVED — no column, no writer — surfaced live on the
+    // turn AND re-derived IDENTICALLY on BOTH read paths from the PERSISTED (goal, information).
+    expect(first.gap).toEqual({
+      goal: "provide_quote",
+      missing: [],
+      nextRequired: null,
+      satisfied: true,
+      turnRequired: false,
+    });
+    expect(summary?.gap, "getConversation derives the satisfied gap on read").toEqual(first.gap);
+    expect(list[0]?.gap, "listConversations derives the satisfied gap on read").toEqual(first.gap);
+
     // TURN 2 — no new customer message, so extraction is DETERMINISTIC: the same context re-extracts the same
     // four facts. Folding them onto the now-persisted record adds nothing new, so the plan is `unchanged` and
     // the engine persists NOTHING — the record is MONOTONIC (it never shrinks, never regresses).
@@ -625,5 +666,11 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(second.information_update).toEqual({ kind: "unchanged", information: FACTS });
     expect(second.next_information).toEqual(FACTS);
     expect(await informationOf(convId), "the information is monotonic — it never regressed").toEqual(FACTS);
+
+    // R21 — the gap is DETERMINISTIC: turn 2 derives the IDENTICAL gap from the same persisted (goal,
+    // information), still satisfied. Deriving it perturbs NO marker — the record is unchanged underneath.
+    expect(second.gap, "the gap is deterministic — same inputs, same derivation").toEqual(first.gap);
+    expect(second.gap.satisfied).toBe(true);
+    expect(second.gap.turnRequired).toBe(false);
   });
 });

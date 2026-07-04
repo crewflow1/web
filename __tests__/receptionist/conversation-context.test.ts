@@ -6,6 +6,7 @@ import {
   DEFAULT_CONTEXT_TOKEN_BUDGET,
 } from "@/lib/receptionist/conversation-context";
 import { estimateTokens } from "@/lib/memory/retrieval";
+import { detectGap } from "@/lib/receptionist/conversation-gap";
 import type {
   ConversationSummary,
   ReconstructedConversation,
@@ -108,6 +109,7 @@ function summary(overrides: Partial<ConversationSummary> = {}): ConversationSumm
     intent: "unknown",
     goal: "undetermined",
     information: {},
+    gap: detectGap("undetermined", {}),
     message_count: 0,
     first_message_at: "2026-01-01T10:00:00.000Z",
     last_message_at: "2026-01-01T10:00:00.000Z",

@@ -3,6 +3,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { normaliseContactRef } from "@/server/services/receptionist-conversations";
 import type { ConversationDirection } from "@/server/services/receptionist-conversations";
 import type { InboundChannel } from "@/lib/receptionist/types";
+import { coerceConversationGoal } from "@/lib/receptionist/conversation-goal";
+import { coerceConversationInformation } from "@/lib/receptionist/conversation-information";
+import { detectGap, type ConversationGap } from "@/lib/receptionist/conversation-gap";
 
 // =====================================================================
 // THE CONVERSATION TIMELINE READ MODEL (CEO Directive #018, R11).
@@ -84,9 +87,12 @@ export type TimelineEvent = {
   receipt_count: number | null;
 };
 
-/** One row of the `receptionist_conversation_list` view — a conversation's container metadata,
- *  contact identity, and a preview of its most recent message. */
-export type ConversationSummary = {
+/** One RAW row of the `receptionist_conversation_list` view — a conversation's container metadata, contact
+ *  identity, and a preview of its most recent message, EXACTLY as the view supplies it. Internal: this is
+ *  the persisted surface, BEFORE the read model derives the R21 gap. `ConversationSummary` is this row plus
+ *  the derived gap (see below), which is why the view read is typed to this row and mapped through
+ *  {@link withGap}. */
+type ConversationListRow = {
   conversation_id: string;
   org_id: string;
   employee_slug: string;
@@ -118,6 +124,18 @@ export type ConversationSummary = {
   updated_at: string;
   last_direction: ConversationDirection | null;
   last_event_at: string | null;
+};
+
+/** One conversation summary as EVERY consumer receives it: the raw {@link ConversationListRow} PLUS the
+ *  DERIVED R21 gap. The read model is the single place the gap is attached, so a consumer that reads a
+ *  conversation's current state always sees its completeness without recomputing it. */
+export type ConversationSummary = ConversationListRow & {
+  /** The DERIVED conversational GAP (R21) — what the conversation's goal is still MISSING (priority-ordered),
+   *  the single `nextRequired` field, whether it is `satisfied`, and whether another turn is `turnRequired`.
+   *  Computed FRESH on every read from (`goal`, `information`) by the single gap authority
+   *  (lib/receptionist/conversation-gap.ts::detectGap), NEVER persisted — there is no gap column, so it can
+   *  never drift from the goal + information it derives from. Independent of every persisted marker. */
+  gap: ConversationGap;
 };
 
 /** A fully reconstructed conversation: its container metadata plus its ordered event timeline.
@@ -162,11 +180,28 @@ function timelineView(): ReadQuery<TimelineEvent> {
   ) as unknown as ReadQuery<TimelineEvent>;
 }
 
-function listView(): ReadQuery<ConversationSummary> {
+function listView(): ReadQuery<ConversationListRow> {
   const admin = createAdminClient();
   return admin.from(
     "receptionist_conversation_list" as never,
-  ) as unknown as ReadQuery<ConversationSummary>;
+  ) as unknown as ReadQuery<ConversationListRow>;
+}
+
+/**
+ * Attach the DERIVED R21 gap to a raw list row — the ONE place the read model turns a persisted
+ * (goal, information) pair into a {@link ConversationSummary}. Coerces the two persisted observations
+ * deny-unknown (the goal through the R19 coercer, the information through the R20 coercer) and derives the
+ * gap through the single authority {@link detectGap}. Pure and deterministic: the same row always yields the
+ * same gap, and nothing is persisted — the gap is recomputed on every read, so it can never be stale.
+ */
+function withGap(row: ConversationListRow): ConversationSummary {
+  return {
+    ...row,
+    gap: detectGap(
+      coerceConversationGoal(row.goal),
+      coerceConversationInformation(row.information),
+    ),
+  };
 }
 
 /**
@@ -235,7 +270,7 @@ export async function listConversations(input: {
   if (error) {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
-  return data ?? [];
+  return (data ?? []).map(withGap);
 }
 
 /**
@@ -255,7 +290,8 @@ export async function getConversation(input: {
   if (error) {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
-  return data?.[0] ?? null;
+  const row = data?.[0];
+  return row ? withGap(row) : null;
 }
 
 /**
@@ -281,7 +317,8 @@ export async function getConversationByContact(input: {
   if (error) {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
-  return data?.[0] ?? null;
+  const row = data?.[0];
+  return row ? withGap(row) : null;
 }
 
 /**
