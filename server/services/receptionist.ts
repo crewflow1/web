@@ -50,6 +50,14 @@ import {
   type ConversationGoal,
   type GoalTransitionPlan,
 } from "@/lib/receptionist/conversation-goal";
+import {
+  EMPTY_INFORMATION,
+  coerceConversationInformation,
+  extractInformation,
+  planInformationUpdate,
+  type ConversationInformation,
+  type InformationUpdate,
+} from "@/lib/receptionist/conversation-information";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -857,6 +865,39 @@ async function setConversationGoal(args: {
   }
 }
 
+// `set_receptionist_conversation_information` is a service-role-only SECURITY DEFINER primitive (migration
+// 20260825000000) and is not in the generated Database types — cast past the typed client, the same
+// `as unknown as` convention as the runtime-state / intent / goal writers above.
+type SetInformationRpc = (
+  fn: "set_receptionist_conversation_information",
+  args: Record<string, unknown>,
+) => Promise<{ error: { message: string } | null }>;
+
+/**
+ * Persist a conversation's UPDATED information through the SINGLE validated, org-scoped writer (the R20
+ * SECURITY DEFINER function). Throw-on-failure, exactly like the runtime-state / intent / goal writers; the
+ * caller catches and swallows so a bookkeeping write never gates the turn. Org-scoped in-DDL, so a caller
+ * can only ever advance its OWN conversation. The DDL validates the SHAPE (a jsonb object of in-vocabulary
+ * keys → string values); the pure engine already guarantees that shape, so this is defence-in-depth.
+ * Idempotent — persisting the same information is a no-op update.
+ */
+async function setConversationInformation(args: {
+  conversation_id: string;
+  org_id: string;
+  information: ConversationInformation;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as SetInformationRpc;
+  const { error } = await rpc("set_receptionist_conversation_information", {
+    p_conversation_id: args.conversation_id,
+    p_org_id: args.org_id,
+    p_information: args.information,
+  });
+  if (error) {
+    throw new Error("set_receptionist_conversation_information failed: " + error.message);
+  }
+}
+
 /**
  * The observable outcome of one conversation turn the runtime folded — the prior and next runtime
  * state, how the turn ROUTED (the pure classification), whether the state actually advanced, the R18
@@ -909,6 +950,23 @@ export type ConversationTurnResult = {
   goal_transition: GoalTransitionPlan;
   /** True when the persisted goal actually changed (a durable advance was written). */
   goal_advanced: boolean;
+  /** The structured information the conversation held BEFORE the turn (the persisted record, coerced
+   *  deny-unknown) (R20). */
+  prior_information: ConversationInformation;
+  /** The information the R20 engine EXTRACTED from this turn's context for the current goal's fields — a
+   *  fresh record of ONLY what this context provides, before it is folded onto the prior. */
+  extracted_information: ConversationInformation;
+  /** The structured information the conversation holds AFTER the turn (prior folded with extracted; equals
+   *  prior_information when the turn extracted nothing new). */
+  next_information: ConversationInformation;
+  /**
+   * The GOVERNED information update the R20 engine planned for this turn — an `updated` (new or changed
+   * fields that were persisted, with `added` naming them) or an `unchanged` (nothing new). The auditable
+   * record of how the single information authority resolved the turn.
+   */
+  information_update: InformationUpdate;
+  /** True when the persisted information actually changed (a durable update was written). */
+  information_updated: boolean;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -946,6 +1004,7 @@ export async function runConversationTurn(
   let priorState: ConversationState = INITIAL_CONVERSATION_STATE;
   let priorIntent: ConversationIntent = INITIAL_CONVERSATION_INTENT;
   let priorGoal: ConversationGoal = INITIAL_CONVERSATION_GOAL;
+  let priorInformation: ConversationInformation = EMPTY_INFORMATION;
   let context: ConversationTurnResult["context"] = null;
   let assembledContext: ConversationContext | null = null;
   if (conversationId) {
@@ -962,6 +1021,7 @@ export async function runConversationTurn(
       priorState = coerceConversationState(turnContext.summary.runtime_state);
       priorIntent = coerceConversationIntent(turnContext.summary.intent);
       priorGoal = coerceConversationGoal(turnContext.summary.goal);
+      priorInformation = coerceConversationInformation(turnContext.summary.information);
     }
   }
 
@@ -1047,6 +1107,41 @@ export async function runConversationTurn(
   const nextGoal: ConversationGoal =
     goalTransition.kind === "advance" ? goalTransition.to : priorGoal;
 
+  // Steps 6–8 (R20) — EXTRACT the structured information the current goal needs, VALIDATE it, and PERSIST
+  // what is new, through the R20 CONVERSATION INFORMATION ENGINE (lib/receptionist/conversation-information.ts)
+  // — ON TOP of the R19 goal engine and STILL BEFORE the draft. The engine is the SINGLE authority over
+  // structured conversational information: keyed on the goal the R19 engine JUST resolved (`nextGoal`, the
+  // goal state of record after this turn), it EXTRACTS the fields that goal needs by SCANNING the ONE
+  // assembled context (the customer's own messages — no model, no second read, so it DUPLICATES no context
+  // assembly, no intent resolution and no goal resolution), VALIDATES each candidate as it extracts (an
+  // extractor yields a value ONLY when it is well-formed — extraction and validation are one pass), then
+  // PLANS the (prior → extracted) merge through its OWN fold. Accumulation is MONOTONIC — a known field is
+  // never dropped or overwritten by a later empty turn, exactly as goal never regresses to `undetermined` —
+  // so a real turn only ever yields an `updated` (naming the `added` fields) or an `unchanged`. Only an
+  // `updated` is written, through the engine's OWN org-scoped writer. The engine NEVER moves the ownership
+  // marker, the intent marker OR the goal marker — information is a FOURTH independent observation — and it
+  // EXTRACTS ONLY: it executes no booking, no scheduling, no memory retrieval (all explicit R20 non-goals).
+  // Best-effort OBSERVATION: a failed information write is logged and swallowed — it never gates the turn or
+  // blocks the reply below.
+  const extractedInformation: ConversationInformation = assembledContext
+    ? extractInformation(assembledContext, nextGoal)
+    : EMPTY_INFORMATION;
+  const informationUpdate = planInformationUpdate(priorInformation, extractedInformation);
+  let informationUpdated = false;
+  if (conversationId && informationUpdate.kind === "updated") {
+    try {
+      await setConversationInformation({
+        org_id: input.org_id,
+        conversation_id: conversationId,
+        information: informationUpdate.information,
+      });
+      informationUpdated = true;
+    } catch (e) {
+      console.error("[receptionist] conversation information update failed", e);
+    }
+  }
+  const nextInformation: ConversationInformation = informationUpdate.information;
+
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
@@ -1131,6 +1226,11 @@ export async function runConversationTurn(
     next_goal: nextGoal,
     goal_transition: goalTransition,
     goal_advanced: goalAdvanced,
+    prior_information: priorInformation,
+    extracted_information: extractedInformation,
+    next_information: nextInformation,
+    information_update: informationUpdate,
+    information_updated: informationUpdated,
     context,
     dispatch,
   };

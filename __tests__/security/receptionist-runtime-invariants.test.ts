@@ -140,6 +140,11 @@ const GOAL_CORE = "lib/receptionist/conversation-goal.ts";
 const GOAL_MIGRATION = "supabase/migrations/20260824000000_receptionist_conversation_goal.sql";
 /** The goal engine's write primitive — the only door that advances a conversation's goal (R19). */
 const GOAL_WRITE_FN = /\bset_receptionist_conversation_goal\b/;
+const INFORMATION_CORE = "lib/receptionist/conversation-information.ts";
+const INFORMATION_MIGRATION =
+  "supabase/migrations/20260825000000_receptionist_conversation_information.sql";
+/** The information engine's write primitive — the only door that persists a conversation's information (R20). */
+const INFORMATION_WRITE_FN = /\bset_receptionist_conversation_information\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -886,14 +891,29 @@ describe("receptionist runtime — R19: the conversation goal engine is a govern
     expect(consumers).toEqual([SERVICE]);
   });
 
-  it("the pure engine has EXACTLY ONE server importer — the orchestrating service", () => {
+  it("has EXACTLY TWO importers — the orchestrating service and the R20 information engine (type-only)", () => {
+    // R19 shipped with a SINGLE importer (the service). R20's information engine sits ON TOP of the goal
+    // engine, so it imports the goal module — but ONLY for the `ConversationGoal` TYPE it keys its slot
+    // schema on (a type-only import), NEVER for a runtime value. The goal engine's AUTHORITY is therefore
+    // undiminished: its resolver and its turn-driven planner STILL have exactly the one consumer each (the
+    // service, asserted just above), and the information engine names neither. The module-import set is
+    // EXACTLY these two and nothing more — no third module reaches into the goal engine.
     const importers = walkSources(SOURCE_ROOTS)
       .filter((full) =>
         importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-goal"),
       )
       .map(rel)
       .sort();
-    expect(importers).toEqual([SERVICE]);
+    expect(importers).toEqual([INFORMATION_CORE, SERVICE]);
+    // The second importer is TYPE-ONLY: it consumes the goal VOCABULARY type, not the resolver or planner.
+    const infoCore = codeOf(read(INFORMATION_CORE));
+    expect(/\bresolveGoal\b/.test(infoCore), "information engine does not consume the goal resolver").toBe(
+      false,
+    );
+    expect(
+      /\bplanGoalProgression\b/.test(infoCore),
+      "information engine does not consume the goal planner",
+    ).toBe(false);
   });
 
   it("the goal writer is named by EXACTLY ONE module — the canonical service", () => {
@@ -1042,6 +1062,260 @@ describe("receptionist runtime — R19: the goal vocabulary is single-sourced an
     ]) {
       expect(core, `engine names ${goal}`).toContain(`"${goal}"`);
       expect(sql, `migration names ${goal}`).toContain(`'${goal}'`);
+    }
+  });
+});
+
+// =====================================================================
+// 16. R20 — THE CONVERSATION INFORMATION ENGINE: a FOURTH pure leaf that sits ON TOP of the
+//     R19 goal engine — it EXTRACTS the STRUCTURED INFORMATION the current goal needs from the
+//     canonical context, validates it on the way in (extraction IS validation), and accumulates
+//     it MONOTONICALLY. Single-sourced, single-consumer, persisting ONLY under a validated
+//     `updated` through its OWN org-scoped writer, DUPLICATING no context assembly, no intent
+//     resolution and no goal resolution (it names none of their resolvers/planners), and NEVER
+//     moving the ownership, intent OR goal marker — so information extraction, a FOURTH distinct
+//     observation, can never bypass any layer beneath it. It EXTRACTS; it never ACTS.
+// =====================================================================
+
+describe("receptionist runtime — R20: the conversation information engine is a governed, single-sourced pure leaf", () => {
+  const core = codeOf(read(INFORMATION_CORE));
+  const service = codeOf(read(SERVICE));
+
+  // The whole information-engine surface: the field vocabulary, the job-type vocabulary, the goal→slots
+  // schema, the deterministic extractor, the accumulation fold, the turn-driven update planner, the
+  // deny-unknown coercer, the exposed validator, and the two slot-surface readers. The analogue of §13's
+  // GOAL_SYMBOLS, for the information layer.
+  const INFORMATION_SYMBOLS: readonly RegExp[] = [
+    /export const INFORMATION_FIELDS\b/,
+    /export const JOB_TYPES\b/,
+    /export const GOAL_SLOTS\b/,
+    /export function extractInformation\(/,
+    /export function advanceInformation\(/,
+    /export function planInformationUpdate\(/,
+    /export function coerceConversationInformation\(/,
+    /export function isValidFieldValue\(/,
+    /export function outstandingSlots\(/,
+    /export function isInformationComplete\(/,
+  ];
+
+  it(`ships the pure information engine ${INFORMATION_CORE}, exporting the whole deterministic surface`, () => {
+    expect(existsSync(resolve(ROOT, INFORMATION_CORE)), INFORMATION_CORE).toBe(true);
+    for (const re of INFORMATION_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly THREE pure layers and NOTHING else — the UK phone normaliser, the R12 context type, the R19 goal type", () => {
+    // The engine's ENTIRE import surface is the canonical UK phone normaliser (`toE164`, the SAME primitive
+    // the SMS transport dials — so an extracted phone is stored in the ONE canonical form), the R12
+    // conversation-context TYPE (the facts it READS FROM), and the R19 goal TYPE (which SELECTS the fields).
+    // It reaches no fourth module — no policy, no provider, no ledger, no DB, no clock, no model — so it
+    // cannot fork a second enforcement, generation or transport path.
+    expect(importSpecifiers(core).sort()).toEqual([
+      "@/lib/phone",
+      "@/lib/receptionist/conversation-context",
+      "@/lib/receptionist/conversation-goal",
+    ]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent / goal / information write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+    expect(GOAL_WRITE_FN.test(core)).toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("DUPLICATES no context assembly, no intent resolution and no goal resolution — it names none of their resolvers/planners", () => {
+    // The cardinal R20 boundary: the engine consumes an ALREADY-assembled context and an ALREADY-resolved
+    // goal; it never RE-assembles context, RE-resolves intent, or RE-resolves goal. In executable source it
+    // names none of the context assembler, the intent resolver/planner, or the goal resolver/planner — so it
+    // re-implements no layer beneath it, exactly as the directive requires ("must NOT duplicate ... context
+    // assembly, intent resolution, OR goal resolution"). The context and goal modules are imported for their
+    // TYPES ALONE.
+    expect(/\bassembleConversationContext\b/.test(core), "never names the context assembler").toBe(false);
+    expect(/\bresolveIntent\b/.test(core), "never names the intent resolver").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never names the intent planner").toBe(false);
+    expect(/\bresolveGoal\b/.test(core), "never names the goal resolver").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never names the goal planner").toBe(false);
+  });
+
+  it("EXTRACTS ONLY — it re-orchestrates no runtime and executes no business action (booking/scheduling are R20 non-goals)", () => {
+    // The engine extracts information and stops; acting on it is a future capability that CONSUMES it. In
+    // executable source it names neither the turn orchestrator nor the canonical dispatch — so it can neither
+    // re-run the runtime nor send/book/schedule anything.
+    expect(/\brunConversationTurn\b/.test(core), "never re-orchestrates the runtime").toBe(false);
+    expect(/\bdispatchReceptionistReply\b/.test(core), "never dispatches a reply").toBe(false);
+  });
+
+  it("is NOT server-only and touches no admin client — model-free extraction calculus usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole information surface in the pure engine — no other module DEFINES any member", () => {
+    // Each member is declared (export const/function) in EXACTLY the pure engine and nowhere else, so the
+    // vocabulary, the slot schema, the extractor, the fold and the planner cannot fork into a second authority.
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of INFORMATION_SYMBOLS) expect(definersOf(re), re.source).toEqual([INFORMATION_CORE]);
+  });
+
+  it("the extractor has EXACTLY ONE consumer — the canonical service (no feature extracts information independently)", () => {
+    // extractInformation is named by the engine (its definition) and the service (its sole consumer) and
+    // NOTHING else: no feature reads structured information out of a conversation outside the single authority.
+    const consumers = namersOf(/\bextractInformation\b/).filter((p) => p !== INFORMATION_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the turn-driven update planner has EXACTLY ONE consumer — the canonical service", () => {
+    const consumers = namersOf(/\bplanInformationUpdate\b/).filter((p) => p !== INFORMATION_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the information writer is named by EXACTLY ONE module — the canonical service", () => {
+    expect(namersOf(INFORMATION_WRITE_FN)).toEqual([SERVICE]);
+  });
+
+  it("persists information ONLY through the SECURITY DEFINER writer — the helper reaches the RPC and throws on failure", () => {
+    // The only mutation of `information` is via the validated writer RPC; the helper never `.update(...)`s the
+    // conversations table inline, and a failed write THROWS (the caller then swallows it — a bookkeeping write
+    // never gates the turn), exactly like the runtime-state (§9), intent (§10) and goal (§13) writers.
+    expect(service).toMatch(
+      /async function setConversationInformation\([\s\S]*?rpc\(\s*["']set_receptionist_conversation_information["']/,
+    );
+    expect(service).toMatch(
+      /async function setConversationInformation\([\s\S]*?set_receptionist_conversation_information[\s\S]*?throw new Error/,
+    );
+  });
+
+  it("EXTRACTS from the assembled context + resolved goal and PLANS from (prior information, extracted information) alone", () => {
+    // The engine extracts the facts the goal the R19 engine JUST resolved (`nextGoal`, the goal state of
+    // record) needs, from the ONE assembled context — NOT a second read, NOT a model call — then plans the
+    // accumulation from the prior persisted information and that freshly-extracted information. This is the
+    // seam that proves the linear stack Context → Intent → Goal → Information.
+    expect(service).toMatch(/extractInformation\(assembledContext,\s*nextGoal\)/);
+    expect(service).toMatch(/planInformationUpdate\(priorInformation,\s*extractedInformation\)/);
+  });
+
+  it("persists an update ONLY under a validated `updated` — the information writer is guarded by the plan kind", () => {
+    // The single information-write call site runs inside the `informationUpdate.kind === "updated"` branch and
+    // persists the engine's validated `informationUpdate.information`. An `unchanged` turn writes nothing.
+    expect(service).toMatch(
+      /informationUpdate\.kind === "updated"[\s\S]*?setConversationInformation\(\{[\s\S]*?information:\s*informationUpdate\.information/,
+    );
+  });
+
+  it("has NO `rejected` arm — extraction validates on the way in, so the only turn outcomes are updated / unchanged", () => {
+    // Unlike the R17/R18/R19 transition plans, the information update type has no `rejected` arm: a value can
+    // only enter through an extractor, which validates it, so a malformed value can never be proposed to the
+    // fold. The engine's discriminated union names exactly `updated` and `unchanged`.
+    expect(core).toMatch(/kind:\s*"updated"/);
+    expect(core).toMatch(/kind:\s*"unchanged"/);
+    expect(core, "no rejected arm").not.toMatch(/kind:\s*"rejected"/);
+  });
+
+  it("NEVER moves the ownership, intent OR goal marker — information extraction cannot bypass any layer beneath it", () => {
+    // The engine writes only the `information` column, through its OWN writer; in executable source it names
+    // none of: the runtime-state / intent / goal write primitives, or the state / intent / goal planners. And
+    // the layers beneath it are UNDISTURBED: the R17 state writer, the R18 intent writer and the R19 goal
+    // writer are STILL each named by exactly the service. So `runtime_state`, `intent`, `goal` and
+    // `information` are four independent observations written by four distinct, separately-guarded doors —
+    // extracting information can never advance (or bypass the governance of) any marker beneath it.
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "never names the state writer").toBe(false);
+    expect(INTENT_WRITE_FN.test(core), "never names the intent writer").toBe(false);
+    expect(GOAL_WRITE_FN.test(core), "never names the goal writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "never reaches the state machine").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never reaches the intent planner").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never reaches the goal planner").toBe(false);
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(GOAL_WRITE_FN)).toEqual([SERVICE]);
+  });
+});
+
+// =====================================================================
+// 17. R20 — THE INFORMATION MIGRATION SHIPS THE MINIMAL STATE — additive, CHECK-bounded to a
+//     jsonb OBJECT, surfaced on the list view, persisted only through an org-scoped SECURITY
+//     DEFINER writer that validates the SHAPE in-DDL. NO backfill: '{}' is the honest initial
+//     value for every pre-R20 row.
+// =====================================================================
+
+describe("receptionist runtime — R20: the information migration is additive, bounded and org-scoped", () => {
+  it(`ships the information migration ${INFORMATION_MIGRATION}`, () => {
+    expect(existsSync(resolve(ROOT, INFORMATION_MIGRATION)), INFORMATION_MIGRATION).toBe(true);
+  });
+
+  const sql = sqlCodeOf(read(INFORMATION_MIGRATION));
+
+  it("adds ONE object-defaulted, CHECK-bounded jsonb column (provably additive), and NEEDS no backfill", () => {
+    expect(sql).toMatch(/add column if not exists information jsonb not null default '\{\}'::jsonb/i);
+    expect(sql).toMatch(/check\s*\(\s*jsonb_typeof\(information\)\s*=\s*'object'\s*\)/i);
+    // '{}' is the honest initial value for every pre-R20 row, so — like the R18/R19 marker migrations and
+    // unlike the R15 runtime_state migration (§6) — this migration performs NO backfill UPDATE that sets
+    // information to a literal value.
+    expect(sql, "no backfill of the information column").not.toMatch(/set information\s*=\s*'/i);
+  });
+
+  it("recreates the list view to EXPOSE information (the R11 read model stays the single reader)", () => {
+    expect(sql).toMatch(/create or replace view public\.receptionist_conversation_list/i);
+    expect(sql).toMatch(/c\.information/i);
+  });
+
+  it("persists information ONLY through a validated, org-scoped SECURITY DEFINER writer that bounds the SHAPE in-DDL", () => {
+    expect(sql).toMatch(
+      /create or replace function public\.set_receptionist_conversation_information\(/i,
+    );
+    expect(sql).toMatch(/returns void/i);
+    expect(sql).toMatch(/security definer/i);
+    expect(sql).toMatch(/set search_path = ''/i);
+    // The SHAPE is validated in-DDL: a jsonb object, every key in the closed field vocabulary, every value a
+    // string — so the writer can never persist an out-of-vocabulary key or a non-string value.
+    expect(sql).toMatch(/jsonb_typeof\(p_information\)\s*<>\s*'object'/i);
+    expect(sql).toMatch(/jsonb_object_keys\(p_information\)/i);
+    expect(sql).toMatch(
+      /v_key not in \('email_address', 'phone_number', 'postcode', 'job_type'\)/i,
+    );
+    expect(sql).toMatch(/jsonb_typeof\(p_information -> v_key\)\s*<>\s*'string'/i);
+    expect(sql).toMatch(/raise exception/i);
+    // Org-scoped: a caller advances only its OWN conversation.
+    expect(sql).toMatch(
+      /update public\.receptionist_conversations[\s\S]*?where id = p_conversation_id[\s\S]*?and org_id = p_org_id/i,
+    );
+    expect(sql).toMatch(/revoke all on function[\s\S]*?from public, anon, authenticated/i);
+    expect(sql).toMatch(/grant execute on function[\s\S]*?to service_role/i);
+  });
+});
+
+// =====================================================================
+// 18. R20 — THE INFORMATION FIELD VOCABULARY IS DEFINED ONCE — the pure engine, mirrored by the
+//     migration's in-DDL key validation.
+// =====================================================================
+
+describe("receptionist runtime — R20: the information field vocabulary is single-sourced and mirrored", () => {
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  it("defines the field vocabulary in exactly one file — the pure engine", () => {
+    expect(definersOf(/export const INFORMATION_FIELDS/)).toEqual([INFORMATION_CORE]);
+  });
+
+  it("defines the extractor, the fold, and the turn planner in exactly one file — the pure engine", () => {
+    expect(definersOf(/export function extractInformation\(/)).toEqual([INFORMATION_CORE]);
+    expect(definersOf(/export function advanceInformation\(/)).toEqual([INFORMATION_CORE]);
+    expect(definersOf(/export function planInformationUpdate\(/)).toEqual([INFORMATION_CORE]);
+  });
+
+  it("the pure engine and the migration name the IDENTICAL four-field vocabulary (lock-step)", () => {
+    const core = codeOf(read(INFORMATION_CORE));
+    const sql = sqlCodeOf(read(INFORMATION_MIGRATION));
+    for (const field of ["email_address", "phone_number", "postcode", "job_type"]) {
+      expect(core, `engine names ${field}`).toContain(`"${field}"`);
+      expect(sql, `migration names ${field}`).toContain(`'${field}'`);
     }
   });
 });

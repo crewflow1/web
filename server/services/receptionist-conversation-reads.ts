@@ -106,6 +106,11 @@ export type ConversationSummary = {
    *  runtime resolves by ELEVATING the intent, then advances; one of the values in
    *  lib/receptionist/conversation-goal.ts::CONVERSATION_GOALS. Independent of `runtime_state` AND `intent`. */
   goal: string;
+  /** The CONVERSATION INFORMATION — the structured facts the customer has provided (R20). A jsonb object the
+   *  runtime EXTRACTS from the context on each turn, keyed by the field vocabulary in
+   *  lib/receptionist/conversation-information.ts::INFORMATION_FIELDS. Read as `unknown` and coerced through
+   *  `coerceConversationInformation` before use. Independent of `runtime_state`, `intent` AND `goal`. */
+  information: unknown;
   message_count: number;
   first_message_at: string;
   last_message_at: string;
@@ -135,7 +140,7 @@ const TIMELINE_COLUMNS =
 
 const LIST_COLUMNS =
   "conversation_id, org_id, employee_slug, channel, contact_ref, contact_name, status, " +
-  "runtime_state, intent, goal, message_count, first_message_at, last_message_at, created_at, updated_at, " +
+  "runtime_state, intent, goal, information, message_count, first_message_at, last_message_at, created_at, updated_at, " +
   "last_direction, last_event_at";
 
 // The two views are not in the generated Database types — cast past the typed client to the

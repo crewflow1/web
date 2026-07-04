@@ -6,7 +6,7 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
  * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE), R18 (CONVERSATION
- * INTENT ENGINE) and R19 (CONVERSATION GOAL ENGINE).
+ * INTENT ENGINE), R19 (CONVERSATION GOAL ENGINE) and R20 (CONVERSATION INFORMATION ENGINE).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -49,6 +49,17 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     an `unchanged` self-loop, and the objective is MONOTONIC (never regresses to `undetermined`). The goal
  *     NEVER moves `runtime_state` OR `intent`, so its progression can never bypass the state machine or the
  *     intent engine.
+ *   • THE INFORMATION IS EXTRACTED, GOVERNED AND PERSISTED (R20) — ON TOP of the goal engine, every turn
+ *     EXTRACTS the structured facts the resolved goal needs (via GOAL_SLOTS) from the customer's OWN turns in
+ *     the assembled context — a real email, a `+44…`-canonical phone, a UK postcode, a job type — plans the
+ *     (prior → folded) accumulation through the information engine, and persists ONLY a validated `updated`
+ *     through its OWN org-scoped writer — surfaced live as `turn.extracted_information` /
+ *     `turn.information_update` and read back through the R11 read model. It is a FOURTH INDEPENDENT marker:
+ *     extraction VALIDATES on the way in (an invalid candidate never enters the record, so there is no
+ *     `rejected` arm), a re-extraction of an unchanged context is an `unchanged` self-loop the engine persists
+ *     nothing for, and the record is MONOTONIC (a known field is never dropped). The information NEVER moves
+ *     `runtime_state`, `intent` OR `goal`, so its accumulation can never bypass any layer beneath it — and it
+ *     only EXTRACTS: it books nothing, schedules nothing, prompts nothing (all R20 non-goals).
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -131,6 +142,17 @@ async function goalOf(convId: string): Promise<string | null> {
   const res = await svc().from(CONVERSATIONS).select("goal").eq("id", convId);
   expect(res.error, res.error?.message).toBeNull();
   return (String((res.data ?? [])[0]?.goal ?? "")) || null;
+}
+
+/** The persisted information (R20), read straight from the container as service_role (ground truth). The
+ *  information column is a jsonb OBJECT written by its OWN org-scoped, SHAPE-validating writer — distinct
+ *  from runtime_state, intent AND goal — so this proves the structured-facts marker accumulated on its own,
+ *  a FOURTH independent observation. Returns the parsed object ('{}' for a conversation that provided
+ *  nothing). */
+async function informationOf(convId: string): Promise<Record<string, unknown>> {
+  const res = await svc().from(CONVERSATIONS).select("information").eq("id", convId);
+  expect(res.error, res.error?.message).toBeNull();
+  return ((res.data ?? [])[0]?.information ?? {}) as Record<string, unknown>;
 }
 
 /** Seed an allowed audit through the canonical write primitive; returns its id. */
@@ -312,13 +334,29 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     });
     expect(await goalOf(convId), "the goal marker advanced live").toBe("provide_quote");
 
-    // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read
-    // model surfaces ALL THREE independent markers (the ownership state, the R18 intent AND the R19 goal).
+    // Step 6 (R20) — ON TOP of the goal engine, the information engine EXTRACTS the facts the resolved goal
+    // (provide_quote) needs. This seed states the OBJECTIVE ("I'd like a quote please.") but provides NONE of
+    // the fields it selects (job_type/postcode/phone_number/email_address), so extraction yields the empty
+    // record, the plan is `unchanged`, and NOTHING is persisted — the honest "learned nothing" path, surfaced
+    // live on the turn result. Information is a FOURTH marker moved by its own door (here, not moved at all).
+    expect(turn.prior_information).toEqual({});
+    expect(turn.extracted_information).toEqual({});
+    expect(turn.information_update).toEqual({ kind: "unchanged", information: {} });
+    expect(turn.information_updated).toBe(false);
+    expect(turn.next_information).toEqual({});
+    expect(await informationOf(convId), "nothing extracted → the column stays the honest empty '{}'").toEqual(
+      {},
+    );
+
+    // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read model
+    // surfaces ALL FOUR independent markers (the ownership state, the R18 intent, the R19 goal AND the R20
+    // information — empty here, since this turn provided no structured facts).
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count).toBe(2);
     expect(summary?.runtime_state).toBe("awaiting_customer");
     expect(summary?.intent, "the read model surfaces the resolved intent").toBe("quote_request");
     expect(summary?.goal, "the read model surfaces the resolved goal").toBe("provide_quote");
+    expect(summary?.information, "the read model surfaces the (empty) information").toEqual({});
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -499,5 +537,93 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(second.goal_transition).toEqual({ kind: "unchanged", goal: "provide_quote" });
     expect(second.next_goal).toBe("provide_quote");
     expect(await goalOf(convId), "the goal is monotonic — it never regressed").toBe("provide_quote");
+  });
+
+  it("R20 — information is EXTRACTED from the customer's own turns, GOVERNED and persisted, and a re-extracted self-loop persists nothing", async () => {
+    const orgId = await freshOrg();
+    // Seed a flag-OFF inbound RICH in structured facts: a quote request (→ provide_quote, whose slots are
+    // job_type/postcode/phone_number/email_address) that STATES all four — a leaking pipe (→ plumbing), an
+    // email, a UK number and a UK postcode. The container is created (information defaults to the empty
+    // '{}'::jsonb) and the inbound is threaded, but no turn has run, so nothing has extracted yet.
+    const seed = await processInboundEnquiry({
+      org_id: orgId,
+      channel: "sms",
+      caller: CALLER,
+      raw_text:
+        "I'd like a quote to fix a leaking pipe. My email is jo@brightspark.co.uk, my number is 07700 900123, and the address is SW1A 1AA.",
+    });
+    const convId = seed.conversation_id as string;
+    expect(await informationOf(convId), "a fresh conversation has extracted nothing").toEqual({});
+
+    // The four canonical facts the engine extracts — each in the ONE canonical form it stores: the job type
+    // from the symptom cue (leaking pipe → plumbing), the postcode upper-cased `OUTWARD INWARD`, the phone in
+    // `+44…` E.164 (the SAME form the SMS transport dials), the email verbatim + lower-cased.
+    const FACTS = {
+      job_type: "plumbing",
+      postcode: "SW1A 1AA",
+      phone_number: "+447700900123",
+      email_address: "jo@brightspark.co.uk",
+    };
+
+    // TURN 1 — the goal resolves to provide_quote (a quote request), which SELECTS all four slots; the engine
+    // EXTRACTS each from the customer's OWN turn, PLANS an `updated` fold over the empty prior, and PERSISTS
+    // it through its OWN org-scoped, shape-validating writer — a FOURTH independent observation, distinct from
+    // state/intent/goal.
+    const first = await runConversationTurn({
+      org_id: orgId,
+      channel: "sms",
+      conversation_id: convId,
+      enquiry_id: seed.enquiry_id,
+      customer_ref: CALLER,
+      metadata: { dedup_key: `CA-${crypto.randomUUID()}` },
+    });
+    // The goal that SELECTED the slots is the provide_quote objective (extraction keys on the resolved goal).
+    expect(first.resolved_goal).toBe("provide_quote");
+    expect(first.next_goal).toBe("provide_quote");
+    // The extraction is a fresh record of exactly what THIS context provided — all four fields, canonicalised.
+    expect(first.prior_information).toEqual({});
+    expect(first.extracted_information).toEqual(FACTS);
+    expect(first.next_information).toEqual(FACTS);
+    expect(first.information_updated).toBe(true);
+    // The plan is a validated `updated` naming exactly the fields that appeared, in INFORMATION_FIELDS order.
+    expect(first.information_update).toEqual({
+      kind: "updated",
+      information: FACTS,
+      added: ["email_address", "phone_number", "postcode", "job_type"],
+    });
+    // Persisted through the writer and read back — directly from the container AND through the R11 read model.
+    expect(await informationOf(convId), "the extracted facts were persisted through the writer").toEqual(
+      FACTS,
+    );
+    const summary = await getConversation({ org_id: orgId, conversation_id: convId });
+    expect(summary?.information, "getConversation surfaces the extracted information").toEqual(FACTS);
+    const list = await listConversations({ org_id: orgId });
+    expect(list[0]?.information, "listConversations surfaces the extracted information").toEqual(FACTS);
+    // Information NEVER moved the layers beneath it — the ownership state, intent and goal all advanced by
+    // their OWN doors; information rode ON TOP without touching any of them.
+    expect(summary?.runtime_state).toBe("awaiting_customer");
+    expect(summary?.intent).toBe("quote_request");
+    expect(summary?.goal).toBe("provide_quote");
+
+    // TURN 2 — no new customer message, so extraction is DETERMINISTIC: the same context re-extracts the same
+    // four facts. Folding them onto the now-persisted record adds nothing new, so the plan is `unchanged` and
+    // the engine persists NOTHING — the record is MONOTONIC (it never shrinks, never regresses).
+    const second = await runConversationTurn({
+      org_id: orgId,
+      channel: "sms",
+      conversation_id: convId,
+      enquiry_id: seed.enquiry_id,
+      customer_ref: CALLER,
+      metadata: { dedup_key: `CA-${crypto.randomUUID()}` },
+    });
+    expect(
+      second.extracted_information,
+      "re-extraction is deterministic — same context, same facts",
+    ).toEqual(FACTS);
+    expect(second.prior_information).toEqual(FACTS);
+    expect(second.information_updated, "a re-extracted self-loop persists nothing").toBe(false);
+    expect(second.information_update).toEqual({ kind: "unchanged", information: FACTS });
+    expect(second.next_information).toEqual(FACTS);
+    expect(await informationOf(convId), "the information is monotonic — it never regressed").toEqual(FACTS);
   });
 });

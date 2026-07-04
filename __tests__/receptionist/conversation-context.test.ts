@@ -107,6 +107,7 @@ function summary(overrides: Partial<ConversationSummary> = {}): ConversationSumm
     runtime_state: "awaiting_customer",
     intent: "unknown",
     goal: "undetermined",
+    information: {},
     message_count: 0,
     first_message_at: "2026-01-01T10:00:00.000Z",
     last_message_at: "2026-01-01T10:00:00.000Z",
