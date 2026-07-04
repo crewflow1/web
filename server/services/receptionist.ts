@@ -67,6 +67,10 @@ import {
   planPrompt,
   type ConversationPromptPlan,
 } from "@/lib/receptionist/conversation-prompt";
+import {
+  buildResponseSpec,
+  type ResponseSpecification,
+} from "@/lib/receptionist/conversation-response";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -1001,6 +1005,16 @@ export type ConversationTurnResult = {
    * business action and writes no words (the engine plans conversational prompts ONLY).
    */
   prompt_plan: ConversationPromptPlan;
+  /**
+   * The model-ready RESPONSE SPECIFICATION the R24 engine DERIVED for this turn — computed from the prompt plan
+   * alone (lib/receptionist/conversation-response.ts), never persisted. Names the response OBJECTIVE
+   * (`objective`), the single field it SOLICITS (non-null only for a `gather`), the model-ready DIRECTIVE that
+   * tells the downstream draft HOW to be produced (`directive`, never customer-facing prose), whether it
+   * `awaitsReply`, and the invariant `guardrails` the produced response must honour. A pure projection of the
+   * prompt plan: it PREPARES how the response should be produced but generates no words and executes no
+   * business action (the engine prepares responses ONLY).
+   */
+  response_spec: ResponseSpecification;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1222,6 +1236,23 @@ export async function runConversationTurn(
   // CONSUMING this plan. Slot filling is the FIRST planner expressed here, not the engine's purpose.
   const promptPlan = planPrompt(strategy);
 
+  // Step (R24) — PREPARE the model-ready RESPONSE SPECIFICATION through the R24 CONVERSATION RESPONSE ENGINE
+  // (lib/receptionist/conversation-response.ts) — ON TOP of the R23 prompt planner, and STILL BEFORE the draft.
+  // The engine is the SINGLE authority over RESPONSE PREPARATION: from the prompt plan ALONE (`promptPlan`, what
+  // the R23 engine JUST derived) it prepares — by pure, deterministic mapping tables, NO model, NO second read —
+  // the response OBJECTIVE (welcome, gather, inform, transfer, confirm), the single field the response SOLICITS
+  // (the plan's target for a `gather`, else null), the model-ready DIRECTIVE that tells the draft HOW to be
+  // produced (never customer-facing prose), whether it `awaitsReply` (carried from the plan), and the invariant
+  // GUARDRAILS the produced response must honour. It REUSES the prompt plan (it forks no planning logic) and
+  // DUPLICATES no context assembly, intent/goal resolution, information extraction, gap detection, strategy
+  // resolution or prompt planning. It PERSISTS NOTHING — the spec adds no column and no writer; it is a fresh
+  // projection of the already-derived plan, surfaced on the turn result and re-derived on every read, so it can
+  // never drift. It PREPARES how the response should be produced but writes no words and executes NO business
+  // action: prose generation is the draft step below (unchanged — the spec is exposed, not yet consumed here),
+  // and booking, scheduling and CRM writes are explicit R24 non-goals a future capability performs by CONSUMING
+  // this spec. Prompt execution is the FIRST response prepared here, not the engine's purpose.
+  const responseSpec = buildResponseSpec(promptPlan);
+
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
@@ -1314,6 +1345,7 @@ export async function runConversationTurn(
     gap,
     strategy,
     prompt_plan: promptPlan,
+    response_spec: responseSpec,
     context,
     dispatch,
   };

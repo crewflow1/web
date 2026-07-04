@@ -84,6 +84,15 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     read. The runtime and the read model plan the IDENTICAL prompt from the SAME strategy; it moves NO marker
  *     beneath it and executes NO business action (it plans the prompt, it never writes the words or books /
  *     schedules — all R23 non-goals).
+ *   • THE RESPONSE SPEC IS DERIVED, NEVER PERSISTED (R24) — ON TOP of the prompt plan, every turn PREPARES the
+ *     model-ready RESPONSE SPEC: the response OBJECTIVE (welcome / gather / inform / transfer / confirm), the
+ *     single field a `gather` SOLICITS, the deterministic DIRECTIVE that tells the draft HOW to be produced,
+ *     whether it AWAITS a reply, and the GUARDRAILS the produced response must honour. Like the gap, the strategy
+ *     and the plan it is an EIGHTH observation with NO column and NO writer — a pure function of the plan ALONE,
+ *     surfaced live as `turn.response_spec` and DERIVED AFRESH on every read. The runtime and the read model
+ *     prepare the IDENTICAL spec from the SAME plan; it moves NO marker beneath it and executes NO business
+ *     action (it PREPARES how the response should be produced, it never writes the words, generates the draft or
+ *     books / schedules — all R24 non-goals).
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -412,6 +421,23 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       expectsReply: true,
     });
 
+    // Step 10 (R24) — ON TOP of the prompt plan, the response engine PREPARES the model-ready response spec. The
+    // planned act is `ask`, so the response objective is `gather` — the ONE prompt-execution objective — and it
+    // SOLICITS the same `job_type` field. Its directive is composed from the plan's FOCUS verbatim (framed as a
+    // request, since a field is solicited) with the reply-expectation clause appended, and its guardrails carry
+    // the two UNIVERSAL invariants plus `solicit_one_field`. The spec is DERIVED from the plan ALONE — no column,
+    // no writer — surfaced live on the turn. It is an EIGHTH observation that moves NO marker beneath it and
+    // executes NO business action (draft generation is an R24 non-goal): it PREPARES how the response should be
+    // produced, it neither writes the words nor generates the draft.
+    expect(turn.response_spec).toEqual({
+      objective: "gather",
+      solicits: "job_type",
+      directive:
+        "Compose a reply that asks the customer for the type of work the customer needs carried out. Expect a reply from the customer.",
+      awaitsReply: true,
+      guardrails: ["conversational_only", "single_reply", "solicit_one_field"],
+    });
+
     // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read model
     // surfaces ALL FOUR independent markers (the ownership state, the R18 intent, the R19 goal AND the R20
     // information — empty here, since this turn provided no structured facts).
@@ -439,6 +465,14 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       summary?.prompt_plan,
       "getConversation plans the prompt on read, identical to the turn's",
     ).toEqual(turn.prompt_plan);
+
+    // R24 — the read model prepares the IDENTICAL response spec from the SAME derived plan: same pure function,
+    // same input, same spec. Like the gap, the strategy and the plan, the spec needs no store of its own — the
+    // turn and the read agree.
+    expect(
+      summary?.response_spec,
+      "getConversation prepares the response spec on read, identical to the turn's",
+    ).toEqual(turn.response_spec);
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -726,6 +760,25 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(summary?.prompt_plan, "getConversation plans the prompt on read").toEqual(first.prompt_plan);
     expect(list[0]?.prompt_plan, "listConversations plans the prompt on read").toEqual(first.prompt_plan);
 
+    // R24 — the response engine maps the FORWARD `proceed` plan to a `confirm` objective that SOLICITS no field.
+    // Its directive is composed from the plan's FOCUS verbatim (framed as its purpose, since no field is
+    // solicited) with NO reply clause (the plan expects none), and its guardrails carry the two UNIVERSAL
+    // invariants plus `no_commitments` (a forward move promises nothing a human must honour). Derived from the
+    // plan ALONE, surfaced live on the turn AND re-prepared IDENTICALLY on BOTH read paths.
+    expect(first.response_spec).toEqual({
+      objective: "confirm",
+      solicits: null,
+      directive: "Compose a reply that will confirm the details gathered and move the objective forward.",
+      awaitsReply: false,
+      guardrails: ["conversational_only", "single_reply", "no_commitments"],
+    });
+    expect(summary?.response_spec, "getConversation prepares the response spec on read").toEqual(
+      first.response_spec,
+    );
+    expect(list[0]?.response_spec, "listConversations prepares the response spec on read").toEqual(
+      first.response_spec,
+    );
+
     // TURN 2 — no new customer message, so extraction is DETERMINISTIC: the same context re-extracts the same
     // four facts. Folding them onto the now-persisted record adds nothing new, so the plan is `unchanged` and
     // the engine persists NOTHING — the record is MONOTONIC (it never shrinks, never regresses).
@@ -763,6 +816,12 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     // strategy. Planning it perturbs NO marker — planning the next prompt never writes anything.
     expect(second.prompt_plan, "the prompt plan is deterministic — same strategy, same plan").toEqual(
       first.prompt_plan,
+    );
+
+    // R24 — the response spec is DETERMINISTIC too: turn 2 prepares the IDENTICAL spec from the same derived
+    // plan. Preparing it perturbs NO marker — preparing the response spec never writes anything.
+    expect(second.response_spec, "the response spec is deterministic — same plan, same spec").toEqual(
+      first.response_spec,
     );
   });
 });
