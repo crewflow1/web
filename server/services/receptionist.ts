@@ -34,6 +34,14 @@ import {
   type ConversationTransitionPlan,
   type TurnRouting,
 } from "@/lib/receptionist/runtime";
+import {
+  INITIAL_CONVERSATION_INTENT,
+  coerceConversationIntent,
+  resolveIntent,
+  planIntentProgression,
+  type ConversationIntent,
+  type IntentTransitionPlan,
+} from "@/lib/receptionist/conversation-intent";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -779,11 +787,43 @@ async function setConversationRuntimeState(args: {
   }
 }
 
+// `set_receptionist_conversation_intent` is a service-role-only SECURITY DEFINER primitive (migration
+// 20260823000000) and is not in the generated Database types — cast past the typed client, the same
+// `as unknown as` convention as `set_receptionist_conversation_runtime_state` above.
+type SetIntentRpc = (
+  fn: "set_receptionist_conversation_intent",
+  args: Record<string, unknown>,
+) => Promise<{ error: { message: string } | null }>;
+
+/**
+ * Persist a conversation's ADVANCED intent through the SINGLE validated, org-scoped writer (the R18
+ * SECURITY DEFINER function). Throw-on-failure, exactly like the runtime-state writer; the caller
+ * catches and swallows so a bookkeeping write never gates the turn. Org-scoped in-DDL, so a caller can
+ * only ever advance its OWN conversation. Idempotent — persisting the same intent is a no-op update.
+ */
+async function setConversationIntent(args: {
+  conversation_id: string;
+  org_id: string;
+  intent: ConversationIntent;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as SetIntentRpc;
+  const { error } = await rpc("set_receptionist_conversation_intent", {
+    p_conversation_id: args.conversation_id,
+    p_org_id: args.org_id,
+    p_intent: args.intent,
+  });
+  if (error) {
+    throw new Error("set_receptionist_conversation_intent failed: " + error.message);
+  }
+}
+
 /**
  * The observable outcome of one conversation turn the runtime folded — the prior and next runtime
- * state, how the turn ROUTED (the pure classification), whether the state actually advanced, the
- * canonical context boundaries the runtime assembled, and the full underlying dispatch outcome. A
- * pure record of what the ONE orchestration layer did; it carries no new enforcement surface.
+ * state, how the turn ROUTED (the pure classification), whether the state actually advanced, the R18
+ * conversational intent it resolved and advanced, the canonical context boundaries the runtime
+ * assembled, and the full underlying dispatch outcome. A pure record of what the ONE orchestration
+ * layer did; it carries no new enforcement surface.
  */
 export type ConversationTurnResult = {
   /** The conversation this turn ran on, or null when the caller supplied no conversation id. */
@@ -802,6 +842,20 @@ export type ConversationTurnResult = {
   transition: ConversationTransitionPlan;
   /** True when the persisted state actually changed (a durable advance was written). */
   state_advanced: boolean;
+  /** The conversational intent BEFORE the turn (the persisted marker, coerced deny-unknown) (R18). */
+  prior_intent: ConversationIntent;
+  /** The intent the R18 engine RESOLVED from this turn's context (the customer's latest message). */
+  resolved_intent: ConversationIntent;
+  /** The conversational intent AFTER the turn (equals prior_intent when the resolution had no signal). */
+  next_intent: ConversationIntent;
+  /**
+   * The GOVERNED intent progression the R18 engine planned for this turn — an `advance` (a validated
+   * change that was persisted), an `unchanged` self-loop, or a `rejected` illegal edge (refused, never
+   * persisted). The auditable record of how the single intent authority resolved the turn.
+   */
+  intent_transition: IntentTransitionPlan;
+  /** True when the persisted intent actually changed (a durable advance was written). */
+  intent_advanced: boolean;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -837,6 +891,7 @@ export async function runConversationTurn(
   // leaves the initial state + null boundaries, and the dispatch still runs. `assembledContext` is the
   // ONE canonical context; it is threaded into the dispatch below, so the whole turn assembles once.
   let priorState: ConversationState = INITIAL_CONVERSATION_STATE;
+  let priorIntent: ConversationIntent = INITIAL_CONVERSATION_INTENT;
   let context: ConversationTurnResult["context"] = null;
   let assembledContext: ConversationContext | null = null;
   if (conversationId) {
@@ -851,10 +906,51 @@ export async function runConversationTurn(
         included_message_count: turnContext.context.boundaries.included_message_count,
       };
       priorState = coerceConversationState(turnContext.summary.runtime_state);
+      priorIntent = coerceConversationIntent(turnContext.summary.intent);
     }
   }
 
-  // Steps 5–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
+  // Steps 4–6 — RESOLVE the conversational intent, VALIDATE its progression, and UPDATE it, through the
+  // R18 CONVERSATION INTENT ENGINE (lib/receptionist/conversation-intent.ts) — ON TOP of the R17 state
+  // machine and BEFORE the draft. The engine is the SINGLE authority over conversational intent: it
+  // RESOLVES the current intent DETERMINISTICALLY from the ONE assembled context (the customer's latest
+  // message — no model, no second read), then PLANS the (prior → resolved) progression through its
+  // formal transition rules. Progression is MONOTONIC — a concrete intent never regresses to `unknown`,
+  // exactly as the state machine never regresses to `awaiting_ai` — and because the turn fold's image is
+  // exactly the legal-edge relation, a real turn only ever yields an `advance` or an `unchanged`; a
+  // `rejected` edge is impossible here and, if it somehow arose, is refused and recorded, NEVER
+  // persisted. Only a validated `advance` is written, through the single org-scoped writer. The engine
+  // NEVER moves the ownership marker, so intent progression can never bypass the state machine. Best-
+  // effort OBSERVATION: a failed intent write is logged and swallowed — it never gates the turn or
+  // blocks the reply below (intent reflects the INBOUND, a fact independent of the outbound).
+  const resolvedIntent = resolveIntent(assembledContext);
+  const intentTransition = planIntentProgression(priorIntent, resolvedIntent);
+  let intentAdvanced = false;
+  if (conversationId && intentTransition.kind === "advance") {
+    try {
+      await setConversationIntent({
+        org_id: input.org_id,
+        conversation_id: conversationId,
+        intent: intentTransition.to,
+      });
+      intentAdvanced = true;
+    } catch (e) {
+      console.error("[receptionist] conversation intent advance failed", e);
+    }
+  } else if (conversationId && intentTransition.kind === "rejected") {
+    // The engine refused an edge outside its declared relation — record the governance event; the
+    // marker is left untouched. (Unreachable for a real turn: the fold's image is the legal-edge
+    // relation, so a turn only ever yields `advance` or `unchanged`. The guard makes that law explicit.)
+    console.error("[receptionist] conversation intent transition REJECTED — illegal edge refused", {
+      from: intentTransition.from,
+      to: intentTransition.to,
+      reason: intentTransition.reason,
+    });
+  }
+  const nextIntent: ConversationIntent =
+    intentTransition.kind === "advance" ? intentTransition.to : priorIntent;
+
+  // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
   // mandatory audit (R4), and routes the outcome (allow→transport, review→held for the Reply Review
@@ -928,6 +1024,11 @@ export async function runConversationTurn(
     next_state: nextState,
     transition,
     state_advanced: stateAdvanced,
+    prior_intent: priorIntent,
+    resolved_intent: resolvedIntent,
+    next_intent: nextIntent,
+    intent_transition: intentTransition,
+    intent_advanced: intentAdvanced,
     context,
     dispatch,
   };

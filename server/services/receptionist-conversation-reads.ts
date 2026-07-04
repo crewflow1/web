@@ -98,6 +98,10 @@ export type ConversationSummary = {
    *  ownership marker the runtime advances after each turn; one of the values in
    *  lib/receptionist/runtime.ts::CONVERSATION_STATES. */
   runtime_state: string;
+  /** The CONVERSATION INTENT — what the customer wants on their latest turn (R18). A per-turn
+   *  classification the runtime resolves and advances; one of the values in
+   *  lib/receptionist/conversation-intent.ts::CONVERSATION_INTENTS. Independent of `runtime_state`. */
+  intent: string;
   message_count: number;
   first_message_at: string;
   last_message_at: string;
@@ -127,7 +131,7 @@ const TIMELINE_COLUMNS =
 
 const LIST_COLUMNS =
   "conversation_id, org_id, employee_slug, channel, contact_ref, contact_name, status, " +
-  "runtime_state, message_count, first_message_at, last_message_at, created_at, updated_at, " +
+  "runtime_state, intent, message_count, first_message_at, last_message_at, created_at, updated_at, " +
   "last_direction, last_event_at";
 
 // The two views are not in the generated Database types — cast past the typed client to the
