@@ -44,8 +44,9 @@ export type { ConversationContext };
 /**
  * The canonical context AND the conversation summary it was assembled from — the product of ONE
  * reconstruction. The R16 runtime consumes this to observe a turn (the summary carries the R15
- * `runtime_state` marker) while threading the SAME `context` down the pipeline, so an autonomous turn
- * reconstructs and assembles EXACTLY ONCE. Both fields derive from a single reconstructConversation.
+ * `runtime_state` marker AND the R18 `intent` marker) while threading the SAME `context` down the
+ * pipeline, so an autonomous turn reconstructs and assembles EXACTLY ONCE. Both fields derive from a
+ * single reconstructConversation.
  */
 export type ConversationTurnContext = {
   /** The model-ready context — the SINGLE assembly, threaded through the whole turn. */

@@ -5,7 +5,8 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
- * (MULTI-TURN CONVERSATION RUNTIME) and R17 (FORMAL CONVERSATION STATE MACHINE).
+ * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE) and R18 (CONVERSATION
+ * INTENT ENGINE).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -31,6 +32,14 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     validated edge — never an ungoverned write.
  *   • A DUPLICATE IS A NO-OP — a turn whose dispatch short-circuits on an already-SENT transport
  *     produces no audit, so it routes `noop` and the persisted state is left UNCHANGED.
+ *   • INTENT IS RESOLVED, GOVERNED AND PERSISTED (R18) — every turn resolves the conversational intent
+ *     DETERMINISTICALLY from the assembled context (the customer's latest message), plans the
+ *     (prior → resolved) progression through the intent engine, and persists ONLY a validated `advance`
+ *     through its OWN org-scoped writer — surfaced live as `turn.resolved_intent` / `turn.intent_transition`
+ *     and read back through the R11 read model. It is an INDEPENDENT marker: intent advances on the
+ *     INBOUND even when the dispatch is a duplicate no-op that moves the ownership state not at all, and a
+ *     re-resolved self-loop is an `unchanged` the engine persists nothing for. Intent NEVER moves
+ *     `runtime_state`, so its progression can never bypass the state machine.
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -95,6 +104,15 @@ async function runtimeStateOf(convId: string): Promise<string | null> {
   const res = await svc().from(CONVERSATIONS).select("runtime_state, message_count").eq("id", convId);
   expect(res.error, res.error?.message).toBeNull();
   return (String((res.data ?? [])[0]?.runtime_state ?? "")) || null;
+}
+
+/** The persisted intent (R18), read straight from the container as service_role (ground truth). The
+ *  intent column is written by a SEPARATE org-scoped writer from runtime_state, so this proves the
+ *  independent marker moved on its own. */
+async function intentOf(convId: string): Promise<string | null> {
+  const res = await svc().from(CONVERSATIONS).select("intent").eq("id", convId);
+  expect(res.error, res.error?.message).toBeNull();
+  return (String((res.data ?? [])[0]?.intent ?? "")) || null;
 }
 
 /** Seed an allowed audit through the canonical write primitive; returns its id. */
@@ -247,10 +265,26 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     });
     expect(await runtimeStateOf(convId)).toBe("awaiting_customer");
 
-    // The runtime OWNS the outbound append — the timeline now carries the reply too.
+    // Steps 4–6 (R18) — it RESOLVED the conversational intent DETERMINISTICALLY from the assembled
+    // context (the seeded "I'd like a quote please." → quote_request), GOVERNED the progression through
+    // the intent engine, and PERSISTED the validated advance through the separate org-scoped writer.
+    expect(turn.prior_intent).toBe("unknown");
+    expect(turn.resolved_intent).toBe("quote_request");
+    expect(turn.next_intent).toBe("quote_request");
+    expect(turn.intent_advanced).toBe(true);
+    expect(turn.intent_transition).toEqual({
+      kind: "advance",
+      from: "unknown",
+      to: "quote_request",
+    });
+    expect(await intentOf(convId), "the intent marker advanced live").toBe("quote_request");
+
+    // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read
+    // model surfaces BOTH independent markers (the ownership state AND the R18 intent).
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count).toBe(2);
     expect(summary?.runtime_state).toBe("awaiting_customer");
+    expect(summary?.intent, "the read model surfaces the resolved intent").toBe("quote_request");
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -291,6 +325,28 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(turn.transition).toEqual({ kind: "unchanged", state: "awaiting_ai" });
     // The persisted marker is UNCHANGED, and no phantom outbound was threaded.
     expect(await runtimeStateOf(convId)).toBe("awaiting_ai");
+
+    // R18 — intent is resolved PRE-dispatch from the INBOUND, so it advances INDEPENDENTLY of the
+    // duplicate no-op that moved the ownership state not at all. The seeded "Please text me back." carries
+    // no callback cue the R2 detector recognises (it knows call / ring / phone me back, not "text"), so it
+    // resolves to the honest general_enquiry — and that concrete intent is governed, advanced and persisted
+    // even though `state_advanced` is false. The two markers are independent observations.
+    expect(turn.prior_intent).toBe("unknown");
+    expect(turn.resolved_intent).toBe("general_enquiry");
+    expect(turn.intent_advanced, "intent advances on the inbound even under a duplicate dispatch").toBe(
+      true,
+    );
+    expect(turn.state_advanced, "yet the ownership state did NOT advance — independent markers").toBe(
+      false,
+    );
+    expect(turn.intent_transition).toEqual({
+      kind: "advance",
+      from: "unknown",
+      to: "general_enquiry",
+    });
+    expect(await intentOf(convId), "the intent marker advanced live, independent of the no-op").toBe(
+      "general_enquiry",
+    );
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count, "a noop threads no outbound").toBe(1);
   });
@@ -313,5 +369,63 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count, "only the inbound is threaded").toBe(1);
     expect(summary?.runtime_state).toBe("awaiting_ai");
+  });
+
+  it("R18 — intent is resolved DETERMINISTICALLY, its progression GOVERNED and persisted, and a re-resolved self-loop advances nothing", async () => {
+    const orgId = await freshOrg();
+    // Seed a flag-OFF inbound: the container is created (intent defaults to `unknown`) and the inbound is
+    // threaded, but no turn has run — so nothing has resolved the intent yet.
+    const seed = await processInboundEnquiry({
+      org_id: orgId,
+      channel: "sms",
+      caller: CALLER,
+      raw_text: "How much do you charge for a boiler service?",
+    });
+    const convId = seed.conversation_id as string;
+    expect(await intentOf(convId), "a fresh conversation has no resolved intent").toBe("unknown");
+
+    // TURN 1 — the engine RESOLVES the intent from the assembled context (a price question → quote_request,
+    // via the QUOTE cues; the R2 booking detector finds no appointment/callback signal), GOVERNS the
+    // (unknown → quote_request) progression as a validated `advance`, and PERSISTS it through its OWN writer.
+    const first = await runConversationTurn({
+      org_id: orgId,
+      channel: "sms",
+      conversation_id: convId,
+      enquiry_id: seed.enquiry_id,
+      customer_ref: CALLER,
+      metadata: { dedup_key: `CA-${crypto.randomUUID()}` },
+    });
+    expect(first.prior_intent).toBe("unknown");
+    expect(first.resolved_intent).toBe("quote_request");
+    expect(first.intent_advanced).toBe(true);
+    expect(first.intent_transition).toEqual({ kind: "advance", from: "unknown", to: "quote_request" });
+    expect(await intentOf(convId)).toBe("quote_request");
+
+    // The R11 read model surfaces the intent on BOTH the single-conversation read and the list read.
+    const summary = await getConversation({ org_id: orgId, conversation_id: convId });
+    expect(summary?.intent, "getConversation surfaces the intent").toBe("quote_request");
+    const list = await listConversations({ org_id: orgId });
+    expect(list[0]?.intent, "listConversations surfaces the intent").toBe("quote_request");
+
+    // TURN 2 — no new customer message has arrived, so the latest customer turn is UNCHANGED. Resolution is
+    // DETERMINISTIC (the same context resolves the same intent — quote_request again), so folding it onto
+    // the now-persisted quote_request is a self-loop the engine plans as `unchanged` and persists NOTHING
+    // for. The intent never regresses (monotonic knowledge): it is still quote_request afterwards.
+    const second = await runConversationTurn({
+      org_id: orgId,
+      channel: "sms",
+      conversation_id: convId,
+      enquiry_id: seed.enquiry_id,
+      customer_ref: CALLER,
+      metadata: { dedup_key: `CA-${crypto.randomUUID()}` },
+    });
+    expect(second.resolved_intent, "resolution is deterministic — same context, same intent").toBe(
+      "quote_request",
+    );
+    expect(second.prior_intent).toBe("quote_request");
+    expect(second.intent_advanced, "a re-resolved self-loop advances nothing").toBe(false);
+    expect(second.intent_transition).toEqual({ kind: "unchanged", intent: "quote_request" });
+    expect(second.next_intent).toBe("quote_request");
+    expect(await intentOf(convId), "the intent is monotonic — it never regressed").toBe("quote_request");
   });
 });

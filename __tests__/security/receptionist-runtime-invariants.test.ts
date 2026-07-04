@@ -3,8 +3,9 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 
 /**
- * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME + FORMAL STATE MACHINE invariants
- * (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME; R17 — FORMAL STATE MACHINE).
+ * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME + FORMAL STATE MACHINE + INTENT ENGINE
+ * invariants (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME; R17 — FORMAL
+ * STATE MACHINE; R18 — CONVERSATION INTENT ENGINE).
  *
  * R1–R14 built a one-shot responder and welded three absolute boundaries: exactly ONE enforcement
  * path, exactly ONE transport-write path, exactly ONE provider door — all captive to the canonical
@@ -33,6 +34,13 @@ import { resolve, relative, sep } from "node:path";
  *     exactly one module, org-scoped in the migration, the vocabulary is defined ONCE in the pure core
  *     and mirrored by the CHECK, and (R17) every persisted advance passes the pure core's formal state
  *     machine (`planConversationTransition`), single-sourced beside the vocabulary it governs.
+ *   • (R18) A SECOND PURE ENGINE GOVERNS CONVERSATIONAL INTENT — lib/receptionist/conversation-intent.ts
+ *     resolves intent DETERMINISTICALLY from the canonical context (reusing the R2 booking detector and
+ *     the R12 context type, nothing else) and governs its progression with the SAME advance / unchanged /
+ *     rejected discipline as the state machine. It is single-sourced, has EXACTLY ONE consumer (the
+ *     service), persists ONLY under a machine-validated advance through its OWN org-scoped SECURITY
+ *     DEFINER writer, and NEVER touches the ownership marker — so intent progression, a distinct
+ *     observation, can never bypass the state machine.
  *
  * The runtime's PURE calculus is pinned exhaustively in the unit tier
  * (__tests__/receptionist/runtime.test.ts); its end-to-end REACHING behaviour over real Postgres
@@ -101,11 +109,13 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 
 const SERVICE = "server/services/receptionist.ts";
 const RUNTIME_CORE = "lib/receptionist/runtime.ts";
+const INTENT_CORE = "lib/receptionist/conversation-intent.ts";
 const DRAFT = "server/services/receptionist-draft.ts";
 const CONTEXT_SEAM = "server/services/receptionist-conversation-context.ts";
 const POLICY = "lib/receptionist/policy.ts";
 const COMMS_INDEX = "lib/comms/index.ts";
 const MIGRATION = "supabase/migrations/20260822000000_receptionist_conversation_runtime.sql";
+const INTENT_MIGRATION = "supabase/migrations/20260823000000_receptionist_conversation_intent.sql";
 
 /** The harvested policy's decision surface. */
 const DECISION_FNS = /\b(?:evaluateReply|isAutoSendable|redactReply)\b/;
@@ -116,6 +126,8 @@ const PROVIDER_FACTORY = /\bgetSmsProvider\b/;
 const TRANSPORT_WRITE_FN = /\brecord_ai_reply_transport\b/;
 /** The runtime state's write primitive — the only door that advances a conversation's state. */
 const RUNTIME_STATE_WRITE_FN = /\bset_receptionist_conversation_runtime_state\b/;
+/** The intent engine's write primitive — the only door that advances a conversation's intent (R18). */
+const INTENT_WRITE_FN = /\bset_receptionist_conversation_intent\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -524,5 +536,235 @@ describe("receptionist runtime — R17: the formal state machine governs every p
     // FACTS — verdict / duplicate / audit-produced, §4). No message text is threaded into the
     // progression decision, so the machine encodes no intent progression / slot filling (R17 non-goals).
     expect(service).toMatch(/planConversationTransition\(\s*priorState,\s*routing\s*\)/);
+  });
+});
+
+// =====================================================================
+// 10. R18 — THE CONVERSATION INTENT ENGINE: a SECOND pure leaf that resolves
+//     conversational intent DETERMINISTICALLY from the canonical context and governs
+//     its progression with the same advance / unchanged / rejected discipline as the
+//     state machine — single-sourced, single-consumer, persisting ONLY under a validated
+//     advance through its OWN org-scoped writer, and NEVER touching the ownership marker
+//     (so intent progression, a distinct observation, can never bypass the state machine).
+// =====================================================================
+
+describe("receptionist runtime — R18: the conversation intent engine is a governed, single-sourced pure leaf", () => {
+  const core = codeOf(read(INTENT_CORE));
+  const service = codeOf(read(SERVICE));
+
+  // The whole intent-engine surface: the vocabulary, the legal-edge relation, the deterministic resolver,
+  // the total validator, and the three progression functions (the raw-endpoint planner, the turn fold,
+  // and the turn-driven planner). The exact analogue of §9's FSM_SYMBOLS, for the intent layer.
+  const INTENT_SYMBOLS: readonly RegExp[] = [
+    /export const CONVERSATION_INTENTS\b/,
+    /export const INTENT_TRANSITIONS\b/,
+    /export function resolveIntent\(/,
+    /export function isValidIntentTransition\(/,
+    /export function planIntentTransition\(/,
+    /export function advanceIntent\(/,
+    /export function planIntentProgression\(/,
+  ];
+
+  it(`ships the pure intent engine ${INTENT_CORE}, exporting the whole deterministic surface`, () => {
+    expect(existsSync(resolve(ROOT, INTENT_CORE)), INTENT_CORE).toBe(true);
+    for (const re of INTENT_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly two pure layers and NOTHING else — the R2 booking detector and the R12 context type", () => {
+    // The engine's ENTIRE import surface is the canonical booking DETECTOR (its single booking-recognition
+    // authority) and the R12 conversation-context TYPE (its sole input contract). It reaches no third
+    // module — no policy, no provider, no ledger, no DB, no clock, no model — so it cannot fork a second
+    // enforcement, generation or transport path any more than the runtime's own pure core (§1) can.
+    expect(importSpecifiers(core).sort()).toEqual([
+      "@/lib/receptionist/conversation-context",
+      "@/lib/receptionist/intent",
+    ]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("is NOT server-only and touches no admin client — model-free intent calculus usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole intent surface in the pure engine — no other module DEFINES any member", () => {
+    // Each member is declared (export const/function) in EXACTLY the pure engine and nowhere else, so the
+    // vocabulary, the transition graph, the resolver and the planners cannot fork into a second authority.
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of INTENT_SYMBOLS) expect(definersOf(re), re.source).toEqual([INTENT_CORE]);
+  });
+
+  it("the resolver has EXACTLY ONE consumer — the canonical service (no feature resolves intent independently)", () => {
+    // resolveIntent is named by the engine (its definition) and the service (its sole consumer) and
+    // NOTHING else: no feature classifies conversational intent outside the single authority.
+    const consumers = namersOf(/\bresolveIntent\b/).filter((p) => p !== INTENT_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the turn-driven progression planner has EXACTLY ONE consumer — the canonical service", () => {
+    const consumers = namersOf(/\bplanIntentProgression\b/).filter((p) => p !== INTENT_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the pure engine has EXACTLY ONE server importer — the orchestrating service", () => {
+    const importers = walkSources(SOURCE_ROOTS)
+      .filter((full) =>
+        importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-intent"),
+      )
+      .map(rel)
+      .sort();
+    expect(importers).toEqual([SERVICE]);
+  });
+
+  it("the intent writer is named by EXACTLY ONE module — the canonical service", () => {
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+  });
+
+  it("advances intent ONLY through the SECURITY DEFINER writer — the helper reaches the RPC and throws on failure", () => {
+    // The only mutation of `intent` is via the validated writer RPC; the helper never `.update(...)`s the
+    // conversations table inline, and a failed write THROWS (the caller then swallows it — a bookkeeping
+    // write never gates the turn).
+    expect(service).toMatch(
+      /async function setConversationIntent\([\s\S]*?rpc\(\s*["']set_receptionist_conversation_intent["']/,
+    );
+    expect(service).toMatch(
+      /async function setConversationIntent\([\s\S]*?set_receptionist_conversation_intent[\s\S]*?throw new Error/,
+    );
+  });
+
+  it("RESOLVES from the ONE assembled context and PLANS from (prior intent, resolved intent) alone", () => {
+    // The engine resolves intent from `assembledContext` — the runtime's single R16 assembly, NOT a second
+    // read and NOT a model call — then plans the progression from the prior persisted intent and that
+    // resolved intent. Determinism is inherited: the same context always resolves the same intent.
+    expect(service).toMatch(/resolveIntent\(\s*assembledContext\s*\)/);
+    expect(service).toMatch(/planIntentProgression\(\s*priorIntent,\s*resolvedIntent\s*\)/);
+  });
+
+  it("persists a progression ONLY under a validated `advance` — the intent writer is guarded by the plan kind", () => {
+    // The single intent-write call site runs inside the `intentTransition.kind === "advance"` branch and
+    // persists the engine's validated target `intentTransition.to`. An `unchanged` self-loop writes
+    // nothing, and a `rejected` illegal edge never reaches the writer.
+    expect(service).toMatch(
+      /intentTransition\.kind === "advance"[\s\S]*?setConversationIntent\(\{[\s\S]*?intent:\s*intentTransition\.to/,
+    );
+  });
+
+  it("REFUSES an illegal intent edge as a governance event — the `rejected` arm carries a reason, is logged, and is never persisted", () => {
+    // The plan type carries a `rejected` arm with an explanatory `reason`; the runtime records that
+    // governance event and does NOT write. (Unreachable for a real turn — the fold's image is the legal
+    // relation — but the arm and the guard make the refusal an explicit, testable law, exactly as §9.)
+    expect(core).toMatch(/kind:\s*"rejected"[\s\S]*?reason:\s*string/);
+    expect(service).toMatch(/intentTransition\.kind === "rejected"[\s\S]*?REJECTED/);
+  });
+
+  it("NEVER moves the ownership marker — intent progression cannot bypass the state machine", () => {
+    // The engine writes only the `intent` column, through its OWN writer; in executable source it names
+    // neither the runtime-state write primitive nor the state machine's planner. And the R17 state machine
+    // is UNDISTURBED: its writer is STILL named by exactly the service and STILL guarded by a validated
+    // `advance`, and its turn-driven planner STILL has exactly the one service consumer. So `intent` and
+    // `runtime_state` are independent observations written by two distinct, separately-guarded doors —
+    // advancing intent can never advance (or bypass the governance of) the ownership state.
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "engine never names the state writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "engine never reaches the state machine").toBe(
+      false,
+    );
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(/\bplanConversationTransition\b/).filter((p) => p !== RUNTIME_CORE)).toEqual([
+      SERVICE,
+    ]);
+    expect(service).toMatch(
+      /transition\.kind === "advance"[\s\S]*?setConversationRuntimeState\(\{[\s\S]*?runtime_state:\s*transition\.to/,
+    );
+  });
+});
+
+// =====================================================================
+// 11. R18 — THE INTENT MIGRATION SHIPS THE MINIMAL STATE — additive, CHECK-bounded,
+//     surfaced on the list view, advanced only through an org-scoped SECURITY DEFINER
+//     writer. NO backfill: 'unknown' is the honest initial value for every pre-R18 row.
+// =====================================================================
+
+describe("receptionist runtime — R18: the intent migration is additive, bounded and org-scoped", () => {
+  it(`ships the intent migration ${INTENT_MIGRATION}`, () => {
+    expect(existsSync(resolve(ROOT, INTENT_MIGRATION)), INTENT_MIGRATION).toBe(true);
+  });
+
+  const sql = sqlCodeOf(read(INTENT_MIGRATION));
+
+  it("adds ONE nullable-defaulted, CHECK-bounded column (provably additive), and NEEDS no backfill", () => {
+    expect(sql).toMatch(/add column if not exists intent text not null default 'unknown'/i);
+    expect(sql).toMatch(
+      /check\s*\(\s*intent in \(\s*'unknown',\s*'general_enquiry',\s*'booking_interest',\s*'callback_request',\s*'quote_request',\s*'human_handoff'\s*\)\s*\)/i,
+    );
+    // 'unknown' is the honest initial value for every pre-R18 row, so — unlike the R15 runtime_state
+    // migration (§6) — this migration performs NO backfill UPDATE that sets intent to a literal value.
+    expect(sql, "no backfill of the intent column").not.toMatch(/set intent\s*=\s*'/i);
+  });
+
+  it("recreates the list view to EXPOSE intent (the R11 read model stays the single reader)", () => {
+    expect(sql).toMatch(/create or replace view public\.receptionist_conversation_list/i);
+    expect(sql).toMatch(/c\.intent/i);
+  });
+
+  it("advances intent ONLY through a validated, org-scoped SECURITY DEFINER writer", () => {
+    expect(sql).toMatch(/create or replace function public\.set_receptionist_conversation_intent\(/i);
+    expect(sql).toMatch(/returns void/i);
+    expect(sql).toMatch(/security definer/i);
+    expect(sql).toMatch(/set search_path = ''/i);
+    // Validated in-DDL against the same six values (never persist an out-of-vocabulary intent).
+    expect(sql).toMatch(/raise exception/i);
+    // Org-scoped: a caller advances only its OWN conversation.
+    expect(sql).toMatch(
+      /update public\.receptionist_conversations[\s\S]*?where id = p_conversation_id[\s\S]*?and org_id = p_org_id/i,
+    );
+    expect(sql).toMatch(/revoke all on function[\s\S]*?from public, anon, authenticated/i);
+    expect(sql).toMatch(/grant execute on function[\s\S]*?to service_role/i);
+  });
+});
+
+// =====================================================================
+// 12. R18 — THE INTENT VOCABULARY IS DEFINED ONCE — the pure engine, mirrored by the CHECK.
+// =====================================================================
+
+describe("receptionist runtime — R18: the intent vocabulary is single-sourced and mirrored", () => {
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  it("defines the intent vocabulary in exactly one file — the pure engine", () => {
+    expect(definersOf(/export const CONVERSATION_INTENTS/)).toEqual([INTENT_CORE]);
+  });
+
+  it("defines the resolver, the fold, and the legal-edge relation in exactly one file — the pure engine", () => {
+    expect(definersOf(/export function resolveIntent\(/)).toEqual([INTENT_CORE]);
+    expect(definersOf(/export function advanceIntent\(/)).toEqual([INTENT_CORE]);
+    expect(definersOf(/export const INTENT_TRANSITIONS/)).toEqual([INTENT_CORE]);
+  });
+
+  it("the pure engine and the migration name the IDENTICAL six-value vocabulary (lock-step)", () => {
+    const core = codeOf(read(INTENT_CORE));
+    const sql = sqlCodeOf(read(INTENT_MIGRATION));
+    for (const intent of [
+      "unknown",
+      "general_enquiry",
+      "booking_interest",
+      "callback_request",
+      "quote_request",
+      "human_handoff",
+    ]) {
+      expect(core, `engine names ${intent}`).toContain(`"${intent}"`);
+      expect(sql, `migration names ${intent}`).toContain(`'${intent}'`);
+    }
   });
 });
