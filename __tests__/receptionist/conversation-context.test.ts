@@ -8,6 +8,7 @@ import {
 import { estimateTokens } from "@/lib/memory/retrieval";
 import { detectGap } from "@/lib/receptionist/conversation-gap";
 import { resolveStrategy } from "@/lib/receptionist/conversation-strategy";
+import { planPrompt } from "@/lib/receptionist/conversation-prompt";
 import type {
   ConversationSummary,
   ReconstructedConversation,
@@ -112,6 +113,7 @@ function summary(overrides: Partial<ConversationSummary> = {}): ConversationSumm
     information: {},
     gap: detectGap("undetermined", {}),
     strategy: resolveStrategy(detectGap("undetermined", {})),
+    prompt_plan: planPrompt(resolveStrategy(detectGap("undetermined", {}))),
     message_count: 0,
     first_message_at: "2026-01-01T10:00:00.000Z",
     last_message_at: "2026-01-01T10:00:00.000Z",

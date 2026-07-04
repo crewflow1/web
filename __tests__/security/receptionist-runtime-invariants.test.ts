@@ -157,6 +157,11 @@ const STRATEGY_CORE = "lib/receptionist/conversation-strategy.ts";
  *  NEVER to exist, because the R22 strategy is DERIVED, never persisted (no column, no writer, no
  *  migration): it is a total function of the ALREADY-derived R21 gap. */
 const STRATEGY_WRITE_FN = /\bset_receptionist_conversation_strategy\b/;
+const PLANNER_CORE = "lib/receptionist/conversation-prompt.ts";
+/** A prompt write primitive would be the shape of `set_receptionist_conversation_prompt` — asserted NEVER
+ *  to exist, because the R23 prompt plan is DERIVED, never persisted (no column, no writer, no migration):
+ *  it is a total function of the ALREADY-derived R22 strategy decision. */
+const PROMPT_WRITE_FN = /\bset_receptionist_conversation_prompt\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -1778,6 +1783,229 @@ describe("receptionist runtime — R22: the strategy vocabulary is single-source
     for (const name of STRATEGY_NAMES) {
       expect(core, `strategy engine names ${name}`).toContain(`"${name}"`);
       expect(goalCore, `goal engine does NOT name the strategy ${name}`).not.toContain(`"${name}"`);
+    }
+  });
+});
+
+// =====================================================================
+// 23. R23 — THE CONVERSATION PROMPT PLANNER IS A GOVERNED, SINGLE-SOURCED, DERIVED PURE LEAF — the THIRD
+//     purely-derived layer (like R21 gap and R22 strategy): it PERSISTS NOTHING (no column, no writer, no
+//     migration), REUSES exactly the R22 strategy TYPES and the R20 information-field TYPE and nothing else,
+//     DUPLICATES no context assembly / intent-goal resolution / information extraction / gap detection / OR
+//     strategy resolution, has EXACTLY the runtime service and the read model as consumers, and is DERIVED
+//     both in the runtime and on read from the ALREADY-derived strategy. It PLANS the next prompt and
+//     executes NO business action (booking / scheduling are explicit R23 non-goals).
+// =====================================================================
+
+describe("receptionist runtime — R23: the conversation prompt planner is a governed, single-sourced, DERIVED pure leaf", () => {
+  const core = codeOf(read(PLANNER_CORE));
+  const service = codeOf(read(SERVICE));
+  const reads = codeOf(read(READS));
+
+  // The whole prompt-planner surface: the derived act vocabulary and the single composed entry point. The
+  // analogue of §22's STRATEGY_SYMBOLS, for the prompt layer.
+  const PROMPT_SYMBOLS: readonly RegExp[] = [
+    /export const PROMPT_ACTS\b/,
+    /export function planPrompt\(/,
+  ];
+
+  it(`ships the pure prompt planner ${PLANNER_CORE}, exporting the whole derived surface`, () => {
+    expect(existsSync(resolve(ROOT, PLANNER_CORE)), PLANNER_CORE).toBe(true);
+    for (const re of PROMPT_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly TWO pure layers and NOTHING else — the R22 strategy TYPES and the R20 information-field TYPE", () => {
+    // Its ENTIRE import surface is the R22 strategy module (the `StrategyDecision` + `ConversationStrategy`
+    // TYPES it reads the decision from and maps the act by) and the R20 information module (the
+    // `InformationField` TYPE an `ask` decision targets). BOTH are type-only, so the planner names no runtime
+    // value from any other layer — no gap, no context, no policy, no provider, no ledger, no DB, no clock, no
+    // model. It cannot fork any enforcement, generation or transport path.
+    expect(importSpecifiers(core).sort()).toEqual([
+      "@/lib/receptionist/conversation-information",
+      "@/lib/receptionist/conversation-strategy",
+    ]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent / goal / information / gap / strategy / prompt write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+    expect(GOAL_WRITE_FN.test(core)).toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core)).toBe(false);
+    expect(GAP_WRITE_FN.test(core)).toBe(false);
+    expect(STRATEGY_WRITE_FN.test(core)).toBe(false);
+    expect(PROMPT_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("DUPLICATES no context assembly, no intent / goal resolution, no information extraction, NO gap detection AND NO STRATEGY RESOLUTION — the cardinal R23 boundary", () => {
+    // The planner consumes an ALREADY-derived strategy decision; it never re-assembles context, re-resolves
+    // intent/goal, re-extracts information, re-detects the gap, OR re-resolves the strategy. In executable
+    // source it names none of the context assembler, the intent/goal resolvers or planners, the information
+    // extractor / update planner, the gap detector OR the strategy resolver — so it re-implements no layer
+    // beneath it, exactly as the directive requires ("must NOT duplicate ... strategy resolution"). The
+    // strategy + information modules are imported for the TYPE alone.
+    expect(/\bassembleConversationContext\b/.test(core), "never names the context assembler").toBe(false);
+    expect(/\bresolveIntent\b/.test(core), "never names the intent resolver").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never names the intent planner").toBe(false);
+    expect(/\bresolveGoal\b/.test(core), "never names the goal resolver").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never names the goal planner").toBe(false);
+    expect(/\bextractInformation\b/.test(core), "never names the information extractor").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never names the information update planner").toBe(false);
+    expect(/\bdetectGap\b/.test(core), "never names the gap detector").toBe(false);
+    expect(/\bresolveStrategy\b/.test(core), "never RE-RESOLVES the strategy (it CONSUMES the derived decision)").toBe(false);
+  });
+
+  it("REUSES the R22 strategy decision rather than forking it — it re-derives NO strategy, priority OR gap", () => {
+    // "What is the next action / what does it target / does it expect a reply" is R22's single authority. The
+    // planner reads the DERIVED decision (its `strategy`, `target`, `expectsReply`) and re-implements none of
+    // that: it names neither R22's ordered rule table, its selector, its published priority, NOR the R21 gap
+    // TYPE or its fields. So there is exactly ONE planning definition (R22) and exactly ONE prompt-planning
+    // definition (R23) — no feature computes either independently. It reaches the gap ONLY through the
+    // decision, never the gap itself.
+    expect(/\bSTRATEGY_RULES\b/.test(core), "does not fork the R22 rule table").toBe(false);
+    expect(/\bselectStrategy\b/.test(core), "does not fork the R22 selector").toBe(false);
+    expect(/\bSTRATEGY_PRIORITY\b/.test(core), "does not re-derive the R22 priority").toBe(false);
+    expect(/\bConversationGap\b/.test(core), "does not name the R21 gap TYPE").toBe(false);
+    expect(/\bnextRequired\b/.test(core), "does not read the gap's nextRequired directly").toBe(false);
+  });
+
+  it("DERIVES ONLY — it re-orchestrates no runtime and executes NO business action (booking / scheduling are R23 non-goals)", () => {
+    // The planner plans the next prompt and stops; ACTING on it — generating the prose, booking, scheduling —
+    // is a future/existing capability that CONSUMES the plan. In executable source it names neither the turn
+    // orchestrator nor the canonical dispatch — so it can neither re-run the runtime nor send / book /
+    // schedule anything. The Prompt Planner determines conversational prompts ONLY.
+    expect(/\brunConversationTurn\b/.test(core), "never re-orchestrates the runtime").toBe(false);
+    expect(/\bdispatchReceptionistReply\b/.test(core), "never dispatches a reply").toBe(false);
+  });
+
+  it("is NOT server-only and touches no admin client — a model-free derivation usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole prompt surface in the pure planner — no other module DEFINES any member", () => {
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of PROMPT_SYMBOLS) expect(definersOf(re), re.source).toEqual([PLANNER_CORE]);
+  });
+
+  it("the prompt planner has EXACTLY the two authorised consumers — the runtime service and the read model", () => {
+    // planPrompt is named by the planner (its definition), the orchestrating service (it surfaces the plan on
+    // the turn result) and the read model (it derives the plan on read) — and NOTHING else: no feature
+    // computes conversational prompt planning independently.
+    const consumers = namersOf(/\bplanPrompt\b/).filter((p) => p !== PLANNER_CORE);
+    expect(consumers).toEqual([READS, SERVICE]);
+  });
+
+  it("PERSISTS NOTHING — the R23 divergence (like R21 / R22): no prompt column, no prompt writer, no prompt migration (the plan is DERIVED)", () => {
+    // Like the R21 gap and the R22 strategy, the prompt layer ships NO migration and NO writer: the plan is a
+    // total function of the ALREADY-derived strategy decision, and persisting it would create a second,
+    // driftable source of truth. Proof — there is no prompt migration file; no module in the source tree names
+    // a prompt write primitive; and no migration adds a prompt_plan column or projects one onto the R11 list
+    // view. (The `prompt_plan` token is used, not a bare `prompt`, so unrelated `prompt` columns in other
+    // migrations do not confound the check.)
+    const migrations = readdirSync(resolve(ROOT, "supabase/migrations")).filter((f) =>
+      f.endsWith(".sql"),
+    );
+    expect(migrations.some((f) => /prompt/i.test(f)), "no prompt migration file exists").toBe(false);
+    expect(namersOf(PROMPT_WRITE_FN), "no module names a prompt write primitive").toEqual([]);
+    for (const f of migrations) {
+      const sql = sqlCodeOf(read(`supabase/migrations/${f}`));
+      expect(PROMPT_WRITE_FN.test(sql), `${f} defines no prompt writer`).toBe(false);
+      expect(/\bc\.prompt_plan\b/i.test(sql), `${f} projects no prompt_plan column onto the list view`).toBe(false);
+      expect(/add column[^;]*\bprompt_plan\b/i.test(sql), `${f} adds no prompt_plan column`).toBe(false);
+    }
+  });
+
+  it("DERIVES the prompt in the runtime from the strategy — the seam that proves Context → … → Strategy → Prompt", () => {
+    // The runtime plans the prompt from the strategy the R22 engine JUST derived (`strategy`) — NOT a second
+    // read, NOT a model call. This is the linear stack, one layer taller.
+    expect(service).toMatch(/planPrompt\(strategy\)/);
+  });
+
+  it("DERIVES the prompt on READ from the derived strategy, persisting nothing", () => {
+    // The read model computes the plan FRESH on every read — deriving the gap, then the strategy from THAT
+    // gap, then the plan from THAT strategy through the ONE prompt authority — and writes nothing. So the read
+    // exposure is a projection, never a stored column, and the read model names NO write primitive of any layer.
+    expect(reads).toMatch(/planPrompt\(strategy\)/);
+    expect(PROMPT_WRITE_FN.test(reads), "read model persists no prompt").toBe(false);
+    expect(STRATEGY_WRITE_FN.test(reads), "read model persists no strategy").toBe(false);
+    expect(GAP_WRITE_FN.test(reads), "read model persists no gap").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(reads), "read model persists no information").toBe(false);
+    expect(GOAL_WRITE_FN.test(reads), "read model persists no goal").toBe(false);
+  });
+
+  it("NEVER moves the ownership, intent, goal, information, gap OR strategy marker — a SEVENTH observation that bypasses no layer beneath it", () => {
+    // The planner writes NOTHING; in executable source it names none of the write primitives or their planners.
+    // And the layers beneath are UNDISTURBED: the R17 state, R18 intent, R19 goal and R20 information writers
+    // are STILL each named by exactly the service. So deriving the prompt plan can move no marker or bypass any
+    // governance.
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "never names the state writer").toBe(false);
+    expect(INTENT_WRITE_FN.test(core), "never names the intent writer").toBe(false);
+    expect(GOAL_WRITE_FN.test(core), "never names the goal writer").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core), "never names the information writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "never reaches the state machine").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never reaches the intent planner").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never reaches the goal planner").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never reaches the information planner").toBe(false);
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(GOAL_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INFORMATION_WRITE_FN)).toEqual([SERVICE]);
+  });
+});
+
+// =====================================================================
+// 24. R23 — THE PROMPT-ACT VOCABULARY IS SINGLE-SOURCED AND INDEPENDENT OF THE STRATEGY AND GOAL ENGINES —
+//     the act vocabulary is defined ONCE in the planner, the strategy → act mapping is a total literal-keyed
+//     table (so the planner keys off the decision's strategy by LITERAL, adding no importer to the R21 gap
+//     engine), and the prompt-act vocabulary is DISJOINT from BOTH the R22 strategy vocabulary and the R19
+//     goal vocabulary (a prompt act is an UTTERANCE, never a move, never an objective).
+// =====================================================================
+
+describe("receptionist runtime — R23: the prompt-act vocabulary is single-sourced and independent of the strategy and goal engines", () => {
+  const core = codeOf(read(PLANNER_CORE));
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  const PROMPT_ACT_NAMES = ["greet", "ask", "answer", "handoff", "proceed"] as const;
+
+  it("defines the prompt-act vocabulary in exactly one file — the prompt planner", () => {
+    expect(definersOf(/export const PROMPT_ACTS/)).toEqual([PLANNER_CORE]);
+  });
+
+  it("maps the strategy to the act through a total literal-keyed table — one source of truth", () => {
+    // The act is chosen by indexing a total `Record<ConversationStrategy, PromptAct>` (STRATEGY_ACT) with the
+    // decision's strategy LITERAL — the analogue of how R22 keyed its rules off gap.goal. So the mapping is
+    // exhaustive by construction (a missing strategy fails tsc) and lives in exactly one place.
+    expect(/\bSTRATEGY_ACT\b/.test(core), "the strategy→act table is defined").toBe(true);
+    expect(/STRATEGY_ACT\[decision\.strategy\]/.test(core), "the act is keyed off the decision's strategy literal").toBe(true);
+  });
+
+  it("keys off the decision's strategy by LITERAL — it adds NO importer to the R21 gap engine", () => {
+    // The planner reads the strategy DECISION, not the gap; it never imports the gap module. So the R21 gap
+    // engine's importer set is undisturbed, and the planner reaches only the two TYPE modules it declares.
+    expect(importSpecifiers(core)).not.toContain("@/lib/receptionist/conversation-gap");
+  });
+
+  it("names the whole act vocabulary, and NEITHER the R22 strategy engine NOR the R19 goal engine names ANY of it — disjoint vocabularies", () => {
+    // The five act names live ONLY in the planner; neither the strategy engine nor the goal engine references
+    // any of them as a quoted literal. So the act vocabulary is the planner's OWN, not a re-labelling of a
+    // strategy or goal concern. The names are deliberately chosen not to collide — the act `answer` ≠ the
+    // strategy `provide_answer` ≠ the goal `answer_enquiry`; the act `handoff` ≠ the strategy
+    // `escalate_to_human` ≠ the goal `handoff_to_human`.
+    const strategyCore = codeOf(read(STRATEGY_CORE));
+    const goalCore = codeOf(read(GOAL_CORE));
+    for (const name of PROMPT_ACT_NAMES) {
+      expect(core, `prompt planner names ${name}`).toContain(`"${name}"`);
+      expect(strategyCore, `strategy engine does NOT name the act ${name}`).not.toContain(`"${name}"`);
+      expect(goalCore, `goal engine does NOT name the act ${name}`).not.toContain(`"${name}"`);
     }
   });
 });

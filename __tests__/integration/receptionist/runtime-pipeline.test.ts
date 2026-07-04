@@ -6,8 +6,8 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
  * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE), R18 (CONVERSATION
- * INTENT ENGINE), R19 (CONVERSATION GOAL ENGINE), R20 (CONVERSATION INFORMATION ENGINE) and R21
- * (CONVERSATION GAP ENGINE).
+ * INTENT ENGINE), R19 (CONVERSATION GOAL ENGINE), R20 (CONVERSATION INFORMATION ENGINE), R21
+ * (CONVERSATION GAP ENGINE), R22 (CONVERSATION STRATEGY ENGINE) and R23 (CONVERSATION PROMPT PLANNER).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -76,6 +76,14 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     function of the gap ALONE, surfaced live as `turn.strategy` and DERIVED AFRESH on every read. The
  *     runtime and the read model decide the IDENTICAL strategy from the SAME gap; it moves NO marker beneath
  *     it and executes NO business action (booking / scheduling are R22 non-goals) — it names the next move only.
+ *   • THE PROMPT PLAN IS DERIVED, NEVER PERSISTED (R23) — ON TOP of the strategy, every turn PLANS the next
+ *     conversational PROMPT: the ACT to perform (greet / ask / answer / handoff / proceed), the single field an
+ *     `ask` TARGETS (slot filling), the deterministic FOCUS directive that guides the draft, and whether it
+ *     EXPECTS a reply. Like the gap and the strategy it is a SEVENTH observation with NO column and NO writer —
+ *     a pure function of the strategy ALONE, surfaced live as `turn.prompt_plan` and DERIVED AFRESH on every
+ *     read. The runtime and the read model plan the IDENTICAL prompt from the SAME strategy; it moves NO marker
+ *     beneath it and executes NO business action (it plans the prompt, it never writes the words or books /
+ *     schedules — all R23 non-goals).
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -390,6 +398,20 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       expectsReply: true,
     });
 
+    // Step 9 (R23) — ON TOP of the strategy, the prompt planner PLANS the next conversational prompt. The
+    // decision is `request_information`, so the planned act is `ask` — the slot-filling act — TARGETING the
+    // same `job_type` field, carrying that field's deterministic FOCUS directive (never customer-facing
+    // prose), and it EXPECTS a customer reply (carried from the decision). The plan is DERIVED from the
+    // strategy ALONE — no column, no writer — surfaced live on the turn. It is a SEVENTH observation that
+    // moves NO marker beneath it and executes NO business action (an R23 non-goal): it plans the next prompt,
+    // it neither writes the words nor performs the action.
+    expect(turn.prompt_plan).toEqual({
+      act: "ask",
+      field: "job_type",
+      focus: "the type of work the customer needs carried out",
+      expectsReply: true,
+    });
+
     // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read model
     // surfaces ALL FOUR independent markers (the ownership state, the R18 intent, the R19 goal AND the R20
     // information — empty here, since this turn provided no structured facts).
@@ -410,6 +432,13 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       summary?.strategy,
       "getConversation derives the strategy on read, identical to the turn's",
     ).toEqual(turn.strategy);
+
+    // R23 — the read model plans the IDENTICAL prompt from the SAME derived strategy: same pure function, same
+    // input, same plan. Like the gap and the strategy, the plan needs no store of its own — turn and read agree.
+    expect(
+      summary?.prompt_plan,
+      "getConversation plans the prompt on read, identical to the turn's",
+    ).toEqual(turn.prompt_plan);
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -684,6 +713,19 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(summary?.strategy, "getConversation derives the strategy on read").toEqual(first.strategy);
     expect(list[0]?.strategy, "listConversations derives the strategy on read").toEqual(first.strategy);
 
+    // R23 — the prompt planner maps the FORWARD strategy to its act: `progress_goal` plans a `proceed` prompt
+    // that TARGETS no field, carries the act's generic FOCUS directive, and expects NO reply (carried from the
+    // decision). Derived from the strategy ALONE, surfaced live on the turn AND re-planned IDENTICALLY on BOTH
+    // read paths.
+    expect(first.prompt_plan).toEqual({
+      act: "proceed",
+      field: null,
+      focus: "confirm the details gathered and move the objective forward",
+      expectsReply: false,
+    });
+    expect(summary?.prompt_plan, "getConversation plans the prompt on read").toEqual(first.prompt_plan);
+    expect(list[0]?.prompt_plan, "listConversations plans the prompt on read").toEqual(first.prompt_plan);
+
     // TURN 2 — no new customer message, so extraction is DETERMINISTIC: the same context re-extracts the same
     // four facts. Folding them onto the now-persisted record adds nothing new, so the plan is `unchanged` and
     // the engine persists NOTHING — the record is MONOTONIC (it never shrinks, never regresses).
@@ -715,6 +757,12 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     // gap. Deriving it perturbs NO marker — planning the next move never writes anything.
     expect(second.strategy, "the strategy is deterministic — same gap, same decision").toEqual(
       first.strategy,
+    );
+
+    // R23 — the prompt plan is DETERMINISTIC too: turn 2 plans the IDENTICAL prompt from the same derived
+    // strategy. Planning it perturbs NO marker — planning the next prompt never writes anything.
+    expect(second.prompt_plan, "the prompt plan is deterministic — same strategy, same plan").toEqual(
+      first.prompt_plan,
     );
   });
 });
