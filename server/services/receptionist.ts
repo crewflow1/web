@@ -59,6 +59,10 @@ import {
   type InformationUpdate,
 } from "@/lib/receptionist/conversation-information";
 import { detectGap, type ConversationGap } from "@/lib/receptionist/conversation-gap";
+import {
+  resolveStrategy,
+  type StrategyDecision,
+} from "@/lib/receptionist/conversation-strategy";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -976,6 +980,14 @@ export type ConversationTurnResult = {
    * moves no marker and executes no action (the engine identifies missing information ONLY).
    */
   gap: ConversationGap;
+  /**
+   * The conversational STRATEGY the R22 engine DERIVED for this turn — computed from the gap alone
+   * (lib/receptionist/conversation-strategy.ts), never persisted. Names the next conversational ACTION
+   * (`strategy`), the single field it TARGETS (non-null only for a slot-filling `request_information` move),
+   * and whether it `expectsReply`. A pure projection of the gap: it DECIDES the next move but executes no
+   * business action (the engine determines conversational actions ONLY).
+   */
+  strategy: StrategyDecision;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1166,6 +1178,21 @@ export async function runConversationTurn(
   // and slot-fill prompting are explicit R21 non-goals a future capability performs by CONSUMING this gap).
   const gap = detectGap(nextGoal, nextInformation);
 
+  // Step (R22) — DERIVE the conversational STRATEGY through the R22 CONVERSATION STRATEGY ENGINE
+  // (lib/receptionist/conversation-strategy.ts) — ON TOP of the R21 gap engine, and STILL BEFORE the draft.
+  // The strategy is the SINGLE authority over conversational PLANNING: from the gap ALONE (`gap`, what the
+  // R21 engine JUST derived) it decides — by a pure, deterministic ordered rule table, NO model, NO second
+  // read — the next conversational ACTION (acknowledge, request_information, provide_answer,
+  // escalate_to_human, progress_goal), the single field that action TARGETS (the gap's `nextRequired` for a
+  // slot-filling request, else null), and whether it `expectsReply`. It REUSES the gap's completeness view
+  // (it forks no "what's missing" logic) and DUPLICATES no context assembly, intent/goal resolution,
+  // information extraction or gap detection. It PERSISTS NOTHING — the strategy adds no column and no writer;
+  // it is a fresh projection of the already-derived gap, surfaced on the turn result and re-derived on every
+  // read, so it can never drift. It DECIDES the next move but executes NO business action: booking,
+  // scheduling and slot-fill prompting are explicit R22 non-goals a future capability performs by CONSUMING
+  // this decision. Slot filling is the FIRST strategy expressed here, not the engine's purpose.
+  const strategy = resolveStrategy(gap);
+
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
@@ -1256,6 +1283,7 @@ export async function runConversationTurn(
     information_update: informationUpdate,
     information_updated: informationUpdated,
     gap,
+    strategy,
     context,
     dispatch,
   };

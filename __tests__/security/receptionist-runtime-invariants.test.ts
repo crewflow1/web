@@ -152,6 +152,11 @@ const READS = "server/services/receptionist-conversation-reads.ts";
 /** A gap write primitive would be the shape of `set_receptionist_conversation_gap` — asserted NEVER to
  *  exist, because the R21 gap is DERIVED, never persisted (no column, no writer, no migration). */
 const GAP_WRITE_FN = /\bset_receptionist_conversation_gap\b/;
+const STRATEGY_CORE = "lib/receptionist/conversation-strategy.ts";
+/** A strategy write primitive would be the shape of `set_receptionist_conversation_strategy` — asserted
+ *  NEVER to exist, because the R22 strategy is DERIVED, never persisted (no column, no writer, no
+ *  migration): it is a total function of the ALREADY-derived R21 gap. */
+const STRATEGY_WRITE_FN = /\bset_receptionist_conversation_strategy\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -1553,5 +1558,226 @@ describe("receptionist runtime — R21: the priority vocabulary is single-source
       infoCore.indexOf('"email_address"'),
       "information engine declares email_address before job_type",
     ).toBeLessThan(infoCore.indexOf('"job_type"'));
+  });
+});
+
+// =====================================================================
+// 21. R22 — THE CONVERSATION STRATEGY ENGINE IS A GOVERNED, SINGLE-SOURCED, DERIVED PURE LEAF.
+//     lib/receptionist/conversation-strategy.ts is the SECOND purely-derived layer (like R21's gap): it
+//     adds NO column, NO migration and NO writer. It CONSUMES the already-derived R21 gap and decides the
+//     next conversational ACTION — reusing the gap's completeness view, duplicating no context assembly,
+//     intent/goal resolution, information extraction OR gap detection, and executing NO business action. It
+//     is single-sourced, has EXACTLY the two authorised consumers (the service + the read model), reaches
+//     only the two TYPE modules it declares, and is surfaced on the turn result + re-derived on every read.
+// =====================================================================
+
+describe("receptionist runtime — R22: the conversation strategy engine is a governed, single-sourced, DERIVED pure leaf", () => {
+  const core = codeOf(read(STRATEGY_CORE));
+  const service = codeOf(read(SERVICE));
+  const reads = codeOf(read(READS));
+
+  // The whole strategy-engine surface: the derived priority vocabulary and the single composed entry point.
+  // The analogue of §19's GAP_SYMBOLS, for the strategy layer.
+  const STRATEGY_SYMBOLS: readonly RegExp[] = [
+    /export const STRATEGY_PRIORITY\b/,
+    /export function resolveStrategy\(/,
+  ];
+
+  it(`ships the pure strategy engine ${STRATEGY_CORE}, exporting the whole derived surface`, () => {
+    expect(existsSync(resolve(ROOT, STRATEGY_CORE)), STRATEGY_CORE).toBe(true);
+    for (const re of STRATEGY_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly TWO pure layers and NOTHING else — the R21 gap TYPE and the R20 information-field TYPE", () => {
+    // Its ENTIRE import surface is the R21 gap module (the `ConversationGap` TYPE it reads the decision from)
+    // and the R20 information module (the `InformationField` TYPE a slot-filling decision targets). BOTH are
+    // type-only, so the engine names no runtime value from any other layer — no context, no policy, no
+    // provider, no ledger, no DB, no clock, no model. It cannot fork any enforcement, generation or transport
+    // path.
+    expect(importSpecifiers(core).sort()).toEqual([
+      "@/lib/receptionist/conversation-gap",
+      "@/lib/receptionist/conversation-information",
+    ]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent / goal / information / gap / strategy write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+    expect(GOAL_WRITE_FN.test(core)).toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core)).toBe(false);
+    expect(GAP_WRITE_FN.test(core)).toBe(false);
+    expect(STRATEGY_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("DUPLICATES no context assembly, no intent / goal resolution, no information extraction AND NO GAP DETECTION — the cardinal R22 boundary", () => {
+    // The strategy engine consumes an ALREADY-derived gap; it never re-assembles context, re-resolves
+    // intent/goal, re-extracts information, or RE-DETECTS the gap. In executable source it names none of the
+    // context assembler, the intent/goal resolvers or planners, the information extractor / update planner,
+    // OR the gap detector — so it re-implements no layer beneath it, exactly as the directive requires ("must
+    // NOT duplicate ... gap detection"). The gap + information modules are imported for the TYPE alone.
+    expect(/\bassembleConversationContext\b/.test(core), "never names the context assembler").toBe(false);
+    expect(/\bresolveIntent\b/.test(core), "never names the intent resolver").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never names the intent planner").toBe(false);
+    expect(/\bresolveGoal\b/.test(core), "never names the goal resolver").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never names the goal planner").toBe(false);
+    expect(/\bextractInformation\b/.test(core), "never names the information extractor").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never names the information update planner").toBe(false);
+    expect(/\bdetectGap\b/.test(core), "never RE-DETECTS the gap (it CONSUMES the derived gap)").toBe(false);
+  });
+
+  it("REUSES the R21 gap's completeness view rather than forking it — it re-derives NO completeness OR priority", () => {
+    // "What is missing / most important / satisfied" is R21's single authority, itself delegating "what's
+    // outstanding / complete" to R20. The strategy engine reads the DERIVED gap (its `goal`, `satisfied`,
+    // `nextRequired`) and re-implements none of that arithmetic: it names neither R20's slot surface nor
+    // R21's derivation helpers. So there is exactly ONE completeness definition (R21/R20) and exactly ONE
+    // planning definition (R22) — no feature computes either independently.
+    expect(/\boutstandingSlots\b/.test(core), "does not fork the R20 slot surface").toBe(false);
+    expect(/\bisInformationComplete\b/.test(core), "does not fork the R20 completeness predicate").toBe(false);
+    expect(/\bmissingInformation\b/.test(core), "does not re-derive the missing list").toBe(false);
+    expect(/\bnextRequiredInformation\b/.test(core), "does not re-derive the next-required field").toBe(false);
+  });
+
+  it("DERIVES ONLY — it re-orchestrates no runtime and executes NO business action (booking / scheduling are R22 non-goals)", () => {
+    // The engine decides the next conversational action and stops; ACTING on it is a future capability that
+    // CONSUMES the decision. In executable source it names neither the turn orchestrator nor the canonical
+    // dispatch — so it can neither re-run the runtime nor send / book / schedule anything. The Strategy
+    // Engine determines conversational actions ONLY.
+    expect(/\brunConversationTurn\b/.test(core), "never re-orchestrates the runtime").toBe(false);
+    expect(/\bdispatchReceptionistReply\b/.test(core), "never dispatches a reply").toBe(false);
+  });
+
+  it("is NOT server-only and touches no admin client — a model-free derivation usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole strategy surface in the pure engine — no other module DEFINES any member", () => {
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of STRATEGY_SYMBOLS) expect(definersOf(re), re.source).toEqual([STRATEGY_CORE]);
+  });
+
+  it("the strategy resolver has EXACTLY the two authorised consumers — the runtime service and the read model", () => {
+    // resolveStrategy is named by the engine (its definition), the orchestrating service (it surfaces the
+    // strategy on the turn result) and the read model (it derives the strategy on read) — and NOTHING else:
+    // no feature computes conversational planning independently.
+    const consumers = namersOf(/\bresolveStrategy\b/).filter((p) => p !== STRATEGY_CORE);
+    expect(consumers).toEqual([READS, SERVICE]);
+  });
+
+  it("PERSISTS NOTHING — the R22 divergence (like R21): no strategy column, no strategy writer, no strategy migration (the strategy is DERIVED)", () => {
+    // Like the R21 gap, the strategy layer ships NO migration and NO writer: the strategy is a total function
+    // of the ALREADY-derived gap, and persisting it would create a second, driftable source of truth. Proof —
+    // there is no strategy migration file; no module in the source tree names a strategy write primitive; and
+    // no migration adds a strategy column or projects one onto the R11 list view.
+    const migrations = readdirSync(resolve(ROOT, "supabase/migrations")).filter((f) =>
+      f.endsWith(".sql"),
+    );
+    expect(migrations.some((f) => /strategy/i.test(f)), "no strategy migration file exists").toBe(false);
+    expect(namersOf(STRATEGY_WRITE_FN), "no module names a strategy write primitive").toEqual([]);
+    for (const f of migrations) {
+      const sql = sqlCodeOf(read(`supabase/migrations/${f}`));
+      expect(STRATEGY_WRITE_FN.test(sql), `${f} defines no strategy writer`).toBe(false);
+      expect(/\bc\.strategy\b/i.test(sql), `${f} projects no strategy column onto the list view`).toBe(false);
+      expect(/add column[^;]*\bstrategy\b/i.test(sql), `${f} adds no strategy column`).toBe(false);
+    }
+  });
+
+  it("DERIVES the strategy in the runtime from the gap — the seam that proves Context → Intent → Goal → Information → Gap → Strategy", () => {
+    // The runtime derives the strategy from the gap the R21 engine JUST derived (`gap`) — NOT a second read,
+    // NOT a model call. This is the linear stack, one layer taller.
+    expect(service).toMatch(/resolveStrategy\(gap\)/);
+  });
+
+  it("DERIVES the strategy on READ from the derived gap, persisting nothing", () => {
+    // The read model computes the strategy FRESH on every read — deriving the gap through the ONE gap
+    // authority, then the strategy from THAT gap through the ONE strategy authority — and writes nothing. So
+    // the read exposure is a projection, never a stored column, and the read model names NO write primitive of
+    // any layer.
+    expect(reads).toMatch(/resolveStrategy\(gap\)/);
+    expect(STRATEGY_WRITE_FN.test(reads), "read model persists no strategy").toBe(false);
+    expect(GAP_WRITE_FN.test(reads), "read model persists no gap").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(reads), "read model persists no information").toBe(false);
+    expect(GOAL_WRITE_FN.test(reads), "read model persists no goal").toBe(false);
+  });
+
+  it("NEVER moves the ownership, intent, goal, information OR gap marker — a SIXTH observation that bypasses no layer beneath it", () => {
+    // The engine writes NOTHING; in executable source it names none of the write primitives or their planners.
+    // And the layers beneath are UNDISTURBED: the R17 state, R18 intent, R19 goal and R20 information writers
+    // are STILL each named by exactly the service. So deriving the strategy can move no marker or bypass any
+    // governance.
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "never names the state writer").toBe(false);
+    expect(INTENT_WRITE_FN.test(core), "never names the intent writer").toBe(false);
+    expect(GOAL_WRITE_FN.test(core), "never names the goal writer").toBe(false);
+    expect(INFORMATION_WRITE_FN.test(core), "never names the information writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "never reaches the state machine").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "never reaches the intent planner").toBe(false);
+    expect(/\bplanGoalProgression\b/.test(core), "never reaches the goal planner").toBe(false);
+    expect(/\bplanInformationUpdate\b/.test(core), "never reaches the information planner").toBe(false);
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(GOAL_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INFORMATION_WRITE_FN)).toEqual([SERVICE]);
+  });
+});
+
+// =====================================================================
+// 22. R22 — THE STRATEGY VOCABULARY IS SINGLE-SOURCED AND INDEPENDENT OF THE GOAL ENGINE — the priority is
+//     defined ONCE in the strategy engine and DERIVED from its ordered rule table (so resolution order and
+//     priority order can never drift), the engine keys off the gap's goal by LITERAL (adding no importer to
+//     the R19 goal engine), and the strategy vocabulary is DISJOINT from the goal vocabulary (a strategy is
+//     a MOVE, never an objective).
+// =====================================================================
+
+describe("receptionist runtime — R22: the strategy vocabulary is single-sourced and independent of the goal engine", () => {
+  const core = codeOf(read(STRATEGY_CORE));
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  const STRATEGY_NAMES = [
+    "acknowledge",
+    "request_information",
+    "provide_answer",
+    "escalate_to_human",
+    "progress_goal",
+  ] as const;
+
+  it("defines the strategy priority in exactly one file — the strategy engine", () => {
+    expect(definersOf(/export const STRATEGY_PRIORITY/)).toEqual([STRATEGY_CORE]);
+  });
+
+  it("DERIVES the priority from the ordered rule table — one source of truth, no drift between order and priority", () => {
+    // STRATEGY_PRIORITY is not a second hand-maintained list: it is the rule table projected onto its strategy
+    // names (STRATEGY_RULES.map(...)). So the resolution order (first applicable rule wins) and the published
+    // priority order are the SAME order by construction.
+    expect(/STRATEGY_RULES\b/.test(core), "the ordered rule table is defined").toBe(true);
+    expect(/STRATEGY_RULES\.map\(/.test(core), "STRATEGY_PRIORITY is the rule table's projection").toBe(true);
+  });
+
+  it("keys off the gap's goal by LITERAL — it adds NO importer to the R19 goal engine", () => {
+    // The strategy engine distinguishes goals (undetermined / answer_enquiry / handoff_to_human) by comparing
+    // gap.goal against STRING LITERALS, NOT by importing the goal module. So R19's importer set is undisturbed
+    // (the §13-analogue still pins it at exactly four: the service, the information engine, the gap engine and
+    // the read model), and the strategy engine reaches only the two TYPE modules it declares.
+    expect(importSpecifiers(core)).not.toContain("@/lib/receptionist/conversation-goal");
+  });
+
+  it("names the whole strategy vocabulary, and the R19 goal engine names NONE of it — disjoint vocabularies", () => {
+    // The five strategy names live ONLY in the strategy engine; the goal engine references none of them. So
+    // the strategy vocabulary is the strategy engine's OWN, not a re-labelling of goal concerns. (That the two
+    // vocabularies share no member at runtime — the strategy `provide_answer` ≠ the goal `answer_enquiry`, the
+    // strategy `escalate_to_human` ≠ the goal `handoff_to_human` — is proven in the unit tier.)
+    const goalCore = codeOf(read(GOAL_CORE));
+    for (const name of STRATEGY_NAMES) {
+      expect(core, `strategy engine names ${name}`).toContain(`"${name}"`);
+      expect(goalCore, `goal engine does NOT name the strategy ${name}`).not.toContain(`"${name}"`);
+    }
   });
 });
