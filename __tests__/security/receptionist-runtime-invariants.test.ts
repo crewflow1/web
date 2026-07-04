@@ -119,6 +119,10 @@ const SERVICE = "server/services/receptionist.ts";
 const RUNTIME_CORE = "lib/receptionist/runtime.ts";
 const INTENT_CORE = "lib/receptionist/conversation-intent.ts";
 const DRAFT = "server/services/receptionist-draft.ts";
+// R25 — the Conversation Generation Engine SERVER runtime (the ONE model reach + the coalesced R12
+// context fetch). The R13 DRAFT seam above is now a thin adapter that delegates the whole generation to
+// this engine, so the R16 context-coalescing invariant below asserts against it.
+const ENGINE = "server/services/receptionist-generation.ts";
 const CONTEXT_SEAM = "server/services/receptionist-conversation-context.ts";
 const POLICY = "lib/receptionist/policy.ts";
 const COMMS_INDEX = "lib/comms/index.ts";
@@ -322,12 +326,14 @@ describe("receptionist runtime — the nine canonical steps, in order, delegatin
   it("delegates GENERATE→POLICY→AUDIT→ROUTE WHOLE to the canonical dispatch — the input is UNCHANGED (governed, not gated)", () => {
     // The dispatch receives the caller's `input` VERBATIM as its first argument. The second argument is
     // the already-assembled canonical context threaded down (R16) — a performance consolidation that
-    // spares the generator a duplicate reconstruction, NOT a prior-state gate. R17 adds a formal state
+    // spares the generator a duplicate reconstruction, NOT a prior-state gate. The THIRD argument is the
+    // R24 `responseSpec` derived this turn (R25), which the Generation Engine consumes into the model
+    // instruction — guidance for HOW to draft, never a gate on WHETHER to. R17 adds a formal state
     // machine, but it GOVERNS the state's PROGRESSION (post-dispatch); it does NOT GATE the turn on the
     // prior state — no prior-state branch re-shapes the dispatch, so intent progression and slot filling
     // stay non-goals the runtime encodes none of.
     expect(code).toMatch(
-      /const dispatch = await dispatchReceptionistReply\(\s*input,\s*assembledContext\s*\)/,
+      /const dispatch = await dispatchReceptionistReply\(\s*input,\s*assembledContext,\s*responseSpec\s*\)/,
     );
   });
 
@@ -484,24 +490,32 @@ describe("receptionist runtime — R16: a turn reconstructs and assembles contex
     );
   });
 
-  it("the R13 generator REUSES a threaded context, its own fetch retained ONLY as the fallback", () => {
-    const code = codeOf(read(DRAFT));
-    // A caller-threaded context (input.context) is consumed verbatim; the seam's own org-scoped fetch
-    // is the coalesced fallback — so an ORCHESTRATED turn never triggers a second reconstruction here,
-    // while a STANDALONE caller (no context threaded) keeps the pre-R16 fetch behaviour, unchanged.
-    expect(code, "consumes the threaded context first").toMatch(/input\.context\s*\?\?/);
-    expect(code, "the fallback fetch is retained").toMatch(/\bgetConversationContext\s*\(/);
+  it("the generator REUSES a threaded context, its own fetch retained ONLY as the fallback (R16 preserved through R25)", () => {
+    // R25 lifted the coalescing fetch INTO the engine. The R13 seam is now a thin adapter that threads the
+    // caller's context straight through (input.context ?? null), and the ENGINE consumes that context
+    // verbatim, falling back to its OWN org-scoped R12 fetch ONLY when nothing was threaded — so an
+    // ORCHESTRATED turn still never triggers a second reconstruction, while a STANDALONE caller keeps the
+    // pre-R16 fetch behaviour, unchanged.
+    const seam = codeOf(read(DRAFT));
+    expect(seam, "the adapter threads the caller's context through").toMatch(/input\.context\s*\?\?/);
+    const engine = codeOf(read(ENGINE));
+    expect(engine, "the engine consumes the threaded context first").toMatch(/request\.context\s*\?\?/);
+    expect(engine, "the engine's own fetch is the coalesced fallback").toMatch(
+      /\bgetConversationContext\s*\(/,
+    );
   });
 
-  it("the dispatch accepts the pre-assembled context and threads it to the generator (input passed verbatim)", () => {
+  it("the dispatch accepts the pre-assembled context AND the R24 spec, threading both to the generator (input passed verbatim)", () => {
     const code = codeOf(read(SERVICE));
-    // dispatchReceptionistReply takes the already-assembled context as an optional second argument…
+    // dispatchReceptionistReply takes the already-assembled context as an optional second argument, and
+    // the R24 response spec as an optional third (R25)…
     expect(code).toMatch(
-      /export async function dispatchReceptionistReply\(\s*input:[\s\S]*?context\?:\s*ConversationContext[\s\S]*?\)/,
+      /export async function dispatchReceptionistReply\(\s*input:[\s\S]*?context\?:\s*ConversationContext[\s\S]*?spec\?:\s*ResponseSpecification[\s\S]*?\)/,
     );
-    // …and hands it to the generator, so the draft is built from the runtime's ONE assembly.
+    // …and hands BOTH to the generator, so the draft is built from the runtime's ONE assembly (R16) and
+    // shaped by the spec derived this turn (R25).
     expect(code).toMatch(
-      /export async function dispatchReceptionistReply\([\s\S]*?generateReplyDraft\(\{[\s\S]*?context,[\s\S]*?\}\)/,
+      /export async function dispatchReceptionistReply\([\s\S]*?generateReplyDraft\(\{[\s\S]*?context,[\s\S]*?spec,[\s\S]*?\}\)/,
     );
   });
 });

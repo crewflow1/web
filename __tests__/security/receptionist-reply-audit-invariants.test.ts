@@ -97,10 +97,11 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 const SERVICE = "server/services/receptionist.ts";
 const PRODUCER = "lib/receptionist/reply.ts";
 // R13 (CEO Directive #018) replaced the fixed acknowledgement composer, at both pipeline draft sites,
-// with the conversation-aware draft generator. The deterministic producer above is now that
-// generator's FALLBACK, so its single consumer is the draft-generation seam — not the service, which
-// now reaches it only THROUGH the generator.
-const DRAFT_GENERATOR = "server/services/receptionist-draft.ts";
+// with the conversation-aware draft generator. The deterministic producer above became that generator's
+// FALLBACK. R25 then lifted the generation — including that fallback shaping — into the canonical
+// Conversation Generation Engine's PURE CORE, so the producer's single consumer is now the engine core
+// (the draft seam is a thin adapter that reaches it only THROUGH the engine).
+const GENERATION_CORE = "lib/receptionist/conversation-generation.ts";
 const MIGRATION = "supabase/migrations/20260815000000_ai_reply_audits.sql";
 
 /** The ledger's write primitive — the function an auditor would call to file a row. */
@@ -170,10 +171,11 @@ describe("receptionist reply audit — the producer is pure and captive", () => 
     .map(rel)
     .sort();
 
-  it("the producer is consumed by EXACTLY ONE module — the R13 draft-generation seam (its fallback)", () => {
-    // Post-R13 the deterministic composer is the generator's fallback, so its sole consumer is the
-    // draft seam. If this list ever grows, the fixed acknowledgement has leaked a second consumer.
-    expect(producerReachers).toEqual([DRAFT_GENERATOR]);
+  it("the producer is consumed by EXACTLY ONE module — the R25 generation engine core (its fallback)", () => {
+    // Post-R25 the deterministic composer is the generation engine's fallback shaping, so its sole
+    // consumer is the engine's pure core. If this list ever grows, the fixed acknowledgement has leaked
+    // a second consumer.
+    expect(producerReachers).toEqual([GENERATION_CORE]);
   });
 
   const pcode = codeOf(read(PRODUCER));

@@ -39,6 +39,18 @@ import { resolve, relative, sep } from "node:path";
  *   • FALLBACK PRESERVED — the seam imports composeReceptionistReply and labels the fallback with the
  *     pre-R13 audit producer, so the degraded draft is byte-for-byte, and in provenance, the R4 reply.
  *
+ * R25 UPDATE — the Conversation Generation Engine now OWNS the generation. R25 lifted the model reach, the
+ * R12-context consumption, the response-spec→instruction consumption and the fallback shaping OUT of the R13
+ * seam and INTO the canonical engine: its PURE core (lib/receptionist/conversation-generation.ts — spec
+ * consumption + fallback shaping, reaching NO model) and its SERVER runtime
+ * (server/services/receptionist-generation.ts — the ONE model reach). The R13 seam is now a THIN adapter that
+ * delegates to the engine and re-exports its producer labels. So the HEADLINE invariants above — draft only
+ * from the canonical R12 context, model only through the abstraction, the bounded edge, the preserved fallback —
+ * are asserted here against the ENGINE, not the adapter; the adapter is still proved to generate ONLY (it
+ * enforces/audits/transports nothing), and the single-draft-path weld through the canonical service is
+ * unchanged. The engine's own single-authority invariants are pinned in
+ * __tests__/security/receptionist-generation-invariants.test.ts.
+ *
  * The layer's runtime behaviour (deterministic prompt assembly; the model path; every degradation to the
  * acknowledgement; the generated draft flowing Enforce → Audit → Transport; org-scoped context
  * consumption) is pinned in __tests__/receptionist/draft.test.ts and
@@ -101,6 +113,13 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 
 const PURE = "lib/receptionist/draft.ts";
 const SEAM = "server/services/receptionist-draft.ts";
+// R25 — the Conversation Generation Engine subsumes R13's model reach. The generation of the draft (consuming
+// the R12 context, consuming an R24 spec into the model instruction, reaching the model, shaping the fallback)
+// moved OUT of the R13 seam and INTO the engine: its PURE core (spec consumption + fallback shaping, no model)
+// and its SERVER runtime (the ONE model reach). The R13 SEAM above is now a THIN adapter that delegates to the
+// engine, so the headline consumption/model/fallback invariants below assert on the engine, not the adapter.
+const ENGINE_CORE = "lib/receptionist/conversation-generation.ts";
+const ENGINE = "server/services/receptionist-generation.ts";
 const SERVICE = "server/services/receptionist.ts";
 const CONTEXT_SEAM = "server/services/receptionist-conversation-context.ts";
 const READS = "server/services/receptionist-conversation-reads.ts";
@@ -130,11 +149,13 @@ describe("receptionist reply drafting — the drafting layer ships", () => {
     expect(code).toMatch(/export const DEFAULT_REPLY_DRAFT_MAX_TOKENS\b/);
   });
 
-  it("the server seam exports the generateReplyDraft entry point + its producer labels", () => {
+  it("the server seam exports the generateReplyDraft entry point + re-exports the engine's producer labels", () => {
     const code = codeOf(read(SEAM));
     expect(code).toMatch(/export async function generateReplyDraft\(/);
-    expect(code).toMatch(/export const MODEL_PRODUCER\b/);
-    expect(code).toMatch(/export const FALLBACK_PRODUCER\b/);
+    // Under R25 the producer labels are DEFINED by the engine core (the provenance authority) and
+    // RE-EXPORTED here, so the seam's existing consumers still import them from this module unchanged.
+    expect(code).toMatch(/export\s*\{[^}]*\bMODEL_PRODUCER\b[\s\S]*?\}/);
+    expect(code).toMatch(/export\s*\{[^}]*\bFALLBACK_PRODUCER\b[\s\S]*?\}/);
   });
 });
 
@@ -160,16 +181,16 @@ describe("receptionist reply drafting — it is additive, code-only", () => {
 // =====================================================================
 
 describe("receptionist reply drafting — every draft is built from the canonical R12 context ONLY", () => {
-  it("the seam's ONLY conversation input is the R12 server seam's getConversationContext", () => {
-    const code = codeOf(read(SEAM));
+  it("the engine's ONLY conversation input is the R12 server seam's getConversationContext", () => {
+    const code = codeOf(read(ENGINE));
     expect(importSpecifiers(code), "consumes the canonical R12 seam").toContain(
       "@/server/services/receptionist-conversation-context",
     );
     expect(code, "and calls its org-scoped fetch").toMatch(/\bgetConversationContext\s*\(/);
   });
 
-  it("the seam NEVER reconstructs or assembles context itself — it folds what R12 produced", () => {
-    const code = codeOf(read(SEAM));
+  it("the engine NEVER reconstructs or assembles context itself — it folds what R12 produced", () => {
+    const code = codeOf(read(ENGINE));
     const imports = importSpecifiers(code);
     // It does not reach the R11 read model…
     expect(imports, "must not import the R11 read service").not.toContain(
@@ -181,8 +202,8 @@ describe("receptionist reply drafting — every draft is built from the canonica
     expect(imports, "must not import the pure assembler module").not.toContain(CONTEXT_TYPE);
   });
 
-  it("neither module reads a substrate table or a read-model view — reconstruction stays R11's job", () => {
-    for (const file of [PURE, SEAM]) {
+  it("no drafting module reads a substrate table or a read-model view — reconstruction stays R11's job", () => {
+    for (const file of [PURE, SEAM, ENGINE_CORE, ENGINE]) {
       const code = codeOf(read(file));
       expect(code, `${file} must not read the timeline view`).not.toMatch(
         /\breceptionist_conversation_timeline\b/,
@@ -214,33 +235,47 @@ describe("receptionist reply drafting — every draft is built from the canonica
 // =====================================================================
 
 describe("receptionist reply drafting — the model is reached ONLY through the existing abstraction", () => {
-  it("the seam's ONLY model door is getTextProvider from lib/ai/text", () => {
-    const code = codeOf(read(SEAM));
+  it("the engine's ONLY model door is getTextProvider from lib/ai/text", () => {
+    const code = codeOf(read(ENGINE));
     expect(importSpecifiers(code), "reaches the model through the house abstraction").toContain(
       TEXT_ABSTRACTION,
     );
     expect(code).toMatch(/\bgetTextProvider\s*\(/);
   });
 
-  it("the seam imports NO vendor SDK and names NO vendor entry point", () => {
-    const code = codeOf(read(SEAM));
-    const imports = importSpecifiers(code);
-    for (const banned of ["@anthropic-ai/sdk", "openai", "@/lib/ai/llm", "@/lib/ai/embeddings"]) {
-      expect(imports, `${SEAM} must not import ${banned}`).not.toContain(banned);
+  it("no drafting module imports a vendor SDK or names a vendor entry point", () => {
+    for (const file of [ENGINE, ENGINE_CORE, SEAM]) {
+      const code = codeOf(read(file));
+      const imports = importSpecifiers(code);
+      for (const banned of ["@anthropic-ai/sdk", "openai", "@/lib/ai/llm", "@/lib/ai/embeddings"]) {
+        expect(imports, `${file} must not import ${banned}`).not.toContain(banned);
+      }
+      expect(code, `${file}: no direct Anthropic client`).not.toMatch(/new\s+Anthropic\b/);
+      expect(code, `${file}: no direct OpenAI client`).not.toMatch(/new\s+OpenAI\b/);
+      expect(code, `${file}: no vendor message call`).not.toMatch(/\.messages\.create\b/);
+      expect(code, `${file}: no vendor chat call`).not.toMatch(/\.chat\.completions\b/);
+      expect(code, `${file}: no embedding call`).not.toMatch(
+        /\b(?:createEmbedding|embedText|embedMany)\b/,
+      );
     }
-    expect(code, "no direct Anthropic client").not.toMatch(/new\s+Anthropic\b/);
-    expect(code, "no direct OpenAI client").not.toMatch(/new\s+OpenAI\b/);
-    expect(code, "no vendor message call").not.toMatch(/\.messages\.create\b/);
-    expect(code, "no vendor chat call").not.toMatch(/\.chat\.completions\b/);
-    expect(code, "no embedding call").not.toMatch(/\b(?:createEmbedding|embedText|embedMany)\b/);
   });
 
   it("the model edge is BOUNDED — temperature 0 and a capped output", () => {
-    const code = codeOf(read(SEAM));
-    expect(code, "bounded determinism: temperature 0").toMatch(/temperature:\s*0\b/);
-    expect(code, "a capped output").toMatch(/\bmaxTokens\b/);
-    expect(code, "the cap is the pure module's constant").toMatch(
+    // The bound is DEFINED in the pure engine core: temperature pinned to 0, the cap defaulting to R13's constant.
+    const core = codeOf(read(ENGINE_CORE));
+    expect(core, "bounded determinism: temperature pinned to 0").toMatch(
+      /GENERATION_TEMPERATURE\s*=\s*0\b/,
+    );
+    expect(core, "the cap defaults to the pure module's constant").toMatch(
       /\bDEFAULT_REPLY_DRAFT_MAX_TOKENS\b/,
+    );
+    // The server runtime applies EXACTLY that prepared instruction at the model door — nothing re-chosen.
+    const engine = codeOf(read(ENGINE));
+    expect(engine, "temperature from the prepared instruction").toMatch(
+      /temperature:\s*instruction\.temperature\b/,
+    );
+    expect(engine, "maxTokens from the prepared instruction").toMatch(
+      /maxTokens:\s*instruction\.max_tokens\b/,
     );
   });
 
@@ -268,37 +303,45 @@ describe("receptionist reply drafting — the model is reached ONLY through the 
 // =====================================================================
 
 describe("receptionist reply drafting — the generator generates only (no bypass)", () => {
-  it("the seam names no policy — it decides no verdict", () => {
-    const code = codeOf(read(SEAM));
-    expect(importSpecifiers(code), "must not import the policy").not.toContain(
-      "@/lib/receptionist/policy",
-    );
-    expect(code).not.toMatch(/\b(?:evaluateReply|isAutoSendable|enforceReceptionistReply)\b/);
+  it("neither the seam nor the engine names any policy — they decide no verdict", () => {
+    for (const file of [SEAM, ENGINE]) {
+      const code = codeOf(read(file));
+      expect(importSpecifiers(code), `${file} must not import the policy`).not.toContain(
+        "@/lib/receptionist/policy",
+      );
+      expect(code).not.toMatch(/\b(?:evaluateReply|isAutoSendable|enforceReceptionistReply)\b/);
+    }
   });
 
-  it("the seam names no audit primitive and no audit seam — it records no attempt", () => {
-    const code = codeOf(read(SEAM));
-    expect(code).not.toMatch(/\brecord_ai_reply_audit\b/);
-    expect(code).not.toMatch(/\benforceAndAuditReply\b/);
+  it("neither the seam nor the engine names an audit primitive or the audit seam — they record no attempt", () => {
+    for (const file of [SEAM, ENGINE]) {
+      const code = codeOf(read(file));
+      expect(code).not.toMatch(/\brecord_ai_reply_audit\b/);
+      expect(code).not.toMatch(/\benforceAndAuditReply\b/);
+    }
   });
 
-  it("the seam names no transport primitive, transport function, or comms door — it sends nothing", () => {
-    const code = codeOf(read(SEAM));
-    expect(importSpecifiers(code), "must not import comms").not.toContain("@/lib/comms");
-    expect(code).not.toMatch(/\brecord_ai_reply_transport\b/);
-    expect(code).not.toMatch(/\b(?:transportReply|dispatchReply|dispatchReceptionistReply)\b/);
-    expect(code).not.toMatch(/\bgetSmsProvider\b/);
-    expect(code).not.toMatch(/\.send\s*\(/);
+  it("neither the seam nor the engine names a transport primitive, transport function, or comms door — they send nothing", () => {
+    for (const file of [SEAM, ENGINE]) {
+      const code = codeOf(read(file));
+      expect(importSpecifiers(code), `${file} must not import comms`).not.toContain("@/lib/comms");
+      expect(code).not.toMatch(/\brecord_ai_reply_transport\b/);
+      expect(code).not.toMatch(/\b(?:transportReply|dispatchReply|dispatchReceptionistReply)\b/);
+      expect(code).not.toMatch(/\bgetSmsProvider\b/);
+      expect(code).not.toMatch(/\.send\s*\(/);
+    }
   });
 
-  it("the seam writes NOTHING — no mutating query verb, no RPC", () => {
-    const code = codeOf(read(SEAM));
-    expect(code).not.toMatch(/\.insert\s*\(/);
-    expect(code).not.toMatch(/\.update\s*\(/);
-    expect(code).not.toMatch(/\.delete\s*\(/);
-    expect(code).not.toMatch(/\.upsert\s*\(/);
-    expect(code).not.toMatch(/\.rpc\b/);
-    expect(code).not.toMatch(/createAdminClient\b/);
+  it("neither the seam nor the engine writes ANYTHING — no mutating query verb, no RPC", () => {
+    for (const file of [SEAM, ENGINE]) {
+      const code = codeOf(read(file));
+      expect(code).not.toMatch(/\.insert\s*\(/);
+      expect(code).not.toMatch(/\.update\s*\(/);
+      expect(code).not.toMatch(/\.delete\s*\(/);
+      expect(code).not.toMatch(/\.upsert\s*\(/);
+      expect(code).not.toMatch(/\.rpc\b/);
+      expect(code).not.toMatch(/createAdminClient\b/);
+    }
   });
 });
 
@@ -371,17 +414,19 @@ describe("receptionist reply drafting — drafting lives in exactly one seam", (
     expect(referers).toEqual([SEAM, SERVICE].sort());
   });
 
-  it("buildReplyPrompt is DEFINED in exactly one module and REFERENCED only by the builder + its seam", () => {
+  it("buildReplyPrompt is DEFINED in exactly one module and REFERENCED only by the builder + the engine core", () => {
     const definers = walkSources(SOURCE_ROOTS)
       .filter((full) => /export function buildReplyPrompt\(/.test(codeOf(read(rel(full)))))
       .map(rel)
       .sort();
     expect(definers).toEqual([PURE]);
+    // Under R25 the ONE consumer of R13's prompt builder is the engine core's spec consumption
+    // (prepareGenerationInstruction). The seam no longer builds the prompt — it delegates to the engine.
     const referers = walkSources(SOURCE_ROOTS)
       .filter((full) => /\bbuildReplyPrompt\s*\(/.test(codeOf(read(rel(full)))))
       .map(rel)
       .sort();
-    expect(referers).toEqual([PURE, SEAM].sort());
+    expect(referers).toEqual([PURE, ENGINE_CORE].sort());
   });
 });
 
@@ -422,15 +467,15 @@ describe("receptionist reply drafting — correct layering, and the builder is t
 // =====================================================================
 
 describe("receptionist reply drafting — the deterministic fallback is the pre-R13 reply", () => {
-  it("the seam imports the R4 acknowledgement composer as its deterministic fallback", () => {
-    expect(importSpecifiers(codeOf(read(SEAM))), "the fallback is the R4 composer").toContain(
+  it("the engine core imports the R4 acknowledgement composer as its deterministic fallback", () => {
+    expect(importSpecifiers(codeOf(read(ENGINE_CORE))), "the fallback is the R4 composer").toContain(
       "@/lib/receptionist/reply",
     );
-    expect(codeOf(read(SEAM))).toMatch(/\bcomposeReceptionistReply\s*\(/);
+    expect(codeOf(read(ENGINE_CORE))).toMatch(/\bcomposeReceptionistReply\s*\(/);
   });
 
   it("the fallback's producer label is the pre-R13 audit producer — identical in provenance too", () => {
-    expect(codeOf(read(SEAM))).toMatch(
+    expect(codeOf(read(ENGINE_CORE))).toMatch(
       /FALLBACK_PRODUCER\s*=\s*["']deterministic_acknowledgement["']/,
     );
   });
