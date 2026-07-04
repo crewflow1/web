@@ -3,9 +3,9 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 
 /**
- * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME + FORMAL STATE MACHINE + INTENT ENGINE
- * invariants (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME; R17 — FORMAL
- * STATE MACHINE; R18 — CONVERSATION INTENT ENGINE).
+ * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME + FORMAL STATE MACHINE + INTENT ENGINE +
+ * GOAL ENGINE invariants (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME; R17 —
+ * FORMAL STATE MACHINE; R18 — CONVERSATION INTENT ENGINE; R19 — CONVERSATION GOAL ENGINE).
  *
  * R1–R14 built a one-shot responder and welded three absolute boundaries: exactly ONE enforcement
  * path, exactly ONE transport-write path, exactly ONE provider door — all captive to the canonical
@@ -41,6 +41,14 @@ import { resolve, relative, sep } from "node:path";
  *     service), persists ONLY under a machine-validated advance through its OWN org-scoped SECURITY
  *     DEFINER writer, and NEVER touches the ownership marker — so intent progression, a distinct
  *     observation, can never bypass the state machine.
+ *   • (R19) A THIRD PURE ENGINE GOVERNS THE CONVERSATIONAL GOAL — lib/receptionist/conversation-goal.ts
+ *     sits ON TOP of the intent engine: it ELEVATES the resolved intent (its SOLE import — it reaches no
+ *     context, no detector, no policy, no provider, no DB, no model) into the conversation's OBJECTIVE and
+ *     governs its progression with the SAME advance / unchanged / rejected discipline under a MONOTONIC
+ *     OBJECTIVE law. It is single-sourced, has EXACTLY ONE consumer (the service), persists ONLY under a
+ *     machine-validated advance through its OWN org-scoped SECURITY DEFINER writer, DUPLICATES no intent
+ *     resolution (it never names the intent resolver), and NEVER moves the ownership OR intent marker — so
+ *     goal progression, a THIRD distinct observation, can never bypass the state machine or the intent engine.
  *
  * The runtime's PURE calculus is pinned exhaustively in the unit tier
  * (__tests__/receptionist/runtime.test.ts); its end-to-end REACHING behaviour over real Postgres
@@ -128,6 +136,10 @@ const TRANSPORT_WRITE_FN = /\brecord_ai_reply_transport\b/;
 const RUNTIME_STATE_WRITE_FN = /\bset_receptionist_conversation_runtime_state\b/;
 /** The intent engine's write primitive — the only door that advances a conversation's intent (R18). */
 const INTENT_WRITE_FN = /\bset_receptionist_conversation_intent\b/;
+const GOAL_CORE = "lib/receptionist/conversation-goal.ts";
+const GOAL_MIGRATION = "supabase/migrations/20260824000000_receptionist_conversation_goal.sql";
+/** The goal engine's write primitive — the only door that advances a conversation's goal (R19). */
+const GOAL_WRITE_FN = /\bset_receptionist_conversation_goal\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -614,14 +626,29 @@ describe("receptionist runtime — R18: the conversation intent engine is a gove
     expect(consumers).toEqual([SERVICE]);
   });
 
-  it("the pure engine has EXACTLY ONE server importer — the orchestrating service", () => {
+  it("has EXACTLY TWO server importers — the orchestrating service and the R19 goal engine (type-only)", () => {
+    // R18 shipped with a SINGLE importer (the service). R19's goal engine sits ON TOP of the intent engine,
+    // so it imports the intent module — but ONLY for the `ConversationIntent` TYPE it elevates FROM (a
+    // type-only import), NEVER for a runtime value. The intent engine's AUTHORITY is therefore undiminished:
+    // its resolver and its turn-driven planner STILL have exactly the one consumer each (the service,
+    // asserted just above), and the goal engine names neither. The module-import set is EXACTLY these two
+    // and nothing more — no third module reaches into the intent engine.
     const importers = walkSources(SOURCE_ROOTS)
       .filter((full) =>
         importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-intent"),
       )
       .map(rel)
       .sort();
-    expect(importers).toEqual([SERVICE]);
+    expect(importers).toEqual([GOAL_CORE, SERVICE]);
+    // The second importer is TYPE-ONLY: it consumes the intent VOCABULARY type, not the resolver or planner.
+    const goalCore = codeOf(read(GOAL_CORE));
+    expect(/\bresolveIntent\b/.test(goalCore), "goal engine does not consume the intent resolver").toBe(
+      false,
+    );
+    expect(
+      /\bplanIntentProgression\b/.test(goalCore),
+      "goal engine does not consume the intent planner",
+    ).toBe(false);
   });
 
   it("the intent writer is named by EXACTLY ONE module — the canonical service", () => {
@@ -765,6 +792,256 @@ describe("receptionist runtime — R18: the intent vocabulary is single-sourced 
     ]) {
       expect(core, `engine names ${intent}`).toContain(`"${intent}"`);
       expect(sql, `migration names ${intent}`).toContain(`'${intent}'`);
+    }
+  });
+});
+
+// =====================================================================
+// 13. R19 — THE CONVERSATION GOAL ENGINE: a THIRD pure leaf that sits ON TOP of the R18
+//     intent engine — it ELEVATES the resolved INTENT into the conversation's OBJECTIVE and
+//     governs its progression with the same advance / unchanged / rejected discipline as the
+//     state machine and the intent engine. Single-sourced, single-consumer, persisting ONLY
+//     under a validated advance through its OWN org-scoped writer, DUPLICATING no intent
+//     resolution (it never names the intent resolver), and NEVER moving the ownership OR intent
+//     marker — so goal progression, a THIRD distinct observation, can never bypass the state
+//     machine or the intent engine.
+// =====================================================================
+
+describe("receptionist runtime — R19: the conversation goal engine is a governed, single-sourced pure leaf", () => {
+  const core = codeOf(read(GOAL_CORE));
+  const service = codeOf(read(SERVICE));
+
+  // The whole goal-engine surface: the vocabulary, the legal-edge relation, the deterministic resolver,
+  // the total validator, and the three progression functions (the raw-endpoint planner, the turn fold,
+  // and the turn-driven planner). The exact analogue of §10's INTENT_SYMBOLS, for the goal layer.
+  const GOAL_SYMBOLS: readonly RegExp[] = [
+    /export const CONVERSATION_GOALS\b/,
+    /export const GOAL_TRANSITIONS\b/,
+    /export function resolveGoal\(/,
+    /export function isValidGoalTransition\(/,
+    /export function planGoalTransition\(/,
+    /export function advanceGoal\(/,
+    /export function planGoalProgression\(/,
+  ];
+
+  it(`ships the pure goal engine ${GOAL_CORE}, exporting the whole deterministic surface`, () => {
+    expect(existsSync(resolve(ROOT, GOAL_CORE)), GOAL_CORE).toBe(true);
+    for (const re of GOAL_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("REUSES exactly ONE pure layer and NOTHING else — the R18 intent engine (its sole input contract)", () => {
+    // The engine's ENTIRE import surface is the R18 intent engine — the type it ELEVATES FROM. It sits ON
+    // TOP of the intent engine and reaches no second module: no context, no booking detector, no policy, no
+    // provider, no ledger, no DB, no clock, no model. So — like the runtime's own pure core (§1) and the
+    // intent engine (§10) — it cannot fork a second enforcement, generation or transport path.
+    expect(importSpecifiers(core).sort()).toEqual(["@/lib/receptionist/conversation-intent"]);
+  });
+
+  it("names no decision surface, no provider, no transport / state / intent / goal write primitive — a pure leaf", () => {
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(PROVIDER_FACTORY.test(core)).toBe(false);
+    expect(TRANSPORT_WRITE_FN.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+    expect(INTENT_WRITE_FN.test(core)).toBe(false);
+    expect(GOAL_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("DUPLICATES no intent resolution and no context assembly — it never names the intent resolver", () => {
+    // The cardinal R19 boundary: the goal engine consumes an ALREADY-resolved intent and elevates it; it
+    // never RE-resolves intent and never reads the R12 context. In executable source it names neither the
+    // intent resolver nor the intent progression planner — so it re-implements no layer beneath it, exactly
+    // as the directive requires ("must NOT duplicate ... intent resolution"). (The context is consumed
+    // transitively, at the runtime seam: Context → Intent → Goal.)
+    expect(/\bresolveIntent\b/.test(core), "goal engine never names the intent resolver").toBe(false);
+    expect(/\bplanIntentProgression\b/.test(core), "goal engine never names the intent planner").toBe(
+      false,
+    );
+    expect(importSpecifiers(core), "goal engine never imports the R12 context").not.toContain(
+      "@/lib/receptionist/conversation-context",
+    );
+  });
+
+  it("is NOT server-only and touches no admin client — model-free goal calculus usable in any tier", () => {
+    expect(importSpecifiers(core)).not.toContain("server-only");
+    expect(importSpecifiers(core)).not.toContain("@/lib/supabase/admin");
+  });
+
+  it("single-sources the whole goal surface in the pure engine — no other module DEFINES any member", () => {
+    // Each member is declared (export const/function) in EXACTLY the pure engine and nowhere else, so the
+    // vocabulary, the transition graph, the resolver and the planners cannot fork into a second authority.
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of GOAL_SYMBOLS) expect(definersOf(re), re.source).toEqual([GOAL_CORE]);
+  });
+
+  it("the resolver has EXACTLY ONE consumer — the canonical service (no feature resolves a goal independently)", () => {
+    // resolveGoal is named by the engine (its definition) and the service (its sole consumer) and NOTHING
+    // else: no feature elevates an intent to an objective outside the single authority.
+    const consumers = namersOf(/\bresolveGoal\b/).filter((p) => p !== GOAL_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the turn-driven progression planner has EXACTLY ONE consumer — the canonical service", () => {
+    const consumers = namersOf(/\bplanGoalProgression\b/).filter((p) => p !== GOAL_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the pure engine has EXACTLY ONE server importer — the orchestrating service", () => {
+    const importers = walkSources(SOURCE_ROOTS)
+      .filter((full) =>
+        importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-goal"),
+      )
+      .map(rel)
+      .sort();
+    expect(importers).toEqual([SERVICE]);
+  });
+
+  it("the goal writer is named by EXACTLY ONE module — the canonical service", () => {
+    expect(namersOf(GOAL_WRITE_FN)).toEqual([SERVICE]);
+  });
+
+  it("advances goal ONLY through the SECURITY DEFINER writer — the helper reaches the RPC and throws on failure", () => {
+    // The only mutation of `goal` is via the validated writer RPC; the helper never `.update(...)`s the
+    // conversations table inline, and a failed write THROWS (the caller then swallows it — a bookkeeping
+    // write never gates the turn), exactly like the runtime-state (§9) and intent (§10) writers.
+    expect(service).toMatch(
+      /async function setConversationGoal\([\s\S]*?rpc\(\s*["']set_receptionist_conversation_goal["']/,
+    );
+    expect(service).toMatch(
+      /async function setConversationGoal\([\s\S]*?set_receptionist_conversation_goal[\s\S]*?throw new Error/,
+    );
+  });
+
+  it("RESOLVES from the resolved intent and PLANS from (prior goal, resolved goal) alone", () => {
+    // The engine elevates the intent the R18 engine JUST resolved (`resolvedIntent`) — NOT a second read,
+    // NOT the context, NOT a model call — then plans the progression from the prior persisted goal and that
+    // resolved goal. Determinism is inherited: the same intent always resolves the same goal. This is the
+    // seam that proves the linear stack Context → Intent → Goal.
+    expect(service).toMatch(/resolveGoal\(\s*resolvedIntent\s*\)/);
+    expect(service).toMatch(/planGoalProgression\(\s*priorGoal,\s*resolvedGoal\s*\)/);
+  });
+
+  it("persists a progression ONLY under a validated `advance` — the goal writer is guarded by the plan kind", () => {
+    // The single goal-write call site runs inside the `goalTransition.kind === "advance"` branch and
+    // persists the engine's validated target `goalTransition.to`. An `unchanged` self-loop writes nothing,
+    // and a `rejected` illegal edge never reaches the writer.
+    expect(service).toMatch(
+      /goalTransition\.kind === "advance"[\s\S]*?setConversationGoal\(\{[\s\S]*?goal:\s*goalTransition\.to/,
+    );
+  });
+
+  it("REFUSES an illegal goal edge as a governance event — the `rejected` arm carries a reason, is logged, and is never persisted", () => {
+    // The plan type carries a `rejected` arm with an explanatory `reason`; the runtime records that
+    // governance event and does NOT write. (Unreachable for a real turn — the fold's image is the legal
+    // relation — but the arm and the guard make the refusal an explicit, testable law, exactly as §9/§10.)
+    expect(core).toMatch(/kind:\s*"rejected"[\s\S]*?reason:\s*string/);
+    expect(service).toMatch(/goalTransition\.kind === "rejected"[\s\S]*?REJECTED/);
+  });
+
+  it("NEVER moves the ownership marker OR the intent marker — goal progression cannot bypass the state machine or the intent engine", () => {
+    // The engine writes only the `goal` column, through its OWN writer; in executable source it names none
+    // of: the runtime-state write primitive, the intent write primitive, the state machine's planner, or the
+    // intent engine's planner. And the layers beneath it are UNDISTURBED: the R17 state writer and the R18
+    // intent writer are STILL each named by exactly the service, and the runtime STILL persists each only
+    // under its own validated `advance`. So `runtime_state`, `intent` and `goal` are three independent
+    // observations written by three distinct, separately-guarded doors — advancing the goal can never
+    // advance (or bypass the governance of) the ownership state or the intent.
+    expect(RUNTIME_STATE_WRITE_FN.test(core), "goal engine never names the state writer").toBe(false);
+    expect(INTENT_WRITE_FN.test(core), "goal engine never names the intent writer").toBe(false);
+    expect(/\bplanConversationTransition\b/.test(core), "goal engine never reaches the state machine").toBe(
+      false,
+    );
+    expect(/\bplanIntentProgression\b/.test(core), "goal engine never reaches the intent planner").toBe(
+      false,
+    );
+    expect(namersOf(RUNTIME_STATE_WRITE_FN)).toEqual([SERVICE]);
+    expect(namersOf(INTENT_WRITE_FN)).toEqual([SERVICE]);
+    expect(service).toMatch(
+      /intentTransition\.kind === "advance"[\s\S]*?setConversationIntent\(\{[\s\S]*?intent:\s*intentTransition\.to/,
+    );
+  });
+});
+
+// =====================================================================
+// 14. R19 — THE GOAL MIGRATION SHIPS THE MINIMAL STATE — additive, CHECK-bounded,
+//     surfaced on the list view, advanced only through an org-scoped SECURITY DEFINER
+//     writer. NO backfill: 'undetermined' is the honest initial value for every pre-R19 row.
+// =====================================================================
+
+describe("receptionist runtime — R19: the goal migration is additive, bounded and org-scoped", () => {
+  it(`ships the goal migration ${GOAL_MIGRATION}`, () => {
+    expect(existsSync(resolve(ROOT, GOAL_MIGRATION)), GOAL_MIGRATION).toBe(true);
+  });
+
+  const sql = sqlCodeOf(read(GOAL_MIGRATION));
+
+  it("adds ONE nullable-defaulted, CHECK-bounded column (provably additive), and NEEDS no backfill", () => {
+    expect(sql).toMatch(/add column if not exists goal text not null default 'undetermined'/i);
+    expect(sql).toMatch(
+      /check\s*\(\s*goal in \(\s*'undetermined',\s*'answer_enquiry',\s*'arrange_booking',\s*'arrange_callback',\s*'provide_quote',\s*'handoff_to_human'\s*\)\s*\)/i,
+    );
+    // 'undetermined' is the honest initial value for every pre-R19 row, so — like the R18 intent migration
+    // (§11) and unlike the R15 runtime_state migration (§6) — this migration performs NO backfill UPDATE
+    // that sets goal to a literal value.
+    expect(sql, "no backfill of the goal column").not.toMatch(/set goal\s*=\s*'/i);
+  });
+
+  it("recreates the list view to EXPOSE goal (the R11 read model stays the single reader)", () => {
+    expect(sql).toMatch(/create or replace view public\.receptionist_conversation_list/i);
+    expect(sql).toMatch(/c\.goal/i);
+  });
+
+  it("advances goal ONLY through a validated, org-scoped SECURITY DEFINER writer", () => {
+    expect(sql).toMatch(/create or replace function public\.set_receptionist_conversation_goal\(/i);
+    expect(sql).toMatch(/returns void/i);
+    expect(sql).toMatch(/security definer/i);
+    expect(sql).toMatch(/set search_path = ''/i);
+    // Validated in-DDL against the same six values (never persist an out-of-vocabulary goal).
+    expect(sql).toMatch(/raise exception/i);
+    // Org-scoped: a caller advances only its OWN conversation.
+    expect(sql).toMatch(
+      /update public\.receptionist_conversations[\s\S]*?where id = p_conversation_id[\s\S]*?and org_id = p_org_id/i,
+    );
+    expect(sql).toMatch(/revoke all on function[\s\S]*?from public, anon, authenticated/i);
+    expect(sql).toMatch(/grant execute on function[\s\S]*?to service_role/i);
+  });
+});
+
+// =====================================================================
+// 15. R19 — THE GOAL VOCABULARY IS DEFINED ONCE — the pure engine, mirrored by the CHECK.
+// =====================================================================
+
+describe("receptionist runtime — R19: the goal vocabulary is single-sourced and mirrored", () => {
+  const sources = walkSources(SOURCE_ROOTS).map((full) => ({
+    path: rel(full),
+    code: codeOf(read(rel(full))),
+  }));
+  const definersOf = (re: RegExp) =>
+    sources.filter((s) => re.test(s.code)).map((s) => s.path).sort();
+
+  it("defines the goal vocabulary in exactly one file — the pure engine", () => {
+    expect(definersOf(/export const CONVERSATION_GOALS/)).toEqual([GOAL_CORE]);
+  });
+
+  it("defines the resolver, the fold, and the legal-edge relation in exactly one file — the pure engine", () => {
+    expect(definersOf(/export function resolveGoal\(/)).toEqual([GOAL_CORE]);
+    expect(definersOf(/export function advanceGoal\(/)).toEqual([GOAL_CORE]);
+    expect(definersOf(/export const GOAL_TRANSITIONS/)).toEqual([GOAL_CORE]);
+  });
+
+  it("the pure engine and the migration name the IDENTICAL six-value vocabulary (lock-step)", () => {
+    const core = codeOf(read(GOAL_CORE));
+    const sql = sqlCodeOf(read(GOAL_MIGRATION));
+    for (const goal of [
+      "undetermined",
+      "answer_enquiry",
+      "arrange_booking",
+      "arrange_callback",
+      "provide_quote",
+      "handoff_to_human",
+    ]) {
+      expect(core, `engine names ${goal}`).toContain(`"${goal}"`);
+      expect(sql, `migration names ${goal}`).toContain(`'${goal}'`);
     }
   });
 });
