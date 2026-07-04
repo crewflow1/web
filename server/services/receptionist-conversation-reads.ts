@@ -10,6 +10,10 @@ import {
   resolveStrategy,
   type StrategyDecision,
 } from "@/lib/receptionist/conversation-strategy";
+import {
+  planPrompt,
+  type ConversationPromptPlan,
+} from "@/lib/receptionist/conversation-prompt";
 
 // =====================================================================
 // THE CONVERSATION TIMELINE READ MODEL (CEO Directive #018, R11).
@@ -146,6 +150,12 @@ export type ConversationSummary = ConversationListRow & {
    *  (lib/receptionist/conversation-strategy.ts::resolveStrategy), NEVER persisted — there is no strategy
    *  column, so it can never drift from the gap it derives from. Independent of every persisted marker. */
   strategy: StrategyDecision;
+  /** The DERIVED conversational PROMPT PLAN (R23) — the next conversational ACT, the single field it TARGETS
+   *  (non-null only for a slot-filling `ask`), the deterministic FOCUS directive that guides the draft, and
+   *  whether it `expectsReply`. Computed FRESH on every read from the strategy by the single planning authority
+   *  (lib/receptionist/conversation-prompt.ts::planPrompt), NEVER persisted — there is no prompt column, so it
+   *  can never drift from the strategy it derives from. Independent of every persisted marker. */
+  prompt_plan: ConversationPromptPlan;
 };
 
 /** A fully reconstructed conversation: its container metadata plus its ordered event timeline.
@@ -198,20 +208,22 @@ function listView(): ReadQuery<ConversationListRow> {
 }
 
 /**
- * Attach the DERIVED R21 gap AND the DERIVED R22 strategy to a raw list row — the ONE place the read model
- * turns a persisted (goal, information) pair into a {@link ConversationSummary}. Coerces the two persisted
- * observations deny-unknown (the goal through the R19 coercer, the information through the R20 coercer),
- * derives the gap through the single gap authority {@link detectGap}, then derives the strategy from THAT
- * gap through the single planning authority {@link resolveStrategy}. Pure and deterministic: the same row
- * always yields the same gap and strategy, and nothing is persisted — both are recomputed on every read, so
- * neither can ever be stale.
+ * Attach the DERIVED R21 gap, the DERIVED R22 strategy AND the DERIVED R23 prompt plan to a raw list row —
+ * the ONE place the read model turns a persisted (goal, information) pair into a {@link ConversationSummary}.
+ * Coerces the two persisted observations deny-unknown (the goal through the R19 coercer, the information
+ * through the R20 coercer), derives the gap through the single gap authority {@link detectGap}, derives the
+ * strategy from THAT gap through the single planning authority {@link resolveStrategy}, then plans the next
+ * prompt from THAT strategy through the single prompt-planning authority {@link planPrompt}. Pure and
+ * deterministic: the same row always yields the same gap, strategy and prompt plan, and nothing is persisted —
+ * all three are recomputed on every read, so none can ever be stale.
  */
 function withDerived(row: ConversationListRow): ConversationSummary {
   const gap = detectGap(
     coerceConversationGoal(row.goal),
     coerceConversationInformation(row.information),
   );
-  return { ...row, gap, strategy: resolveStrategy(gap) };
+  const strategy = resolveStrategy(gap);
+  return { ...row, gap, strategy, prompt_plan: planPrompt(strategy) };
 }
 
 /**

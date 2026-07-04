@@ -63,6 +63,10 @@ import {
   resolveStrategy,
   type StrategyDecision,
 } from "@/lib/receptionist/conversation-strategy";
+import {
+  planPrompt,
+  type ConversationPromptPlan,
+} from "@/lib/receptionist/conversation-prompt";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -988,6 +992,15 @@ export type ConversationTurnResult = {
    * business action (the engine determines conversational actions ONLY).
    */
   strategy: StrategyDecision;
+  /**
+   * The conversational PROMPT PLAN the R23 engine DERIVED for this turn — computed from the strategy alone
+   * (lib/receptionist/conversation-prompt.ts), never persisted. Names the next conversational ACT to perform
+   * (`act`), the single field it TARGETS (non-null only for a slot-filling `ask`), the deterministic FOCUS
+   * directive that guides the downstream draft (`focus`, never customer-facing prose), and whether it
+   * `expectsReply`. A pure projection of the strategy decision: it PLANS the next prompt but executes no
+   * business action and writes no words (the engine plans conversational prompts ONLY).
+   */
+  prompt_plan: ConversationPromptPlan;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1193,6 +1206,22 @@ export async function runConversationTurn(
   // this decision. Slot filling is the FIRST strategy expressed here, not the engine's purpose.
   const strategy = resolveStrategy(gap);
 
+  // Step (R23) — PLAN the next conversational PROMPT through the R23 CONVERSATION PROMPT PLANNER
+  // (lib/receptionist/conversation-prompt.ts) — ON TOP of the R22 strategy engine, and STILL BEFORE the draft.
+  // The planner is the SINGLE authority over conversational PROMPT PLANNING: from the strategy decision ALONE
+  // (`strategy`, what the R22 engine JUST derived) it plans — by pure, deterministic mapping tables, NO model,
+  // NO second read — the next conversational ACT (greet, ask, answer, handoff, proceed), the single field that
+  // act TARGETS (the decision's target for a slot-filling `ask`, else null), the deterministic FOCUS directive
+  // that guides the draft (never customer-facing prose), and whether it `expectsReply` (carried from the
+  // decision). It REUSES the strategy decision (it forks no strategy logic) and DUPLICATES no context
+  // assembly, intent/goal resolution, information extraction, gap detection or strategy resolution. It
+  // PERSISTS NOTHING — the plan adds no column and no writer; it is a fresh projection of the already-derived
+  // strategy, surfaced on the turn result and re-derived on every read, so it can never drift. It PLANS the
+  // next prompt but writes no words and executes NO business action: prose generation is the draft step below,
+  // and booking, scheduling and CRM writes are explicit R23 non-goals a future capability performs by
+  // CONSUMING this plan. Slot filling is the FIRST planner expressed here, not the engine's purpose.
+  const promptPlan = planPrompt(strategy);
+
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
@@ -1284,6 +1313,7 @@ export async function runConversationTurn(
     information_updated: informationUpdated,
     gap,
     strategy,
+    prompt_plan: promptPlan,
     context,
     dispatch,
   };
