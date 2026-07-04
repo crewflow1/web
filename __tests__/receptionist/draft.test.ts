@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ConversationContext } from "@/lib/receptionist/conversation-context";
+import type { ResponseSpecification } from "@/lib/receptionist/conversation-response";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 /**
@@ -103,6 +104,16 @@ function ctx(overrides?: {
 function fakeProvider(provider = "anthropic", model = "claude-haiku-4-5") {
   return { info: { provider, model }, generate: generateMock };
 }
+
+/** A representative R24 response specification the runtime derives — threaded to guide generation. */
+const gatherSpec: ResponseSpecification = {
+  objective: "gather",
+  solicits: "job_type",
+  directive:
+    "Compose a reply that asks the customer for the type of work the customer needs carried out. Expect a reply from the customer.",
+  awaitsReply: true,
+  guardrails: ["conversational_only", "single_reply", "solicit_one_field"],
+};
 
 // =====================================================================
 // 1. The PURE prompt builder — deterministic input assembly + fixed framing.
@@ -352,6 +363,45 @@ describe("generateReplyDraft — the conversation-aware generator", () => {
     expect(out.draft).toBe(
       "Thanks Priya — the team will be in touch shortly about your boiler.",
     );
+  });
+
+  it("THREADED SPEC (R25) — a caller-supplied response spec reaches the model as guidance APPENDED to R13's ask, the safety framing untouched", async () => {
+    const context = ctx({ channel: "sms" });
+    getTextProviderMock.mockReturnValue(fakeProvider());
+    generateMock.mockResolvedValue({
+      text: "Thanks Priya — what type of work do you need carried out?",
+      model: "claude-haiku-4-5",
+      inputTokens: 130,
+      outputTokens: 15,
+    });
+
+    await generateReplyDraft({
+      org_id: "org-1",
+      channel: "sms",
+      conversation_id: "conv-1",
+      context, // the runtime's ONE assembly, threaded down
+      spec: gatherSpec, // the R24 spec the runtime derived for this turn
+    });
+
+    // The model was reached through the abstraction exactly once, bounded as always.
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    const [userArg, opts] = generateMock.mock.calls[0]!;
+    const base = buildReplyPrompt(context);
+    // The spec only ADDS to the user channel — R13's ask is preserved verbatim as the prefix…
+    expect(userArg.startsWith(base.user)).toBe(true);
+    // …and the spec's model-ready guidance (objective, directive, guardrails) is appended.
+    expect(userArg).toContain("Response guidance (objective: gather):");
+    expect(userArg).toContain(gatherSpec.directive);
+    expect(userArg).toContain(
+      "Honour these response guardrails: conversational_only, single_reply, solicit_one_field.",
+    );
+    // The system framing is NEVER steerable by a spec — it stays R13's fixed constant, bounded.
+    expect(opts).toEqual({
+      system: base.system,
+      temperature: 0,
+      maxTokens: DEFAULT_REPLY_DRAFT_MAX_TOKENS,
+    });
+    expect(opts.system).toBe(REPLY_DRAFT_SYSTEM_PROMPT);
   });
 
   it("NO THREADED CONTEXT (R16) — with nothing threaded, the generator performs its own canonical fetch (pre-R16 behaviour)", async () => {

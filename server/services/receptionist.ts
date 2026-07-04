@@ -700,12 +700,16 @@ export async function dispatchReply(
  * The optional `context` is the canonical R12 context ALREADY ASSEMBLED by the caller (R16): the
  * runtime assembles it ONCE per turn and threads it here, and it is handed to the generator verbatim
  * IN PLACE OF a second fetch. Omitted (a standalone caller), the generator fetches its own — the
- * pre-R16 behaviour, unchanged. It re-shapes nothing else: enforcement, audit, transport and the
- * no-duplicate short-circuit are identical whether or not a context is threaded.
+ * pre-R16 behaviour, unchanged. The optional `spec` is the R24 RESPONSE SPECIFICATION the runtime
+ * DERIVED for this turn (R25): it is threaded to the Generation Engine, which consumes it into the
+ * model instruction. Omitted (a spec-less caller), the engine prepares exactly the pre-R25 prompt. It
+ * re-shapes nothing else: enforcement, audit, transport and the no-duplicate short-circuit are
+ * identical whether or not a context or spec is threaded.
  */
 export async function dispatchReceptionistReply(
   input: ReplyAuditContext & { destination?: string | null },
   context?: ConversationContext | null,
+  spec?: ResponseSpecification | null,
 ): Promise<ReceptionistDispatchOutcome> {
   const dedupKey = transportDedupKey(input);
   if (dedupKey) {
@@ -733,6 +737,7 @@ export async function dispatchReceptionistReply(
     channel: input.channel,
     conversation_id: input.conversation_id ?? null,
     context,
+    spec,
   });
   return dispatchReply({
     ...input,
@@ -1248,18 +1253,21 @@ export async function runConversationTurn(
   // resolution or prompt planning. It PERSISTS NOTHING — the spec adds no column and no writer; it is a fresh
   // projection of the already-derived plan, surfaced on the turn result and re-derived on every read, so it can
   // never drift. It PREPARES how the response should be produced but writes no words and executes NO business
-  // action: prose generation is the draft step below (unchanged — the spec is exposed, not yet consumed here),
-  // and booking, scheduling and CRM writes are explicit R24 non-goals a future capability performs by CONSUMING
-  // this spec. Prompt execution is the FIRST response prepared here, not the engine's purpose.
+  // action: prose generation is the draft step below, where R25's Generation Engine CONSUMES this spec into the
+  // model instruction; booking, scheduling and CRM writes are explicit R24 non-goals a future capability performs
+  // by CONSUMING this spec. Prompt execution is the FIRST response prepared here, not the engine's purpose.
   const responseSpec = buildResponseSpec(promptPlan);
 
-  // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
-  // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
-  // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
-  // mandatory audit (R4), and routes the outcome (allow→transport, review→held for the Reply Review
-  // Inbox, block→refused) exactly as it always has. The `input` is passed verbatim; the threaded
-  // context re-shapes nothing — it only spares the generator a duplicate reconstruction.
-  const dispatch = await dispatchReceptionistReply(input, assembledContext);
+  // Step (R25) + Steps 7–8 — GENERATE the draft THROUGH THE CONVERSATION GENERATION ENGINE, then POLICY →
+  // AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The runtime adds no second path here:
+  // `dispatchReceptionistReply` generates the draft through the engine (R25 — from the ONE `assembledContext`
+  // threaded in AND the R24 `responseSpec` derived above, both consumed into the model instruction, not a second
+  // fetch or a second derivation), enforces the policy (R3), writes the mandatory audit (R4), and routes the
+  // outcome (allow→transport, review→held for the Reply Review Inbox, block→refused) exactly as it always has.
+  // The `input` is passed verbatim; the threaded context and spec re-shape nothing else — they only tell the
+  // engine HOW to generate. In CI (no provider) the engine takes its deterministic fallback, so the draft is
+  // byte-for-byte its pre-R25 self regardless of the spec.
+  const dispatch = await dispatchReceptionistReply(input, assembledContext, responseSpec);
 
   // Step 9 — GOVERN the conversation's progression through the R17 FORMAL STATE MACHINE. Classify the
   // turn from its dispatch facts (the turn OUTCOME/event), then PLAN the transition: the state machine

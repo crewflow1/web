@@ -132,10 +132,16 @@ const svc = (): Client => serviceClient() as unknown as Client;
 
 const FLAG = "NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK";
 const CONVERSATIONS = "receptionist_conversations";
+const AUDITS = "ai_reply_audits";
 const AUDIT_RPC = "record_ai_reply_audit";
 const TRANSPORT_RPC = "record_ai_reply_transport";
 const EMPLOYEE_SLUG = "voice-receptionist-ai";
 const CALLER = "+447700900123";
+
+// The deterministic written-channel acknowledgement the Generation Engine's FALLBACK composes — byte-for-byte
+// the reply R4 shipped. In CI no LLM key is configured, so every generated draft degrades to this, whatever
+// response spec the runtime threaded in (R25 leaves the draft BYTES unchanged; only the model path would differ).
+const MESSAGE_ACK = "Thanks for your message — a member of the team will get back to you shortly.";
 
 const createdOrgs: string[] = [];
 
@@ -186,6 +192,15 @@ async function informationOf(convId: string): Promise<Record<string, unknown>> {
   const res = await svc().from(CONVERSATIONS).select("information").eq("id", convId);
   expect(res.error, res.error?.message).toBeNull();
   return ((res.data ?? [])[0]?.information ?? {}) as Record<string, unknown>;
+}
+
+/** The folded generation provenance on one audit row, read as service_role (ground truth). The runtime
+ *  folds the Generation Engine's producer/model/fallback_reason into `ai_reply_audits.metadata`, so this is
+ *  how a live turn proves WHICH path produced its draft — the engine's fallback, or the model. */
+async function auditMetadataOf(auditId: string): Promise<Record<string, unknown>> {
+  const res = await svc().from(AUDITS).select("metadata").eq("id", auditId);
+  expect(res.error, res.error?.message).toBeNull();
+  return ((res.data ?? [])[0]?.metadata ?? {}) as Record<string, unknown>;
 }
 
 /** Seed an allowed audit through the canonical write primitive; returns its id. */
@@ -325,6 +340,22 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     // Steps 5–8 — it DELEGATED the canonical dispatch (generate → policy → audit → route).
     expect(turn.dispatch.audit_id).toBeTruthy();
     expect(turn.dispatch.decision?.verdict).toBe("allow");
+
+    // Step (R25) — the GENERATE leg of that dispatch ran THROUGH THE CONVERSATION GENERATION ENGINE, and
+    // nowhere else. The runtime threaded the R24 responseSpec derived below into the engine alongside the ONE
+    // assembled context; the engine consulted that context (FOUND) and, with no provider configured in CI,
+    // took its DETERMINISTIC fallback — so the dispatched draft is byte-for-byte the pre-R25 acknowledgement,
+    // and the engine's provenance is folded into the mandatory audit. `no_provider` (NOT `no_context` /
+    // `no_conversation`) is the decisive tell: the context + spec threaded ALL the way through the engine and
+    // only the absent CI provider stopped a model draft — the whole R25 wiring witnessed by one live turn.
+    expect(turn.dispatch.draft, "the engine's deterministic written-channel acknowledgement").toBe(MESSAGE_ACK);
+    expect(await auditMetadataOf(turn.dispatch.audit_id as string)).toMatchObject({
+      producer: "deterministic_acknowledgement",
+      fallback_reason: "no_provider",
+      model: null,
+      input_tokens: 0,
+      output_tokens: 0,
+    });
 
     // Step 9 — it GOVERNED the progression through the R17 state machine and persisted the advance.
     expect(turn.routing).toBe("sent");
