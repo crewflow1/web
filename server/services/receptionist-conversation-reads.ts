@@ -6,6 +6,10 @@ import type { InboundChannel } from "@/lib/receptionist/types";
 import { coerceConversationGoal } from "@/lib/receptionist/conversation-goal";
 import { coerceConversationInformation } from "@/lib/receptionist/conversation-information";
 import { detectGap, type ConversationGap } from "@/lib/receptionist/conversation-gap";
+import {
+  resolveStrategy,
+  type StrategyDecision,
+} from "@/lib/receptionist/conversation-strategy";
 
 // =====================================================================
 // THE CONVERSATION TIMELINE READ MODEL (CEO Directive #018, R11).
@@ -89,9 +93,9 @@ export type TimelineEvent = {
 
 /** One RAW row of the `receptionist_conversation_list` view — a conversation's container metadata, contact
  *  identity, and a preview of its most recent message, EXACTLY as the view supplies it. Internal: this is
- *  the persisted surface, BEFORE the read model derives the R21 gap. `ConversationSummary` is this row plus
- *  the derived gap (see below), which is why the view read is typed to this row and mapped through
- *  {@link withGap}. */
+ *  the persisted surface, BEFORE the read model derives the R21 gap and the R22 strategy.
+ *  `ConversationSummary` is this row plus those derived views (see below), which is why the view read is
+ *  typed to this row and mapped through {@link withDerived}. */
 type ConversationListRow = {
   conversation_id: string;
   org_id: string;
@@ -136,6 +140,12 @@ export type ConversationSummary = ConversationListRow & {
    *  (lib/receptionist/conversation-gap.ts::detectGap), NEVER persisted — there is no gap column, so it can
    *  never drift from the goal + information it derives from. Independent of every persisted marker. */
   gap: ConversationGap;
+  /** The DERIVED conversational STRATEGY (R22) — the next conversational ACTION, the single field it TARGETS
+   *  (non-null only for a slot-filling `request_information`), and whether it `expectsReply`. Computed FRESH
+   *  on every read from the gap by the single planning authority
+   *  (lib/receptionist/conversation-strategy.ts::resolveStrategy), NEVER persisted — there is no strategy
+   *  column, so it can never drift from the gap it derives from. Independent of every persisted marker. */
+  strategy: StrategyDecision;
 };
 
 /** A fully reconstructed conversation: its container metadata plus its ordered event timeline.
@@ -188,20 +198,20 @@ function listView(): ReadQuery<ConversationListRow> {
 }
 
 /**
- * Attach the DERIVED R21 gap to a raw list row — the ONE place the read model turns a persisted
- * (goal, information) pair into a {@link ConversationSummary}. Coerces the two persisted observations
- * deny-unknown (the goal through the R19 coercer, the information through the R20 coercer) and derives the
- * gap through the single authority {@link detectGap}. Pure and deterministic: the same row always yields the
- * same gap, and nothing is persisted — the gap is recomputed on every read, so it can never be stale.
+ * Attach the DERIVED R21 gap AND the DERIVED R22 strategy to a raw list row — the ONE place the read model
+ * turns a persisted (goal, information) pair into a {@link ConversationSummary}. Coerces the two persisted
+ * observations deny-unknown (the goal through the R19 coercer, the information through the R20 coercer),
+ * derives the gap through the single gap authority {@link detectGap}, then derives the strategy from THAT
+ * gap through the single planning authority {@link resolveStrategy}. Pure and deterministic: the same row
+ * always yields the same gap and strategy, and nothing is persisted — both are recomputed on every read, so
+ * neither can ever be stale.
  */
-function withGap(row: ConversationListRow): ConversationSummary {
-  return {
-    ...row,
-    gap: detectGap(
-      coerceConversationGoal(row.goal),
-      coerceConversationInformation(row.information),
-    ),
-  };
+function withDerived(row: ConversationListRow): ConversationSummary {
+  const gap = detectGap(
+    coerceConversationGoal(row.goal),
+    coerceConversationInformation(row.information),
+  );
+  return { ...row, gap, strategy: resolveStrategy(gap) };
 }
 
 /**
@@ -270,7 +280,7 @@ export async function listConversations(input: {
   if (error) {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
-  return (data ?? []).map(withGap);
+  return (data ?? []).map(withDerived);
 }
 
 /**
@@ -291,7 +301,7 @@ export async function getConversation(input: {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
   const row = data?.[0];
-  return row ? withGap(row) : null;
+  return row ? withDerived(row) : null;
 }
 
 /**
@@ -318,7 +328,7 @@ export async function getConversationByContact(input: {
     throw new Error("receptionist_conversation_list read failed: " + error.message);
   }
   const row = data?.[0];
-  return row ? withGap(row) : null;
+  return row ? withDerived(row) : null;
 }
 
 /**

@@ -69,6 +69,13 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     (goal, information). The runtime and the read model derive the IDENTICAL gap from the SAME inputs, so
  *     it needs no store of its own; it moves NO marker beneath it and executes NO business action (booking /
  *     scheduling are R21 non-goals) — it identifies missing information only.
+ *   • THE STRATEGY IS DERIVED, NEVER PERSISTED (R22) — ON TOP of the gap, every turn DECIDES the next
+ *     conversational ACTION: acknowledge an unknown objective, `request_information` (slot filling) TARGETING
+ *     the gap's next-required field, else provide / escalate / progress the satisfied objective, plus whether
+ *     the move EXPECTS a reply. Like the gap it is a SIXTH observation with NO column and NO writer — a pure
+ *     function of the gap ALONE, surfaced live as `turn.strategy` and DERIVED AFRESH on every read. The
+ *     runtime and the read model decide the IDENTICAL strategy from the SAME gap; it moves NO marker beneath
+ *     it and executes NO business action (booking / scheduling are R22 non-goals) — it names the next move only.
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -371,6 +378,18 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
       turnRequired: true,
     });
 
+    // Step 8 (R22) — ON TOP of the gap, the strategy engine DECIDES the next conversational action. The
+    // objective is unsatisfied, so the highest-priority applicable move is `request_information` — the
+    // slot-filling strategy — TARGETING the gap's `nextRequired` field (job_type), and it EXPECTS a customer
+    // reply. The strategy is DERIVED from the gap ALONE — no column, no writer — surfaced live on the turn. It
+    // is a SIXTH observation that moves NO marker beneath it and executes NO business action (an R22 non-goal):
+    // it names the next move, it does not perform it.
+    expect(turn.strategy).toEqual({
+      strategy: "request_information",
+      target: "job_type",
+      expectsReply: true,
+    });
+
     // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read model
     // surfaces ALL FOUR independent markers (the ownership state, the R18 intent, the R19 goal AND the R20
     // information — empty here, since this turn provided no structured facts).
@@ -384,6 +403,13 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     // R21 — the read model DERIVES the IDENTICAL gap from the PERSISTED (goal, information): same pure
     // function, same inputs, same result. The gap needs no store of its own — the turn and the read agree.
     expect(summary?.gap, "getConversation derives the gap on read, identical to the turn's").toEqual(turn.gap);
+
+    // R22 — the read model derives the IDENTICAL strategy from the SAME derived gap: same pure function, same
+    // input, same decision. Like the gap, the strategy needs no store of its own — the turn and the read agree.
+    expect(
+      summary?.strategy,
+      "getConversation derives the strategy on read, identical to the turn's",
+    ).toEqual(turn.strategy);
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -646,6 +672,18 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(summary?.gap, "getConversation derives the satisfied gap on read").toEqual(first.gap);
     expect(list[0]?.gap, "listConversations derives the satisfied gap on read").toEqual(first.gap);
 
+    // R22 — with the objective SATISFIED, the strategy engine decides the goal-specific FORWARD move: an
+    // actionable provide_quote with nothing outstanding is `progress_goal` — it TARGETS no field and expects
+    // NO reply (it is not a customer-facing move). Derived from the gap ALONE, surfaced live on the turn AND
+    // re-derived IDENTICALLY on BOTH read paths.
+    expect(first.strategy).toEqual({
+      strategy: "progress_goal",
+      target: null,
+      expectsReply: false,
+    });
+    expect(summary?.strategy, "getConversation derives the strategy on read").toEqual(first.strategy);
+    expect(list[0]?.strategy, "listConversations derives the strategy on read").toEqual(first.strategy);
+
     // TURN 2 — no new customer message, so extraction is DETERMINISTIC: the same context re-extracts the same
     // four facts. Folding them onto the now-persisted record adds nothing new, so the plan is `unchanged` and
     // the engine persists NOTHING — the record is MONOTONIC (it never shrinks, never regresses).
@@ -672,5 +710,11 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(second.gap, "the gap is deterministic — same inputs, same derivation").toEqual(first.gap);
     expect(second.gap.satisfied).toBe(true);
     expect(second.gap.turnRequired).toBe(false);
+
+    // R22 — the strategy is DETERMINISTIC too: turn 2 derives the IDENTICAL decision from the same derived
+    // gap. Deriving it perturbs NO marker — planning the next move never writes anything.
+    expect(second.strategy, "the strategy is deterministic — same gap, same decision").toEqual(
+      first.strategy,
+    );
   });
 });
