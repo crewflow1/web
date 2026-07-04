@@ -5,7 +5,7 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
- * (MULTI-TURN CONVERSATION RUNTIME).
+ * (MULTI-TURN CONVERSATION RUNTIME) and R17 (FORMAL CONVERSATION STATE MACHINE).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -25,6 +25,10 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     state each turn — never a new thread, never a spontaneous re-drive.
  *   • THE NINE STEPS ARE OBSERVABLE — `runConversationTurn` surfaces the prior state it READ, the
  *     context it ASSEMBLED, the dispatch it DELEGATED, and the next state it ADVANCED to.
+ *   • THE PROGRESSION IS GOVERNED (R17) — the persisted advance is the `advance` plan of the formal
+ *     state machine (awaiting_ai → awaiting_customer), surfaced live as `turn.transition`; a no-op turn
+ *     is an `unchanged` self-loop the machine persists nothing for. Every live progression is a
+ *     validated edge — never an ungoverned write.
  *   • A DUPLICATE IS A NO-OP — a turn whose dispatch short-circuits on an already-SENT transport
  *     produces no audit, so it routes `noop` and the persisted state is left UNCHANGED.
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
@@ -231,10 +235,16 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(turn.dispatch.audit_id).toBeTruthy();
     expect(turn.dispatch.decision?.verdict).toBe("allow");
 
-    // Step 9 — it ADVANCED the state by the pure fold, and persisted it.
+    // Step 9 — it GOVERNED the progression through the R17 state machine and persisted the advance.
     expect(turn.routing).toBe("sent");
     expect(turn.next_state).toBe("awaiting_customer");
     expect(turn.state_advanced).toBe(true);
+    // The persisted advance is the machine's VALIDATED `advance` plan — the exact edge it wrote.
+    expect(turn.transition).toEqual({
+      kind: "advance",
+      from: "awaiting_ai",
+      to: "awaiting_customer",
+    });
     expect(await runtimeStateOf(convId)).toBe("awaiting_customer");
 
     // The runtime OWNS the outbound append — the timeline now carries the reply too.
@@ -277,6 +287,8 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(turn.state_advanced).toBe(false);
     expect(turn.next_state).toBe(turn.prior_state);
     expect(turn.next_state).toBe("awaiting_ai");
+    // R17 — the state machine planned an `unchanged` self-loop, so nothing was persisted.
+    expect(turn.transition).toEqual({ kind: "unchanged", state: "awaiting_ai" });
     // The persisted marker is UNCHANGED, and no phantom outbound was threaded.
     expect(await runtimeStateOf(convId)).toBe("awaiting_ai");
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });

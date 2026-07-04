@@ -3,8 +3,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, relative, sep } from "node:path";
 
 /**
- * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME invariants
- * (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME).
+ * Voice Receptionist AI — MULTI-TURN CONVERSATION RUNTIME + FORMAL STATE MACHINE invariants
+ * (the AI Receptionist Programme, R15 — MULTI-TURN CONVERSATION RUNTIME; R17 — FORMAL STATE MACHINE).
  *
  * R1–R14 built a one-shot responder and welded three absolute boundaries: exactly ONE enforcement
  * path, exactly ONE transport-write path, exactly ONE provider door — all captive to the canonical
@@ -27,10 +27,12 @@ import { resolve, relative, sep } from "node:path";
  *     enforces, audits, transports or advances a conversation outside it.
  *   • THE ORCHESTRATION FOLDS THE CANONICAL PIPELINE, IN ORDER — `runConversationTurn` resolves →
  *     assembles context → delegates GENERATE→POLICY→AUDIT→ROUTE WHOLE to `dispatchReceptionistReply`
- *     → classifies → advances; the dispatch consumes the caller's input UNCHANGED (a marker, never a
- *     gate — no formal state machine).
- *   • ONLY THE RUNTIME ADVANCES STATE — the state writer is named by exactly one module, org-scoped in
- *     the migration, and the vocabulary is defined ONCE in the pure core and mirrored by the CHECK.
+ *     → classifies → PLANS+advances; the dispatch consumes the caller's input UNCHANGED — the R17 state
+ *     machine GOVERNS the progression, it does not GATE the turn.
+ *   • ONLY THE RUNTIME ADVANCES STATE, AND ONLY UNDER A VALIDATED EDGE — the state writer is named by
+ *     exactly one module, org-scoped in the migration, the vocabulary is defined ONCE in the pure core
+ *     and mirrored by the CHECK, and (R17) every persisted advance passes the pure core's formal state
+ *     machine (`planConversationTransition`), single-sourced beside the vocabulary it governs.
  *
  * The runtime's PURE calculus is pinned exhaustively in the unit tier
  * (__tests__/receptionist/runtime.test.ts); its end-to-end REACHING behaviour over real Postgres
@@ -252,23 +254,27 @@ describe("receptionist runtime — the single orchestration layer", () => {
 describe("receptionist runtime — the nine canonical steps, in order, delegating the pipeline whole", () => {
   const code = codeOf(read(SERVICE));
 
-  it("runConversationTurn RESOLVES → RECONSTRUCTS+ASSEMBLES ONCE → DISPATCHES → CLASSIFIES → ADVANCES, in that order", () => {
+  it("runConversationTurn RESOLVES → RECONSTRUCTS+ASSEMBLES ONCE → DISPATCHES → CLASSIFIES → PLANS → ADVANCES, in that order", () => {
     // Steps 2–4 go THROUGH the R12 seam `getConversationTurnContext` — the single server-side
     // reconstruct-and-assemble path (R16), which yields BOTH the assembled context AND the summary
     // (carrying `runtime_state`) from ONE reconstruction, so state is determined WITHOUT a separate
     // read. The runtime never calls the pure `assembleConversationContext` directly (that would be a
-    // second assembly path, forbidden by the R12 invariant). Then the pipeline is delegated whole.
+    // second assembly path, forbidden by the R12 invariant). Then the pipeline is delegated whole, the
+    // turn is classified from its outcome, and — R17 — the progression is PLANNED through the formal
+    // state machine (`planConversationTransition`) BEFORE the writer runs, so every persisted advance
+    // passes the machine's validation. The classify → plan → persist order is fixed here in source.
     expect(code).toMatch(
-      /export async function runConversationTurn\([\s\S]*?getConversationTurnContext\([\s\S]*?dispatchReceptionistReply\(\s*input,[\s\S]*?classifyTurn\([\s\S]*?nextConversationState\([\s\S]*?setConversationRuntimeState\(/,
+      /export async function runConversationTurn\([\s\S]*?getConversationTurnContext\([\s\S]*?dispatchReceptionistReply\(\s*input,[\s\S]*?classifyTurn\([\s\S]*?planConversationTransition\([\s\S]*?setConversationRuntimeState\(/,
     );
   });
 
-  it("delegates GENERATE→POLICY→AUDIT→ROUTE WHOLE to the canonical dispatch — the input is UNCHANGED (a marker, not a gate)", () => {
+  it("delegates GENERATE→POLICY→AUDIT→ROUTE WHOLE to the canonical dispatch — the input is UNCHANGED (governed, not gated)", () => {
     // The dispatch receives the caller's `input` VERBATIM as its first argument. The second argument is
     // the already-assembled canonical context threaded down (R16) — a performance consolidation that
-    // spares the generator a duplicate reconstruction, NOT a prior-state gate: no prior-state branch
-    // re-shapes the turn, so the runtime encodes no formal state machine / intent progression (R16+
-    // non-goals).
+    // spares the generator a duplicate reconstruction, NOT a prior-state gate. R17 adds a formal state
+    // machine, but it GOVERNS the state's PROGRESSION (post-dispatch); it does NOT GATE the turn on the
+    // prior state — no prior-state branch re-shapes the dispatch, so intent progression and slot filling
+    // stay non-goals the runtime encodes none of.
     expect(code).toMatch(
       /const dispatch = await dispatchReceptionistReply\(\s*input,\s*assembledContext\s*\)/,
     );
@@ -446,5 +452,77 @@ describe("receptionist runtime — R16: a turn reconstructs and assembles contex
     expect(code).toMatch(
       /export async function dispatchReceptionistReply\([\s\S]*?generateReplyDraft\(\{[\s\S]*?context,[\s\S]*?\}\)/,
     );
+  });
+});
+
+// =====================================================================
+// 9. R17 — THE FORMAL CONVERSATION STATE MACHINE: the transition graph, its
+//    validator, and its planners are single-sourced in the pure core; the
+//    turn-driven planner has EXACTLY ONE consumer (the service); and a
+//    progression is PERSISTED ONLY under a machine-validated `advance`.
+// =====================================================================
+
+describe("receptionist runtime — R17: the formal state machine governs every persisted progression", () => {
+  const core = codeOf(read(RUNTIME_CORE));
+  const service = codeOf(read(SERVICE));
+
+  // The whole state-machine surface: the legal-edge relation, the total validator, and the two planners
+  // (the raw-endpoint `planStateTransition` and the turn-driven `planConversationTransition`).
+  const FSM_SYMBOLS: readonly RegExp[] = [
+    /export const CONVERSATION_TRANSITIONS\b/,
+    /export function isValidConversationTransition\(/,
+    /export function planStateTransition\(/,
+    /export function planConversationTransition\(/,
+  ];
+
+  it("defines the whole state-machine surface in the pure core — the relation, the validator, and both planners", () => {
+    for (const re of FSM_SYMBOLS) expect(core, re.source).toMatch(re);
+  });
+
+  it("single-sources the state machine in the pure core — no other module DEFINES any of its members", () => {
+    // Each member is declared (export const/function) in EXACTLY the pure core and nowhere else, so the
+    // transition graph, its validator, and its planners cannot fork into a second, divergent authority.
+    const definersOf = (re: RegExp) =>
+      walkSources(SOURCE_ROOTS).filter((full) => re.test(codeOf(read(rel(full))))).map(rel).sort();
+    for (const re of FSM_SYMBOLS) expect(definersOf(re), re.source).toEqual([RUNTIME_CORE]);
+  });
+
+  it("the turn-driven planner has EXACTLY ONE consumer — the canonical service (no feature plans its own progression)", () => {
+    // planConversationTransition is named by the core (its definition) and the service (its sole
+    // consumer) and NOTHING else: no feature computes a conversation's next state outside the runtime.
+    const consumers = namersOf(/\bplanConversationTransition\b/).filter((p) => p !== RUNTIME_CORE);
+    expect(consumers).toEqual([SERVICE]);
+  });
+
+  it("the state machine lives in the leaf that reaches nothing — governance that can never enforce, transport, or generate", () => {
+    // The planners sit in the pure core, whose import list is empty (§1). Re-asserted here as an R17
+    // fact: the progression authority reaches no side-effecting door and names no decision surface.
+    expect(importSpecifiers(core)).toEqual([]);
+    expect(DECISION_FNS.test(core)).toBe(false);
+    expect(RUNTIME_STATE_WRITE_FN.test(core)).toBe(false);
+  });
+
+  it("persists a progression ONLY under a machine-validated `advance` — the writer is guarded by the plan kind", () => {
+    // The single state-write call site runs inside the `transition.kind === "advance"` branch and
+    // persists the machine's validated target `transition.to`. An `unchanged` self-loop writes nothing,
+    // and a `rejected` illegal edge never reaches the writer.
+    expect(service).toMatch(
+      /transition\.kind === "advance"[\s\S]*?setConversationRuntimeState\(\{[\s\S]*?runtime_state:\s*transition\.to/,
+    );
+  });
+
+  it("REFUSES an illegal edge as a governance event — the `rejected` arm carries a reason, is logged, and is never persisted", () => {
+    // The plan type carries a `rejected` arm with an explanatory `reason`; the runtime records that
+    // governance event and does NOT write. (Unreachable for a real turn — δ's image is the legal
+    // relation — but the arm and the guard make the refusal an explicit, testable law.)
+    expect(core).toMatch(/kind:\s*"rejected"[\s\S]*?reason:\s*string/);
+    expect(service).toMatch(/transition\.kind === "rejected"[\s\S]*?REJECTED/);
+  });
+
+  it("derives the transition from the coarse (prior state, turn OUTCOME) ALONE — never from message content", () => {
+    // The planner's only inputs are the prior state and the routing (itself classified from dispatch
+    // FACTS — verdict / duplicate / audit-produced, §4). No message text is threaded into the
+    // progression decision, so the machine encodes no intent progression / slot filling (R17 non-goals).
+    expect(service).toMatch(/planConversationTransition\(\s*priorState,\s*routing\s*\)/);
   });
 });

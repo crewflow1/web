@@ -29,8 +29,9 @@ import {
   INITIAL_CONVERSATION_STATE,
   coerceConversationState,
   classifyTurn,
-  nextConversationState,
+  planConversationTransition,
   type ConversationState,
+  type ConversationTransitionPlan,
   type TurnRouting,
 } from "@/lib/receptionist/runtime";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
@@ -727,18 +728,22 @@ export async function dispatchReceptionistReply(
 //   7. AUDIT                             — inside `dispatchReceptionistReply`, the R4 ledger.
 //   8. ROUTE (allow→transport, review→Reply Review Inbox, block→blocked flow) — UNCHANGED, all inside
 //                                          `dispatchReceptionistReply` / `dispatchReply`.
-//   9. ADVANCE the conversation state    — the pure fold in lib/receptionist/runtime.ts, persisted
+//   9. GOVERN the progression          — the R17 FORMAL STATE MACHINE in lib/receptionist/runtime.ts
+//                                          (`planConversationTransition`) validates the (prior →
+//                                          outcome) edge and the runtime persists a validated `advance`
 //                                          through the org-scoped writer below.
 //
 // IT ADDS NO SECOND ENFORCEMENT, GENERATION, OR TRANSPORT PATH. Steps 5–8 are delegated WHOLE to
 // `dispatchReceptionistReply` — the runtime NEVER re-drafts, re-enforces, re-audits or re-sends; it
-// ORCHESTRATES the canonical pipeline and then ADVANCES a coarse ownership marker. AND IT ADDS NO
-// SECOND RECONSTRUCTION OR ASSEMBLY (R16): steps 2–3 reconstruct and assemble the context ONCE, and
+// ORCHESTRATES the canonical pipeline and then GOVERNS the ownership marker's progression. AND IT ADDS
+// NO SECOND RECONSTRUCTION OR ASSEMBLY (R16): steps 2–3 reconstruct and assemble the context ONCE, and
 // the runtime threads that SAME object into the dispatch, so the R13 generator drafts from it without
-// a second fetch. The marker is a persisted OBSERVABLE, never a gate: no turn is ever branched on it
-// (a formal conversation state machine, slot filling and intent progression are EXPLICIT R16+
-// non-goals). DETERMINISTIC: the same conversation and the same dispatch outcome always advance to the
-// same state.
+// a second fetch. R17 makes step 9 the SINGLE PROGRESSION AUTHORITY: every persisted advance passes the
+// state machine's declared-edge validation, and an illegal edge is REFUSED — but the machine derives
+// the transition from the coarse (prior state, turn OUTCOME) ALONE, never from message content, so it
+// still never GATES a turn on the state (slot filling and intent progression stay EXPLICIT R17
+// non-goals). DETERMINISTIC: the same conversation and the same dispatch outcome always plan the same
+// transition and advance to the same state.
 // =====================================================================
 
 // `set_receptionist_conversation_runtime_state` is a service-role-only SECURITY DEFINER primitive
@@ -789,6 +794,12 @@ export type ConversationTurnResult = {
   routing: TurnRouting;
   /** The runtime state AFTER the turn (equals prior_state on a `noop`). */
   next_state: ConversationState;
+  /**
+   * The GOVERNED transition the R17 state machine planned for this turn — an `advance` (a validated
+   * change that was persisted), an `unchanged` self-loop, or a `rejected` illegal edge (refused, never
+   * persisted). The auditable record of how the single progression authority resolved the turn.
+   */
+  transition: ConversationTransitionPlan;
   /** True when the persisted state actually changed (a durable advance was written). */
   state_advanced: boolean;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
@@ -803,8 +814,9 @@ export type ConversationTurnResult = {
  * Performs the nine canonical steps in order (see the section header): RESOLVE the conversation, LOAD
  * its timeline, ASSEMBLE its context, DETERMINE its current state, then GENERATE → POLICY → AUDIT →
  * ROUTE by delegating WHOLE to {@link dispatchReceptionistReply} (so there is exactly one enforcement,
- * generation and transport path), and finally ADVANCE the coarse runtime-state marker with the pure
- * fold in lib/receptionist/runtime.ts. Steps 1–4 are best-effort OBSERVATION that never gate the turn:
+ * generation and transport path), and finally GOVERN the runtime-state marker's progression through the
+ * R17 formal state machine ({@link planConversationTransition} in lib/receptionist/runtime.ts) — the
+ * single authority that validates every persisted advance. Steps 1–4 are best-effort OBSERVATION that never gate the turn:
  * a missing conversation simply leaves the state at its initial value and the context null; the
  * dispatch still runs. The state advance and the outbound timeline append are best-effort side-effects
  * — a failure is logged and swallowed so a durable, audited reply is never undone by a bookkeeping
@@ -850,29 +862,45 @@ export async function runConversationTurn(
   // context re-shapes nothing — it only spares the generator a duplicate reconstruction.
   const dispatch = await dispatchReceptionistReply(input, assembledContext);
 
-  // Step 9 — ADVANCE the conversation state by the pure, deterministic fold. Classify the turn from
-  // its dispatch facts, compute the next state, and persist it ONLY when it actually changed and a
-  // conversation exists. Best-effort: a failed advance is logged, never thrown — a durable, audited
-  // reply is never undone by a bookkeeping write.
+  // Step 9 — GOVERN the conversation's progression through the R17 FORMAL STATE MACHINE. Classify the
+  // turn from its dispatch facts (the turn OUTCOME/event), then PLAN the transition: the state machine
+  // folds the outcome to a target state and VALIDATES the (prior → target) edge against its declared
+  // relation. Persist ONLY a validated `advance`, through the single org-scoped writer; an `unchanged`
+  // self-loop writes nothing, and a `rejected` illegal edge is REFUSED and recorded (never persisted).
+  // The machine is the single authority over progression, yet it derives the transition from the
+  // coarse (prior state, outcome) ALONE — never from message content — so it governs the marker without
+  // gating the turn (intent progression and slot filling stay non-goals). Best-effort: a failed advance
+  // is logged, never thrown — a durable, audited reply is never undone by a bookkeeping write.
   const routing = classifyTurn({
     verdict: dispatch.decision?.verdict ?? null,
     duplicate: dispatch.transport.duplicate,
     auditProduced: dispatch.audit_id !== null,
   });
-  const nextState = nextConversationState(routing);
+  const transition = planConversationTransition(priorState, routing);
   let stateAdvanced = false;
-  if (conversationId && nextState && nextState !== priorState) {
+  if (conversationId && transition.kind === "advance") {
     try {
       await setConversationRuntimeState({
         org_id: input.org_id,
         conversation_id: conversationId,
-        runtime_state: nextState,
+        runtime_state: transition.to,
       });
       stateAdvanced = true;
     } catch (e) {
       console.error("[receptionist] runtime state advance failed", e);
     }
+  } else if (conversationId && transition.kind === "rejected") {
+    // The state machine refused an edge outside its declared relation — record the governance event;
+    // the marker is left untouched. (Unreachable for a real turn: the fold's image is the legal-edge
+    // relation, so a turn only ever yields `advance` or `unchanged`. The guard makes that law explicit.)
+    console.error("[receptionist] runtime state transition REJECTED — illegal edge refused", {
+      from: transition.from,
+      to: transition.to,
+      reason: transition.reason,
+    });
   }
+  const nextState: ConversationState =
+    transition.kind === "advance" ? transition.to : priorState;
 
   // Thread the OUTBOUND reply onto the same conversation timeline — but ONLY when a reply was actually
   // produced and audited (an `audit_id` exists). The entry REFERENCES that `ai_reply_audits` row (its
@@ -897,7 +925,8 @@ export async function runConversationTurn(
     conversation_id: conversationId,
     prior_state: priorState,
     routing,
-    next_state: nextState ?? priorState,
+    next_state: nextState,
+    transition,
     state_advanced: stateAdvanced,
     context,
     dispatch,
