@@ -322,6 +322,63 @@ describe("generateReplyDraft — the conversation-aware generator", () => {
     expect(out.fallback_reason).toBe("empty_generation");
   });
 
+  it("THREADED CONTEXT (R16) — a caller-supplied context is consumed WITHOUT a second fetch or reconstruction", async () => {
+    const context = ctx({ channel: "sms", contact_name: "Priya" });
+    getTextProviderMock.mockReturnValue(fakeProvider());
+    generateMock.mockResolvedValue({
+      text: "Thanks Priya — the team will be in touch shortly about your boiler.",
+      model: "claude-haiku-4-5",
+      inputTokens: 100,
+      outputTokens: 14,
+    });
+
+    const out = await generateReplyDraft({
+      org_id: "org-1",
+      channel: "sms",
+      conversation_id: "conv-1",
+      context, // the runtime's ONE assembly, threaded down
+    });
+
+    // The threaded context is used as-is — the generator never fetches/reconstructs a second time.
+    expect(getConversationContextMock).not.toHaveBeenCalled();
+    // And the draft is built from EXACTLY that context (the prompt is the pure fold of the threaded object).
+    const prompt = buildReplyPrompt(context);
+    expect(generateMock).toHaveBeenCalledWith(prompt.user, {
+      system: prompt.system,
+      temperature: 0,
+      maxTokens: DEFAULT_REPLY_DRAFT_MAX_TOKENS,
+    });
+    expect(out.producer).toBe(MODEL_PRODUCER);
+    expect(out.draft).toBe(
+      "Thanks Priya — the team will be in touch shortly about your boiler.",
+    );
+  });
+
+  it("NO THREADED CONTEXT (R16) — with nothing threaded, the generator performs its own canonical fetch (pre-R16 behaviour)", async () => {
+    const context = ctx({ channel: "sms" });
+    getConversationContextMock.mockResolvedValue(context);
+    getTextProviderMock.mockReturnValue(fakeProvider());
+    generateMock.mockResolvedValue({
+      text: "Thanks — the team will be in touch shortly.",
+      model: "claude-haiku-4-5",
+      inputTokens: 90,
+      outputTokens: 11,
+    });
+
+    await generateReplyDraft({
+      org_id: "org-1",
+      channel: "sms",
+      conversation_id: "conv-1",
+      // no context threaded — the coalesced fallback fetch runs
+    });
+
+    // The standalone path is unchanged: the generator's own org-scoped fetch runs exactly as before.
+    expect(getConversationContextMock).toHaveBeenCalledWith({
+      org_id: "org-1",
+      conversation_id: "conv-1",
+    });
+  });
+
   it("the deterministic fallback honours the channel — voice vs written phrasing", async () => {
     getTextProviderMock.mockReturnValue(null);
     const channels: InboundChannel[] = [

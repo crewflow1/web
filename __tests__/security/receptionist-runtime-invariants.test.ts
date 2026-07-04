@@ -100,6 +100,7 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 const SERVICE = "server/services/receptionist.ts";
 const RUNTIME_CORE = "lib/receptionist/runtime.ts";
 const DRAFT = "server/services/receptionist-draft.ts";
+const CONTEXT_SEAM = "server/services/receptionist-conversation-context.ts";
 const POLICY = "lib/receptionist/policy.ts";
 const COMMS_INDEX = "lib/comms/index.ts";
 const MIGRATION = "supabase/migrations/20260822000000_receptionist_conversation_runtime.sql";
@@ -251,20 +252,26 @@ describe("receptionist runtime — the single orchestration layer", () => {
 describe("receptionist runtime — the nine canonical steps, in order, delegating the pipeline whole", () => {
   const code = codeOf(read(SERVICE));
 
-  it("runConversationTurn RESOLVES → ASSEMBLES context → DISPATCHES → CLASSIFIES → ADVANCES, in that order", () => {
-    // Steps 2+3 (load timeline + assemble context) go THROUGH the R12 seam `getConversationContext`
-    // — the single server-side assembly path — and step 4 (determine state) reads `getConversation`;
-    // the runtime never calls the pure `assembleConversationContext` directly (that would be a second
-    // assembly path, forbidden by the R12 invariant). Then the pipeline is delegated whole.
+  it("runConversationTurn RESOLVES → RECONSTRUCTS+ASSEMBLES ONCE → DISPATCHES → CLASSIFIES → ADVANCES, in that order", () => {
+    // Steps 2–4 go THROUGH the R12 seam `getConversationTurnContext` — the single server-side
+    // reconstruct-and-assemble path (R16), which yields BOTH the assembled context AND the summary
+    // (carrying `runtime_state`) from ONE reconstruction, so state is determined WITHOUT a separate
+    // read. The runtime never calls the pure `assembleConversationContext` directly (that would be a
+    // second assembly path, forbidden by the R12 invariant). Then the pipeline is delegated whole.
     expect(code).toMatch(
-      /export async function runConversationTurn\([\s\S]*?getConversationContext\([\s\S]*?getConversation\([\s\S]*?dispatchReceptionistReply\(input\)[\s\S]*?classifyTurn\([\s\S]*?nextConversationState\([\s\S]*?setConversationRuntimeState\(/,
+      /export async function runConversationTurn\([\s\S]*?getConversationTurnContext\([\s\S]*?dispatchReceptionistReply\(\s*input,[\s\S]*?classifyTurn\([\s\S]*?nextConversationState\([\s\S]*?setConversationRuntimeState\(/,
     );
   });
 
   it("delegates GENERATE→POLICY→AUDIT→ROUTE WHOLE to the canonical dispatch — the input is UNCHANGED (a marker, not a gate)", () => {
-    // The dispatch consumes the caller's context verbatim; no prior-state branch re-shapes the turn,
-    // so the runtime encodes no formal state machine / intent progression (the R16+ non-goals).
-    expect(code).toMatch(/const dispatch = await dispatchReceptionistReply\(input\)/);
+    // The dispatch receives the caller's `input` VERBATIM as its first argument. The second argument is
+    // the already-assembled canonical context threaded down (R16) — a performance consolidation that
+    // spares the generator a duplicate reconstruction, NOT a prior-state gate: no prior-state branch
+    // re-shapes the turn, so the runtime encodes no formal state machine / intent progression (R16+
+    // non-goals).
+    expect(code).toMatch(
+      /const dispatch = await dispatchReceptionistReply\(\s*input,\s*assembledContext\s*\)/,
+    );
   });
 
   it("the missed-call wiring delegates to the runtime — not to the dispatch directly", () => {
@@ -385,5 +392,59 @@ describe("receptionist runtime — the state vocabulary is single-sourced and mi
       expect(core, `core names ${state}`).toContain(`"${state}"`);
       expect(sql, `migration names ${state}`).toContain(`'${state}'`);
     }
+  });
+});
+
+// =====================================================================
+// 8. R16 — RUNTIME CONTEXT CONSOLIDATION: an autonomous turn reconstructs and
+//    assembles the canonical context EXACTLY ONCE, then threads that ONE object
+//    through the pipeline (no duplicate reconstruction path remains).
+// =====================================================================
+
+describe("receptionist runtime — R16: a turn reconstructs and assembles context exactly once", () => {
+  it("the runtime acquires context through the SINGLE reconstruct-and-assemble seam, and no other way", () => {
+    const code = codeOf(read(SERVICE));
+    // The turn's ONE context acquisition is getConversationTurnContext — called exactly once.
+    expect((code.match(/getConversationTurnContext\s*\(/g) ?? []).length).toBe(1);
+    // And it acquires context NO OTHER way: it never reconstructs, never assembles directly, never
+    // takes a separate list read for state, and never issues a second context-only fetch. Any of
+    // these reappearing would be a duplicate reconstruction — exactly what R16 removed.
+    expect(code, "no direct reconstruction").not.toMatch(/\breconstructConversation\s*\(/);
+    expect(code, "no direct pure assembly").not.toMatch(/\bassembleConversationContext\s*\(/);
+    expect(code, "no separate list read for runtime_state").not.toMatch(/\bgetConversation\s*\(/);
+    expect(code, "no second context-only fetch").not.toMatch(/\bgetConversationContext\s*\(/);
+  });
+
+  it("the single-reconstruction seam reconstructs ONCE and assembles ONCE; the context-only fetch delegates to it", () => {
+    const code = codeOf(read(CONTEXT_SEAM));
+    // getConversationTurnContext is the one reconstruct-and-assemble site; getConversationContext is
+    // now defined in terms of it, so the WHOLE seam has exactly one reconstruct/assemble call site.
+    expect(code).toMatch(/export async function getConversationTurnContext\(/);
+    expect((code.match(/\breconstructConversation\s*\(/g) ?? []).length).toBe(1);
+    expect((code.match(/\bassembleConversationContext\s*\(/g) ?? []).length).toBe(1);
+    expect(code, "getConversationContext delegates, never re-reconstructs").toMatch(
+      /export async function getConversationContext\([\s\S]*?getConversationTurnContext\(/,
+    );
+  });
+
+  it("the R13 generator REUSES a threaded context, its own fetch retained ONLY as the fallback", () => {
+    const code = codeOf(read(DRAFT));
+    // A caller-threaded context (input.context) is consumed verbatim; the seam's own org-scoped fetch
+    // is the coalesced fallback — so an ORCHESTRATED turn never triggers a second reconstruction here,
+    // while a STANDALONE caller (no context threaded) keeps the pre-R16 fetch behaviour, unchanged.
+    expect(code, "consumes the threaded context first").toMatch(/input\.context\s*\?\?/);
+    expect(code, "the fallback fetch is retained").toMatch(/\bgetConversationContext\s*\(/);
+  });
+
+  it("the dispatch accepts the pre-assembled context and threads it to the generator (input passed verbatim)", () => {
+    const code = codeOf(read(SERVICE));
+    // dispatchReceptionistReply takes the already-assembled context as an optional second argument…
+    expect(code).toMatch(
+      /export async function dispatchReceptionistReply\(\s*input:[\s\S]*?context\?:\s*ConversationContext[\s\S]*?\)/,
+    );
+    // …and hands it to the generator, so the draft is built from the runtime's ONE assembly.
+    expect(code).toMatch(
+      /export async function dispatchReceptionistReply\([\s\S]*?generateReplyDraft\(\{[\s\S]*?context,[\s\S]*?\}\)/,
+    );
   });
 });
