@@ -42,6 +42,14 @@ import {
   type ConversationIntent,
   type IntentTransitionPlan,
 } from "@/lib/receptionist/conversation-intent";
+import {
+  INITIAL_CONVERSATION_GOAL,
+  coerceConversationGoal,
+  resolveGoal,
+  planGoalProgression,
+  type ConversationGoal,
+  type GoalTransitionPlan,
+} from "@/lib/receptionist/conversation-goal";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -818,6 +826,37 @@ async function setConversationIntent(args: {
   }
 }
 
+// `set_receptionist_conversation_goal` is a service-role-only SECURITY DEFINER primitive (migration
+// 20260824000000) and is not in the generated Database types — cast past the typed client, the same
+// `as unknown as` convention as the runtime-state / intent writers above.
+type SetGoalRpc = (
+  fn: "set_receptionist_conversation_goal",
+  args: Record<string, unknown>,
+) => Promise<{ error: { message: string } | null }>;
+
+/**
+ * Persist a conversation's ADVANCED goal through the SINGLE validated, org-scoped writer (the R19 SECURITY
+ * DEFINER function). Throw-on-failure, exactly like the runtime-state and intent writers; the caller
+ * catches and swallows so a bookkeeping write never gates the turn. Org-scoped in-DDL, so a caller can only
+ * ever advance its OWN conversation. Idempotent — persisting the same goal is a no-op update.
+ */
+async function setConversationGoal(args: {
+  conversation_id: string;
+  org_id: string;
+  goal: ConversationGoal;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const rpc = admin.rpc.bind(admin) as unknown as SetGoalRpc;
+  const { error } = await rpc("set_receptionist_conversation_goal", {
+    p_conversation_id: args.conversation_id,
+    p_org_id: args.org_id,
+    p_goal: args.goal,
+  });
+  if (error) {
+    throw new Error("set_receptionist_conversation_goal failed: " + error.message);
+  }
+}
+
 /**
  * The observable outcome of one conversation turn the runtime folded — the prior and next runtime
  * state, how the turn ROUTED (the pure classification), whether the state actually advanced, the R18
@@ -856,6 +895,20 @@ export type ConversationTurnResult = {
   intent_transition: IntentTransitionPlan;
   /** True when the persisted intent actually changed (a durable advance was written). */
   intent_advanced: boolean;
+  /** The conversational goal BEFORE the turn (the persisted marker, coerced deny-unknown) (R19). */
+  prior_goal: ConversationGoal;
+  /** The goal the R19 engine RESOLVED from this turn — the objective the resolved intent elevates to. */
+  resolved_goal: ConversationGoal;
+  /** The conversational goal AFTER the turn (equals prior_goal when the resolution had no objective). */
+  next_goal: ConversationGoal;
+  /**
+   * The GOVERNED goal progression the R19 engine planned for this turn — an `advance` (a validated change
+   * that was persisted), an `unchanged` self-loop, or a `rejected` illegal edge (refused, never persisted).
+   * The auditable record of how the single goal authority resolved the turn.
+   */
+  goal_transition: GoalTransitionPlan;
+  /** True when the persisted goal actually changed (a durable advance was written). */
+  goal_advanced: boolean;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -892,6 +945,7 @@ export async function runConversationTurn(
   // ONE canonical context; it is threaded into the dispatch below, so the whole turn assembles once.
   let priorState: ConversationState = INITIAL_CONVERSATION_STATE;
   let priorIntent: ConversationIntent = INITIAL_CONVERSATION_INTENT;
+  let priorGoal: ConversationGoal = INITIAL_CONVERSATION_GOAL;
   let context: ConversationTurnResult["context"] = null;
   let assembledContext: ConversationContext | null = null;
   if (conversationId) {
@@ -907,6 +961,7 @@ export async function runConversationTurn(
       };
       priorState = coerceConversationState(turnContext.summary.runtime_state);
       priorIntent = coerceConversationIntent(turnContext.summary.intent);
+      priorGoal = coerceConversationGoal(turnContext.summary.goal);
     }
   }
 
@@ -949,6 +1004,48 @@ export async function runConversationTurn(
   }
   const nextIntent: ConversationIntent =
     intentTransition.kind === "advance" ? intentTransition.to : priorIntent;
+
+  // Steps 5–7 (R19) — RESOLVE the conversational GOAL, VALIDATE its progression, and UPDATE it, through the
+  // R19 CONVERSATION GOAL ENGINE (lib/receptionist/conversation-goal.ts) — ON TOP of the R18 intent engine
+  // and STILL BEFORE the draft. The engine is the SINGLE authority over the conversational OBJECTIVE: it
+  // RESOLVES the current goal DETERMINISTICALLY by ELEVATING the intent the R18 engine JUST resolved (its
+  // sole input — the context's canonical projection; it never re-reads or re-classifies the context, so it
+  // DUPLICATES no intent resolution and no context assembly), then PLANS the (prior → resolved) progression
+  // through its OWN formal transition rules. Progression is MONOTONIC — a concrete goal never regresses to
+  // `undetermined`, exactly as intent never regresses to `unknown` and state never to `awaiting_ai` — and
+  // because the turn fold's image is exactly the legal-edge relation, a real turn only ever yields an
+  // `advance` or an `unchanged`; a `rejected` edge is impossible here and, if it somehow arose, is refused
+  // and recorded, NEVER persisted. Only a validated `advance` is written, through the engine's OWN
+  // org-scoped writer. The engine NEVER moves the ownership marker OR the intent marker — the goal is a
+  // THIRD independent observation — so goal progression can never bypass the state machine or the intent
+  // engine. Best-effort OBSERVATION: a failed goal write is logged and swallowed — it never gates the turn
+  // or blocks the reply below.
+  const resolvedGoal = resolveGoal(resolvedIntent);
+  const goalTransition = planGoalProgression(priorGoal, resolvedGoal);
+  let goalAdvanced = false;
+  if (conversationId && goalTransition.kind === "advance") {
+    try {
+      await setConversationGoal({
+        org_id: input.org_id,
+        conversation_id: conversationId,
+        goal: goalTransition.to,
+      });
+      goalAdvanced = true;
+    } catch (e) {
+      console.error("[receptionist] conversation goal advance failed", e);
+    }
+  } else if (conversationId && goalTransition.kind === "rejected") {
+    // The engine refused an edge outside its declared relation — record the governance event; the marker is
+    // left untouched. (Unreachable for a real turn: the fold's image is the legal-edge relation, so a turn
+    // only ever yields `advance` or `unchanged`. The guard makes that law explicit.)
+    console.error("[receptionist] conversation goal transition REJECTED — illegal edge refused", {
+      from: goalTransition.from,
+      to: goalTransition.to,
+      reason: goalTransition.reason,
+    });
+  }
+  const nextGoal: ConversationGoal =
+    goalTransition.kind === "advance" ? goalTransition.to : priorGoal;
 
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
@@ -1029,6 +1126,11 @@ export async function runConversationTurn(
     next_intent: nextIntent,
     intent_transition: intentTransition,
     intent_advanced: intentAdvanced,
+    prior_goal: priorGoal,
+    resolved_goal: resolvedGoal,
+    next_goal: nextGoal,
+    goal_transition: goalTransition,
+    goal_advanced: goalAdvanced,
     context,
     dispatch,
   };

@@ -5,8 +5,8 @@ import { getConversation, listConversations } from "@/server/services/receptioni
 
 /**
  * Multi-turn Conversation Runtime — real-Postgres proof of the AI Receptionist Programme R15
- * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE) and R18 (CONVERSATION
- * INTENT ENGINE).
+ * (MULTI-TURN CONVERSATION RUNTIME), R17 (FORMAL CONVERSATION STATE MACHINE), R18 (CONVERSATION
+ * INTENT ENGINE) and R19 (CONVERSATION GOAL ENGINE).
  *
  * R1–R14 built a one-shot responder. R15 makes the receptionist a CONVERSATION RUNTIME:
  * `runConversationTurn` is the single orchestration layer that, for a turn, RESOLVES the existing
@@ -40,6 +40,15 @@ import { getConversation, listConversations } from "@/server/services/receptioni
  *     INBOUND even when the dispatch is a duplicate no-op that moves the ownership state not at all, and a
  *     re-resolved self-loop is an `unchanged` the engine persists nothing for. Intent NEVER moves
  *     `runtime_state`, so its progression can never bypass the state machine.
+ *   • THE GOAL IS RESOLVED, GOVERNED AND PERSISTED (R19) — ON TOP of the intent engine, every turn ELEVATES
+ *     the resolved intent into the conversation's OBJECTIVE (quote_request → provide_quote, general_enquiry
+ *     → answer_enquiry), plans the (prior → resolved) progression through the goal engine, and persists ONLY
+ *     a validated `advance` through its OWN org-scoped writer — surfaced live as `turn.resolved_goal` /
+ *     `turn.goal_transition` and read back through the R11 read model. It is a THIRD INDEPENDENT marker:
+ *     like intent it advances on the INBOUND even under a duplicate no-op, a deterministic re-resolution is
+ *     an `unchanged` self-loop, and the objective is MONOTONIC (never regresses to `undetermined`). The goal
+ *     NEVER moves `runtime_state` OR `intent`, so its progression can never bypass the state machine or the
+ *     intent engine.
  *   • THE ONE-SHOT PATH IS INTACT — with the missed-call flag OFF the runtime never runs: no
  *     outbound is threaded and the conversation still `awaiting_ai` (the AI still owes the turn),
  *     byte-for-byte its pre-R15 self.
@@ -113,6 +122,15 @@ async function intentOf(convId: string): Promise<string | null> {
   const res = await svc().from(CONVERSATIONS).select("intent").eq("id", convId);
   expect(res.error, res.error?.message).toBeNull();
   return (String((res.data ?? [])[0]?.intent ?? "")) || null;
+}
+
+/** The persisted goal (R19), read straight from the container as service_role (ground truth). The goal
+ *  column is written by its OWN org-scoped writer — distinct from both runtime_state and intent — so this
+ *  proves the conversational OBJECTIVE marker moved on its own, a THIRD independent observation. */
+async function goalOf(convId: string): Promise<string | null> {
+  const res = await svc().from(CONVERSATIONS).select("goal").eq("id", convId);
+  expect(res.error, res.error?.message).toBeNull();
+  return (String((res.data ?? [])[0]?.goal ?? "")) || null;
 }
 
 /** Seed an allowed audit through the canonical write primitive; returns its id. */
@@ -279,12 +297,28 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     });
     expect(await intentOf(convId), "the intent marker advanced live").toBe("quote_request");
 
+    // Step 5 (R19) — ON TOP of the intent engine, the goal engine ELEVATES the resolved intent
+    // (quote_request) into the conversation's OBJECTIVE (provide_quote), GOVERNS the (undetermined →
+    // provide_quote) progression as a validated `advance`, and PERSISTS it through its OWN org-scoped
+    // writer — a THIRD independent marker moved by its own door.
+    expect(turn.prior_goal).toBe("undetermined");
+    expect(turn.resolved_goal).toBe("provide_quote");
+    expect(turn.next_goal).toBe("provide_quote");
+    expect(turn.goal_advanced).toBe(true);
+    expect(turn.goal_transition).toEqual({
+      kind: "advance",
+      from: "undetermined",
+      to: "provide_quote",
+    });
+    expect(await goalOf(convId), "the goal marker advanced live").toBe("provide_quote");
+
     // The runtime OWNS the outbound append — the timeline now carries the reply too, and the R11 read
-    // model surfaces BOTH independent markers (the ownership state AND the R18 intent).
+    // model surfaces ALL THREE independent markers (the ownership state, the R18 intent AND the R19 goal).
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count).toBe(2);
     expect(summary?.runtime_state).toBe("awaiting_customer");
     expect(summary?.intent, "the read model surfaces the resolved intent").toBe("quote_request");
+    expect(summary?.goal, "the read model surfaces the resolved goal").toBe("provide_quote");
   });
 
   it("a DUPLICATE dispatch is a NO-OP — the turn advances nothing and the persisted state is unchanged", async () => {
@@ -347,6 +381,22 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(await intentOf(convId), "the intent marker advanced live, independent of the no-op").toBe(
       "general_enquiry",
     );
+
+    // R19 — the goal ELEVATES the resolved intent (general_enquiry → answer_enquiry) and, like intent, is
+    // resolved PRE-dispatch from the inbound, so its OBJECTIVE advances INDEPENDENTLY of the duplicate no-op
+    // that left the ownership state untouched. Three independent markers, three separate doors.
+    expect(turn.prior_goal).toBe("undetermined");
+    expect(turn.resolved_goal).toBe("answer_enquiry");
+    expect(turn.goal_advanced, "goal advances on the inbound even under a duplicate dispatch").toBe(true);
+    expect(turn.goal_transition).toEqual({
+      kind: "advance",
+      from: "undetermined",
+      to: "answer_enquiry",
+    });
+    expect(await goalOf(convId), "the goal marker advanced live, independent of the no-op").toBe(
+      "answer_enquiry",
+    );
+
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.message_count, "a noop threads no outbound").toBe(1);
   });
@@ -401,11 +451,21 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(first.intent_transition).toEqual({ kind: "advance", from: "unknown", to: "quote_request" });
     expect(await intentOf(convId)).toBe("quote_request");
 
-    // The R11 read model surfaces the intent on BOTH the single-conversation read and the list read.
+    // R19 — the goal engine ELEVATES that resolved intent into the OBJECTIVE (quote_request → provide_quote),
+    // governs the (undetermined → provide_quote) advance, and persists it through its own writer.
+    expect(first.prior_goal).toBe("undetermined");
+    expect(first.resolved_goal).toBe("provide_quote");
+    expect(first.goal_advanced).toBe(true);
+    expect(first.goal_transition).toEqual({ kind: "advance", from: "undetermined", to: "provide_quote" });
+    expect(await goalOf(convId)).toBe("provide_quote");
+
+    // The R11 read model surfaces BOTH markers on the single-conversation read and the list read.
     const summary = await getConversation({ org_id: orgId, conversation_id: convId });
     expect(summary?.intent, "getConversation surfaces the intent").toBe("quote_request");
+    expect(summary?.goal, "getConversation surfaces the goal").toBe("provide_quote");
     const list = await listConversations({ org_id: orgId });
     expect(list[0]?.intent, "listConversations surfaces the intent").toBe("quote_request");
+    expect(list[0]?.goal, "listConversations surfaces the goal").toBe("provide_quote");
 
     // TURN 2 — no new customer message has arrived, so the latest customer turn is UNCHANGED. Resolution is
     // DETERMINISTIC (the same context resolves the same intent — quote_request again), so folding it onto
@@ -427,5 +487,17 @@ describeIntegration("Multi-turn Conversation Runtime (R15)", () => {
     expect(second.intent_transition).toEqual({ kind: "unchanged", intent: "quote_request" });
     expect(second.next_intent).toBe("quote_request");
     expect(await intentOf(convId), "the intent is monotonic — it never regressed").toBe("quote_request");
+
+    // R19 — goal resolution is equally deterministic: the same intent elevates to the same objective
+    // (provide_quote), so folding it onto the now-persisted provide_quote is an `unchanged` self-loop the
+    // engine persists nothing for. The OBJECTIVE is monotonic too — it never regressed to `undetermined`.
+    expect(second.resolved_goal, "goal resolution is deterministic — same intent, same objective").toBe(
+      "provide_quote",
+    );
+    expect(second.prior_goal).toBe("provide_quote");
+    expect(second.goal_advanced, "a re-resolved goal self-loop advances nothing").toBe(false);
+    expect(second.goal_transition).toEqual({ kind: "unchanged", goal: "provide_quote" });
+    expect(second.next_goal).toBe("provide_quote");
+    expect(await goalOf(convId), "the goal is monotonic — it never regressed").toBe("provide_quote");
   });
 });

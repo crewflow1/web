@@ -102,6 +102,10 @@ export type ConversationSummary = {
    *  classification the runtime resolves and advances; one of the values in
    *  lib/receptionist/conversation-intent.ts::CONVERSATION_INTENTS. Independent of `runtime_state`. */
   intent: string;
+  /** The CONVERSATION GOAL — what the conversation is trying to accomplish (R19). A per-turn objective the
+   *  runtime resolves by ELEVATING the intent, then advances; one of the values in
+   *  lib/receptionist/conversation-goal.ts::CONVERSATION_GOALS. Independent of `runtime_state` AND `intent`. */
+  goal: string;
   message_count: number;
   first_message_at: string;
   last_message_at: string;
@@ -131,7 +135,7 @@ const TIMELINE_COLUMNS =
 
 const LIST_COLUMNS =
   "conversation_id, org_id, employee_slug, channel, contact_ref, contact_name, status, " +
-  "runtime_state, intent, message_count, first_message_at, last_message_at, created_at, updated_at, " +
+  "runtime_state, intent, goal, message_count, first_message_at, last_message_at, created_at, updated_at, " +
   "last_direction, last_event_at";
 
 // The two views are not in the generated Database types — cast past the typed client to the
