@@ -58,6 +58,7 @@ import {
   type ConversationInformation,
   type InformationUpdate,
 } from "@/lib/receptionist/conversation-information";
+import { detectGap, type ConversationGap } from "@/lib/receptionist/conversation-gap";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -967,6 +968,14 @@ export type ConversationTurnResult = {
   information_update: InformationUpdate;
   /** True when the persisted information actually changed (a durable update was written). */
   information_updated: boolean;
+  /**
+   * The conversational GAP the R21 engine DERIVED for this turn — computed from the goal of record
+   * (`next_goal`) and the information of record (`next_information`), never persisted. Names what the
+   * objective is still MISSING (priority-ordered), the single `nextRequired` field, whether the objective
+   * is `satisfied`, and whether another turn is `turnRequired`. A pure projection of goal + information: it
+   * moves no marker and executes no action (the engine identifies missing information ONLY).
+   */
+  gap: ConversationGap;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1142,6 +1151,21 @@ export async function runConversationTurn(
   }
   const nextInformation: ConversationInformation = informationUpdate.information;
 
+  // Step (R21) — DERIVE the conversational GAP through the R21 CONVERSATION GAP ENGINE
+  // (lib/receptionist/conversation-gap.ts) — ON TOP of the R19 goal engine and the R20 information engine,
+  // and STILL BEFORE the draft. The gap is the SINGLE authority over conversational completeness: from the
+  // goal of record (`nextGoal`, what the R19 engine JUST resolved) and the information of record
+  // (`nextInformation`, what the R20 engine JUST accumulated) it computes — by pure, deterministic set
+  // arithmetic, NO model, NO second read — what the objective is still MISSING (priority-ordered), the single
+  // highest-priority `nextRequired` field, whether the objective is `satisfied`, and whether another turn is
+  // `turnRequired`. It REUSES R20's completeness surface (it forks no "what's missing" logic) and DUPLICATES
+  // no context assembly, intent/goal resolution or information extraction. It PERSISTS NOTHING — the gap adds
+  // no column and no writer; it is a fresh projection of the two already-persisted observations (goal +
+  // information), surfaced on the turn result and re-derived on every read, so it can never drift. It moves
+  // NO marker and executes NO business action: it identifies missing information ONLY (booking, scheduling
+  // and slot-fill prompting are explicit R21 non-goals a future capability performs by CONSUMING this gap).
+  const gap = detectGap(nextGoal, nextInformation);
+
   // Steps 7–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
   // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
   // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
@@ -1231,6 +1255,7 @@ export async function runConversationTurn(
     next_information: nextInformation,
     information_update: informationUpdate,
     information_updated: informationUpdated,
+    gap,
     context,
     dispatch,
   };
