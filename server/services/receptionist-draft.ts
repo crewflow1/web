@@ -5,7 +5,10 @@ import {
   DEFAULT_REPLY_DRAFT_MAX_TOKENS,
 } from "@/lib/receptionist/draft";
 import { composeReceptionistReply } from "@/lib/receptionist/reply";
-import { getConversationContext } from "@/server/services/receptionist-conversation-context";
+import {
+  getConversationContext,
+  type ConversationContext,
+} from "@/server/services/receptionist-conversation-context";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -78,6 +81,13 @@ export type GenerateReplyDraftInput = {
   channel: InboundChannel;
   /** The conversation to reason over. Null (no contact ⇒ no thread) ⇒ deterministic fallback. */
   conversation_id: string | null;
+  /**
+   * The canonical R12 context, ALREADY ASSEMBLED by the caller (R16). When the runtime orchestrates a
+   * turn it reconstructs and assembles ONCE and threads that single context in here, so the generator
+   * consumes it verbatim WITHOUT a second fetch. Absent (a standalone caller) ⇒ the generator performs
+   * its own canonical, org-scoped fetch below — the pre-R16 behaviour, unchanged.
+   */
+  context?: ConversationContext | null;
   /** The output-token ceiling; defaults to {@link DEFAULT_REPLY_DRAFT_MAX_TOKENS}. */
   max_tokens?: number;
 };
@@ -99,16 +109,19 @@ export async function generateReplyDraft(
   // A conversation-aware draft is impossible without a conversation; behaviour is the pre-R13 reply.
   if (!input.conversation_id) return fallback(input.channel, "no_conversation");
 
-  // CONSUME ONLY THE CANONICAL R12 CONTEXT, and consume it FIRST — the single, org-scoped,
-  // deterministic fetch is the generator's primary act, so a conversation-aware draft can be built
-  // from nothing else. Fetching before the provider check makes org-scoping (inherited wholesale from
-  // R12) unconditional and observable, and keeps this generator's identity unambiguous: it consults
-  // the canonical context, then decides whether a model is available to draft from it. Absent (a
-  // conversation that does not exist in this org) ⇒ deterministic fallback.
-  const context = await getConversationContext({
-    org_id: input.org_id,
-    conversation_id: input.conversation_id,
-  });
+  // CONSUME ONLY THE CANONICAL R12 CONTEXT, and consume it FIRST — a conversation-aware draft can be
+  // built from nothing else. The context is EITHER threaded in by the R16 runtime (assembled ONCE
+  // upstream, org-scoped at reconstruction) OR, for a standalone caller, fetched here through the
+  // single org-scoped R12 seam. Consuming it before the provider check keeps org-scoping unconditional
+  // and observable and this generator's identity unambiguous: it consults the canonical context, then
+  // decides whether a model is available to draft from it. Absent (a conversation that does not exist
+  // in this org) ⇒ deterministic fallback.
+  const context =
+    input.context ??
+    (await getConversationContext({
+      org_id: input.org_id,
+      conversation_id: input.conversation_id,
+    }));
   if (!context) return fallback(input.channel, "no_context");
 
   const provider = getTextProvider();

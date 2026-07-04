@@ -21,8 +21,10 @@ import {
   resolveConversation,
   appendConversationMessage,
 } from "@/server/services/receptionist-conversations";
-import { getConversation } from "@/server/services/receptionist-conversation-reads";
-import { getConversationContext } from "@/server/services/receptionist-conversation-context";
+import {
+  getConversationTurnContext,
+  type ConversationContext,
+} from "@/server/services/receptionist-conversation-context";
 import {
   INITIAL_CONVERSATION_STATE,
   coerceConversationState,
@@ -656,9 +658,16 @@ export async function dispatchReply(
  * generator consumes ONLY the canonical R12 context and reaches the model ONLY through the existing
  * abstraction; when no provider / no conversation / no context is available it degrades to the
  * deterministic acknowledgement, so this path is byte-for-byte its pre-R13 self in CI.
+ *
+ * The optional `context` is the canonical R12 context ALREADY ASSEMBLED by the caller (R16): the
+ * runtime assembles it ONCE per turn and threads it here, and it is handed to the generator verbatim
+ * IN PLACE OF a second fetch. Omitted (a standalone caller), the generator fetches its own — the
+ * pre-R16 behaviour, unchanged. It re-shapes nothing else: enforcement, audit, transport and the
+ * no-duplicate short-circuit are identical whether or not a context is threaded.
  */
 export async function dispatchReceptionistReply(
   input: ReplyAuditContext & { destination?: string | null },
+  context?: ConversationContext | null,
 ): Promise<ReceptionistDispatchOutcome> {
   const dedupKey = transportDedupKey(input);
   if (dedupKey) {
@@ -685,6 +694,7 @@ export async function dispatchReceptionistReply(
     org_id: input.org_id,
     channel: input.channel,
     conversation_id: input.conversation_id ?? null,
+    context,
   });
   return dispatchReply({
     ...input,
@@ -704,13 +714,15 @@ export async function dispatchReceptionistReply(
 // canonical steps IN ORDER — and it RE-USES every existing layer, recreating none:
 //
 //   1. RESOLVE the existing conversation — the R10 substrate id threaded in by the caller.
-//   2. LOAD the canonical timeline       — through the R12 seam `getConversationContext`, which
+//   2. RECONSTRUCT the canonical timeline — through the R12 seam `getConversationTurnContext`, which
 //                                          reconstructs via the R11 read model. Never independently.
-//   3. ASSEMBLE the canonical context    — that SAME seam folds it (the single server-side assembly
-//                                          path); the runtime consumes the seam, never re-assembling.
-//   4. DETERMINE the current state       — `coerceConversationState` over the persisted
-//                                          `runtime_state` (the R15 marker).
-//   5. GENERATE the next draft           — inside `dispatchReceptionistReply`, the R13 generator.
+//   3. ASSEMBLE the canonical context    — that SAME seam call folds the pure R12 assembler EXACTLY
+//                                          ONCE and returns the summary alongside; the runtime threads
+//                                          the assembled context DOWN and never re-assembles.
+//   4. DETERMINE the current state       — `coerceConversationState` over that SAME summary's
+//                                          `runtime_state` (the R15 marker) — from the one reconstruction.
+//   5. GENERATE the next draft           — inside `dispatchReceptionistReply`, the R13 generator, from
+//                                          the context THREADED in at step 3 (no second fetch).
 //   6. POLICY                            — inside `dispatchReceptionistReply`, the R3 seam.
 //   7. AUDIT                             — inside `dispatchReceptionistReply`, the R4 ledger.
 //   8. ROUTE (allow→transport, review→Reply Review Inbox, block→blocked flow) — UNCHANGED, all inside
@@ -720,10 +732,13 @@ export async function dispatchReceptionistReply(
 //
 // IT ADDS NO SECOND ENFORCEMENT, GENERATION, OR TRANSPORT PATH. Steps 5–8 are delegated WHOLE to
 // `dispatchReceptionistReply` — the runtime NEVER re-drafts, re-enforces, re-audits or re-sends; it
-// ORCHESTRATES the canonical pipeline and then ADVANCES a coarse ownership marker. The marker is a
-// persisted OBSERVABLE, never a gate: no turn is ever branched on it (a formal conversation state
-// machine, slot filling and intent progression are EXPLICIT R16+ non-goals). DETERMINISTIC: the same
-// conversation and the same dispatch outcome always advance to the same state.
+// ORCHESTRATES the canonical pipeline and then ADVANCES a coarse ownership marker. AND IT ADDS NO
+// SECOND RECONSTRUCTION OR ASSEMBLY (R16): steps 2–3 reconstruct and assemble the context ONCE, and
+// the runtime threads that SAME object into the dispatch, so the R13 generator drafts from it without
+// a second fetch. The marker is a persisted OBSERVABLE, never a gate: no turn is ever branched on it
+// (a formal conversation state machine, slot filling and intent progression are EXPLICIT R16+
+// non-goals). DETERMINISTIC: the same conversation and the same dispatch outcome always advance to the
+// same state.
 // =====================================================================
 
 // `set_receptionist_conversation_runtime_state` is a service-role-only SECURITY DEFINER primitive
@@ -801,40 +816,39 @@ export async function runConversationTurn(
 ): Promise<ConversationTurnResult> {
   const conversationId = input.conversation_id ?? null;
 
-  // Steps 1–4 — RESOLVE the conversation (the R10 substrate id threaded in by the caller), LOAD its
-  // canonical timeline + ASSEMBLE its canonical context through the R12 SEAM (`getConversationContext`
-  // — the SINGLE server-side assembly path, which reconstructs via the R11 read model then folds; the
-  // runtime consumes the seam and never re-assembles independently), and DETERMINE its current state
-  // from the persisted R15 marker (the R11 summary read, coerced deny-unknown). Pure OBSERVATION: it
-  // never gates the turn — an absent conversation leaves the initial state + null context, and the
-  // dispatch still runs.
+  // Steps 1–4 — RESOLVE the conversation (the R10 substrate id threaded in by the caller), then
+  // RECONSTRUCT + ASSEMBLE its canonical context EXACTLY ONCE through the R12 SEAM
+  // (`getConversationTurnContext` — the SINGLE server-side reconstruct-and-assemble path, which
+  // reconstructs via the R11 read model, folds the pure R12 assembler, and returns the summary
+  // alongside), and DETERMINE its current state from that SAME summary's persisted R15 marker (coerced
+  // deny-unknown) — NO second read. Pure OBSERVATION: it never gates the turn — an absent conversation
+  // leaves the initial state + null boundaries, and the dispatch still runs. `assembledContext` is the
+  // ONE canonical context; it is threaded into the dispatch below, so the whole turn assembles once.
   let priorState: ConversationState = INITIAL_CONVERSATION_STATE;
   let context: ConversationTurnResult["context"] = null;
+  let assembledContext: ConversationContext | null = null;
   if (conversationId) {
-    const assembled = await getConversationContext({
+    const turnContext = await getConversationTurnContext({
       org_id: input.org_id,
       conversation_id: conversationId,
     });
-    if (assembled) {
+    if (turnContext) {
+      assembledContext = turnContext.context;
       context = {
-        total_message_count: assembled.boundaries.total_message_count,
-        included_message_count: assembled.boundaries.included_message_count,
+        total_message_count: turnContext.context.boundaries.total_message_count,
+        included_message_count: turnContext.context.boundaries.included_message_count,
       };
-    }
-    const summary = await getConversation({
-      org_id: input.org_id,
-      conversation_id: conversationId,
-    });
-    if (summary) {
-      priorState = coerceConversationState(summary.runtime_state);
+      priorState = coerceConversationState(turnContext.summary.runtime_state);
     }
   }
 
   // Steps 5–8 — GENERATE → POLICY → AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The
-  // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13), enforces
-  // the policy (R3), writes the mandatory audit (R4), and routes the outcome (allow→transport,
-  // review→held for the Reply Review Inbox, block→refused) exactly as it always has.
-  const dispatch = await dispatchReceptionistReply(input);
+  // runtime adds no second path here: `dispatchReceptionistReply` generates the draft (R13) — from the
+  // ONE `assembledContext` threaded in, not a second fetch — enforces the policy (R3), writes the
+  // mandatory audit (R4), and routes the outcome (allow→transport, review→held for the Reply Review
+  // Inbox, block→refused) exactly as it always has. The `input` is passed verbatim; the threaded
+  // context re-shapes nothing — it only spares the generator a duplicate reconstruction.
+  const dispatch = await dispatchReceptionistReply(input, assembledContext);
 
   // Step 9 — ADVANCE the conversation state by the pure, deterministic fold. Classify the turn from
   // its dispatch facts, compute the next state, and persist it ONLY when it actually changed and a
