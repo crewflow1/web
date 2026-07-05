@@ -171,6 +171,11 @@ const RESPONSE_CORE = "lib/receptionist/conversation-response.ts";
  *  to exist, because the R24 response spec is DERIVED, never persisted (no column, no writer, no migration):
  *  it is a total function of the ALREADY-derived R23 prompt plan. */
 const RESPONSE_WRITE_FN = /\bset_receptionist_conversation_response\b/;
+/** The R26 outcome engine and R27 action engine pure cores. Both sit ON TOP of the R19 goal engine and key
+ *  their own schemas on the `ConversationGoal` TYPE (type-only imports of the goal module) — neither reaches
+ *  its resolver or planner, so the goal engine's authority stays single-sourced (asserted in R19 §importers). */
+const OUTCOME_CORE = "lib/receptionist/conversation-outcome.ts";
+const ACTION_CORE = "lib/receptionist/conversation-action.ts";
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -927,25 +932,27 @@ describe("receptionist runtime — R19: the conversation goal engine is a govern
     expect(consumers).toEqual([SERVICE]);
   });
 
-  it("has EXACTLY FOUR importers — the service, the R20 information engine (type-only), the R21 gap engine (type-only), and the read model (the coercer only)", () => {
-    // R19 shipped with a SINGLE importer (the service). Three layers now sit ON TOP of the goal engine and
+  it("has EXACTLY SIX importers — the service, the R20 information + R21 gap engines (type-only), the R11 read model (the coercer only), and the R26 outcome + R27 action engines (type-only)", () => {
+    // R19 shipped with a SINGLE importer (the service). Five layers now sit ON TOP of the goal engine and
     // import the goal module, but NONE of them reaches its resolver or planner:
     //   • the R20 information engine — ONLY the `ConversationGoal` TYPE it keys its slot schema on (type-only);
     //   • the R21 gap engine — ONLY the `ConversationGoal` TYPE it keys the gap on (type-only);
-    //   • the R11 read model — ONLY the deny-unknown `coerceConversationGoal`, to DERIVE the gap on read.
+    //   • the R11 read model — ONLY the deny-unknown `coerceConversationGoal`, to DERIVE the gap on read;
+    //   • the R26 outcome engine — ONLY the `ConversationGoal` TYPE it keys its GOAL_OUTCOME map on (type-only);
+    //   • the R27 action engine — ONLY the `ConversationGoal` TYPE it keys its GOAL_ACTION map on (type-only).
     // The goal engine's AUTHORITY is therefore undiminished: its resolver and its turn-driven planner STILL
-    // have exactly the one consumer each (the service, asserted just above), and none of the three new
-    // importers names either. The module-import set is EXACTLY these four and nothing more.
+    // have exactly the one consumer each (the service, asserted just above), and none of the five non-service
+    // importers names either. The module-import set is EXACTLY these six and nothing more.
     const importers = walkSources(SOURCE_ROOTS)
       .filter((full) =>
         importSpecifiers(codeOf(read(rel(full)))).includes("@/lib/receptionist/conversation-goal"),
       )
       .map(rel)
       .sort();
-    expect(importers).toEqual([GAP_CORE, INFORMATION_CORE, READS, SERVICE]);
-    // None of the three non-service importers consumes the goal RESOLVER or the goal PLANNER — they take the
-    // vocabulary type (info/gap engines) or the coercer (read model), never the authority.
-    for (const importer of [INFORMATION_CORE, GAP_CORE, READS] as const) {
+    expect(importers).toEqual([ACTION_CORE, GAP_CORE, INFORMATION_CORE, OUTCOME_CORE, READS, SERVICE]);
+    // None of the five non-service importers consumes the goal RESOLVER or the goal PLANNER — they take the
+    // vocabulary type (info/gap/outcome/action engines) or the coercer (read model), never the authority.
+    for (const importer of [INFORMATION_CORE, GAP_CORE, READS, OUTCOME_CORE, ACTION_CORE] as const) {
       const src = codeOf(read(importer));
       expect(/\bresolveGoal\b/.test(src), `${importer} does not consume the goal resolver`).toBe(
         false,

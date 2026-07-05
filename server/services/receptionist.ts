@@ -80,6 +80,15 @@ import {
   recordConversationOutcome,
   type RecordedOutcome,
 } from "@/server/services/receptionist-outcome";
+import {
+  resolveAction,
+  isActionableAction,
+  type ActionResolution,
+} from "@/lib/receptionist/conversation-action";
+import {
+  recordConversationAction,
+  type RecordedAction,
+} from "@/server/services/receptionist-action";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -1042,6 +1051,20 @@ export type ConversationTurnResult = {
   outcome_recorded: boolean;
   /** The append-only `receptionist_conversation_outcomes` row id when an outcome was recorded, else null. */
   outcome_id: string | null;
+  /**
+   * The internal ACTION the R27 engine RESOLVED for this turn — computed from the outcome, strategy, goal and
+   * information (lib/receptionist/conversation-action.ts), never persisted by the pure core. Either an
+   * ACTIONABLE action (R27: a `prepare_booking` carrying the job type, postcode and number the team needs) or
+   * an ABSTENTION (`kind: "none"` with a reason) — the common case, including every turn the Outcome Engine
+   * claimed (`outcome_resolved`). The engine PREPARES an INTERNAL action and executes no external business
+   * action; the Outcome Engine stays authoritative (the action defers whenever an actionable outcome exists).
+   */
+  action: ActionResolution;
+  /** True when an actionable action was durably filed to the append-only action ledger (a best-effort write;
+   *  false when the action was an abstention OR the ledger write could not be recorded). */
+  action_recorded: boolean;
+  /** The append-only `receptionist_conversation_actions` row id when an action was prepared, else null. */
+  action_id: string | null;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1292,6 +1315,21 @@ export async function runConversationTurn(
   // call are all explicit R26 non-goals).
   const outcome = resolveOutcome(strategy.strategy, nextGoal, nextInformation);
 
+  // Step (R27 — RESOLVE) — RESOLVE the internal ACTION through the R27 CONVERSATION ACTION ENGINE
+  // (lib/receptionist/conversation-action.ts) — the layer that CONVERTS the resolved outcome into an internal
+  // business action PROPOSAL, ON TOP of the Outcome Engine. From the `outcome` just resolved (the DEFERRAL
+  // gate — the Outcome Engine stays authoritative), the strategy (`strategy.strategy`), the goal (`nextGoal`)
+  // and the information (`nextInformation`) it resolves — by a pure, deterministic mapping table + the ONE R20
+  // validity check, NO model, NO second read — either an ACTIONABLE action (R27: a `prepare_booking` carrying
+  // the job type, postcode and number the team needs) or an ABSTENTION (`kind: "none"`, the common case,
+  // including every turn the Outcome Engine claimed). Because the action's GOAL_ACTION map is DISJOINT from the
+  // outcome's GOAL_OUTCOME, the two engines never contend: booking preparation fires precisely on the
+  // satisfied `arrange_booking` the Outcome Engine abstains on. Resolution is PURE and PERSISTS NOTHING here;
+  // the action is PREPARED after the audited dispatch below. The engine PREPARES an INTERNAL action and
+  // executes NO external business action (booking execution, calendar writes, quoting, scheduling, customer
+  // promotion are all explicit R27 non-goals).
+  const action = resolveAction(outcome, strategy.strategy, nextGoal, nextInformation);
+
   // Step (R25) + Steps 7–8 — GENERATE the draft THROUGH THE CONVERSATION GENERATION ENGINE, then POLICY →
   // AUDIT → ROUTE, delegated WHOLE to the ONE canonical dispatch. The runtime adds no second path here:
   // `dispatchReceptionistReply` generates the draft through the engine (R25 — from the ONE `assembledContext`
@@ -1324,6 +1362,33 @@ export async function runConversationTurn(
       customer_ref: input.customer_ref ?? null,
       correlation_id: dispatch.correlation_id,
       outcome,
+      metadata: { strategy: strategy.strategy, goal: nextGoal },
+    });
+  }
+
+  // Step (R27 — PREPARE) — PREPARE the resolved internal ACTION, threaded to the SAME `correlation_id` the
+  // dispatch audited the confirmation reply under (and the outcome record shares), so an auditor joins the
+  // action to the confirmation that announced it and, via that id, to the outcome ledger. Files ONLY for an
+  // ACTIONABLE action (a `prepare_booking`; abstentions — including every turn the Outcome Engine claimed —
+  // prepare nothing) AND ONLY after a REAL audited dispatch — the `dispatch.correlation_id !== null` gate
+  // makes the record IDEMPOTENT, exactly as the outcome record is: a webhook-retry duplicate short-circuits
+  // the dispatch to a null correlation id, so no second action row is ever filed for the same turn. The record
+  // runs AFTER the audited dispatch: the confirmation is produced and audited by the UNCHANGED reply pipeline,
+  // and the action is a best-effort bookkeeping write PREPARED alongside it — a durable, audited reply is
+  // never undone because an action row could not be filed (`recordConversationAction` logs and swallows,
+  // returning null). This PREPARES an internal action and executes NO external business action (booking
+  // execution, calendar writes, quoting, scheduling, customer promotion are all explicit R27 non-goals); the
+  // ledger row IS the exposure to future business workflows.
+  let recordedAction: RecordedAction | null = null;
+  if (conversationId && isActionableAction(action) && dispatch.correlation_id !== null) {
+    recordedAction = await recordConversationAction({
+      org_id: input.org_id,
+      conversation_id: conversationId,
+      enquiry_id: input.enquiry_id ?? null,
+      lead_id: input.lead_id ?? null,
+      customer_ref: input.customer_ref ?? null,
+      correlation_id: dispatch.correlation_id,
+      action,
       metadata: { strategy: strategy.strategy, goal: nextGoal },
     });
   }
@@ -1416,6 +1481,9 @@ export async function runConversationTurn(
     outcome,
     outcome_recorded: recordedOutcome !== null,
     outcome_id: recordedOutcome?.outcome_id ?? null,
+    action,
+    action_recorded: recordedAction !== null,
+    action_id: recordedAction?.action_id ?? null,
     context,
     dispatch,
   };
