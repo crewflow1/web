@@ -10,6 +10,7 @@ import {
   type ReceptionistDispatchOutcome,
 } from "@/server/services/receptionist";
 import { fulfilApprovedBooking } from "@/server/services/receptionist-fulfilment";
+import { verifyApprovedFulfilment } from "@/server/services/receptionist-verification";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -318,6 +319,25 @@ export async function resolveReviewSend(input: {
   // (`sent_audit_id`) and makes the "no audit ⇒ nothing to fulfil" case explicit.
   if (outcome.audit_id !== null) {
     await fulfilApprovedBooking({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R31 — VERIFY. STRICTLY AFTER the R30 fulfilment above (the write is awaited and committed first), the R31
+    // CONVERSATION VERIFICATION ENGINE independently RECONCILES the fulfilment R30 decided against the record it
+    // filed (server/services/receptionist-verification.ts) and records an auditable INTEGRITY verdict — `consistent`
+    // when the record matches, `missing` when the approved operation went unrecorded (R30's best-effort gap made
+    // observable), `inconsistent` when the record diverges. It VERIFIES work; it performs NO business action. This
+    // is the SOLE caller of the Verification Engine, and it fires ONLY here — downstream of the SAME human grant, so
+    // Human Review can NEVER be bypassed by construction. The Fulfilment and Authorisation Engines stay
+    // authoritative (the runtime re-derives the expected fulfilment through R30's own `resolveFulfilment` and folds
+    // the grant through R29's own `deriveAuthorisationState`), and the write is IDEMPOTENT (a repeat verifies at
+    // most once via UNIQUE(authorisation_id)). BEST-EFFORT: the runtime logs and returns null on any failure, and a
+    // non-booking reply verifies nothing — a durable, human-approved confirmation reply, and the booking R30 already
+    // performed, are never undone by this verification write.
+    await verifyApprovedFulfilment({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
