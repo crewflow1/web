@@ -11,6 +11,7 @@ import {
 } from "@/server/services/receptionist";
 import { fulfilApprovedBooking } from "@/server/services/receptionist-fulfilment";
 import { verifyApprovedFulfilment } from "@/server/services/receptionist-verification";
+import { recoverVerifiedFulfilment } from "@/server/services/receptionist-recovery";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -338,6 +339,25 @@ export async function resolveReviewSend(input: {
     // non-booking reply verifies nothing — a durable, human-approved confirmation reply, and the booking R30 already
     // performed, are never undone by this verification write.
     await verifyApprovedFulfilment({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R32 — DETERMINE RECOVERY. STRICTLY AFTER the R31 verification above (that write is awaited and committed
+    // first), the R32 CONVERSATION RECOVERY ENGINE reads R31's RECORDED verification verdict and CLASSIFIES it into
+    // the recovery it warrants (server/services/receptionist-recovery.ts) — `none` when the verification was
+    // `consistent` (no recovery required), `reinstate` when it was `missing`, `reconcile` when it was `inconsistent`
+    // — recording an auditable RECOVERY disposition. It DETERMINES recovery; it EXECUTES no recovery action (it
+    // re-books nothing, retries nothing, schedules nothing). This is the SOLE caller of the Recovery Engine, and it
+    // fires ONLY here — downstream of the SAME human grant AND the recorded verification, so Human Review can NEVER be
+    // bypassed by construction. The Verification Engine stays authoritative (the runtime consumes R31's RECORDED
+    // decision through R32's own `resolveRecovery`, never re-verifying), and the write is IDEMPOTENT (a repeat
+    // determines recovery at most once via UNIQUE(authorisation_id)). BEST-EFFORT: the runtime logs and returns null
+    // on any failure, and a reply with no recorded verification recovers nothing — a durable, human-approved
+    // confirmation reply, and the booking R30 performed, and the verdict R31 recorded, are never undone by this write.
+    await recoverVerifiedFulfilment({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
