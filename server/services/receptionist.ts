@@ -89,6 +89,16 @@ import {
   recordConversationAction,
   type RecordedAction,
 } from "@/server/services/receptionist-action";
+import {
+  resolveExecution,
+  isExecutionDecided,
+  type ExecutionDecision,
+} from "@/lib/receptionist/conversation-execution";
+import {
+  recordConversationExecution,
+  isBookingExecutionLive,
+  type RecordedExecution,
+} from "@/server/services/receptionist-execution";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -1065,6 +1075,21 @@ export type ConversationTurnResult = {
   action_recorded: boolean;
   /** The append-only `receptionist_conversation_actions` row id when an action was prepared, else null. */
   action_id: string | null;
+  /**
+   * The EXECUTION DECISION the R28 engine RESOLVED for this turn — computed from the prepared action, the
+   * reply's policy verdict and the org's controls (lib/receptionist/conversation-execution.ts), never
+   * persisted by the pure core. Either a DECIDED decision (R28: an `execute_booking` carrying its eligibility —
+   * `requires_human_review`, `blocked_by_policy` or `blocked_by_org`, NEVER an autonomous-execute value) or an
+   * ABSTENTION (`kind: "none"` with a reason) — the common case, every turn the Action Engine prepared no
+   * action. The engine DECIDES eligibility and executes no business action; the Action Engine stays
+   * authoritative (the decision defers whenever no action was prepared).
+   */
+  execution: ExecutionDecision;
+  /** True when a decision was durably filed to the append-only execution ledger (a best-effort write; false
+   *  when the decision was an abstention OR the ledger write could not be recorded). */
+  execution_decided: boolean;
+  /** The append-only `receptionist_conversation_executions` row id when a decision was filed, else null. */
+  execution_id: string | null;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1393,6 +1418,55 @@ export async function runConversationTurn(
     });
   }
 
+  // Step (R28 — DECIDE) — DECIDE the internal EXECUTION eligibility through the R28 CONVERSATION EXECUTION
+  // ENGINE (lib/receptionist/conversation-execution.ts) — the single authority over whether a PREPARED action
+  // may execute, ON TOP of the Action Engine. It runs AFTER the audited dispatch because it CONSUMES the
+  // reply's ALREADY-computed policy verdict (`dispatch.decision?.verdict`) — Policy stays the single arbiter of
+  // the reply's fate and is never re-run here. From the `action` the R27 engine prepared (the DEFERRAL gate —
+  // the Action Engine stays authoritative, so an abstention yields `no_action_prepared`), that policy verdict
+  // (the POLICY constraint — a `block` forces `blocked_by_policy`), and the org's controls (the ORGANISATIONAL
+  // constraint — `isBookingExecutionLive`, DEFAULT OFF, forces `blocked_by_org` until deliberately armed) it
+  // resolves — by a pure, deterministic fold, NO model, NO second read — an execution DECISION whose STRONGEST
+  // eligibility is `requires_human_review` (a booking is a §9 A4 commitment; there is deliberately no
+  // autonomous-execute value). The verdict defaults to `review` only on the pre-audit duplicate short-circuit
+  // (when `correlation_id` is null too), which the record gate below excludes anyway. Resolution is PURE; the
+  // decision is RECORDED after the audited dispatch. The engine DECIDES eligibility and executes NO external
+  // business action (booking execution, calendar writes, scheduling, quoting, customer promotion, retry,
+  // receipt reconciliation are all explicit R28 non-goals).
+  const executionPolicyVerdict = dispatch.decision?.verdict ?? "review";
+  const liveBookingExecution = isBookingExecutionLive();
+  const execution = resolveExecution(action, executionPolicyVerdict, {
+    liveExecutionEnabled: liveBookingExecution,
+  });
+
+  // Step (R28 — RECORD) — RECORD the resolved EXECUTION DECISION, threaded to the SAME `correlation_id` the
+  // dispatch audited the confirmation reply under (and the outcome/action records share), and to the very
+  // action row it decides over (`action_id`), so an auditor joins the decision to the confirmation that
+  // announced it and to the action ledger. Files ONLY for a DECIDED decision (an `execute_booking`;
+  // abstentions — every turn the Action Engine prepared no action — decide nothing) AND ONLY after a REAL
+  // audited dispatch — the `dispatch.correlation_id !== null` gate makes the record IDEMPOTENT, exactly as the
+  // outcome/action records are. The record runs AFTER the audited dispatch: the confirmation is produced and
+  // audited by the UNCHANGED reply pipeline, and the decision is a best-effort bookkeeping write RECORDED
+  // alongside it — a durable, audited reply is never undone because a decision row could not be filed
+  // (`recordConversationExecution` logs and swallows, returning null). This RECORDS an eligibility decision and
+  // executes NO external business action; the ledger row IS the exposure to future business workflows.
+  let recordedExecution: RecordedExecution | null = null;
+  if (conversationId && isExecutionDecided(execution) && dispatch.correlation_id !== null) {
+    recordedExecution = await recordConversationExecution({
+      org_id: input.org_id,
+      conversation_id: conversationId,
+      enquiry_id: input.enquiry_id ?? null,
+      lead_id: input.lead_id ?? null,
+      customer_ref: input.customer_ref ?? null,
+      correlation_id: dispatch.correlation_id,
+      action_id: recordedAction?.action_id ?? null,
+      decision: execution,
+      policy_verdict: executionPolicyVerdict,
+      live_execution: liveBookingExecution,
+      metadata: { strategy: strategy.strategy, goal: nextGoal },
+    });
+  }
+
   // Step 9 — GOVERN the conversation's progression through the R17 FORMAL STATE MACHINE. Classify the
   // turn from its dispatch facts (the turn OUTCOME/event), then PLAN the transition: the state machine
   // folds the outcome to a target state and VALIDATES the (prior → target) edge against its declared
@@ -1484,6 +1558,9 @@ export async function runConversationTurn(
     action,
     action_recorded: recordedAction !== null,
     action_id: recordedAction?.action_id ?? null,
+    execution,
+    execution_decided: recordedExecution !== null,
+    execution_id: recordedExecution?.execution_id ?? null,
     context,
     dispatch,
   };
