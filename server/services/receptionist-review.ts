@@ -9,6 +9,7 @@ import {
   HUMAN_REVIEWED_BLOCKED_REASON,
   type ReceptionistDispatchOutcome,
 } from "@/server/services/receptionist";
+import { fulfilApprovedBooking } from "@/server/services/receptionist-fulfilment";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -303,6 +304,26 @@ export async function resolveReviewSend(input: {
   // A NULL id means a concurrent reviewer resolved this held reply first. The transport dedup index
   // (dedup_key = review_audit_id, where status='sent') has already prevented a duplicate send.
   if (resolutionId === null) return { ok: false, reason: "already_resolved", outcome };
+
+  // R30 — FULFIL. The human has now APPROVED this held reply (a durable `sent` resolution above). If the reply
+  // was a held BOOKING confirmation, that grant authorises the R30 CONVERSATION FULFILMENT ENGINE to CARRY OUT
+  // the approved internal business operation — materialise the booking as ONE idempotent, append-only record
+  // (server/services/receptionist-fulfilment.ts). This is the SOLE caller of the Fulfilment Engine, and it fires
+  // ONLY here — strictly downstream of a human's `sent` resolution — so Human Review can NEVER be bypassed by
+  // construction. The Authorisation Engine stays authoritative (the runtime folds the grant through R29's own
+  // `deriveAuthorisationState`), and the write is IDEMPOTENT (a repeat send performs the booking at most once via
+  // UNIQUE(authorisation_id)). BEST-EFFORT: the runtime logs and returns null on any failure, and a non-booking
+  // reply resolves to no fulfilment — a durable, human-approved confirmation reply is never undone by this write.
+  // A sent reply always produces an audit; the guard both satisfies the fulfilment's NOT NULL provenance
+  // (`sent_audit_id`) and makes the "no audit ⇒ nothing to fulfil" case explicit.
+  if (outcome.audit_id !== null) {
+    await fulfilApprovedBooking({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+  }
 
   return { ok: true, edited, outcome };
 }
