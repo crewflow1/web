@@ -14,6 +14,7 @@ import { verifyApprovedFulfilment } from "@/server/services/receptionist-verific
 import { recoverVerifiedFulfilment } from "@/server/services/receptionist-recovery";
 import { resolveConversationCompletion } from "@/server/services/receptionist-resolution";
 import { governConversationLifecycle } from "@/server/services/receptionist-lifecycle";
+import { orchestrateConversationLifecycle } from "@/server/services/receptionist-orchestration";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -404,6 +405,30 @@ export async function resolveReviewSend(input: {
     // the verdict R31 recorded, the recovery R32 determined and the resolution R33 decided are never undone by this
     // write.
     await governConversationLifecycle({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R35 — ORCHESTRATE THE RESPONSE. STRICTLY AFTER the R34 lifecycle above (that write is awaited and committed
+    // first), the R35 CONVERSATION ORCHESTRATION ENGINE reads R34's RECORDED lifecycle state and ROUTES it to the
+    // platform capability that should RESPOND (server/services/receptionist-orchestration.ts) — `conclude`→
+    // `conversation_conclusion` when the lifecycle was `closed` (the conversation is done, route it to conclusion),
+    // `recover`→`recovery_handling` when it was `retained` (a recovery path is open, route it to recovery handling),
+    // `escalate`→`human_attention` when it was `escalated` (the record is ambiguous, route it to human attention) —
+    // recording an auditable ORCHESTRATION decision and whether the conversation's orchestration is concluded or an
+    // active capability response is routed. It ROUTES work; it EXECUTES no work (it concludes nothing, recovers
+    // nothing, escalates nothing, enqueues nothing, notifies no one, retries nothing, schedules nothing). This is the
+    // SOLE caller of the Orchestration Engine, and it fires ONLY here — downstream of the SAME human grant AND the
+    // recorded lifecycle, so Human Review can NEVER be bypassed by construction. The Lifecycle Engine stays
+    // authoritative (the runtime consumes R34's RECORDED decision through R35's own `resolveConversationOrchestration`,
+    // never re-governing), and the write is IDEMPOTENT (a repeat orchestrates at most once via UNIQUE(lifecycle_id)).
+    // BEST-EFFORT: the runtime logs and returns null on any failure, and a reply with no recorded lifecycle
+    // orchestrates nothing — a durable, human-approved confirmation reply, the booking R30 performed, the verdict R31
+    // recorded, the recovery R32 determined, the resolution R33 decided and the lifecycle R34 governed are never undone
+    // by this write.
+    await orchestrateConversationLifecycle({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
