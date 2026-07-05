@@ -99,6 +99,15 @@ import {
   isBookingExecutionLive,
   type RecordedExecution,
 } from "@/server/services/receptionist-execution";
+import {
+  resolveAuthorisation,
+  isAuthorisationDecided,
+  type AuthorisationDecision,
+} from "@/lib/receptionist/conversation-authorisation";
+import {
+  recordConversationAuthorisation,
+  type RecordedAuthorisation,
+} from "@/server/services/receptionist-authorisation";
 import { getSmsProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
 import { toE164 } from "@/lib/phone";
@@ -1090,6 +1099,22 @@ export type ConversationTurnResult = {
   execution_decided: boolean;
   /** The append-only `receptionist_conversation_executions` row id when a decision was filed, else null. */
   execution_id: string | null;
+  /**
+   * The AUTHORISATION DECISION the R29 engine RESOLVED for this turn — computed PURELY from the R28 execution
+   * decision (lib/receptionist/conversation-authorisation.ts), never persisted by the pure core. Either a
+   * DECIDED authorisation (R29: an `approve_booking` carrying its requirement and turn-time state — `pending`
+   * when a human must approve, `foreclosed` when the execution was blocked upstream, NEVER a grant) or an
+   * ABSTENTION (`kind: "none"` with a reason) — the common case, every turn the Execution Engine decided
+   * nothing. The engine DETERMINES APPROVAL and executes nothing; the Execution Engine stays authoritative (the
+   * authorisation defers whenever no execution was decided), and the human's grant stays in the EXISTING Human
+   * Review ledger.
+   */
+  authorisation: AuthorisationDecision;
+  /** True when a decision was durably filed to the append-only authorisation ledger (a best-effort write; false
+   *  when the authorisation was an abstention OR the ledger write could not be recorded). */
+  authorisation_recorded: boolean;
+  /** The append-only `receptionist_conversation_authorisations` row id when a decision was filed, else null. */
+  authorisation_id: string | null;
   /** The canonical R12 context boundaries the runtime assembled, or null when there was no timeline. */
   context: { total_message_count: number; included_message_count: number } | null;
   /** The full canonical dispatch outcome (Generate → Enforce → Audit → Transport), verbatim. */
@@ -1467,6 +1492,46 @@ export async function runConversationTurn(
     });
   }
 
+  // Step (R29 — AUTHORISE) — DETERMINE the internal AUTHORISATION through the R29 CONVERSATION AUTHORISATION
+  // ENGINE (lib/receptionist/conversation-authorisation.ts) — the single authority over whether a DECIDED
+  // execution requires approval, ON TOP of the Execution Engine. It consumes ONLY the R28 `execution` decision
+  // (the DEFERRAL gate — the Execution Engine stays authoritative, so an abstention yields
+  // `no_execution_decision`) and folds its eligibility — by a pure, deterministic fold, NO model, NO policy
+  // re-run, NO second read, NO org lookup — into an approval REQUIREMENT and a turn-time STATE whose STRONGEST
+  // value is `pending` (a booking is a §9 A4 commitment; there is deliberately no autonomous-approve value).
+  // Policy stays MANDATORY transitively (a `block` already forced the execution to `blocked_by_policy`, which
+  // folds to `foreclosed`); Human Review stays MANDATORY (the grant — `approved`/`rejected` — is the human's,
+  // recorded in the EXISTING review ledger, never here). Resolution is PURE; the decision is RECORDED below.
+  const authorisation = resolveAuthorisation(execution);
+
+  // Step (R29 — RECORD) — RECORD the resolved AUTHORISATION DECISION, threaded to the SAME `correlation_id` the
+  // dispatch audited the confirmation under (and the outcome/action/execution records share), to the execution
+  // row it authorises (`execution_id`) and the action it decides over (`action_id`), AND — when the confirmation
+  // was HELD for review — to the held reply a human resolves (`review_audit_id`), the JOIN to the EXISTING Human
+  // Review inbox where the grant is recorded. Files ONLY for a DECIDED authorisation (an `approve_booking`;
+  // abstentions decide nothing) AND ONLY after a REAL audited dispatch — the `dispatch.correlation_id !== null`
+  // gate makes the record IDEMPOTENT, exactly as the outcome/action/execution records are. NO org feature gate is
+  // consulted (the org constraint was already folded into the eligibility by R28). Best-effort: a durable,
+  // audited reply is never undone because a decision row could not be filed (`recordConversationAuthorisation`
+  // logs and swallows, returning null). This RECORDS an approval requirement and executes NOTHING; the ledger row
+  // IS the exposure to future business workflows.
+  let recordedAuthorisation: RecordedAuthorisation | null = null;
+  if (conversationId && isAuthorisationDecided(authorisation) && dispatch.correlation_id !== null) {
+    recordedAuthorisation = await recordConversationAuthorisation({
+      org_id: input.org_id,
+      conversation_id: conversationId,
+      enquiry_id: input.enquiry_id ?? null,
+      lead_id: input.lead_id ?? null,
+      customer_ref: input.customer_ref ?? null,
+      correlation_id: dispatch.correlation_id,
+      action_id: recordedAction?.action_id ?? null,
+      execution_id: recordedExecution?.execution_id ?? null,
+      review_audit_id: dispatch.decision?.verdict === "review" ? dispatch.audit_id : null,
+      decision: authorisation,
+      metadata: { strategy: strategy.strategy, goal: nextGoal },
+    });
+  }
+
   // Step 9 — GOVERN the conversation's progression through the R17 FORMAL STATE MACHINE. Classify the
   // turn from its dispatch facts (the turn OUTCOME/event), then PLAN the transition: the state machine
   // folds the outcome to a target state and VALIDATES the (prior → target) edge against its declared
@@ -1561,6 +1626,9 @@ export async function runConversationTurn(
     execution,
     execution_decided: recordedExecution !== null,
     execution_id: recordedExecution?.execution_id ?? null,
+    authorisation,
+    authorisation_recorded: recordedAuthorisation !== null,
+    authorisation_id: recordedAuthorisation?.authorisation_id ?? null,
     context,
     dispatch,
   };
