@@ -12,6 +12,7 @@ import {
 import { fulfilApprovedBooking } from "@/server/services/receptionist-fulfilment";
 import { verifyApprovedFulfilment } from "@/server/services/receptionist-verification";
 import { recoverVerifiedFulfilment } from "@/server/services/receptionist-recovery";
+import { resolveConversationCompletion } from "@/server/services/receptionist-resolution";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -358,6 +359,27 @@ export async function resolveReviewSend(input: {
     // on any failure, and a reply with no recorded verification recovers nothing — a durable, human-approved
     // confirmation reply, and the booking R30 performed, and the verdict R31 recorded, are never undone by this write.
     await recoverVerifiedFulfilment({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R33 — DETERMINE RESOLUTION. STRICTLY AFTER the R32 recovery above (that write is awaited and committed first),
+    // the R33 CONVERSATION RESOLUTION ENGINE reads R32's RECORDED recovery disposition and CLASSIFIES it into the
+    // conversation-completion state it implies (server/services/receptionist-resolution.ts) — `terminal` when the
+    // recovery was `none` (the conversation is fully resolved, no further intervention), `recoverable` when it was
+    // `reinstate` (a clear recovery path exists), `unresolved` when it was `reconcile` (the record is ambiguous) —
+    // recording an auditable RESOLUTION state and whether further intervention is required. It DETERMINES completion;
+    // it EXECUTES no recovery or business action (it re-books nothing, reconciles nothing, retries nothing, schedules
+    // nothing). This is the SOLE caller of the Resolution Engine, and it fires ONLY here — downstream of the SAME
+    // human grant AND the recorded recovery, so Human Review can NEVER be bypassed by construction. The Recovery
+    // Engine stays authoritative (the runtime consumes R32's RECORDED decision through R33's own
+    // `resolveConversationResolution`, never re-recovering), and the write is IDEMPOTENT (a repeat determines
+    // resolution at most once via UNIQUE(recovery_id)). BEST-EFFORT: the runtime logs and returns null on any failure,
+    // and a reply with no recorded recovery resolves nothing — a durable, human-approved confirmation reply, and the
+    // booking R30 performed, the verdict R31 recorded and the recovery R32 determined, are never undone by this write.
+    await resolveConversationCompletion({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
