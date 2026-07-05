@@ -13,6 +13,7 @@ import { fulfilApprovedBooking } from "@/server/services/receptionist-fulfilment
 import { verifyApprovedFulfilment } from "@/server/services/receptionist-verification";
 import { recoverVerifiedFulfilment } from "@/server/services/receptionist-recovery";
 import { resolveConversationCompletion } from "@/server/services/receptionist-resolution";
+import { governConversationLifecycle } from "@/server/services/receptionist-lifecycle";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -380,6 +381,29 @@ export async function resolveReviewSend(input: {
     // and a reply with no recorded recovery resolves nothing — a durable, human-approved confirmation reply, and the
     // booking R30 performed, the verdict R31 recorded and the recovery R32 determined, are never undone by this write.
     await resolveConversationCompletion({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R34 — GOVERN LIFECYCLE. STRICTLY AFTER the R33 resolution above (that write is awaited and committed first),
+    // the R34 CONVERSATION LIFECYCLE ENGINE reads R33's RECORDED resolution state and GOVERNS the conversation into
+    // the lifecycle transition and state it warrants (server/services/receptionist-lifecycle.ts) — `close`→`closed`
+    // when the resolution was `terminal` (the conversation is done), `retain`→`retained` when it was `recoverable`
+    // (a recovery path is open, keep the conversation live), `escalate`→`escalated` when it was `unresolved` (the
+    // record is ambiguous, hand it to a human) — recording an auditable LIFECYCLE decision and whether the
+    // conversation is closed or ongoing. It GOVERNS the conversation lifecycle; it EXECUTES no business action (it
+    // re-books nothing, retries nothing, schedules nothing, promotes no customer, fulfils no quote). This is the SOLE
+    // caller of the Lifecycle Engine, and it fires ONLY here — downstream of the SAME human grant AND the recorded
+    // resolution, so Human Review can NEVER be bypassed by construction. The Resolution Engine stays authoritative
+    // (the runtime consumes R33's RECORDED decision through R34's own `resolveConversationLifecycle`, never
+    // re-resolving), and the write is IDEMPOTENT (a repeat governs the lifecycle at most once via
+    // UNIQUE(resolution_id)). BEST-EFFORT: the runtime logs and returns null on any failure, and a reply with no
+    // recorded resolution governs nothing — a durable, human-approved confirmation reply, the booking R30 performed,
+    // the verdict R31 recorded, the recovery R32 determined and the resolution R33 decided are never undone by this
+    // write.
+    await governConversationLifecycle({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
