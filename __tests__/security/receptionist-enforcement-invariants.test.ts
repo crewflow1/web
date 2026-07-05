@@ -91,10 +91,28 @@ const rel = (full: string) => relative(ROOT, full).split(sep).join("/");
 
 const SERVICE = "server/services/receptionist.ts";
 const POLICY = "lib/receptionist/policy.ts";
+/** The R28 Conversation Execution Engine — the pure core and its server runtime. Both sit ON TOP of the reply
+ *  pipeline and fold the ALREADY-computed policy verdict into an execution decision, so each imports the
+ *  `GuardrailVerdict` verdict TYPE (type-only) from the policy module — but NEITHER imports a policy VALUE and
+ *  NEITHER names a decision function, so they CONSUME the verdict and can neither enforce nor bypass. */
+const EXECUTION_CORE = "lib/receptionist/conversation-execution.ts";
+const EXECUTION_RUNTIME = "server/services/receptionist-execution.ts";
 
 /** The harvested policy's decision surface — the functions an enforcer would reach for. */
 const DECISION_FNS = /\b(?:evaluateReply|isAutoSendable|redactReply)\b/;
 const POLICY_SPEC = "@/lib/receptionist/policy";
+
+/**
+ * Does the module import a VALUE (not merely a `type`) from the harvested policy module? A type-only import
+ * (`import type { GuardrailVerdict } from "@/lib/receptionist/policy"`) erases entirely at compile time — it
+ * emits no JavaScript, invokes nothing, and can neither enforce a rule nor manufacture an `allowed` verdict; it
+ * merely NAMES the verdict a downstream decider CONSUMES. A value import is a genuine reach for policy logic.
+ * The check flags any import from the policy spec that is NOT an `import type …` statement, so a later value
+ * import (or an inline `{ type X }` mixed import) is treated — conservatively — as a real reach.
+ */
+function importsPolicyValue(code: string): boolean {
+  return /\bimport\s+(?!type\b)[^;]*?\bfrom\s*["']@\/lib\/receptionist\/policy["']/.test(code);
+}
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -119,13 +137,16 @@ describe("receptionist enforcement — the canonical reply gate ships", () => {
 // =====================================================================
 
 describe("receptionist enforcement — exactly one path reaches the policy", () => {
-  // Every non-test module whose EXECUTABLE source reaches the guardrail's decision
-  // surface — by importing the policy module or by naming one of its decision functions.
+  // THE ENFORCEMENT PATH — every non-test module whose EXECUTABLE source RUNS the guardrail: it imports a
+  // policy VALUE, or names one of the decision functions. This is the load-bearing set: to enforce (or to
+  // bypass) the policy you must reach a decision function, and to reach one you must import a value. A type-only
+  // import of the `GuardrailVerdict` verdict TYPE is deliberately NOT a reach — it erases at compile time and
+  // enforces nothing (proved separately below).
   const reachers = walkSources(SOURCE_ROOTS)
     .filter((full) => rel(full) !== POLICY) // the policy DEFINES the surface; it is not a reacher
     .filter((full) => {
       const code = codeOf(read(rel(full)));
-      return importSpecifiers(code).includes(POLICY_SPEC) || DECISION_FNS.test(code);
+      return importsPolicyValue(code) || DECISION_FNS.test(code);
     })
     .map(rel)
     .sort();
@@ -141,6 +162,27 @@ describe("receptionist enforcement — exactly one path reaches the policy", () 
 
   it("no other server/ module reaches the policy directly", () => {
     expect(reachers.filter((p) => p !== SERVICE && p.startsWith("server/"))).toEqual([]);
+  });
+
+  // The policy MODULE may be IMPORTED more broadly than it is RUN — R28's Execution Engine consumes the verdict
+  // TYPE. This proves those extra importers are non-enforcing: they import the module type-only and name no
+  // decision function, so they cannot be a second enforcement path.
+  it("R28's execution engine imports the verdict TYPE ONLY — it neither imports a policy value nor enforces", () => {
+    const policyModuleImporters = walkSources(SOURCE_ROOTS)
+      .filter((full) => rel(full) !== POLICY)
+      .filter((full) => importSpecifiers(codeOf(read(rel(full)))).includes(POLICY_SPEC))
+      .map(rel)
+      .sort();
+    // The service RUNS policy; R28's two modules CONSUME the verdict type. Nothing else imports the module.
+    expect(policyModuleImporters).toEqual([EXECUTION_CORE, EXECUTION_RUNTIME, SERVICE]);
+    for (const importer of [EXECUTION_CORE, EXECUTION_RUNTIME] as const) {
+      const code = codeOf(read(importer));
+      expect(importsPolicyValue(code), `${importer} imports the policy module type-only`).toBe(false);
+      expect(
+        DECISION_FNS.test(code),
+        `${importer} names no policy decision function — it consumes the verdict, it does not enforce`,
+      ).toBe(false);
+    }
   });
 });
 

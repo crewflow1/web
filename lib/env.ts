@@ -152,6 +152,10 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_VOICE_NOTES: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
+  // The R28 Conversation Execution Engine's organisational control: whether the org has enabled CONTROLLED
+  // LIVE BOOKING EXECUTION. DEFAULTS OFF — until explicitly armed, every prepared booking is `blocked_by_org`.
+  // Even when armed, a booking never executes autonomously: the strongest eligibility is `requires_human_review`.
+  NEXT_PUBLIC_FEATURE_BOOKING_EXECUTION: z.enum(["true", "false"]).default("false"),
 
   // -- Capability authority source (Directive #015 / D-05) ---------------
   // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The

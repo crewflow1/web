@@ -176,6 +176,12 @@ const RESPONSE_WRITE_FN = /\bset_receptionist_conversation_response\b/;
  *  its resolver or planner, so the goal engine's authority stays single-sourced (asserted in R19 §importers). */
 const OUTCOME_CORE = "lib/receptionist/conversation-outcome.ts";
 const ACTION_CORE = "lib/receptionist/conversation-action.ts";
+/** The R28 Conversation Execution Engine — the pure core and its server runtime. Both sit ON TOP of the whole
+ *  stack and fold the reply's ALREADY-computed policy verdict into an execution decision, so each names the
+ *  `GuardrailVerdict` TYPE (a type-only import of the policy module) — but NEITHER names a policy decision
+ *  function, so Policy's decision surface stays single-sourced to the canonical service (asserted in §2). */
+const EXECUTION_CORE = "lib/receptionist/conversation-execution.ts";
+const EXECUTION_RUNTIME = "server/services/receptionist-execution.ts";
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -250,18 +256,46 @@ describe("receptionist runtime — the pure core is a leaf that reaches nothing"
 // =====================================================================
 
 describe("receptionist runtime — R15 added no new enforcement or transport path", () => {
-  const policyReachers = walkSources(SOURCE_ROOTS)
+  // THE ENFORCEMENT PATH — every module whose EXECUTABLE source NAMES a policy decision function. This is the
+  // guarantee that matters: exactly ONE module may RUN a policy decision. R28 layered the Execution Engine on
+  // top of the stack, but it CONSUMES the already-computed verdict and names NO decision function, so the
+  // decision surface is STILL run by exactly the canonical service.
+  const decisionSurfaceReachers = walkSources(SOURCE_ROOTS)
     .filter((full) => rel(full) !== POLICY) // the policy DEFINES the surface; it is not a reacher
-    .filter((full) => {
-      const code = codeOf(read(rel(full)));
-      return importSpecifiers(code).includes(POLICY_SPEC) || DECISION_FNS.test(code);
-    })
+    .filter((full) => DECISION_FNS.test(codeOf(read(rel(full)))))
     .map(rel)
     .sort();
 
-  it("the policy is STILL reached by exactly the canonical service — the pure core is not a reacher", () => {
-    expect(policyReachers).toEqual([SERVICE]);
-    expect(policyReachers).not.toContain(RUNTIME_CORE);
+  // THE MODULE-IMPORT SET — every module that IMPORTS the policy module (any kind, incl. type-only). The
+  // service RUNS policy; R28's two Execution-Engine modules import ONLY the `GuardrailVerdict` verdict TYPE
+  // (type-only — it erases at compile time), so they name the verdict they CONSUME, never re-run the guardrail.
+  const policyModuleImporters = walkSources(SOURCE_ROOTS)
+    .filter((full) => rel(full) !== POLICY)
+    .filter((full) => importSpecifiers(codeOf(read(rel(full)))).includes(POLICY_SPEC))
+    .map(rel)
+    .sort();
+
+  it("the policy DECISION SURFACE is STILL run by exactly the canonical service — no pure core is a reacher", () => {
+    expect(decisionSurfaceReachers).toEqual([SERVICE]);
+    expect(decisionSurfaceReachers).not.toContain(RUNTIME_CORE);
+    expect(decisionSurfaceReachers).not.toContain(EXECUTION_CORE);
+    expect(decisionSurfaceReachers).not.toContain(EXECUTION_RUNTIME);
+  });
+
+  it("the policy module is imported by EXACTLY the service and R28's two type-only verdict consumers", () => {
+    // R15 shipped with a SINGLE importer (the service). R28's Execution Engine sits ON TOP of the whole stack
+    // and folds the reply's verdict into an execution decision; both its modules therefore name the
+    // `GuardrailVerdict` TYPE — but ONLY the type (a type-only import), NEVER a decision function. The
+    // enforcement path is undiminished: the decision surface still has exactly the one runner (asserted just
+    // above), and neither R28 importer reaches it. The pure STATE core is in NEITHER set.
+    expect(policyModuleImporters).toEqual([EXECUTION_CORE, EXECUTION_RUNTIME, SERVICE]);
+    expect(policyModuleImporters).not.toContain(RUNTIME_CORE);
+    for (const importer of [EXECUTION_CORE, EXECUTION_RUNTIME] as const) {
+      expect(
+        DECISION_FNS.test(codeOf(read(importer))),
+        `${importer} consumes the verdict TYPE only — it names no policy decision function`,
+      ).toBe(false);
+    }
   });
 
   it("the transport ledger is STILL written by exactly the canonical service", () => {
