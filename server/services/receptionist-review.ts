@@ -15,6 +15,7 @@ import { recoverVerifiedFulfilment } from "@/server/services/receptionist-recove
 import { resolveConversationCompletion } from "@/server/services/receptionist-resolution";
 import { governConversationLifecycle } from "@/server/services/receptionist-lifecycle";
 import { orchestrateConversationLifecycle } from "@/server/services/receptionist-orchestration";
+import { coordinateConversationLifecycle } from "@/server/services/receptionist-coordination";
 import type { InboundChannel } from "@/lib/receptionist/types";
 
 // =====================================================================
@@ -429,6 +430,29 @@ export async function resolveReviewSend(input: {
     // recorded, the recovery R32 determined, the resolution R33 decided and the lifecycle R34 governed are never undone
     // by this write.
     await orchestrateConversationLifecycle({
+      org_id: item.org_id,
+      review_audit_id: item.review_audit_id,
+      sent_audit_id: outcome.audit_id,
+      review_resolution_id: resolutionId,
+    });
+
+    // R36 — COORDINATE THE RESPONSE. STRICTLY AFTER the R35 orchestration above (that write is awaited and committed
+    // first), the R36 CONVERSATION COORDINATION ENGINE reads R35's RECORDED orchestration routing and COORDINATES it
+    // into a participation plan (server/services/receptionist-coordination.ts) — `finalising`→`conversation_conclusion`
+    // when the orchestration routed `conclude`, `remediating`→`recovery_handling` when it routed `recover`,
+    // `escalating`→`human_attention` when it routed `escalate` — recording an auditable COORDINATION decision: the MODE
+    // by which the platform's capabilities should be coordinated to respond, the lead capability that should participate,
+    // the single-capability participation plan, and whether the coordinated response requires a human or is autonomous.
+    // It COORDINATES work; it EXECUTES no work (it concludes nothing, recovers nothing, escalates nothing, enqueues
+    // nothing, notifies no one, retries nothing, schedules nothing). This is the SOLE caller of the Coordination Engine,
+    // and it fires ONLY here — downstream of the SAME human grant AND the recorded orchestration, so Human Review can
+    // NEVER be bypassed by construction. The Orchestration Engine stays authoritative (the runtime consumes R35's
+    // RECORDED decision, never re-orchestrating), and the write is IDEMPOTENT (a repeat coordinates at most once via
+    // UNIQUE(orchestration_id)). BEST-EFFORT: the runtime logs and returns null on any failure, and a reply with no
+    // recorded orchestration coordinates nothing — a durable, human-approved confirmation reply, the booking R30
+    // performed, the verdict R31 recorded, the recovery R32 determined, the resolution R33 decided, the lifecycle R34
+    // governed and the orchestration R35 routed are never undone by this write.
+    await coordinateConversationLifecycle({
       org_id: item.org_id,
       review_audit_id: item.review_audit_id,
       sent_audit_id: outcome.audit_id,
