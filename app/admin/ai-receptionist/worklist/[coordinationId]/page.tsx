@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { requireHqPage } from "@/server/auth/hq";
 import { requireOrgContext } from "@/server/auth/session";
 import { getCoordinationById } from "@/server/services/receptionist-coordination-view";
+import { getClaimForCoordination } from "@/server/services/receptionist-claim-view";
+import { projectClaimOwnership } from "@/lib/receptionist/conversation-claim-view";
 import {
   projectCoordinationDetail,
   type CoordinationDetailView,
@@ -11,6 +13,7 @@ import {
   type DetailField,
   type TimelineStep,
 } from "./detail-view";
+import { ClaimPanel } from "./claim-panel";
 
 /**
  * /admin/ai-receptionist/worklist/[coordinationId] — the CONVERSATION WORKLIST DETAIL SURFACE
@@ -23,24 +26,32 @@ import {
  * six linked per-engine contexts in full, and the provenance chain — a complete inspection of what the
  * receptionist decided and how it got there.
  *
- * IT CONSUMES ONLY THE AUTHORISED READ STACK. Its one data path is the R37 Coordination Read Model's
- * single-item seam, {@link getCoordinationById}: it opens no database client, names no ledger or view,
- * and reaches around no layer. The R37 read model stays the authoritative single source of a recorded
- * coordination; behind it the Coordination Engine (and Lifecycle, Resolution, Recovery, Verification,
- * Fulfilment, Orchestration) stay authoritative over every fact. This surface adds pixels — the pure
- * {@link projectCoordinationDetail} does the labelling — not a second read path and not a decision.
+ * IT CONSUMES ONLY THE AUTHORISED STACKS. Its READ paths are the two authorised read seams — the R37
+ * Coordination Read Model's single-item seam {@link getCoordinationById} for the coordination, and the
+ * R47 ownership reader {@link getClaimForCoordination} for the current claim — and its ONE WRITE path is
+ * the R46 runtime, reached ONLY through the {@link ClaimPanel}'s `claimWorkItemAction` server action. It
+ * opens no database client, names no ledger and no write primitive, and reaches around no layer. The R37
+ * read model stays the authoritative single source of a recorded coordination; behind it the Coordination
+ * Engine (and Lifecycle, Resolution, Recovery, Verification, Fulfilment, Orchestration) stay authoritative
+ * over every fact; and the R46 runtime stays the sole authority over recording a claim. This surface adds
+ * pixels and a SINGLE claim affordance — not a second read path, not a second write path, and not a
+ * decision.
  *
  * ORGANISATION ISOLATION IS PRESERVED. Auth is the EXISTING HQ gate (`requireHqPage`); the organisation
- * the read is scoped to is resolved ONLY from the session (`requireOrgContext` → `ctx.org.id`), exactly
- * as the R40 API resolves it — never from the URL. The coordination id comes from the path, but the read
- * is org-scoped, so a coordination id belonging to ANOTHER organisation resolves to null and renders a
- * 404: a caller can only ever inspect a coordination that belongs to the organisation their session
- * resolves to.
+ * the read AND the claim are scoped to is resolved ONLY from the session (`requireOrgContext` →
+ * `ctx.org.id`), exactly as the R40 API resolves it — never from the URL. The coordination id comes from
+ * the path, but the read is org-scoped, so a coordination id belonging to ANOTHER organisation resolves to
+ * null and renders a 404: a caller can only ever inspect a coordination that belongs to the organisation
+ * their session resolves to. The claim action re-resolves the org the same way, and the R46 runtime's
+ * storage guard refuses any coordination not recorded in that org — so a claim can never cross a tenant
+ * boundary either.
  *
- * IT IS READ-ONLY. It renders a decision, a booking, a timeline, contexts and ids. It does not assign
- * work, does not claim it, does not dispatch it, does not execute it and does not mutate state — there is
- * no form, no action, no mutation and no execution path anywhere on it. A field is a label; there is
- * nothing to submit.
+ * IT OFFERS EXACTLY ONE OPERATOR ACTION — CLAIM OWNERSHIP — AND NOTHING ELSE. Beyond the read it displays
+ * the current owner and, ONLY when the item is unclaimed, a single Claim button. That button's only path
+ * is the R46 runtime (`claimConversationWork`), through the server action — the surface cannot bypass the
+ * runtime. It does NOT assign, reassign, release, dispatch, notify, schedule, fulfil or execute any work —
+ * every one an explicit R47 non-goal. The claim it records lands in R46's append-only ledger through the
+ * runtime; this surface introduces no second write path and no execution path.
  */
 
 type Params = Promise<{ coordinationId: string }>;
@@ -51,12 +62,13 @@ export default async function HqReceptionistWorklistDetailPage({
   params: Params;
 }) {
   // The EXISTING HQ gate authenticates the operator; the org is resolved from the SESSION (never the URL),
-  // exactly as the R40 API does — so the single-item read below can only be scoped to the caller's org.
-  await requireHqPage();
+  // exactly as the R40 API does — so the reads below can only be scoped to the caller's org. The gate's
+  // user is the VIEWER whose ownership view the claim panel is projected for (drives "You hold this claim").
+  const user = await requireHqPage();
   const { ctx } = await requireOrgContext();
   const { coordinationId } = await params;
 
-  // The ONE data path — the R37 read model's org-scoped single-item seam. A coordination that does not
+  // The coordination read — the R37 read model's org-scoped single-item seam. A coordination that does not
   // belong to this organisation resolves to null and 404s: organisation isolation, structurally.
   const record = await getCoordinationById({
     org_id: ctx.org.id,
@@ -65,6 +77,14 @@ export default async function HqReceptionistWorklistDetailPage({
   if (!record) notFound();
 
   const detail = projectCoordinationDetail(record);
+
+  // The ownership read — the R47 org-scoped claim reader. Returns the current claim on this item, or null
+  // when unclaimed; projected (with the viewer's id) into the ownership view the claim panel renders.
+  const owner = await getClaimForCoordination({
+    org_id: ctx.org.id,
+    coordination_id: coordinationId,
+  });
+  const ownership = projectClaimOwnership({ owner, viewerOperatorId: user.id });
 
   return (
     <div className="space-y-6">
@@ -84,14 +104,17 @@ export default async function HqReceptionistWorklistDetailPage({
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{detail.headline.title}</h1>
           <p className="mt-1 text-sm text-slate-600">
-            Read-only inspection of one coordinated conversation. It shows the recorded decision, its
-            timeline and its linked context — nothing here claims, mutates or executes work.
+            Inspect one coordinated conversation — the recorded decision, its timeline and its linked
+            context — and claim ownership of it. Claiming records who owns the item; no other action
+            follows.
           </p>
         </div>
         <span className="inline-flex rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
           {detail.headline.status}
         </span>
       </header>
+
+      <ClaimPanel coordinationId={detail.coordinationId} ownership={ownership} />
 
       <Metadata detail={detail} />
 
