@@ -13,12 +13,14 @@ import { resolve, relative, sep } from "node:path";
  * worklist through the R43 → R42 → R41 → R40 spine, the detail surface reads a SINGLE coordination through the
  * R37 Coordination Read Model's org-scoped single-item seam, `getCoordinationById`, and RE-SHAPES that record
  * for display with the pure `projectCoordinationDetail`. The cardinal safety property is that the detail
- * surface CONSUMES ONLY THE AUTHORISED READ STACK and does nothing else: it reads one coordination ONLY through
- * the R37 reader (never a ledger, the read-model view directly, an engine, the worklist read surface/API/client/
- * session/view model, or a database client), it RE-DERIVES no fact (the record's coded facets are RECORDED by
- * the engines; the pure core only LABELS and ORDERS them, it recomputes nothing and re-orders by nothing but a
- * fixed causal SEQUENCE), and it introduces NO mutation and NO execution path — it assigns nobody, claims
- * nothing, dispatches nothing, notifies no one, schedules nothing, enqueues into nothing and retries nothing.
+ * surface CONSUMES ONLY AUTHORISED STACKS: it reads the coordination ONLY through the R37 reader and the current
+ * claim ONLY through the R47 ownership reader (never a ledger, the read-model view directly, an engine, the
+ * worklist read surface/API/client/session/view model, or a database client), it RE-DERIVES no fact (the
+ * record's coded facets are RECORDED by the engines; the pure core only LABELS and ORDERS them, it recomputes
+ * nothing and re-orders by nothing but a fixed causal SEQUENCE), and page.tsx itself introduces NO mutation — it
+ * assigns nobody, dispatches nothing, notifies no one, schedules nothing, enqueues into nothing and retries
+ * nothing. The ONE affordance it renders is the R47 claim panel, whose action consumes the R46 runtime; the page
+ * performs no write of its own, and that claim path is pinned by the R47 claim-surface invariant suite.
  *
  * ORGANISATION ISOLATION IS PRESERVED — and here the surface's shape is the INVERSE of R44's. The operator
  * surface names no organisation because org is resolved down in the HTTP stack (it forwards a cookie). The
@@ -32,17 +34,19 @@ import { resolve, relative, sep } from "node:path";
  * This suite proves the contract as a matter of SOURCE, not discipline — the house bar of the R36→R44
  * invariant suites:
  *
- *   • THE SURFACE IS READ-ONLY — it authenticates, resolves the org, awaits ONE single-item read, projects it
- *     and renders it. It issues NO `fetch(` of its own, carries no HTTP method (no `method:` literal),
- *     `.send(`s nothing, declares no server action (`"use server"`), opens no database client and names no
- *     query verb. There is provably no path through which the surface mutates anything.
- *   • THE SURFACE CONSUMES ONLY THE AUTHORISED READ STACK — the page's ENTIRE import surface is the R37 reader
- *     (its one data path), the EXISTING HQ auth gate, the session/org chokepoint (for org resolution),
- *     `next/link`, `next/navigation` and its own pure presentation core; the core's ENTIRE surface is the R37
- *     read-model TYPES alone. Neither imports the worklist view model, session, client, read surface, engine,
- *     an API contract or a database client. With R45 in the tree the R37 reader module is imported by EXACTLY
- *     the R38 worklist runtime + the detail page, and `getCoordinationById` is named by EXACTLY its definition
- *     (the reader) + the detail page.
+ *   • THE PAGE AND ITS CORE ARE READ-ONLY — the page authenticates, resolves the org, awaits its two single-item
+ *     reads, projects them and renders. Neither page.tsx nor its pure core issues a `fetch(` of its own, carries
+ *     an HTTP method (no `method:` literal), `.send(`s anything, declares a server action (`"use server"`), opens
+ *     a database client or names a query verb — the WRITE is delegated to the claim panel's action, never
+ *     performed here. There is provably no path through which these two artefacts mutate anything.
+ *   • THE SURFACE CONSUMES ONLY AUTHORISED STACKS — the page's ENTIRE import surface is its TWO read seams (the
+ *     R37 coordination reader + the R47 ownership reader), the R47 ownership view-core, the EXISTING HQ auth
+ *     gate, the session/org chokepoint (for org resolution), `next/link`, `next/navigation`, its own pure
+ *     presentation core and the R47 claim panel it renders; the core's ENTIRE surface is the R37 read-model
+ *     TYPES alone. Neither imports the worklist view model, session, client, read surface, engine, an API
+ *     contract or a database client. With R45 in the tree the R37 reader module is imported by EXACTLY the R38
+ *     worklist runtime + the detail page, and `getCoordinationById` is named by EXACTLY its definition (the
+ *     reader) + the detail page.
  *   • THE READ STACK BELOW STAYS AUTHORITATIVE — the surface re-derives nothing and answers no query: it RENDERS
  *     the record the reader hands it. With R45 in the tree the Read Model view is STILL queried only by the R37
  *     reader, the worklist derivation STILL by exactly the two R38 modules, and the R43 view-model runtime is
@@ -54,8 +58,10 @@ import { resolve, relative, sep } from "node:path";
  *   • NO DUPLICATE READ / DERIVATION LOGIC — the page re-declares none of the presentation core's view types and
  *     drives no worklist read; the pure core reaches no I/O, no clock and no RNG, sorts nothing and filters
  *     nothing — its causal ordering is STRUCTURAL, so the SAME record always projects to the SAME view.
- *   • NO MUTATION, NO EXECUTION PATH — neither artefact names any engine writer, engine runtime, or operational
- *     verb (assign / dispatch / notify / schedule / enqueue / retry), names a ledger, or ships a migration.
+ *   • NO ENGINE WRITER, NO NON-GOAL VERB — neither artefact names any engine writer, engine runtime, or non-goal
+ *     operational verb (assign / dispatch / notify / schedule / enqueue / retry), names a ledger, or ships a
+ *     migration. The one authorised affordance — claim — is delegated to the R46 runtime through the claim
+ *     panel's action, not executed here; `claim` is deliberately NOT among the non-goal verbs above.
  *
  * The surface's rendering is pinned by the production build (it compiles + type-checks) and its projection
  * arithmetic by the unit suite (__tests__/receptionist/conversation-worklist-detail-surface.test.ts); its data
@@ -150,7 +156,6 @@ const DETAIL_FILES = [DETAIL_PAGE, DETAIL_VIEW] as const;
 // The R37 Coordination Read Model — the ONE read stack the detail surface consumes.
 const R37_READER = "server/services/receptionist-coordination-view.ts";
 const R37_READER_MODULE = "@/server/services/receptionist-coordination-view";
-const R37_CORE = "lib/receptionist/conversation-coordination-view.ts";
 const R37_CORE_MODULE = "@/lib/receptionist/conversation-coordination-view";
 
 // The R38 Worklist Engine — the OTHER (pre-existing) consumer of the R37 reader; the detail surface must not
@@ -181,15 +186,28 @@ const R40_CORE_MODULE = "@/lib/receptionist/conversation-worklist-api";
 // The R44 operator page — the sole importer of the R43 view-model runtime; the detail surface must NOT join it.
 const OPERATOR_PAGE = "app/admin/ai-receptionist/worklist/page.tsx";
 
-/** The exact import surface the detail PAGE is permitted — the R37 reader (its one read), the HQ gate, the
- *  session/org chokepoint, the two Next primitives it renders with, and its own presentation core. Nothing else. */
+// The R47 CONVERSATION WORK CLAIM SURFACE additions to the detail page. R45 shipped a purely read-only page; R47
+// wires the single authorised claim affordance onto it. The page therefore gains THREE imports: the org-scoped
+// ownership READER (a second read seam, alongside the R37 coordination reader), the pure ownership VIEW-CORE that
+// projects it, and the client CLAIM PANEL that renders it. The page itself still performs no write — the panel's
+// action consumes the R46 runtime, pinned by __tests__/security/receptionist-claim-surface-invariants.test.ts.
+const CLAIM_READER_MODULE = "@/server/services/receptionist-claim-view";
+const CLAIM_VIEW_CORE_MODULE = "@/lib/receptionist/conversation-claim-view";
+const CLAIM_PANEL_MODULE = "./claim-panel";
+
+/** The exact import surface the detail PAGE is permitted — its TWO read seams (the R37 coordination reader + the
+ *  R47 ownership reader), the R47 ownership view-core, the HQ gate, the session/org chokepoint, the two Next
+ *  primitives it renders with, its own presentation core, and the R47 claim panel it renders. Nothing else. */
 const ALLOWED_PAGE_IMPORTS = [
   R37_READER_MODULE,
+  CLAIM_READER_MODULE,
+  CLAIM_VIEW_CORE_MODULE,
   HQ_AUTH_MODULE,
   SESSION_AUTH_MODULE,
   "next/link",
   "next/navigation",
   "./detail-view",
+  CLAIM_PANEL_MODULE,
 ].sort();
 
 /** The exact import surface the pure presentation CORE is permitted — the R37 read-model TYPES alone. */
@@ -311,10 +329,10 @@ describe("receptionist worklist detail surface — the surface ships", () => {
 });
 
 // =====================================================================
-// 1. THE SURFACE IS READ-ONLY — it authenticates, resolves the org, awaits one read, projects and renders.
+// 1. THE PAGE AND ITS CORE ARE READ-ONLY — the page authenticates, resolves the org, awaits its two reads, projects and renders.
 // =====================================================================
 
-describe("receptionist worklist detail surface — the surface is read-only", () => {
+describe("receptionist worklist detail surface — the page and its core are read-only", () => {
   it("issues NO fetch of its own — its data path is the R37 single-item reader", () => {
     for (const path of DETAIL_FILES) {
       expect(codeOf(read(path)), `${path} must not fetch directly`).not.toMatch(/\bfetch\s*\(/);
@@ -361,11 +379,11 @@ describe("receptionist worklist detail surface — the surface is read-only", ()
 });
 
 // =====================================================================
-// 2. THE SURFACE CONSUMES ONLY THE AUTHORISED READ STACK — it reaches around nothing.
+// 2. THE SURFACE CONSUMES ONLY AUTHORISED STACKS — it reaches around nothing.
 // =====================================================================
 
-describe("receptionist worklist detail surface — it consumes only the authorised read stack", () => {
-  it("the page's ENTIRE import surface is the R37 reader, the HQ gate, the session chokepoint, next primitives and its core", () => {
+describe("receptionist worklist detail surface — it consumes only authorised stacks", () => {
+  it("the page's ENTIRE import surface is its two read seams, the HQ gate, the session chokepoint, next primitives, its core and the claim panel", () => {
     const imports = new Set(importSpecifiers(codeOf(read(DETAIL_PAGE))));
     expect([...imports].sort()).toEqual(ALLOWED_PAGE_IMPORTS);
   });
@@ -496,11 +514,11 @@ describe("receptionist worklist detail surface — it forks no read or derivatio
 });
 
 // =====================================================================
-// 6. NO MUTATION, NO EXECUTION PATH — neither artefact names any engine writer, runtime, or operational verb.
+// 6. NO ENGINE WRITER, NO NON-GOAL VERB — neither artefact names any engine writer, runtime, or non-goal verb.
 // =====================================================================
 
-describe("receptionist worklist detail surface — it introduces no execution path", () => {
-  it("neither artefact names ANY engine writer, runtime, or operational verb", () => {
+describe("receptionist worklist detail surface — the page and its core name no engine writer or non-goal verb", () => {
+  it("neither artefact names ANY engine writer, runtime, or non-goal operational verb", () => {
     for (const path of DETAIL_FILES) {
       const code = codeOf(read(path));
       for (const token of EXECUTION_TOKENS) {
