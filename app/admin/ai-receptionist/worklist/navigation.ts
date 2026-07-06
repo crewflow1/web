@@ -81,3 +81,12 @@ export function worklistPath(view: WorklistView, offset: number): string {
   if (offset > 0) params.set("offset", String(offset));
   return `${BASE_PATH}?${params.toString()}`;
 }
+
+/**
+ * Build the href for one worklist item's DETAIL surface (R45) — the anchor a worklist row points at. The
+ * coordination id is a PATH segment (encoded defensively); the detail page resolves the organisation from
+ * the session and reads that single coordination org-scoped, so this href names a view, never a tenant.
+ */
+export function detailPath(coordinationId: string): string {
+  return `${BASE_PATH}/${encodeURIComponent(coordinationId)}`;
+}

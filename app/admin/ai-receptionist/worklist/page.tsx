@@ -15,6 +15,7 @@ import {
   nextOffset,
   previousOffset,
   worklistPath,
+  detailPath,
 } from "./navigation";
 
 /**
@@ -225,7 +226,12 @@ function WorklistTableRow({ row }: { row: WorklistRow }) {
         ) : (
           <span className="text-slate-400">—</span>
         )}
-        <p className="font-mono text-[11px] text-slate-400">{row.coordinationId}</p>
+        <Link
+          href={detailPath(row.coordinationId)}
+          className="font-mono text-[11px] text-slate-500 hover:text-slate-900 hover:underline"
+        >
+          {row.coordinationId}
+        </Link>
       </td>
       <td className="px-4 py-3 hidden md:table-cell">
         {row.categoryLabels.length > 0 ? (
