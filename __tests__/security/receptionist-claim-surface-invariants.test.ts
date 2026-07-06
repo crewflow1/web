@@ -29,8 +29,9 @@ import { resolve, relative, sep } from "node:path";
  *     resolved from the SESSION (`requireOrgContext` → `ctx.org.id`), NEVER from a parameter; the page resolves the org
  *     the same way for BOTH reads; and the ownership reader's `org_id` filter is MANDATORY on the query.
  *   • THE AUDIT STAYS APPEND-ONLY — the ownership reader performs ONLY a SELECT (no insert/update/delete/upsert, no
- *     write primitive), and the claims ledger is read through EXACTLY ONE seam; R47 adds no writer and no migration, so
- *     the R46 append-only ledger is the sole, untouched record.
+ *     write primitive), and the claims ledger is read through READ-ONLY seams only (this surface reader and the R48
+ *     ownership read model — both SELECT-only projections); R47 adds no writer and no migration, so the R46 append-only
+ *     ledger is the sole, untouched record.
  *   • NO EXECUTION PATH IS INTRODUCED — none of the claim-specific surface files (view core, reader, action, panel)
  *     names any engine execution function, any other engine writer, or any R46/R47 non-goal token (assign / dispatch /
  *     notify / schedule / enqueue / retry / promote / complete / close). The surface displays ownership and records a
@@ -107,6 +108,9 @@ const READER = "server/services/receptionist-claim-view.ts";
 const ACTION = "app/admin/ai-receptionist/worklist/[coordinationId]/claim-actions.ts";
 const PANEL = "app/admin/ai-receptionist/worklist/[coordinationId]/claim-panel.tsx";
 const PAGE = "app/admin/ai-receptionist/worklist/[coordinationId]/page.tsx";
+
+// The R48 canonical ownership read model — the SECOND read-only reader over the same append-only claims ledger.
+const OWNERSHIP_READ_MODEL = "server/services/receptionist-ownership-read-model.ts";
 
 /** The claim-specific surface files whose EXECUTABLE source must name no execution path. Excludes the page, which
  *  legitimately renders R45's read-only engine display (fulfilment/lifecycle/etc.). */
@@ -341,9 +345,11 @@ describe("receptionist claim surface — the append-only audit is preserved", ()
     expect(code).not.toMatch(/\.rpc\(/);
   });
 
-  it("the claims ledger is READ through EXACTLY ONE seam — the ownership reader", () => {
-    // The runtime writes the ledger through the RPC (it never names the table); the reader is the one table reader.
-    expect(ledgerReaders).toEqual([READER]);
+  it("the claims ledger is READ through READ-ONLY seams only — this surface reader and the R48 ownership read model", () => {
+    // The runtime writes the ledger through the RPC (it never names the table); the readers are the only table readers.
+    // R48 added the canonical ownership read model as a SECOND read-only seam — both are SELECT-only projections, so a
+    // growth in this set beyond the two known readers would mean a new, un-vetted ledger reader appeared.
+    expect(ledgerReaders).toEqual([READER, OWNERSHIP_READ_MODEL].sort());
   });
 
   it("no claim-surface module directly mutates the ledger — the append-only R46 writer is the only path", () => {
