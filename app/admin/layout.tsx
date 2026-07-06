@@ -44,6 +44,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },
   { href: "/admin/ai-receptionist", label: "AI Receptionist setups" },
+  { href: "/admin/ai-receptionist/worklist", label: "↳ Conversation worklist" },
   { href: "/admin/ai-receptionist/review", label: "↳ Reply review inbox" },
   { href: "/admin/ai-receptionist/deliveries", label: "↳ Reply delivery monitor" },
   { href: "/admin/billing", label: "Billing" },
