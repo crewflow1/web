@@ -11,18 +11,23 @@ import type { ClaimType, ClaimOutcome } from "./conversation-claim";
 // dashboard, an operator queue) reads THROUGH this read model and re-implements no ownership derivation of its own.
 //
 // This module is the read model's PURE CORE. It PROJECTS what the read model exposes as total, deterministic functions
-// over already-recorded claim facts. It reaches NO I/O, holds NO clock and NO RNG, and — the cardinal rule shared with
-// every core in this stack — RECORDS NOTHING and DECIDES NO CLAIM. The claim decision is R46's (`resolveClaim`), the
-// write is R46's (`claimConversationWork`); this core only turns read-back ledger rows into ownership facts. It
-// introduces NO execution path: it assigns nothing, reassigns nothing, releases nothing, dispatches nothing, notifies
-// no one and completes nothing — it is presentation-agnostic projection over the R46 record, and nothing else.
+// over already-recorded ownership facts. It reaches NO I/O, holds NO clock and NO RNG, and — the cardinal rule shared
+// with every core in this stack — RECORDS NOTHING, DECIDES NO CLAIM and DECIDES NO RELEASE. The claim decision + write
+// are R46's (`resolveClaim` / `claimConversationWork`); the release decision + write are R50's (`resolveRelease` /
+// `releaseConversationWork`); this core only turns read-back ledger rows into ownership facts. It introduces NO
+// execution path: it assigns nothing, reassigns nothing, dispatches nothing, notifies no one and completes nothing, and
+// it neither claims nor releases anything — it is presentation-agnostic projection over the R46 + R50 records, and
+// nothing else.
 //
-// IT CONSUMES ONLY THE APPEND-ONLY CLAIM LEDGER. The read model's whole input is {@link OwnershipClaimRow} — the
-// columns the ownership reader selects from `receptionist_conversation_claims`. It reads no coordination ledger, no
-// sibling engine and no other table; it re-derives no coordination and re-decides no claim. Because the ledger is
-// append-only and `coordination_id` is UNIQUE there, a coordination has AT MOST ONE claim row: ownership is therefore a
-// pure function of that row's presence (owned) or absence (unowned), and the org-wide history is simply the set of
-// claim rows, each an ownership-taken event.
+// IT CONSUMES THE APPEND-ONLY CLAIM LEDGER AND ITS APPEND-ONLY RELEASE LEDGER — NOTHING ELSE. The read model's input is
+// {@link OwnershipClaimRow} (the columns the ownership reader selects from `receptionist_conversation_claims`) plus,
+// since R50, {@link OwnershipReleaseRow} (the columns it selects from `receptionist_conversation_claim_releases`). It
+// reads no coordination ledger, no sibling engine and no other table; it re-derives no coordination and re-decides
+// nothing. Because both ledgers are append-only and `coordination_id` is UNIQUE in each, a coordination has AT MOST ONE
+// claim row and AT MOST ONE release row: ownership is therefore a pure function of "a claim is present AND no release
+// is present" (owned), and the org-wide history is the set of claims whose coordination has NOT been released, each an
+// ownership-taken event. R50 makes the read model RELEASE-AWARE while keeping it the single ownership authority — a
+// released item returns to the unclaimed state HERE, in the read model's derivation, not by mutating the claim ledger.
 //
 // IT IS VIEWER-AGNOSTIC. Unlike R47's `projectClaimOwnership` (which folds in the VIEWER's identity to decide "You
 // hold this" / "may I claim"), this read model states ownership FACTS with no viewer: WHO owns a coordination, WHEN
@@ -60,6 +65,23 @@ export type OwnershipClaimRow = {
   readonly claim_outcome: string;
   readonly status: string;
   readonly claimed_at: string;
+};
+
+/**
+ * One RAW row of the append-only RELEASE ledger — the recorded fact that ONE operator RELINQUISHED their claim on a
+ * coordination, in the shape the ownership reader selects from `receptionist_conversation_claim_releases` (R50). The
+ * read model consumes releases to SUBTRACT them from ownership: a coordination with a release row is NO LONGER owned,
+ * even though its append-only claim row still exists. `coordination_id` is the load-bearing anchor (UNIQUE in the
+ * release ledger too, so a coordination has at most one release); the rest is provenance the read model does not need
+ * to derive ownership but carries for a faithful row shape. This is the read model's SECOND (and only other) input — it
+ * consumes the claim ledger and the release ledger, and nothing else.
+ */
+export type OwnershipReleaseRow = {
+  readonly coordination_id: string;
+  readonly org_id: string;
+  readonly operator_id: string;
+  readonly operator_email: string | null;
+  readonly released_at: string;
 };
 
 // ---------------------------------------------------------------------
@@ -132,17 +154,26 @@ export type OwnershipRecord = {
 };
 
 /**
- * Derive the per-coordination {@link OwnershipRecord} from the coordination id and its claim row (or its absence).
- * Pure and total. Because `coordination_id` is UNIQUE in the append-only ledger, a coordination has AT MOST ONE claim:
- * a present row is `owned` (with the current owner and claim timestamp), an absent row is `unowned`. It names no viewer
- * and grants no affordance — it states ownership FACTS only.
+ * Derive the per-coordination {@link OwnershipRecord} from the coordination id, its claim row (or its absence) and,
+ * since R50, its release row (or its absence). Pure and total. Because `coordination_id` is UNIQUE in BOTH append-only
+ * ledgers, a coordination has AT MOST ONE claim and AT MOST ONE release, so ownership is a three-way total function:
+ *   • no claim                     → `unowned` (no operator ever took it);
+ *   • a claim AND a release        → `unowned` (its owner RELINQUISHED it — it has returned to the unclaimed state);
+ *   • a claim AND no release       → `owned` (with the current owner and claim timestamp).
+ * The `release` argument is OPTIONAL and defaults to absent, so a caller that has only claim facts (a pre-R50 caller, or
+ * a coordination that provably has no release) gets the original claim-only semantics unchanged. It names no viewer and
+ * grants no affordance — it states ownership FACTS only, and it RECORDS neither a claim nor a release.
  */
 export function projectOwnership(input: {
   coordinationId: string;
   claim: OwnershipClaimRow | null;
+  release?: OwnershipReleaseRow | null;
 }): OwnershipRecord {
-  const { coordinationId, claim } = input;
-  if (!claim) {
+  const { coordinationId, claim, release } = input;
+  // Unowned when there is no claim at all, OR when the claim has been relinquished (a release returns the item to the
+  // unclaimed state). A released item carries no CURRENT owner, so its record is the same fully-null unowned shape as a
+  // never-claimed item — ownership is the present fact, not the history.
+  if (!claim || release) {
     return {
       coordinationId,
       conversationId: null,
@@ -161,6 +192,25 @@ export function projectOwnership(input: {
     owner,
     claimedAt: owner.claimedAt,
   };
+}
+
+/**
+ * The ACTIVE claims in a set — the claims whose coordination has NOT been relinquished (R50). Given the org's claim
+ * rows and its release rows, it returns exactly the claims that still represent CURRENT ownership: a claim is active
+ * unless a release row names the same coordination. This is the single place the read model SUBTRACTS releases from
+ * ownership, so the history and the summary are derived over the SAME "claim present AND no release" rule that
+ * {@link projectOwnership} applies per coordination.
+ *
+ * Pure, total and ORDER-INDEPENDENT: it consults a set of released coordination ids, so shuffling either input never
+ * changes the output. Non-mutating — it returns a NEW array and never reorders the caller's. A claim with no matching
+ * release passes through verbatim; a released claim is dropped.
+ */
+export function selectActiveClaims(
+  claims: readonly OwnershipClaimRow[],
+  releases: readonly OwnershipReleaseRow[],
+): OwnershipClaimRow[] {
+  const released = new Set(releases.map((release) => release.coordination_id));
+  return claims.filter((claim) => !released.has(claim.coordination_id));
 }
 
 // ---------------------------------------------------------------------

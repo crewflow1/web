@@ -140,10 +140,15 @@ const COORDINATIONS_TABLE = /\breceptionist_conversation_coordinations\b/;
 const ENGINE_EXECUTION_FNS =
   /\b(?:fulfilApprovedBooking|verifyApprovedFulfilment|recoverVerifiedFulfilment|resolveConversationCompletion|governConversationLifecycle|orchestrateConversationLifecycle|coordinateConversationLifecycle|resolveConversationCoordination|resolveClaim|resolveFulfilment|resolveVerification|resolveRecovery|resolveResolution|resolveLifecycle|resolveOrchestration|resolveCoordination)\b/;
 
-/** The R48 explicit non-goals as SOURCE tokens — the read model states ownership; it acts on nothing. */
+/**
+ * The R48 explicit non-goals as SOURCE tokens — the read model states ownership; it acts on nothing. NOTE (R50): the
+ * read model is now RELEASE-AWARE — it consumes the append-only release ledger to subtract released items from
+ * ownership, so `release` is a legitimately-named CAPABILITY here, not a non-goal. Release remains a READ ONLY: the
+ * finer-grained bans below (no release write primitive `record_receptionist_conversation_\w+`, no direct write, no
+ * `.rpc(`) still prove the read model introduces no release EXECUTION path.
+ */
 const NON_GOAL_TOKENS = [
   /\bassign\w*/i, // assignment / reassignment
-  /\brelease\w*/i,
   /\bdispatch\w*/i,
   /\bnotif\w*/i, // notify / notification
   /\bschedul\w*/i, // schedule / scheduling
@@ -243,12 +248,18 @@ describe("receptionist ownership read model — the claim runtime remains author
 // 3. IT CONSUMES ONLY THE APPEND-ONLY CLAIM LEDGER — one table, no coordination, no sibling engine.
 // =====================================================================
 
-describe("receptionist ownership read model — consumes only the append-only claim ledger", () => {
-  it("the reader's only .from(...) target is the claims ledger — it derives no coordination", () => {
+describe("receptionist ownership read model — consumes only the append-only claim + release ledgers", () => {
+  it("the reader's only .from(...) targets are the two append-only ledgers — it derives no coordination", () => {
     const code = codeOf(read(READER));
     expect(code).toMatch(CLAIM_LEDGER);
     expect(code).not.toMatch(COORDINATIONS_TABLE);
-    expect([...new Set(fromTargets(code))]).toEqual(["receptionist_conversation_claims"]);
+    // R48 read the claims ledger only; R50 makes it release-aware — it now ALSO reads the release ledger to subtract
+    // released items from ownership. These two append-only ledgers are its ONLY .from(...) targets: no coordination
+    // table, no sibling engine, no view.
+    expect([...new Set(fromTargets(code))]).toEqual([
+      "receptionist_conversation_claims",
+      "receptionist_conversation_claim_releases",
+    ]);
   });
 
   it("the pure core names no table at all — it consumes rows, not a database", () => {
