@@ -6,8 +6,10 @@ import {
   projectOwnershipEvent,
   compareOwnershipEvents,
   orderOwnershipEvents,
+  selectActiveClaims,
   summariseOwnership,
   type OwnershipClaimRow,
+  type OwnershipReleaseRow,
   type OwnershipEvent,
 } from "@/lib/receptionist/conversation-ownership-read-model";
 
@@ -39,6 +41,17 @@ function makeRow(overrides: Partial<OwnershipClaimRow> = {}): OwnershipClaimRow 
     claim_outcome: "work_claimed",
     status: "claimed",
     claimed_at: "2026-07-06T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeRelease(overrides: Partial<OwnershipReleaseRow> = {}): OwnershipReleaseRow {
+  return {
+    coordination_id: "coord-1",
+    org_id: "org-1",
+    operator_id: "operator-1",
+    operator_email: "op@crewflow.uk",
+    released_at: "2026-07-06T13:00:00.000Z",
     ...overrides,
   };
 }
@@ -99,6 +112,98 @@ describe("projectOwnership — the per-coordination ownership record", () => {
   it("reports on the coordination it was asked about (uses the queried id)", () => {
     const record = projectOwnership({ coordinationId: "asked-for", claim: null });
     expect(record.coordinationId).toBe("asked-for");
+  });
+
+  it("projects a claim with NO release as OWNED — an explicit null release is the claim-only semantics", () => {
+    const record = projectOwnership({
+      coordinationId: "coord-9",
+      claim: makeRow({ coordination_id: "coord-9" }),
+      release: null,
+    });
+    expect(record.status).toBe("owned");
+    expect(record.owned).toBe(true);
+    expect(record.owner?.operatorId).toBe("operator-1");
+  });
+
+  it("projects a claim WITH a release as UNOWNED — a released item returns to the unclaimed state", () => {
+    // R50: ownership is the PRESENT fact, not the history. A claim that has been relinquished (a release row names its
+    // coordination) reads as the SAME fully-null unowned shape as a never-claimed item.
+    const record = projectOwnership({
+      coordinationId: "coord-9",
+      claim: makeRow({ coordination_id: "coord-9" }),
+      release: makeRelease({ coordination_id: "coord-9" }),
+    });
+    expect(record).toEqual({
+      coordinationId: "coord-9",
+      conversationId: null,
+      status: "unowned",
+      owned: false,
+      owner: null,
+      claimedAt: null,
+    });
+  });
+
+  it("projects NO claim with a release as UNOWNED (a defensive, still-total case)", () => {
+    const record = projectOwnership({
+      coordinationId: "coord-9",
+      claim: null,
+      release: makeRelease({ coordination_id: "coord-9" }),
+    });
+    expect(record.status).toBe("unowned");
+    expect(record.owned).toBe(false);
+  });
+});
+
+describe("selectActiveClaims — subtract released coordinations from the owned set", () => {
+  it("returns every claim verbatim when there are no releases", () => {
+    const claims = [makeRow({ coordination_id: "c1" }), makeRow({ coordination_id: "c2" })];
+    expect(selectActiveClaims(claims, [])).toEqual(claims);
+  });
+
+  it("drops exactly the claims whose coordination has a release", () => {
+    const claims = [
+      makeRow({ coordination_id: "c1" }),
+      makeRow({ coordination_id: "c2" }),
+      makeRow({ coordination_id: "c3" }),
+    ];
+    const releases = [makeRelease({ coordination_id: "c2" })];
+    expect(selectActiveClaims(claims, releases).map((c) => c.coordination_id)).toEqual(["c1", "c3"]);
+  });
+
+  it("ignores releases that match no claim (a release for another coordination drops nothing)", () => {
+    const claims = [makeRow({ coordination_id: "c1" })];
+    const releases = [makeRelease({ coordination_id: "other" })];
+    expect(selectActiveClaims(claims, releases)).toEqual(claims);
+  });
+
+  it("returns an empty set when every claim has been released", () => {
+    const claims = [makeRow({ coordination_id: "c1" }), makeRow({ coordination_id: "c2" })];
+    const releases = [
+      makeRelease({ coordination_id: "c1" }),
+      makeRelease({ coordination_id: "c2" }),
+    ];
+    expect(selectActiveClaims(claims, releases)).toEqual([]);
+  });
+
+  it("is ORDER-INDEPENDENT — shuffling either input yields the same active set", () => {
+    const c1 = makeRow({ coordination_id: "c1" });
+    const c2 = makeRow({ coordination_id: "c2" });
+    const c3 = makeRow({ coordination_id: "c3" });
+    const releases = [makeRelease({ coordination_id: "c2" })];
+    const forward = selectActiveClaims([c1, c2, c3], releases).map((c) => c.coordination_id);
+    const reversed = selectActiveClaims([c3, c2, c1], [...releases].reverse()).map(
+      (c) => c.coordination_id,
+    );
+    expect(new Set(forward)).toEqual(new Set(reversed));
+  });
+
+  it("does not mutate its inputs, and returns a NEW array", () => {
+    const claims = [makeRow({ coordination_id: "c1" }), makeRow({ coordination_id: "c2" })];
+    const releases = [makeRelease({ coordination_id: "c1" })];
+    const claimsSnapshot = claims.map((c) => c.coordination_id);
+    const result = selectActiveClaims(claims, releases);
+    expect(result).not.toBe(claims);
+    expect(claims.map((c) => c.coordination_id)).toEqual(claimsSnapshot);
   });
 });
 
