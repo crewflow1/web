@@ -33,8 +33,8 @@ import { resolve, relative, sep } from "node:path";
  *   • THE OWNERSHIP READ MODEL REMAINS AUTHORITATIVE — release records a fact; it re-implements NO ownership derivation.
  *     Neither release file names `projectOwnership` / `selectActiveClaims` / `summariseOwnership` / `getOwnership*`; the
  *     runtime reads NO ownership (no `.from(...)`, no read-model import). The release ledger is READ through exactly ONE
- *     seam — the R48 reader (now release-aware) — so "does this item read as unclaimed again?" is answered in the read
- *     model's derivation, nowhere else.
+ *     seam — the R51 Ownership State engine (since R51 the R48 reader consumes the engine) — so "does this item read as
+ *     unclaimed again?" is answered in the engine's derivation, nowhere else.
  *   • ORGANISATION ISOLATION IS PRESERVED — the core DEMANDS an organisation on every request (its first gate), the
  *     ledger's `org_id` is NOT NULL, the writer's coordination guard is org-scoped (`c.org_id = p_org_id`) AND its
  *     ownership gate is org-scoped (`claims … and org_id = p_org_id`): a cross-tenant release names no coordination in
@@ -140,9 +140,11 @@ const MIGRATION =
 const CLAIM_CORE = "lib/receptionist/conversation-claim.ts";
 const CLAIM_RUNTIME = "server/services/receptionist-claim.ts";
 const CLAIM_MIGRATION = "supabase/migrations/20260907000000_receptionist_conversation_claims.sql";
-// The R48 Ownership Read Model spine — the release ledger's ONLY read seam (release-aware since R50).
+// The R48 Ownership Read Model spine — still ships, but since R51 it reads NO ledger: it consumes the state engine.
 const OWNERSHIP_CORE = "lib/receptionist/conversation-ownership-read-model.ts";
 const OWNERSHIP_READER = "server/services/receptionist-ownership-read-model.ts";
+// The R51 Ownership State Engine runtime — since R51 the release ledger's ONLY reader (the sole engine-side event reader).
+const OWNERSHIP_STATE_RUNTIME = "server/services/receptionist-ownership-state.ts";
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -243,8 +245,8 @@ describe("receptionist release — exactly one module records a release (the rel
     .sort();
 
   it("the ONLY module that names the release write primitive is the release server runtime", () => {
-    // If this list ever grows, a second release-write path (or a bypass) has appeared. The R48 reader names the release
-    // LEDGER (a `.from(...)` read), never this WRITER — so it is absent here.
+    // If this list ever grows, a second release-write path (or a bypass) has appeared. The R51 state engine names the
+    // release LEDGER (a `.from(...)` read), never this WRITER — so it is absent here.
     expect(writers).toEqual([RUNTIME]);
   });
 
@@ -410,16 +412,17 @@ describe("receptionist release — the Ownership Read Model remains authoritativ
     expect(specs).not.toContain("@/lib/receptionist/conversation-ownership-read-model");
   });
 
-  it("the release ledger is READ through exactly ONE seam — the release-aware R48 reader", () => {
-    // A `.from("receptionist_conversation_claim_releases")` appears in exactly one module: the ownership reader. No
-    // My-Claims list, dashboard or queue reconstructs ownership from the release ledger itself.
-    expect(releaseTableReaders).toEqual([OWNERSHIP_READER]);
+  it("the release ledger is READ through exactly ONE seam — the R51 ownership state engine", () => {
+    // A `.from("receptionist_conversation_claim_releases")` appears in exactly one module: the state-engine runtime.
+    // Since R51 the R48 reader consumes the engine (it names the release ledger no more); no My-Claims list, dashboard
+    // or queue reconstructs ownership from the release ledger itself.
+    expect(releaseTableReaders).toEqual([OWNERSHIP_STATE_RUNTIME]);
   });
 
-  it("the R48 reader was MADE release-aware — it consumes the release ledger to subtract released items", () => {
-    const reader = codeOf(read(OWNERSHIP_READER));
-    expect(reader).toMatch(/receptionist_conversation_claim_releases/);
-    expect(reader).toMatch(/selectActiveClaims/);
+  it("the R51 state engine reads the release ledger — it folds claims + releases into derived ownership state", () => {
+    const runtime = codeOf(read(OWNERSHIP_STATE_RUNTIME));
+    expect(runtime).toMatch(/receptionist_conversation_claim_releases/);
+    expect(runtime).toMatch(/reconcileOwnershipStates/);
   });
 });
 

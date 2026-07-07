@@ -109,8 +109,9 @@ const ACTION = "app/admin/ai-receptionist/worklist/[coordinationId]/claim-action
 const PANEL = "app/admin/ai-receptionist/worklist/[coordinationId]/claim-panel.tsx";
 const PAGE = "app/admin/ai-receptionist/worklist/[coordinationId]/page.tsx";
 
-// The R48 canonical ownership read model — the SECOND read-only reader over the same append-only claims ledger.
-const OWNERSHIP_READ_MODEL = "server/services/receptionist-ownership-read-model.ts";
+// The R51 Ownership State Engine runtime — since R51 the SECOND read-only reader over the append-only claims ledger.
+// (The R48 read model reads the ledger no more; it consumes this engine, which is now the engine-side ledger reader.)
+const OWNERSHIP_STATE_RUNTIME = "server/services/receptionist-ownership-state.ts";
 
 /** The claim-specific surface files whose EXECUTABLE source must name no execution path. Excludes the page, which
  *  legitimately renders R45's read-only engine display (fulfilment/lifecycle/etc.). */
@@ -345,11 +346,12 @@ describe("receptionist claim surface — the append-only audit is preserved", ()
     expect(code).not.toMatch(/\.rpc\(/);
   });
 
-  it("the claims ledger is READ through READ-ONLY seams only — this surface reader and the R48 ownership read model", () => {
+  it("the claims ledger is READ through READ-ONLY seams only — this surface reader and the R51 ownership state engine", () => {
     // The runtime writes the ledger through the RPC (it never names the table); the readers are the only table readers.
-    // R48 added the canonical ownership read model as a SECOND read-only seam — both are SELECT-only projections, so a
-    // growth in this set beyond the two known readers would mean a new, un-vetted ledger reader appeared.
-    expect(ledgerReaders).toEqual([READER, OWNERSHIP_READ_MODEL].sort());
+    // R51 moved ownership derivation into the state engine, whose runtime is now the SECOND read-only seam over the
+    // claims ledger (the R48 read model reads the ledger no more — it consumes the engine). Both are SELECT-only
+    // projections, so a growth in this set beyond the two known readers would mean a new, un-vetted ledger reader appeared.
+    expect(ledgerReaders).toEqual([READER, OWNERSHIP_STATE_RUNTIME].sort());
   });
 
   it("no claim-surface module directly mutates the ledger — the append-only R46 writer is the only path", () => {
