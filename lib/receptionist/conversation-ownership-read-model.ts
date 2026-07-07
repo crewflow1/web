@@ -1,100 +1,93 @@
 import type { ClaimType, ClaimOutcome } from "./conversation-claim";
+import {
+  deriveOwnershipState,
+  isOwnedState,
+  type OwnershipClaimEvent,
+  type OwnershipReleaseEvent,
+} from "./conversation-ownership-state";
 
 // =====================================================================
 // THE CONVERSATION WORK OWNERSHIP READ MODEL — PURE CORE (CEO Directive #018, R48: CONVERSATION WORK OWNERSHIP READ
-// MODEL).
+// MODEL; delegating to the Ownership State Engine since R51: CONVERSATION OWNERSHIP STATE ENGINE).
 //
 // R46 shipped the claim CAPABILITY (the pure `resolveClaim`, the `claimConversationWork` runtime, the append-only
-// `receptionist_conversation_claims` ledger); R47 shipped the first operator-facing SURFACE over it. R48 establishes
-// the CANONICAL OWNERSHIP READ MODEL — the single authoritative projection of ownership state derived from the
-// append-only claim ledger. Every future capability that needs to know "who owns what" (a My-Claims list, an ownership
-// dashboard, an operator queue) reads THROUGH this read model and re-implements no ownership derivation of its own.
+// `receptionist_conversation_claims` ledger); R47 shipped the first operator-facing SURFACE over it; R50 added the
+// RELEASE capability + its append-only ledger. R48 established the CANONICAL OWNERSHIP READ MODEL — the authoritative
+// VIEW of ownership over those ledgers. R51 established the canonical OWNERSHIP STATE ENGINE beneath it: the single
+// authority that DERIVES ownership state (`unclaimed` / `claimed` / `released`) from the append-only event stream. Since
+// R51 the read model is a pure CONSUMER of that engine — it re-implements NO ownership derivation of its own; it asks the
+// engine for the state and PROJECTS it into the read model's views. Every capability that needs to know "who owns what"
+// (a My-Claims list, an ownership dashboard, an operator queue) reads THROUGH this read model, which reads through the
+// engine.
 //
 // This module is the read model's PURE CORE. It PROJECTS what the read model exposes as total, deterministic functions
 // over already-recorded ownership facts. It reaches NO I/O, holds NO clock and NO RNG, and — the cardinal rule shared
 // with every core in this stack — RECORDS NOTHING, DECIDES NO CLAIM and DECIDES NO RELEASE. The claim decision + write
 // are R46's (`resolveClaim` / `claimConversationWork`); the release decision + write are R50's (`resolveRelease` /
-// `releaseConversationWork`); this core only turns read-back ledger rows into ownership facts. It introduces NO
-// execution path: it assigns nothing, reassigns nothing, dispatches nothing, notifies no one and completes nothing, and
-// it neither claims nor releases anything — it is presentation-agnostic projection over the R46 + R50 records, and
-// nothing else.
+// `releaseConversationWork`); the ownership-state derivation is R51's ({@link deriveOwnershipState}); this core only
+// PROJECTS the engine's state into views. It introduces NO execution path: it assigns nothing, reassigns nothing,
+// dispatches nothing, notifies no one and completes nothing, and it neither claims nor releases anything — it is
+// presentation-agnostic projection over the engine's state, and nothing else.
 //
-// IT CONSUMES THE APPEND-ONLY CLAIM LEDGER AND ITS APPEND-ONLY RELEASE LEDGER — NOTHING ELSE. The read model's input is
-// {@link OwnershipClaimRow} (the columns the ownership reader selects from `receptionist_conversation_claims`) plus,
-// since R50, {@link OwnershipReleaseRow} (the columns it selects from `receptionist_conversation_claim_releases`). It
-// reads no coordination ledger, no sibling engine and no other table; it re-derives no coordination and re-decides
-// nothing. Because both ledgers are append-only and `coordination_id` is UNIQUE in each, a coordination has AT MOST ONE
-// claim row and AT MOST ONE release row: ownership is therefore a pure function of "a claim is present AND no release
-// is present" (owned), and the org-wide history is the set of claims whose coordination has NOT been released, each an
-// ownership-taken event. R50 makes the read model RELEASE-AWARE while keeping it the single ownership authority — a
-// released item returns to the unclaimed state HERE, in the read model's derivation, not by mutating the claim ledger.
+// OWNERSHIP DERIVATION LIVES IN THE ENGINE, NOT HERE. The read model's owned/unowned STATUS and its "active claim"
+// selection both DELEGATE to the R51 engine ({@link deriveOwnershipState} / {@link isOwnedState}) — owned IFF the engine
+// derives `claimed`; a claim is active IFF the engine derives `claimed` from it and its (matching) release. The read
+// model's inputs are the engine's event shapes: {@link OwnershipClaimRow} (a claim event, aliased from the engine's
+// `OwnershipClaimEvent`) and {@link OwnershipReleaseRow} (a release event, aliased from `OwnershipReleaseEvent`). It
+// reads no coordination ledger, no sibling engine and no other table; it re-derives no coordination and re-decides no
+// ownership. A released item returns to the unclaimed state in the ENGINE's derivation, which this core projects.
 //
 // IT IS VIEWER-AGNOSTIC. Unlike R47's `projectClaimOwnership` (which folds in the VIEWER's identity to decide "You
 // hold this" / "may I claim"), this read model states ownership FACTS with no viewer: WHO owns a coordination, WHEN
 // they claimed it, and the ownership STATUS. A viewer-relative surface composes ON TOP of these facts; the read model
 // itself names no viewer and grants no affordance.
 //
-// Five things the read model exposes, each a pure projection/fold:
-//   • projectOwner          — one ledger row → the OWNER facts (who holds the claim, and when).
-//   • projectOwnership      — a coordination id + its claim row (or null) → the per-coordination OWNERSHIP RECORD:
-//                             the current owner, the claim timestamp and the ownership STATUS (owned / unowned).
-//   • projectOwnershipEvent — one ledger row → one OWNERSHIP EVENT (an operator took ownership of a coordination).
+// Five things the read model exposes, each a pure projection/fold over the engine's state + events:
+//   • projectOwner          — one claim event → the OWNER facts (who holds the claim, and when).
+//   • projectOwnership      — a coordination id + its claim/release events → the per-coordination OWNERSHIP RECORD: the
+//                             current owner, the claim timestamp and the ownership STATUS (owned / unowned), the STATUS
+//                             derived by the engine.
+//   • projectOwnershipEvent — one claim event → one OWNERSHIP EVENT (an operator took ownership of a coordination).
 //   • orderOwnershipEvents  — the canonical HISTORY order: newest claim first, stable tiebreak on coordination id.
-//   • summariseOwnership    — a set of ledger rows → the org-wide ownership SUMMARY: total claims, distinct owners,
+//   • summariseOwnership    — a set of claim events → the org-wide ownership SUMMARY: total claims, distinct owners,
 //                             per-owner tallies, and the latest / earliest claim instants. Order-INDEPENDENT.
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// The RAW claim row — exactly the columns the ownership reader selects from `receptionist_conversation_claims`.
+// The RAW ownership events — the engine's canonical event shapes, re-exported as the read model's row inputs.
 // ---------------------------------------------------------------------
 
 /**
- * One RAW row of the append-only claims ledger — the recorded facts of ONE operator's claim, in the shape the ownership
- * reader selects. The CHECK-pinned vocabulary means `claim_type` / `claim_outcome` / `status` always name their closed
- * sets; `conversation_id` and `correlation_id` are the ledger's nullable, best-effort provenance. This is the read
- * model's ONLY input — it consumes the claim ledger and nothing else.
+ * One RAW row of the append-only claims ledger — the recorded facts of ONE operator's claim, in the shape the state
+ * engine reads. Since R51 the canonical shape lives in the Ownership State Engine as {@link OwnershipClaimEvent}; the
+ * read model aliases it so there is a SINGLE definition of a claim event and the read model provably consumes the
+ * engine's shape. The CHECK-pinned vocabulary means `claim_type` / `claim_outcome` / `status` always name their closed
+ * sets; `conversation_id` and `correlation_id` are the nullable, best-effort provenance.
  */
-export type OwnershipClaimRow = {
-  readonly coordination_id: string;
-  readonly org_id: string;
-  readonly conversation_id: string | null;
-  readonly correlation_id: string | null;
-  readonly operator_id: string;
-  readonly operator_email: string | null;
-  readonly claim_type: string;
-  readonly claim_outcome: string;
-  readonly status: string;
-  readonly claimed_at: string;
-};
+export type OwnershipClaimRow = OwnershipClaimEvent;
 
 /**
  * One RAW row of the append-only RELEASE ledger — the recorded fact that ONE operator RELINQUISHED their claim on a
- * coordination, in the shape the ownership reader selects from `receptionist_conversation_claim_releases` (R50). The
- * read model consumes releases to SUBTRACT them from ownership: a coordination with a release row is NO LONGER owned,
- * even though its append-only claim row still exists. `coordination_id` is the load-bearing anchor (UNIQUE in the
- * release ledger too, so a coordination has at most one release); the rest is provenance the read model does not need
- * to derive ownership but carries for a faithful row shape. This is the read model's SECOND (and only other) input — it
- * consumes the claim ledger and the release ledger, and nothing else.
+ * coordination (R50), in the shape the state engine reads. Since R51 the canonical shape lives in the Ownership State
+ * Engine as {@link OwnershipReleaseEvent}; the read model aliases it. The read model consumes releases to SUBTRACT them
+ * from ownership: a coordination with a release event is NO LONGER owned, even though its append-only claim event still
+ * exists. `coordination_id` is the load-bearing anchor (UNIQUE in the release ledger too, so a coordination has at most
+ * one release); the rest is provenance carried for a faithful row shape.
  */
-export type OwnershipReleaseRow = {
-  readonly coordination_id: string;
-  readonly org_id: string;
-  readonly operator_id: string;
-  readonly operator_email: string | null;
-  readonly released_at: string;
-};
+export type OwnershipReleaseRow = OwnershipReleaseEvent;
 
 // ---------------------------------------------------------------------
 // Ownership STATUS — the closed vocabulary the read model derives for one coordination.
 // ---------------------------------------------------------------------
 
 /**
- * The closed vocabulary of OWNERSHIP STATUS — the recorded state of a coordination's ownership. R48 derives exactly
- * two, and they are TOTAL over the append-only ledger:
- *   • owned   — a claim row exists for the coordination; an operator holds it.
- *   • unowned — no claim row exists; no operator has taken ownership.
- * There is deliberately no "released" or "reassigned" status: the ledger records the TAKING of ownership only, and
- * release / reassignment are explicit non-goals of a later, separately-authorised increment. A closed const tuple, so
+ * The closed vocabulary of OWNERSHIP STATUS — the read model's VIEW of a coordination's ownership, a two-member
+ * PROJECTION of the engine's three-member lifecycle ({@link isOwnedState}). They are TOTAL:
+ *   • owned   — the engine derives `claimed`; an operator holds it now.
+ *   • unowned — the engine derives `unclaimed` (never taken) OR `released` (relinquished, free again).
+ * The read model deliberately collapses the lifecycle's `unclaimed` and `released` into `unowned`: for "who owns this?"
+ * both mean "no current owner". The finer three-state lifecycle lives in the R51 Ownership State Engine; reassignment,
+ * dispatch and the rest remain explicit non-goals of later, separately-authorised increments. A closed const tuple, so
  * {@link OwnershipStatus} is exactly these members and a consumer can switch exhaustively.
  */
 export const OWNERSHIP_STATES = ["owned", "unowned"] as const;
@@ -154,15 +147,16 @@ export type OwnershipRecord = {
 };
 
 /**
- * Derive the per-coordination {@link OwnershipRecord} from the coordination id, its claim row (or its absence) and,
- * since R50, its release row (or its absence). Pure and total. Because `coordination_id` is UNIQUE in BOTH append-only
- * ledgers, a coordination has AT MOST ONE claim and AT MOST ONE release, so ownership is a three-way total function:
- *   • no claim                     → `unowned` (no operator ever took it);
- *   • a claim AND a release        → `unowned` (its owner RELINQUISHED it — it has returned to the unclaimed state);
- *   • a claim AND no release       → `owned` (with the current owner and claim timestamp).
- * The `release` argument is OPTIONAL and defaults to absent, so a caller that has only claim facts (a pre-R50 caller, or
- * a coordination that provably has no release) gets the original claim-only semantics unchanged. It names no viewer and
- * grants no affordance — it states ownership FACTS only, and it RECORDS neither a claim nor a release.
+ * Project the per-coordination {@link OwnershipRecord} from the coordination id, its claim event (or its absence) and,
+ * since R50, its release event (or its absence). Pure and total. The ownership STATUS is DERIVED BY THE ENGINE, not
+ * here: it asks {@link deriveOwnershipState} for the coordination's lifecycle state and {@link isOwnedState} whether that
+ * state is owned — so the read model re-decides no ownership. Because the engine derives `claimed` (the only owned
+ * state) exactly when a claim event is present and no release event is, the record is a total projection:
+ *   • engine derives `unclaimed` (no claim)             → `unowned` (no operator ever took it);
+ *   • engine derives `released`  (a claim AND a release) → `unowned` (its owner RELINQUISHED it — free again);
+ *   • engine derives `claimed`   (a claim, no release)   → `owned` (with the current owner and claim timestamp).
+ * The `release` argument is OPTIONAL and defaults to absent. It names no viewer and grants no affordance — it PROJECTS
+ * ownership FACTS only, and it RECORDS neither a claim nor a release.
  */
 export function projectOwnership(input: {
   coordinationId: string;
@@ -170,10 +164,11 @@ export function projectOwnership(input: {
   release?: OwnershipReleaseRow | null;
 }): OwnershipRecord {
   const { coordinationId, claim, release } = input;
-  // Unowned when there is no claim at all, OR when the claim has been relinquished (a release returns the item to the
-  // unclaimed state). A released item carries no CURRENT owner, so its record is the same fully-null unowned shape as a
-  // never-claimed item — ownership is the present fact, not the history.
-  if (!claim || release) {
+  // The STATUS is the engine's — owned IFF it derives `claimed`. A released item carries no CURRENT owner, so its record
+  // is the same fully-null unowned shape as a never-claimed item — ownership is the present fact, not the history. The
+  // `!claim` is a type-narrowing the engine's `claimed` result already implies (never taken when owned).
+  const state = deriveOwnershipState({ claim, release });
+  if (!isOwnedState(state) || !claim) {
     return {
       coordinationId,
       conversationId: null,
@@ -195,13 +190,14 @@ export function projectOwnership(input: {
 }
 
 /**
- * The ACTIVE claims in a set — the claims whose coordination has NOT been relinquished (R50). Given the org's claim
- * rows and its release rows, it returns exactly the claims that still represent CURRENT ownership: a claim is active
- * unless a release row names the same coordination. This is the single place the read model SUBTRACTS releases from
- * ownership, so the history and the summary are derived over the SAME "claim present AND no release" rule that
- * {@link projectOwnership} applies per coordination.
+ * The ACTIVE claims in a set — the claims whose coordination the ENGINE derives as still `claimed` (R50/R51). Given the
+ * org's claim events and its release events, it returns exactly the claims that still represent CURRENT ownership: for
+ * each claim it asks {@link deriveOwnershipState} for the coordination's state (folding in that coordination's release,
+ * if any) and keeps it only when the engine derives `claimed`. So the read model SUBTRACTS releases from ownership
+ * through the SAME single derivation {@link projectOwnership} uses per coordination — the engine's, not a rule of its
+ * own.
  *
- * Pure, total and ORDER-INDEPENDENT: it consults a set of released coordination ids, so shuffling either input never
+ * Pure, total and ORDER-INDEPENDENT: it consults a per-coordination map of releases, so shuffling either input never
  * changes the output. Non-mutating — it returns a NEW array and never reorders the caller's. A claim with no matching
  * release passes through verbatim; a released claim is dropped.
  */
@@ -209,8 +205,16 @@ export function selectActiveClaims(
   claims: readonly OwnershipClaimRow[],
   releases: readonly OwnershipReleaseRow[],
 ): OwnershipClaimRow[] {
-  const released = new Set(releases.map((release) => release.coordination_id));
-  return claims.filter((claim) => !released.has(claim.coordination_id));
+  const releaseByCoordination = new Map(
+    releases.map((release) => [release.coordination_id, release] as const),
+  );
+  return claims.filter(
+    (claim) =>
+      deriveOwnershipState({
+        claim,
+        release: releaseByCoordination.get(claim.coordination_id) ?? null,
+      }) === "claimed",
+  );
 }
 
 // ---------------------------------------------------------------------

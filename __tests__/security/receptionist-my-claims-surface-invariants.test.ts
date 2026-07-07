@@ -98,8 +98,10 @@ const RUNTIME = "server/services/receptionist-claim.ts";
 // The R47 surface reader — the single-item, viewer-relative ownership reader over the claims ledger.
 const CLAIM_READER = "server/services/receptionist-claim-view.ts";
 
-// The R48 canonical ownership read model — the org-scoped reader whose seams R49 consumes.
-const OWNERSHIP_READ_MODEL = "server/services/receptionist-ownership-read-model.ts";
+// The R51 Ownership State Engine runtime — since R51 the engine-side reader of the claims ledger for ownership state.
+// (R49 still consumes the R48 read model's SEAMS; the read model itself reads the ledger no more — it consumes this
+// engine, so the engine runtime is what now appears among the claims ledger's readers.)
+const OWNERSHIP_STATE_RUNTIME = "server/services/receptionist-ownership-state.ts";
 
 // The R49 surface — the pure view core and the read-only page. There is NO action and NO client panel.
 const MY_CLAIMS_CORE = "lib/receptionist/my-claims-view.ts";
@@ -304,10 +306,11 @@ describe("receptionist my claims — the append-only audit is preserved", () => 
     .map(rel)
     .sort();
 
-  it("the claims ledger is READ through the SAME two read-only seams as before — R49 adds no ledger reader", () => {
-    // R49 reads ownership through the R48 read model's seams, NOT the ledger table: so the set of modules naming the
-    // ledger is UNCHANGED — the R47 surface reader and the R48 ownership read model. My Claims is in neither.
-    expect(ledgerReaders).toEqual([CLAIM_READER, OWNERSHIP_READ_MODEL].sort());
+  it("the claims ledger is READ through two read-only seams — the R47 surface reader and the R51 state engine — R49 adds neither", () => {
+    // R49 reads ownership through the R48 read model's seams, NOT the ledger table. Since R51 the read model no longer
+    // names the ledger (it consumes the state engine), so the modules naming the claims ledger are the R47 surface
+    // reader and the R51 state-engine runtime. My Claims is in neither.
+    expect(ledgerReaders).toEqual([CLAIM_READER, OWNERSHIP_STATE_RUNTIME].sort());
     expect(ledgerReaders).not.toContain(PAGE);
     expect(ledgerReaders).not.toContain(MY_CLAIMS_CORE);
   });

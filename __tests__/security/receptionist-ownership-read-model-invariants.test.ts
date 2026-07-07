@@ -8,32 +8,34 @@ import { resolve, relative, sep } from "node:path";
  *
  * R46 shipped the claim capability (the `claimConversationWork` runtime + the append-only, conflict-guarded
  * `receptionist_conversation_claims` ledger); R47 shipped the first operator-facing surface. R48 establishes the
- * CANONICAL OWNERSHIP READ MODEL — the single authoritative projection of ownership state derived from the append-only
- * claim ledger. Its law is exact: "the ownership read model is authoritative; the claim runtime remains authoritative;
- * it consumes ONLY the append-only claim ledger; organisation isolation is preserved; the audit remains append-only;
+ * CANONICAL OWNERSHIP READ MODEL — the single authoritative projection of ownership state. Since R51 (CONVERSATION
+ * OWNERSHIP STATE ENGINE) it no longer derives ownership itself: it reads ownership state THROUGH the state engine and
+ * PROJECTS it. Its law is exact: "the ownership read model is authoritative; the claim runtime remains authoritative;
+ * it consumes ONLY the R51 Ownership State Engine; organisation isolation is preserved; the audit remains append-only;
  * and NO execution path is introduced." This suite proves that contract as a matter of SOURCE, not discipline — the
- * house bar of the R30→R47 invariant suites:
+ * house bar of the R30→R50 invariant suites:
  *
  *   • THE READ MODEL IS AUTHORITATIVE — the canonical ownership reader exports the org-scoped ownership seams
  *     (per-coordination owner + status, org-wide history, org-wide summary); the pure core exports the projections, the
- *     canonical history order and the summary fold. Ownership derivation lives HERE and nowhere else.
+ *     canonical history order and the summary fold. Ownership PRESENTATION lives HERE; ownership DERIVATION is the R51
+ *     engine's, which this core delegates to.
  *   • THE CLAIM RUNTIME STAYS AUTHORITATIVE — R48 adds NO writer: the ledger write primitive
  *     (`record_receptionist_conversation_claim`) is still named by EXACTLY ONE module (the R46 runtime), and
  *     `claimConversationWork` is still DEFINED once. Neither the read-model core nor its reader records a claim, names
  *     the runtime writer, or re-derives a claim (`resolveClaim`).
- *   • IT CONSUMES ONLY THE APPEND-ONLY CLAIM LEDGER — the reader's only `.from(...)` target is
- *     `receptionist_conversation_claims`; it names no coordination table and no sibling engine. The pure core names no
- *     table at all — it consumes rows, not a database.
- *   • ORGANISATION ISOLATION IS PRESERVED — EVERY read is org-scoped: the reader's `org_id` filter count equals its
- *     `select` count, so no read can escape the org filter.
- *   • THE AUDIT STAYS APPEND-ONLY — the reader performs ONLY SELECTs (no insert/update/delete/upsert, no write
- *     primitive, no RPC); and across all source the claims ledger is READ through EXACTLY TWO read-only seams (the R47
- *     surface reader and this R48 read model) — R48 adds no writer and no migration.
+ *   • IT CONSUMES ONLY THE R51 OWNERSHIP STATE ENGINE — since R51 the reader reads ownership state THROUGH the engine's
+ *     state runtime: it issues NO `.from(...)`, names NEITHER ledger and no coordination table, and its ownership source
+ *     is the engine. The pure core names no table at all — it consumes rows, not a database.
+ *   • ORGANISATION ISOLATION IS PRESERVED — EVERY read is org-scoped: the reader THREADS the caller's `org_id` into
+ *     every state-engine call (the org-threaded-call count equals the state-call count), so no read can escape the org.
+ *   • THE AUDIT STAYS APPEND-ONLY — the reader is a read-only projection (no `.from`, no insert/update/delete/upsert, no
+ *     write primitive, no RPC); and across all source the claims ledger is READ through EXACTLY TWO read-only seams (the
+ *     R47 surface reader and the R51 state engine) — R48 adds no writer and no migration.
  *   • NO EXECUTION PATH IS INTRODUCED — neither read-model file names any engine execution function, any other engine
  *     writer, or any R48 non-goal token (assign / reassign / release / dispatch / notify / schedule / … / close). The
  *     read model states ownership facts; it acts on nothing.
  *   • THE MODULE BOUNDARIES HOLD — the reader is server-only, and the pure core is a shared, deterministic module
- *     (NOT server-only) importing only the R46 claim types, touching no I/O, no clock and no RNG.
+ *     (NOT server-only) importing only the R46 claim types + the R51 engine, touching no I/O, no clock and no RNG.
  *
  * The read model's runtime behaviour (reader over real Postgres, reading back what the runtime recorded) is pinned in
  * __tests__/integration/receptionist/ownership-read-model-pipeline.test.ts, and the pure core exhaustively in
@@ -115,13 +117,19 @@ const CLAIM_READER = "server/services/receptionist-claim-view.ts";
 const CORE = "lib/receptionist/conversation-ownership-read-model.ts";
 const READER = "server/services/receptionist-ownership-read-model.ts";
 
+// The R51 Ownership State Engine runtime — the SOLE event-stream reader. Since R51 the read model reads ownership state
+// THROUGH this (it no longer names the ledgers itself), so it JOINS the claims-ledger reader set in the R47 reader's
+// place.
+const STATE_RUNTIME = "server/services/receptionist-ownership-state.ts";
+
 /** The read-model files whose EXECUTABLE source must name no execution path. */
 const READ_MODEL_FILES = [CORE, READER] as const;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
-/** The claims ledger table + the R46 write primitive. */
+/** The claims ledger table, the R50 releases ledger table + the R46 write primitive. */
 const CLAIM_LEDGER = /\breceptionist_conversation_claims\b/;
+const RELEASES_LEDGER = /\breceptionist_conversation_claim_releases\b/;
 const WRITE_FN = /\brecord_receptionist_conversation_claim\b/;
 
 /** The R46 runtime entry point — the ONE governed mechanism that records an operator claim. */
@@ -248,24 +256,23 @@ describe("receptionist ownership read model — the claim runtime remains author
 // 3. IT CONSUMES ONLY THE APPEND-ONLY CLAIM LEDGER — one table, no coordination, no sibling engine.
 // =====================================================================
 
-describe("receptionist ownership read model — consumes only the append-only claim + release ledgers", () => {
-  it("the reader's only .from(...) targets are the two append-only ledgers — it derives no coordination", () => {
+describe("receptionist ownership read model — consumes ownership state only through the R51 state engine", () => {
+  it("the reader reads NO ledger — it names neither ledger, issues no .from(...), and consumes the state engine", () => {
     const code = codeOf(read(READER));
-    expect(code).toMatch(CLAIM_LEDGER);
+    // Until R51 the reader FOLDED the two ledgers itself; since R51 it reads ownership state THROUGH the state engine.
+    // So it names NEITHER ledger, issues NO `.from(...)`, and its ownership source is the engine's state runtime.
+    expect(code).not.toMatch(/\.from\(/);
+    expect(code).not.toMatch(CLAIM_LEDGER);
+    expect(code).not.toMatch(RELEASES_LEDGER);
     expect(code).not.toMatch(COORDINATIONS_TABLE);
-    // R48 read the claims ledger only; R50 makes it release-aware — it now ALSO reads the release ledger to subtract
-    // released items from ownership. These two append-only ledgers are its ONLY .from(...) targets: no coordination
-    // table, no sibling engine, no view.
-    expect([...new Set(fromTargets(code))]).toEqual([
-      "receptionist_conversation_claims",
-      "receptionist_conversation_claim_releases",
-    ]);
+    expect(importSpecifiers(code)).toContain("@/server/services/receptionist-ownership-state");
   });
 
   it("the pure core names no table at all — it consumes rows, not a database", () => {
     const code = codeOf(read(CORE));
     expect(code).not.toMatch(/\.from\(/);
     expect(code).not.toMatch(CLAIM_LEDGER);
+    expect(code).not.toMatch(RELEASES_LEDGER);
     expect(code).not.toMatch(COORDINATIONS_TABLE);
   });
 });
@@ -275,18 +282,24 @@ describe("receptionist ownership read model — consumes only the append-only cl
 // =====================================================================
 
 describe("receptionist ownership read model — organisation isolation is preserved", () => {
-  it("every read the reader performs is org-scoped — the org_id filter count equals the select count", () => {
+  it("every ownership read is org-scoped — every state-engine call threads the caller's org_id", () => {
+    // The reader no longer filters a ledger itself; it delegates to the engine. Isolation is preserved by THREADING the
+    // caller's org into EVERY engine call: the count of org-threaded calls equals the count of state-engine calls, so no
+    // read can escape the org scope. (The engine's own select==org-filter proof lives in its invariant suite.)
     const code = codeOf(read(READER));
-    const selects = (code.match(/\.select\(/g) ?? []).length;
-    const orgFilters = (code.match(/\.eq\(\s*["']org_id["']/g) ?? []).length;
-    expect(selects).toBeGreaterThan(0);
-    expect(orgFilters).toBe(selects);
+    const stateCalls = (
+      code.match(/\b(?:getCoordinationOwnershipState|listCoordinationOwnershipStates)\(/g) ?? []
+    ).length;
+    const orgThreads = (code.match(/org_id:\s*input\.org_id/g) ?? []).length;
+    expect(stateCalls).toBeGreaterThan(0);
+    expect(orgThreads).toBe(stateCalls);
   });
 
-  it("the per-coordination read is BOTH org- and coordination-scoped", () => {
+  it("the per-coordination read threads BOTH the org and the coordination id into the engine", () => {
     const code = codeOf(read(READER));
-    expect(code).toMatch(/\.eq\(\s*["']org_id["']/);
-    expect(code).toMatch(/\.eq\(\s*["']coordination_id["']/);
+    expect(code).toMatch(/getCoordinationOwnershipState\(/);
+    expect(code).toMatch(/org_id:\s*input\.org_id/);
+    expect(code).toMatch(/coordination_id:\s*input\.coordination_id/);
   });
 });
 
@@ -300,18 +313,20 @@ describe("receptionist ownership read model — the append-only audit is preserv
     .map(rel)
     .sort();
 
-  it("the reader performs ONLY SELECTs — no insert/update/delete/upsert, no write primitive, no RPC", () => {
+  it("the reader is a read-only projection — no .from, no insert/update/delete/upsert, no write primitive, no RPC", () => {
+    // Since R51 the reader issues no query at all — it consumes the engine and PROJECTS. It writes nothing by any means.
     const code = codeOf(read(READER));
-    expect(code).toMatch(/\.select\(/);
+    expect(code).not.toMatch(/\.from\(/);
     expect(code).not.toMatch(DIRECT_WRITE);
     expect(code).not.toMatch(WRITE_FN);
     expect(code).not.toMatch(/\.rpc\(/);
   });
 
-  it("the claims ledger is READ through EXACTLY TWO read-only seams — the R47 surface reader and the R48 read model", () => {
+  it("the claims ledger is READ through EXACTLY TWO read-only seams — the R47 surface reader and the R51 state engine", () => {
     // The runtime writes the ledger through the RPC (it never names the table); the two readers are the only table
-    // readers. R48 adds the second, canonical read model alongside R47's viewer-relative surface reader.
-    expect(ledgerReaders).toEqual([CLAIM_READER, READER].sort());
+    // readers. Since R51 the read model reads ownership state THROUGH the engine, so it no longer names the ledger — the
+    // R51 state runtime takes its place alongside R47's viewer-relative surface reader.
+    expect(ledgerReaders).toEqual([CLAIM_READER, STATE_RUNTIME].sort());
   });
 
   it("no read-model module directly mutates the ledger — the append-only R46 writer is the only write path", () => {
@@ -369,10 +384,12 @@ describe("receptionist ownership read model — the module boundaries hold", () 
     expect(importSpecifiers(codeOf(read(READER)))).toContain("server-only");
   });
 
-  it("the pure core is a shared module (NOT server-only) importing only the R46 claim types", () => {
+  it("the pure core is a shared module (NOT server-only) importing only the R46 claim types + the R51 state engine", () => {
+    // Since R51 the core DELEGATES its derivation to the engine ({@link deriveOwnershipState} / {@link isOwnedState}), so
+    // it imports the engine core alongside the R46 claim types — and nothing else.
     const specs = importSpecifiers(codeOf(read(CORE)));
     expect(specs).not.toContain("server-only");
-    expect(specs).toEqual(["./conversation-claim"]);
+    expect(specs).toEqual(["./conversation-claim", "./conversation-ownership-state"]);
   });
 
   it("the core touches no I/O and no clock/RNG — it is deterministic", () => {
