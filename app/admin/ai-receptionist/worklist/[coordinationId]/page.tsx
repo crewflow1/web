@@ -116,6 +116,17 @@ export default async function HqReceptionistWorklistDetailPage({
 
       <ClaimPanel coordinationId={detail.coordinationId} ownership={ownership} />
 
+      {ownership.claimed ? (
+        <div className="text-sm">
+          <Link
+            href={`/admin/ai-receptionist/worklist/${detail.coordinationId}/reassign`}
+            className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Reassign ownership →
+          </Link>
+        </div>
+      ) : null}
+
       <Metadata detail={detail} />
 
       <Headline headline={detail.headline} />

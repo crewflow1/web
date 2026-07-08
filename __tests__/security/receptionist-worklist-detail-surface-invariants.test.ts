@@ -44,9 +44,10 @@ import { resolve, relative, sep } from "node:path";
  *     gate, the session/org chokepoint (for org resolution), `next/link`, `next/navigation`, its own pure
  *     presentation core and the R47 claim panel it renders; the core's ENTIRE surface is the R37 read-model
  *     TYPES alone. Neither imports the worklist view model, session, client, read surface, engine, an API
- *     contract or a database client. With R45 in the tree the R37 reader module is imported by EXACTLY the R38
- *     worklist runtime + the detail page, and `getCoordinationById` is named by EXACTLY its definition (the
- *     reader) + the detail page.
+ *     contract or a database client. With R45 + R54 in the tree the R37 reader module is imported by EXACTLY the
+ *     R38 worklist runtime + the detail page + the R54 reassignment-surface page (a SECOND authorised consumer of
+ *     the single-item seam, for existence + isolation), and `getCoordinationById` is named by EXACTLY its
+ *     definition (the reader) + those two pages.
  *   • THE READ STACK BELOW STAYS AUTHORITATIVE — the surface re-derives nothing and answers no query: it RENDERS
  *     the record the reader hands it. With R45 in the tree the Read Model view is STILL queried only by the R37
  *     reader, the worklist derivation STILL by exactly the two R38 modules, and the R43 view-model runtime is
@@ -152,6 +153,14 @@ function importersOf(moduleSpec: string): string[] {
 const DETAIL_PAGE = "app/admin/ai-receptionist/worklist/[coordinationId]/page.tsx";
 const DETAIL_VIEW = "app/admin/ai-receptionist/worklist/[coordinationId]/detail-view.ts";
 const DETAIL_FILES = [DETAIL_PAGE, DETAIL_VIEW] as const;
+
+// The R54 Conversation Work Reassignment Surface page — a SECOND authorised consumer of the R37 single-item
+// seam. Like the detail page it reads the coordination ONLY through `getCoordinationById`, org-scoped from the
+// session, to establish existence + organisation isolation (a foreign coordination resolves to null and 404s)
+// before projecting the transfer view. Its co-tenancy on the R37 reader is therefore part of the pinned
+// importer/namer set; the reassignment surface's OWN invariants are pinned by its dedicated suite
+// (__tests__/security/receptionist-reassignment-surface-invariants.test.ts).
+const REASSIGN_PAGE = "app/admin/ai-receptionist/worklist/[coordinationId]/reassign/page.tsx";
 
 // The R37 Coordination Read Model — the ONE read stack the detail surface consumes.
 const R37_READER = "server/services/receptionist-coordination-view.ts";
@@ -413,12 +422,12 @@ describe("receptionist worklist detail surface — it consumes only authorised s
     expect(imports).toEqual(ALLOWED_DETAIL_VIEW_IMPORTS);
   });
 
-  it("with R45 in the tree, the R37 reader module is imported by EXACTLY the R38 runtime + the detail page", () => {
-    expect(importersOf(R37_READER_MODULE)).toEqual([DETAIL_PAGE, R38_RUNTIME].sort());
+  it("with R45 + R54 in the tree, the R37 reader module is imported by EXACTLY the R38 runtime + the detail page + the reassign page", () => {
+    expect(importersOf(R37_READER_MODULE)).toEqual([DETAIL_PAGE, REASSIGN_PAGE, R38_RUNTIME].sort());
   });
 
-  it("with R45 in the tree, getCoordinationById is named by EXACTLY its definition (the reader) + the detail page", () => {
-    expect(namersOf(/\bgetCoordinationById\b/)).toEqual([DETAIL_PAGE, R37_READER].sort());
+  it("with R45 + R54 in the tree, getCoordinationById is named by EXACTLY its definition (the reader) + the detail page + the reassign page", () => {
+    expect(namersOf(/\bgetCoordinationById\b/)).toEqual([DETAIL_PAGE, REASSIGN_PAGE, R37_READER].sort());
   });
 
   it("the surface reaches around the reader to nothing — it names no worklist spine primitive", () => {
