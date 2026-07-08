@@ -2,23 +2,32 @@ import type { ClaimType, ClaimOutcome } from "./conversation-claim";
 import {
   deriveOwnershipState,
   isOwnedState,
+  resolveCurrentOwner,
+  latestReassignmentFor,
   type OwnershipClaimEvent,
   type OwnershipReleaseEvent,
+  type OwnershipReassignmentEvent,
+  type OwnershipHolder,
 } from "./conversation-ownership-state";
 
 // =====================================================================
 // THE CONVERSATION WORK OWNERSHIP READ MODEL — PURE CORE (CEO Directive #018, R48: CONVERSATION WORK OWNERSHIP READ
-// MODEL; delegating to the Ownership State Engine since R51: CONVERSATION OWNERSHIP STATE ENGINE).
+// MODEL; delegating to the Ownership State Engine since R51: CONVERSATION OWNERSHIP STATE ENGINE; reassignment-aware
+// since R53: OWNERSHIP READ MODEL REASSIGNMENT AWARENESS).
 //
 // R46 shipped the claim CAPABILITY (the pure `resolveClaim`, the `claimConversationWork` runtime, the append-only
 // `receptionist_conversation_claims` ledger); R47 shipped the first operator-facing SURFACE over it; R50 added the
-// RELEASE capability + its append-only ledger. R48 established the CANONICAL OWNERSHIP READ MODEL — the authoritative
+// RELEASE capability + its append-only ledger; R52 added the REASSIGNMENT capability (a holder TRANSFERS a coordination to
+// another operator) + its own append-only ledger. R48 established the CANONICAL OWNERSHIP READ MODEL — the authoritative
 // VIEW of ownership over those ledgers. R51 established the canonical OWNERSHIP STATE ENGINE beneath it: the single
-// authority that DERIVES ownership state (`unclaimed` / `claimed` / `released`) from the append-only event stream. Since
-// R51 the read model is a pure CONSUMER of that engine — it re-implements NO ownership derivation of its own; it asks the
-// engine for the state and PROJECTS it into the read model's views. Every capability that needs to know "who owns what"
-// (a My-Claims list, an ownership dashboard, an operator queue) reads THROUGH this read model, which reads through the
-// engine.
+// authority that DERIVES ownership state (`unclaimed` / `claimed` / `released`) from the append-only event stream, and R53
+// extended that engine to ALSO fold the reassignment chain into the CURRENT OWNER. Since R51 the read model is a pure
+// CONSUMER of that engine — it re-implements NO ownership derivation of its own; it asks the engine for the state and the
+// current owner and PROJECTS them into the read model's views. Since R53 those views attribute the CURRENT holder of a
+// transferred coordination (operator B after A→B) while preserving the original CLAIMANT (operator A) — so a My-Claims
+// list shows a reassigned item under the operator who holds it now, not the one who first took it. Every capability that
+// needs to know "who owns what" (a My-Claims list, an ownership dashboard, an operator queue) reads THROUGH this read
+// model, which reads through the engine.
 //
 // This module is the read model's PURE CORE. It PROJECTS what the read model exposes as total, deterministic functions
 // over already-recorded ownership facts. It reaches NO I/O, holds NO clock and NO RNG, and — the cardinal rule shared
@@ -29,13 +38,17 @@ import {
 // dispatches nothing, notifies no one and completes nothing, and it neither claims nor releases anything — it is
 // presentation-agnostic projection over the engine's state, and nothing else.
 //
-// OWNERSHIP DERIVATION LIVES IN THE ENGINE, NOT HERE. The read model's owned/unowned STATUS and its "active claim"
-// selection both DELEGATE to the R51 engine ({@link deriveOwnershipState} / {@link isOwnedState}) — owned IFF the engine
-// derives `claimed`; a claim is active IFF the engine derives `claimed` from it and its (matching) release. The read
-// model's inputs are the engine's event shapes: {@link OwnershipClaimRow} (a claim event, aliased from the engine's
-// `OwnershipClaimEvent`) and {@link OwnershipReleaseRow} (a release event, aliased from `OwnershipReleaseEvent`). It
-// reads no coordination ledger, no sibling engine and no other table; it re-derives no coordination and re-decides no
-// ownership. A released item returns to the unclaimed state in the ENGINE's derivation, which this core projects.
+// OWNERSHIP DERIVATION LIVES IN THE ENGINE, NOT HERE. The read model's owned/unowned STATUS, its "active claim"
+// selection and its CURRENT-OWNER attribution all DELEGATE to the R51/R53 engine ({@link deriveOwnershipState} /
+// {@link isOwnedState} for the state; {@link resolveCurrentOwner} / {@link latestReassignmentFor} for the holder) — owned
+// IFF the engine derives `claimed`; a claim is active IFF the engine derives `claimed` from it and its (matching) release;
+// the current owner is the tail of the engine's transfer-chain fold. The read model's inputs are the engine's event
+// shapes: {@link OwnershipClaimRow} (a claim event, aliased from the engine's `OwnershipClaimEvent`),
+// {@link OwnershipReleaseRow} (a release event, aliased from `OwnershipReleaseEvent`) and {@link OwnershipReassignmentRow}
+// (a reassignment event, aliased from `OwnershipReassignmentEvent`). It reads no coordination ledger, no sibling engine
+// and no other table; it re-derives no coordination and re-decides no ownership. A released item returns to the unclaimed
+// state in the ENGINE's derivation, and a reassigned item stays `claimed` under the CURRENT holder — both of which this
+// core projects.
 //
 // IT IS VIEWER-AGNOSTIC. Unlike R47's `projectClaimOwnership` (which folds in the VIEWER's identity to decide "You
 // hold this" / "may I claim"), this read model states ownership FACTS with no viewer: WHO owns a coordination, WHEN
@@ -44,13 +57,16 @@ import {
 //
 // Five things the read model exposes, each a pure projection/fold over the engine's state + events:
 //   • projectOwner          — one claim event → the OWNER facts (who holds the claim, and when).
-//   • projectOwnership      — a coordination id + its claim/release events → the per-coordination OWNERSHIP RECORD: the
-//                             current owner, the claim timestamp and the ownership STATUS (owned / unowned), the STATUS
-//                             derived by the engine.
-//   • projectOwnershipEvent — one claim event → one OWNERSHIP EVENT (an operator took ownership of a coordination).
+//   • projectOwnership      — a coordination id + its claim/release/reassignment events → the per-coordination OWNERSHIP
+//                             RECORD: the CURRENT owner (the tail of the transfer chain), the original CLAIMANT, whether it
+//                             was reassigned, WHEN the current owner took hold, the claim timestamp and the ownership
+//                             STATUS (owned / unowned) — the STATUS + the owner derived by the engine.
+//   • projectOwnershipEvent — one claim event + its transfer chain → one OWNERSHIP EVENT (the CURRENT owner holds a
+//                             coordination the original claimant first took).
 //   • orderOwnershipEvents  — the canonical HISTORY order: newest claim first, stable tiebreak on coordination id.
-//   • summariseOwnership    — a set of claim events → the org-wide ownership SUMMARY: total claims, distinct owners,
-//                             per-owner tallies, and the latest / earliest claim instants. Order-INDEPENDENT.
+//   • summariseOwnership    — a set of claim events + transfer chains → the org-wide ownership SUMMARY grouped by CURRENT
+//                             owner: total claims, distinct owners, per-owner tallies, and the latest / earliest claim
+//                             instants. Order-INDEPENDENT.
 // =====================================================================
 
 // ---------------------------------------------------------------------
@@ -75,6 +91,16 @@ export type OwnershipClaimRow = OwnershipClaimEvent;
  * one release); the rest is provenance carried for a faithful row shape.
  */
 export type OwnershipReleaseRow = OwnershipReleaseEvent;
+
+/**
+ * One RAW row of the append-only REASSIGNMENT ledger — the recorded fact that a coordination's holder TRANSFERRED it to
+ * another named operator (R52), in the shape the state engine reads. Since R53 the canonical shape lives in the Ownership
+ * State Engine as {@link OwnershipReassignmentEvent}; the read model aliases it. Unlike a claim or a release, a
+ * coordination may carry MANY reassignments (a chain A→B→C is a row per leg — `coordination_id` is NOT unique here); the
+ * read model folds the chain (through the engine's {@link resolveCurrentOwner}) to attribute ownership to the CURRENT
+ * holder while preserving the original claimant. `to_operator_id` is the load-bearing identity; the rest is provenance.
+ */
+export type OwnershipReassignmentRow = OwnershipReassignmentEvent;
 
 // ---------------------------------------------------------------------
 // Ownership STATUS — the closed vocabulary the read model derives for one coordination.
@@ -128,14 +154,23 @@ export function projectOwner(row: OwnershipClaimRow): OwnerView {
 // ---------------------------------------------------------------------
 
 /**
- * The authoritative ownership state of ONE coordination — the read model's answer to "who owns this item?":
- *   • status     — {@link OwnershipStatus}: `owned` when a claim exists, `unowned` when it does not.
+ * The authoritative ownership state of ONE coordination — the read model's answer to "who owns this item now?":
+ *   • status     — {@link OwnershipStatus}: `owned` when a claim exists (and no release), `unowned` when it does not.
  *   • owned      — the same fact as a boolean convenience.
- *   • owner      — the {@link OwnerView} when owned, else null (the CURRENT owner).
- *   • claimedAt  — the claim TIMESTAMP when owned, else null.
+ *   • owner      — the {@link OwnerView} when owned, else null. The CURRENT holder: operator B after an A→B transfer, or
+ *                  the original claimant when the item was never transferred. Its `claimedAt` remains the ORIGINAL claim
+ *                  instant (the claim vocabulary + timestamp describe the underlying claim, not the transfer).
+ *   • claimant   — the ORIGINAL {@link OwnershipHolder} who first took the item (operator A), when owned, else null. It is
+ *                  who the claim ledger names; `owner` is who holds it now. Equal to `owner` when never reassigned.
+ *   • reassigned — whether the current owner holds the item by TRANSFER (true after ≥1 reassignment) rather than by the
+ *                  original claim. When owned and false, `owner` and `claimant` name the same operator.
+ *   • claimedAt  — the ORIGINAL claim TIMESTAMP when owned, else null (unchanged by any transfer).
+ *   • heldSince  — WHEN the CURRENT owner took hold when owned, else null: the latest reassignment's instant when
+ *                  reassigned, otherwise the claim instant. Equal to `claimedAt` when never reassigned.
  *   • conversationId — the conversation the claimed coordination concerns (provenance), or null.
- * A pure projection of the coordination id + its (at most one) claim row; it re-derives no coordination and decides no
- * claim.
+ * A pure projection of the coordination id + its (at most one) claim row + its (possibly many) reassignment rows; it
+ * re-derives no coordination and decides no claim. A `released` (unowned) record carries the fully-null shape — ownership
+ * is the PRESENT fact, not the history — so a released item names no current owner, claimant or transfer.
  */
 export type OwnershipRecord = {
   readonly coordinationId: string;
@@ -143,27 +178,38 @@ export type OwnershipRecord = {
   readonly status: OwnershipStatus;
   readonly owned: boolean;
   readonly owner: OwnerView | null;
+  readonly claimant: OwnershipHolder | null;
+  readonly reassigned: boolean;
   readonly claimedAt: string | null;
+  readonly heldSince: string | null;
 };
 
 /**
- * Project the per-coordination {@link OwnershipRecord} from the coordination id, its claim event (or its absence) and,
- * since R50, its release event (or its absence). Pure and total. The ownership STATUS is DERIVED BY THE ENGINE, not
- * here: it asks {@link deriveOwnershipState} for the coordination's lifecycle state and {@link isOwnedState} whether that
- * state is owned — so the read model re-decides no ownership. Because the engine derives `claimed` (the only owned
- * state) exactly when a claim event is present and no release event is, the record is a total projection:
+ * Project the per-coordination {@link OwnershipRecord} from the coordination id, its claim event (or its absence), its
+ * release event (or its absence, since R50) and its reassignment CHAIN (possibly empty, since R53). Pure and total. The
+ * ownership STATUS is DERIVED BY THE ENGINE, not here: it asks {@link deriveOwnershipState} for the coordination's
+ * lifecycle state and {@link isOwnedState} whether that state is owned — so the read model re-decides no ownership. The
+ * CURRENT OWNER is likewise the engine's: {@link resolveCurrentOwner} folds the claim with its transfer chain into the
+ * holder. Because the engine derives `claimed` (the only owned state) exactly when a claim event is present and no release
+ * event is, the record is a total projection:
  *   • engine derives `unclaimed` (no claim)             → `unowned` (no operator ever took it);
  *   • engine derives `released`  (a claim AND a release) → `unowned` (its owner RELINQUISHED it — free again);
- *   • engine derives `claimed`   (a claim, no release)   → `owned` (with the current owner and claim timestamp).
- * The `release` argument is OPTIONAL and defaults to absent. It names no viewer and grants no affordance — it PROJECTS
- * ownership FACTS only, and it RECORDS neither a claim nor a release.
+ *   • engine derives `claimed`   (a claim, no release)   → `owned`, attributed to the CURRENT holder: operator B after an
+ *                                                          A→B transfer, else the original claimant. The `claimant`, the
+ *                                                          `reassigned` flag and `heldSince` carry the transfer context.
+ * The `owner`'s claim vocabulary + `claimedAt` describe the UNDERLYING claim (a transfer moves the holder, not the claim
+ * facts), so `owner.claimedAt === record.claimedAt === claim.claimed_at` always holds. The `release` and `reassignments`
+ * arguments are OPTIONAL and default to absent/empty. It names no viewer and grants no affordance — it PROJECTS ownership
+ * FACTS only, and it RECORDS no claim, no release and no reassignment.
  */
 export function projectOwnership(input: {
   coordinationId: string;
   claim: OwnershipClaimRow | null;
   release?: OwnershipReleaseRow | null;
+  reassignments?: readonly OwnershipReassignmentRow[];
 }): OwnershipRecord {
   const { coordinationId, claim, release } = input;
+  const reassignments = input.reassignments ?? [];
   // The STATUS is the engine's — owned IFF it derives `claimed`. A released item carries no CURRENT owner, so its record
   // is the same fully-null unowned shape as a never-claimed item — ownership is the present fact, not the history. The
   // `!claim` is a type-narrowing the engine's `claimed` result already implies (never taken when owned).
@@ -175,17 +221,37 @@ export function projectOwnership(input: {
       status: "unowned",
       owned: false,
       owner: null,
+      claimant: null,
+      reassigned: false,
       claimedAt: null,
+      heldSince: null,
     };
   }
-  const owner = projectOwner(claim);
+  // The CURRENT holder is the engine's — the tail of the transfer chain, coalesced to the claimant. The owner's claim
+  // vocabulary + timestamp stay the UNDERLYING claim's (a transfer moves WHO holds it, not the claim facts); `heldSince`
+  // captures WHEN the holder took hold — the latest transfer instant, or the claim instant when never transferred.
+  const holder = resolveCurrentOwner(claim, reassignments) ?? {
+    operatorId: claim.operator_id,
+    operatorEmail: claim.operator_email,
+  };
+  const latest = latestReassignmentFor(claim.coordination_id, reassignments);
+  const owner: OwnerView = {
+    operatorId: holder.operatorId,
+    operatorEmail: holder.operatorEmail,
+    claimType: claim.claim_type as ClaimType,
+    claimOutcome: claim.claim_outcome as ClaimOutcome,
+    claimedAt: claim.claimed_at,
+  };
   return {
     coordinationId,
     conversationId: claim.conversation_id,
     status: "owned",
     owned: true,
     owner,
+    claimant: { operatorId: claim.operator_id, operatorEmail: claim.operator_email },
+    reassigned: latest !== null,
     claimedAt: owner.claimedAt,
+    heldSince: latest ? latest.reassigned_at : claim.claimed_at,
   };
 }
 
@@ -222,10 +288,12 @@ export function selectActiveClaims(
 // ---------------------------------------------------------------------
 
 /**
- * ONE ownership event — the durable fact that an operator took ownership of a coordination, at an instant. The org-wide
- * ownership HISTORY is the set of these (one per claim row), canonically ordered by {@link orderOwnershipEvents}. Each
- * event carries the coordination + conversation it concerns, the operator who took it, the CHECK-pinned claim
- * vocabulary and the claim timestamp — the recorded facts, never re-derived.
+ * ONE ownership event — the durable fact that a coordination is HELD, at an instant. The org-wide ownership HISTORY is the
+ * set of these (one per claim row), canonically ordered by {@link orderOwnershipEvents}. Each event carries the
+ * coordination + conversation it concerns, the CURRENT owner (`operatorId` / `operatorEmail` — operator B after an A→B
+ * transfer), the original `claimant` (operator A), whether it was `reassigned`, the CHECK-pinned claim vocabulary and the
+ * ORIGINAL claim timestamp — the recorded facts, never re-derived. When never reassigned the owner and the claimant name
+ * the same operator.
  */
 export type OwnershipEvent = {
   readonly coordinationId: string;
@@ -235,18 +303,34 @@ export type OwnershipEvent = {
   readonly claimType: ClaimType;
   readonly claimOutcome: ClaimOutcome;
   readonly claimedAt: string;
+  readonly reassigned: boolean;
+  readonly claimant: OwnershipHolder;
 };
 
-/** Project one raw ledger row into an {@link OwnershipEvent}. Pure — a straight, total relabelling of recorded facts. */
-export function projectOwnershipEvent(row: OwnershipClaimRow): OwnershipEvent {
+/**
+ * Project one raw claim row + its (possibly empty) reassignment chain into an {@link OwnershipEvent}. Pure — a straight,
+ * total relabelling of recorded facts, attributing the CURRENT owner ({@link resolveCurrentOwner}: operator B after an
+ * A→B transfer) while preserving the original `claimant` (operator A) and the ORIGINAL claim timestamp. The `reassignments`
+ * argument is OPTIONAL and defaults to empty (a never-transferred event, whose owner IS its claimant).
+ */
+export function projectOwnershipEvent(
+  row: OwnershipClaimRow,
+  reassignments: readonly OwnershipReassignmentRow[] = [],
+): OwnershipEvent {
+  const holder = resolveCurrentOwner(row, reassignments) ?? {
+    operatorId: row.operator_id,
+    operatorEmail: row.operator_email,
+  };
   return {
     coordinationId: row.coordination_id,
     conversationId: row.conversation_id,
-    operatorId: row.operator_id,
-    operatorEmail: row.operator_email,
+    operatorId: holder.operatorId,
+    operatorEmail: holder.operatorEmail,
     claimType: row.claim_type as ClaimType,
     claimOutcome: row.claim_outcome as ClaimOutcome,
     claimedAt: row.claimed_at,
+    reassigned: latestReassignmentFor(row.coordination_id, reassignments) !== null,
+    claimant: { operatorId: row.operator_id, operatorEmail: row.operator_email },
   };
 }
 
@@ -278,8 +362,9 @@ export function orderOwnershipEvents(events: readonly OwnershipEvent[]): Ownersh
 // ---------------------------------------------------------------------
 
 /**
- * One owner's tally in the ownership summary — how many coordinations an operator owns, and when they most recently
- * took a claim. The `operatorEmail` is the denormalised attribution from that operator's LATEST claim (deterministic).
+ * One owner's tally in the ownership summary — how many coordinations an operator HOLDS NOW (by original claim or by
+ * transfer), and when the most recent of those was first claimed. The `operatorEmail` is the denormalised attribution of
+ * that CURRENT holder, taken from their latest-claimed held coordination (deterministic).
  */
 export type OwnerTally = {
   readonly operatorId: string;
@@ -289,11 +374,11 @@ export type OwnerTally = {
 };
 
 /**
- * The org-wide ownership SUMMARY — aggregates over every claim row in one organisation:
- *   • totalClaims     — how many coordinations are owned (one claim row each).
- *   • distinctOwners  — how many distinct operators hold at least one claim.
- *   • owners          — the per-owner {@link OwnerTally} list, in a deterministic order (most claims first, then most
- *                       recent claim, then operator id).
+ * The org-wide ownership SUMMARY — aggregates over every held coordination in one organisation, grouped by CURRENT owner:
+ *   • totalClaims     — how many coordinations are owned (one claim row each; a transfer moves a claim, it adds none).
+ *   • distinctOwners  — how many distinct operators HOLD at least one coordination now (current owners, post-transfer).
+ *   • owners          — the per-CURRENT-owner {@link OwnerTally} list, in a deterministic order (most held first, then
+ *                       most recent claim, then operator id).
  *   • latestClaimAt   — the most recent claim instant across the organisation, or null when there are none.
  *   • earliestClaimAt — the oldest claim instant across the organisation, or null when there are none.
  * A pure, ORDER-INDEPENDENT fold: the same set of rows in any order yields an identical summary.
@@ -339,25 +424,39 @@ function compareOwnerTallies(a: OwnerTally, b: OwnerTally): number {
 }
 
 /**
- * Fold a set of claim rows into the org-wide {@link OwnershipSummary}. Pure, total and ORDER-INDEPENDENT: rows are
- * grouped by operator, each group tallied (count + that operator's latest claim), and the owners sorted by a total
- * order — so shuffling the input never changes the output. The overall latest / earliest instants are the extremes
- * under the same total order (null when there are no claims). It aggregates recorded facts only; it derives no claim.
+ * Fold a set of claim rows + their transfer chains into the org-wide {@link OwnershipSummary}. Pure, total and
+ * ORDER-INDEPENDENT: each row is attributed to its CURRENT owner ({@link resolveCurrentOwner} over the reassignment
+ * chain — operator B after an A→B transfer), rows are grouped by that holder, each group tallied (count + the holder's
+ * latest-claimed held coordination), and the owners sorted by a total order — so shuffling either input never changes the
+ * output. The overall latest / earliest instants are the claim-time extremes under the same total order (null when there
+ * are no claims), UNCHANGED by transfer since a transfer moves a claim's holder, not its instant. The `reassignments`
+ * argument is OPTIONAL and defaults to empty (a claim-only summary, whose owners ARE their claimants). It aggregates
+ * recorded facts only; it derives no claim and no reassignment.
  */
-export function summariseOwnership(rows: readonly OwnershipClaimRow[]): OwnershipSummary {
-  const byOperator = new Map<string, OwnershipClaimRow[]>();
+export function summariseOwnership(
+  rows: readonly OwnershipClaimRow[],
+  reassignments: readonly OwnershipReassignmentRow[] = [],
+): OwnershipSummary {
+  const holderOf = (row: OwnershipClaimRow): OwnershipHolder =>
+    resolveCurrentOwner(row, reassignments) ?? {
+      operatorId: row.operator_id,
+      operatorEmail: row.operator_email,
+    };
+
+  const byOwner = new Map<string, OwnershipClaimRow[]>();
   for (const row of rows) {
-    const group = byOperator.get(row.operator_id);
+    const ownerId = holderOf(row).operatorId;
+    const group = byOwner.get(ownerId);
     if (group) group.push(row);
-    else byOperator.set(row.operator_id, [row]);
+    else byOwner.set(ownerId, [row]);
   }
 
   const owners: OwnerTally[] = [];
-  for (const [operatorId, claims] of byOperator) {
+  for (const [operatorId, claims] of byOwner) {
     const latest = latestClaim(claims);
     owners.push({
       operatorId,
-      operatorEmail: latest.operator_email,
+      operatorEmail: holderOf(latest).operatorEmail,
       claimCount: claims.length,
       latestClaimAt: latest.claimed_at,
     });
@@ -366,7 +465,7 @@ export function summariseOwnership(rows: readonly OwnershipClaimRow[]): Ownershi
 
   return {
     totalClaims: rows.length,
-    distinctOwners: byOperator.size,
+    distinctOwners: byOwner.size,
     owners,
     latestClaimAt: rows.length > 0 ? latestClaim(rows).claimed_at : null,
     earliestClaimAt: rows.length > 0 ? earliestClaim(rows).claimed_at : null,

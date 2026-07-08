@@ -10,7 +10,9 @@ import { resolve, relative, sep } from "node:path";
  * `receptionist_conversation_claims` ledger); R47 shipped the first operator-facing surface. R48 establishes the
  * CANONICAL OWNERSHIP READ MODEL — the single authoritative projection of ownership state. Since R51 (CONVERSATION
  * OWNERSHIP STATE ENGINE) it no longer derives ownership itself: it reads ownership state THROUGH the state engine and
- * PROJECTS it. Its law is exact: "the ownership read model is authoritative; the claim runtime remains authoritative;
+ * PROJECTS it; since R53 that projection is REASSIGNMENT-AWARE — it attributes each held item to its CURRENT owner (the
+ * latest transfer's target, resolved by the engine), preserving the original claimant. Its law is exact: "the ownership
+ * read model is authoritative; the claim runtime remains authoritative;
  * it consumes ONLY the R51 Ownership State Engine; organisation isolation is preserved; the audit remains append-only;
  * and NO execution path is introduced." This suite proves that contract as a matter of SOURCE, not discipline — the
  * house bar of the R30→R50 invariant suites:
@@ -32,8 +34,9 @@ import { resolve, relative, sep } from "node:path";
  *     write primitive, no RPC); and across all source the claims ledger is READ through EXACTLY TWO read-only seams (the
  *     R47 surface reader and the R51 state engine) — R48 adds no writer and no migration.
  *   • NO EXECUTION PATH IS INTRODUCED — neither read-model file names any engine execution function, any other engine
- *     writer, or any R48 non-goal token (assign / reassign / release / dispatch / notify / schedule / … / close). The
- *     read model states ownership facts; it acts on nothing.
+ *     writer, or any R48 non-goal token (assign / dispatch / notify / schedule / … / close). `release` (R50) and
+ *     `reassign` (R53) are READ capabilities the model folds, not non-goals. The read model states ownership facts; it
+ *     acts on nothing.
  *   • THE MODULE BOUNDARIES HOLD — the reader is server-only, and the pure core is a shared, deterministic module
  *     (NOT server-only) importing only the R46 claim types + the R51 engine, touching no I/O, no clock and no RNG.
  *
@@ -149,14 +152,15 @@ const ENGINE_EXECUTION_FNS =
   /\b(?:fulfilApprovedBooking|verifyApprovedFulfilment|recoverVerifiedFulfilment|resolveConversationCompletion|governConversationLifecycle|orchestrateConversationLifecycle|coordinateConversationLifecycle|resolveConversationCoordination|resolveClaim|resolveFulfilment|resolveVerification|resolveRecovery|resolveResolution|resolveLifecycle|resolveOrchestration|resolveCoordination)\b/;
 
 /**
- * The R48 explicit non-goals as SOURCE tokens — the read model states ownership; it acts on nothing. NOTE (R50): the
- * read model is now RELEASE-AWARE — it consumes the append-only release ledger to subtract released items from
- * ownership, so `release` is a legitimately-named CAPABILITY here, not a non-goal. Release remains a READ ONLY: the
- * finer-grained bans below (no release write primitive `record_receptionist_conversation_\w+`, no direct write, no
- * `.rpc(`) still prove the read model introduces no release EXECUTION path.
+ * The R48 explicit non-goals as SOURCE tokens — the read model states ownership; it acts on nothing. NOTE (R50/R53): the
+ * read model is now RELEASE- and REASSIGNMENT-AWARE — it consumes the append-only release ledger to subtract released
+ * items, and (through the state engine) the reassignment chain to attribute each held item to its current owner, so
+ * `release` and `reassign` are legitimately-named CAPABILITIES here, not non-goals. Note `\bassign\w*` NEVER matches
+ * "reassign" (no word boundary between "re" and "assign"). Both remain READ ONLY: the finer-grained bans below (no write
+ * primitive `record_receptionist_conversation_\w+`, no direct write, no `.rpc(`) still prove no EXECUTION path.
  */
 const NON_GOAL_TOKENS = [
-  /\bassign\w*/i, // assignment / reassignment
+  /\bassign\w*/i, // automatic assignment (NEVER matches "reassign")
   /\bdispatch\w*/i,
   /\bnotif\w*/i, // notify / notification
   /\bschedul\w*/i, // schedule / scheduling
@@ -355,7 +359,7 @@ describe("receptionist ownership read model — no execution path is introduced"
     }
   });
 
-  it("no read-model file names an R48 non-goal token (assign/reassign/release/dispatch/…/close)", () => {
+  it("no read-model file names an R48 non-goal token (assign/dispatch/…/close)", () => {
     for (const f of READ_MODEL_FILES) {
       const code = codeOf(read(f));
       for (const token of NON_GOAL_TOKENS) {

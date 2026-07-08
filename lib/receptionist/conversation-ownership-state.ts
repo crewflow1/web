@@ -24,9 +24,12 @@
 //   • a claim event, no release event    → `claimed`   (an operator holds it now);
 //   • a claim event AND a release event  → `released`  (its holder relinquished it — it is free to be claimed again).
 // Because `coordination_id` is UNIQUE in BOTH ledgers, a coordination has AT MOST ONE claim event and AT MOST ONE release
-// event, so the derivation is a TOTAL function of that (at most one, at most one) pair. The lifecycle is deliberately
-// small: reassignment, dispatch, scheduling and the rest are explicit non-goals of later, separately-authorised
-// increments — the engine states WHERE a coordination is in the claim⇄release lifecycle, and grants no affordance.
+// event, so the STATE derivation is a TOTAL function of that (at most one, at most one) pair. Reassignment does NOT add a
+// state: a transferred item is still `claimed`. Since R53 the engine ALSO folds the append-only REASSIGNMENT ledger (R52)
+// to resolve the CURRENT OWNER — WHO holds a `claimed` coordination now — because a transfer changes the holder without
+// changing the state. Ownership is thus TWO orthogonal facts the engine derives: the STATE (from claim + release) and the
+// CURRENT OWNER (from claim + reassignment chain). Dispatch, scheduling and the rest remain explicit non-goals of later,
+// separately-authorised increments — the engine states WHERE a coordination is and WHO holds it, and grants no affordance.
 //
 // THE ENGINE IS VIEWER-AGNOSTIC AND PRESENTATION-AGNOSTIC. It states the ownership STATE as a FACT — it folds in no
 // viewer identity, no owned/unowned rendering, no history ordering and no summary. Those are the READ MODEL's concern, a
@@ -37,8 +40,10 @@
 //   • deriveOwnershipState     — a coordination's (claim?, release?) events → its {@link OwnershipState}. THE derivation.
 //   • isUnclaimed / isClaimed / isReleased — total predicates over a derived state (a consumer switches exhaustively).
 //   • isOwnedState             — the canonical owned/unowned projection of the lifecycle (owned IFF `claimed`).
-//   • projectOwnershipState    — a coordination id + its events → its {@link OwnershipStateRecord} (state + the events).
-//   • reconcileOwnershipStates — an org's claim events + release events → one state record per claimed coordination.
+//   • latestReassignmentFor    — the tail of a coordination's transfer chain (by the R52 order), or null. THE order rule.
+//   • resolveCurrentOwner      — a claim + its reassignment chain → the CURRENT holder, or null. THE owner resolution.
+//   • projectOwnershipState    — a coordination id + its events → its {@link OwnershipStateRecord} (state, owner, events).
+//   • reconcileOwnershipStates — an org's claims + releases + reassignments → one state record per claimed coordination.
 // =====================================================================
 
 // ---------------------------------------------------------------------
@@ -82,9 +87,44 @@ export type OwnershipReleaseEvent = {
 };
 
 /**
- * The pair of append-only events that bear on ONE coordination's ownership — its (at most one) claim event and its (at
- * most one) release event. Both are OPTIONAL: their PRESENCE (not their content) is what the derivation folds. A caller
- * that has only claim facts passes `release` absent; a never-claimed coordination passes both absent.
+ * One REASSIGNMENT event — the durable fact that a coordination's holder TRANSFERRED it to another named operator, in the
+ * shape the state runtime selects from `receptionist_conversation_claim_reassignments` (R52). Unlike a claim or a release,
+ * a coordination may have MANY reassignments (a transfer CHAIN A→B→C is a row per leg — `coordination_id` is NOT unique in
+ * this ledger), so this is the engine's THIRD, MULTI-valued input. It changes WHO holds a coordination, never WHETHER it is
+ * held: the derivation's three-state lifecycle is untouched (a reassigned item is still `claimed`), but the CURRENT OWNER
+ * is the `to_operator` of the LATEST reassignment (by `reassigned_at`, then `created_at`, then `id` — the exact order the
+ * R52 database owner-resolution uses), falling back to the original claimant when none names the coordination. The engine
+ * consumes events, never a database — it names no table.
+ */
+export type OwnershipReassignmentEvent = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly coordination_id: string;
+  readonly from_operator_id: string;
+  readonly from_operator_email: string | null;
+  readonly to_operator_id: string;
+  readonly to_operator_email: string | null;
+  readonly reassigned_at: string;
+  readonly created_at: string;
+};
+
+/**
+ * A resolved OWNERSHIP HOLDER — WHO holds a coordination's claim RIGHT NOW, after folding its claim and its (possibly
+ * empty) reassignment chain. Just the operator's identity (id + denormalised email); the claim vocabulary + timestamps
+ * live on the events. It is the engine's answer to "who is the current owner?" — the original claimant when the item was
+ * never transferred, or the latest reassignment's `to_operator` when it was.
+ */
+export type OwnershipHolder = {
+  readonly operatorId: string;
+  readonly operatorEmail: string | null;
+};
+
+/**
+ * The pair of append-only events that bear on ONE coordination's ownership STATE — its (at most one) claim event and its
+ * (at most one) release event. Both are OPTIONAL: their PRESENCE (not their content) is what the derivation folds. A
+ * caller that has only claim facts passes `release` absent; a never-claimed coordination passes both absent. Reassignment
+ * events do NOT appear here — they change the current OWNER, not the STATE, so the derivation ({@link deriveOwnershipState})
+ * never sees them.
  */
 export type OwnershipEvents = {
   readonly claim?: OwnershipClaimEvent | null;
@@ -163,6 +203,68 @@ export function isOwnedState(state: OwnershipState): boolean {
 }
 
 // ---------------------------------------------------------------------
+// CURRENT-OWNER resolution — WHO holds a coordination now, folding its claim with its reassignment chain (R53).
+// ---------------------------------------------------------------------
+
+/**
+ * Strictly-later ordering over two reassignment events, mirroring the R52 database owner-resolution EXACTLY:
+ * `reassigned_at desc, created_at desc, id desc`. Compares INSTANTS (via `Date.parse`), never raw timestamp strings, so
+ * the same moment written in different zone spellings ties and is decided by the next key; `id` (a uuid, UNIQUE) is the
+ * final total tiebreak, so the "latest" is deterministic. `a` is later than `b` when its `reassigned_at` is newer, or —
+ * on a tie — its `created_at` is newer, or — on a further tie — its id sorts higher.
+ */
+function isLaterReassignment(
+  a: OwnershipReassignmentEvent,
+  b: OwnershipReassignmentEvent,
+): boolean {
+  const ta = Date.parse(a.reassigned_at);
+  const tb = Date.parse(b.reassigned_at);
+  if (ta !== tb) return ta > tb;
+  const ca = Date.parse(a.created_at);
+  const cb = Date.parse(b.created_at);
+  if (ca !== cb) return ca > cb;
+  return a.id > b.id;
+}
+
+/**
+ * The LATEST reassignment naming one coordination — the tail of its transfer chain — or null when none does. Pure, total
+ * and ORDER-INDEPENDENT: it filters to the coordination and reduces under the total {@link isLaterReassignment} order, so
+ * shuffling the input never changes the result. This is the single definition of "the reassignment that decides the
+ * current owner", the read side's mirror of the R52 writer's `order by reassigned_at desc, created_at desc, id desc`.
+ */
+export function latestReassignmentFor(
+  coordinationId: string,
+  reassignments: readonly OwnershipReassignmentEvent[],
+): OwnershipReassignmentEvent | null {
+  let latest: OwnershipReassignmentEvent | null = null;
+  for (const reassignment of reassignments) {
+    if (reassignment.coordination_id !== coordinationId) continue;
+    if (latest === null || isLaterReassignment(reassignment, latest)) latest = reassignment;
+  }
+  return latest;
+}
+
+/**
+ * Resolve the CURRENT OWNER of a coordination — the single canonical fold of a claim with its reassignment chain into the
+ * operator who holds it NOW. Pure and total:
+ *   • no claim                         → null (no operator has ever taken it — there is nothing to hold);
+ *   • a claim, no reassignment naming it → the original CLAIMANT (the item was never transferred);
+ *   • a claim AND ≥1 reassignment       → the `to_operator` of the LATEST reassignment ({@link latestReassignmentFor}).
+ * This is the read side's exact mirror of the R52 database owner-resolution (latest `to_operator_id`, coalesced to the
+ * claimant): so the Ownership Read Model names the SAME current owner the Release + Reassignment runtimes enforce against,
+ * and release authority aligns with it. It folds in no viewer and grants no affordance; it names the holder, nothing more.
+ */
+export function resolveCurrentOwner(
+  claim: OwnershipClaimEvent | null,
+  reassignments: readonly OwnershipReassignmentEvent[],
+): OwnershipHolder | null {
+  if (!claim) return null;
+  const latest = latestReassignmentFor(claim.coordination_id, reassignments);
+  if (latest) return { operatorId: latest.to_operator_id, operatorEmail: latest.to_operator_email };
+  return { operatorId: claim.operator_id, operatorEmail: claim.operator_email };
+}
+
+// ---------------------------------------------------------------------
 // The per-coordination STATE RECORD — the derived state plus the events it was derived from.
 // ---------------------------------------------------------------------
 
@@ -170,63 +272,88 @@ export function isOwnedState(state: OwnershipState): boolean {
  * The derived ownership state of ONE coordination — its {@link OwnershipState} plus the append-only events it was folded
  * from (so a consumer projecting a view — the current owner, the claim timestamp — reads the SAME events the engine
  * derived from, never re-fetching). The engine's authoritative per-coordination answer to "where is this in the
- * lifecycle?":
+ * lifecycle?" AND "who holds it now?":
  *   • coordinationId — the coordination the state concerns.
- *   • state          — its {@link OwnershipState}: `unclaimed` / `claimed` / `released`.
+ *   • state          — its {@link OwnershipState}: `unclaimed` / `claimed` / `released`. Folded from claim + release ONLY.
  *   • claim          — the claim event it was derived from, or null (null ⟺ `unclaimed`).
  *   • release        — the release event it was derived from, or null.
+ *   • reassignments  — this coordination's transfer chain (R52), in the order read; empty when it was never transferred.
+ *   • currentOwner   — WHO holds it now ({@link resolveCurrentOwner}): the latest reassignment's `to_operator`, else the
+ *                      claimant, or null when `unclaimed`. Meaningful when `state === 'claimed'`; on a `released` record it
+ *                      names the last holder before release, which the read model projects as unowned (state, not owner,
+ *                      decides owned/unowned).
  */
 export type OwnershipStateRecord = {
   readonly coordinationId: string;
   readonly state: OwnershipState;
   readonly claim: OwnershipClaimEvent | null;
   readonly release: OwnershipReleaseEvent | null;
+  readonly reassignments: readonly OwnershipReassignmentEvent[];
+  readonly currentOwner: OwnershipHolder | null;
 };
 
 /**
- * Fold ONE coordination's events into its {@link OwnershipStateRecord}. Pure and total — it derives the state through the
- * single {@link deriveOwnershipState} and carries the (normalised-to-null) events alongside it. The `claim` / `release`
- * arguments are OPTIONAL and default to absent, so a never-claimed coordination folds to an `unclaimed` record with both
- * events null. It records nothing and re-decides nothing.
+ * Fold ONE coordination's events into its {@link OwnershipStateRecord}. Pure and total — it derives the STATE through the
+ * single {@link deriveOwnershipState} (claim + release only), resolves the CURRENT OWNER through the single
+ * {@link resolveCurrentOwner} (claim + reassignments), and carries the (normalised-to-null) events alongside. The `claim`
+ * / `release` / `reassignments` arguments are OPTIONAL and default to absent/empty, so a never-claimed coordination folds
+ * to an `unclaimed` record with no events and no owner. The `reassignments` are filtered to THIS coordination defensively,
+ * so the record only ever carries its own transfer chain. It records nothing and re-decides nothing.
  */
 export function projectOwnershipState(input: {
   coordinationId: string;
   claim?: OwnershipClaimEvent | null;
   release?: OwnershipReleaseEvent | null;
+  reassignments?: readonly OwnershipReassignmentEvent[];
 }): OwnershipStateRecord {
   const claim = input.claim ?? null;
   const release = input.release ?? null;
+  const reassignments = (input.reassignments ?? []).filter(
+    (reassignment) => reassignment.coordination_id === input.coordinationId,
+  );
   return {
     coordinationId: input.coordinationId,
     state: deriveOwnershipState({ claim, release }),
     claim,
     release,
+    reassignments,
+    currentOwner: resolveCurrentOwner(claim, reassignments),
   };
 }
 
 /**
  * Reconcile an organisation's append-only events into per-coordination {@link OwnershipStateRecord}s — the org-wide fold
- * the state runtime performs. Given the org's claim events and its release events, it emits ONE record per CLAIMED
- * coordination (one per claim event), each folded through {@link projectOwnershipState} with its matching release (if
- * any). A coordination with no claim event is `unclaimed` and is NOT enumerated — the engine reports the coordinations
- * that HAVE entered the lifecycle, and `unclaimed` is the absence of a record. A release with no matching claim cannot
- * arise under R50's ownership gate; were one present it would simply have no claim to pair with and would be ignored.
+ * the state runtime performs. Given the org's claim events, its release events and its reassignment events, it emits ONE
+ * record per CLAIMED coordination (one per claim event), each folded through {@link projectOwnershipState} with its
+ * matching release (if any, at most one) and its matching reassignment CHAIN (if any, possibly many). A coordination with
+ * no claim event is `unclaimed` and is NOT enumerated — the engine reports the coordinations that HAVE entered the
+ * lifecycle, and `unclaimed` is the absence of a record. A release or reassignment with no matching claim cannot arise
+ * under the R50/R52 ownership gates; were one present it would simply have no claim to pair with and would be ignored.
  *
- * Pure, total and ORDER-INDEPENDENT: it consults a per-coordination map of releases, so shuffling either input never
- * changes the output (records appear in the claims' order — the runtime orders them for presentation, the engine does
- * not). Non-mutating — it returns a NEW array.
+ * Pure, total and ORDER-INDEPENDENT: it consults a per-coordination map of releases and a per-coordination map of
+ * reassignment chains, so shuffling any input never changes the output (records appear in the claims' order — the runtime
+ * orders them for presentation, the engine does not; the current-owner fold re-sorts each chain internally). Non-mutating
+ * — it returns a NEW array. The `reassignments` argument is OPTIONAL and defaults to empty (a claim-and-release-only fold).
  */
 export function reconcileOwnershipStates(
   claims: readonly OwnershipClaimEvent[],
   releases: readonly OwnershipReleaseEvent[],
+  reassignments: readonly OwnershipReassignmentEvent[] = [],
 ): OwnershipStateRecord[] {
   const releaseByCoordination = new Map<string, OwnershipReleaseEvent>();
   for (const release of releases) releaseByCoordination.set(release.coordination_id, release);
+  const reassignmentsByCoordination = new Map<string, OwnershipReassignmentEvent[]>();
+  for (const reassignment of reassignments) {
+    const chain = reassignmentsByCoordination.get(reassignment.coordination_id);
+    if (chain) chain.push(reassignment);
+    else reassignmentsByCoordination.set(reassignment.coordination_id, [reassignment]);
+  }
   return claims.map((claim) =>
     projectOwnershipState({
       coordinationId: claim.coordination_id,
       claim,
       release: releaseByCoordination.get(claim.coordination_id) ?? null,
+      reassignments: reassignmentsByCoordination.get(claim.coordination_id) ?? [],
     }),
   );
 }

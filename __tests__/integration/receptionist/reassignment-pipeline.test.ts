@@ -12,6 +12,7 @@ import { claimConversationWork } from "@/server/services/receptionist-claim";
 import { releaseConversationWork } from "@/server/services/receptionist-release";
 import { reassignConversationWork } from "@/server/services/receptionist-reassignment";
 import { getOwnership } from "@/server/services/receptionist-ownership-read-model";
+import { getCoordinationOwnershipState } from "@/server/services/receptionist-ownership-state";
 import {
   isAuthorisationDecided,
   resolveAuthorisation,
@@ -45,8 +46,9 @@ import type { OperatorIdentity } from "@/lib/receptionist/conversation-claim";
  *   • THE TRANSFER IS AUTHORITATIVE — after A→B, the current owner is B: the upgraded Release Runtime lets ONLY B release
  *     the item and refuses A. Ownership genuinely changed hands; the reassignment "took".
  *   • THE OTHER ENGINES REMAIN AUTHORITATIVE — a reassignment NEVER mutates the claim ledger (still A, still 'claimed')
- *     and writes NO release row; a reassignment adds NO state to the R51 lifecycle (the item stays claimed). The R48 read
- *     model remains CLAIM-CENTRIC (it still names the original claimant as owner — the documented R53 gap).
+ *     and writes NO release row; a reassignment adds NO state to the R51 lifecycle (the item stays claimed). Since R53 the
+ *     R51 state engine and the R48 read model FOLD the transfer: the item stays owned, but its CURRENT owner is now B
+ *     (the original claimant A preserved alongside), proven here through both seams over the live database.
  *   • OWNERSHIP HISTORY IS PRESERVED IN FULL — A→B→C is a CHAIN of first-class append-only rows; each transfer is a new
  *     row, never an overwrite, so the complete lineage of who held the item survives.
  *   • INVALID TRANSFERS ARE PREVENTED — an item with NO claim, a RELEASED item, or an item held by a DIFFERENT operator
@@ -356,7 +358,7 @@ describeIntegration(
       expect(releaseByB.release.operator_id).toBe(OPERATOR_B.id);
     });
 
-    it("reassignment adds NO ownership state — the item stays claimed; the Claim + Release ledgers are untouched", async () => {
+    it("reassignment FOLDS ownership to B — the item stays claimed, the read model names B (claimant A preserved); the Claim + Release ledgers are untouched", async () => {
       const orgId = crypto.randomUUID();
       const { coordinationId } = await seedClaimed(orgId);
 
@@ -370,10 +372,22 @@ describeIntegration(
       // The item stays CLAIMED — a reassignment adds no state to the R51 lifecycle (a reassigned item is still owned).
       const record = await getOwnership({ org_id: orgId, coordination_id: coordinationId });
       expect(record.owned).toBe(true);
-      // THE R48 READ MODEL REMAINS CLAIM-CENTRIC — it still names the ORIGINAL claimant (A) as owner, NOT the new owner
-      // (B). This is the DOCUMENTED R53 gap: the ownership read model reads the claim ledger through the state engine and
-      // does not yet fold reassignments. Pinned here so the gap is explicit and any future closure is a deliberate change.
-      expect(record.owner?.operatorId).toBe(OPERATOR_A.id);
+      // SINCE R53 THE READ MODEL FOLDS THE TRANSFER — it names the CURRENT owner (B), not the original claimant (A). The
+      // ownership read model reads the reassignment chain THROUGH the state engine and re-attributes the held item to its
+      // current holder, preserving A as the original claimant. This closes the former R53 gap, proven over the live DB.
+      expect(record.owner?.operatorId).toBe(OPERATOR_B.id);
+      expect(record.owner?.operatorEmail).toBe(OPERATOR_B.email);
+      expect(record.reassigned).toBe(true);
+      expect(record.claimant?.operatorId).toBe(OPERATOR_A.id);
+
+      // THE STATE ENGINE FOLDS THE SAME TRANSFER — the coordination is still `claimed` (state is claim+release only), its
+      // CURRENT owner is B, and it carries EXACTLY ONE reassignment leg (A→B). State and current owner agree with the read
+      // model above, because the read model reads ownership THROUGH this engine.
+      const state = await getCoordinationOwnershipState({ org_id: orgId, coordination_id: coordinationId });
+      expect(state.state).toBe("claimed");
+      expect(state.currentOwner?.operatorId).toBe(OPERATOR_B.id);
+      expect(state.reassignments).toHaveLength(1);
+      expect(state.reassignments[0]?.to_operator_id).toBe(OPERATOR_B.id);
 
       // THE CLAIM RUNTIME REMAINS AUTHORITATIVE — the append-only claim row is UNCHANGED (still A, still 'claimed'). A
       // reassignment never mutates or deletes the claim.
@@ -426,6 +440,14 @@ describeIntegration(
       expect(staleB.resolution).toBe("not_owned");
       // No third row was written.
       expect((await rowsForCoordination(coordinationId)).data).toHaveLength(2);
+
+      // THE READ MODEL FOLDS THE WHOLE CHAIN — after A→B→C the current owner is the TAIL of the chain (C), the item is
+      // still owned, and the ORIGINAL claimant (A) is preserved. Ownership history survives across every leg.
+      const chained = await getOwnership({ org_id: orgId, coordination_id: coordinationId });
+      expect(chained.owned).toBe(true);
+      expect(chained.owner?.operatorId).toBe(OPERATOR_C.id);
+      expect(chained.reassigned).toBe(true);
+      expect(chained.claimant?.operatorId).toBe(OPERATOR_A.id);
 
       // C can release the item (C is the current owner); the release writer resolves the tail of the chain.
       const releaseByC = await releaseConversationWork({

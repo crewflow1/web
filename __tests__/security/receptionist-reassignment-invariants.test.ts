@@ -37,10 +37,10 @@ import { resolve, relative, sep } from "node:path";
  *     SOLE authority over recording a release. This migration create-or-REPLACES that one writer to HARDEN its ownership
  *     gate (it now resolves the CURRENT, possibly-reassigned owner from the reassignment ledger, so only that operator
  *     may release) — no second release path, no signature change; for a never-reassigned item it behaves exactly as R50.
- *   • THE OWNERSHIP STATE ENGINE REMAINS AUTHORITATIVE — a reassignment adds NO state to the R51 lifecycle (a reassigned
- *     item is still `claimed`). The R51 engine still folds ONLY the claims + releases ledgers; it names the reassignment
- *     ledger nowhere, and no TS reader folds the reassignment ledger yet (the documented R53 gap). The reassignment
- *     files re-implement NO ownership derivation and name no state-engine function.
+ *   • THE OWNERSHIP STATE ENGINE REMAINS AUTHORITATIVE — a reassignment adds NO STATE to the R51 lifecycle (a reassigned
+ *     item is still `claimed`), so the STATE fold is unchanged (claims + releases). Since R53 the R51 engine ALSO folds
+ *     the reassignments ledger to resolve the CURRENT OWNER, and it is the SOLE TS seam that reads that ledger. The R52
+ *     reassignment files themselves re-implement NO ownership derivation and name no state-engine function.
  *   • ORGANISATION ISOLATION IS PRESERVED — the core DEMANDS an organisation on every request (its first gate), the
  *     ledger's `org_id` is NOT NULL, the writer's coordination guard is org-scoped (`c.org_id = p_org_id`) AND its
  *     ownership gate is org-scoped (`claims … and org_id = p_org_id`): a cross-tenant transfer names no coordination in
@@ -210,7 +210,7 @@ const CLAIMS_TABLE = /\breceptionist_conversation_claims\b/;
 /** The R50 releases ledger table — the writer reads it (the released-item gate); the state engine folds it. */
 const RELEASES_TABLE = /\breceptionist_conversation_claim_releases\b/;
 
-/** The R52 reassignments ledger table — no TS reader folds it yet (the documented R53 gap). */
+/** The R52 reassignments ledger table — since R53 folded by exactly the R51 ownership state runtime (current-owner). */
 const REASSIGNMENTS_TABLE = /\breceptionist_conversation_claim_reassignments\b/;
 
 /** Every engine EXECUTION function (deriving/performing runtimes + resolvers) — a reassignment names none of them. */
@@ -484,8 +484,9 @@ describe("receptionist reassignment — the Release runtime remains authoritativ
 });
 
 // =====================================================================
-// 5. The OWNERSHIP STATE ENGINE remains AUTHORITATIVE — a reassignment adds NO state; the R51 engine still folds only the
-//    claims + releases ledgers, and no TS reader folds the reassignment ledger yet (the documented R53 gap).
+// 5. The OWNERSHIP STATE ENGINE remains AUTHORITATIVE — a reassignment adds NO STATE (a reassigned item is still
+//    `claimed`); since R53 the engine ALSO folds the reassignments ledger to resolve the CURRENT OWNER, and it is the
+//    SOLE TS seam that does.
 // =====================================================================
 
 describe("receptionist reassignment — the Ownership State engine remains authoritative", () => {
@@ -508,20 +509,21 @@ describe("receptionist reassignment — the Ownership State engine remains autho
     expect(existsSync(resolve(ROOT, OWNERSHIP_READER)), OWNERSHIP_READER).toBe(true);
   });
 
-  it("the R51 engine still folds ONLY the claims + releases ledgers — it names the reassignment ledger NOWHERE", () => {
-    // A reassignment adds NO state to the R51 lifecycle (a reassigned item is still `claimed`): the state engine reads
-    // the same two ledgers it read at R51 and derives ownership from them, unchanged by R52.
+  it("the R51 engine STATE fold stays claims+releases, and since R53 it ALSO names the reassignments ledger (current owner)", () => {
+    // A reassignment adds NO STATE to the R51 lifecycle (a reassigned item is still `claimed`), so the STATE fold reads
+    // the same claims + releases ledgers as at R51. Since R53 the engine ALSO reads the reassignments ledger to resolve
+    // the CURRENT OWNER of a held item — so the state runtime now names all THREE ledgers.
     const stateRuntime = codeOf(read(OWNERSHIP_STATE_RUNTIME));
     expect(stateRuntime).toMatch(CLAIMS_TABLE);
     expect(stateRuntime).toMatch(RELEASES_TABLE);
+    expect(stateRuntime).toMatch(REASSIGNMENTS_TABLE);
     expect(stateRuntime).toMatch(/reconcileOwnershipStates/);
-    expect(stateRuntime).not.toMatch(REASSIGNMENTS_TABLE);
   });
 
-  it("no TS source folds the reassignment ledger yet — the DOCUMENTED R53 gap (claim-centric read model)", () => {
-    // The R48/R51 read model is claim-centric: it does not yet fold reassignments, so after A→B it still reads owner=A.
-    // This is an explicit R53 recommendation, PINNED here in source: exactly ZERO modules read the reassignment ledger.
-    expect(reassignmentTableReaders).toEqual([]);
+  it("since R53 EXACTLY ONE TS seam folds the reassignments ledger — the R51 ownership state runtime", () => {
+    // R53 closed the former claim-centric gap: the state engine now folds the transfer chain to resolve the current
+    // owner, and every consumer reads ownership THROUGH it. Pinned here in source: the state runtime is the SOLE reader.
+    expect(reassignmentTableReaders).toEqual([OWNERSHIP_STATE_RUNTIME]);
   });
 
   it("neither reassignment file re-implements ownership derivation — it names no state-engine function or fold", () => {

@@ -32,6 +32,8 @@ function makeEvent(overrides: Partial<OwnershipEvent> = {}): OwnershipEvent {
     claimType: "claim_conversation_work",
     claimOutcome: "work_claimed",
     claimedAt: "2026-07-06T12:00:00.000Z",
+    reassigned: false,
+    claimant: { operatorId: "operator-1", operatorEmail: "op@crewflow.uk" },
     ...overrides,
   };
 }

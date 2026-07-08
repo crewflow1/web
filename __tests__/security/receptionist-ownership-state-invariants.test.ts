@@ -12,8 +12,9 @@ import { resolve, relative, sep } from "node:path";
  * OWNERSHIP EVENT STREAM. R48 established the canonical Ownership Read Model over them — but its reader FOLDED the two
  * ledgers itself, so ownership was derived in more than one place. R51 establishes the single canonical authority: the
  * OWNERSHIP STATE ENGINE. It is the ONE module that reads the event stream for ownership and DERIVES state
- * (`unclaimed` / `claimed` / `released`) from it, and every consumer — the Ownership Read Model above all — reads
- * ownership state THROUGH it. Its law is exact: "the Ownership State engine derives ownership state using ONLY the
+ * (`unclaimed` / `claimed` / `released`) from it — and, since R53, ALSO folds the append-only reassignment ledger (R52)
+ * to resolve the CURRENT OWNER of a still-`claimed` item — and every consumer — the Ownership Read Model above all —
+ * reads ownership state THROUGH it. Its law is exact: "the Ownership State engine derives ownership state using ONLY the
  * append-only ownership events; it becomes the only authorised source of ownership state; no consumer may derive
  * ownership independently; the Claim runtime remains authoritative; the Release runtime remains authoritative; the
  * Ownership Read Model consumes only the Ownership State engine; organisation isolation is preserved; the audit remains
@@ -22,9 +23,10 @@ import { resolve, relative, sep } from "node:path";
  *
  *   • THE ENGINE IS AUTHORITATIVE — the pure derivation `deriveOwnershipState` and the folds
  *     `reconcileOwnershipStates` / `projectOwnershipState` are each DEFINED in exactly ONE module (the engine core); the
- *     runtime is the event-stream READER, and its `.from(...)` targets are EXACTLY the two append-only ledgers. The
- *     release ledger is READ through exactly ONE seam (the engine runtime); the claims ledger through exactly TWO (the
- *     engine runtime + the R47 claim affordance, out of R51 scope). No consumer re-implements the fold.
+ *     runtime is the event-stream READER, and its `.from(...)` targets are EXACTLY the THREE append-only ledgers (claims,
+ *     releases and — since R53 — reassignments). The release ledger AND the reassignments ledger are each READ through
+ *     exactly ONE seam (the engine runtime); the claims ledger through exactly TWO (the engine runtime + the R47 claim
+ *     affordance, out of R51 scope). No consumer re-implements the fold.
  *   • THE CLAIM RUNTIME REMAINS AUTHORITATIVE — R51 adds NO writer: `record_receptionist_conversation_claim` is still
  *     named by exactly the R46 runtime, `claimConversationWork` is still defined once, and neither engine file records
  *     or re-resolves a claim.
@@ -38,9 +40,10 @@ import { resolve, relative, sep } from "node:path";
  *   • THE AUDIT STAYS APPEND-ONLY — the runtime performs ONLY SELECTs (no insert/update/delete/upsert, no write
  *     primitive, no RPC), and the engine adds no table and no writer — it reads the existing ledgers.
  *   • NO EXECUTION PATH IS INTRODUCED — neither engine file names any engine execution function, any other engine
- *     writer, or any R51 non-goal token (assign / reassign / dispatch / notify / schedule / fulfil / promote / complete
- *     / close). `claim` and `release` are DELIBERATELY not non-goals — they are the two capabilities the engine derives
- *     over. The engine states WHERE a coordination sits in the lifecycle; it acts on nothing.
+ *     writer, or any R51 non-goal token (assign / dispatch / notify / schedule / fulfil / promote / complete / close).
+ *     `claim`, `release` and — since R53 — `reassign` are DELIBERATELY not non-goals: they are the capabilities the
+ *     engine derives over (a claim event, a release event, a reassignment chain), the last resolving the CURRENT OWNER of
+ *     a still-`claimed` item. The engine states WHERE a coordination sits and WHO holds it; it acts on nothing.
  *   • THE MODULE BOUNDARIES HOLD — the runtime is server-only; the pure core is a shared, dependency-free module (it
  *     imports NOTHING), touching no I/O, no clock and no RNG.
  *
@@ -132,9 +135,10 @@ const CLAIM_READER = "server/services/receptionist-claim-view.ts";
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
-/** The two append-only ledger tables — the ownership event stream. */
+/** The three append-only ledger tables — the ownership event stream (reassignments joined the stream at R52/R53). */
 const CLAIMS_LEDGER = /\breceptionist_conversation_claims\b/;
 const RELEASES_LEDGER = /\breceptionist_conversation_claim_releases\b/;
+const REASSIGNMENTS_LEDGER = /\breceptionist_conversation_claim_reassignments\b/;
 
 /** The two ledgers' write primitives — the engine names neither (it reads the stream, it never writes it). */
 const CLAIM_WRITE_FN = /\brecord_receptionist_conversation_claim\b/;
@@ -166,14 +170,15 @@ const ENGINE_EXECUTION_FNS =
   /\b(?:fulfilApprovedBooking|verifyApprovedFulfilment|recoverVerifiedFulfilment|resolveConversationCompletion|governConversationLifecycle|orchestrateConversationLifecycle|coordinateConversationLifecycle|resolveConversationCoordination|resolveClaim|resolveRelease|resolveFulfilment|resolveVerification|resolveRecovery|resolveResolution|resolveLifecycle|resolveOrchestration|resolveCoordination)\b/;
 
 /**
- * The R51 explicit non-goals as SOURCE tokens — the engine derives ownership STATE; it grants no affordance and moves
- * work to no one. `claim` and `release` are DELIBERATELY ABSENT: they are the two capabilities the engine derives over
- * (a claim event, a release event), not non-goals. `email` is absent too — the events carry an `operator_email`
- * attribution, which is not the email CHANNEL non-goal.
+ * The R51 explicit non-goals as SOURCE tokens — the engine derives ownership STATE (and, since R53, the CURRENT OWNER);
+ * it grants no affordance and moves work to no one. `claim`, `release` and `reassign` are DELIBERATELY ABSENT: they are
+ * the capabilities the engine derives over (a claim event, a release event, a reassignment chain), not non-goals —
+ * `reassign` joined them at R53, when the engine began folding the transfer chain to resolve the current owner. Note
+ * `\bassign\w*` NEVER matches "reassign" (no word boundary between "re" and "assign"), so R52's capability tokens can
+ * never trip it. `email` is absent too — the events carry an `operator_email` attribution, not the email CHANNEL non-goal.
  */
 const NON_GOAL_TOKENS = [
-  /\breassign\w*/i, // reassignment
-  /\bassign\w*/i, // automatic assignment
+  /\bassign\w*/i, // automatic assignment (NEVER matches "reassign")
   /\bdispatch\w*/i, // work dispatch
   /\bnotif\w*/i, // user notification
   /\bschedul\w*/i, // scheduling
@@ -199,13 +204,15 @@ describe("receptionist ownership state engine — the engine ships", () => {
     }
   });
 
-  it("the pure core exports the derivation, the predicates, the owned projection and the record folds", () => {
+  it("the pure core exports the derivation, the predicates, the owned projection, the current-owner resolution and the record folds", () => {
     const code = codeOf(read(ENGINE_CORE));
     expect(code).toMatch(DERIVE_DEF);
     expect(code).toMatch(/export function isUnclaimed\(/);
     expect(code).toMatch(/export function isClaimed\(/);
     expect(code).toMatch(/export function isReleased\(/);
     expect(code).toMatch(/export function isOwnedState\(/);
+    expect(code).toMatch(/export function latestReassignmentFor\(/);
+    expect(code).toMatch(/export function resolveCurrentOwner\(/);
     expect(code).toMatch(PROJECT_STATE_DEF);
     expect(code).toMatch(RECONCILE_DEF);
     expect(code).toMatch(/export const OWNERSHIP_LIFECYCLE/);
@@ -246,6 +253,14 @@ describe("receptionist ownership state engine — the engine is the single autho
     )
     .map(rel)
     .sort();
+  const reassignmentTableReaders = walkSources(SOURCE_ROOTS)
+    .filter((full) =>
+      fromTargets(codeOf(read(rel(full)))).includes(
+        "receptionist_conversation_claim_reassignments",
+      ),
+    )
+    .map(rel)
+    .sort();
 
   it("the derivation deriveOwnershipState is DEFINED in exactly one module — the engine core", () => {
     // The single canonical fold. If this list ever grows, a consumer has started re-deriving ownership independently.
@@ -257,12 +272,13 @@ describe("receptionist ownership state engine — the engine is the single autho
     expect(projectStateDefiners).toEqual([ENGINE_CORE]);
   });
 
-  it("the runtime's .from(...) targets are EXACTLY the two append-only ownership ledgers — it derives no coordination", () => {
+  it("the runtime's .from(...) targets are EXACTLY the three append-only ownership ledgers — it derives no coordination", () => {
     const code = codeOf(read(ENGINE_RUNTIME));
     expect(code).not.toMatch(COORDINATIONS_TABLE);
     expect([...new Set(fromTargets(code))]).toEqual([
       "receptionist_conversation_claims",
       "receptionist_conversation_claim_releases",
+      "receptionist_conversation_claim_reassignments",
     ]);
   });
 
@@ -270,6 +286,12 @@ describe("receptionist ownership state engine — the engine is the single autho
     // The R50 runtime WRITES the release ledger through its RPC (it never `.from(...)`s it); since R51 the R48 reader
     // reads state THROUGH the engine, so the engine runtime is the SOLE `.from(...)` reader of the release ledger.
     expect(releaseTableReaders).toEqual([ENGINE_RUNTIME]);
+  });
+
+  it("the REASSIGNMENTS ledger is READ through exactly ONE seam — the engine runtime (R53)", () => {
+    // The R52 runtime WRITES the reassignments ledger through its RPC (it never `.from(...)`s it); since R53 the engine
+    // runtime folds the transfer chain to resolve the current owner, so it is the SOLE `.from(...)` reader of that ledger.
+    expect(reassignmentTableReaders).toEqual([ENGINE_RUNTIME]);
   });
 
   it("the CLAIMS ledger is READ through exactly TWO seams — the engine runtime and the R47 claim affordance", () => {
@@ -366,11 +388,12 @@ describe("receptionist ownership state engine — the Ownership Read Model consu
     expect(specs).toContain("@/server/services/receptionist-ownership-state");
   });
 
-  it("the R48 reader reads NO ledger of its own — it names neither ledger, issues no .from(...), opens no client", () => {
+  it("the R48 reader reads NO ledger of its own — it names none of the three ledgers, issues no .from(...), opens no client", () => {
     const code = codeOf(read(OWNERSHIP_READER));
     expect(code).not.toMatch(/\.from\(/);
     expect(code).not.toMatch(CLAIMS_LEDGER);
     expect(code).not.toMatch(RELEASES_LEDGER);
+    expect(code).not.toMatch(REASSIGNMENTS_LEDGER);
     expect(code).not.toMatch(/createAdminClient/);
     expect(code).not.toMatch(/\.rpc\(/);
   });
@@ -444,7 +467,7 @@ describe("receptionist ownership state engine — no execution path is introduce
     }
   });
 
-  it("neither engine file names an R51 non-goal token (assign/reassign/dispatch/…/close)", () => {
+  it("neither engine file names an R51 non-goal token (assign/dispatch/…/close)", () => {
     for (const f of ENGINE_FILES) {
       const code = codeOf(read(f));
       for (const token of NON_GOAL_TOKENS) {
@@ -486,6 +509,7 @@ describe("receptionist ownership state engine — the module boundaries hold", (
     expect(code).not.toMatch(/\.from\(/);
     expect(code).not.toMatch(CLAIMS_LEDGER);
     expect(code).not.toMatch(RELEASES_LEDGER);
+    expect(code).not.toMatch(REASSIGNMENTS_LEDGER);
     expect(code).not.toMatch(COORDINATIONS_TABLE);
   });
 
