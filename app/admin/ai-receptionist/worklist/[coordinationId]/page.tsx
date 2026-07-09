@@ -7,6 +7,7 @@ import { getClaimForCoordination } from "@/server/services/receptionist-claim-vi
 import { getOwnershipTimeline } from "@/server/services/receptionist-ownership-timeline";
 import { projectClaimOwnership } from "@/lib/receptionist/conversation-claim-view";
 import { projectOwnershipTimelinePanel } from "@/lib/receptionist/conversation-ownership-timeline-panel";
+import { projectConversationActionSummary } from "@/lib/receptionist/conversation-action-summary-panel";
 import {
   projectCoordinationDetail,
   type CoordinationDetailView,
@@ -17,6 +18,7 @@ import {
 } from "./detail-view";
 import { ClaimPanel } from "./claim-panel";
 import { OwnershipTimelinePanel } from "./ownership-timeline-panel";
+import { ConversationActionSummaryPanel } from "./action-summary-panel";
 
 /**
  * /admin/ai-receptionist/worklist/[coordinationId] — the CONVERSATION WORKLIST DETAIL SURFACE
@@ -102,6 +104,11 @@ export default async function HqReceptionistWorklistDetailPage({
   });
   const timelinePanel = projectOwnershipTimelinePanel(timeline);
 
+  // The ACTION SUMMARY — the R57 at-a-glance digest. It REUSES the two views already read above (the R37 coordination
+  // record + the R55 ownership timeline) and re-shapes them into a compact read-only summary; it opens NO new read seam
+  // and derives no conversation state of its own — both authorities stay authoritative.
+  const actionSummary = projectConversationActionSummary({ coordination: record, ownership: timeline });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
@@ -129,6 +136,8 @@ export default async function HqReceptionistWorklistDetailPage({
           {detail.headline.status}
         </span>
       </header>
+
+      <ConversationActionSummaryPanel view={actionSummary} />
 
       <ClaimPanel coordinationId={detail.coordinationId} ownership={ownership} />
 
