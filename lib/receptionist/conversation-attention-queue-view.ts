@@ -39,7 +39,11 @@ import type {
 // introduces NO execution path: it dispatches nothing, notifies no one, schedules nothing, assigns nobody, promotes no
 // customer, retrieves no memory and completes nothing — every one an explicit R59 non-goal. (R60 reads ONE more fact
 // off this same view — `canClaim`, the pure `!owned` eligibility the operator surface uses to decide whether to offer
-// the EXISTING R46 claim; it is inert data — this core still grants no affordance, records nothing and runs nothing.)
+// the EXISTING R46 claim; it is inert data — this core still grants no affordance, records nothing and runs nothing.
+// R61 reads ONE further fact — `canRelease`, the VIEWER-SCOPED eligibility (the row is owned AND its owner IS the
+// current viewer) the operator surface reads to decide whether to offer the EXISTING R50 release. Unlike `canClaim`,
+// which is viewer-independent, `canRelease` needs the viewer's operator id, threaded in as a pure option; absent it no
+// row is releasable. It too is inert data — this core still grants no affordance, records nothing and runs nothing.)
 // =====================================================================
 
 /** The placeholder shown for any absent (null / empty) value — the surface never invents a fact. */
@@ -112,6 +116,11 @@ function shortId(id: string): string {
  *                        `!owned` derivation mirroring the R47 detail surface's `canClaim`; the operator surface reads it
  *                        to decide whether to offer the EXISTING R46 claim, and the R46 runtime stays the final gate (it
  *                        refuses an already-owned coordination). This flag is inert — the core grants no affordance.
+ *   • canRelease       — whether the VIEWER can release the row NOW: TRUE iff the row is owned AND its owner IS the
+ *                        current viewer. Unlike `canClaim` (viewer-independent), this needs the viewer's operator id,
+ *                        threaded into the projection; absent it, no row is releasable. The EXISTING R50 release runtime
+ *                        stays the final gate (it refuses a row the caller does not hold). Inert — the core grants no
+ *                        affordance.
  */
 export type AttentionQueueRowView = {
   readonly coordinationId: string;
@@ -136,6 +145,7 @@ export type AttentionQueueRowView = {
   readonly recordedAt: string;
   readonly ownershipSummary: string;
   readonly canClaim: boolean;
+  readonly canRelease: boolean;
 };
 
 /**
@@ -195,12 +205,28 @@ function ownershipSummaryOf(owned: boolean, reassigned: boolean, ownerLabel: str
 }
 
 /**
+ * Whether the VIEWER holds this row — the pure, viewer-scoped release eligibility. TRUE iff an operator owns the row AND
+ * that owner IS the viewer (`ownership.owner.operatorId === viewerOperatorId`). With NO viewer id (a viewer-agnostic
+ * projection) no row is releasable, so the surface never offers a release it cannot scope to the caller. Pure and total;
+ * it re-decides no ownership — it compares the view's already-recorded owner against the operator id it is handed.
+ */
+function viewerHoldsRow(ownership: AttentionQueueEntry["ownership"], viewerOperatorId: string | null): boolean {
+  return (
+    ownership.owned &&
+    ownership.owner !== null &&
+    viewerOperatorId !== null &&
+    ownership.owner.operatorId === viewerOperatorId
+  );
+}
+
+/**
  * Project ONE R58 queue row into a display row. Pure — a straight relabelling: each fact is copied from the row's
  * worklist entry (priority, mode, categories, requires-human, recorded instant, ids) or its ownership record (status,
  * current owner, transfer flag, held-since), humanised for display. It re-derives no worklist and re-decides no
- * ownership; it only re-shapes the view's facts.
+ * ownership; it only re-shapes the view's facts. The `viewerOperatorId` scopes the row's `canRelease` eligibility to
+ * the caller — it is compared against the recorded owner, never re-decided.
  */
-function projectRow(row: AttentionQueueEntry): AttentionQueueRowView {
+function projectRow(row: AttentionQueueEntry, viewerOperatorId: string | null): AttentionQueueRowView {
   const { entry, ownership } = row;
   const ownerLabel =
     ownership.owned && ownership.owner ? ownership.owner.operatorEmail ?? ownership.owner.operatorId : null;
@@ -229,18 +255,22 @@ function projectRow(row: AttentionQueueEntry): AttentionQueueRowView {
     // R60 claim-from-queue eligibility — a pure `!owned` mirror of the R47 detail surface's `canClaim`. A row is
     // claimable iff no operator holds it yet; the R46 claim runtime remains the final gate on the actual claim.
     canClaim: !ownership.owned,
+    // R61 release-from-queue eligibility — VIEWER-SCOPED: releasable iff the row is owned AND the viewer IS its owner.
+    // Threaded from the caller (never re-decided here); the R50 release runtime remains the final gate on the release.
+    canRelease: viewerHoldsRow(ownership, viewerOperatorId),
   };
 }
 
-/** Project ONE R58 queue group into a display group — titled, described, its rows relabelled. Pure and total. */
-function projectGroup(group: AttentionQueueGroup): AttentionQueueGroupView {
+/** Project ONE R58 queue group into a display group — titled, described, its rows relabelled. Pure and total. The
+ *  `viewerOperatorId` is threaded straight into each row's projection to scope its `canRelease` eligibility. */
+function projectGroup(group: AttentionQueueGroup, viewerOperatorId: string | null): AttentionQueueGroupView {
   const meta = GROUP_META[group.group];
   return {
     group: group.group,
     title: meta.title,
     description: meta.description,
     count: group.count,
-    rows: group.entries.map(projectRow),
+    rows: group.entries.map((entry) => projectRow(entry, viewerOperatorId)),
   };
 }
 
@@ -254,13 +284,22 @@ function summaryLabelOf(total: number, unowned: number, owned: number): string {
 
 /**
  * Project the {@link AttentionQueueSurfaceView} from the R58 {@link AttentionQueueView} the queue runtime composed.
- * Pure, total and deterministic — the same view always yields the same surface model. It titles + describes + counts
- * each of the two groups (in the view's presentation order), humanises every row's already-derived facts, flattens the
- * grouped rows into one list, and writes the headline summary. It RE-DERIVES no worklist, RE-DECIDES no ownership,
- * RE-ORDERS nothing and names no organisation — it presents the composed view it is handed.
+ * Pure, total and deterministic — the same view (and same viewer) always yields the same surface model. It titles +
+ * describes + counts each of the two groups (in the view's presentation order), humanises every row's already-derived
+ * facts, flattens the grouped rows into one list, and writes the headline summary. It RE-DERIVES no worklist,
+ * RE-DECIDES no ownership, RE-ORDERS nothing and names no organisation — it presents the composed view it is handed.
+ *
+ * The optional `viewerOperatorId` scopes each row's viewer-dependent `canRelease` eligibility (R61): the operator id of
+ * the caller reading the queue, compared against each row's recorded owner. It is OPTIONAL and defaults to `null`, so a
+ * viewer-agnostic caller still gets a valid surface (with no row releasable). It never widens what the view exposes —
+ * it only decides, per row, whether THIS viewer holds it.
  */
-export function projectAttentionQueueSurface(view: AttentionQueueView): AttentionQueueSurfaceView {
-  const groups = view.groups.map(projectGroup);
+export function projectAttentionQueueSurface(
+  view: AttentionQueueView,
+  options?: { readonly viewerOperatorId?: string | null },
+): AttentionQueueSurfaceView {
+  const viewerOperatorId = options?.viewerOperatorId ?? null;
+  const groups = view.groups.map((group) => projectGroup(group, viewerOperatorId));
   const rows = groups.flatMap((group) => group.rows);
   const unownedCount = groups.find((group) => group.group === "unowned")?.count ?? 0;
   const ownedCount = groups.find((group) => group.group === "owned")?.count ?? 0;
