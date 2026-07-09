@@ -493,8 +493,14 @@ describe("receptionist attention queue — the module boundaries hold", () => {
     expect(code).not.toMatch(/new Date\(/);
   });
 
-  it("the runtime IS server-only and is the SOLE importer of the pure core (no UI consumes it)", () => {
+  it("the runtime IS server-only; the pure core is imported ONLY by that runtime and the R59 surface view core", () => {
     expect(importSpecifiers(codeOf(read(QUEUE_RUNTIME)))).toContain("server-only");
-    expect(importersOf(QUEUE_CORE_MODULE)).toEqual([QUEUE_RUNTIME]);
+    // The R58 pure core is consumed by EXACTLY two modules: the R58 runtime (which composes the view over the two
+    // seams) and the R59 surface's pure VIEW core (`conversation-attention-queue-view.ts`), which imports its TYPES
+    // ONLY to project the operator display model. Both are authorised; no page, no client and no other server module
+    // reads the core directly. (The R59 view core's type-only import is pinned in the R59 surface suite.)
+    expect(importersOf(QUEUE_CORE_MODULE)).toEqual(
+      ["lib/receptionist/conversation-attention-queue-view.ts", QUEUE_RUNTIME].sort(),
+    );
   });
 });
