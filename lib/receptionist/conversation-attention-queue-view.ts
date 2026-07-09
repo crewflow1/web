@@ -43,7 +43,10 @@ import type {
 // R61 reads ONE further fact — `canRelease`, the VIEWER-SCOPED eligibility (the row is owned AND its owner IS the
 // current viewer) the operator surface reads to decide whether to offer the EXISTING R50 release. Unlike `canClaim`,
 // which is viewer-independent, `canRelease` needs the viewer's operator id, threaded in as a pure option; absent it no
-// row is releasable. It too is inert data — this core still grants no affordance, records nothing and runs nothing.)
+// row is releasable. It too is inert data — this core still grants no affordance, records nothing and runs nothing. R62
+// reads a LAST fact — `canReassign`, the SAME viewer-scoped predicate as `canRelease` (an operator may hand on only a
+// row they hold), the operator surface reads to decide whether to offer the EXISTING R52 reassignment; whether a
+// destination exists is a roster question decided downstream, not here. It too is inert data.)
 // =====================================================================
 
 /** The placeholder shown for any absent (null / empty) value — the surface never invents a fact. */
@@ -121,6 +124,13 @@ function shortId(id: string): string {
  *                        threaded into the projection; absent it, no row is releasable. The EXISTING R50 release runtime
  *                        stays the final gate (it refuses a row the caller does not hold). Inert — the core grants no
  *                        affordance.
+ *   • canReassign      — whether the VIEWER can reassign (transfer) the row NOW: the SAME viewer-scoped eligibility as
+ *                        `canRelease` — TRUE iff the row is owned AND its owner IS the current viewer — because an operator
+ *                        may hand on only a row they themselves hold. The two differ only in what they enable (release vs
+ *                        transfer), not in who is eligible. Whether a DESTINATION exists (another authorised operator to
+ *                        receive it) is decided downstream from the org roster, not here. The EXISTING R52 reassignment
+ *                        runtime stays the final gate (it refuses a row the source does not hold). Inert — the core grants
+ *                        no affordance.
  */
 export type AttentionQueueRowView = {
   readonly coordinationId: string;
@@ -146,6 +156,7 @@ export type AttentionQueueRowView = {
   readonly ownershipSummary: string;
   readonly canClaim: boolean;
   readonly canRelease: boolean;
+  readonly canReassign: boolean;
 };
 
 /**
@@ -258,6 +269,10 @@ function projectRow(row: AttentionQueueEntry, viewerOperatorId: string | null): 
     // R61 release-from-queue eligibility — VIEWER-SCOPED: releasable iff the row is owned AND the viewer IS its owner.
     // Threaded from the caller (never re-decided here); the R50 release runtime remains the final gate on the release.
     canRelease: viewerHoldsRow(ownership, viewerOperatorId),
+    // R62 reassign-from-queue eligibility — the SAME viewer-scoped predicate: an operator may transfer only a row they
+    // hold. Whether a destination operator exists is decided downstream from the org roster; the R52 reassignment runtime
+    // remains the final gate on the transfer.
+    canReassign: viewerHoldsRow(ownership, viewerOperatorId),
   };
 }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   projectReassignmentView,
   describeReassignmentOutcome,
+  toReassignmentCandidates,
   type ReassignmentOperator,
 } from "@/lib/receptionist/conversation-reassignment-view";
 import { REASSIGNMENT_RESOLUTIONS } from "@/lib/receptionist/conversation-reassignment";
@@ -216,6 +217,60 @@ describe("projectReassignmentView — the transfer view over an ownership record
       viewerOperatorId: "z",
     });
     expect(view.coordinationId).toBe("coord-xyz");
+  });
+});
+
+describe("toReassignmentCandidates — the shared roster-minus-owner destination projection (R62 reuse)", () => {
+  it("excludes the named operator and labels + orders the rest — the SAME set projectReassignmentView folds in", () => {
+    const operators = [op("owner"), op("a"), op("b")];
+    const candidates = toReassignmentCandidates(operators, { excludeOperatorId: "owner" });
+    expect(candidates.map((c) => c.operatorId)).toEqual(["a", "b"]);
+    // Byte-for-byte the candidate list projectReassignmentView derives for the same owner — the shared derivation.
+    const viaView = projectReassignmentView({
+      coordinationId: "coord-1",
+      ownership: ownedBy("owner"),
+      operators,
+      viewerOperatorId: "z",
+    }).candidates;
+    expect(candidates).toEqual(viaView);
+  });
+
+  it("orders deterministically regardless of input order", () => {
+    const forward = toReassignmentCandidates([op("a"), op("b"), op("c")], { excludeOperatorId: "x" });
+    const shuffled = toReassignmentCandidates([op("c"), op("a"), op("b")], { excludeOperatorId: "x" });
+    expect(forward.map((c) => c.operatorId)).toEqual(["a", "b", "c"]);
+    expect(shuffled.map((c) => c.operatorId)).toEqual(forward.map((c) => c.operatorId));
+  });
+
+  it("labels each candidate by name, else email, else id", () => {
+    const candidates = toReassignmentCandidates(
+      [
+        { operatorId: "n", operatorEmail: "n@crewflow.uk", operatorName: "Nadia" },
+        { operatorId: "e", operatorEmail: "e@crewflow.uk", operatorName: null },
+        { operatorId: "i", operatorEmail: null, operatorName: null },
+      ],
+      { excludeOperatorId: null },
+    );
+    const labelById = Object.fromEntries(candidates.map((c) => [c.operatorId, c.label]));
+    expect(labelById["n"]).toBe("Nadia");
+    expect(labelById["e"]).toBe("e@crewflow.uk");
+    expect(labelById["i"]).toBe("i");
+  });
+
+  it("returns empty when the ONLY operator is the excluded one — no destination remains", () => {
+    expect(toReassignmentCandidates([op("owner")], { excludeOperatorId: "owner" })).toEqual([]);
+  });
+
+  it("a null excludeOperatorId excludes no one — every operator becomes a candidate", () => {
+    const candidates = toReassignmentCandidates([op("a"), op("b")], { excludeOperatorId: null });
+    expect(candidates.map((c) => c.operatorId)).toEqual(["a", "b"]);
+  });
+
+  it("does not mutate its operators input", () => {
+    const operators = [op("b"), op("a")];
+    const snapshot = operators.map((o) => o.operatorId);
+    toReassignmentCandidates(operators, { excludeOperatorId: "z" });
+    expect(operators.map((o) => o.operatorId)).toEqual(snapshot);
   });
 });
 
