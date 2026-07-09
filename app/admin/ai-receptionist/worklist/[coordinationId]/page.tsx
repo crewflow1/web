@@ -4,7 +4,9 @@ import { requireHqPage } from "@/server/auth/hq";
 import { requireOrgContext } from "@/server/auth/session";
 import { getCoordinationById } from "@/server/services/receptionist-coordination-view";
 import { getClaimForCoordination } from "@/server/services/receptionist-claim-view";
+import { getOwnershipTimeline } from "@/server/services/receptionist-ownership-timeline";
 import { projectClaimOwnership } from "@/lib/receptionist/conversation-claim-view";
+import { projectOwnershipTimelinePanel } from "@/lib/receptionist/conversation-ownership-timeline-panel";
 import {
   projectCoordinationDetail,
   type CoordinationDetailView,
@@ -14,6 +16,7 @@ import {
   type TimelineStep,
 } from "./detail-view";
 import { ClaimPanel } from "./claim-panel";
+import { OwnershipTimelinePanel } from "./ownership-timeline-panel";
 
 /**
  * /admin/ai-receptionist/worklist/[coordinationId] — the CONVERSATION WORKLIST DETAIL SURFACE
@@ -26,16 +29,19 @@ import { ClaimPanel } from "./claim-panel";
  * six linked per-engine contexts in full, and the provenance chain — a complete inspection of what the
  * receptionist decided and how it got there.
  *
- * IT CONSUMES ONLY THE AUTHORISED STACKS. Its READ paths are the two authorised read seams — the R37
- * Coordination Read Model's single-item seam {@link getCoordinationById} for the coordination, and the
- * R47 ownership reader {@link getClaimForCoordination} for the current claim — and its ONE WRITE path is
- * the R46 runtime, reached ONLY through the {@link ClaimPanel}'s `claimWorkItemAction` server action. It
+ * IT CONSUMES ONLY THE AUTHORISED STACKS. Its READ paths are three authorised read seams — the R37
+ * Coordination Read Model's single-item seam {@link getCoordinationById} for the coordination, the R47
+ * ownership reader {@link getClaimForCoordination} for the current claim, and the R55 Ownership Timeline
+ * Runtime {@link getOwnershipTimeline} for the read-only ownership-history panel — and its ONE WRITE path
+ * is the R46 runtime, reached ONLY through the {@link ClaimPanel}'s `claimWorkItemAction` server action. It
  * opens no database client, names no ledger and no write primitive, and reaches around no layer. The R37
  * read model stays the authoritative single source of a recorded coordination; behind it the Coordination
  * Engine (and Lifecycle, Resolution, Recovery, Verification, Fulfilment, Orchestration) stay authoritative
- * over every fact; and the R46 runtime stays the sole authority over recording a claim. This surface adds
- * pixels and a SINGLE claim affordance — not a second read path, not a second write path, and not a
- * decision.
+ * over every fact; the R46 runtime stays the sole authority over recording a claim; and the R55 Timeline
+ * Runtime (folding the Ownership Read Model and Ownership State Engine) stays authoritative over the
+ * ownership history — the panel re-derives none of it. This surface adds pixels — read-only inspection and
+ * a SINGLE claim affordance — over authorised read seams only; it adds no second WRITE path, no execution
+ * path and no decision.
  *
  * ORGANISATION ISOLATION IS PRESERVED. Auth is the EXISTING HQ gate (`requireHqPage`); the organisation
  * the read AND the claim are scoped to is resolved ONLY from the session (`requireOrgContext` →
@@ -86,6 +92,16 @@ export default async function HqReceptionistWorklistDetailPage({
   });
   const ownership = projectClaimOwnership({ owner, viewerOperatorId: user.id });
 
+  // The ownership TIMELINE read — the R55 Timeline Runtime's org-scoped seam. It composes the R48/R53 Read Model's present
+  // owner with the R51 State Engine's append-only transitions into one view; projected here into the read-only panel's
+  // display model. This is a THIRD read path, not a second write path: the panel shows the ownership history, it records
+  // nothing and derives no ownership of its own — the runtime stays authoritative.
+  const timeline = await getOwnershipTimeline({
+    org_id: ctx.org.id,
+    coordination_id: coordinationId,
+  });
+  const timelinePanel = projectOwnershipTimelinePanel(timeline);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
@@ -126,6 +142,8 @@ export default async function HqReceptionistWorklistDetailPage({
           </Link>
         </div>
       ) : null}
+
+      <OwnershipTimelinePanel view={timelinePanel} />
 
       <Metadata detail={detail} />
 

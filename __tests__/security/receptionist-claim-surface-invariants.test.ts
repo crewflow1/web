@@ -311,8 +311,9 @@ describe("receptionist claim surface — organisation isolation is preserved", (
     const code = codeOf(read(PAGE));
     expect(code).toMatch(/requireHqPage\(/);
     expect(code).toMatch(/requireOrgContext\(/);
-    // Both the coordination read and the ownership read are org-scoped by ctx.org.id.
-    expect(code.match(/org_id:\s*ctx\.org\.id/g) ?? []).toHaveLength(2);
+    // All three page reads are org-scoped by ctx.org.id: the R37 coordination read, the R47 claim ownership read, and
+    // (added by R56) the R55 ownership-timeline read that feeds the read-only ownership-history panel.
+    expect(code.match(/org_id:\s*ctx\.org\.id/g) ?? []).toHaveLength(3);
   });
 
   it("the viewer identity comes from the authenticated HQ gate, not the client", () => {

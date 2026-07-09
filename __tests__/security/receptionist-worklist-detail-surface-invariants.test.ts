@@ -39,11 +39,13 @@ import { resolve, relative, sep } from "node:path";
  *     an HTTP method (no `method:` literal), `.send(`s anything, declares a server action (`"use server"`), opens
  *     a database client or names a query verb — the WRITE is delegated to the claim panel's action, never
  *     performed here. There is provably no path through which these two artefacts mutate anything.
- *   • THE SURFACE CONSUMES ONLY AUTHORISED STACKS — the page's ENTIRE import surface is its TWO read seams (the
- *     R37 coordination reader + the R47 ownership reader), the R47 ownership view-core, the EXISTING HQ auth
- *     gate, the session/org chokepoint (for org resolution), `next/link`, `next/navigation`, its own pure
- *     presentation core and the R47 claim panel it renders; the core's ENTIRE surface is the R37 read-model
- *     TYPES alone. Neither imports the worklist view model, session, client, read surface, engine, an API
+ *   • THE SURFACE CONSUMES ONLY AUTHORISED STACKS — the page's ENTIRE import surface is its THREE read seams (the
+ *     R37 coordination reader + the R47 ownership reader + the R55 ownership-timeline runtime), the R47 ownership
+ *     view-core + the R56 timeline-panel view-core, the EXISTING HQ auth gate, the session/org chokepoint (for org
+ *     resolution), `next/link`, `next/navigation`, its own pure presentation core and the R47 claim panel + the R56
+ *     ownership-timeline panel it renders; the core's ENTIRE surface is the R37 read-model TYPES alone. The R55
+ *     timeline runtime folds the Ownership Read Model + State Engine, so the page derives no ownership of its own.
+ *     Neither imports the worklist view model, session, client, read surface, engine, an API
  *     contract or a database client. With R45 + R54 in the tree the R37 reader module is imported by EXACTLY the
  *     R38 worklist runtime + the detail page + the R54 reassignment-surface page (a SECOND authorised consumer of
  *     the single-item seam, for existence + isolation), and `getCoordinationById` is named by EXACTLY its
@@ -204,19 +206,34 @@ const CLAIM_READER_MODULE = "@/server/services/receptionist-claim-view";
 const CLAIM_VIEW_CORE_MODULE = "@/lib/receptionist/conversation-claim-view";
 const CLAIM_PANEL_MODULE = "./claim-panel";
 
-/** The exact import surface the detail PAGE is permitted — its TWO read seams (the R37 coordination reader + the
- *  R47 ownership reader), the R47 ownership view-core, the HQ gate, the session/org chokepoint, the two Next
- *  primitives it renders with, its own presentation core, and the R47 claim panel it renders. Nothing else. */
+// The R56 CONVERSATION OWNERSHIP TIMELINE PANEL additions to the detail page. R56 mounts the read-only ownership-history
+// panel onto the SAME Conversation Detail surface. It adds a THIRD org-scoped READ SEAM — the R55 Ownership Timeline
+// Runtime (which itself folds the R48/R53 Ownership Read Model + the R51 Ownership State Engine into one view, so the page
+// derives no ownership of its own) — the pure PANEL VIEW-CORE that projects that view for display, and the presentational
+// PANEL COMPONENT that renders it. The panel offers NO affordance: it is inspection only, so the page gains a READ path,
+// not a second write path. The panel's own invariants are pinned by
+// __tests__/security/receptionist-ownership-timeline-panel-invariants.test.ts.
+const TIMELINE_RUNTIME_MODULE = "@/server/services/receptionist-ownership-timeline";
+const TIMELINE_PANEL_CORE_MODULE = "@/lib/receptionist/conversation-ownership-timeline-panel";
+const TIMELINE_PANEL_MODULE = "./ownership-timeline-panel";
+
+/** The exact import surface the detail PAGE is permitted — its THREE read seams (the R37 coordination reader + the
+ *  R47 ownership reader + the R55 ownership-timeline runtime), the R47 ownership view-core + the R56 timeline-panel
+ *  view-core, the HQ gate, the session/org chokepoint, the two Next primitives it renders with, its own presentation
+ *  core, and the R47 claim panel + the R56 ownership-timeline panel it renders. Nothing else. */
 const ALLOWED_PAGE_IMPORTS = [
   R37_READER_MODULE,
   CLAIM_READER_MODULE,
   CLAIM_VIEW_CORE_MODULE,
+  TIMELINE_RUNTIME_MODULE,
+  TIMELINE_PANEL_CORE_MODULE,
   HQ_AUTH_MODULE,
   SESSION_AUTH_MODULE,
   "next/link",
   "next/navigation",
   "./detail-view",
   CLAIM_PANEL_MODULE,
+  TIMELINE_PANEL_MODULE,
 ].sort();
 
 /** The exact import surface the pure presentation CORE is permitted — the R37 read-model TYPES alone. */
@@ -392,7 +409,7 @@ describe("receptionist worklist detail surface — the page and its core are rea
 // =====================================================================
 
 describe("receptionist worklist detail surface — it consumes only authorised stacks", () => {
-  it("the page's ENTIRE import surface is its two read seams, the HQ gate, the session chokepoint, next primitives, its core and the claim panel", () => {
+  it("the page's ENTIRE import surface is its three read seams, the two view-cores, the HQ gate, the session chokepoint, next primitives, its core and the two panels", () => {
     const imports = new Set(importSpecifiers(codeOf(read(DETAIL_PAGE))));
     expect([...imports].sort()).toEqual(ALLOWED_PAGE_IMPORTS);
   });
