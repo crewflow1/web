@@ -2,15 +2,21 @@ import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { requireOrgContext } from "@/server/auth/session";
 import { getConversationAttentionQueue } from "@/server/services/receptionist-attention-queue";
+import { listOrgOperators } from "@/server/services/receptionist-operators";
 import {
   projectAttentionQueueSurface,
   type AttentionQueueGroupView,
   type AttentionQueueRowView,
 } from "@/lib/receptionist/conversation-attention-queue-view";
+import {
+  toReassignmentCandidates,
+  type ReassignmentCandidate,
+} from "@/lib/receptionist/conversation-reassignment-view";
 import { detailPath } from "../navigation";
 import { AttentionQueueRefreshButton } from "./refresh-button";
 import { AttentionQueueClaimButton } from "./claim-button";
 import { AttentionQueueReleaseButton } from "./release-button";
+import { AttentionQueueReassignButton } from "./reassign-button";
 
 /**
  * /admin/ai-receptionist/worklist/attention — the CONVERSATION ATTENTION QUEUE (Directive #018, R59: CONVERSATION
@@ -37,16 +43,21 @@ import { AttentionQueueReleaseButton } from "./release-button";
  * takes no parameter that could name another org, and threads that one org id straight into the runtime, which scopes
  * BOTH seam reads to it. So one organisation can never read another's attention queue.
  *
- * IT ADDS TWO OWNERSHIP AFFORDANCES — THE R60 CLAIM AND THE R61 RELEASE — AND NO OTHER EXECUTION PATH. It renders the
- * grouped queue and, per row, its DERIVED priority, its RECORDED mode + categories, its SURFACED human-required flag and
- * its R48 ownership state; each row links to the existing R45 detail surface, and one Refresh control re-reads the same
- * page. On the UNOWNED rows (the pure view's `canClaim`) it offers a Claim button that REUSES the existing R46
- * Conversation Work Claim capability through the queue claim action; on the rows the VIEWER holds (the pure view's
- * `canRelease`) it offers a Release button that REUSES the existing R50 Conversation Work Release capability through the
- * queue release action. The page itself inlines no write runtime, no write primitive and no claim / release action — it
- * DELEGATES each to its client button, and the R46 / R50 runtimes stay the final gate on the claim / release. Beyond
- * those two ownership affordances it assigns nobody, reassigns nothing, dispatches nothing, notifies no one, schedules
- * nothing, promotes no customer, retrieves no memory and completes nothing — every one an explicit R60 / R61 non-goal.
+ * IT ADDS THREE OWNERSHIP AFFORDANCES — THE R60 CLAIM, THE R61 RELEASE AND THE R62 REASSIGN — AND NO OTHER EXECUTION
+ * PATH. It renders the grouped queue and, per row, its DERIVED priority, its RECORDED mode + categories, its SURFACED
+ * human-required flag and its R48 ownership state; each row links to the existing R45 detail surface, and one Refresh
+ * control re-reads the same page. On the UNOWNED rows (the pure view's `canClaim`) it offers a Claim button that REUSES
+ * the existing R46 Conversation Work Claim capability through the queue claim action; on the rows the VIEWER holds (the
+ * pure view's `canRelease` / `canReassign`) it offers a Release button that REUSES the existing R50 Conversation Work
+ * Release capability, and — when another authorised operator exists to receive it — a Reassign control that REUSES the
+ * existing R52 Conversation Work Reassignment capability, each through its own queue action. To compose the reassign
+ * destinations the page reads the org-scoped operator roster once (`listOrgOperators`) and derives the candidate set (the
+ * roster MINUS the viewer, who owns every reassignable row) with the pure `toReassignmentCandidates`, sharing that one
+ * list across every owned row. The page itself inlines no write runtime, no write primitive and no claim / release /
+ * reassign action — it DELEGATES each to its client button, and the R46 / R50 / R52 runtimes stay the final gate on the
+ * claim / release / transfer. Beyond those three ownership affordances it assigns nobody automatically, dispatches
+ * nothing, notifies no one, schedules nothing, promotes no customer, retrieves no memory and completes nothing — every
+ * one an explicit R60 / R61 / R62 non-goal, and no affordance acts in bulk.
  */
 
 /** `force-dynamic` so the queue re-reads its authoritative seams on every request (including the Refresh re-read) rather
@@ -62,8 +73,10 @@ const ATTENTION_QUEUE_LIMIT = 200;
 export default async function HqReceptionistAttentionQueuePage() {
   // The EXISTING HQ gate authenticates the operator. The org is resolved from the SESSION (never the client), exactly as
   // every worklist surface resolves it — so the runtime read below can only ever be scoped to the caller's organisation.
-  // The authenticated user's id is the VIEWER identity threaded into the projection below to scope the R61 release
-  // eligibility (`canRelease`) to the operator reading the queue — it never comes from the client.
+  // The authenticated user's id is the VIEWER identity threaded into the projection below to scope the R61 release and
+  // R62 reassign eligibility (`canRelease` / `canReassign`) to the operator reading the queue — it never comes from the
+  // client. It is also the source operator excluded from the reassignment destinations (an operator cannot transfer a
+  // row to themselves).
   const user = await requireHqPage();
   const { ctx } = await requireOrgContext();
 
@@ -72,8 +85,17 @@ export default async function HqReceptionistAttentionQueuePage() {
   const view = await getConversationAttentionQueue({ org_id: ctx.org.id, limit: ATTENTION_QUEUE_LIMIT });
 
   // Project the runtime's view into the display model — purely, in the R59 core. The page derives nothing. The viewer's
-  // operator id scopes each row's `canRelease` eligibility (R61): a row is releasable only by the operator who holds it.
+  // operator id scopes each row's `canRelease` / `canReassign` eligibility (R61 / R62): a row is releasable or
+  // reassignable only by the operator who holds it.
   const surface = projectAttentionQueueSurface(view, { viewerOperatorId: user.id });
+
+  // R62 reassign-from-queue destinations — read the org's authorised operator roster once and derive the destination
+  // candidates (every operator EXCEPT the viewer, who is the owner of every `canReassign` row) with the pure
+  // `toReassignmentCandidates`. The SAME candidate set is shared by every owned row's Reassign control, so the roster is
+  // read once per render, not once per row. The org is the session's; a client names no destination that is not an
+  // authorised member of it, and the R52 runtime's writer stays the final gate on the transfer.
+  const operators = await listOrgOperators({ org_id: ctx.org.id });
+  const reassignCandidates = toReassignmentCandidates(operators, { excludeOperatorId: user.id });
 
   return (
     <div className="space-y-6">
@@ -95,9 +117,10 @@ export default async function HqReceptionistAttentionQueuePage() {
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
             The conversations that need attention, grouped by whether an operator holds them yet — waiting to be picked
             up first, in progress next — in priority order within each group. Each row links to the item&rsquo;s detail,
-            an unowned row can be claimed directly from here, and a row you hold can be released back to the queue —
-            claiming records that you have taken ownership and releasing that you have relinquished it, and nothing else
-            is recorded or acted on.
+            an unowned row can be claimed directly from here, and a row you hold can be released back to the queue or
+            reassigned to another operator — claiming records that you have taken ownership, releasing that you have
+            relinquished it, and reassigning that ownership passed to the operator you chose, and nothing else is
+            recorded or acted on.
           </p>
         </div>
         <AttentionQueueRefreshButton />
@@ -110,7 +133,11 @@ export default async function HqReceptionistAttentionQueuePage() {
       ) : (
         <div className="space-y-8">
           {surface.groups.map((group) => (
-            <AttentionQueueGroupSection key={group.group} group={group} />
+            <AttentionQueueGroupSection
+              key={group.group}
+              group={group}
+              reassignCandidates={reassignCandidates}
+            />
           ))}
         </div>
       )}
@@ -129,7 +156,13 @@ function EmptyState() {
 }
 
 /** One group section — its title, description and count, then its rows (in canonical order) or a per-group empty note. */
-function AttentionQueueGroupSection({ group }: { group: AttentionQueueGroupView }) {
+function AttentionQueueGroupSection({
+  group,
+  reassignCandidates,
+}: {
+  group: AttentionQueueGroupView;
+  reassignCandidates: readonly ReassignmentCandidate[];
+}) {
   return (
     <section>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -141,7 +174,7 @@ function AttentionQueueGroupSection({ group }: { group: AttentionQueueGroupView 
       <p className="mt-0.5 text-sm text-slate-500">{group.description}</p>
 
       {group.rows.length > 0 ? (
-        <AttentionQueueTable rows={group.rows} />
+        <AttentionQueueTable rows={group.rows} reassignCandidates={reassignCandidates} />
       ) : (
         <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
           Nothing here right now.
@@ -152,7 +185,13 @@ function AttentionQueueGroupSection({ group }: { group: AttentionQueueGroupView 
 }
 
 /** The rows table for one group — one row per coordination, each linking to the R45 detail surface. */
-function AttentionQueueTable({ rows }: { rows: readonly AttentionQueueRowView[] }) {
+function AttentionQueueTable({
+  rows,
+  reassignCandidates,
+}: {
+  rows: readonly AttentionQueueRowView[];
+  reassignCandidates: readonly ReassignmentCandidate[];
+}) {
   return (
     <section className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="min-w-full divide-y divide-slate-200">
@@ -167,7 +206,11 @@ function AttentionQueueTable({ rows }: { rows: readonly AttentionQueueRowView[] 
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white text-sm">
           {rows.map((row) => (
-            <AttentionQueueTableRow key={row.coordinationId} row={row} />
+            <AttentionQueueTableRow
+              key={row.coordinationId}
+              row={row}
+              reassignCandidates={reassignCandidates}
+            />
           ))}
         </tbody>
       </table>
@@ -176,7 +219,13 @@ function AttentionQueueTable({ rows }: { rows: readonly AttentionQueueRowView[] 
 }
 
 /** A single attention-queue row — every value the pure projection's; the page only styles by the tones it provides. */
-function AttentionQueueTableRow({ row }: { row: AttentionQueueRowView }) {
+function AttentionQueueTableRow({
+  row,
+  reassignCandidates,
+}: {
+  row: AttentionQueueRowView;
+  reassignCandidates: readonly ReassignmentCandidate[];
+}) {
   return (
     <tr className="align-top hover:bg-slate-50">
       <td className="px-4 py-3">
@@ -233,6 +282,17 @@ function AttentionQueueTableRow({ row }: { row: AttentionQueueRowView }) {
             runtime, no write primitive and no release action of its own. A row is never both claimable and releasable —
             canClaim needs it unowned, canRelease needs the viewer to own it. */}
         {row.canRelease ? <AttentionQueueReleaseButton coordinationId={row.coordinationId} /> : null}
+        {/* R62 reassign-from-queue — shown only on rows the VIEWER holds (row.canReassign) AND only when a destination
+            operator exists (the control renders nothing for an empty candidate set). It delegates the transfer to the
+            client control, which consumes the existing R52 runtime via the queue action; the page inlines no write
+            runtime, no write primitive and no reassignment action of its own. The candidate set is the org roster minus
+            the viewer, composed once above and shared by every owned row. */}
+        {row.canReassign ? (
+          <AttentionQueueReassignButton
+            coordinationId={row.coordinationId}
+            candidates={reassignCandidates}
+          />
+        ) : null}
       </td>
     </tr>
   );

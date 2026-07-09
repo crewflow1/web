@@ -447,6 +447,79 @@ describe("projectAttentionQueueSurface — the R61 release-from-queue eligibilit
   });
 });
 
+describe("projectAttentionQueueSurface — the R62 reassign-from-queue eligibility (canReassign)", () => {
+  it("marks a row the VIEWER owns reassignable — canReassign is true when the viewer IS the recorded owner", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")], OWNER_ID).rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canReassign).toBe(true);
+  });
+
+  it("marks a row owned by SOMEONE ELSE not reassignable — canReassign is false when the viewer is not the owner", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")], "another-operator").rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canReassign).toBe(false);
+  });
+
+  it("marks an UNOWNED row not reassignable for any viewer — there is no held claim to transfer", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [unowned("coord-a")], OWNER_ID).rows[0]!;
+    expect(r.ownershipStatus).toBe("unowned");
+    expect(r.canReassign).toBe(false);
+  });
+
+  it("marks NOTHING reassignable for a viewer-agnostic projection — no viewer id means no row is scoped to the caller", () => {
+    // The backward-compatible single-arg call (surfaceOf) supplies no viewer, so even an owned row is not reassignable.
+    const r = surfaceOf([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")]).rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canReassign).toBe(false);
+    // An explicit null viewer is the same as omitting it.
+    const nullViewer = surfaceForViewer([entryOf("coord-b", "conv-b")], [owned("coord-b", "conv-b")], null).rows[0]!;
+    expect(nullViewer.canReassign).toBe(false);
+  });
+
+  it("keeps canReassign true for a REASSIGNED row the viewer now holds — a transfer is ownership the holder may hand on", () => {
+    const record: OwnershipRecord = { ...owned("coord-a", "conv-a"), reassigned: true };
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [record], OWNER_ID).rows[0]!;
+    expect(r.reassigned).toBe(true);
+    expect(r.canReassign).toBe(true);
+  });
+
+  it("canReassign EQUALS canRelease on every row — the two viewer-scoped affordances share one eligibility predicate", () => {
+    // coord-a owned by the viewer, coord-b owned by another operator, coord-c unowned — every ownership shape.
+    const heldByOther = owned("coord-b", "conv-b");
+    const otherOwner: OwnershipRecord = {
+      ...heldByOther,
+      owner: { ...heldByOther.owner!, operatorId: "another-operator" },
+    };
+    const surface = surfaceForViewer(
+      [entryOf("coord-a", "conv-a"), entryOf("coord-b", "conv-b"), entryOf("coord-c", "conv-c")],
+      [owned("coord-a", "conv-a"), otherOwner, unowned("coord-c")],
+      OWNER_ID,
+    );
+    for (const r of surface.rows) {
+      expect(r.canReassign).toBe(r.canRelease);
+    }
+    // Concretely: reassignable EXACTLY on the viewer-owned row — the same rows canRelease selects.
+    const byId = Object.fromEntries(surface.rows.map((r) => [r.coordinationId, r.canReassign]));
+    expect(byId).toEqual({ "coord-a": true, "coord-b": false, "coord-c": false });
+  });
+
+  it("never marks a row BOTH claimable and reassignable — claiming needs it unowned, reassigning needs the viewer to own it", () => {
+    const surface = surfaceForViewer(
+      [entryOf("coord-a", "conv-a"), entryOf("coord-b", "conv-b")],
+      [owned("coord-a", "conv-a"), unowned("coord-b")],
+      OWNER_ID,
+    );
+    for (const r of surface.rows) {
+      expect(r.canClaim && r.canReassign).toBe(false);
+    }
+    // The owned-by-viewer row is reassignable-not-claimable; the unowned row is claimable-not-reassignable.
+    const heldRow = surface.rows.find((r) => r.coordinationId === "coord-a")!;
+    const openRow = surface.rows.find((r) => r.coordinationId === "coord-b")!;
+    expect([heldRow.canClaim, heldRow.canReassign]).toEqual([false, true]);
+    expect([openRow.canClaim, openRow.canReassign]).toEqual([true, false]);
+  });
+});
+
 describe("projectAttentionQueueSurface — the headline summary", () => {
   it("reports the size and the unowned / owned split (plural)", () => {
     const surface = surfaceOf(

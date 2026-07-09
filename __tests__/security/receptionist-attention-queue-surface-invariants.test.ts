@@ -144,10 +144,20 @@ const R38_CORE_MODULE = "@/lib/receptionist/conversation-coordination-worklist";
 const HQ_AUTH_MODULE = "@/server/auth/hq";
 const SESSION_AUTH_MODULE = "@/server/auth/session";
 
+// R62 adds two READ dependencies to the page: the org-scoped operator roster READER (a peer read model) and the R54
+// reassignment view core (the pure `toReassignmentCandidates` projection). The page composes the reassignment destination
+// candidates ONCE (the roster minus the viewer, who owns every reassignable row) and hands the SAME list to each owned
+// row's reassign button. Both are read-only — the roster reader is a SELECT, the view core a pure fold — so neither is a
+// write path, and neither is a seam BELOW the queue runtime (the roster is a peer read model, not part of the R58 compose).
+const ROSTER_MODULE = "@/server/services/receptionist-operators";
+const REASSIGN_VIEW_MODULE = "@/lib/receptionist/conversation-reassignment-view";
+
 /** The EXACT import surface the page is authorised to have — the R58 runtime, the R59 view core, the HQ + session gates,
  *  the navigation helper (for the R45 detail link), the client refresh button, the R60 client claim button, the R61
- *  client release button and `next/link`. Nothing else. Each ownership button is a LEAF affordance: the page hands it one
- *  coordination id and the button owns its own path (claim → the R46 runtime; release → the R50 runtime) through its own
+ *  client release button, the R62 client reassign button, `next/link` — and, NEW at R62, the org roster READER + the R54
+ *  reassignment view core (to compose the reassign destination candidates once). Nothing else. Each ownership button is a
+ *  LEAF affordance: the page hands it one coordination id (and, for reassign, the shared candidate list) and the button
+ *  owns its own path (claim → the R46 runtime; release → the R50 runtime; reassign → the R52 runtime) through its own
  *  action, so the page still consumes no write runtime itself. */
 const ALLOWED_PAGE_IMPORTS = [
   "next/link",
@@ -155,10 +165,13 @@ const ALLOWED_PAGE_IMPORTS = [
   SESSION_AUTH_MODULE,
   QUEUE_RUNTIME_MODULE,
   SURFACE_CORE_MODULE,
+  ROSTER_MODULE,
+  REASSIGN_VIEW_MODULE,
   "../navigation",
   "./refresh-button",
   "./claim-button",
   "./release-button",
+  "./reassign-button",
 ].sort();
 
 /** The EXACT import surface the client refresh button is authorised to have — React + the Next router, nothing more. */
@@ -255,9 +268,13 @@ describe("receptionist attention queue surface — the surface ships", () => {
 // =====================================================================
 
 describe("receptionist attention queue surface — consumes only the R58 runtime", () => {
-  it("the page's ONLY server-service import is the R58 attention-queue runtime", () => {
+  it("the page's server-service imports are EXACTLY the R58 queue runtime + the org roster READER — two read models, no write runtime, no seam below the runtime", () => {
     const specs = importSpecifiers(codeOf(read(PAGE)));
-    expect(specs.filter((s) => s.startsWith("@/server/services/"))).toEqual([QUEUE_RUNTIME_MODULE]);
+    // R62 adds the org roster reader (a peer READ model, used only to compose the reassign destination candidates). It is
+    // NOT a seam below the queue runtime and NOT a write runtime — the page still reaches no R39/R48/R38 seam and no writer.
+    expect(specs.filter((s) => s.startsWith("@/server/services/")).sort()).toEqual(
+      [QUEUE_RUNTIME_MODULE, ROSTER_MODULE].sort(),
+    );
   });
 
   it("the page's whole import surface is EXACTLY the authorised set — runtime, view core, gates, nav, refresh, link", () => {
@@ -357,25 +374,30 @@ describe("receptionist attention queue surface — organisation isolation is pre
     expect(code).toMatch(/requireOrgContext\(/);
   });
 
-  it("the single runtime read is org-scoped by ctx.org.id — the org filter is on the read", () => {
+  it("every runtime read is org-scoped by ctx.org.id — the queue read AND the R62 roster read are both filtered by the session org", () => {
     const code = codeOf(read(PAGE));
-    expect(code.match(/org_id:\s*ctx\.org\.id/g) ?? []).toHaveLength(1);
+    // TWO org-scoped reads now — the R58 queue runtime and the R62 operator roster reader — each filtered by the SESSION
+    // org id, never a client value. There is no third: exactly two `org_id: ctx.org.id` filters, both on a READ.
+    expect(code.match(/org_id:\s*ctx\.org\.id/g) ?? []).toHaveLength(2);
     expect(code).toMatch(/getConversationAttentionQueue\(\{[\s\S]*?org_id:\s*ctx\.org\.id/);
+    expect(code).toMatch(/listOrgOperators\(\s*\{\s*org_id:\s*ctx\.org\.id/);
   });
 
   it("the surface takes NO parameter — it cannot be pointed at another org", () => {
     const code = codeOf(read(PAGE));
     expect(code).toMatch(/export default async function HqReceptionistAttentionQueuePage\(\s*\)/);
-    // Both ownership affordances are DELEGATED to their client buttons (the page renders each on eligible rows and hands
-    // it one coordination id): the page itself still names NO write runtime, NO write primitive, and NEITHER ownership
-    // action — not the R47/R60 claim actions `claimWorkItemAction`/`claimFromQueueAction`, nor the R61 release action
-    // `releaseFromQueueAction`. Each path lives in its button + that button's own action, so the page derives nothing and
-    // executes nothing.
+    // All THREE ownership affordances are DELEGATED to their client buttons (the page renders each on eligible rows and
+    // hands it one coordination id — plus, for reassign, the shared candidate list): the page itself still names NO write
+    // runtime, NO write primitive, and NO ownership action — not the R47/R60 claim actions
+    // `claimWorkItemAction`/`claimFromQueueAction`, not the R61 release action `releaseFromQueueAction`, and not the R62
+    // reassign action `reassignFromQueueAction`. Each path lives in its button + that button's own action, so the page
+    // derives nothing and executes nothing.
     expect(code).not.toMatch(CANONICAL_WRITE_RUNTIMES);
     expect(code).not.toMatch(WRITE_PRIMITIVE);
     expect(code).not.toMatch(/\bclaimWorkItemAction\b/);
     expect(code).not.toMatch(/\bclaimFromQueueAction\b/);
     expect(code).not.toMatch(/\breleaseFromQueueAction\b/);
+    expect(code).not.toMatch(/\breassignFromQueueAction\b/);
   });
 
   it("the pure core + refresh button are ORG-AGNOSTIC — they name no org token", () => {

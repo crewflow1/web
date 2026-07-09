@@ -103,6 +103,26 @@ function compareCandidates(a: ReassignmentCandidate, b: ReassignmentCandidate): 
 }
 
 /**
+ * Derive the DESTINATION CANDIDATES from an organisation's authorised operator roster — every operator EXCEPT the one
+ * named by `excludeOperatorId` (the current owner), each labelled for the picker and ordered deterministically. Pure and
+ * total. This is exactly the roster-minus-owner projection {@link projectReassignmentView} folds into its view, lifted
+ * out so a caller that ALREADY knows the current owner's id (the R62 queue surface, which offers the transfer only on a
+ * row it has established the viewer owns) can compose the SAME candidate set without re-deriving an ownership record. It
+ * selects no operator and records nothing; the excluded operator is never a candidate (a transfer must move the item to a
+ * DIFFERENT operator, and the pure reassignment core refuses a self-transfer regardless), and a null `excludeOperatorId`
+ * excludes no one.
+ */
+export function toReassignmentCandidates(
+  operators: readonly ReassignmentOperator[],
+  options: { excludeOperatorId: string | null },
+): ReassignmentCandidate[] {
+  return operators
+    .filter((op) => op.operatorId !== options.excludeOperatorId)
+    .map((op): ReassignmentCandidate => ({ ...op, label: labelFor(op) }))
+    .sort(compareCandidates);
+}
+
+/**
  * Derive the transfer view from the read-back ownership record, the organisation's authorised operator roster and the
  * viewer's operator id. Pure and total. The current owner is the R48 read model's (folded from the R51/R53 engine's
  * transfer chain) — this core re-derives no ownership; it presents it. The ONLY affordance the surface grants is
@@ -145,11 +165,9 @@ export function projectReassignmentView(input: {
 
   // The destination roster — every authorised operator EXCEPT the current owner. A transfer must move the item to a
   // DIFFERENT operator, so the current holder is filtered out; the pure reassignment core would refuse a self-transfer
-  // anyway. Labelled for the picker and ordered deterministically so two reads never reorder the choices.
-  const candidates = operators
-    .filter((op) => op.operatorId !== owner.operatorId)
-    .map((op): ReassignmentCandidate => ({ ...op, label: labelFor(op) }))
-    .sort(compareCandidates);
+  // anyway. Labelled for the picker and ordered deterministically so two reads never reorder the choices. Derived by the
+  // shared {@link toReassignmentCandidates} projection so the R62 queue surface composes the identical candidate set.
+  const candidates = toReassignmentCandidates(operators, { excludeOperatorId: owner.operatorId });
 
   const currentOwnerLabel = mine ? "You" : owner.operatorEmail ?? owner.operatorId;
 
