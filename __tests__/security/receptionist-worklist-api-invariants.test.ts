@@ -120,6 +120,10 @@ const ROUTE = "app/api/receptionist/worklists/route.ts";
 // The R39 read surface R40 reads THROUGH — never around. The route consumes the R39 runtime reader; the
 // request contract consumes the R39 pure core's vocabulary (WORKLIST_VIEWS + the query types).
 const R39_RUNTIME = "server/services/receptionist-worklist-read-surface.ts";
+// R58 — the Conversation Attention Queue: R39's authorised SECOND consumer of the worklist read surface
+// (the "queue" R39's own doc-comment anticipates). It reads `prioritised` worklist pages through R39 and
+// groups them by ownership; it never names the R38 reader, so it is not a read path around R39.
+const R58_QUEUE_RUNTIME = "server/services/receptionist-attention-queue.ts";
 const R39_RUNTIME_MODULE = "@/server/services/receptionist-worklist-read-surface";
 const R39_CORE_MODULE = "@/lib/receptionist/conversation-worklist-read-surface";
 
@@ -303,14 +307,16 @@ describe("receptionist worklist API — the read surface stays authoritative", (
     expect(owners).toEqual([R38_RUNTIME, R39_RUNTIME].sort());
   });
 
-  it("the R40 route is the sole production caller of the R39 read surface (queryOrgWorklist)", () => {
-    // In executable source, `queryOrgWorklist` is named only by the R39 runtime (its definition) and the
-    // R40 route (its single production caller). This positively pins that R40 reads THROUGH R39.
+  it("the R39 read surface (queryOrgWorklist) is called by exactly the R40 route, the R58 attention queue + the R39 runtime", () => {
+    // In executable source, `queryOrgWorklist` is named by the R39 runtime (its definition), the R40 route
+    // (its HTTP caller) and the R58 attention queue (R39's designed queue consumer — R39's own doc names "a
+    // queue" as its intended reader). R40 STILL reads THROUGH R39 (it is in the set); no surface reaches
+    // around R39 to the R38 reader — the getCoordinationWorklists pin stays exactly R38 + R39.
     const owners = walkSources(SOURCE_ROOTS)
       .filter((full) => /\bqueryOrgWorklist\b/.test(codeOf(read(rel(full)))))
       .map(rel)
       .sort();
-    expect(owners).toEqual([ROUTE, R39_RUNTIME].sort());
+    expect(owners).toEqual([ROUTE, R39_RUNTIME, R58_QUEUE_RUNTIME].sort());
   });
 });
 
