@@ -145,7 +145,9 @@ const HQ_AUTH_MODULE = "@/server/auth/hq";
 const SESSION_AUTH_MODULE = "@/server/auth/session";
 
 /** The EXACT import surface the page is authorised to have — the R58 runtime, the R59 view core, the HQ + session gates,
- *  the navigation helper (for the R45 detail link), the client refresh button and `next/link`. Nothing else. */
+ *  the navigation helper (for the R45 detail link), the client refresh button, the R60 client claim button and
+ *  `next/link`. Nothing else. The claim button is a LEAF affordance: the page hands it one coordination id and the button
+ *  owns the claim path (through its own action → the R46 runtime), so the page still consumes no write runtime itself. */
 const ALLOWED_PAGE_IMPORTS = [
   "next/link",
   HQ_AUTH_MODULE,
@@ -154,6 +156,7 @@ const ALLOWED_PAGE_IMPORTS = [
   SURFACE_CORE_MODULE,
   "../navigation",
   "./refresh-button",
+  "./claim-button",
 ].sort();
 
 /** The EXACT import surface the client refresh button is authorised to have — React + the Next router, nothing more. */
@@ -361,9 +364,14 @@ describe("receptionist attention queue surface — organisation isolation is pre
   it("the surface takes NO parameter — it cannot be pointed at another org", () => {
     const code = codeOf(read(PAGE));
     expect(code).toMatch(/export default async function HqReceptionistAttentionQueuePage\(\s*\)/);
-    // And it offers no ownership affordance — it names no claim/reassign/release runtime or action.
+    // The R60 claim affordance is DELEGATED to the client claim button (the page renders it on unowned rows and hands it
+    // one coordination id): the page itself still names NO write runtime, NO write primitive, and NEITHER claim action —
+    // not the R47 detail action `claimWorkItemAction`, nor the R60 queue action `claimFromQueueAction`. The claim path
+    // lives in the button + its own action, so the page derives nothing and executes nothing.
     expect(code).not.toMatch(CANONICAL_WRITE_RUNTIMES);
+    expect(code).not.toMatch(WRITE_PRIMITIVE);
     expect(code).not.toMatch(/\bclaimWorkItemAction\b/);
+    expect(code).not.toMatch(/\bclaimFromQueueAction\b/);
   });
 
   it("the pure core + refresh button are ORG-AGNOSTIC — they name no org token", () => {

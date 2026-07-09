@@ -37,7 +37,9 @@ import type {
 // Organisation scoping is the RUNTIME's concern (the queue runtime threads the org into both seam reads); this core is
 // org-agnostic, projecting only the view it is handed. It records nothing, decides nothing, grants no affordance and
 // introduces NO execution path: it dispatches nothing, notifies no one, schedules nothing, assigns nobody, promotes no
-// customer, retrieves no memory and completes nothing — every one an explicit R59 non-goal.
+// customer, retrieves no memory and completes nothing — every one an explicit R59 non-goal. (R60 reads ONE more fact
+// off this same view — `canClaim`, the pure `!owned` eligibility the operator surface uses to decide whether to offer
+// the EXISTING R46 claim; it is inert data — this core still grants no affordance, records nothing and runs nothing.)
 // =====================================================================
 
 /** The placeholder shown for any absent (null / empty) value — the surface never invents a fact. */
@@ -106,6 +108,10 @@ function shortId(id: string): string {
  *   • heldSince       — WHEN the current owner took hold, formatted (or the em dash when unowned).
  *   • recordedAt      — WHEN the coordination was recorded, formatted.
  *   • ownershipSummary — a ready human sentence describing the present ownership.
+ *   • canClaim         — whether the row is claimable NOW: TRUE iff no operator holds it yet (the unowned state). A pure
+ *                        `!owned` derivation mirroring the R47 detail surface's `canClaim`; the operator surface reads it
+ *                        to decide whether to offer the EXISTING R46 claim, and the R46 runtime stays the final gate (it
+ *                        refuses an already-owned coordination). This flag is inert — the core grants no affordance.
  */
 export type AttentionQueueRowView = {
   readonly coordinationId: string;
@@ -129,6 +135,7 @@ export type AttentionQueueRowView = {
   readonly heldSince: string;
   readonly recordedAt: string;
   readonly ownershipSummary: string;
+  readonly canClaim: boolean;
 };
 
 /**
@@ -219,6 +226,9 @@ function projectRow(row: AttentionQueueEntry): AttentionQueueRowView {
     heldSince: formatInstant(ownership.heldSince),
     recordedAt: formatInstant(entry.at),
     ownershipSummary: ownershipSummaryOf(ownership.owned, ownership.reassigned, ownerLabel),
+    // R60 claim-from-queue eligibility — a pure `!owned` mirror of the R47 detail surface's `canClaim`. A row is
+    // claimable iff no operator holds it yet; the R46 claim runtime remains the final gate on the actual claim.
+    canClaim: !ownership.owned,
   };
 }
 

@@ -9,6 +9,7 @@ import {
 } from "@/lib/receptionist/conversation-attention-queue-view";
 import { detailPath } from "../navigation";
 import { AttentionQueueRefreshButton } from "./refresh-button";
+import { AttentionQueueClaimButton } from "./claim-button";
 
 /**
  * /admin/ai-receptionist/worklist/attention — the CONVERSATION ATTENTION QUEUE (Directive #018, R59: CONVERSATION
@@ -35,11 +36,14 @@ import { AttentionQueueRefreshButton } from "./refresh-button";
  * takes no parameter that could name another org, and threads that one org id straight into the runtime, which scopes
  * BOTH seam reads to it. So one organisation can never read another's attention queue.
  *
- * IT IS READ-ONLY — IT INTRODUCES NO EXECUTION PATH. It renders the grouped queue and, per row, its DERIVED priority,
- * its RECORDED mode + categories, its SURFACED human-required flag and its R48 ownership state; each row links to the
- * existing R45 detail surface, and one Refresh control re-reads the same page. It assigns nobody, dispatches nothing,
- * notifies no one, schedules nothing, promotes no customer, retrieves no memory and completes nothing — every one an
- * explicit R59 non-goal.
+ * IT ADDS ONE AFFORDANCE — THE R60 CLAIM — AND NO OTHER EXECUTION PATH. It renders the grouped queue and, per row, its
+ * DERIVED priority, its RECORDED mode + categories, its SURFACED human-required flag and its R48 ownership state; each
+ * row links to the existing R45 detail surface, and one Refresh control re-reads the same page. On the UNOWNED rows (the
+ * pure view's `canClaim`) it also offers ONE affordance — a Claim button that REUSES the existing R46 Conversation Work
+ * Claim capability through the queue claim action; the page itself inlines no write runtime, no write primitive and no
+ * claim action — it DELEGATES the claim to the client button, and the R46 runtime stays the final gate on the claim.
+ * Beyond that one claim it assigns nobody, reassigns nothing, releases nothing, dispatches nothing, notifies no one,
+ * schedules nothing, promotes no customer, retrieves no memory and completes nothing — every one an explicit R60 non-goal.
  */
 
 /** `force-dynamic` so the queue re-reads its authoritative seams on every request (including the Refresh re-read) rather
@@ -84,8 +88,9 @@ export default async function HqReceptionistAttentionQueuePage() {
           <h1 className="text-2xl font-bold text-slate-900">Attention queue</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
             The conversations that need attention, grouped by whether an operator holds them yet — waiting to be picked
-            up first, in progress next — in priority order within each group. This surface is read-only: each row links
-            to the item&rsquo;s detail; it records nothing and acts on nothing.
+            up first, in progress next — in priority order within each group. Each row links to the item&rsquo;s detail,
+            and an unowned row can be claimed directly from here — claiming records that you have taken ownership, and
+            nothing else is recorded or acted on.
           </p>
         </div>
         <AttentionQueueRefreshButton />
@@ -212,6 +217,10 @@ function AttentionQueueTableRow({ row }: { row: AttentionQueueRowView }) {
         {row.ownershipStatus === "owned" && row.heldSince !== "—" ? (
           <div className="mt-0.5 text-xs text-slate-400">Since {row.heldSince}</div>
         ) : null}
+        {/* R60 claim-from-queue — the ONE affordance, shown only on unowned rows (row.canClaim). It delegates the claim
+            to the client button, which consumes the existing R46 runtime via the queue action; the page inlines no
+            write runtime, no write primitive and no claim action of its own. */}
+        {row.canClaim ? <AttentionQueueClaimButton coordinationId={row.coordinationId} /> : null}
       </td>
     </tr>
   );
