@@ -327,6 +327,39 @@ describe("projectAttentionQueueSurface — ownership state and its summary", () 
   });
 });
 
+describe("projectAttentionQueueSurface — the R60 claim-from-queue eligibility (canClaim)", () => {
+  it("marks an UNOWNED row claimable — canClaim is true, the pure `!owned` mirror of the R47 detail rule", () => {
+    const r = surfaceOf([entryOf("coord-a", "conv-a")], [unowned("coord-a")]).rows[0]!;
+    expect(r.ownershipStatus).toBe("unowned");
+    expect(r.canClaim).toBe(true);
+  });
+
+  it("marks an OWNED row NOT claimable — canClaim is false (the queue never re-claims a held item)", () => {
+    const r = surfaceOf([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")]).rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canClaim).toBe(false);
+  });
+
+  it("keeps canClaim false for a REASSIGNED (still owned) row — a transfer is ownership, never an opening", () => {
+    const record: OwnershipRecord = { ...owned("coord-a", "conv-a"), reassigned: true };
+    const r = surfaceOf([entryOf("coord-a", "conv-a")], [record]).rows[0]!;
+    expect(r.reassigned).toBe(true);
+    expect(r.canClaim).toBe(false);
+  });
+
+  it("a row is claimable EXACTLY when it is unowned — canClaim tracks the ownership status, nothing else", () => {
+    const surface = surfaceOf(
+      [entryOf("coord-a", "conv-a"), entryOf("coord-b", "conv-b"), entryOf("coord-c", "conv-c")],
+      [unowned("coord-a"), owned("coord-b", "conv-b"), unowned("coord-c")],
+    );
+    for (const r of surface.rows) {
+      expect(r.canClaim).toBe(r.ownershipStatus === "unowned");
+    }
+    // Exactly the two unowned rows are claimable — grouped unowned-first, so they lead the flat list.
+    expect(surface.rows.filter((r) => r.canClaim).map((r) => r.coordinationId)).toEqual(["coord-a", "coord-c"]);
+  });
+});
+
 describe("projectAttentionQueueSurface — the headline summary", () => {
   it("reports the size and the unowned / owned split (plural)", () => {
     const surface = surfaceOf(
