@@ -145,9 +145,10 @@ const HQ_AUTH_MODULE = "@/server/auth/hq";
 const SESSION_AUTH_MODULE = "@/server/auth/session";
 
 /** The EXACT import surface the page is authorised to have — the R58 runtime, the R59 view core, the HQ + session gates,
- *  the navigation helper (for the R45 detail link), the client refresh button, the R60 client claim button and
- *  `next/link`. Nothing else. The claim button is a LEAF affordance: the page hands it one coordination id and the button
- *  owns the claim path (through its own action → the R46 runtime), so the page still consumes no write runtime itself. */
+ *  the navigation helper (for the R45 detail link), the client refresh button, the R60 client claim button, the R61
+ *  client release button and `next/link`. Nothing else. Each ownership button is a LEAF affordance: the page hands it one
+ *  coordination id and the button owns its own path (claim → the R46 runtime; release → the R50 runtime) through its own
+ *  action, so the page still consumes no write runtime itself. */
 const ALLOWED_PAGE_IMPORTS = [
   "next/link",
   HQ_AUTH_MODULE,
@@ -157,6 +158,7 @@ const ALLOWED_PAGE_IMPORTS = [
   "../navigation",
   "./refresh-button",
   "./claim-button",
+  "./release-button",
 ].sort();
 
 /** The EXACT import surface the client refresh button is authorised to have — React + the Next router, nothing more. */
@@ -364,14 +366,16 @@ describe("receptionist attention queue surface — organisation isolation is pre
   it("the surface takes NO parameter — it cannot be pointed at another org", () => {
     const code = codeOf(read(PAGE));
     expect(code).toMatch(/export default async function HqReceptionistAttentionQueuePage\(\s*\)/);
-    // The R60 claim affordance is DELEGATED to the client claim button (the page renders it on unowned rows and hands it
-    // one coordination id): the page itself still names NO write runtime, NO write primitive, and NEITHER claim action —
-    // not the R47 detail action `claimWorkItemAction`, nor the R60 queue action `claimFromQueueAction`. The claim path
-    // lives in the button + its own action, so the page derives nothing and executes nothing.
+    // Both ownership affordances are DELEGATED to their client buttons (the page renders each on eligible rows and hands
+    // it one coordination id): the page itself still names NO write runtime, NO write primitive, and NEITHER ownership
+    // action — not the R47/R60 claim actions `claimWorkItemAction`/`claimFromQueueAction`, nor the R61 release action
+    // `releaseFromQueueAction`. Each path lives in its button + that button's own action, so the page derives nothing and
+    // executes nothing.
     expect(code).not.toMatch(CANONICAL_WRITE_RUNTIMES);
     expect(code).not.toMatch(WRITE_PRIMITIVE);
     expect(code).not.toMatch(/\bclaimWorkItemAction\b/);
     expect(code).not.toMatch(/\bclaimFromQueueAction\b/);
+    expect(code).not.toMatch(/\breleaseFromQueueAction\b/);
   });
 
   it("the pure core + refresh button are ORG-AGNOSTIC — they name no org token", () => {

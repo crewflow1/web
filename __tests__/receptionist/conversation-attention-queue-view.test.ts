@@ -160,7 +160,8 @@ function ownershipMap(...records: OwnershipRecord[]): Map<string, OwnershipRecor
   return new Map(records.map((r) => [r.coordinationId, r]));
 }
 
-/** Compose the two cores exactly as the runtime does: build the R58 view, then project the R59 surface over it. */
+/** Compose the two cores exactly as the runtime does: build the R58 view, then project the R59 surface over it. This
+ *  is the VIEWER-AGNOSTIC projection (no viewer id) — the default the backward-compatible single-arg call preserves. */
 function surfaceOf(
   entries: readonly WorklistEntry[],
   records: readonly OwnershipRecord[],
@@ -171,6 +172,23 @@ function surfaceOf(
   });
   return projectAttentionQueueSurface(view);
 }
+
+/** The SAME composition, but VIEWER-SCOPED — the viewer's operator id threaded into the projection so each row's R61
+ *  `canRelease` eligibility can be decided against the recorded owner. This is exactly how the page projects the queue. */
+function surfaceForViewer(
+  entries: readonly WorklistEntry[],
+  records: readonly OwnershipRecord[],
+  viewerOperatorId: string | null,
+): AttentionQueueSurfaceView {
+  const view: AttentionQueueView = projectAttentionQueue({
+    entries,
+    ownershipByCoordination: ownershipMap(...records),
+  });
+  return projectAttentionQueueSurface(view, { viewerOperatorId });
+}
+
+/** The operator id the `owned(...)` factory records as the holder — the viewer must match this to release. */
+const OWNER_ID = "operator-1";
 
 /** The wall-clock render the surface must produce for an ISO instant — the same SLICE the core performs (never a parse). */
 function slice(iso: string): string {
@@ -357,6 +375,75 @@ describe("projectAttentionQueueSurface — the R60 claim-from-queue eligibility 
     }
     // Exactly the two unowned rows are claimable — grouped unowned-first, so they lead the flat list.
     expect(surface.rows.filter((r) => r.canClaim).map((r) => r.coordinationId)).toEqual(["coord-a", "coord-c"]);
+  });
+});
+
+describe("projectAttentionQueueSurface — the R61 release-from-queue eligibility (canRelease)", () => {
+  it("marks a row the VIEWER owns releasable — canRelease is true when the viewer IS the recorded owner", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")], OWNER_ID).rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canRelease).toBe(true);
+  });
+
+  it("marks a row owned by SOMEONE ELSE not releasable — canRelease is false when the viewer is not the owner", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")], "another-operator").rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canRelease).toBe(false);
+  });
+
+  it("marks an UNOWNED row not releasable for any viewer — there is no held claim to release", () => {
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [unowned("coord-a")], OWNER_ID).rows[0]!;
+    expect(r.ownershipStatus).toBe("unowned");
+    expect(r.canRelease).toBe(false);
+  });
+
+  it("marks NOTHING releasable for a viewer-agnostic projection — no viewer id means no row is scoped to the caller", () => {
+    // The backward-compatible single-arg call (surfaceOf) supplies no viewer, so even an owned row is not releasable.
+    const r = surfaceOf([entryOf("coord-a", "conv-a")], [owned("coord-a", "conv-a")]).rows[0]!;
+    expect(r.ownershipStatus).toBe("owned");
+    expect(r.canRelease).toBe(false);
+    // An explicit null viewer is the same as omitting it.
+    const nullViewer = surfaceForViewer([entryOf("coord-b", "conv-b")], [owned("coord-b", "conv-b")], null).rows[0]!;
+    expect(nullViewer.canRelease).toBe(false);
+  });
+
+  it("keeps canRelease true for a REASSIGNED row the viewer now holds — a transfer is ownership the holder may release", () => {
+    const record: OwnershipRecord = { ...owned("coord-a", "conv-a"), reassigned: true };
+    const r = surfaceForViewer([entryOf("coord-a", "conv-a")], [record], OWNER_ID).rows[0]!;
+    expect(r.reassigned).toBe(true);
+    expect(r.canRelease).toBe(true);
+  });
+
+  it("a row is releasable EXACTLY when the viewer owns it — canRelease tracks viewer-ownership, nothing else", () => {
+    // coord-a owned by the viewer, coord-b owned by another operator, coord-c unowned.
+    const heldByOther = owned("coord-b", "conv-b");
+    const otherOwner: OwnershipRecord = {
+      ...heldByOther,
+      owner: { ...heldByOther.owner!, operatorId: "another-operator" },
+    };
+    const surface = surfaceForViewer(
+      [entryOf("coord-a", "conv-a"), entryOf("coord-b", "conv-b"), entryOf("coord-c", "conv-c")],
+      [owned("coord-a", "conv-a"), otherOwner, unowned("coord-c")],
+      OWNER_ID,
+    );
+    const byId = Object.fromEntries(surface.rows.map((r) => [r.coordinationId, r.canRelease]));
+    expect(byId).toEqual({ "coord-a": true, "coord-b": false, "coord-c": false });
+  });
+
+  it("never marks a row BOTH claimable and releasable — the two ownership affordances are mutually exclusive", () => {
+    const surface = surfaceForViewer(
+      [entryOf("coord-a", "conv-a"), entryOf("coord-b", "conv-b")],
+      [owned("coord-a", "conv-a"), unowned("coord-b")],
+      OWNER_ID,
+    );
+    for (const r of surface.rows) {
+      expect(r.canClaim && r.canRelease).toBe(false);
+    }
+    // The owned-by-viewer row is releasable-not-claimable; the unowned row is claimable-not-releasable.
+    const heldRow = surface.rows.find((r) => r.coordinationId === "coord-a")!;
+    const openRow = surface.rows.find((r) => r.coordinationId === "coord-b")!;
+    expect([heldRow.canClaim, heldRow.canRelease]).toEqual([false, true]);
+    expect([openRow.canClaim, openRow.canRelease]).toEqual([true, false]);
   });
 });
 

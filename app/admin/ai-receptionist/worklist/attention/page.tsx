@@ -10,6 +10,7 @@ import {
 import { detailPath } from "../navigation";
 import { AttentionQueueRefreshButton } from "./refresh-button";
 import { AttentionQueueClaimButton } from "./claim-button";
+import { AttentionQueueReleaseButton } from "./release-button";
 
 /**
  * /admin/ai-receptionist/worklist/attention — the CONVERSATION ATTENTION QUEUE (Directive #018, R59: CONVERSATION
@@ -36,14 +37,16 @@ import { AttentionQueueClaimButton } from "./claim-button";
  * takes no parameter that could name another org, and threads that one org id straight into the runtime, which scopes
  * BOTH seam reads to it. So one organisation can never read another's attention queue.
  *
- * IT ADDS ONE AFFORDANCE — THE R60 CLAIM — AND NO OTHER EXECUTION PATH. It renders the grouped queue and, per row, its
- * DERIVED priority, its RECORDED mode + categories, its SURFACED human-required flag and its R48 ownership state; each
- * row links to the existing R45 detail surface, and one Refresh control re-reads the same page. On the UNOWNED rows (the
- * pure view's `canClaim`) it also offers ONE affordance — a Claim button that REUSES the existing R46 Conversation Work
- * Claim capability through the queue claim action; the page itself inlines no write runtime, no write primitive and no
- * claim action — it DELEGATES the claim to the client button, and the R46 runtime stays the final gate on the claim.
- * Beyond that one claim it assigns nobody, reassigns nothing, releases nothing, dispatches nothing, notifies no one,
- * schedules nothing, promotes no customer, retrieves no memory and completes nothing — every one an explicit R60 non-goal.
+ * IT ADDS TWO OWNERSHIP AFFORDANCES — THE R60 CLAIM AND THE R61 RELEASE — AND NO OTHER EXECUTION PATH. It renders the
+ * grouped queue and, per row, its DERIVED priority, its RECORDED mode + categories, its SURFACED human-required flag and
+ * its R48 ownership state; each row links to the existing R45 detail surface, and one Refresh control re-reads the same
+ * page. On the UNOWNED rows (the pure view's `canClaim`) it offers a Claim button that REUSES the existing R46
+ * Conversation Work Claim capability through the queue claim action; on the rows the VIEWER holds (the pure view's
+ * `canRelease`) it offers a Release button that REUSES the existing R50 Conversation Work Release capability through the
+ * queue release action. The page itself inlines no write runtime, no write primitive and no claim / release action — it
+ * DELEGATES each to its client button, and the R46 / R50 runtimes stay the final gate on the claim / release. Beyond
+ * those two ownership affordances it assigns nobody, reassigns nothing, dispatches nothing, notifies no one, schedules
+ * nothing, promotes no customer, retrieves no memory and completes nothing — every one an explicit R60 / R61 non-goal.
  */
 
 /** `force-dynamic` so the queue re-reads its authoritative seams on every request (including the Refresh re-read) rather
@@ -59,15 +62,18 @@ const ATTENTION_QUEUE_LIMIT = 200;
 export default async function HqReceptionistAttentionQueuePage() {
   // The EXISTING HQ gate authenticates the operator. The org is resolved from the SESSION (never the client), exactly as
   // every worklist surface resolves it — so the runtime read below can only ever be scoped to the caller's organisation.
-  await requireHqPage();
+  // The authenticated user's id is the VIEWER identity threaded into the projection below to scope the R61 release
+  // eligibility (`canRelease`) to the operator reading the queue — it never comes from the client.
+  const user = await requireHqPage();
   const { ctx } = await requireOrgContext();
 
   // The ONE data path — the R58 runtime, org-scoped. It reads the org's actionable worklist (through R39) and each
   // entry's ownership (through R48) and composes the grouped view. This surface issues no read of its own.
   const view = await getConversationAttentionQueue({ org_id: ctx.org.id, limit: ATTENTION_QUEUE_LIMIT });
 
-  // Project the runtime's view into the display model — purely, in the R59 core. The page derives nothing.
-  const surface = projectAttentionQueueSurface(view);
+  // Project the runtime's view into the display model — purely, in the R59 core. The page derives nothing. The viewer's
+  // operator id scopes each row's `canRelease` eligibility (R61): a row is releasable only by the operator who holds it.
+  const surface = projectAttentionQueueSurface(view, { viewerOperatorId: user.id });
 
   return (
     <div className="space-y-6">
@@ -89,8 +95,9 @@ export default async function HqReceptionistAttentionQueuePage() {
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
             The conversations that need attention, grouped by whether an operator holds them yet — waiting to be picked
             up first, in progress next — in priority order within each group. Each row links to the item&rsquo;s detail,
-            and an unowned row can be claimed directly from here — claiming records that you have taken ownership, and
-            nothing else is recorded or acted on.
+            an unowned row can be claimed directly from here, and a row you hold can be released back to the queue —
+            claiming records that you have taken ownership and releasing that you have relinquished it, and nothing else
+            is recorded or acted on.
           </p>
         </div>
         <AttentionQueueRefreshButton />
@@ -217,10 +224,15 @@ function AttentionQueueTableRow({ row }: { row: AttentionQueueRowView }) {
         {row.ownershipStatus === "owned" && row.heldSince !== "—" ? (
           <div className="mt-0.5 text-xs text-slate-400">Since {row.heldSince}</div>
         ) : null}
-        {/* R60 claim-from-queue — the ONE affordance, shown only on unowned rows (row.canClaim). It delegates the claim
-            to the client button, which consumes the existing R46 runtime via the queue action; the page inlines no
-            write runtime, no write primitive and no claim action of its own. */}
+        {/* R60 claim-from-queue — shown only on unowned rows (row.canClaim). It delegates the claim to the client
+            button, which consumes the existing R46 runtime via the queue action; the page inlines no write runtime, no
+            write primitive and no claim action of its own. */}
         {row.canClaim ? <AttentionQueueClaimButton coordinationId={row.coordinationId} /> : null}
+        {/* R61 release-from-queue — shown only on rows the VIEWER holds (row.canRelease). It delegates the release to
+            the client button, which consumes the existing R50 runtime via the queue action; the page inlines no write
+            runtime, no write primitive and no release action of its own. A row is never both claimable and releasable —
+            canClaim needs it unowned, canRelease needs the viewer to own it. */}
+        {row.canRelease ? <AttentionQueueReleaseButton coordinationId={row.coordinationId} /> : null}
       </td>
     </tr>
   );
