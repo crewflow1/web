@@ -135,6 +135,10 @@ const R40_CORE_MODULE = "@/lib/receptionist/conversation-worklist-api";
 
 // The R39 read surface the client reads THROUGH the API — the session must never name it.
 const R39_RUNTIME = "server/services/receptionist-worklist-read-surface.ts";
+// R58 — the Conversation Attention Queue: R39's authorised SECOND consumer of the worklist read surface
+// (the "queue" R39's own doc-comment anticipates). It reads `prioritised` worklist pages through R39 and
+// groups them by ownership; it never names the R38 reader, so it is not a read path around R39.
+const R58_QUEUE_RUNTIME = "server/services/receptionist-attention-queue.ts";
 const R39_CORE_MODULE = "@/lib/receptionist/conversation-worklist-read-surface";
 const R39_RUNTIME_MODULE = "@/server/services/receptionist-worklist-read-surface";
 
@@ -354,16 +358,16 @@ describe("receptionist worklist session — it consumes only the Worklist Client
     expect(owners).toEqual([CLIENT_CORE]);
   });
 
-  it("with R42 in the tree, the R39 read surface is STILL called by exactly the R40 route + the R39 runtime", () => {
-    // `queryOrgWorklist` — the R39 read surface — must be named in executable source only by the R40 route
-    // (its single production caller) and the R39 runtime (its definition). The R42 session must NOT appear:
-    // it reads THROUGH the client (which GETs the API), never by calling the read surface. If it did, it
-    // would have a read path AROUND the client and the API.
+  it("with R58 in the tree, the R39 read surface is called by exactly the R40 route, the R58 attention queue + the R39 runtime", () => {
+    // `queryOrgWorklist` — the R39 read surface — is named in executable source by the R40 route (its HTTP
+    // caller), the R58 attention queue (R39's designed queue consumer) and the R39 runtime (its definition).
+    // The R42 session must STILL NOT appear: it reads THROUGH the client (which GETs the API), never by
+    // calling the read surface. If it did, it would have a read path AROUND the client and the API.
     const callers = walkSources(SOURCE_ROOTS)
       .filter((full) => /\bqueryOrgWorklist\b/.test(codeOf(read(rel(full)))))
       .map(rel)
       .sort();
-    expect(callers).toEqual([ROUTE, R39_RUNTIME].sort());
+    expect(callers).toEqual([ROUTE, R39_RUNTIME, R58_QUEUE_RUNTIME].sort());
   });
 
   it("neither artefact names a lower reader, a ledger or the Read Model view — it reads through the client", () => {

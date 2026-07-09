@@ -166,6 +166,10 @@ const R40_CORE_MODULE = "@/lib/receptionist/conversation-worklist-api";
 
 // The R39 read surface — the surface must never name it.
 const R39_RUNTIME = "server/services/receptionist-worklist-read-surface.ts";
+// R58 — the Conversation Attention Queue: R39's authorised SECOND consumer of the worklist read surface
+// (the "queue" R39's own doc-comment anticipates). It reads `prioritised` worklist pages through R39 and
+// groups them by ownership; it never names the R38 reader, so it is not a read path around R39.
+const R58_QUEUE_RUNTIME = "server/services/receptionist-attention-queue.ts";
 const R39_CORE_MODULE = "@/lib/receptionist/conversation-worklist-read-surface";
 const R39_RUNTIME_MODULE = "@/server/services/receptionist-worklist-read-surface";
 
@@ -458,8 +462,10 @@ describe("receptionist worklist operator surface — the stack below stays autho
     expect(namersOf(/\bfetchOrgWorklist\b/)).toEqual([CLIENT_RUNTIME, SESSION_RUNTIME].sort());
   });
 
-  it("the read surface is STILL called by exactly the R40 route + the R39 runtime", () => {
-    expect(namersOf(/\bqueryOrgWorklist\b/)).toEqual([ROUTE, R39_RUNTIME].sort());
+  it("the read surface is called by exactly the R40 route, the R58 attention queue + the R39 runtime", () => {
+    // R58, the attention queue, is R39's authorised second consumer (the "queue" R39's doc anticipates);
+    // R44's surface still reads through the client/API, never the read surface directly.
+    expect(namersOf(/\bqueryOrgWorklist\b/)).toEqual([ROUTE, R39_RUNTIME, R58_QUEUE_RUNTIME].sort());
   });
 
   it("the endpoint literal is STILL owned by the client core alone", () => {
