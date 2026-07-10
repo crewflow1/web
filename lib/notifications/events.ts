@@ -161,6 +161,10 @@ export function notifyOnFailedPayment(input: {
       source_module: "stripe",
       source_id: input.stripe_invoice_id ?? null,
       metadata: { amount_gbp: input.amount_gbp, reason: input.reason ?? null },
+      // Also deliver by email — a declined card is money-critical and the
+      // customer may not be logged in to see the in-app notice. Recipient
+      // resolves to the org's `organizations.email` (see emitNotifications).
+      email: {},
     }),
     hqForOrg(input.org_id, "stripe.payment_failed", {
       category: "stripe",
