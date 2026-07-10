@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { csvEscape } from "@/lib/csv";
 
 /**
  * CSV export of an org's finances.
@@ -16,15 +17,6 @@ import { requireOrgContext } from "@/server/auth/session";
  */
 
 const MAX_ROWS = 50_000;
-
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 export async function GET(request: NextRequest) {
   await requireOrgContext();
