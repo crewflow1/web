@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         r.vat_rate ?? "",
         vat.toFixed(2),
         (amt + vat).toFixed(2),
-        csvEscape(r.notes),
+        r.notes ?? "",
       ]
         .map(csvEscape)
         .join(","),
