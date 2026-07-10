@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import { csvEscape } from "@/lib/csv";
 
 /**
  * CSV export of an org's invoices.
@@ -33,15 +34,6 @@ const XERO_DATE = (iso: string | null): string => {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${dd}/${mm}/${d.getUTCFullYear()}`;
 };
-
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 // Map a numeric VAT rate to Xero's TaxType string. Anything we can't map
 // falls through to "Tax Exempt" so the import doesn't reject the row —
