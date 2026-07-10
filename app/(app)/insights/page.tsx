@@ -4,6 +4,7 @@ import {
   computeActivitySummary,
   computeLeadInsights,
 } from "@/lib/ai/aggregates";
+import { resolveInsightNarrative } from "@/server/services/ai-insights";
 import { InsightsSection } from "../dashboard/_insights";
 import { QuestionBox } from "./_question-box";
 import { isAiConfigured } from "@/lib/ai/safety";
@@ -18,9 +19,12 @@ import { isAiConfigured } from "@/lib/ai/safety";
  *
  *   • Read-only — AI never changes business data.
  *   • Visible only in the tenant app (NOT in HQ).
- *   • Surfaces deterministic signals today; the prose layer in
- *     `lib/ai/types::ActivitySummaryResponse.summary` is wired and
- *     will fill in when ANTHROPIC_API_KEY is configured.
+ *   • Surfaces deterministic signals as the authoritative source, then
+ *     overlays an LLM narrative on the activity payload's `summary` slot
+ *     via `resolveInsightNarrative` — generated ONLY through the shared
+ *     provider abstraction (`lib/ai/text`), cached, cost-recorded, and
+ *     gracefully null when no provider is configured. The prose only ever
+ *     describes the deterministic facts; it never computes or invents them.
  *
  * The page intentionally keeps the same component as the dashboard's
  * inline panel — single source of truth, no drift. Future expansion
@@ -37,6 +41,19 @@ export default async function InsightsPage() {
     computeActivitySummary(ctx.org.id, 30),
     computeLeadInsights(ctx.org.id, 90),
   ]);
+
+  // Overlay the LLM narrative on the ACTIVITY payload. The deterministic
+  // aggregates above stay the authoritative source of every number the UI
+  // renders; this only fills the prose `summary` slot, and only when a provider
+  // is configured (else null → deterministic-only, exactly as before). Reaches
+  // a model solely through the shared abstraction, cached + cost-recorded.
+  const { summary } = await resolveInsightNarrative({
+    orgId: ctx.org.id,
+    kind: "activity",
+    windowDays: 30,
+    payload: activity,
+  });
+  const activityWithNarrative = { ...activity, summary };
 
   return (
     <div className="space-y-6">
@@ -71,7 +88,7 @@ export default async function InsightsPage() {
 
       <QuestionBox aiConfigured={isAiConfigured()} />
 
-      <InsightsSection activity={activity} leads={leads} />
+      <InsightsSection activity={activityWithNarrative} leads={leads} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
