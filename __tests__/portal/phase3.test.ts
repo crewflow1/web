@@ -255,6 +255,61 @@ describe("Phase 3 — payment proof upload", () => {
 });
 
 // =====================================================================
+// 5b. Payment proof READ-BACK (invoices portal)
+//
+// The upload above is write-only unless the customer can see what they
+// sent. This closes the loop: the invoices page reads `portal_uploads`
+// back and lists submitted proofs per invoice, so a customer gets a
+// persistent "received" record instead of a one-shot banner (and stops
+// re-sending the same proof). The DB row stays the single source of
+// truth — the page only reads it.
+// =====================================================================
+
+describe("Phase 3 — payment proof read-back", () => {
+  it("reads submitted proofs from portal_uploads (same untyped-table cast as the writer)", () => {
+    expect(INV_PAGE).toMatch(/from\("portal_uploads" as never\)/);
+  });
+
+  it("scopes the read to THIS org AND customer — never org-wide", () => {
+    // Both filters must be present so a refactor can't widen the scope and
+    // leak another customer's proofs on the RLS-bypassing service-role client.
+    expect(INV_PAGE).toMatch(/\.eq\("org_id", customer\.org_id\)/);
+    expect(INV_PAGE).toMatch(
+      /from\("portal_uploads"[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+  });
+
+  it("narrows to this page's own uploads: invoices target + payment_proof kind", () => {
+    expect(INV_PAGE).toMatch(/\.eq\("target_table", "invoices"\)/);
+    expect(INV_PAGE).toMatch(/\.eq\("kind", "payment_proof"\)/);
+  });
+
+  it("only reads proofs for the invoices actually on the page (.in target_id)", () => {
+    expect(INV_PAGE).toMatch(/\.in\("target_id", ids\)/);
+  });
+
+  it("renders a per-invoice 'proof received' record with filename + date", () => {
+    expect(INV_PAGE).toMatch(/Payment proof/);
+    expect(INV_PAGE).toMatch(/submittedProofs/);
+    expect(INV_PAGE).toMatch(/pf\.filename/);
+    expect(INV_PAGE).toMatch(/pf\.uploaded_at\.slice\(0, 10\)/);
+  });
+
+  it("degrades gracefully — nothing renders when no proof was submitted", () => {
+    // Guarded on a length check off a `?? []` default, so an empty/absent
+    // read collapses to no UI rather than an error.
+    expect(INV_PAGE).toMatch(/proofsByInvoice\.get\(inv\.id\) \?\? \[\]/);
+    expect(INV_PAGE).toMatch(/submittedProofs\.length > 0 \? \(/);
+  });
+
+  it("adds no new business logic — the read is a plain select, no re-derivation", () => {
+    // Reuse over reinvention: this is a read of the authoritative table, not a
+    // second copy of upload/matching logic.
+    expect(INV_PAGE).not.toMatch(/ALLOWED_MIME|MAX_BYTES|10 \* 1024/);
+  });
+});
+
+// =====================================================================
 // 6. Shell + branding + tab nav
 // =====================================================================
 

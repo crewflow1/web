@@ -61,7 +61,7 @@ export default async function PortalInvoicesPage({
     if (sp.saved === "uploaded")
       return {
         tone: "ok" as const,
-        msg: "Proof uploaded. We'll review and update the invoice when it's matched.",
+        msg: "Proof uploaded — it's now listed on the invoice below. We'll review and update the invoice once it's matched.",
       };
     if (sp.error)
       return {
@@ -125,6 +125,54 @@ export default async function PortalInvoicesPage({
     }
   }
 
+  // Payment proofs this customer has already submitted, keyed by invoice.
+  // The upload action (`_upload-action.ts`) writes these into `portal_uploads`;
+  // reading them back gives the customer a persistent "received" record instead
+  // of the one-shot post-upload banner, so they aren't left re-sending the same
+  // proof wondering whether it landed. Scoped to THIS org + customer + these
+  // invoices; `kind` narrows to payment proofs (the only kind this page emits).
+  // `portal_uploads` isn't in the generated types, so we cast exactly like the
+  // write side and the messages page do — the DB stays the one authoritative
+  // owner of the record; this page only reads it back.
+  type ProofRow = {
+    target_id: string;
+    filename: string;
+    uploaded_at: string;
+    notes: string | null;
+  };
+  type ProofQuery = {
+    eq: (k: string, v: unknown) => ProofQuery;
+    in: (k: string, v: unknown[]) => ProofQuery;
+    order: (
+      k: string,
+      opts: { ascending: boolean },
+    ) => Promise<{
+      data: ProofRow[] | null;
+      error: { message: string } | null;
+    }>;
+  };
+  const proofsByInvoice = new Map<string, ProofRow[]>();
+  if (invoices.length > 0) {
+    const ids = invoices.map((i) => i.id);
+    const { data: proofs } = await (
+      admin.from("portal_uploads" as never) as unknown as {
+        select: (cols: string) => ProofQuery;
+      }
+    )
+      .select("target_id, filename, uploaded_at, notes")
+      .eq("org_id", customer.org_id)
+      .eq("customer_id", customer.id)
+      .eq("target_table", "invoices")
+      .eq("kind", "payment_proof")
+      .in("target_id", ids)
+      .order("uploaded_at", { ascending: false });
+    for (const pf of proofs ?? []) {
+      const list = proofsByInvoice.get(pf.target_id) ?? [];
+      list.push(pf);
+      proofsByInvoice.set(pf.target_id, list);
+    }
+  }
+
   return (
     <PortalShell customer={customer} org={org} token={token} active="invoices">
       {banner ? (
@@ -150,6 +198,7 @@ export default async function PortalInvoicesPage({
             const paid = paidByInvoice.get(inv.id) ?? 0;
             const outstanding = Math.max(0, total - paid);
             const isFullyPaid = inv.status === "paid" || outstanding === 0;
+            const submittedProofs = proofsByInvoice.get(inv.id) ?? [];
             return (
               <li
                 key={inv.id}
@@ -231,6 +280,43 @@ export default async function PortalInvoicesPage({
                     <span aria-hidden>↓</span> Download invoice PDF
                   </a>
                 </div>
+
+                {/* Proofs this customer has already submitted — the read-back
+                    side of the upload below. Persists across visits so the
+                    customer can see their proof is on file. */}
+                {submittedProofs.length > 0 ? (
+                  <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                    <p className="text-[11px] font-semibold text-slate-700">
+                      Payment proof{submittedProofs.length > 1 ? "s" : ""}{" "}
+                      received
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {submittedProofs.map((pf, i) => (
+                        <li
+                          key={i}
+                          className="flex items-baseline justify-between gap-2 text-[11px] text-slate-600"
+                        >
+                          <span className="min-w-0 truncate">
+                            <span aria-hidden className="text-green-600">
+                              ✓{" "}
+                            </span>
+                            {pf.filename}
+                            {pf.notes ? (
+                              <span className="text-slate-400"> — {pf.notes}</span>
+                            ) : null}
+                          </span>
+                          <span className="shrink-0 text-slate-400">
+                            {pf.uploaded_at.slice(0, 10)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      {org.name} will confirm here once it&apos;s matched to your
+                      payment.
+                    </p>
+                  </div>
+                ) : null}
 
                 {/* Phase 3 — payment proof upload. Hidden on fully-paid
                     invoices since there's nothing to prove. */}
