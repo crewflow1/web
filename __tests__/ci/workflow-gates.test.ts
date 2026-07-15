@@ -111,3 +111,55 @@ describe("CI gates — all six survive, and still do the real work", () => {
     expect(CI).not.toMatch(/if:\s*false/);
   });
 });
+
+/**
+ * Env coverage — a gate that dies at import is not a gate.
+ *
+ * `lib/env.ts` declares NEXT_PUBLIC_APP_URL as `z.string().url()` with no
+ * default and validates on import, so any test whose import graph reaches it
+ * throws "Invalid environment variables" before asserting anything. The unit,
+ * security and e2e jobs all supplied it; the integration job did not — so 23 of
+ * its 84 files failed on env rather than on their subject, and never reached the
+ * Postgres they exist to test.
+ *
+ * That is the same shape of bug as the missing trigger above: the job ran, went
+ * red for a reason unrelated to the code under test, and would have been easy to
+ * mistake for a product regression. Pinned so every job that executes app code
+ * keeps supplying the env that code requires.
+ */
+describe("CI env coverage — jobs that run app code supply required env", () => {
+  const REQUIRED = "NEXT_PUBLIC_APP_URL";
+
+  it("lib/env.ts still requires NEXT_PUBLIC_APP_URL (guards this test's premise)", () => {
+    const envSrc = readFileSync(resolve(ROOT, "lib/env.ts"), "utf8");
+    expect(envSrc).toMatch(/NEXT_PUBLIC_APP_URL:\s*z\.string\(\)\.url\(\)/);
+    // If a default were added the requirement would relax and these pins could
+    // be revisited — but until then, every runner needs the value.
+    expect(envSrc).not.toMatch(/NEXT_PUBLIC_APP_URL:\s*z\.string\(\)\.url\(\)\.default\(/);
+  });
+
+  it("the integration job supplies it — the gap that turned 23 files red", () => {
+    const block = CI.slice(CI.indexOf("\n  integration:"), CI.indexOf("\n  security:"));
+    expect(block).toContain(REQUIRED);
+  });
+
+  it("every app-code job supplies it (unit, integration, security, e2e)", () => {
+    const bounds: Array<[string, string]> = [
+      ["\n  test:", "\n  integration:"],
+      ["\n  integration:", "\n  security:"],
+      ["\n  security:", "\n  e2e:"],
+      ["\n  e2e:", ""],
+    ];
+    for (const [start, end] of bounds) {
+      const from = CI.indexOf(start);
+      const block = end ? CI.slice(from, CI.indexOf(end)) : CI.slice(from);
+      expect(block).toContain(REQUIRED);
+    }
+  });
+
+  it("the integration job echoes it in its MISSING check, so a future gap is loud", () => {
+    const block = CI.slice(CI.indexOf("\n  integration:"), CI.indexOf("\n  security:"));
+    expect(block).toMatch(new RegExp(`for v in [^\\n]*${REQUIRED}`));
+    expect(block).toMatch(/MISSING/);
+  });
+});
