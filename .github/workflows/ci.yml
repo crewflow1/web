@@ -20,11 +20,24 @@ name: CI
 # redirect contract + security headers on the genuine request path. Mocks
 # prove intent; real infrastructure proves behaviour.
 
+# Branch filters cover BOTH long-lived integration targets. `main` is the
+# obvious one; `directive/018-r6-controlled-live-execution` is where the Vision
+# 2030 increments actually land, and it was previously unlisted — so every
+# increment merged into it (#334-#340) was gated only by the Vercel preview
+# build, and the six gates below (crucially integration + e2e, the only ones
+# that touch a real Postgres) never ran. The gap stayed invisible because the
+# increments never targeted `main` until the whole directive branch did, which
+# would have deferred every database-backed failure to one large merge.
+#
+# Listing the branch explicitly rather than globbing `directive/**`: the other
+# directive/* branches are proposals and design docs, and this is the narrowest
+# filter that closes the gap. Add the next integration branch here when one
+# supersedes this.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, directive/018-r6-controlled-live-execution]
   push:
-    branches: [main]
+    branches: [main, directive/018-r6-controlled-live-execution]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -127,8 +140,16 @@ jobs:
           # orchestration, never the wire.
           export NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL"
           export NEXT_PUBLIC_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          # lib/env.ts declares NEXT_PUBLIC_APP_URL as z.string().url() with NO
+          # default and validates on import, so any test whose import graph
+          # reaches it (e.g. via lib/email/send.ts) dies at import before it can
+          # assert anything. The unit, security and e2e jobs all supply it; this
+          # job did not — which is why 23 of its 84 files failed on "Invalid
+          # environment variables" and never reached the Postgres they exist to
+          # test. Same value the e2e job exports.
+          export NEXT_PUBLIC_APP_URL="http://localhost:3000"
           set +a
-          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY; do
+          for v in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY NEXT_PUBLIC_APP_URL; do
             [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
           done
           npm run test:integration
