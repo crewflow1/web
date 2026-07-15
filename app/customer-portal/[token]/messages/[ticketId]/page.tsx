@@ -86,6 +86,7 @@ export default async function PortalThreadPage({
   // and again in JS) — HQ private notes must never reach the customer.
   type MsgQuery = {
     eq: (k: string, v: unknown) => MsgQuery;
+    in: (k: string, v: unknown[]) => MsgQuery;
     order: (
       k: string,
       opts: { ascending: boolean },
@@ -103,6 +104,10 @@ export default async function PortalThreadPage({
     .eq("ticket_id", ticket.id)
     .eq("org_id", customer.org_id)
     .eq("internal", false)
+    // Only the two parties to THIS conversation. 'hq' is CrewFlow talking to
+    // the org on its own helpdesk — never addressed to the customer, and
+    // previously rendered to them as though the org had written it.
+    .in("author_kind", ["customer", "org"])
     .order("created_at", { ascending: true });
   type MsgRow = {
     id: string;
@@ -111,8 +116,11 @@ export default async function PortalThreadPage({
     internal: boolean;
     created_at: string;
   };
+  // Belt-and-braces on both narrowing filters above: the admin client bypasses
+  // RLS, so nothing else stops an internal HQ note — or an 'hq' message that
+  // isn't part of this conversation — reaching the customer.
   const messages = ((msgsRaw ?? []) as unknown as MsgRow[]).filter(
-    (m) => !m.internal,
+    (m) => !m.internal && m.author_kind !== "hq",
   );
 
   const banner = (() => {
@@ -176,7 +184,11 @@ export default async function PortalThreadPage({
         ) : (
           <ul className="space-y-3">
             {messages.map((m) => {
-              const mine = m.author_kind !== "hq";
+              // Attribute on the customer actor, NOT on "anything that isn't
+              // CrewFlow". The old `!== "hq"` test made every org reply render
+              // as the customer's own message, because the org's only available
+              // actor was 'customer'.
+              const mine = m.author_kind === "customer";
               return (
                 <li
                   key={m.id}

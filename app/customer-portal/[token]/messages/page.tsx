@@ -164,9 +164,12 @@ export default async function PortalMessagesPage({
         ) : (
           <ul className="space-y-2">
             {tickets.map((t) => {
-              // Last visible (non-internal) message for the preview line.
+              // Last visible message for the preview line: non-internal, and
+              // one of the two parties to this conversation. 'hq' is CrewFlow
+              // talking to the org on its own helpdesk — not addressed to this
+              // customer, and previously previewed as though the org sent it.
               const lastVisible = (t.last_message ?? []).find(
-                (m) => !m.internal,
+                (m) => !m.internal && m.author_kind !== "hq",
               );
               return (
                 <li key={t.id}>
@@ -185,9 +188,9 @@ export default async function PortalMessagesPage({
                     {lastVisible ? (
                       <p className="mt-1 line-clamp-2 text-xs text-slate-600">
                         <span className="font-medium">
-                          {lastVisible.author_kind === "hq"
-                            ? `${org.name}: `
-                            : "You: "}
+                          {lastVisible.author_kind === "customer"
+                            ? "You: "
+                            : `${org.name}: `}
                         </span>
                         {lastVisible.body}
                       </p>
