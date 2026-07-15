@@ -163,6 +163,29 @@ export async function confirmBankMatch(
   if (line.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
   if (line.amount <= 0) redirect("/payments?error=not_an_incoming_payment");
 
+  // SECURITY: `invoice_id` arrives from the form and was previously trusted.
+  // The bank line above is org-checked; the invoice was not, and nothing
+  // downstream re-checks it:
+  //   - invoice_payments' INSERT policy is `with check (is_org_member(org_id))`
+  //     (20260524000000_payment_tracking.sql) — it constrains only the org_id
+  //     column we set ourselves, never invoice_id, so an insert naming another
+  //     org's invoice satisfies it;
+  //   - _tg_invoice_payments_sync_status is SECURITY DEFINER
+  //     (20260618000000_fix_invoice_payments_sync_trigger.sql), so it then reads
+  //     and updates that invoice with RLS bypassed.
+  // A crafted invoice_id therefore recorded a payment against ANOTHER org's
+  // invoice and moved its status. Resolve the invoice through the RLS client
+  // (invoices are select-scoped to the caller's orgs) and re-check org_id —
+  // mirroring the bank-line checks above, and matching addInvoicePayment, which
+  // already resolves its invoice this way. Fails closed.
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("id, org_id")
+    .eq("id", targetInvoiceId)
+    .maybeSingle();
+  if (!inv) redirect("/payments?error=not_found");
+  if (inv.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
+
   // Insert payment + link the line in one round trip (the trigger
   // auto-derives invoice status).
   const { data: payment, error: payErr } = await supabase
