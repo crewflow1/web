@@ -26,13 +26,30 @@ import { onDemoStripePaymentConfirmed } from "@/server/services/demo-lifecycle";
  * tests can hit it with synthetic events.
  *
  * Idempotency strategy:
- *   1. Every webhook starts with an INSERT into billing_events keyed
- *      on the Stripe event.id (unique partial index from HQ-4 ensures
- *      replay attempts collide).
- *   2. If the INSERT collides → return early with status="duplicate".
- *      The route returns 200 to Stripe (any other response triggers
- *      retries we don't want).
- *   3. After successful processing, UPDATE billing_events.processed_at.
+ *   1. Every webhook starts with an INSERT into billing_events keyed on the
+ *      Stripe event.id (`event_id text unique` — a plain UNIQUE constraint, so
+ *      re-delivery collides).
+ *   2. On collision, read the stored row's processed_at:
+ *        - stamped  → genuinely handled before → return "duplicate", 200, stop.
+ *                     This is the idempotency guarantee: handlers don't re-run.
+ *        - NULL     → stored but never completed → FALL THROUGH and dispatch.
+ *                     This is Stripe's retry doing its job.
+ *   3. processed_at is stamped ONLY on success or a deliberate no-op
+ *      (markProcessed). A failed dispatch records error_message and leaves
+ *      processed_at NULL (markFailed), so the event stays retryable.
+ *
+ * `processed_at` is therefore the single "never run this again" flag, and the
+ * ONLY thing that may set it is a dispatch that actually finished. Short-
+ * circuiting on row existence instead — as this did until the retry
+ * correction — turns Stripe's at-least-once delivery into at-most-once: one
+ * transient failure inside a handler permanently drops the event.
+ *
+ * Known narrow window (documented, not fixed here): if a retry arrives while a
+ * previous attempt is still in flight, both see processed_at NULL and both
+ * dispatch. Closing it needs an atomic claim (e.g. a processing_started_at
+ * column), which is a schema change and out of scope for this correction.
+ * Stripe's retry schedule makes overlap unlikely, and the previous behaviour
+ * traded this window for silent permanent data loss — a strictly worse deal.
  *
  * Service-role client throughout — RLS would block the cross-tenant
  * lookups (find org by stripe_customer_id, etc).
@@ -92,9 +109,8 @@ export type ProcessResult =
 export async function processStripeEvent(
   event: Stripe.Event,
 ): Promise<ProcessResult> {
-  // 1. Insert into billing_events. Unique partial index on event_id
-  //    means a second delivery for the same event collides and we
-  //    short-circuit with "duplicate".
+  // 1. Insert into billing_events. `event_id` carries a UNIQUE constraint, so a
+  //    second delivery of the same event collides here.
   const orgId = await orgIdFromEvent(event);
   const insertRes = await adminTable("billing_events").insert({
     event_id: event.id,
@@ -103,16 +119,43 @@ export async function processStripeEvent(
     payload: event as unknown as Record<string, unknown>,
   });
   if (insertRes.error) {
-    // Unique violation = duplicate delivery → ack and stop.
-    if (
+    const isDuplicate =
       insertRes.error.code === "23505" ||
-      insertRes.error.message?.includes("duplicate")
-    ) {
+      insertRes.error.message?.includes("duplicate");
+    if (!isDuplicate) {
+      // Some other DB error — we throw so the route returns 500 and
+      // Stripe retries.
+      throw new Error(
+        `billing_events insert failed: ${insertRes.error.message}`,
+      );
+    }
+
+    // A row already exists for this event_id — but that is NOT proof it was
+    // handled. A previous attempt may have died mid-dispatch, leaving the row
+    // stored and processed_at NULL. Short-circuiting on mere existence is what
+    // converted Stripe's at-least-once retry into at-most-once: the retry found
+    // the row, said "duplicate", and the event was never processed.
+    //
+    // So we short-circuit ONLY on a genuinely completed row. An unprocessed one
+    // falls through to dispatch — which is exactly what the retry is for.
+    const existingRes = await adminTable("billing_events")
+      .select("processed_at")
+      .eq("event_id", event.id)
+      .maybeSingle();
+    if (existingRes.error) {
+      // Can't tell whether it was processed → throw so Stripe retries rather
+      // than risk either dropping the event or double-running the handler.
+      throw new Error(
+        `billing_events duplicate lookup failed: ${existingRes.error.message}`,
+      );
+    }
+    const existing = existingRes.data as { processed_at: string | null } | null;
+    if (existing?.processed_at) {
+      // Genuinely processed before → ack and stop. This is the idempotency
+      // guarantee: the business logic below does not run twice.
       return { status: "duplicate", event_id: event.id };
     }
-    // Some other DB error — we throw so the route returns 500 and
-    // Stripe retries.
-    throw new Error(`billing_events insert failed: ${insertRes.error.message}`);
+    // Stored but never processed → fall through and dispatch (the retry).
   }
 
   // 2. Skip event types we don't process — but still mark stored.
@@ -160,7 +203,8 @@ export async function processStripeEvent(
     await markProcessed(event.id, "ok");
     return { status: "processed", event_id: event.id, actions };
   } catch (e) {
-    await markProcessed(
+    // Record WHY it failed, but leave processed_at NULL so the retry re-runs it.
+    await markFailed(
       event.id,
       `error: ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -601,12 +645,46 @@ async function orgIdByCustomer(customerId: string): Promise<string | null> {
   return (res.data as { id: string }).id;
 }
 
+/**
+ * Mark an event TERMINALLY handled.
+ *
+ * `processed_at` is the "never run this again" flag: the duplicate branch in
+ * processStripeEvent short-circuits on it, so it must be stamped ONLY when the
+ * dispatch genuinely finished — success ("ok") or a deliberate no-op ("noop").
+ * Failures go to markFailed, which leaves it NULL.
+ *
+ * error_message is cleared here on purpose: a successful retry of a previously
+ * failed event should not leave the old error behind.
+ */
 async function markProcessed(eventId: string, note: string): Promise<void> {
   await adminTable("billing_events")
     .update({
       processed_at: new Date().toISOString(),
-      error_message: note === "ok" ? null : note.startsWith("error:") ? note : null,
+      error_message: null,
     })
+    .eq("event_id", eventId);
+  void note;
+  // Suppress lint for the awaited expression's discarded promise above.
+}
+
+/**
+ * Record a FAILED dispatch without marking the event processed.
+ *
+ * This is the crux of at-least-once delivery. Previously the failure path
+ * called markProcessed, which stamped `processed_at` — and because the
+ * duplicate branch short-circuited on row EXISTENCE, Stripe's retry then found
+ * the row, returned "duplicate", and never ran the handler. A transient blip
+ * (e.g. one flaky call inside handleCheckoutCompleted) permanently dropped the
+ * event: the tenant had paid, but their org never activated, no billing_invoice
+ * row was written and no notification fired. The only trace was
+ * billing_events.error_message.
+ *
+ * Leaving `processed_at` NULL keeps the row retryable, so Stripe's at-least-once
+ * delivery does what it is designed to do.
+ */
+async function markFailed(eventId: string, error: string): Promise<void> {
+  await adminTable("billing_events")
+    .update({ error_message: error })
     .eq("event_id", eventId);
   // Suppress lint for the awaited expression's discarded promise above.
 }
