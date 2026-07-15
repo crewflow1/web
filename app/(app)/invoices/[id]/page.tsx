@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
+import { PaymentProofsPanel } from "./_payment-proofs-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
@@ -211,6 +212,11 @@ export default async function InvoiceDetailPage({
           has no line items.
         </p>
       )}
+
+      {/* Proofs the customer sent via their portal. Sits directly above the
+          payments panel because it's the evidence for the record-payment
+          decision made there. Renders nothing when no proof was submitted. */}
+      <PaymentProofsPanel invoiceId={invoice.id} />
 
       {/* Payments panel — manual record + history. Wave 3. */}
       <PaymentsPanel
