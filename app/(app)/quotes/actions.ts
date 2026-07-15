@@ -574,8 +574,51 @@ export async function reviewQuote(id: string, formData: FormData) {
 }
 
 export async function deleteQuote(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
+
+  // INTEGRITY GUARD — refuse to delete a quote that invoices still depend on.
+  //
+  // `invoices.quote_id` is `on delete set null` (20260515190000_invoices.sql),
+  // so deleting the quote does NOT fail. It silently orphans the invoice, and
+  // every consequence is invisible from this screen:
+  //   - the invoice disappears from the customer's portal (both the overview
+  //     and the invoices list scope by the customer's quote ids);
+  //   - its portal PDF 404s (ownership resolves through quote -> customer);
+  //   - its PDF and emailed copy render with a correct total and NO line items
+  //     (they read quote_line_items via quote_id);
+  //   - the reminder cron stops chasing it FOREVER, because the recipient also
+  //     resolves through quote -> customer, and a missing email is silently
+  //     counted as skipped.
+  // The money stays owed and nothing pursues it. The FK's stated intent —
+  // "invoices outlive their source quote for audit" — is not delivered.
+  //
+  // Scoped to the ACTIVE org deliberately, not left to RLS: the invoices SELECT
+  // policy is `org_id in (select current_org_ids())`, which spans EVERY org the
+  // caller belongs to, so for a multi-org user another org's invoice could
+  // otherwise decide this org's deletion.
+  //
+  // Fails CLOSED: if the check itself errors we refuse the delete rather than
+  // fall through to it. A dependency check that fails open is worse than none —
+  // it reads as a guarantee while silently permitting the damage.
+  const { data: dependents, error: depErr } = await supabase
+    .from("invoices")
+    .select("id")
+    .eq("quote_id", id)
+    .eq("org_id", ctx.org.id)
+    .limit(1);
+  if (depErr) {
+    console.error("[quotes] invoice dependency check failed", {
+      quoteId: id,
+      code: depErr.code,
+      message: depErr.message,
+    });
+    redirect(`/quotes/${id}?error=delete_check_failed`);
+  }
+  if ((dependents ?? []).length > 0) {
+    redirect(`/quotes/${id}?error=has_invoices`);
+  }
+
   // RLS on quotes inherits from the broader members policy: DELETE allowed
   // for any member (no admin gating on quotes table by default).
   // quote_line_items cascade-delete via FK ON DELETE CASCADE.
