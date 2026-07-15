@@ -248,7 +248,10 @@ describe("Phase 3 — message thread detail + reply", () => {
 
   it("filters internal messages out EXPLICITLY (admin client bypasses the RLS internal filter)", () => {
     expect(THREAD_PAGE).toMatch(/\.eq\("internal", false\)/);
-    expect(THREAD_PAGE).toMatch(/\.filter\(\s*\(m\) => !m\.internal,?\s*\)/);
+    // Assert the invariant (a JS-level `!m.internal` exclusion), not the exact
+    // shape of the predicate: the same filter now also drops 'hq' messages, so
+    // pinning the closing paren made this fail on a change that STRENGTHENED it.
+    expect(THREAD_PAGE).toMatch(/\.filter\(\s*\(m\) =>[^)]*!m\.internal/);
   });
 
   it("renders the reply form wired to replyToPortalThread, hidden on terminal tickets", () => {
