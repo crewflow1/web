@@ -169,28 +169,33 @@ export default async function PortalMessagesPage({
                 (m) => !m.internal,
               );
               return (
-                <li
-                  key={t.id}
-                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-slate-900">
-                      #{t.ticket_number} · {t.subject}
-                    </p>
-                    <span className="shrink-0 text-[11px] text-slate-500">
-                      {t.status}
-                    </span>
-                  </div>
-                  {lastVisible ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-600">
-                      <span className="font-medium">
-                        {lastVisible.author_kind === "hq"
-                          ? `${org.name}: `
-                          : "You: "}
+                <li key={t.id}>
+                  <a
+                    href={`/customer-portal/${token}/messages/${t.id}`}
+                    className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        #{t.ticket_number} · {t.subject}
+                      </p>
+                      <span className="shrink-0 text-[11px] text-slate-500">
+                        {t.status}
                       </span>
-                      {lastVisible.body}
+                    </div>
+                    {lastVisible ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">
+                        <span className="font-medium">
+                          {lastVisible.author_kind === "hq"
+                            ? `${org.name}: `
+                            : "You: "}
+                        </span>
+                        {lastVisible.body}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-[11px] font-medium text-slate-400">
+                      View conversation →
                     </p>
-                  ) : null}
+                  </a>
                 </li>
               );
             })}

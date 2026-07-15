@@ -33,6 +33,10 @@ const JOBS_PAGE = read("app/customer-portal/[token]/jobs/page.tsx");
 const MSG_PAGE = read("app/customer-portal/[token]/messages/page.tsx");
 const INV_PAGE = read("app/customer-portal/[token]/invoices/page.tsx");
 const MSG_ACTION = read("app/customer-portal/_message-action.ts");
+const THREAD_PAGE = read(
+  "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
+);
+const REPLY_ACTION = read("app/customer-portal/_thread-reply-action.ts");
 const UPLOAD_ACTION = read("app/customer-portal/_upload-action.ts");
 const SHELL = read("app/customer-portal/[token]/_shell.tsx");
 const HELPERS = read("app/customer-portal/_helpers.ts");
@@ -203,6 +207,101 @@ describe("Phase 3 — /customer-portal/[token]/messages + sendPortalMessage", ()
 });
 
 // =====================================================================
+// 4b. Portal messaging — thread detail (view full conversation + reply)
+//
+// The list page + sendPortalMessage only OPEN threads. This closes the
+// two-way loop: a dedicated thread route reads one ticket's full
+// conversation and replyToPortalThread appends the customer's reply to
+// the EXISTING ticket. The support_messages_after_insert trigger owns
+// last_reply_at / status; the action never writes them.
+// =====================================================================
+
+describe("Phase 3 — message thread detail + reply", () => {
+  it("thread route exists at messages/[ticketId]", () => {
+    expect(
+      existsSync(
+        resolve(
+          ROOT,
+          "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("list page links each thread to its detail route", () => {
+    expect(MSG_PAGE).toMatch(
+      /href=\{`\/customer-portal\/\$\{token\}\/messages\/\$\{t\.id\}`\}/,
+    );
+  });
+
+  it("thread page fails closed: token → session, missing ticket → InvalidLinkPage", () => {
+    expect(THREAD_PAGE).toMatch(/loadCustomerByPortalToken\(token\)/);
+    expect(THREAD_PAGE).toMatch(/if \(!loaded\) return <InvalidLinkPage/);
+    expect(THREAD_PAGE).toMatch(/if \(!ticketRaw\) return <InvalidLinkPage/);
+  });
+
+  it("scopes the ticket read by org_id AND customer_id AND id (no cross-customer thread access)", () => {
+    expect(THREAD_PAGE).toMatch(
+      /from\("support_tickets"[\s\S]*?\.eq\("id", ticketId\)[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+  });
+
+  it("filters internal messages out EXPLICITLY (admin client bypasses the RLS internal filter)", () => {
+    expect(THREAD_PAGE).toMatch(/\.eq\("internal", false\)/);
+    expect(THREAD_PAGE).toMatch(/\.filter\(\s*\(m\) => !m\.internal,?\s*\)/);
+  });
+
+  it("renders the reply form wired to replyToPortalThread, hidden on terminal tickets", () => {
+    expect(THREAD_PAGE).toMatch(/action=\{replyToPortalThread\}/);
+    expect(THREAD_PAGE).toMatch(/name="ticket_id"/);
+    expect(THREAD_PAGE).toMatch(
+      /ticket\.status === "closed" \|\| ticket\.status === "resolved"/,
+    );
+  });
+
+  it("reply action validates token (uuid) + ticket_id (uuid) + body, and rate-limits", () => {
+    expect(REPLY_ACTION).toMatch(/ticket_id: z\.string\(\)\.uuid\(\)/);
+    expect(REPLY_ACTION).toMatch(/body:[\s\S]*\.min\(1\)\.max\(10_000\)/);
+    expect(REPLY_ACTION).toMatch(
+      /consume\("portal_write", token, DEFAULT_LIMITS\.portal_write\)/,
+    );
+  });
+
+  it("re-verifies ticket ownership before appending (org_id + customer_id)", () => {
+    expect(REPLY_ACTION).toMatch(/loadCustomerByPortalToken\(token\)/);
+    expect(REPLY_ACTION).toMatch(
+      /from\("support_tickets"[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+    expect(REPLY_ACTION).toMatch(/ticket_not_found/);
+  });
+
+  it("appends a customer, non-internal support_messages row", () => {
+    expect(REPLY_ACTION).toMatch(/from\("support_messages" as never\)/);
+    expect(REPLY_ACTION).toMatch(/author_kind: "customer"/);
+    expect(REPLY_ACTION).toMatch(/internal: false/);
+  });
+
+  it("leaves last_reply_at / status to the DB trigger — no duplicated state writes", () => {
+    // The support_messages_after_insert trigger owns these; the action must not
+    // set them itself (that would be a second, divergent source of truth).
+    expect(REPLY_ACTION).not.toMatch(/last_reply_at/);
+    expect(REPLY_ACTION).not.toMatch(/last_reply_kind/);
+    expect(REPLY_ACTION).not.toMatch(/status:/);
+  });
+
+  it("mirrors sendPortalMessage's audience model: audit + revalidate, no HQ notification", () => {
+    expect(REPLY_ACTION).toMatch(/action: "portal\.message\.reply"/);
+    expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/admin\/support`\)/);
+    expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/support`\)/);
+    // notifyOnSupportReplyToHq targets CrewFlow HQ — the wrong audience for a
+    // customer↔org portal reply; sendPortalMessage omits it and so do we.
+    expect(REPLY_ACTION).not.toMatch(
+      /notifyOnSupportReplyToHq|emitNotifications/,
+    );
+  });
+});
+
+// =====================================================================
 // 5. Payment proof upload (invoices portal)
 // =====================================================================
 
@@ -341,6 +440,7 @@ describe("Phase 3 — cross-tenant isolation", () => {
     "app/customer-portal/[token]/invoices/page.tsx",
     "app/customer-portal/[token]/jobs/page.tsx",
     "app/customer-portal/[token]/messages/page.tsx",
+    "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
   ];
 
   for (const p of pages) {
