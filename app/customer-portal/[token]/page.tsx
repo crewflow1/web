@@ -70,9 +70,19 @@ export default async function PortalOverviewPage({
     .order("created_at", { ascending: false })
     .limit(50);
   const allQuotes = quotesData ?? [];
-  const quoteIds = allQuotes.map((q) => q.id);
 
-  let invoices: Array<{
+  // Scope invoices by their own customer anchor (Issue #349 Phase 1), not via
+  // quote_id — authoritative and survives quote loss (see the invoices page).
+  const { data: invoicesData } = await admin
+    .from("invoices")
+    .select(
+      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
+    )
+    .eq("org_id", customer.org_id)
+    .eq("customer_id", customer.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const invoices: Array<{
     id: string;
     number: string;
     status: string;
@@ -82,19 +92,7 @@ export default async function PortalOverviewPage({
     due_date: string | null;
     sent_at: string | null;
     paid_at: string | null;
-  }> = [];
-  if (quoteIds.length > 0) {
-    const { data: invoicesData } = await admin
-      .from("invoices")
-      .select(
-        "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
-      )
-      .eq("org_id", customer.org_id)
-      .in("quote_id", quoteIds)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    invoices = invoicesData ?? [];
-  }
+  }> = invoicesData ?? [];
 
   const openQuotes = allQuotes.filter(
     (q) => q.status === "draft" || q.status === "sent" || q.status === "viewed",

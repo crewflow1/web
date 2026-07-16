@@ -139,8 +139,11 @@ describe("Sprint A item 6 — invoice PDF download from customer portal", () => 
   it("the new pdf route gates on portal token + ownership checks", () => {
     expect(PORTAL_PDF_ROUTE).toMatch(/loadCustomerByPortalToken/);
     expect(PORTAL_PDF_ROUTE).toMatch(/invoice\.org_id\s*!==\s*customer\.org_id/);
+    // Issue #349 Phase 1: ownership now resolves the customer via the one
+    // authority (invoice's own customer_id, quote fallback) so a quote-less
+    // invoice still authorises correctly instead of 404ing.
     expect(PORTAL_PDF_ROUTE).toMatch(
-      /invoice\.quote\?\.customer_id\s*!==\s*customer\.id/,
+      /invoiceCustomerId\(invoice\)\s*!==\s*customer\.id/,
     );
   });
 

@@ -58,6 +58,8 @@ type CandidateRow = {
   paid_at: string | null;
   notes: string | null;
   quote_id: string | null;
+  // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote path.
+  customer: { email: string | null } | null;
   quote: {
     customer: { email: string | null } | null;
   } | null;
@@ -113,6 +115,7 @@ async function runReminders() {
         `
           id, org_id, number, status, sent_at, amount, vat_total, total,
           due_date, paid_at, notes, quote_id,
+          customer:customers!invoices_customer_org_fkey ( email ),
           quote:quotes ( customer:customers ( email ) )
         `,
       )
@@ -159,7 +162,9 @@ async function runReminders() {
         stats.skipped_already_sent++;
         continue;
       }
-      if (!inv.quote?.customer?.email) {
+      // Prefer the invoice's own customer (Issue #349 Phase 1) so an orphaned
+      // invoice (quote deleted) is still chased instead of silently skipped.
+      if (!(inv.customer?.email ?? inv.quote?.customer?.email)) {
         stats.skipped_no_email++;
         continue;
       }
