@@ -41,13 +41,17 @@ const h = vi.hoisted(() => {
   const ops: Op[] = [];
   const cfg: {
     insertError: { message: string; code?: string } | null;
-    existingRow: { processed_at: string | null } | null;
-    existingLookupError: { message: string } | null;
+    // The row the atomic reclaim UPDATE ... RETURNING resolves to: a non-empty
+    // array = "I reclaimed it → dispatch"; [] = "completed or active lease →
+    // skip". This is what the post-#350 concurrency claim reads instead of a
+    // separate processed_at select.
+    reclaimReturns: Array<{ id: string }>;
+    reclaimError: { message: string } | null;
     dispatchThrows: boolean;
   } = {
     insertError: null,
-    existingRow: null,
-    existingLookupError: null,
+    reclaimReturns: [],
+    reclaimError: null,
     dispatchThrows: false,
   };
 
@@ -57,33 +61,33 @@ const h = vi.hoisted(() => {
         ops.push({ table, op: "insert", payload, eqs: [] });
         return Promise.resolve({ data: null, error: cfg.insertError });
       },
-      select: () => {
-        const rec: Op = { table, op: "select", eqs: [] };
-        ops.push(rec);
-        const chain = {
-          eq: (k: string, v: unknown) => {
-            rec.eqs.push([k, v]);
-            return chain;
-          },
-          maybeSingle: () =>
-            Promise.resolve({
-              data: cfg.existingRow,
-              error: cfg.existingLookupError,
-            }),
-        };
-        return chain;
-      },
       update: (payload: Record<string, unknown>) => {
         const rec: Op = { table, op: "update", payload, eqs: [] };
         ops.push(rec);
+        // The billing_events reclaim: .update().eq().is().or().select().
+        // The completion/failure writes: .update().eq() (thenable).
+        const isReclaim = "claimed_at" in payload && "error_message" in payload;
         const chain = {
           eq: (k: string, v: unknown) => {
             rec.eqs.push([k, v]);
-            // The dispatch target is organizations.update — throwing here
-            // simulates a transient failure INSIDE the handler.
             if (table === "organizations" && cfg.dispatchThrows) {
+              // The dispatch target — simulate a transient in-handler failure.
               return Promise.reject(new Error("transient db blip"));
             }
+            if (isReclaim) {
+              // Continue the reclaim chain: .is().or().select().
+              const reclaimChain = {
+                is: () => reclaimChain,
+                or: () => reclaimChain,
+                select: () =>
+                  Promise.resolve({
+                    data: cfg.reclaimReturns,
+                    error: cfg.reclaimError,
+                  }),
+              };
+              return reclaimChain;
+            }
+            // markProcessed / markFailed terminal update.
             return Promise.resolve({ error: null });
           },
         };
@@ -124,20 +128,25 @@ const dispatched = () => h.ops.some((o) => o.table === "organizations");
 /** billing_events UPDATEs, in order. */
 const billingUpdates = () =>
   h.ops.filter((o) => o.table === "billing_events" && o.op === "update");
-/** The single billing_events UPDATE — asserted to exist, so callers get a narrowed value. */
-function onlyBillingUpdate(): Op {
-  const upd = billingUpdates();
-  expect(upd).toHaveLength(1);
-  const first = upd[0];
-  if (!first) throw new Error("expected exactly one billing_events update");
+/** The reclaim UPDATE (has both claimed_at + error_message), if any. */
+const reclaimUpdate = () =>
+  billingUpdates().find(
+    (o) => o.payload && "claimed_at" in o.payload && "error_message" in o.payload,
+  );
+/** The terminal completion/failure UPDATE (markProcessed / markFailed). */
+function terminalBillingUpdate(): Op {
+  const term = billingUpdates().filter((o) => o !== reclaimUpdate());
+  expect(term).toHaveLength(1);
+  const first = term[0];
+  if (!first) throw new Error("expected exactly one terminal billing_events update");
   return first;
 }
 
 beforeEach(() => {
   h.ops.length = 0;
   h.cfg.insertError = null;
-  h.cfg.existingRow = null;
-  h.cfg.existingLookupError = null;
+  h.cfg.reclaimReturns = [];
+  h.cfg.reclaimError = null;
   h.cfg.dispatchThrows = false;
 });
 
@@ -152,11 +161,18 @@ describe("first delivery — success", () => {
 
   it("stamps processed_at and clears any error", async () => {
     await processStripeEvent(customerEvent());
-    const upd = onlyBillingUpdate();
+    const upd = terminalBillingUpdate();
     expect(upd.payload).toHaveProperty("processed_at");
     expect(upd.payload?.processed_at).toBeTruthy();
     expect(upd.payload?.error_message).toBeNull();
     expect(upd.eqs).toContainEqual(["event_id", EVENT_ID]);
+  });
+
+  it("stamps claimed_at on the initial insert (the atomic first claim)", async () => {
+    await processStripeEvent(customerEvent());
+    const ins = h.ops.find((o) => o.table === "billing_events" && o.op === "insert");
+    expect(ins?.payload).toHaveProperty("claimed_at");
+    expect(ins?.payload?.claimed_at).toBeTruthy();
   });
 });
 
@@ -167,13 +183,13 @@ describe("failed events remain retryable", () => {
       "transient db blip",
     );
     // The crux: a failed event must not look done, or the retry is refused.
-    expect(onlyBillingUpdate().payload).not.toHaveProperty("processed_at");
+    expect(terminalBillingUpdate().payload).not.toHaveProperty("processed_at");
   });
 
   it("records the error without falsely signalling success", async () => {
     h.cfg.dispatchThrows = true;
     await expect(processStripeEvent(customerEvent())).rejects.toThrow();
-    const upd = onlyBillingUpdate();
+    const upd = terminalBillingUpdate();
     expect(String(upd.payload?.error_message)).toContain("transient db blip");
     expect(upd.payload?.processed_at).toBeUndefined();
   });
@@ -184,11 +200,12 @@ describe("failed events remain retryable", () => {
   });
 });
 
-describe("retried failed event — processed again", () => {
-  it("falls through to dispatch when the stored row is unprocessed", async () => {
-    // The retry: INSERT collides, but the row was never completed.
+describe("retried / orphaned event — reclaimed and processed again", () => {
+  it("dispatches when the atomic reclaim WINS (row returned)", async () => {
+    // INSERT collides, but the reclaim UPDATE matched a releasable row
+    // (failed, or lease-expired) and returned it.
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
-    h.cfg.existingRow = { processed_at: null };
+    h.cfg.reclaimReturns = [{ id: "be-1" }];
 
     const res = await processStripeEvent(customerEvent());
 
@@ -198,51 +215,55 @@ describe("retried failed event — processed again", () => {
 
   it("a successful retry transitions the event to processed", async () => {
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
-    h.cfg.existingRow = { processed_at: null };
+    h.cfg.reclaimReturns = [{ id: "be-1" }];
 
     await processStripeEvent(customerEvent());
 
-    const upd = onlyBillingUpdate();
+    const upd = terminalBillingUpdate();
     expect(upd.payload?.processed_at).toBeTruthy();
     expect(upd.payload?.error_message).toBeNull(); // stale error cleared
   });
 
-  it("checks processed_at on the stored row, keyed by event_id", async () => {
+  it("reclaims atomically (UPDATE ... RETURNING), never read-then-act", async () => {
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
-    h.cfg.existingRow = { processed_at: null };
+    h.cfg.reclaimReturns = [{ id: "be-1" }];
     await processStripeEvent(customerEvent());
-    const lookup = h.ops.find(
-      (o) => o.table === "billing_events" && o.op === "select",
-    );
-    expect(lookup).toBeDefined();
-    expect(lookup?.eqs).toContainEqual(["event_id", EVENT_ID]);
+    // The claim is an UPDATE keyed by event_id — no prior SELECT of the row.
+    const reclaim = reclaimUpdate();
+    expect(reclaim).toBeDefined();
+    expect(reclaim?.eqs).toContainEqual(["event_id", EVENT_ID]);
+    expect(h.ops.some((o) => o.op === "select")).toBe(false);
   });
 });
 
-describe("successful duplicates stay idempotent", () => {
-  it("short-circuits and does NOT run business logic twice", async () => {
+describe("concurrent loser / completed event — stays idempotent", () => {
+  it("short-circuits and does NOT run business logic when the reclaim loses", async () => {
+    // Reclaim returns NO row → completed, or an active lease is held by a
+    // concurrent winner. Either way the loser must run nothing.
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
-    h.cfg.existingRow = { processed_at: "2026-07-15T00:00:00.000Z" };
+    h.cfg.reclaimReturns = [];
 
     const res = await processStripeEvent(customerEvent());
 
     expect(res.status).toBe("duplicate");
     expect(dispatched()).toBe(false); // handlers must not re-run
-    expect(billingUpdates()).toHaveLength(0); // nothing re-stamped
+    // Only the reclaim attempt itself; no terminal stamp.
+    expect(billingUpdates().filter((o) => o !== reclaimUpdate())).toHaveLength(0);
   });
 });
 
-describe("fails safe when the duplicate lookup itself errors", () => {
+describe("fails safe when the reclaim itself errors", () => {
   it("throws rather than guessing — no drop, no double-run", async () => {
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
-    h.cfg.existingLookupError = { message: "connection reset" };
+    h.cfg.reclaimError = { message: "connection reset" };
 
     await expect(processStripeEvent(customerEvent())).rejects.toThrow(
-      /duplicate lookup failed/,
+      /reclaim failed/,
     );
-    // Neither outcome was assumed: nothing dispatched, nothing stamped.
+    // Neither outcome was assumed: nothing dispatched, no terminal stamp. (The
+    // reclaim UPDATE itself was attempted — that's the op that errored.)
     expect(dispatched()).toBe(false);
-    expect(billingUpdates()).toHaveLength(0);
+    expect(billingUpdates().filter((o) => o !== reclaimUpdate())).toHaveLength(0);
   });
 });
 
