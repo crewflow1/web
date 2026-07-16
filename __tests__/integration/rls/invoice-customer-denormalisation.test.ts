@@ -109,7 +109,13 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
 
     const q = await svc
       .from("quotes")
-      .insert({ org_id: orgA, customer_id: custA, subtotal: 100, vat_total: 0 })
+      .insert({
+        org_id: orgA,
+        customer_id: custA,
+        number: `${TOKEN}-Q-1`, // quotes.number is NOT NULL, no default
+        subtotal: 100,
+        vat_total: 0,
+      })
       .select("id")
       .single();
     expect(q.error, q.error?.message).toBeNull();
@@ -154,7 +160,13 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
     const svc = db(serviceClient());
     const q = await svc
       .from("quotes")
-      .insert({ org_id: orgA, customer_id: custA, subtotal: 50, vat_total: 0 })
+      .insert({
+        org_id: orgA,
+        customer_id: custA,
+        number: `${TOKEN}-Q-2`, // NOT NULL, no default
+        subtotal: 50,
+        vat_total: 0,
+      })
       .select("id")
       .single();
     const qid = q.data?.id as string;
@@ -208,6 +220,37 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
   // -------------------------------------------------------------------
   // Portal + isolation
   // -------------------------------------------------------------------
+
+  it("the composite-FK customer embed resolves (send-invoice / reminders path)", async () => {
+    // send-invoice.ts and the reminders cron read the customer via the embed
+    // `customers!invoices_customer_org_fkey`. That hint resolves at QUERY time
+    // against PostgREST's schema cache, so neither the migration nor the direct
+    // inserts above prove it — this does, by issuing the exact embed shape.
+    const svc = db(serviceClient());
+    const inv = await mkInvoice(orgA, { customer_id: custA });
+    const invId = inv.data?.id as string;
+
+    const res = await (
+      svc.from("invoices") as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: Record<string, unknown> | null;
+              error: { message: string; code?: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .select("id, customer:customers!invoices_customer_org_fkey ( id, name )")
+      .eq("id", invId)
+      .maybeSingle();
+
+    // A bad relationship hint surfaces as a PostgREST error (PGRST200) here.
+    expect(res.error, res.error?.message).toBeNull();
+    const embedded = res.data?.customer as { id: string; name: string } | null;
+    expect(embedded?.id).toBe(custA);
+  });
 
   it("portal customer-scoped read returns the invoice by its own customer_id", async () => {
     // The portal now scopes invoices by customer_id (not quote_id). Prove the
