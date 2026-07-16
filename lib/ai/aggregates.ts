@@ -1,5 +1,10 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import {
+  invoiceBusinessToday,
+  invoiceDaysOverdue,
+  isInvoiceOverdue,
+} from "@/lib/invoices/overdue";
 import type {
   ActivitySummaryResponse,
   LeadInsightsResponse,
@@ -148,31 +153,31 @@ export async function computeActivitySummary(
   }
   quotes_unviewed_7d.sort((a, b) => b.days_stale - a.days_stale);
 
-  // --- 4) overdue invoices: sent > 30d, status sent/overdue ----------------
-  const thirtyDaysAgo = new Date(Date.now() - 30 * DAY_MS).toISOString();
+  // --- 4) overdue invoices -------------------------------------------------
+  // Uses the one authority (lib/invoices/overdue.ts). This previously ran its
+  // own definition — `sent_at < now-30d && !paid_at`, with days_overdue
+  // measured from sent_at — which is a different question: 30 days after
+  // SENDING is not overdue under 60-day terms, and it ignored due_date
+  // entirely. The dashboard meanwhile used due_date, so the two surfaces
+  // disagreed about which invoices were overdue and by how long.
+  const todayIso = invoiceBusinessToday();
   const { data: invoices } = await supabase
     .from("invoices")
     .select("id, number, status, total, sent_at, due_date, paid_at");
 
   const invoices_overdue_30d: StalledInvoice[] = [];
   for (const inv of invoices ?? []) {
-    if (
-      (inv.status === "sent" || inv.status === "overdue") &&
-      inv.sent_at &&
-      inv.sent_at < thirtyDaysAgo &&
-      !inv.paid_at
-    ) {
-      const daysOverdue = Math.floor((Date.now() - +new Date(inv.sent_at)) / DAY_MS);
-      invoices_overdue_30d.push({
-        id: inv.id,
-        number: inv.number ?? "—",
-        total: Number(inv.total ?? 0),
-        sent_at: inv.sent_at,
-        due_date: inv.due_date,
-        days_overdue: daysOverdue,
-        href: `/invoices/${inv.id}`,
-      });
-    }
+    if (!isInvoiceOverdue(inv, todayIso)) continue;
+    invoices_overdue_30d.push({
+      id: inv.id,
+      number: inv.number ?? "—",
+      total: Number(inv.total ?? 0),
+      sent_at: inv.sent_at,
+      due_date: inv.due_date,
+      // Days past the DEADLINE now, not days since sending.
+      days_overdue: invoiceDaysOverdue(inv, todayIso) ?? 0,
+      href: `/invoices/${inv.id}`,
+    });
   }
   invoices_overdue_30d.sort((a, b) => b.days_overdue - a.days_overdue);
 

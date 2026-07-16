@@ -58,7 +58,12 @@ function chainable() {
     "select",
     "eq",
     "neq",
+    "gt",
     "gte",
+    // `lt` is used by the derived-overdue count (status IN collectable AND
+    // due_date < today). `lte` was already here; the pair is listed together
+    // so the stub keeps modelling the real query surface.
+    "lt",
     "lte",
     "in",
     "not",

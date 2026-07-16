@@ -3,6 +3,10 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { uploadPaymentProof } from "../../_upload-action";
+import {
+  invoiceBusinessToday,
+  invoiceDisplayStatus,
+} from "@/lib/invoices/overdue";
 
 const UPLOAD_ERRORS: Record<string, string> = {
   no_file: "Choose a file to upload first.",
@@ -74,6 +78,9 @@ export default async function PortalInvoicesPage({
   const loaded = await loadCustomerByPortalToken(token);
   if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
+  // Derived overdue — the customer sees the same definition the org's dashboard
+  // counts. Before this, an invoice 60 days late still read "sent" here.
+  const todayIso = invoiceBusinessToday();
 
   const admin = createAdminClient();
 
@@ -216,9 +223,10 @@ export default async function PortalInvoicesPage({
                   </div>
                   <div className="shrink-0 text-right">
                     <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[inv.status] ?? "bg-slate-100 text-slate-700"}`}
+                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoiceDisplayStatus(inv, todayIso)] ?? "bg-slate-100 text-slate-700"}`}
                     >
-                      {STATUS_LABELS[inv.status] ?? inv.status}
+                      {STATUS_LABELS[invoiceDisplayStatus(inv, todayIso)] ??
+                        invoiceDisplayStatus(inv, todayIso)}
                     </span>
                     <div className="mt-1 text-sm font-semibold text-slate-900">
                       {GBP.format(total)}
