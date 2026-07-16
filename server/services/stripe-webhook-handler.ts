@@ -106,56 +106,96 @@ export type ProcessResult =
   | { status: "skipped"; event_id: string; reason: string }
   | { status: "processed"; event_id: string; actions: ReadonlyArray<string> };
 
+/**
+ * How long a billing_events claim is honoured before it is treated as orphaned.
+ *
+ * 15 minutes, matching the automation dispatcher's lease
+ * (20260912000000_automation_runs_claim_semantics). The webhook route sets no
+ * maxDuration and Stripe closes the connection at ~20s then retries, so nothing
+ * legitimate runs anywhere near this — an older claim is provably dead.
+ */
+export const BILLING_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
 export async function processStripeEvent(
   event: Stripe.Event,
 ): Promise<ProcessResult> {
-  // 1. Insert into billing_events. `event_id` carries a UNIQUE constraint, so a
-  //    second delivery of the same event collides here.
+  // 1. CLAIM the event before any business logic runs. `event_id` is UNIQUE, so
+  //    the INSERT is itself the atomic first-delivery claim: exactly one
+  //    concurrent caller inserts, the rest collide with 23505.
+  //
+  //    `claimed_at = now()` on the insert is the lease stamp a concurrent loser
+  //    reads to tell "someone is working on this right now" from "orphaned".
   const orgId = await orgIdFromEvent(event);
   const insertRes = await adminTable("billing_events").insert({
     event_id: event.id,
     event_type: event.type,
     org_id: orgId,
     payload: event as unknown as Record<string, unknown>,
+    claimed_at: new Date().toISOString(),
   });
   if (insertRes.error) {
     const isDuplicate =
       insertRes.error.code === "23505" ||
       insertRes.error.message?.includes("duplicate");
     if (!isDuplicate) {
-      // Some other DB error — we throw so the route returns 500 and
+      // A real DB error — surfaced, not swallowed. Throw so the route 500s and
       // Stripe retries.
       throw new Error(
         `billing_events insert failed: ${insertRes.error.message}`,
       );
     }
 
-    // A row already exists for this event_id — but that is NOT proof it was
-    // handled. A previous attempt may have died mid-dispatch, leaving the row
-    // stored and processed_at NULL. Short-circuiting on mere existence is what
-    // converted Stripe's at-least-once retry into at-most-once: the retry found
-    // the row, said "duplicate", and the event was never processed.
+    // A row already exists for this event_id. Existence is NOT proof of
+    // completion. Try to RECLAIM it with ONE atomic conditional UPDATE — never
+    // a read-then-act, whose window let a concurrent loser dispatch a second
+    // time while the winner was still working.
     //
-    // So we short-circuit ONLY on a genuinely completed row. An unprocessed one
-    // falls through to dispatch — which is exactly what the retry is for.
-    const existingRes = await adminTable("billing_events")
-      .select("processed_at")
+    // The UPDATE matches only a row that is genuinely takeable:
+    //   - processed_at IS NULL           — never steal completed work, and
+    //   - error_message IS NOT NULL      — a released failure, retry now, OR
+    //   - claimed_at < now() - 15 min    — an orphaned in-flight claim.
+    // A live claim (processed_at NULL, error_message NULL, claimed_at recent)
+    // matches NEITHER branch, so it is left alone: the concurrent loser reclaims
+    // nothing and runs nothing.
+    const leaseCutoff = new Date(
+      Date.now() - BILLING_CLAIM_LEASE_MS,
+    ).toISOString();
+    const reclaimRes = await (
+      adminTable("billing_events") as unknown as {
+        update: (row: unknown) => {
+          eq: (k: string, v: unknown) => {
+            is: (k: string, v: unknown) => {
+              or: (f: string) => {
+                select: (cols: string) => Promise<{
+                  data: Array<{ id: string }> | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
+        };
+      }
+    )
+      .update({ claimed_at: new Date().toISOString(), error_message: null })
       .eq("event_id", event.id)
-      .maybeSingle();
-    if (existingRes.error) {
-      // Can't tell whether it was processed → throw so Stripe retries rather
-      // than risk either dropping the event or double-running the handler.
+      .is("processed_at", null)
+      .or(`error_message.not.is.null,claimed_at.lt.${leaseCutoff}`)
+      .select("id");
+
+    if (reclaimRes.error) {
+      // Cannot tell whether we hold the claim → throw so Stripe retries rather
+      // than risk dropping the event or double-running the handler.
       throw new Error(
-        `billing_events duplicate lookup failed: ${existingRes.error.message}`,
+        `billing_events reclaim failed: ${reclaimRes.error.message}`,
       );
     }
-    const existing = existingRes.data as { processed_at: string | null } | null;
-    if (existing?.processed_at) {
-      // Genuinely processed before → ack and stop. This is the idempotency
-      // guarantee: the business logic below does not run twice.
+    if ((reclaimRes.data?.length ?? 0) === 0) {
+      // Completed, or an active lease is held by a concurrent winner. Either
+      // way: ack and run NOTHING. This is the idempotency + concurrency
+      // guarantee — business logic below does not run twice.
       return { status: "duplicate", event_id: event.id };
     }
-    // Stored but never processed → fall through and dispatch (the retry).
+    // Reclaimed an orphaned/failed row → fall through and dispatch (the retry).
   }
 
   // 2. Skip event types we don't process — but still mark stored.
@@ -657,14 +697,23 @@ async function orgIdByCustomer(customerId: string): Promise<string | null> {
  * failed event should not leave the old error behind.
  */
 async function markProcessed(eventId: string, note: string): Promise<void> {
-  await adminTable("billing_events")
+  // Success is terminal: processed_at stamped (never reclaimed thereafter, even
+  // with an old claimed_at) and any stale error cleared. claimed_at is left as
+  // it is — processed_at, not the lease, is what makes a row terminal.
+  const res = await adminTable("billing_events")
     .update({
       processed_at: new Date().toISOString(),
       error_message: null,
     })
     .eq("event_id", eventId);
   void note;
-  // Suppress lint for the awaited expression's discarded promise above.
+  // Supabase returns { error } rather than throwing — check it explicitly.
+  if (res.error) {
+    console.error("[stripe-webhook] markProcessed failed", {
+      event_id: eventId,
+      message: res.error.message,
+    });
+  }
 }
 
 /**
@@ -683,8 +732,18 @@ async function markProcessed(eventId: string, note: string): Promise<void> {
  * delivery does what it is designed to do.
  */
 async function markFailed(eventId: string, error: string): Promise<void> {
-  await adminTable("billing_events")
+  // Release the claim without completing: error_message set, processed_at left
+  // NULL. That combination is reclaimable IMMEDIATELY (the reclaim's
+  // `error_message IS NOT NULL` branch) — a retry need not wait out the lease,
+  // because a live handler recorded this and nothing is in flight.
+  const res = await adminTable("billing_events")
     .update({ error_message: error })
     .eq("event_id", eventId);
-  // Suppress lint for the awaited expression's discarded promise above.
+  // Supabase returns { error } rather than throwing — check it explicitly.
+  if (res.error) {
+    console.error("[stripe-webhook] markFailed failed", {
+      event_id: eventId,
+      message: res.error.message,
+    });
+  }
 }
