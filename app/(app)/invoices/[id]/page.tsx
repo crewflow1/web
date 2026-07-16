@@ -7,6 +7,10 @@ import { PaymentsPanel } from "./_payments-panel";
 import { PaymentProofsPanel } from "./_payment-proofs-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import {
+  invoiceBusinessToday,
+  invoiceDisplayStatus,
+} from "@/lib/invoices/overdue";
 
 /**
  * Invoice detail view.
@@ -105,7 +109,14 @@ export default async function InvoiceDetailPage({
       ).data ?? []
     : [];
 
+  // Two different questions, deliberately kept apart:
+  //   status        — what is STORED. The controls need this to know which
+  //                   button is current, and it is what a write would replace.
+  //   displayStatus — what a human should SEE. Overdue is derived, so a
+  //                   past-due invoice reads "overdue" without anything having
+  //                   been written. See lib/invoices/overdue.ts.
   const status = invoice.status as InvoiceStatus;
+  const displayStatus = invoiceDisplayStatus(invoice, invoiceBusinessToday());
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -135,9 +146,9 @@ export default async function InvoiceDetailPage({
             Download PDF
           </a>
           <span
-            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
+            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[displayStatus]}`}
           >
-            {status}
+            {displayStatus}
           </span>
         </div>
       </header>

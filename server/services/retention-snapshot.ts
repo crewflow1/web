@@ -1,5 +1,9 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import {
+  OVERDUE_COLLECTABLE_STATUSES,
+  invoiceBusinessToday,
+} from "@/lib/invoices/overdue";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import type { OnboardingSnapshot } from "@/lib/onboarding/checklist";
 import type {
@@ -98,11 +102,28 @@ export async function buildRetentionSnapshot(
       .select("total, status")
       .eq("org_id", orgId)
       .in("status", ["sent", "paid", "awaiting_payment", "partially_paid", "overdue"]),
+    // Overdue count — DERIVED, matching lib/invoices/overdue.ts exactly.
+    //
+    // This previously filtered `.eq("status", "overdue")`, which counted only
+    // invoices someone had manually marked. Nothing kept that value current, so
+    // the figure was effectively always 0 — and it feeds `signals.ts`
+    // (`score -= min(overdue * 4, 20)`) and ai-question's "No overdue invoices
+    // right now." Both were therefore reporting on a number that never moved.
+    //
+    // BEHAVIOUR CHANGE, called out deliberately: this now returns real counts,
+    // so health scores can drop by up to 20 points where overdue invoices
+    // genuinely exist. That is the correct figure finally being counted, not a
+    // regression — and suppressing it to preserve the old score would be
+    // preserving a bug. See the PR report.
+    //
+    // The predicate is expressed at the DB (status ∈ collectable AND due_date <
+    // today) so it selects exactly the population isInvoiceOverdue() accepts.
     supabase
       .from("invoices")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
-      .eq("status", "overdue"),
+      .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
+      .lt("due_date", invoiceBusinessToday()),
     // Phase 2 — open support tickets count toward health drag.
     // "open" = anything not 'resolved' / 'closed'. Cast past the
     // generated supabase types since `support_tickets` is not yet

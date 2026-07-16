@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
+import { isInvoiceOverdue } from "@/lib/invoices/overdue";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
@@ -349,13 +350,24 @@ export default async function DashboardPage() {
     if (inv.created_at && inv.created_at >= monthStart) {
       invoicedThisMonth += total;
     }
+    // Overdue is DERIVED by the one authority (lib/invoices/overdue.ts) and
+    // counted OUTSIDE the outstanding gate below. That gate admits only
+    // `sent`/`overdue`, but money is equally owed on `awaiting_payment` and
+    // `partially_paid` — so counting overdue inside it would keep this tile
+    // selecting a narrower population than its own drill-through
+    // (/invoices?status=overdue), which is the mismatch this change ends. The
+    // outstanding / due-this-week tiles keep their existing status gate: they
+    // are different metrics and not in scope here.
+    const overdue = isInvoiceOverdue(inv, todayIso);
+    if (overdue) {
+      overdueCount++;
+      overdueTotal += total;
+    }
     if (inv.status === "sent" || inv.status === "overdue") {
       outstandingCount++;
       outstandingTotal += total;
-      if (inv.due_date && inv.due_date < todayIso) {
-        overdueCount++;
-        overdueTotal += total;
-      } else if (
+      if (
+        !overdue &&
         inv.due_date &&
         inv.due_date >= todayIso &&
         inv.due_date <= weekFromNowIso
