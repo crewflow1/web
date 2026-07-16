@@ -23,6 +23,14 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 
+  // -- WhatsApp Business Cloud API (Meta) --------------------------------
+  // App secret: keys the X-Hub-Signature-256 HMAC on the inbound webhook. Absent
+  // ⇒ verifyMetaSignature fails closed ⇒ the webhook rejects everything (dark).
+  WHATSAPP_APP_SECRET: z.string().optional(),
+  // Verify token: the shared string echoed back during Meta's GET hub.challenge
+  // subscription handshake. Absent ⇒ the handshake fails closed.
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
