@@ -746,6 +746,10 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       .insert({
         org_id: quote.org_id,
         quote_id: quote.id,
+        // Denormalised customer anchor (Issue #349 Phase 1) — stamped from the
+        // quote at creation so the invoice keeps its customer identity if the
+        // quote is later deleted. Composite FK guarantees same-org.
+        customer_id: quote.customer_id,
         number: invNumber as unknown as string,
         amount: quote.subtotal,
         vat_total: quote.vat_total,
@@ -945,6 +949,9 @@ export async function acceptQuoteByToken(
       .insert({
         org_id: quote.org_id,
         quote_id: quote.id,
+        // Denormalised customer anchor (Issue #349 Phase 1) — see the owner
+        // auto-invoice path above. Same composite-FK guarantee.
+        customer_id: quote.customer_id,
         number: invNumber as unknown as string,
         amount: quote.subtotal,
         vat_total: quote.vat_total,

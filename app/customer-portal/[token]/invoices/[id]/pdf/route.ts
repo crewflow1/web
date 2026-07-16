@@ -3,6 +3,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
+import { invoiceCustomerId } from "@/lib/invoices/customer";
 
 export const runtime = "nodejs";
 
@@ -36,7 +37,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     .select(
       `
         id, number, status, amount, vat_total, total, due_date, paid_at,
-        notes, quote_id, org_id,
+        notes, quote_id, org_id, customer_id,
         quote:quotes ( customer_id, customer:customers ( name ) ),
         org:organizations ( name, phone, vat_number, logo_url, address, bank_details )
       `,
@@ -48,12 +49,14 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Org + customer ownership check. The invoice must belong to this
-  // customer's org AND its parent quote must be linked to this customer.
+  // Org + customer ownership check. The invoice must belong to this customer's
+  // org AND to this customer. Resolve the customer via the ONE authority
+  // (Issue #349 Phase 1): the invoice's own customer_id, quote fallback — so a
+  // quote-less invoice still authorises correctly instead of 404ing.
   if (invoice.org_id !== customer.org_id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (invoice.quote?.customer_id !== customer.id) {
+  if (invoiceCustomerId(invoice) !== customer.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

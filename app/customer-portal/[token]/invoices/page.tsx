@@ -84,15 +84,21 @@ export default async function PortalInvoicesPage({
 
   const admin = createAdminClient();
 
-  // Get this customer's quote IDs first, then invoices linked to them.
-  const { data: customerQuotes } = await admin
-    .from("quotes")
-    .select("id")
+  // Scope invoices by their OWN customer anchor (Issue #349 Phase 1), not by
+  // walking quote -> customer. This is authoritative and survives quote loss:
+  // an invoice whose quote was deleted keeps its customer_id, so it still
+  // appears here instead of vanishing. org_id + customer_id keeps it strictly
+  // this customer's, on the RLS-bypassing admin client.
+  const { data: invoicesData } = await admin
+    .from("invoices")
+    .select(
+      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, created_at",
+    )
     .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id);
-  const quoteIds = (customerQuotes ?? []).map((q) => q.id);
-
-  let invoices: Array<{
+    .eq("customer_id", customer.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  const invoices: Array<{
     id: string;
     number: string;
     status: string;
@@ -103,20 +109,7 @@ export default async function PortalInvoicesPage({
     sent_at: string | null;
     paid_at: string | null;
     created_at: string;
-  }> = [];
-
-  if (quoteIds.length > 0) {
-    const { data } = await admin
-      .from("invoices")
-      .select(
-        "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, created_at",
-      )
-      .eq("org_id", customer.org_id)
-      .in("quote_id", quoteIds)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    invoices = data ?? [];
-  }
+  }> = invoicesData ?? [];
 
   // Paid-so-far per invoice for the partial-payment display.
   const paidByInvoice = new Map<string, number>();

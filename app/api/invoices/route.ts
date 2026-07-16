@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
   // need its totals).
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
-    .select("id, subtotal, vat_total, total, currency, org_id, status")
+    .select("id, subtotal, vat_total, total, currency, org_id, status, customer_id")
     .eq("id", parsed.data.quote_id)
     .maybeSingle();
   if (qErr) {
@@ -114,6 +114,11 @@ export async function POST(request: NextRequest) {
     .insert({
       org_id: ctx.org.id,
       quote_id: quote.id,
+      // Denormalised customer anchor (Issue #349 Phase 1): stamp it at creation
+      // from the source quote so the invoice keeps its customer identity even if
+      // the quote is later deleted. The composite FK (customer_id, org_id) ->
+      // customers (id, org_id) guarantees it's a same-org customer.
+      customer_id: (quote as { customer_id: string | null }).customer_id ?? null,
       number: numberRpc as unknown as string,
       amount: Number(quote.subtotal ?? 0),
       vat_total: Number(quote.vat_total ?? 0),
