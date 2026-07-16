@@ -6,6 +6,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/overdue-invoices",
+      "schedule": "30 9 * * *"
+    },
+    {
       "path": "/api/cron/quote-followup",
       "schedule": "0 11 * * *"
     },
