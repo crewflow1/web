@@ -780,6 +780,48 @@ export type Database = {
           },
         ]
       }
+      invoice_line_items: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          invoice_id: string
+          line_total: number
+          org_id: string
+          qty: number
+          sort_order: number
+          unit: string
+          unit_price: number
+          vat_rate: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          id?: string
+          invoice_id: string
+          line_total?: number
+          org_id: string
+          qty?: number
+          sort_order?: number
+          unit?: string
+          unit_price?: number
+          vat_rate?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          invoice_id?: string
+          line_total?: number
+          org_id?: string
+          qty?: number
+          sort_order?: number
+          unit?: string
+          unit_price?: number
+          vat_rate?: number
+        }
+        Relationships: []
+      }
       invoice_payments: {
         Row: {
           amount: number

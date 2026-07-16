@@ -60,13 +60,13 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: lines } = invoice.quote_id
-    ? await admin
-        .from("quote_line_items")
-        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-        .eq("quote_id", invoice.quote_id)
-        .order("sort_order", { ascending: true })
-    : { data: [] };
+  // Invoice-owned snapshot (Issue #349 Phase 2): the customer's PDF shows the
+  // invoice as billed, unaffected by any later quote edit or deletion.
+  const { data: lines } = await admin
+    .from("invoice_line_items")
+    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+    .eq("invoice_id", invoice.id)
+    .order("sort_order", { ascending: true });
 
   const input: InvoicePdfInput = {
     number: invoice.number,

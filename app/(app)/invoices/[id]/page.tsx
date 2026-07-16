@@ -98,16 +98,18 @@ export default async function InvoiceDetailPage({
   const invTotal = Number(invoice.total ?? 0);
   const outstanding = Math.max(0, invTotal - paidTotal);
 
-  // Line items from the source quote (if still present).
-  const lineItems = invoice.quote_id
-    ? (
-        await supabase
-          .from("quote_line_items")
-          .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
-          .eq("quote_id", invoice.quote_id)
-          .order("sort_order", { ascending: true })
-      ).data ?? []
-    : [];
+  // Line items from the invoice's own immutable snapshot (Issue #349 Phase 2),
+  // not the live quote — so a later quote edit or deletion can't rewrite this
+  // historical invoice. The snapshot is created atomically by the
+  // invoices_snapshot_line_items trigger, so every invoice has one.
+  const lineItems =
+    (
+      await supabase
+        .from("invoice_line_items")
+        .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", id)
+        .order("sort_order", { ascending: true })
+    ).data ?? [];
 
   // Two different questions, deliberately kept apart:
   //   status        — what is STORED. The controls need this to know which
