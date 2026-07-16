@@ -62,7 +62,7 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
     fields: Record<string, unknown>,
   ) => {
     n += 1;
-    const res = await db(serviceClient())
+    return db(serviceClient())
       .from("invoices")
       .insert({
         org_id: org,
@@ -74,7 +74,28 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
       })
       .select("id, customer_id, quote_id, org_id")
       .single();
-    return res;
+  };
+
+  /**
+   * A fresh quote for THIS customer. quote <-> invoice is 1:1
+   * (invoices_quote_id_unique partial index), so any invoice that links a
+   * quote_id needs its own quote — reusing one collides on that index.
+   */
+  const mkQuote = async (org: string, customerId: string) => {
+    n += 1;
+    const res = await db(serviceClient())
+      .from("quotes")
+      .insert({
+        org_id: org,
+        customer_id: customerId,
+        number: `${TOKEN}-Q-${n}`,
+        subtotal: 100,
+        vat_total: 0,
+      })
+      .select("id")
+      .single();
+    expect(res.error, res.error?.message).toBeNull();
+    return res.data?.id as string;
   };
 
   beforeAll(async () => {
@@ -158,19 +179,9 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
 
   it("keeps customer_id after the source quote is deleted", async () => {
     const svc = db(serviceClient());
-    const q = await svc
-      .from("quotes")
-      .insert({
-        org_id: orgA,
-        customer_id: custA,
-        number: `${TOKEN}-Q-2`, // NOT NULL, no default
-        subtotal: 50,
-        vat_total: 0,
-      })
-      .select("id")
-      .single();
-    const qid = q.data?.id as string;
+    const qid = await mkQuote(orgA, custA);
     const inv = await mkInvoice(orgA, { customer_id: custA, quote_id: qid });
+    expect(inv.error, inv.error?.message).toBeNull();
     const invId = inv.data?.id as string;
 
     // Delete the quote — quote_id is ON DELETE SET NULL, customer_id must remain.
@@ -196,7 +207,11 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
     // same backfill statement the migration runs, and confirm it fills exactly
     // this row from its quote — same-org only.
     const svc = db(serviceClient());
-    const inv = await mkInvoice(orgA, { customer_id: null, quote_id: quoteA });
+    // Its OWN quote — quoteA is already linked to test 1's invoice, and
+    // invoices_quote_id_unique forbids a second invoice on the same quote.
+    const qid = await mkQuote(orgA, custA);
+    const inv = await mkInvoice(orgA, { customer_id: null, quote_id: qid });
+    expect(inv.error, inv.error?.message).toBeNull();
     const invId = inv.data?.id as string;
     expect(inv.data?.customer_id).toBeNull();
 
