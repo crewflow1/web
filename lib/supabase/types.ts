@@ -363,6 +363,8 @@ export type Database = {
           org_id: string
           phone: string | null
           portal_token: string | null
+          portal_token_expires_at: string | null
+          portal_token_last_used_at: string | null
           postcode: string | null
           updated_at: string
         }
@@ -380,6 +382,8 @@ export type Database = {
           org_id: string
           phone?: string | null
           portal_token?: string | null
+          portal_token_expires_at?: string | null
+          portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
         }
@@ -397,6 +401,8 @@ export type Database = {
           org_id?: string
           phone?: string | null
           portal_token?: string | null
+          portal_token_expires_at?: string | null
+          portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
         }
