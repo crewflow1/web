@@ -1,7 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processInboundEnquiry } from "@/server/services/receptionist";
-import { recordSmsDeliveryReceipt } from "@/server/services/receptionist";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   normalizeMetaMessages,
@@ -265,18 +264,14 @@ async function handleStatus(
     return;
   }
 
-  try {
-    // Wire-now-inert: correlates by provider message id. Until outbound WhatsApp
-    // transports exist (a later ring) there is nothing to correlate, so this is a
-    // no-op record. It never throws.
-    if (st.receipt) {
-      await recordSmsDeliveryReceipt(st.receipt).catch(() => undefined);
-    }
-    await markProcessed(eventKey);
-  } catch (e) {
-    result.failed++;
-    await markFailed(eventKey, e instanceof Error ? e.message : String(e));
-  }
+  // A status transition (sent/delivered/read/failed) is CLAIMED and recorded — the
+  // ledger row + its `payload` are the idempotent audit trail — but it is NOT
+  // correlated to any outbound message: WhatsApp v1 sends nothing to customers
+  // (employee spec #27, Tier T3 draft-first), so there is no outbound message a
+  // receipt could belong to. The SMS receipt writer stays CAPTIVE to the SMS route
+  // (receptionist-delivery-receipt-invariants); when an outbound WhatsApp transport
+  // lands in a later ring it will introduce its OWN receipt correlation deliberately.
+  await markProcessed(eventKey);
 }
 
 /**
