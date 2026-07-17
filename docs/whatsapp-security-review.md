@@ -1,0 +1,37 @@
+# WhatsApp AI Assistant milestone — independent security review (Directive #018 R6, PRs 1+2+3)
+
+Branch `feat/whatsapp-hardening-release` @ `36ce1a2`. Adversarial, read-only. Base for milestone diff: `c81953d`.
+Evidence: source citations below + full security suite green (108 files / 3219 tests) + the 4 re-expressed invariant suites green (254 tests).
+
+## The 14 invariants
+
+| # | Invariant | Verdict | Citation / guard |
+|---|-----------|---------|------------------|
+| 1 | Sig verify BEFORE JSON parse; constant-time HMAC; raw-body integrity | **CONFIRMED-HELD** | `app/api/webhooks/whatsapp/route.ts:76` reads `request.text()`, `:80` `verifyMetaSignature(...)`, `:87` parse only after. `lib/comms/providers/meta-whatsapp.ts:50-57` `createHmac("sha256",secret).update(rawBody,"utf8")`, length check `:56` then `timingSafeEqual(a,b)`; every unhappy path returns `false` (`:42,:44,:47,:58`). |
+| 2 | hub.challenge verify-token fail-closed (403) | **CONFIRMED-HELD** | `route.ts:55` `if (!expected || mode !== "subscribe" || !token || token !== expected) return new NextResponse("forbidden",{status:403})`. Whole GET gated by `isWhatsAppInboundLive()` (404) `:45`. |
+| 3 | Unknown phone_number_id fails closed (ack-drop, no tenant data) | **CONFIRMED-HELD** | `server/services/whatsapp-webhook-handler.ts:207-219`: null org → claim+`recordAdminActivity`(org-less HQ log)+`markProcessed`, returns before `processInboundEnquiry`. No tenant table touched; ingress ledger is service-role RLS-zero-policy (`20260917...:60`). |
+| 4 | Routing cannot cross orgs; receipt org from transport not caller | **CONFIRMED-HELD** | `whatsapp_number_routes.phone_number_id` UNIQUE (`20260918...:18`), `resolveOrgForNumber` `.eq(active,true).maybeSingle()` (handler:165-169) → exactly one org. Receipt org copied `v_transport.org_id` (`20260817...:320`). Transport guard rejects org≠audit org (`20260816...:202`). |
+| 5 | Replay harmless (ingress claim + downstream partial-unique; INSERT-as-claim; processed_at sole proof) | **CONFIRMED-HELD** | `event_key text not null unique` (`20260917...:26`); atomic INSERT claim + releasable-only reclaim (handler:96-133); `inbound_enquiries (org_id,provider_message_id) where not null` unique (`20260919...:38`) + 23505 short-circuit to existing enquiry, no re-reply (receptionist.ts:2102-2139); `processed_at` NULL = retryable. |
+| 6 | Feature flags fail closed | **CONFIRMED-HELD** | `lib/env.ts:180` `NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true","false"]).default("false")`. `receptionist-channel-eligibility.ts:41` `!== "true" → false`, `:44-47` default-deny, `:80` `enabled===true && status==="live"`. |
+| 7 | Autonomous customer outbound OFF by default | **CONFIRMED-HELD** | `lib/comms/index.ts:182-191` `metaConfigured = WHATSAPP_ACCESS_TOKEN && WHATSAPP_PHONE_NUMBER_ID`; null when absent (CI default). `receptionist.ts:640-661` provider null → records `no_provider`, sends nothing. |
+| 8 | SMS fallback IMPOSSIBLE | **CONFIRMED-HELD** | `receptionist.ts:435-448` `whatsapp_msg/_call → "whatsapp"` only. `lib/comms/index.ts:226` `channel==="whatsapp" ? getWhatsAppProvider() : getSmsProvider()` — no fallback branch. Vendor factories imported ONLY by `lib/comms/index.ts` (grep confirmed). |
+| 9 | review/block cannot bypass approval | **CONFIRMED-HELD** | `receptionist.ts:737` `if(!outcome.decision.allowed)` → skipped before transport. Human-review refuses `block` absolutely (`:1777-1808`) before any clear. DB guard: `v_allowed is distinct from true` rejects non-allow + missing audit (`20260816...:195`). transportReply reached only from the 2 gated callers (`:775`, `:1848`). |
+| 10 | Secrets absent from logs & DB payloads | **CONFIRMED-HELD** | Token only in Authorization header (`meta-whatsapp-sender.ts:55`), never logged. Error body truncated `detail.slice(0,500)` `:72`; token is in request header not response body. grep: no `console.*` of any WHATSAPP_ secret. |
+| 11 | Service-role narrow; all new Supabase `{error}` checked | **CONFIRMED-HELD** | handler claimEvent/markProcessed/markFailed/resolveOrgForNumber all check `.error` (`:107-133,:140,:152,:170`); eligibility checks `error` (`:72`); `recordDeliveryReceipt` throws on `error` (`:2370`). No unchecked awaits found. |
+| 12 | Receipt writers distinct+captive; RPC named once | **CONFIRMED-HELD** | `recordSmsDeliveryReceipt` imported ONLY by `app/api/webhooks/twilio/sms-status/route.ts`; `recordWhatsAppDeliveryReceipt` ONLY by `whatsapp-webhook-handler.ts` (grep). RPC string `record_ai_reply_delivery_receipt` invoked once (`receptionist.ts:2362`). (Fix `28f042f` removed the premature SMS-writer call.) |
+| 13 | Out-of-order/duplicate receipts cannot regress/double-count | **CONFIRMED-HELD** | append-only triggers (`20260817...:245-253`); `on conflict (provider_message_id,status) do nothing` (`:325`); `terminal` generated col excludes `read` — `20260921` widens status CHECK only, not terminal set. |
+| 14 | No direct Meta/Twilio send outside the seam | **CONFIRMED-HELD** | Only `graph.facebook.com` ref is `meta-whatsapp-sender.ts:51` (inside `lib/comms/providers`). No `api.twilio`/`twilio.com` outside providers. No stray `fetch()` to a vendor in `server/`. |
+
+## New findings (adversarial hunt beyond the checklist)
+
+No finding weakens a safety invariant. Two informational nits:
+
+- **INFO-1 (stale/false doc comment).** RESOLVED in `284cb14` — the docstring now states outbound is credential-gated, not structurally impossible. `lib/comms/index.ts:168-175` — the `getWhatsAppProvider()` docstring still asserts *"DARK in this ring: no Meta Cloud API sender is wired yet, so EVERY branch resolves to `null`."* PR3 wired `createMetaWhatsAppProvider` (`:188,:191`), so `auto`/`meta` now return a real provider **when creds are present**. The runtime safety property still holds (null without creds = CI/dev default), but the comment is false and could mislead a future reader into believing outbound WA is structurally impossible when it is in fact credential-gated. Doc-only; no code change to the invariant.
+
+- **INFO-2 (channel isolation is by id-namespacing, not an explicit guard).** `recordWhatsAppDeliveryReceipt` and `recordSmsDeliveryReceipt` are byte-identical (both delegate to `recordDeliveryReceipt`), and the RPC correlates purely by `provider_message_id` with no channel filter (`20260817...:302-306`). Behavioral SMS/WA isolation therefore relies on Meta `wamid.*` never equalling a Twilio `SM…` SID (true) plus outbound WA being dark. The invariant the suite actually enforces — **captivity** (which route may call which writer) — holds. No practical cross-channel path exists. Worth an explicit note only because the docstring's "channel='whatsapp' is what makes it a WhatsApp receipt" is delivered by the resolved transport, not by the writer.
+
+Weakened-test check: the 4 invariant suites were **re-expressed and strengthened**, not loosened. `getSmsProvider`→`getTransportProvider` registry rename + NEW raw-factory captivity test (`rawReachers==[]`); inline `channel!=="phone"` gate → `canRunReceptionistChannel` authority + NEW fail-closed-authority assertions; NEW WhatsApp-writer captivity + SMS/WA distinctness tests; NEW channel-vocab-exactly-{sms,whatsapp} test. `maybeTextBackMissedCall` enforces eligibility via early-return before any dispatch (receptionist.ts:1966-1982). All 254 pass.
+
+## Overall verdict
+
+**CLEAN** — all 14 invariants CONFIRMED-HELD; 0 findings weaken a safety invariant; 2 informational doc/nit notes only.
