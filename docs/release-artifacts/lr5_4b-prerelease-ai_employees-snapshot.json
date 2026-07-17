@@ -1,0 +1,242 @@
+// CrewFlow LR5.4B pre-release snapshot — prod public.ai_employees.{tools_allowed,permissions}
+// Captured 2026-07-17 from linked prod (jzntbskdqdopzwdqwvkp) BEFORE migration 20260812 drops these columns.
+// Rollback mitigation for the one irreversible migration in the directive→main release. 12 rows.
+      "json_agg": [
+        {
+          "id": "07bedb42-cd4c-4299-9c23-60d50dfdaf30",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "prioritize"
+            ]
+          },
+          "slug": "ceo-ai",
+          "tools_allowed": [
+            "read_dashboards",
+            "summarize",
+            "prioritize",
+            "draft_strategy"
+          ]
+        },
+        {
+          "id": "b8bcaeb2-2609-40ea-8b76-660a3ea3cfd4",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "review",
+              "draft"
+            ]
+          },
+          "slug": "cto-ai",
+          "tools_allowed": [
+            "read_codebase",
+            "review_architecture",
+            "assess_risk",
+            "draft_roadmap"
+          ]
+        },
+        {
+          "id": "06069a82-7fc0-4e5a-bbaa-a22fd87bc420",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "review",
+              "suggest"
+            ]
+          },
+          "slug": "design-ai",
+          "tools_allowed": [
+            "review_ui",
+            "propose_layout",
+            "check_brand",
+            "suggest_design"
+          ]
+        },
+        {
+          "id": "c3a2e93d-ed1b-487b-adee-10867ca28ae4",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "suggest"
+            ]
+          },
+          "slug": "documentation-ai",
+          "tools_allowed": [
+            "read_docs",
+            "draft_doc",
+            "review_accuracy",
+            "suggest_edits"
+          ]
+        },
+        {
+          "id": "992fb9ba-7ff8-4bbf-966d-1853864c7cb2",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "analyze",
+              "draft"
+            ]
+          },
+          "slug": "finance-ai",
+          "tools_allowed": [
+            "read_billing",
+            "model_revenue",
+            "flag_anomaly",
+            "draft_report"
+          ]
+        },
+        {
+          "id": "17f064cf-bd2f-4e11-8b92-f4f4fbecb62a",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "suggest"
+            ]
+          },
+          "slug": "marketing-ai",
+          "tools_allowed": [
+            "read_analytics",
+            "draft_content",
+            "propose_campaign",
+            "review_copy"
+          ]
+        },
+        {
+          "id": "fb131476-582d-4fe5-8b12-ed4825049058",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "suggest"
+            ]
+          },
+          "slug": "operations-ai",
+          "tools_allowed": [
+            "read_onboarding",
+            "track_migration",
+            "coordinate_tasks",
+            "flag_blockers"
+          ]
+        },
+        {
+          "id": "4138cdbc-d280-40c4-a66a-829639063444",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "prioritize"
+            ]
+          },
+          "slug": "product-ai",
+          "tools_allowed": [
+            "read_feedback",
+            "draft_spec",
+            "prioritize_backlog",
+            "summarize_research"
+          ]
+        },
+        {
+          "id": "e92652eb-0b0c-47c1-bbae-e95d4fefa8b4",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "review",
+              "report"
+            ]
+          },
+          "slug": "qa-ai",
+          "tools_allowed": [
+            "read_changes",
+            "draft_test_plan",
+            "spot_regressions",
+            "report_findings"
+          ]
+        },
+        {
+          "id": "7b123cd6-f062-4d47-a4a3-e5db89e4e7a2",
+          "permissions": {
+            "can_execute": true,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "research",
+              "draft",
+              "score",
+              "memory"
+            ]
+          },
+          "slug": "research-ai",
+          "tools_allowed": [
+            "fetch_website",
+            "detect_technology",
+            "extract_contacts",
+            "analyse_company",
+            "identify_decision_makers",
+            "build_sales_brief",
+            "draft_communications",
+            "score_company",
+            "write_memory"
+          ]
+        },
+        {
+          "id": "4aea4ad7-7b6a-4df8-8d32-5b796e81bff2",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "suggest"
+            ]
+          },
+          "slug": "sales-ai",
+          "tools_allowed": [
+            "read_demos",
+            "draft_email",
+            "summarize_deal",
+            "suggest_followup"
+          ]
+        },
+        {
+          "id": "228e7950-357b-4875-9621-ade03185817f",
+          "permissions": {
+            "can_execute": false,
+            "requires_approval": true,
+            "scopes": [
+              "read",
+              "draft",
+              "triage"
+            ]
+          },
+          "slug": "support-ai",
+          "tools_allowed": [
+            "read_tickets",
+            "draft_reply",
+            "triage",
+            "summarize_issues"
+          ]
+        }
+      ]
+    }
+  ],
