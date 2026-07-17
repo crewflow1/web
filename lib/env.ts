@@ -99,6 +99,17 @@ const envSchema = z.object({
   // needs zero env-schema edits.
   COMMS_SMS_PROVIDER: z.string().optional(),
 
+  // -- Communication Layer: WhatsApp provider (Directive #018 R6) ---------
+  // Names the active outbound WhatsApp provider — the receptionist's SECOND outbound
+  // transport. Default "auto". DARK today: no Meta Cloud API sender is wired, so
+  // getWhatsAppProvider() resolves to null for every value and the transport records a
+  // terminal `failed`/no_provider attempt on channel='whatsapp' and SENDS NOTHING —
+  // WhatsApp outbound is impossible by construction (the draft-first safety posture).
+  // The real sender (gated on WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) slots
+  // in as configuration + a sibling file in the outbound ring. Free string (not an
+  // enum) so a new provider needs zero env-schema edits.
+  COMMS_WHATSAPP_PROVIDER: z.string().optional(),
+
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The
   // webhook + checkout routes return 503 with a clear error when these
