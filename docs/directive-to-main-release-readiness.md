@@ -160,9 +160,24 @@ Full detail: `docs/whatsapp-release-inventory.md` (WhatsApp slice) + this audit.
 - **Hardening sweep** (`20260910–16`): genuine cross-tenant fixes (billing claim-lease race,
   cross-tenant invoice-payment) — these **improve** prod integrity and are a reason *to* ship.
 - **WhatsApp slice:** independent review CLEAN — 14/14 invariants held (`docs/whatsapp-security-review.md`).
-- **Residual (−1):** an exhaustive line-by-line pass over all 178 definer functions was not completed
-  (agent stalls); the structural posture is verified sound and the tenant-facing RPCs spot-check clean.
-  Recommend a focused definer sweep during the merge-PR review.
+- **Service-role + secret-leak sweep (completed):** CLEAN. `requireOrgContext()` derives `org_id` from
+  the authenticated user's memberships (never client-supplied); every `app/api` route + admin server
+  action + customer portal enforces it (admin actions re-check `isSuperAdminEmail` and re-derive org
+  server-side; the worklist definer `record_receptionist_conversation_claim` refuses any coordination
+  outside the caller's org). No token in any log / HTTP response / DB payload; signature secrets used
+  only for HMAC (`timingSafeEqual`/`validateRequest`); the access token rides only the `Authorization`
+  header; provider error bodies are truncated.
+- **LOW / informational (non-blocking, pre-existing):** `app/api/receptionist/inbound/route.ts` trusts a
+  body-supplied `org_id` behind a single global `CHANNEL_INBOUND_SECRET` with a plain `!==` compare. It
+  is **ingest-only (files an enquiry/lead — not an IDOR, reads no tenant data)** and by-design for a
+  channel gateway; the newer WhatsApp webhook (per-request HMAC + `phone_number_id`→org routing) is the
+  better pattern. **Recommended future hardening** (not required for this release): constant-time compare
+  + per-org channel secrets. Left unchanged here to honour "modify prod code only if required for release
+  safety."
+- **Residual (−1 on the score):** a line-by-line pass over all 178 SECURITY DEFINER functions was not
+  individually completed; the structural posture is verified sound (all tenant RPCs org-scoped; the
+  unscoped definers are all `hq_*`/registry/executor = HQ-global by design) and the service-role/secret
+  sweep above is complete. Recommend a final definer spot-sweep during the merge-PR review.
 
 ---
 
