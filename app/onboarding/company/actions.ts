@@ -93,5 +93,8 @@ export async function createOrg(formData: FormData) {
   }
 
   revalidatePath("/dashboard", "layout");
-  redirect("/dashboard");
+  // First Impression Experience: send a brand-new org into the GUIDED setup (the existing
+  // stepper) rather than a cold, empty dashboard — paired with the sample data seeded at org
+  // creation, the first screen is a guided path through a populated, working product.
+  redirect("/onboarding/setup");
 }
