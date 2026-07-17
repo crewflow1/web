@@ -168,6 +168,9 @@ describeIntegration("whatsapp outbound receipts + metadata · real Postgres", ()
       raw_text: "Hello",
       dedup_key: wamid,
       provider_message_id: wamid,
+      // Meta sends this as Unix SECONDS (a numeric string); it must be converted before the
+      // timestamptz insert (a bare epoch would fail the insert and drop the whole ingestion).
+      provider_timestamp: "1700000000",
       has_media: false,
     });
     // Re-ingest the SAME (org, wamid): the partial-unique short-circuits to the same enquiry.
@@ -183,13 +186,18 @@ describeIntegration("whatsapp outbound receipts + metadata · real Postgres", ()
     expect(second.enquiry_id).toBe(first.enquiry_id);
     expect(second.textback).toEqual({ attempted: false, reason: "duplicate_message" });
 
-    // Exactly one enquiry carries this provider_message_id.
+    // Exactly one enquiry carries this provider_message_id, and the epoch timestamp was
+    // converted to a valid timestamptz (not dropped, not a parse failure).
     const res = await svc()
       .from("inbound_enquiries")
-      .select("id, provider_message_id")
+      .select("id, provider_message_id, provider_timestamp")
       .eq("provider_message_id", wamid);
     expect(res.error, res.error?.message).toBeNull();
-    expect(res.data ?? []).toHaveLength(1);
+    const rows = res.data ?? [];
+    expect(rows).toHaveLength(1);
+    const ts = rows[0]?.provider_timestamp as string | null;
+    expect(ts, "epoch provider_timestamp must persist as a valid timestamp").toBeTruthy();
+    expect(Number.isNaN(Date.parse(String(ts)))).toBe(false);
   });
 
   it("nullable-unique: multiple NULL-provider_message_id enquiries coexist (legacy/phone unconstrained)", async () => {

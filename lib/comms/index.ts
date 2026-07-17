@@ -166,12 +166,13 @@ export function isSmsConfigured(): boolean {
  * records a terminal `failed`/no_provider attempt on `channel='whatsapp'` and SENDS
  * NOTHING.
  *
- * DARK in this ring: no Meta Cloud API sender is wired yet, so EVERY branch resolves
- * to `null`. The real sender (a Graph API `POST /{phone_number_id}/messages` adapter,
- * gated on WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) slots into the `auto`/
- * `meta` case in the outbound ring — configuration + a sibling file, never a change
- * to the transport. Until then WhatsApp outbound is impossible by construction, which
- * is the draft-first safety posture.
+ * The Meta Cloud API sender (a Graph API `POST /{phone_number_id}/messages` adapter) IS
+ * wired (`createMetaWhatsAppProvider`), but it is returned ONLY when BOTH WHATSAPP_ACCESS_TOKEN
+ * and WHATSAPP_PHONE_NUMBER_ID are set — the CI/dev default has neither, so `auto`/`meta`
+ * still resolve to `null` there and outbound is dark. Outbound is thus CREDENTIAL-gated, not
+ * structurally impossible: the draft-first safety posture holds because (a) creds are unset
+ * outside production, and (b) even with creds, a substantive reply is only ever sent after a
+ * human approves it in the review inbox — nothing auto-sends.
  */
 export function getWhatsAppProvider(): WhatsAppProvider | null {
   const name = (env.COMMS_WHATSAPP_PROVIDER ?? "auto").trim().toLowerCase();

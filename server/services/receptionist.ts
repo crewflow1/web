@@ -2073,6 +2073,20 @@ export async function processInboundEnquiry(
     console.error("[receptionist] conversation resolve failed", e);
   }
 
+  // Meta sends provider_timestamp as Unix SECONDS (a numeric string), but the column is
+  // `timestamptz` — inserting the bare epoch would raise a parse error and fail ingestion.
+  // Convert epoch → ISO. A non-numeric value (a future channel sending an ISO string) passes
+  // through; anything unparseable becomes null rather than a failed insert.
+  const providerTimestampIso = ((raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+      const ms = Number(raw) * 1000;
+      return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  })(input.provider_timestamp);
+
   // Step 1 — record raw enquiry (with the channel provider's message id + metadata, Part 11).
   const { data: enquiryRow, error: insErr } = await (
     admin.from("inbound_enquiries" as never) as unknown as {
@@ -2094,7 +2108,7 @@ export async function processInboundEnquiry(
       status: "received",
       conversation_id: conversationId,
       provider_message_id: input.provider_message_id ?? null,
-      provider_timestamp: input.provider_timestamp ?? null,
+      provider_timestamp: providerTimestampIso,
       has_media: input.has_media ?? false,
     })
     .select("id")
