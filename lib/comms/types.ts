@@ -290,6 +290,25 @@ export function isTerminalSmsDeliveryStatus(
 }
 
 /**
+ * The FULL delivery lifecycle across channels: the SMS nine PLUS WhatsApp's `read`
+ * (Directive #018 R6, PR3). A strict SUPERSET of {@link SMS_DELIVERY_STATUSES} — the SMS
+ * set is left untouched (Twilio never reports `read`), so the SMS receipt path is byte-for-
+ * byte unchanged; only the WhatsApp adapter emits `read`. The receipt ledger's CHECK is
+ * widened to admit this set. `read` is deliberately NOT terminal: it is an additional fact
+ * appended after `delivered`, never a state a later receipt can regress.
+ */
+export const DELIVERY_STATUSES = [...SMS_DELIVERY_STATUSES, "read"] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** Narrow an arbitrary string to a canonical cross-channel delivery status (SMS nine + read). */
+export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
+  return (
+    typeof value === "string" &&
+    (DELIVERY_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/**
  * One async delivery receipt, parsed from a provider's status callback. Pure data —
  * the provider-specific adapter (e.g. Twilio) translates its raw callback params into
  * this shape, and the canonical service correlates it to the transport it belongs to.
@@ -300,8 +319,8 @@ export function isTerminalSmsDeliveryStatus(
 export type SmsDeliveryReceipt = {
   /** The provider's message id — the correlation key back to the transport. */
   providerMessageId: string;
-  /** The canonical lifecycle status the provider reported. */
-  status: SmsDeliveryStatus;
+  /** The canonical lifecycle status the provider reported (SMS nine + WhatsApp `read`). */
+  status: DeliveryStatus;
   /** The provider's raw status string, when it differs from the canonical form. */
   providerStatus?: string | null;
   /** The provider's error code for a non-delivery, when it reports one. */

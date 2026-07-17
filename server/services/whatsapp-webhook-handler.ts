@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processInboundEnquiry } from "@/server/services/receptionist";
+import { recordWhatsAppDeliveryReceipt } from "@/server/services/receptionist";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   normalizeMetaMessages,
@@ -218,18 +219,21 @@ async function handleMessage(
   }
 
   try {
-    // Hand off to the UNCHANGED ingestion core — same path as phone/SMS. The
-    // wamid is the dedup_key: repeated deliveries of the same message fold to one
-    // ingestion. (contact_name is captured in the normalized message and the
-    // webhook_events payload, but InboundEnquiryInput does not accept it today —
-    // enriching the core input with a display name is a deliberate follow-up, not
-    // smuggled into this foundation PR.)
+    // Hand off to the UNCHANGED ingestion core — same path as phone/SMS. The wamid is BOTH
+    // the outbound dedup_key (repeated deliveries fold to one reply) AND the inbound message
+    // identity `provider_message_id` (Part 11) — the partial-unique DB backstop to the ingress
+    // claim. provider_timestamp + has_media are persisted on the enquiry (metadata only in v1).
+    // (contact_name is captured in the normalized message + the webhook_events payload, but
+    // InboundEnquiryInput does not accept it today — a deliberate follow-up.)
     await processInboundEnquiry({
       org_id: orgId,
       channel: "whatsapp_msg",
       raw_text: msg.raw_text,
       caller: msg.caller,
       dedup_key: msg.wamid,
+      provider_message_id: msg.wamid,
+      provider_timestamp: msg.provider_timestamp,
+      has_media: msg.has_media,
     });
     result.dispatched++;
     await markProcessed(eventKey);
@@ -264,14 +268,22 @@ async function handleStatus(
     return;
   }
 
-  // A status transition (sent/delivered/read/failed) is CLAIMED and recorded — the
-  // ledger row + its `payload` are the idempotent audit trail — but it is NOT
-  // correlated to any outbound message: WhatsApp v1 sends nothing to customers
-  // (employee spec #27, Tier T3 draft-first), so there is no outbound message a
-  // receipt could belong to. The SMS receipt writer stays CAPTIVE to the SMS route
-  // (receptionist-delivery-receipt-invariants); when an outbound WhatsApp transport
-  // lands in a later ring it will introduce its OWN receipt correlation deliberately.
-  await markProcessed(eventKey);
+  // A status transition (sent/delivered/read/failed) is CLAIMED, then correlated to its
+  // outbound message via the WhatsApp receipt authority (PR3). recordWhatsAppDeliveryReceipt
+  // is the DISTINCT WhatsApp writer (captive to this handler; the SMS writer stays captive to
+  // the Twilio route) sharing the channel-agnostic core: it resolves the SENT transport by
+  // this wamid and appends an idempotent receipt on channel='whatsapp', copying org/audit from
+  // that row. An unknown wamid (EVERY wamid while outbound is dark — nothing was sent) records
+  // nothing and is a benign no-op. Only a genuine WRITE error leaves the event retryable.
+  try {
+    if (st.receipt) {
+      await recordWhatsAppDeliveryReceipt(st.receipt);
+    }
+    await markProcessed(eventKey);
+  } catch (e) {
+    result.failed++;
+    await markFailed(eventKey, e instanceof Error ? e.message : String(e));
+  }
 }
 
 /**

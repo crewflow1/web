@@ -109,7 +109,7 @@ import {
   type RecordedAuthorisation,
 } from "@/server/services/receptionist-authorisation";
 import { getTransportProvider, smsCostUsd } from "@/lib/comms";
-import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
+import type { SmsDeliveryReceipt, DeliveryStatus } from "@/lib/comms";
 import { canRunReceptionistChannel } from "@/server/services/receptionist-channel-eligibility";
 import { toE164 } from "@/lib/phone";
 import type { NotificationCreate } from "@/lib/notifications/types";
@@ -1921,7 +1921,8 @@ export type MissedCallTextbackResult =
         | "flag_off"
         | "unsupported_channel"
         | "channel_not_enabled"
-        | "no_destination";
+        | "no_destination"
+        | "duplicate_message";
     }
   | { attempted: true; dispatch: ReceptionistDispatchOutcome }
   | { attempted: true; error: string };
@@ -2072,14 +2073,14 @@ export async function processInboundEnquiry(
     console.error("[receptionist] conversation resolve failed", e);
   }
 
-  // Step 1 — record raw enquiry.
+  // Step 1 — record raw enquiry (with the channel provider's message id + metadata, Part 11).
   const { data: enquiryRow, error: insErr } = await (
     admin.from("inbound_enquiries" as never) as unknown as {
       insert: (row: unknown) => {
         select: (cols: string) => {
           single: () => Promise<{
             data: { id: string } | null;
-            error: { message: string } | null;
+            error: { message: string; code?: string } | null;
           }>;
         };
       };
@@ -2092,10 +2093,52 @@ export async function processInboundEnquiry(
       caller: input.caller ?? null,
       status: "received",
       conversation_id: conversationId,
+      provider_message_id: input.provider_message_id ?? null,
+      provider_timestamp: input.provider_timestamp ?? null,
+      has_media: input.has_media ?? false,
     })
     .select("id")
     .single();
   if (insErr || !enquiryRow?.id) {
+    // Downstream idempotency backstop (Part 11): a duplicate (org, provider_message_id) means
+    // this exact provider message was already ingested — the partial unique index raises 23505.
+    // Short-circuit to the EXISTING enquiry WITHOUT re-processing (extraction/lead/notify/reply
+    // run exactly once). The ingress claim (whatsapp_webhook_events) is the primary dedup; this
+    // is the DB backstop for the rare double-processing the claim didn't stop.
+    const isDup =
+      insErr?.code === "23505" || (insErr?.message?.includes("duplicate") ?? false);
+    if (isDup && input.provider_message_id) {
+      const existing = await (
+        admin.from("inbound_enquiries" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              eq: (k: string, v: unknown) => {
+                maybeSingle: () => Promise<{
+                  data: {
+                    id: string;
+                    lead_id: string | null;
+                    conversation_id: string | null;
+                  } | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
+        }
+      )
+        .select("id, lead_id, conversation_id")
+        .eq("org_id", input.org_id)
+        .eq("provider_message_id", input.provider_message_id)
+        .maybeSingle();
+      if (existing.data?.id) {
+        return {
+          enquiry_id: existing.data.id,
+          lead_id: existing.data.lead_id,
+          conversation_id: existing.data.conversation_id,
+          textback: { attempted: false, reason: "duplicate_message" },
+        };
+      }
+    }
     throw new Error(`inbound_enquiries insert failed: ${insErr?.message ?? "no id"}`);
   }
   const enquiryId = enquiryRow.id;
@@ -2289,7 +2332,7 @@ export type SmsDeliveryReceiptResult =
       transport_id: string;
       reply_audit_id: string;
       org_id: string;
-      status: SmsDeliveryStatus;
+      status: DeliveryStatus;
       terminal: boolean;
     };
 
@@ -2311,7 +2354,7 @@ export type SmsDeliveryReceiptResult =
  * never a swallowed no-op. A "no transport found" is NOT an error — it is a recorded
  * decision the route answers cleanly.
  */
-export async function recordSmsDeliveryReceipt(
+async function recordDeliveryReceipt(
   receipt: SmsDeliveryReceipt,
 ): Promise<SmsDeliveryReceiptResult> {
   const admin = createAdminClient();
@@ -2346,6 +2389,30 @@ export async function recordSmsDeliveryReceipt(
     status: receipt.status,
     terminal: Boolean(row.is_terminal),
   };
+}
+
+/**
+ * Record one SMS delivery receipt — called ONLY by the authenticated Twilio status-callback
+ * route (its captivity is a security invariant). A thin wrapper over the channel-agnostic core;
+ * the correlated transport's `channel='sms'` is what makes it an SMS receipt.
+ */
+export async function recordSmsDeliveryReceipt(
+  receipt: SmsDeliveryReceipt,
+): Promise<SmsDeliveryReceiptResult> {
+  return recordDeliveryReceipt(receipt);
+}
+
+/**
+ * Record one WhatsApp delivery/read receipt — called ONLY by the Meta status webhook handler
+ * (Directive #018 R6, PR3). A DISTINCT writer from the SMS one (its own captivity invariant),
+ * sharing the same channel-agnostic core. The correlated transport's `channel='whatsapp'` is
+ * what makes it a WhatsApp receipt; an outbound wamid matching no SENT transport (every wamid in
+ * CI, where outbound is dark) records nothing and returns `unknown_message` — fail-safe.
+ */
+export async function recordWhatsAppDeliveryReceipt(
+  receipt: SmsDeliveryReceipt,
+): Promise<SmsDeliveryReceiptResult> {
+  return recordDeliveryReceipt(receipt);
 }
 
 // ---------------------------------------------------------------------

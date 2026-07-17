@@ -30,6 +30,13 @@ const envSchema = z.object({
   // Verify token: the shared string echoed back during Meta's GET hub.challenge
   // subscription handshake. Absent ⇒ the handshake fails closed.
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  // Outbound sender (Directive #018 R6 → PR3). The Meta Cloud API access token + business
+  // phone-number id the WhatsApp sender POSTs with. BOTH absent ⇒ getWhatsAppProvider()
+  // returns null (dark) ⇒ a WhatsApp reply records no_provider and SENDS NOTHING — the CI
+  // path (CI sets neither). Optional graph version pins the Graph API version (default v21.0).
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_GRAPH_VERSION: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),

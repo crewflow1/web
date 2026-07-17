@@ -112,6 +112,9 @@ const MIGRATION = "supabase/migrations/20260817000000_ai_reply_delivery_receipts
 const RECEIPT_WRITE_FN = /\brecord_ai_reply_delivery_receipt\b/;
 /** The single service-side persistence function — the only door to the write primitive. */
 const RECEIPT_SERVICE_FN = /\brecordSmsDeliveryReceipt\b/;
+/** The WhatsApp receipt writer (Directive #018 R6, PR3) — a DISTINCT writer captive to the Meta webhook handler. */
+const RECEIPT_WA_SERVICE_FN = /\brecordWhatsAppDeliveryReceipt\b/;
+const WA_HANDLER = "server/services/whatsapp-webhook-handler.ts";
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -192,8 +195,44 @@ describe("receptionist delivery receipt — the receipt writer is captive to the
     expect(reachers).toEqual([ROUTE]);
   });
 
-  it("no other server/ module reaches the receipt writer", () => {
+  it("no other server/ module reaches the SMS receipt writer", () => {
+    // SMS captivity preserved: the WhatsApp handler uses its OWN writer, never this one.
     expect(reachers.filter((p) => p.startsWith("server/"))).toEqual([]);
+  });
+});
+
+// =====================================================================
+// 2b. The WhatsApp receipt writer is DISTINCT and CAPTIVE to the Meta webhook handler.
+//     (Directive #018 R6, PR3.) Meta multiplexes messages + statuses through the ONE
+//     /api/webhooks/whatsapp route → handleStatus, so — unlike the SMS writer's app/
+//     route captivity — the WhatsApp writer is reached from a server/ handler. Both
+//     writers share ONE channel-agnostic core (the RPC is still named exactly once).
+// =====================================================================
+
+describe("receptionist delivery receipt — the WhatsApp receipt writer is captive to the webhook handler", () => {
+  const waReachers = walkSources(SOURCE_ROOTS)
+    .filter((full) => rel(full) !== SERVICE) // exclude the definer home
+    .filter((full) => RECEIPT_WA_SERVICE_FN.test(codeOf(read(rel(full)))))
+    .map(rel)
+    .sort();
+
+  it("recordWhatsAppDeliveryReceipt is reached by EXACTLY ONE consumer — the Meta webhook handler", () => {
+    expect(waReachers).toEqual([WA_HANDLER]);
+  });
+
+  it("no app/ route reaches the WhatsApp receipt writer directly", () => {
+    expect(waReachers.filter((p) => p.startsWith("app/"))).toEqual([]);
+  });
+
+  it("the two writers are DISTINCT — the SMS route never reaches the WhatsApp writer, and vice versa", () => {
+    // A WhatsApp status cannot be recorded through the SMS writer (the P4 security-gate finding),
+    // nor an SMS receipt through the WhatsApp writer. They share a core but not a call site.
+    expect(waReachers).not.toContain(ROUTE); // the Twilio SMS route
+    const smsReachers = walkSources(SOURCE_ROOTS)
+      .filter((full) => rel(full) !== SERVICE)
+      .filter((full) => RECEIPT_SERVICE_FN.test(codeOf(read(rel(full)))))
+      .map(rel);
+    expect(smsReachers).not.toContain(WA_HANDLER);
   });
 });
 

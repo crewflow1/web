@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import { createResendEmailProvider } from "./providers/resend";
 import { createTwilioSmsProvider } from "./providers/twilio";
+import { createMetaWhatsAppProvider } from "./providers/meta-whatsapp-sender";
 
 export type {
   EmailProvider,
@@ -43,6 +44,7 @@ export type {
   SmsDeliveryStatus,
   TerminalSmsDeliveryStatus,
   SmsDeliveryReceipt,
+  DeliveryStatus,
   WhatsAppProvider,
   WhatsAppMessage,
   WhatsAppAcceptance,
@@ -52,8 +54,10 @@ export type {
 export {
   SMS_DELIVERY_STATUSES,
   TERMINAL_SMS_DELIVERY_STATUSES,
+  DELIVERY_STATUSES,
   isSmsDeliveryStatus,
   isTerminalSmsDeliveryStatus,
+  isDeliveryStatus,
 } from "./types";
 export { emailCostUsd, smsCostUsd } from "./cost";
 
@@ -172,13 +176,20 @@ export function isSmsConfigured(): boolean {
 export function getWhatsAppProvider(): WhatsAppProvider | null {
   const name = (env.COMMS_WHATSAPP_PROVIDER ?? "auto").trim().toLowerCase();
 
+  // Meta Cloud API is "configured" only when BOTH the access token AND the business
+  // phone-number id are present. Absent (the CI/dev default) ⇒ null ⇒ the transport
+  // records no_provider and SENDS NOTHING. Same gate shape as getSmsProvider's twilioConfigured.
+  const metaConfigured = Boolean(
+    env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID,
+  );
+
   switch (name) {
-    // The real Meta Cloud API sender lands HERE in the outbound ring:
-    //   case "auto": return metaConfigured ? createMetaWhatsAppProvider() : null;
-    //   case "meta": return metaConfigured ? createMetaWhatsAppProvider() : null;
-    // Dark today — no sender wired, so every configured value resolves to null.
     case "auto":
+      return metaConfigured ? createMetaWhatsAppProvider() : null;
+
     case "meta":
+      return metaConfigured ? createMetaWhatsAppProvider() : null;
+
     case "":
     case "none":
     case "off":
