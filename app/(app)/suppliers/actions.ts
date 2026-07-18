@@ -113,7 +113,7 @@ export async function updateSupplier(
 
   revalidatePath("/suppliers");
   revalidatePath(`/suppliers/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Supplier updated." });
 }
 
 export async function deleteSupplier(id: string) {

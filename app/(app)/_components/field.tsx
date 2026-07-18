@@ -22,6 +22,8 @@ type Props = {
   autoComplete?: string;
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
   error?: string;
+  /** Focus this field on mount — set on the FIRST field of a form so users can type immediately. */
+  autoFocus?: boolean;
 };
 
 export function Field({
@@ -36,6 +38,7 @@ export function Field({
   autoComplete,
   inputMode,
   error,
+  autoFocus,
 }: Props) {
   const errorId = error ? `${name}-error` : undefined;
   return (
@@ -57,6 +60,7 @@ export function Field({
         name={name}
         type={type}
         required={required}
+        autoFocus={autoFocus}
         defaultValue={defaultValue}
         placeholder={placeholder}
         autoComplete={autoComplete}
