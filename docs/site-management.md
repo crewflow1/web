@@ -110,6 +110,57 @@ happened and who attended. Same template again.
 - **RLS proof** (`__tests__/integration/rls/toolbox-talks-isolation.test.ts`, 5
   cases): service positive control, anon + non-member denial, CHECK accepts/rejects.
 
+## Increment 4 — Site Reports (`/site-reports`) — formal progress reporting
+
+The largest Site Management vertical: formal, client-ready progress reports that
+**aggregate** existing site information (diary, snags, toolbox talks) into a
+structured, auditable deliverable — distinct from the internal Daily Diary. Built
+to the full production bar as a **phased feature**; this is **increment 1 — the
+durable, security-critical core**, shipped complete and verified. PDF, portal, the
+rich per-section editor, notifications and the AI writer layer on this proven
+foundation (they do not change the model).
+
+**Shipped (increment 1):**
+- **Immutable-snapshot data model** (`20260922000000_site_reports.sql`). A report
+  separates its **editable draft** (`content` jsonb — selected source refs +
+  commentary) from the **frozen customer-visible snapshot** (`snapshot` jsonb,
+  materialised at issue). A DB trigger (`tg_site_reports_immutable`) makes the
+  snapshot **write-once** and freezes `content` after issue — enforced even against
+  the service-role writer, so a historical report can never silently change when
+  its source records are later edited. Revisions supersede rather than mutate.
+- **Server-validated state machine** (`lib/site-reports/state.ts`): draft →
+  ready_for_review → approved → issued → superseded → archived; every transition
+  is `assertTransition`-guarded in the actions. Unit-tested.
+- **Deterministic aggregation** (`lib/site-reports/aggregate.ts`, pure): gathers a
+  job+period's diary/snags/toolbox, proposes a default selection, summarises
+  counts, and materialises the frozen snapshot from the author's curated selection
+  + commentary. *Deterministic, not AI* — the AI writer (a later increment) will
+  feed this same pipeline through the existing draft/approval/capability/audit
+  engines, never a parallel path.
+- **Full lifecycle actions + UI**: list (status filter), create (pick job +
+  period → gather → draft), review (edit commentary, run the workflow, issue).
+  Report-level attachments via the universal pipeline (CHECK widened to
+  `site_reports`, preserving all prior Site Management targets).
+- **Security proof** (`__tests__/integration/rls/site-reports-isolation.test.ts`,
+  real Postgres): tenant isolation (anon + non-member denied), **snapshot
+  write-once + content-freeze-after-issue** (trigger blocks even service_role),
+  and the attachment CHECK accepts `site_reports`, still accepts `snags`, rejects
+  bogus. Plus 12 unit cases (state machine, schema, aggregation).
+
+**Reuse points identified for later increments (discovery):**
+- **PDF** — reuse `@react-pdf/renderer` + the `lib/pdf/*.tsx` component pattern
+  (invoice/quote/payslip PDFs) + a `/api/site-reports/[id]/pdf/route.ts`. No new
+  PDF system.
+- **Portal** — issued-only visibility through the existing customer-portal token
+  model (a dedicated issued-only read path, not a blanket policy). `customer_id` +
+  `status='issued'` are already the scoping keys + index.
+- **Notifications / approval / AI** — the existing notification, draft, approval
+  and capability-registry engines; no parallel pathways.
+
+**Deferred to increments 2+ (honestly not in this PR):** PDF generation, the
+customer-portal surface, structured risk/decision/photo-gallery editors,
+notifications, and the AI Site Report Writer.
+
 ## Fast-follow backlog (next Site Management increments)
 
 - **"Log a snag" from a job** — a button on `jobs/[id]` deep-linking `/snags/new?job=…`
