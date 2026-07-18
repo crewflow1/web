@@ -90,6 +90,26 @@ via the same universal `tenant_attachments` pipeline (allowlist + CHECK widened 
 - **RLS proof** (`__tests__/integration/rls/site-diary-isolation.test.ts`, 5 cases):
   service positive control, anon + non-member denial, CHECK accepts/rejects.
 
+## Increment 3 — Toolbox Talks / RAMS (`/toolbox`)
+
+Recorded on-site safety briefings — the evidence a UK site must keep that a talk
+happened and who attended. Same template again.
+
+- **Table** `toolbox_talks` (`20260921000000_toolbox_talks.sql`): topic +
+  talk_date (required), presenter, attendees (free-text sign-in) + optional
+  `attendee_count` (>= 0 CHECK), job, notes. Org-scoped RLS (member CRUD,
+  admin-only delete — H&S evidence), shared trigger, `(org_id, talk_date desc)` +
+  per-job indexes. The signed attendance sheet is a **photo** via the universal
+  pipeline (allowlist + CHECK widened to `toolbox_talks` — third stacked widening,
+  preserving `snags` + `site_diary_entries`).
+- **CRUD**: list (most-recent first, batched job names), create form, detail with
+  photos, admin delete. Point-in-time record — no edit surface in v1.
+- **Pure logic** (`lib/toolbox-talks/schema.ts`): Zod schema incl. `attendee_count`
+  coercion — unit-tested (6 cases). Date display reuses the diary's
+  `formatDiaryDate`.
+- **RLS proof** (`__tests__/integration/rls/toolbox-talks-isolation.test.ts`, 5
+  cases): service positive control, anon + non-member denial, CHECK accepts/rejects.
+
 ## Fast-follow backlog (next Site Management increments)
 
 - **"Log a snag" from a job** — a button on `jobs/[id]` deep-linking `/snags/new?job=…`
@@ -98,6 +118,6 @@ via the same universal `tenant_attachments` pipeline (allowlist + CHECK widened 
 - **Customer-portal visibility** — surface verified/open snags on the portal so a
   client can see defects being closed before handover.
 - **Snag-list "assigned to me"** filter for field staff; bulk status actions.
-- **Next Stage One verticals**: Toolbox Talks / RAMS, Site Reports (same
-  job-linked + photo-attached shape), then the Blueprint Centre epic. (Daily
-  Diary shipped — increment 2 above.)
+- **Next Stage One verticals**: Site Reports (same job-linked + photo-attached
+  shape) completes the Site Management cluster, then the Blueprint Centre epic.
+  (Snagging, Daily Diary, Toolbox Talks shipped — increments 1–3 above.)
