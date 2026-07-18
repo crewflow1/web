@@ -18,6 +18,7 @@ const ADMIN_LINKS = [
   { href: "/inbox", label: "Inbox" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },
+  { href: "/snags", label: "Snagging" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
   { href: "/suppliers", label: "Suppliers" },
@@ -41,6 +42,7 @@ const ADMIN_LINKS = [
 const STAFF_LINKS = [
   { href: "/me", label: "My day" },
   { href: "/jobs", label: "Jobs" },
+  { href: "/snags", label: "Snagging" },
   { href: "/staff/leave", label: "Leave" },
   { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },
