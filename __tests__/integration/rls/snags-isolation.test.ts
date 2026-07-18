@@ -130,4 +130,36 @@ describeIntegration("snags · tenant isolation (RLS)", () => {
     expect(error, error?.message).toBeNull();
     expect(data ?? []).toHaveLength(0);
   });
+
+  // The migration widens the tenant_attachments target_table CHECK to admit
+  // 'snags' (so snag photos ride the universal pipeline). Prove the widening
+  // took — and that the constraint still constrains — rather than assume it.
+  it("tenant_attachments accepts target_table='snags' (CHECK widened)", async () => {
+    const { error } = await db(serviceClient())
+      .from("tenant_attachments")
+      .insert({
+        org_id: orgId,
+        target_table: "snags",
+        target_id: snagId,
+        filename: "defect.jpg",
+        storage_path: `${orgId}/snags/${snagId}/probe.jpg`,
+      });
+    // Cascades away with the org on teardown (org_id ... on delete cascade).
+    expect(error, error?.message).toBeNull();
+  });
+
+  it("tenant_attachments still rejects an unknown target_table (CHECK enforced)", async () => {
+    const { error } = await db(serviceClient())
+      .from("tenant_attachments")
+      .insert({
+        org_id: orgId,
+        target_table: "not_a_real_table",
+        target_id: snagId,
+        filename: "x.jpg",
+        storage_path: `${orgId}/x/probe.jpg`,
+      });
+    // A single, correctly-widened CHECK must still reject a bogus value; a null
+    // error here would mean the constraint was dropped, not widened.
+    expect(error).not.toBeNull();
+  });
 });
