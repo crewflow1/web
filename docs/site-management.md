@@ -70,6 +70,26 @@ policy, matching the compliance/attachments gate.
   non-member** denial (proving the gate is org membership via `current_org_ids()`,
   not mere authentication).
 
+## Increment 2 — Daily Site Diary (`/diary`)
+
+The second vertical, built on the exact snagging template. A dated per-site log —
+**date, job, weather, headcount, work done, delays, notes**, with site **photos**
+via the same universal `tenant_attachments` pipeline (allowlist + CHECK widened to
+`site_diary_entries`, proven by the same positive/negative assertions).
+
+- **Table** `site_diary_entries` (`20260920000000_site_diary.sql`): org-scoped RLS
+  (member CRUD, admin-only delete — a diary is handover/dispute evidence), a
+  `labour_count >= 0` CHECK, `entry_date default current_date`, the shared
+  `tg_set_updated_at()` trigger, and `(org_id, entry_date desc)` + per-job indexes.
+- **Full CRUD**: list (most-recent-day first, batched job-name resolution, delay
+  badge), a shared create/edit form (`_form.tsx`, so the two can't drift), detail
+  with photos, and admin delete (count-gated, photo-cleanup first).
+- **Pure logic** (`lib/site-diary/schema.ts`): a deterministic `formatDiaryDate`
+  (no locale/timezone dependency) + the Zod schemas incl. `labour_count`
+  coercion — unit-tested (`__tests__/site-diary/schema.test.ts`, 8 cases).
+- **RLS proof** (`__tests__/integration/rls/site-diary-isolation.test.ts`, 5 cases):
+  service positive control, anon + non-member denial, CHECK accepts/rejects.
+
 ## Fast-follow backlog (next Site Management increments)
 
 - **"Log a snag" from a job** — a button on `jobs/[id]` deep-linking `/snags/new?job=…`
@@ -78,5 +98,6 @@ policy, matching the compliance/attachments gate.
 - **Customer-portal visibility** — surface verified/open snags on the portal so a
   client can see defects being closed before handover.
 - **Snag-list "assigned to me"** filter for field staff; bulk status actions.
-- **Next Stage One verticals**: Daily Diary, Toolbox Talks / RAMS, Site Reports
-  (same job-linked + photo-attached shape), then the Blueprint Centre epic.
+- **Next Stage One verticals**: Toolbox Talks / RAMS, Site Reports (same
+  job-linked + photo-attached shape), then the Blueprint Centre epic. (Daily
+  Diary shipped — increment 2 above.)

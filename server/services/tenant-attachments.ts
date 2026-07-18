@@ -12,7 +12,8 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  * authenticated tenant user.
  *
  * Allowed target_table values (CHECK on the column): customers,
- * jobs, quotes, invoices, suppliers, memberships, leads, snags.
+ * jobs, quotes, invoices, suppliers, memberships, leads, snags,
+ * site_diary_entries.
  *
  * MIME whitelist: PDF, JPG, PNG, HEIC, HEIF, WebP, Excel, CSV.
  * Size cap: 25 MB.
@@ -48,6 +49,7 @@ export const ATTACHMENT_TARGET_TABLES = [
   "memberships",
   "leads",
   "snags",
+  "site_diary_entries",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 
