@@ -145,6 +145,14 @@ export default async function SiteReportDetailPage({
               </span>
             </div>
           </div>
+          <a
+            href={`/api/site-reports/${report.id}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            {status === "issued" ? "Download PDF" : "Preview PDF"}
+          </a>
         </div>
       </header>
 

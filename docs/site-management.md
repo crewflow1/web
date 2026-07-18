@@ -157,9 +157,21 @@ foundation (they do not change the model).
 - **Notifications / approval / AI** — the existing notification, draft, approval
   and capability-registry engines; no parallel pathways.
 
-**Deferred to increments 2+ (honestly not in this PR):** PDF generation, the
-customer-portal surface, structured risk/decision/photo-gallery editors,
-notifications, and the AI Site Report Writer.
+**Shipped (increment 2 — the client deliverable):** a branded, professional
+**PDF** at `GET /api/site-reports/[id]/pdf` (RLS-authed, `runtime=nodejs`),
+reusing `@react-pdf/renderer` + the invoice/quote PDF architecture — org
+letterhead + logo, report identity block, executive summary, aggregated
+site-activity stats, a snags table, all commentary sections, an approval block,
+and a fixed footer with page numbers. It renders the **frozen snapshot** for an
+issued report and a live **preview** for a draft; a Download/Preview button sits
+on the detail page. Proven by a real PDF-generation unit test (renders a
+well-formed `%PDF-` buffer, incl. an empty-content draft) — enabled by switching
+the unit tier to the automatic JSX runtime (`vitest.config.ts`).
+
+**Deferred to increments 3+ (honestly not yet built):** the customer-portal
+surface (issued-only visibility via the existing token model), structured
+risk/decision/photo-gallery editors, notifications, and the AI Site Report Writer
+(through the existing draft/approval/capability engines).
 
 ## Fast-follow backlog (next Site Management increments)
 
