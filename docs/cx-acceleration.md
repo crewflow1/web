@@ -23,14 +23,19 @@ Cumulative with #364 (first impression: guided onboarding + sample data + comms 
 
 ## Ranked fast-follow backlog (impact ÷ effort; ready to build)
 
-**HIGH**
+### Sprint II — additionally shipped
+- **Detail-page breadcrumbs** — added "← Customers / Quotes / Invoices" above the `[id]` detail `<h1>`
+  (the three highest-traffic detail pages). Jobs/leads/suppliers `[id]` remain (same pattern).
+- **Autofocus rolled out** to the leads + suppliers create forms (customers already done). Jobs create
+  form's first field is a date, so autofocus is intentionally skipped there.
+- **Visible ⌘K chip** — already present in the search pill (`search-palette.tsx`); no change needed.
+
+**HIGH (remaining)**
 - **Standardise on the `Button` primitive** — `components/ui/button.tsx` exists but only ~3 of ~113
   files use it; the rest hand-roll `bg-slate-900`. Roll out `<Button>`/variants → one design language.
-- **Detail-page breadcrumbs** — customers/quotes/invoices/jobs/leads/suppliers `[id]` are dead-ends
-  (no back link); add "← Jobs" etc. above each `<h1>`.
+- **Breadcrumbs on the remaining detail pages** (jobs/leads/suppliers `[id]`).
 - **Sole-owner quote send** — collapse Request-approval → Approve → Mark-sent into one "Approve & send"
   for `isSoleApprover` (`quotes/[id]`).
-- **Autofocus** on the remaining create forms (leads/suppliers/jobs/quotes) — same one-line pattern.
 
 **MED**
 - **Mobile nav "More" sheet** — `BottomNav` reaches only 5 of 22 destinations; add a "More" tab (pattern

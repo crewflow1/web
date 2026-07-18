@@ -182,6 +182,12 @@ export default async function EditCustomerPage({
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
+          <Link
+            href="/customers"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Customers
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
           <p className="mt-1 text-sm text-slate-600">
             Customer since {customer.created_at.slice(0, 10)}
