@@ -503,3 +503,101 @@ export async function deleteSiteReport(id: string): Promise<void> {
   revalidatePath("/site-reports");
   redirect(`/site-reports?saved=deleted`);
 }
+
+/**
+ * Publish an issued report to the customer portal — a deliberate, separate step
+ * from issuing. Owner/admin only (publishing exposes a report to a customer).
+ * Touches ONLY publication columns, so the frozen snapshot/content are untouched
+ * (the immutability trigger is not engaged). Clears any prior withdrawal.
+ */
+export async function publishToPortal(id: string): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!siteReportIdSchema.safeParse(id).success) redirect(`/site-reports?error=bad_id`);
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect(`/site-reports?error=forbidden`);
+  }
+
+  const tenant = await createClient();
+  const report = await getReport(tenant, ctx.org.id, id);
+  if (!report) redirect(`/site-reports?error=not_found`);
+  // Only an ISSUED report may be published — never a draft/approved one.
+  if (report.status !== "issued") {
+    redirect(`/site-reports/${id}?error=not_issued`);
+  }
+
+  const { error, count } = await (
+    reports(tenant).from("site_reports") as unknown as UpdateChain
+  )
+    .update(
+      {
+        portal_published_at: new Date().toISOString(),
+        portal_published_by: user.id,
+        portal_withdrawn_at: null,
+      },
+      { count: "exact" },
+    )
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[site-reports] publish failed", error);
+    redirect(`/site-reports/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/site-reports?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "site_report.portal_published",
+    targetTable: "site_reports",
+    targetId: id,
+    metadata: { report_number: report.report_number },
+  });
+
+  revalidatePath(`/site-reports/${id}`);
+  revalidatePath("/site-reports");
+  redirect(`/site-reports/${id}?saved=published`);
+}
+
+/**
+ * Withdraw a report from the customer portal — hides it without deleting the
+ * report or its audit history. Owner/admin only.
+ */
+export async function withdrawFromPortal(id: string): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!siteReportIdSchema.safeParse(id).success) redirect(`/site-reports?error=bad_id`);
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect(`/site-reports?error=forbidden`);
+  }
+
+  const tenant = await createClient();
+  const report = await getReport(tenant, ctx.org.id, id);
+  if (!report) redirect(`/site-reports?error=not_found`);
+  if (report.status !== "issued" && report.status !== "superseded") {
+    redirect(`/site-reports/${id}?error=not_published`);
+  }
+
+  const { error, count } = await (
+    reports(tenant).from("site_reports") as unknown as UpdateChain
+  )
+    .update({ portal_withdrawn_at: new Date().toISOString() }, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[site-reports] withdraw failed", error);
+    redirect(`/site-reports/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/site-reports?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "site_report.portal_withdrawn",
+    targetTable: "site_reports",
+    targetId: id,
+    metadata: { report_number: report.report_number },
+  });
+
+  revalidatePath(`/site-reports/${id}`);
+  revalidatePath("/site-reports");
+  redirect(`/site-reports/${id}?saved=withdrawn`);
+}

@@ -11,15 +11,18 @@ import {
   SITE_REPORT_STATUS_LABELS,
   type SiteReportStatus,
 } from "@/lib/site-reports/state";
+import { isPortalVisible } from "@/lib/site-reports/portal";
 import {
   approveReport,
   archiveReport,
   deleteSiteReport,
   issueReport,
+  publishToPortal,
   returnToDraft,
   submitForReview,
   supersedeReport,
   updateReportContent,
+  withdrawFromPortal,
 } from "../actions";
 
 type ReportRow = {
@@ -35,6 +38,8 @@ type ReportRow = {
   snapshot: ReportSnapshot | null;
   approved_at: string | null;
   issued_at: string | null;
+  portal_published_at: string | null;
+  portal_withdrawn_at: string | null;
   created_at: string;
 };
 
@@ -44,6 +49,8 @@ const SAVED_MAP: Record<string, string> = {
   status: "Report updated.",
   issued: "Report issued and frozen. It's now a permanent record.",
   superseded: "New revision started from the issued report.",
+  published: "Published — the customer can now see this report in their portal.",
+  withdrawn: "Withdrawn from the customer portal.",
 };
 const ERROR_MAP: Record<string, string> = {
   validation: "Please check the form.",
@@ -52,6 +59,9 @@ const ERROR_MAP: Record<string, string> = {
   bad_transition: "That action isn't allowed from the current status.",
   not_deletable: "Only a draft can be deleted — issued reports are evidence.",
   no_job: "This report has no linked job.",
+  not_issued: "Only an issued report can be published to the portal.",
+  not_published: "This report isn't published to the portal.",
+  forbidden: "Only an owner or admin can publish or withdraw reports.",
 };
 
 const STATUS_STYLES: Record<SiteReportStatus, string> = {
@@ -85,7 +95,7 @@ export default async function SiteReportDetailPage({
     }
   )
     .select(
-      "id, report_number, title, status, revision, job_id, period_start, period_end, content, snapshot, approved_at, issued_at, created_at",
+      "id, report_number, title, status, revision, job_id, period_start, period_end, content, snapshot, approved_at, issued_at, portal_published_at, portal_withdrawn_at, created_at",
     )
     .eq("id", id)
     .maybeSingle();
@@ -97,6 +107,13 @@ export default async function SiteReportDetailPage({
   const canDelete =
     (ctx.membership.role === "owner" || ctx.membership.role === "admin") &&
     isDeletable(status);
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const portalVisible = isPortalVisible({
+    status: report.status,
+    portal_published_at: report.portal_published_at,
+    portal_withdrawn_at: report.portal_withdrawn_at,
+  });
 
   let jobName: string | null = null;
   if (report.job_id) {
@@ -201,6 +218,33 @@ export default async function SiteReportDetailPage({
               : "Locked"}
         </span>
       </section>
+
+      {(status === "issued" || status === "superseded") && isAdmin ? (
+        <section className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Customer portal</p>
+            <p className="text-xs text-slate-500">
+              {portalVisible
+                ? "The customer can see this report in their portal."
+                : "Not visible to the customer yet."}
+            </p>
+          </div>
+          <div className="ml-auto flex gap-2">
+            {portalVisible ? (
+              <ActionButton
+                action={withdrawFromPortal.bind(null, report.id)}
+                label="Withdraw from portal"
+              />
+            ) : status === "issued" ? (
+              <ActionButton
+                action={publishToPortal.bind(null, report.id)}
+                label="Publish to portal"
+                primary
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {/* Gathered site information (deterministic aggregation, author-curated). */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

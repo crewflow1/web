@@ -168,10 +168,38 @@ on the detail page. Proven by a real PDF-generation unit test (renders a
 well-formed `%PDF-` buffer, incl. an empty-content draft) — enabled by switching
 the unit tier to the automatic JSX runtime (`vitest.config.ts`).
 
-**Deferred to increments 3+ (honestly not yet built):** the customer-portal
-surface (issued-only visibility via the existing token model), structured
-risk/decision/photo-gallery editors, notifications, and the AI Site Report Writer
-(through the existing draft/approval/capability engines).
+**Shipped (increment 3 — the customer value loop):** issued reports can now be
+**published to the customer portal** and viewed/downloaded by the client.
+- **Publication model** (`20260923000000_site_reports_portal.sql`): additive
+  `portal_published_at` / `portal_published_by` / `portal_withdrawn_at` /
+  `customer_notified_at` + a partial index over the visible set. Publishing is a
+  **deliberate step separate from issuing** (issue internally, publish later).
+  The frozen snapshot is untouched (publication columns are separate operational
+  state). Visibility rule (`lib/site-reports/portal.ts` `isPortalVisible`, pure +
+  unit-tested): `status IN (issued,superseded) AND published AND NOT withdrawn`.
+- **Access model**: the portal has **no customer JWT** — the URL token resolves
+  to a customer (`loadCustomerByPortalToken`), and every report read
+  (`_reports.ts`) filters by that `customer_id` + `org_id` + `isPortalVisible` on
+  the admin client, exactly like quotes/invoices. Guessing an id, a draft, an
+  unpublished or withdrawn report, another customer's or another org's report all
+  return nothing identically.
+- **Customer surface**: `/customer-portal/[token]/reports` (list, latest vs.
+  superseded) + `/[id]` (frozen snapshot, client-decisions surfaced, supersession
+  notice) + `/[id]/pdf` (token-gated download, `safeReportFilename`, private
+  cache). Renders **only** the frozen snapshot — never live source records.
+- **Operator controls**: Publish / Withdraw on the internal detail page
+  (owner/admin, issued-only, count-gated, audited). Portal-visibility status shown.
+- **Security proof** (`__tests__/integration/rls/site-reports-portal.test.ts`,
+  real Postgres): customer isolation (A1 ≠ A2, id-guessing fails), tenant
+  isolation (org A ↛ org B), status enforcement (draft/approved/unpublished/
+  withdrawn invisible; issued-published + superseded-published visible), frozen
+  snapshot exposure. Plus 9 unit cases (visibility predicate + safe filename).
+
+**Deferred to increments 4+ (honestly not yet built):** customer notifications on
+publish (through the existing draft/approval/comms-readiness engine — the
+`customer_notified_at` field + audit distinction are already in place), a
+Playwright E2E of the full internal→customer loop, structured risk/decision/
+photo-gallery editors, and the AI Site Report Writer.
 
 ## Fast-follow backlog (next Site Management increments)
 
