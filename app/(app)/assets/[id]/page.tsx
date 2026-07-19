@@ -14,6 +14,7 @@ import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { deleteAsset, updateAssetStatus } from "../actions";
 import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
+import { InspectionsSection, type InspectionRow } from "./_inspections";
 
 type AssetRow = {
   id: string;
@@ -59,6 +60,9 @@ const SAVED_MAP: Record<string, string> = {
   transferred: "Asset transferred.",
   qr: "QR identity generated. Any previous label no longer works.",
   qr_revoked: "QR identity revoked.",
+  inspection: "Inspection recorded.",
+  inspection_issued: "Inspection issued. The record is now locked.",
+  inspection_archived: "Draft inspection discarded.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
@@ -67,6 +71,12 @@ const ERROR_MAP: Record<string, string> = {
   not_open: "That asset isn't currently checked out.",
   qr_failed: "Couldn't update the QR identity. Try again.",
   no_active_qr: "This asset has no active QR identity.",
+  inspection_invalid: "Please check the inspection details.",
+  inspection_failed: "Couldn't save the inspection. Try again.",
+  inspection_outcome: "Choose an outcome to issue the inspection.",
+  inspection_not_draft: "That inspection is no longer a draft.",
+  inspection_missing: "That inspection could not be found.",
+  inspection_locked: "That inspection is locked.",
 };
 
 export default async function AssetDetailPage({
@@ -193,6 +203,24 @@ export default async function AssetDetailPage({
     .eq("asset_id", id)
     .eq("active", true)
     .maybeSingle();
+
+  // Inspections for this asset (newest first), excluding archived drafts.
+  const { data: inspectionsRaw } = await (
+    supabase.from("asset_inspections" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          neq: (k: string, v: unknown) => {
+            order: (c: string, o: { ascending: boolean }) => Promise<{ data: InspectionRow[] | null }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at")
+    .eq("asset_id", id)
+    .neq("status", "archived")
+    .order("created_at", { ascending: false });
+  const inspections: InspectionRow[] = inspectionsRaw ?? [];
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
@@ -330,6 +358,8 @@ export default async function AssetDetailPage({
           ) : null}
         </div>
       </section>
+
+      <InspectionsSection assetId={asset.id} inspections={inspections} />
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />

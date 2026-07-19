@@ -16,7 +16,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
-| 4 | Inspections | `asset_inspections` + templates + schedules; reminders reuse the cron pattern | planned |
+| **4** | **Inspections** | `asset_inspections` (immutable snapshot + pass/fail outcome) → templates → safety-blocking | ◑ **M4a foundation — this PR**; M4b templates, M4c safety-blocking next |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
@@ -196,6 +196,49 @@ the E2E tier has **no auth harness yet**. That harness is a discrete,
 independently-reviewed infrastructure increment (it becomes the first authenticated
 spec and every later feature E2E depends on it) — **not** folded silently into a
 feature PR. Tracked as the next E2E-infra task.
+
+## Milestone 4a — shipped: inspections (immutable records + pass/fail outcome)
+
+A durable, tamper-evident record of every inspection on an asset — pre-use, LOLER,
+PUWER, PAT, servicing — with a pass/fail **outcome** that becomes the safety
+signal M4c reads through the M2 custody eligibility seam. **Reuses the Site
+Reports immutable-snapshot pattern exactly — no new framework.**
+
+- **`asset_inspections`** (`20260927000000`): `content` (mutable working answers)
+  vs `snapshot` (frozen at issue, **write-once**); `status`
+  (draft/issued/superseded/archived); `outcome` (pass/pass_with_defects/fail);
+  `safety_critical`; re-inspection lineage (`revision`/`supersedes_id`). Indexes
+  incl. a partial one for the M4c safety lookup (current issued safety-critical
+  fails). Evidence photos ride `tenant_attachments` (CHECK widened, all 13 prior
+  targets preserved) — no new store.
+- **Immutability + issue-integrity trigger** (`tg_asset_inspections_immutable`):
+  snapshot is write-once; an **issued** inspection **must** carry an outcome + a
+  snapshot; and `content`/`outcome`/`safety_critical` are **frozen** once issued
+  (the safety record can't be quietly re-scored). A same-org guard
+  (`tg_asset_inspections_guard`) rejects a cross-tenant `asset_id`. RLS: member
+  CRUD, admin delete.
+- **Pure domain** (`lib/assets/inspection.ts`, 12 unit cases): the state machine
+  (`assertTransition`), outcome/kind constants + labels, `materializeInspection
+  Snapshot` (pure, caller-passed `issuedAt`), and **`isSafetyBlocking`** — the
+  predicate the M4c DB guard will mirror, unit-tested so the two can't drift.
+- **Actions** (`inspection-actions.ts`): create draft; **issue** (state-machine
+  check → materialise snapshot → status+outcome+snapshot+content in **one atomic
+  update**; the trigger is the hard gate); discard-draft. All tenant-scoped +
+  audited.
+- **UX**: an Inspections section on the asset detail — list (status/outcome/
+  safety badges), a **blocking banner** on a current safety-critical fail, a
+  record-inspection form, and per-draft issue/discard.
+- **Security proof** (`__tests__/integration/rls/asset-inspections.test.ts`, real
+  Postgres, 8 cases): the legit issue; issued-requires-outcome **and**
+  -snapshot; snapshot write-once + content/outcome/safety_critical frozen;
+  same-org guard; status/outcome CHECKs; anon + non-member denial; attachment
+  CHECK (asset_inspections + prior 'assets' + bogus rejected).
+
+**M4 remainder (next slices):** M4b reusable **versioned templates** that seed a
+draft's `content` + scheduling/reminders (reuse the cron pattern); M4c
+**safety-blocking** — extend the M2 `tg_asset_assignments_guard` so a current
+issued safety-critical **fail** (or an overdue inspection) blocks check-out /
+transfer-in, with a permissioned override, plus reinspection + return-to-service.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
