@@ -304,11 +304,29 @@ export default async function AssetDetailPage({
             </button>
           </form>
           {qr ? (
-            <form action={revokeQr.bind(null, asset.id)}>
-              <button type="submit" className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50">
-                Revoke
-              </button>
-            </form>
+            <>
+              <a
+                href={`/api/assets/${asset.id}/label/pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Print label
+              </a>
+              <a
+                href={`/api/assets/${asset.id}/label/pdf?copies=12`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Print sheet
+              </a>
+              <form action={revokeQr.bind(null, asset.id)}>
+                <button type="submit" className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50">
+                  Revoke
+                </button>
+              </form>
+            </>
           ) : null}
         </div>
       </section>

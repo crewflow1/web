@@ -139,10 +139,31 @@ scanned URL; `qrcode` renders the *image*, added in the labels slice).
   Postgres, 4 cases): active same-org token → the correct asset; revoked → null;
   cross-tenant → null (owning org still resolves); unknown → null.
 
-**M3b-labels (next slice):** final `qrcode` `npm audit` + install → SVG →
-react-pdf **labels** (single + sheets, org branding, no financial fields) → camera
-scanner UX + manual entry → dedicated Playwright QR E2E. The scan *security* is
-proven here; labels are rendering + camera UI.
+## Milestone 3b (labels) — shipped: printable QR labels
+
+- **Supply-chain review (documented):** `qrcode@1.5.4` (MIT, maintained) installed
+  + `@types/qrcode` (dev). Its subtree adds **no flagged advisories** (the repo's
+  pre-existing Next.js/PrismJS audit findings are unrelated). Server-only; used at
+  render time. No second QR/PDF library.
+- **`lib/pdf/asset-label-pdf.tsx`** — reuses the **existing react-pdf** architecture
+  (no new engine). The QR is **true vector**: `QRCode.create()` → each dark module
+  a react-pdf `<Rect>` inside an `<Svg>` (crisp at any print size). Labels carry
+  **only safe/public fields** (name, ref, category, optional serial/registration,
+  QR, "Scan to view asset", org branding) — **never** price/value/supplier pricing/
+  notes (the input type doesn't accept them).
+- **`GET /api/assets/[id]/label/pdf?copies=N`** — RLS-authed; resolves the asset's
+  **active** QR token → encodes the absolute `/a/[token]` scan URL (so a phone
+  camera opens the authenticated route); single label or an N-up print sheet;
+  `safeLabelFilename`, private cache; 404 (no leak) if not the caller's / no active
+  identity. **Print label** + **Print sheet** on the asset QR card.
+- **PDF test** (`label-pdf.test.ts`, 4 cases): renders a real `%PDF-` buffer for a
+  single label + a 12-up sheet + a bare label; asserts the input exposes no
+  financial fields.
+
+**M3b remainder (next slice):** camera scanner entry (browser `BarcodeDetector`
+where supported) + manual-token fallback on top of the existing `/a/[token]`
+resolver (no new resolver), and a dedicated Playwright QR E2E (create → generate →
+label → scan route → custody action → regenerate → old fails / new works).
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
