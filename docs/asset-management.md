@@ -16,7 +16,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
-| **4** | **Inspections** | `asset_inspections` (immutable snapshot + pass/fail outcome) → templates → safety-blocking | ◑ **M4a foundation — this PR**; M4b templates, M4c safety-blocking next |
+| **4** | **Inspections** | `asset_inspections` (immutable snapshot + outcome) + **safety-blocking custody** (extends the M2 guard); templates next | ◑ **M4a #380 + M4c safety-block (this PR)**; M4b templates + scheduling next |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
@@ -234,11 +234,35 @@ Reports immutable-snapshot pattern exactly — no new framework.**
   same-org guard; status/outcome CHECKs; anon + non-member denial; attachment
   CHECK (asset_inspections + prior 'assets' + bogus rejected).
 
-**M4 remainder (next slices):** M4b reusable **versioned templates** that seed a
-draft's `content` + scheduling/reminders (reuse the cron pattern); M4c
-**safety-blocking** — extend the M2 `tg_asset_assignments_guard` so a current
-issued safety-critical **fail** (or an overdue inspection) blocks check-out /
-transfer-in, with a permissioned override, plus reinspection + return-to-service.
+## Milestone 4c — shipped: safety-blocking custody
+
+Closes the loop between inspections and custody, **at the database**.
+
+- **`20260928000000_asset_inspection_safety_block.sql`** — **extends** the M2
+  custody guard (`tg_asset_assignments_guard`, CREATE OR REPLACE, every prior
+  check reproduced verbatim) so a **new open assignment is refused** while the
+  asset has an **issued safety-critical `fail`** that a **later issued
+  safety-critical pass has not cleared** (`inspected_at >`). Because the guard
+  fires `before insert or update` and the transfer RPC is SECURITY INVOKER, this
+  applies to **check-out AND transfer-in** with no action-layer change — the
+  frontend can't bypass it. **Reinspection / return-to-service falls out for
+  free**: issue a passing safety-critical inspection and the asset is issuable
+  again (no separate state to flip). Partial index keeps the lookup cheap.
+- **Friendly error** (`lib/assets/assignment.ts`, `friendlyAssignmentError`): the
+  new `check_violation` is surfaced as "record a passing re-inspection before
+  issuing it" (unit-tested); the M4a asset-detail banner already flags the block.
+- **Security proof** (`__tests__/integration/rls/asset-inspection-safety.test.ts`,
+  real Postgres, 5 cases): an issued safety-critical fail **blocks** check-out; a
+  **later pass clears** it; a **non-safety-critical** fail and a **draft** fail do
+  **not** block; **transfer-in is blocked** too (RPC rolls back, the original open
+  assignment survives).
+
+**Permissioned override** is a deliberate follow-up — a safety block should not be
+trivially overridable, so it needs an explicit authorised-override path (role +
+recorded reason), not a quiet flag.
+
+**M4 remainder (next slice):** M4b reusable **versioned templates** that seed a
+draft's `content` + scheduling/reminders (reuse the cron pattern).
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

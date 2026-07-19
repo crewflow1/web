@@ -51,6 +51,11 @@ describe("friendlyAssignmentError", () => {
     );
     expect(friendlyAssignmentError("23514", "job X is not in org Y")).toMatch(/organisation/i);
   });
+  it("maps a failed safety inspection to a re-inspection prompt (M4c)", () => {
+    expect(
+      friendlyAssignmentError("23514", "asset X has a failed safety inspection and cannot be issued"),
+    ).toMatch(/re-inspection/i);
+  });
   it("falls back generically", () => {
     expect(friendlyAssignmentError("XXXXX", "weird")).toMatch(/try again/i);
   });
