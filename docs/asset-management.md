@@ -13,8 +13,8 @@ reuses existing infrastructure; each is dark-safe and additive.
 
 | # | Milestone | Core extension points | Status |
 |---|---|---|---|
-| **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ **this PR** |
-| 2 | Assignment engine | `asset_assignments` (asset → job/staff/vehicle/depot), conflict guard, audit | planned |
+| **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
+| **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | 3 | QR platform | opaque asset id → existing routing; **needs a QR-gen dependency (decision)** | planned — see below |
 | 4 | Inspections | `asset_inspections` + templates + schedules; reminders reuse the cron pattern | planned |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
@@ -58,6 +58,42 @@ The durable register:
 - **Security proof** (`__tests__/integration/rls/assets-isolation.test.ts`, real
   Postgres): tenant isolation (anon + non-member denied), attachment CHECK accepts
   `assets`, still accepts `site_reports`, rejects bogus.
+
+## Milestone 2 — shipped (this PR): assignment, custody & transfer
+
+Custody history for every asset — who has it, on which job/vehicle, at which
+depot, in what condition, due back when — with the **defining risk (conflicting
+custody) enforced at the database, never the frontend**.
+
+- **Five concerns kept separate** (per the approved model): asset **lifecycle**
+  (`assets.status`), **custody + history** (`asset_assignments`), and the seams for
+  operational availability / location / compliance that M4–M5 will fill. Custody is
+  NOT overloaded onto the lifecycle status.
+- **The invariant** (`20260925000000_asset_assignments.sql`): a **partial unique
+  index `UNIQUE(asset_id) WHERE status='open'`** → at most one open assignment per
+  asset; two concurrent check-outs → exactly one winner (the loser gets a 23505 the
+  action translates to "already checked out"). A **guard trigger** enforces same-org
+  references (job/vehicle/assignee) + eligibility (only an `active` asset may be
+  issued) at the DB. **Transfer** is an atomic `SECURITY INVOKER` RPC
+  (`transfer_asset_assignment`) — close-old + open-new in one transaction, rolls
+  back fully on a bad destination.
+- **Actions** (`assignment-actions.ts`): check-out (insert; DB invariant is the
+  gate — no check-then-insert), return (close the open row; a repeat is a no-op),
+  transfer (RPC). All translate DB violations into construction-language errors.
+- **Pure domain** (`lib/assets/assignment.ts`, 9 unit cases): types/conditions,
+  destination-per-type, eligibility, overdue, error translation, Zod schemas.
+- **UX**: a custody section on the asset detail — current holder/job/location,
+  since, due-back, overdue; check-out / return / transfer forms.
+- **Security proof** (`__tests__/integration/rls/asset-assignments.test.ts`, real
+  Postgres, 7 cases incl. a genuine **concurrency** proof): single-open invariant,
+  concurrent-winner, eligibility, cross-org guard, transfer atomicity + rollback,
+  return idempotency, attachment CHECK (+ prior targets), anon denial.
+
+**Known limitations (M2):** reservations deferred (documented — better handled by
+future scheduling); lost/stolen is via the asset lifecycle status (M1) not a custody
+action yet; staff-held / job-asset cross-domain lists + a dedicated Playwright E2E
+are the immediate follow-ups; per-field operational-vs-financial permission split is
+a later hardening pass.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

@@ -10,7 +10,9 @@ import {
   type AssetOwnership,
   type AssetStatus,
 } from "@/lib/assets/schema";
+import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { deleteAsset, updateAssetStatus } from "../actions";
+import { CustodySection, type CurrentAssignment } from "./_custody";
 
 type AssetRow = {
   id: string;
@@ -48,10 +50,18 @@ const STATUS_STYLES: Record<AssetStatus, string> = {
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 const money = (v: number | string | null) => (v == null ? "—" : GBP.format(Number(v)));
 
-const SAVED_MAP: Record<string, string> = { created: "Asset added.", status: "Status updated." };
+const SAVED_MAP: Record<string, string> = {
+  created: "Asset added.",
+  status: "Status updated.",
+  checked_out: "Asset checked out.",
+  returned: "Asset returned.",
+  transferred: "Asset transferred.",
+};
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
   update_failed: "Couldn't update the asset.",
+  validation: "Please check the form.",
+  not_open: "That asset isn't currently checked out.",
 };
 
 export default async function AssetDetailPage({
@@ -102,8 +112,70 @@ export default async function AssetDetailPage({
     supplierName = s?.name ?? null;
   }
 
+  // Current open custody assignment (if any) + the pickers for check-out/transfer.
+  const { data: currentRaw } = await (
+    supabase.from("asset_assignments" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: {
+                id: string;
+                assignment_type: string;
+                job_id: string | null;
+                assignee_id: string | null;
+                location: string | null;
+                assigned_at: string;
+                expected_return_at: string | null;
+                issue_condition: string | null;
+              } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select(
+      "id, assignment_type, job_id, assignee_id, location, assigned_at, expected_return_at, issue_condition",
+    )
+    .eq("asset_id", id)
+    .eq("status", "open")
+    .maybeSingle();
+
+  const staff = await listStaffForOrg();
+  const { data: jobsRaw } = await supabase
+    .from("jobs")
+    .select("id, scheduled_date, customer:customers ( name )")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  const jobs = (jobsRaw ?? []).map((j) => ({
+    id: j.id,
+    label: (j.customer?.name ?? "Job") + (j.scheduled_date ? ` · ${j.scheduled_date}` : ""),
+  }));
+  const staffOpts = staff.map((s) => ({ id: s.id, name: s.full_name || s.email }));
+  const jobName = (jid: string | null) =>
+    jid ? (jobs.find((j) => j.id === jid)?.label ?? "Job") : null;
+
+  const current: CurrentAssignment | null = currentRaw
+    ? {
+        id: currentRaw.id,
+        assignment_type: currentRaw.assignment_type,
+        job_name: jobName(currentRaw.job_id),
+        assignee_name: currentRaw.assignee_id
+          ? (staffOpts.find((s) => s.id === currentRaw.assignee_id)?.name ?? "Someone")
+          : null,
+        location: currentRaw.location,
+        assigned_at: currentRaw.assigned_at,
+        expected_return_at: currentRaw.expected_return_at,
+        issue_condition: currentRaw.issue_condition,
+      }
+    : null;
+  const today = new Date().toISOString().slice(0, 10);
+
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? null) : null;
+  const errorMessage = sp.error
+    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -186,6 +258,15 @@ export default async function AssetDetailPage({
           })}
         </div>
       </section>
+
+      <CustodySection
+        assetId={asset.id}
+        assetActive={status === "active"}
+        current={current}
+        jobs={jobs}
+        staff={staffOpts}
+        today={today}
+      />
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />
