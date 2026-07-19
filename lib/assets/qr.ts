@@ -33,6 +33,46 @@ export function scanPath(token: string): string {
 }
 
 /**
+ * Extract a valid opaque token from whatever a scanner/manual-entry yields — a
+ * full label URL (`https://crewflow.uk/a/<token>`), a bare path (`/a/<token>`),
+ * or the raw token itself — returning `null` for anything that isn't a
+ * well-formed token.
+ *
+ * Security: the scanned host is DELIBERATELY ignored. We only ever pull the
+ * token out and re-navigate internally via `scanPath` — so a spoofed QR
+ * encoding `https://evil.example/a/<token>` cannot become an open redirect, and
+ * a payload whose path isn't `/a/<token>` resolves to nothing at all. The token
+ * is then still resolved behind auth + RLS; this is only the edge shape gate.
+ */
+export function tokenFromScan(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // A full URL or a path: take the token segment of an `/a/<token>` path only.
+  let candidate = trimmed;
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("/")) {
+    let pathname: string | null = null;
+    try {
+      pathname = new URL(trimmed, "https://placeholder.invalid").pathname;
+    } catch {
+      return null;
+    }
+    const m = /^\/a\/([^/?#]+)\/?$/.exec(pathname);
+    const segment = m?.[1];
+    if (!segment) return null;
+    // The token was percent-encoded into the URL path; undo that before shape-check.
+    try {
+      candidate = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+  }
+
+  return isValidTokenFormat(candidate) ? candidate : null;
+}
+
+/**
  * A safe download filename for a QR label PDF — no path/header injection, always
  * `.pdf`, never leaks internal ids.
  */

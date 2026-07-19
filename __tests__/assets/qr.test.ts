@@ -5,6 +5,7 @@ import {
   isValidTokenFormat,
   safeLabelFilename,
   scanPath,
+  tokenFromScan,
 } from "@/lib/assets/qr";
 
 describe("generateOpaqueToken", () => {
@@ -55,5 +56,43 @@ describe("safeLabelFilename", () => {
     expect(safeLabelFilename('a"b\nc', null)).toBe("a-b-c-qr.pdf");
     expect(safeLabelFilename(null, null)).toBe("asset-label-qr.pdf");
     expect(safeLabelFilename("../../etc/passwd")).not.toContain("/");
+  });
+});
+
+describe("tokenFromScan", () => {
+  const token = "abc123_-XYZtoken0000"; // 20 chars, valid shape
+
+  it("accepts a full label URL and pulls the token from the /a/<token> path", () => {
+    expect(tokenFromScan(`https://crewflow.uk/a/${token}`)).toBe(token);
+    expect(tokenFromScan(`https://crewflow.uk/a/${token}?ref=x#y`)).toBe(token);
+    expect(tokenFromScan(`https://crewflow.uk/a/${token}/`)).toBe(token);
+  });
+
+  it("accepts a bare path and a bare token", () => {
+    expect(tokenFromScan(`/a/${token}`)).toBe(token);
+    expect(tokenFromScan(token)).toBe(token);
+    expect(tokenFromScan(`  ${token}  `)).toBe(token); // trims
+  });
+
+  it("IGNORES the scanned host — a spoofed origin can't become an open redirect", () => {
+    // The host is discarded; only the token is extracted, to be re-navigated
+    // internally via scanPath. So evil.example yields the same token, not a redirect.
+    expect(tokenFromScan(`https://evil.example/a/${token}`)).toBe(token);
+  });
+
+  it("rejects anything that isn't an /a/<token> path or a well-formed token", () => {
+    expect(tokenFromScan("https://crewflow.uk/assets")).toBeNull();
+    expect(tokenFromScan("https://crewflow.uk/a/")).toBeNull();
+    expect(tokenFromScan("/login?next=/a/x")).toBeNull();
+    expect(tokenFromScan("javascript:alert(1)")).toBeNull();
+    expect(tokenFromScan("short")).toBeNull(); // below the 16-char floor
+    expect(tokenFromScan("has spaces in it here")).toBeNull();
+    expect(tokenFromScan("")).toBeNull();
+    expect(tokenFromScan(null)).toBeNull();
+    expect(tokenFromScan(42)).toBeNull();
+  });
+
+  it("round-trips a token that was percent-encoded into the URL path", () => {
+    expect(tokenFromScan(`https://crewflow.uk/a/${encodeURIComponent(token)}`)).toBe(token);
   });
 });

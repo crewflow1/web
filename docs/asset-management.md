@@ -15,7 +15,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 |---|---|---|---|
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
-| **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) | ◑ **M3a identity core — this PR**; M3b (labels+scan) next |
+| **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
 | 4 | Inspections | `asset_inspections` + templates + schedules; reminders reuse the cron pattern | planned |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
@@ -160,10 +160,42 @@ scanned URL; `qrcode` renders the *image*, added in the labels slice).
   single label + a 12-up sheet + a bare label; asserts the input exposes no
   financial fields.
 
-**M3b remainder (next slice):** camera scanner entry (browser `BarcodeDetector`
-where supported) + manual-token fallback on top of the existing `/a/[token]`
-resolver (no new resolver), and a dedicated Playwright QR E2E (create → generate →
-label → scan route → custody action → regenerate → old fails / new works).
+## Milestone 3b (scanner) — shipped: in-app camera scanner entry + QR E2E
+
+The last M3b slice — **completes the QR platform**. No new resolver, no new
+dependency.
+
+- **`/assets/scan`** (`app/(app)/assets/scan/page.tsx` + `_scanner.tsx`) — a thin
+  authed server shell rendering a client scanner. **Camera path** uses the native
+  `BarcodeDetector` where the browser exposes it (Chrome/Android); everywhere else
+  (notably iOS Safari) it **degrades gracefully** to the always-present **manual
+  code entry** (paste the label URL or type the code under the QR). The camera is
+  released on stop/unmount. A **Scan** action sits on the assets list header.
+- **`tokenFromScan`** (`lib/assets/qr.ts`, pure + unit-tested) is the security
+  gate: it accepts a full label URL, a bare `/a/<token>` path, or the raw token,
+  and returns a valid token or `null`. **The scanned host is deliberately ignored**
+  — only the token is extracted and we navigate **internally** via `scanPath`, so a
+  spoofed QR (`https://evil.example/a/<token>`) can never become an open redirect,
+  and a non-`/a/` payload resolves to nothing. The token is still resolved behind
+  auth + RLS by the existing `/a/[token]` route.
+- **QR E2E** (`e2e/asset-qr.spec.ts`, real app + real Postgres): proves the
+  request-boundary property that is the whole point of a scannable label — **a
+  logged-out scan of `/a/<token>` and a logged-out visit to `/assets/scan` both hit
+  the auth wall** (307 → `/login`, destination preserved) and **never paint** asset
+  or custody data. A well-formed-but-fake token redirects identically to junk (no
+  oracle). This matches the tier's deterministic anonymous-visitor pattern.
+
+### QR lifecycle coverage — where each invariant is proven
+The full **create → generate → label → scan → custody → regenerate** lifecycle is
+proven **deterministically at the integration tier against real Postgres**, where
+those data invariants belong: `asset-qr.test.ts` (one-active, atomic rotate,
+resolve/deny), `asset-qr-scan.test.ts` (per-tenant + per-state resolution),
+`label-pdf.test.ts` (label + sheet render). An **authenticated browser lifecycle
+E2E** would need a logged-in session; this app is passwordless (magic-link/OTP) and
+the E2E tier has **no auth harness yet**. That harness is a discrete,
+independently-reviewed infrastructure increment (it becomes the first authenticated
+spec and every later feature E2E depends on it) — **not** folded silently into a
+feature PR. Tracked as the next E2E-infra task.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

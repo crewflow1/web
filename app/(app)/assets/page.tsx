@@ -98,12 +98,20 @@ export default async function AssetsPage({ searchParams }: { searchParams: SP })
             documents and history in one place.
           </p>
         </div>
-        <Link
-          href="/assets/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Add asset
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/assets/scan"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Scan
+          </Link>
+          <Link
+            href="/assets/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Add asset
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (
