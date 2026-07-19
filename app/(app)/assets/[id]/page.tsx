@@ -12,6 +12,7 @@ import {
 } from "@/lib/assets/schema";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { deleteAsset, updateAssetStatus } from "../actions";
+import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
 
 type AssetRow = {
@@ -56,12 +57,16 @@ const SAVED_MAP: Record<string, string> = {
   checked_out: "Asset checked out.",
   returned: "Asset returned.",
   transferred: "Asset transferred.",
+  qr: "QR identity generated. Any previous label no longer works.",
+  qr_revoked: "QR identity revoked.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
   update_failed: "Couldn't update the asset.",
   validation: "Please check the form.",
   not_open: "That asset isn't currently checked out.",
+  qr_failed: "Couldn't update the QR identity. Try again.",
+  no_active_qr: "This asset has no active QR identity.",
 };
 
 export default async function AssetDetailPage({
@@ -172,6 +177,23 @@ export default async function AssetDetailPage({
     : null;
   const today = new Date().toISOString().slice(0, 10);
 
+  // Current active QR identity (if any).
+  const { data: qr } = await (
+    supabase.from("asset_qr_identities" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: { id: string; generated_at: string } | null }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, generated_at")
+    .eq("asset_id", id)
+    .eq("active", true)
+    .maybeSingle();
+
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -267,6 +289,29 @@ export default async function AssetDetailPage({
         staff={staffOpts}
         today={today}
       />
+
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">QR identity</h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {qr
+            ? `Active since ${qr.generated_at.slice(0, 10)}. A scan resolves here after sign-in — the label carries only an opaque token.`
+            : "No QR identity yet. Generate one to print a label; the label carries only an opaque token."}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <form action={generateOrRegenerateQr.bind(null, asset.id)}>
+            <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
+              {qr ? "Regenerate (invalidates old label)" : "Generate QR identity"}
+            </button>
+          </form>
+          {qr ? (
+            <form action={revokeQr.bind(null, asset.id)}>
+              <button type="submit" className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50">
+                Revoke
+              </button>
+            </form>
+          ) : null}
+        </div>
+      </section>
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />

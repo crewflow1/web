@@ -15,7 +15,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 |---|---|---|---|
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
-| 3 | QR platform | opaque asset id → existing routing; **needs a QR-gen dependency (decision)** | planned — see below |
+| **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) | ◑ **M3a identity core — this PR**; M3b (labels+scan) next |
 | 4 | Inspections | `asset_inspections` + templates + schedules; reminders reuse the cron pattern | planned |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
@@ -94,6 +94,37 @@ future scheduling); lost/stolen is via the asset lifecycle status (M1) not a cus
 action yet; staff-held / job-asset cross-domain lists + a dedicated Playwright E2E
 are the immediate follow-ups; per-field operational-vs-financial permission split is
 a later hardening pass.
+
+## Milestone 3a — shipped (this PR): QR identity core
+
+The security foundation of the QR platform — **dependency-free** (the `qrcode`
+library only renders the *image*; that's M3b). A permanent, revocable, tenant-safe
+identity per asset.
+
+- **`asset_qr_identities`** (`20260926000000`): opaque high-entropy token (raw,
+  like `customers.portal_token` — revocable + enumeration-resistant, encodes no
+  business data), `active`, revocation (`revoked_at/by/reason`), lineage
+  (`regenerated_from`). **Invariant: one ACTIVE identity per asset** (partial
+  unique index) + unique token + a same-org guard trigger. RLS (member CRUD,
+  admin delete).
+- **Atomic rotate RPC** (`rotate_asset_qr_identity`, SECURITY INVOKER): revoke-old
+  + insert-new in one txn → old printed labels die immediately; concurrent
+  rotations can't leave two active.
+- **Pure module** (`lib/assets/qr.ts`, 5 unit cases): crypto-random token gen,
+  edge token-format validation, the `isResolvable` (active-only) scan predicate,
+  `scanPath`, safe label filename.
+- **Actions**: generate/regenerate (rotate RPC), revoke (count-gated). QR card on
+  the asset detail.
+- **Security proof** (`__tests__/integration/rls/asset-qr.test.ts`, real Postgres,
+  6 cases): one-active invariant, concurrent-generation → exactly one active,
+  atomic rotate revokes-old, revoked/cross-tenant/unknown token **do not resolve**,
+  same-org guard, anon denial.
+
+**M3b (next slice):** install `qrcode` (final `npm audit`), render the SVG →
+react-pdf **labels** (single + sheets), the authenticated **`/a/[token]` scan
+resolver** (validate → auth → active → tenant → asset view, identical failure for
+bad tokens — reuses M2 custody actions), and the mobile scan UX. The identity +
+resolution security is already proven here; M3b is rendering + routing + UI.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
