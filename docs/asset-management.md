@@ -120,11 +120,29 @@ identity per asset.
   atomic rotate revokes-old, revoked/cross-tenant/unknown token **do not resolve**,
   same-org guard, anon denial.
 
-**M3b (next slice):** install `qrcode` (final `npm audit`), render the SVG →
-react-pdf **labels** (single + sheets), the authenticated **`/a/[token]` scan
-resolver** (validate → auth → active → tenant → asset view, identical failure for
-bad tokens — reuses M2 custody actions), and the mobile scan UX. The identity +
-resolution security is already proven here; M3b is rendering + routing + UI.
+## Milestone 3b (scan) — shipped: authenticated scan resolver
+
+The security-critical half of M3b — **dependency-free** (the token comes from the
+scanned URL; `qrcode` renders the *image*, added in the labels slice).
+
+- **`/a/[token]`** (`app/(app)/a/[token]/page.tsx`) — under the `(app)` auth group,
+  so an unauthenticated scan follows the app's normal sign-in and returns to this
+  internal route (**no open-redirect surface**). Renders a thin scan landing
+  (asset + status + custody) → **View asset & custody**, handing off to the detail
+  page's existing **M2 custody actions** — no QR-specific custody logic.
+- **`resolveScannedAsset`** (`_scan.ts`, server-only, **tenant-scoped** via the
+  user-JWT client so RLS gates both the identity and the asset): edge token-shape
+  gate → active identity by token → the asset. **Identical `null` (→ notFound)** for
+  malformed / unknown / revoked / cross-tenant / inaccessible — no disclosure, no
+  enumeration signal.
+- **Security proof** (`__tests__/integration/rls/asset-qr-scan.test.ts`, real
+  Postgres, 4 cases): active same-org token → the correct asset; revoked → null;
+  cross-tenant → null (owning org still resolves); unknown → null.
+
+**M3b-labels (next slice):** final `qrcode` `npm audit` + install → SVG →
+react-pdf **labels** (single + sheets, org branding, no financial fields) → camera
+scanner UX + manual entry → dedicated Playwright QR E2E. The scan *security* is
+proven here; labels are rendering + camera UI.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
