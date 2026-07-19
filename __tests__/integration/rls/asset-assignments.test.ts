@@ -191,11 +191,11 @@ describeIntegration("asset_assignments · custody invariants", () => {
     const openId = String(opened.error ? "" : (await db(serviceClient())
       .from("asset_assignments").select("id").eq("asset_id", asset).eq("status", "open").single()).data?.id ?? "");
     const close1 = await db(serviceClient())
-      .from("asset_assignments").update({ status: "closed" }).eq("id", openId).eq("org_id", orgA).eq("status", "open");
+      .from("asset_assignments").update({ status: "closed" }, { count: "exact" }).eq("id", openId).eq("org_id", orgA).eq("status", "open");
     expect(close1.error, close1.error?.message).toBeNull();
     expect(close1.count).toBe(1);
     const close2 = await db(serviceClient())
-      .from("asset_assignments").update({ status: "closed" }).eq("id", openId).eq("org_id", orgA).eq("status", "open");
+      .from("asset_assignments").update({ status: "closed" }, { count: "exact" }).eq("id", openId).eq("org_id", orgA).eq("status", "open");
     expect(close2.count ?? 0).toBe(0); // already closed — no-op
   });
 
