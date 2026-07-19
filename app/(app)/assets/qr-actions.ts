@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
-import { generateOpaqueToken } from "@/lib/assets/qr";
+import { generateOpaqueToken } from "@/lib/assets/qr-token";
 import { assetIdSchema } from "@/lib/assets/schema";
 
 /**

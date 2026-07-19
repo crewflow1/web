@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  generateOpaqueToken,
   isResolvable,
   isValidTokenFormat,
   safeLabelFilename,
   scanPath,
   tokenFromScan,
 } from "@/lib/assets/qr";
+import { generateOpaqueToken } from "@/lib/assets/qr-token";
 
 describe("generateOpaqueToken", () => {
   it("produces a valid, URL-safe, unique token each call", () => {

@@ -1,18 +1,13 @@
-import { randomBytes } from "node:crypto";
-
 /**
- * Asset QR identity — pure domain helpers (no `qrcode` dependency; that library
- * only renders the image in the label slice). Unit-tested directly.
+ * Asset QR identity — pure, ISOMORPHIC domain helpers (no `node:crypto`, no
+ * `qrcode`). Safe to import from the client scanner as well as the server; the
+ * server-only token minting lives in `qr-token.ts` so this module never drags
+ * `node:crypto` into the browser bundle. Unit-tested directly.
  *
  * The token is a high-entropy opaque random encoding NO business data. A scan
  * validates the payload's shape, then resolves it through an authenticated,
  * tenant-scoped lookup — the token's value is the only thing the QR carries.
  */
-
-/** 24 random bytes → a 32-char URL-safe (base64url) opaque token. */
-export function generateOpaqueToken(): string {
-  return randomBytes(24).toString("base64url");
-}
 
 // base64url charset; bounded length so a scan can cheaply reject junk before any
 // DB lookup (enumeration/DoS resistance at the edge).
