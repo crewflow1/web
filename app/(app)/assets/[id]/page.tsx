@@ -18,6 +18,7 @@ import { InspectionsSection, type InspectionRow, type PublishedTemplate } from "
 import { SchedulesSection, type ScheduleRow } from "./_schedules";
 import { SafetyBlocksSection } from "./_safety";
 import { MaintenanceSection, type MaintenanceCaseRow } from "./_maintenance";
+import { ServiceSchedulesSection, type ServiceScheduleRow } from "./_service-schedules";
 import {
   currentSafetyBlocks,
   hasUnbypassedBlock,
@@ -338,6 +339,24 @@ export default async function AssetDetailPage({
     .order("created_at", { ascending: false });
   const maintenanceCases: MaintenanceCaseRow[] = casesRaw ?? [];
 
+  // Standing service schedules for this asset.
+  const { data: svcSchedulesRaw } = await (
+    supabase.from("asset_service_schedules" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (c: string, o: { ascending: boolean }) => Promise<{ data: ServiceScheduleRow[] | null }>;
+        };
+      };
+    }
+  )
+    .select("id, maintenance_type, title, interval_days, interval_months, next_due, lead_time_days, active")
+    .eq("asset_id", id)
+    .order("next_due", { ascending: true });
+  const serviceSchedules: ServiceScheduleRow[] = svcSchedulesRaw ?? [];
+
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -480,6 +499,13 @@ export default async function AssetDetailPage({
       <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} blocked={blockedFromIssue} />
 
       <MaintenanceSection assetId={asset.id} cases={maintenanceCases} isAdmin={canDelete} />
+
+      <ServiceSchedulesSection
+        assetId={asset.id}
+        schedules={serviceSchedules}
+        isAdmin={canDelete}
+        today={today}
+      />
 
       <SchedulesSection
         assetId={asset.id}

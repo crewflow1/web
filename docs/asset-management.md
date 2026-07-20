@@ -17,7 +17,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
 | **4** | **Inspections** | immutable records + safety-blocking + templates + scheduling + **overrides/lineage/hardening/pre-use (this PR)**; UX/E2E completion next | ◑ M4a #380 · M4c #381 · M4b-1 #382 · M4b-2 #383 · **M4d — this PR**; M4 UX/E2E next |
-| **5** | **Maintenance** | cases + DB-gated state machine + admin-only costs satellite **(M5a — this PR)**; schedules/generator (M5b) + RTS loop UX (M5c) next | ◑ **M5a — this PR** |
+| **5** | **Maintenance** | cases + state machine + costs privacy (M5a) + **service schedules & idempotent generation (M5b — this PR)**; RTS loop UX/E2E (M5c) next | ◑ M5a #386 · **M5b — this PR** |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
 | 8 | Global search | extend the ⌘K palette + indexed serial/reg/tag search | planned |
@@ -509,9 +509,42 @@ planned work). `20261002000000`:
   smuggle; anon denial on cases AND costs; attachment CHECK 15 targets + prior
   + bogus).
 
-**M5 remainder:** M5b service schedules + idempotent generator (clone of the
-proven M4b-2 claim model; the design's pair-CHECK bug fixed the same way) and
-M5c the full repair → re-inspection → return-to-service loop UX + E2E.
+## Milestone 5b — shipped: service schedules + idempotent case generation
+
+Standing preventive-maintenance rules that generate cases — **a direct clone of
+the proven M4b-2 model**, sharing its pure date maths (no second scheduler
+framework). `20261003000000`:
+
+- **`asset_service_schedules`**: type (preventive/service/calibration), optional
+  name, exactly-one-interval-or-one-off cadence, `next_due`,
+  `lead_time_days` (default **14** — services need booking lead time), `active`,
+  supplier propagation. Same-org guard; **admin-only writes** at RLS, member
+  read.
+- **The claim**: `asset_maintenance_cases` gains `schedule_id` + `cycle_key`
+  with a **TOTAL unique index** (added by ALTER — the reviewed design's
+  pair-CHECK bug is fixed the M4b-2 way: no pair CHECK, so `on delete set null`
+  schedule deletion keeps working). The generator's
+  `INSERT … ON CONFLICT DO NOTHING` is the claim; **count-gated CAS**
+  advancement; one-offs deactivate; generated cases arrive as
+  `status='scheduled'` with type/supplier/date propagated. The cases guard is
+  CREATE-OR-REPLACEd (prior arms verbatim) with one new arm: generated
+  provenance must be a same-org schedule **for the same asset**.
+- **Cron**: `GET /api/cron/maintenance-due` (Bearer + telemetry, `maxDuration
+  60`) — `vercel.json` daily 05:30 (19th cron). `maintenance.due` notification
+  per WON claim (the claim is the dedup).
+- **UX**: a Service schedules section on the asset detail (cadence, next-due
+  with overdue highlight, pause/resume/remove, admin add form).
+- **Proof** (`asset-maintenance-generator.test.ts`, real Postgres, 5 cases
+  **running the real generator**): exactly-one correctly-shaped case +
+  idempotent re-run + one CAS advance · **concurrent runs → one case, one
+  advance** · paused generates nothing + one-offs deactivate · cross-org
+  schedule refs + generated-provenance smuggle rejected · anon denied. The
+  pure date maths is already covered by the 10 M4b-2 unit cases it reuses.
+
+**M5 remainder:** M5c — the full repair → re-inspection → return-to-service
+loop UX (report-fault prefilled from a failed inspection, start re-inspection
+from a case, downtime auto-stamps surfaced) + boundary E2E, then full Asset
+Management integration & hardening.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
