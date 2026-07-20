@@ -97,7 +97,10 @@ export function friendlyAssignmentError(
   if (code === "23505") return "That asset is already checked out. Return it first.";
   if (code === "23514" || code === "check_violation") {
     if (message && /failed safety inspection/.test(message)) {
-      return "That asset has a failed safety inspection. Record a passing re-inspection before issuing it.";
+      return "That asset has a failed safety inspection. Record a passing re-inspection — or an admin can record a formal override — before issuing it.";
+    }
+    if (message && /requires a completed inspection/.test(message)) {
+      return "A required pre-use inspection is due on that asset. Complete it before issuing.";
     }
     if (message && /cannot be assigned/.test(message)) {
       return "That asset can't be assigned in its current state (retired, sold, lost or out of service).";

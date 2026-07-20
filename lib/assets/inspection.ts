@@ -121,6 +121,8 @@ export const createInspectionSchema = z.object({
   safety_critical: z.coerce.boolean().default(false),
   notes: optText(),
   due_at: z.preprocess(blankToUndefined, z.string().datetime().optional()),
+  /** M4d lineage: the failed inspection this one re-inspects (clears exactly it). */
+  reinspection_of: z.preprocess(blankToUndefined, z.string().uuid().optional()),
 });
 export type CreateInspectionInput = z.infer<typeof createInspectionSchema>;
 
@@ -146,6 +148,8 @@ export type InspectionSnapshot = {
   asset: { id: string; name: string; asset_ref: string | null };
   inspected_at: string | null;
   issued_at: string;
+  /** M4d: lineage is part of the frozen record. */
+  reinspection_of: string | null;
 };
 
 export function materializeInspectionSnapshot(input: {
@@ -157,6 +161,7 @@ export function materializeInspectionSnapshot(input: {
   asset: { id: string; name: string; asset_ref: string | null };
   inspected_at: string | null;
   issuedAt: string;
+  reinspection_of?: string | null;
 }): InspectionSnapshot {
   return {
     title: input.title,
@@ -167,5 +172,6 @@ export function materializeInspectionSnapshot(input: {
     asset: input.asset,
     inspected_at: input.inspected_at,
     issued_at: input.issuedAt,
+    reinspection_of: input.reinspection_of ?? null,
   };
 }

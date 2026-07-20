@@ -16,6 +16,13 @@ import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
 import { InspectionsSection, type InspectionRow, type PublishedTemplate } from "./_inspections";
 import { SchedulesSection, type ScheduleRow } from "./_schedules";
+import { SafetyBlocksSection } from "./_safety";
+import {
+  currentSafetyBlocks,
+  hasUnbypassedBlock,
+  type BlockableInspection,
+  type OverrideRow,
+} from "@/lib/assets/inspection-override";
 
 type AssetRow = {
   id: string;
@@ -68,6 +75,9 @@ const SAVED_MAP: Record<string, string> = {
   schedule_paused: "Schedule paused.",
   schedule_resumed: "Schedule resumed.",
   schedule_deleted: "Schedule removed. Generated history is preserved.",
+  override: "Authorised operational override recorded.",
+  override_revoked: "Override revoked. Blocking has resumed.",
+  reinspection: "Re-inspection draft created. Complete and issue it to clear the block.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
@@ -88,6 +98,10 @@ const ERROR_MAP: Record<string, string> = {
   schedule_invalid: "Please check the schedule details.",
   schedule_failed: "Couldn't save the schedule. Try again.",
   forbidden: "Only an owner or admin can do that.",
+  override_invalid: "Give a real reason (at least 10 characters).",
+  override_failed: "Couldn't save the override. Try again.",
+  override_already_revoked: "That override was already revoked.",
+  inspection_not_issued: "Only an issued inspection can be re-inspected.",
 };
 
 export default async function AssetDetailPage({
@@ -227,7 +241,7 @@ export default async function AssetDetailPage({
       };
     }
   )
-    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at, due_at, template_id, template_version")
+    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at, due_at, template_id, template_version, reinspection_of")
     .eq("asset_id", id)
     .neq("status", "archived")
     .order("created_at", { ascending: false });
@@ -270,6 +284,30 @@ export default async function AssetDetailPage({
     .eq("asset_id", id)
     .order("next_due", { ascending: true });
   const schedules: ScheduleRow[] = schedulesRaw ?? [];
+
+  // Overrides for this asset + the current safety blocks (the guard's mirror).
+  const { data: overridesRaw } = await (
+    supabase.from("asset_inspection_overrides" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (c: string, o: { ascending: boolean }) => Promise<{ data: OverrideRow[] | null }>;
+        };
+      };
+    }
+  )
+    .select("id, inspection_id, reason, expires_at, created_at, created_by, revoked_at")
+    .eq("asset_id", id)
+    .order("created_at", { ascending: false });
+  const nowIso = new Date().toISOString();
+  const safetyBlocks = currentSafetyBlocks(
+    inspections as unknown as BlockableInspection[],
+    overridesRaw ?? [],
+    nowIso,
+  );
+  const blockedFromIssue = hasUnbypassedBlock(safetyBlocks);
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
@@ -358,6 +396,8 @@ export default async function AssetDetailPage({
         </div>
       </section>
 
+      <SafetyBlocksSection assetId={asset.id} blocks={safetyBlocks} isAdmin={canDelete} />
+
       <CustodySection
         assetId={asset.id}
         assetActive={status === "active"}
@@ -408,7 +448,7 @@ export default async function AssetDetailPage({
         </div>
       </section>
 
-      <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} />
+      <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} blocked={blockedFromIssue} />
 
       <SchedulesSection
         assetId={asset.id}

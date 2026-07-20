@@ -77,6 +77,7 @@ type InspectionRow = {
   kind: InspectionKind | null;
   safety_critical: boolean;
   content: Record<string, unknown> | null;
+  reinspection_of: string | null;
   assets: { id: string; name: string; asset_ref: string | null } | null;
 };
 
@@ -90,6 +91,7 @@ export async function createInspection(formData: FormData): Promise<void> {
     safety_critical: formData.get("safety_critical") ?? false,
     notes: formData.get("notes"),
     due_at: formData.get("due_at"),
+    reinspection_of: formData.get("reinspection_of"),
   });
   if (!parsed.success) {
     const assetId = String(formData.get("asset_id") ?? "");
@@ -108,6 +110,7 @@ export async function createInspection(formData: FormData): Promise<void> {
       status: "draft",
       content: input.notes ? { notes: input.notes } : {},
       due_at: input.due_at ?? null,
+      reinspection_of: input.reinspection_of ?? null,
       created_by: user.id,
     })
     .select("id")
@@ -144,7 +147,7 @@ export async function issueInspection(formData: FormData): Promise<void> {
 
   // Load the draft + its asset (RLS-scoped). notFound-equivalent → back to assets.
   const { data: insp } = await (tenant.from("asset_inspections" as never) as unknown as LoadChain)
-    .select("id, asset_id, status, title, kind, safety_critical, content, assets(id, name, asset_ref)")
+    .select("id, asset_id, status, title, kind, safety_critical, content, reinspection_of, assets(id, name, asset_ref)")
     .eq("id", inspectionId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
@@ -173,6 +176,7 @@ export async function issueInspection(formData: FormData): Promise<void> {
     asset: insp.assets ?? { id: insp.asset_id, name: "", asset_ref: null },
     inspected_at: inspectedAt,
     issuedAt,
+    reinspection_of: insp.reinspection_of,
   });
 
   // Atomic: status + outcome + snapshot + content + inspected_at in one write.
@@ -264,6 +268,7 @@ type TemplatedInspectionRow = {
   content: Record<string, unknown> | null;
   template_snapshot: TemplateSnapshot | null;
   schedule_id: string | null;
+  reinspection_of: string | null;
   assets: { id: string; name: string; asset_ref: string | null } | null;
 };
 
@@ -357,7 +362,7 @@ async function loadTemplatedInspection(orgId: string, inspectionId: string) {
       };
     };
   })
-    .select("id, asset_id, status, title, kind, content, template_snapshot, schedule_id, assets(id, name, asset_ref)")
+    .select("id, asset_id, status, title, kind, content, template_snapshot, schedule_id, reinspection_of, assets(id, name, asset_ref)")
     .eq("id", inspectionId)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -434,6 +439,7 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     asset: insp.assets ?? { id: insp.asset_id, name: "", asset_ref: null },
     inspected_at: issuedAt,
     issuedAt,
+    reinspection_of: insp.reinspection_of,
   });
 
   const tenant = await createClient();
@@ -497,4 +503,99 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
 
   revalidatePath(`/assets/${insp.asset_id}`);
   redirect(`${runUrl}?saved=issued`);
+}
+
+/**
+ * M4d — start a re-inspection explicitly linked to a failed inspection. A
+ * passing issue of the new record clears EXACTLY that fail (arm 1 of the
+ * clearing predicate). Templated fails re-run the family's CURRENT published
+ * version (falling back to the fail's frozen snapshot if none is published);
+ * ad-hoc fails get an ad-hoc safety-critical draft.
+ */
+export async function startReinspection(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const failId = String(formData.get("inspection_id") ?? "");
+  const fail = await loadTemplatedInspection(ctx.org.id, failId);
+  if (!fail) redirect(`/assets?error=inspection_missing`);
+  const assetUrl = `/assets/${fail.asset_id}`;
+  if (fail.status !== "issued") redirect(`${assetUrl}?error=inspection_not_issued`);
+
+  const tenant = await createClient();
+  let templateFields: Record<string, unknown> = {};
+  let title = `Re-inspection: ${fail.title}`.slice(0, 200);
+
+  if (fail.template_snapshot) {
+    // Prefer the family's live published version; fall back to the frozen copy.
+    const { data: published } = await (
+      tenant.from("asset_inspection_templates" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplatePickRow | null }> };
+          };
+        };
+      }
+    )
+      .select("id, family_id, version, name, check_level, status, definition")
+      .eq("family_id", fail.template_snapshot.family_id)
+      .eq("status", "published")
+      .maybeSingle();
+    const def = published ? templateDefinitionSchema.safeParse(published.definition) : null;
+    if (published && def?.success) {
+      templateFields = {
+        template_id: published.id,
+        template_version: published.version,
+        template_snapshot: materializeTemplateSnapshot({
+          id: published.id,
+          family_id: published.family_id,
+          version: published.version,
+          name: published.name,
+          check_level: published.check_level,
+          definition: def.data,
+        }),
+      };
+      title = published.name;
+    } else {
+      templateFields = {
+        template_id: fail.template_snapshot.template_id,
+        template_version: fail.template_snapshot.version,
+        template_snapshot: fail.template_snapshot,
+      };
+      title = fail.template_snapshot.name;
+    }
+  }
+
+  const { data, error } = await (tenant.from("asset_inspections" as never) as unknown as InsertChain)
+    .insert({
+      org_id: ctx.org.id,
+      asset_id: fail.asset_id,
+      title,
+      kind: fail.template_snapshot ? null : "safety",
+      status: "draft",
+      // Ad-hoc re-inspections are safety-critical by construction (they exist to
+      // clear a safety block); templated ones derive the flag at issue.
+      safety_critical: fail.template_snapshot ? false : true,
+      content: {},
+      reinspection_of: failId,
+      created_by: user.id,
+      ...templateFields,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    console.error("[asset-inspection] start reinspection failed", error);
+    redirect(`${assetUrl}?error=inspection_failed`);
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "asset.reinspection_started",
+    targetTable: "asset_inspections",
+    targetId: data.id,
+    metadata: { asset_id: fail.asset_id, reinspection_of: failId },
+  });
+
+  revalidatePath(assetUrl);
+  if (fail.template_snapshot) redirect(`${assetUrl}/inspections/${data.id}`);
+  redirect(`${assetUrl}?saved=reinspection`);
 }

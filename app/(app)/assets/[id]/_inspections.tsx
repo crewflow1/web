@@ -5,7 +5,6 @@ import {
   INSPECTION_OUTCOME_LABELS,
   INSPECTION_OUTCOMES,
   INSPECTION_STATUS_LABELS,
-  isSafetyBlocking,
   type InspectionKind,
   type InspectionOutcome,
   type InspectionStatus,
@@ -61,13 +60,16 @@ export function InspectionsSection({
   inspections,
   templates,
   today,
+  blocked,
 }: {
   assetId: string;
   inspections: InspectionRow[];
   templates: PublishedTemplate[];
   today: string;
+  /** Accurate M4d block state (lineage + overrides aware), computed by the page. */
+  blocked: boolean;
 }) {
-  const blocking = inspections.some((i) => isSafetyBlocking(i));
+  const blocking = blocked;
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
