@@ -56,6 +56,14 @@ floating-point money, service-role portal reads without explicit scoping.
   the invoice snapshot only READS lines, so accept→invoice is unaffected.
   To change agreed scope, raise a variation — never edit the accepted quote.
 
+- **Construction retention** (20261005000000): `jobs.retention_percent` +
+  append-only `retention_releases` ledger. Held = `rate% × non-draft invoiced
+  NET − released` (DERIVED, never stored). DB guards: no over-release
+  (`tg_retention_release_guard` computes accrued from invoices via SECURITY
+  DEFINER), releases immutable (UPDATE blocked for all roles), positive amount,
+  org-consistency; DELETE open for cascade. A COMMERCIAL holdback, not CIS/HMRC
+  — no tax logic. Retention accrues on the ex-VAT works value (UK convention).
+
 ## Carried lessons (from the asset programme)
 
 `next build` is a gate tsc can't replace (node:crypto) · inspect shared
