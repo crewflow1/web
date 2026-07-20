@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isMaintenanceMode } from "@/lib/maintenance";
 import { z } from "zod";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { INBOUND_CHANNELS } from "@/lib/receptionist/types";
@@ -57,6 +58,15 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Maintenance-window gate: during a cutover, return a retry-safe 503 so the
+  // provider (Stripe/Meta/Twilio) re-delivers after the window instead of
+  // treating the event as handled. Inert unless MAINTENANCE_MODE=on.
+  if (isMaintenanceMode()) {
+    return NextResponse.json(
+      { ok: false, maintenance: true, message: "Scheduled maintenance — retry shortly." },
+      { status: 503, headers: { "retry-after": "120", "cache-control": "no-store" } },
+    );
+  }
   // Rate limit before auth — abusive bots get cut off cheaply.
   const rl = enforce(request, "receptionist_inbound", DEFAULT_LIMITS.api);
   if (rl) return rl as unknown as NextResponse;

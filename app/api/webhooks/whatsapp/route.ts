@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import {
   verifyMetaSignature,
@@ -64,6 +65,15 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 /** POST — a verified WhatsApp delivery (messages and/or statuses). */
 export async function POST(request: Request): Promise<NextResponse> {
+  // Maintenance-window gate: during a cutover, return a retry-safe 503 so the
+  // provider (Stripe/Meta/Twilio) re-delivers after the window instead of
+  // treating the event as handled. Inert unless MAINTENANCE_MODE=on.
+  if (isMaintenanceMode()) {
+    return NextResponse.json(
+      { ok: false, maintenance: true, message: "Scheduled maintenance — retry shortly." },
+      { status: 503, headers: { "retry-after": "120", "cache-control": "no-store" } },
+    );
+  }
   // Rate limit before auth — abusive senders are cut off cheaply.
   const rl = enforce(request, "whatsapp_webhook", DEFAULT_LIMITS.api);
   if (rl) return rl as unknown as NextResponse;

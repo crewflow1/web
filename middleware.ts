@@ -1,13 +1,27 @@
 import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import {
+  isMaintenanceMode,
+  isMaintenanceBypassed,
+  maintenanceResponse,
+} from "@/lib/maintenance";
 
 /**
  * Top-level middleware — delegates to the Supabase session helper.
  *
+ * Block 1: maintenance-window gate (DB-free) — during a controlled cutover,
+ *   customer/app routes return a retry-safe 503 BEFORE any session/DB work, so
+ *   it is safe to serve even while the schema is mid-migration. Operators and
+ *   smoke-tests bypass with the MAINTENANCE_BYPASS token. Inert unless
+ *   MAINTENANCE_MODE=on. api/health, api/cron and api/webhooks are excluded by
+ *   the matcher below and gated separately (they must stay reachable / retry-safe).
  * Block 2: session refresh + auth redirects.
- * Block 3+ may add: request-id headers, rate limiting, A/B flag injection.
  */
 export async function middleware(request: NextRequest) {
+  if (isMaintenanceMode() && !isMaintenanceBypassed(request)) {
+    const wantsHtml = (request.headers.get("accept") ?? "").includes("text/html");
+    return maintenanceResponse(wantsHtml ? "html" : "json");
+  }
   return await updateSession(request);
 }
 

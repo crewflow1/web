@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isMaintenanceMode } from "@/lib/maintenance";
 import {
   verifyTwilioSignature,
   parseTwilioSmsStatusCallback,
@@ -71,6 +72,15 @@ function callbackUrl(request: Request): string {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Maintenance-window gate: during a cutover, return a retry-safe 503 so the
+  // provider (Stripe/Meta/Twilio) re-delivers after the window instead of
+  // treating the event as handled. Inert unless MAINTENANCE_MODE=on.
+  if (isMaintenanceMode()) {
+    return NextResponse.json(
+      { ok: false, maintenance: true, message: "Scheduled maintenance — retry shortly." },
+      { status: 503, headers: { "retry-after": "120", "cache-control": "no-store" } },
+    );
+  }
   // Twilio delivers an application/x-www-form-urlencoded body. Read it raw — the
   // signature is computed over these exact params, so we must not let anything
   // re-encode them before verification.
