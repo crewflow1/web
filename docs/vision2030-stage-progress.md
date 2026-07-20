@@ -5,9 +5,14 @@
 > Separate from `docs/roadmap.md`, which tracks the HQ AI-boardroom / Sales-AI
 > programme. Updated after every milestone.
 >
-> **Last updated:** 2026-07-18 · Site Management → **Snagging** shipped (PR #367,
-> all 8 CI gates green, unmerged per protocol). Next vertical in build: **Daily
-> Diary**.
+> **Last updated:** 2026-07-20 · **Asset Management COMPLETE (M1–M5 +
+> integration): PRs #373–#374, #376–#388 — 16 CI-green PRs, migrations
+> `20260924`→`20261003`, all unmerged per protocol.** Register → custody →
+> QR platform → inspections (templates, scheduling, safety-blocking,
+> overrides/lineage) → maintenance (cases, service scheduling, the connected
+> repair→re-inspection→return-to-service loop) → cross-domain integration
+> (job-linked assets, holdings, unified history). Full detail + test evidence:
+> `docs/asset-management.md`.
 
 ## Standing reality (read first)
 - **Nothing is in production yet.** The directive branch is ~21 PRs / 151
@@ -23,9 +28,9 @@
 | **1. Blueprint Centre** | ◻ not started | Canvas/PDF epic (markups, comparison, measurements, mobile viewer) — needs a **new client rendering dependency** + its own multi-milestone plan. Sequence after the additive Site-Mgmt cluster. |
 | **2. Customer Portal (remainder)** | ◐ partial | Portal exists (payments, uploads, proofs). Warranties, completion certs, maintenance reminders, richer timeline/feed, blueprint/AI updates — pending. |
 | **3. Variation Management** | ◐ partial | Some variation surface exists. Invoice amendments, approvals, profitability/financial impact, portal integration, doc generation — pending. |
-| **4. Site Management** | ◑ **in progress** | **Snagging ✅ shipped (PR #367).** Daily Diary — **in build**. Toolbox Talks / RAMS, Site Reports, progress photos, H&S, inspections, site issues — pending. Weather intelligence needs an external API (gated). |
+| **4. Site Management** | ◑ largely shipped | Snagging #367 · Daily Diary #368 · Toolbox Talks #369 · Site Reports #370–#372 (immutable, PDF, portal). Progress-photo galleries + weather intelligence (external API, gated) remain. |
 | **5. Financial Operations** | ◐ partial | Expenses/finances/tax exist. CIS, purchase orders, retention tracking, supplier reconciliation, payment scheduling, finance dashboard — pending. CIS = HMRC correctness; may need a product decision. |
-| **6. Asset Management** | ◻ not started | Fleet/vehicles/equipment, QR codes, inspections, maintenance, servicing, allocation. Clean additive cluster (like Site Mgmt). |
+| **6. Asset Management** | ✅ **complete (M1–M5 + integration)** | Register #373 · custody #374 · QR #376–#379 · inspections #380–#385 (immutable records, safety-blocking custody, versioned templates, idempotent scheduling, audited overrides + explicit reinspection lineage, org-wide attention) · maintenance #386–#388 (state machine, costs privacy, service scheduler, connected RTS loop) · integration (job-linked assets, holdings, unified history). DB-enforced invariants + real-Postgres proofs throughout; authenticated lifecycle E2E gated on the login harness (tracked). |
 | **7. Customer Experience** | ◑ ongoing | Premium-feel polish shipped across PRs #364–#366 (onboarding, empty states, loading, copy, breadcrumbs, autofocus). Ranked backlog in `docs/cx-acceleration.md`. |
 
 **Dependency-safe next verticals (no CEO decision / no external creds):** Daily

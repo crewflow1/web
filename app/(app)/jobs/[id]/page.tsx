@@ -8,6 +8,7 @@ import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { JobAssetsSection } from "./_job-assets";
 import { JobDocumentsPanel } from "./_job-documents";
 import {
   computeJobProfitability,
@@ -426,6 +427,8 @@ export default async function EditJobPage({
           </div>
         )}
       </section>
+
+      <JobAssetsSection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

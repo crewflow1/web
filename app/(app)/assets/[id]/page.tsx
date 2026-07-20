@@ -19,6 +19,9 @@ import { SchedulesSection, type ScheduleRow } from "./_schedules";
 import { SafetyBlocksSection } from "./_safety";
 import { MaintenanceSection, type MaintenanceCaseRow } from "./_maintenance";
 import { ServiceSchedulesSection, type ServiceScheduleRow } from "./_service-schedules";
+import { AssetTimelineSection, type TimelineEvent } from "./_timeline";
+import { INSPECTION_OUTCOME_LABELS } from "@/lib/assets/inspection";
+import { MAINTENANCE_STATUS_LABELS as CASE_STATUS_LABELS } from "@/lib/assets/maintenance";
 import {
   currentSafetyBlocks,
   hasUnbypassedBlock,
@@ -357,6 +360,49 @@ export default async function AssetDetailPage({
     .order("next_due", { ascending: true });
   const serviceSchedules: ServiceScheduleRow[] = svcSchedulesRaw ?? [];
 
+  // Unified history: one bounded custody read + events composed from data
+  // already loaded above (inspections, overrides, maintenance cases).
+  const { data: historyRaw } = await (
+    supabase.from("asset_assignments" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => { limit: (n: number) => Promise<{ data: { assignment_type: string; assigned_at: string; actual_return_at: string | null; location: string | null }[] | null }> };
+        };
+      };
+    }
+  )
+    .select("assignment_type, assigned_at, actual_return_at, location")
+    .eq("asset_id", id)
+    .order("assigned_at", { ascending: false })
+    .limit(15);
+  const timeline: TimelineEvent[] = [];
+  for (const a of historyRaw ?? []) {
+    timeline.push({ at: a.assigned_at, kind: "custody", label: `Checked out (${a.assignment_type.replaceAll("_", " ")}${a.location ? ` — ${a.location}` : ""})` });
+    if (a.actual_return_at) timeline.push({ at: a.actual_return_at, kind: "custody", label: "Returned" });
+  }
+  for (const i of inspections) {
+    if (i.status === "issued" || i.status === "superseded") {
+      timeline.push({
+        at: i.inspected_at ?? i.created_at,
+        kind: "inspection",
+        label: `${i.title} — ${i.outcome ? INSPECTION_OUTCOME_LABELS[i.outcome] : "recorded"}${i.safety_critical && i.outcome === "fail" ? " (safety block)" : ""}`,
+      });
+    }
+  }
+  for (const o of overridesRaw ?? []) {
+    timeline.push({ at: o.created_at, kind: "override", label: "Operational override recorded" });
+    if (o.revoked_at) timeline.push({ at: o.revoked_at, kind: "override", label: "Override revoked" });
+  }
+  for (const c of maintenanceCases) {
+    timeline.push({ at: c.created_at, kind: "maintenance", label: `${c.title} — ${CASE_STATUS_LABELS[c.status]}` });
+  }
+
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -514,6 +560,8 @@ export default async function AssetDetailPage({
         isAdmin={canDelete}
         today={today}
       />
+
+      <AssetTimelineSection events={timeline} />
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />

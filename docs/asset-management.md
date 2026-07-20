@@ -567,8 +567,28 @@ suite. The authenticated browser lifecycle E2E remains gated on the login
 harness (tracked).
 
 **M5 status: COMPLETE** (cases · schedules · generation · the connected loop).
-**Next:** full Asset Management integration & hardening (job-detail assets,
-unified timeline, dashboard attention) + Stage One reconciliation.
+
+## Integration slice — shipped: the connected operating system
+
+- **Assets on the job detail** (`_job-assets.tsx`): every asset currently
+  allocated to the job via open custody, linked both ways.
+- **`/assets/holdings`**: who has what right now — staff-held / on jobs / on
+  vehicles / depots-repair-suppliers, with overdue-return highlighting. One
+  bounded RLS-scoped read.
+- **Unified asset history** on the detail page: custody, inspections (with
+  safety-block markers), overrides and maintenance interleaved chronologically
+  (capped at 30; full history stays in each section).
+- **Boundary E2E** (`asset-integration.spec.ts`): the holdings surface never
+  paints for a logged-out caller.
+
+### Programme status — Asset Management COMPLETE
+M1 register · M2 custody · M3 QR · M4 inspections · M5 maintenance ·
+integration — 16 CI-green PRs (#373–#374, #376–#388), migrations
+`20260924`→`20261003`, every invariant DB-enforced and proven against real
+Postgres, every PR unmerged per protocol. **Remaining tracked follow-ups:**
+authenticated-E2E login harness (unlocks the full 17-step lifecycle specs);
+per-item photo binding + drawn signatures; dashboards/exports/global-search
+polish; permission-capability model refinement.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
