@@ -43,7 +43,12 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
   let n = 0;
   const svc = () => db(serviceClient());
 
-  /** A quote in org A. `status` and `total` default to the caller's wishes. */
+  // The freeze (hardened in 20261007) keys on accepted_at, NOT the live status —
+  // an accepted quote carries accepted_at, and it stays frozen even if the status
+  // is later changed back (the status side-channel this fix closes).
+  const ACCEPTED_AT = "2026-01-01T00:00:00.000Z";
+
+  /** A quote in org A. An 'accepted' quote realistically carries accepted_at. */
   const mkQuote = async (status: string, total = 120) => {
     n += 1;
     const q = await svc()
@@ -56,12 +61,17 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
         subtotal: 100,
         vat_total: 20,
         total,
+        accepted_at: status === "accepted" ? ACCEPTED_AT : null,
       })
       .select("id")
       .single();
     expect(q.error, q.error?.message).toBeNull();
     return q.data?.id as string;
   };
+
+  /** The real accept transition: sets status AND accepted_at in one update. */
+  const accept = (quoteId: string) =>
+    svc().from("quotes").update({ status: "accepted", accepted_at: ACCEPTED_AT }).eq("id", quoteId);
 
   const mkLine = async (quoteId: string) => {
     n += 1;
@@ -110,14 +120,14 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
   // ── The accept TRANSITION itself is never blocked ──────────────────────────
   it("sent → accepted transition succeeds (the freeze does not block accepting)", async () => {
     const q = await mkQuote("sent");
-    const accept = await svc().from("quotes").update({ status: "accepted" }).eq("id", q);
-    expect(accept.error, accept.error?.message).toBeNull();
+    const res = await accept(q);
+    expect(res.error, res.error?.message).toBeNull();
   });
 
   // ── Money is frozen once accepted ──────────────────────────────────────────
   it("REJECTS changing an accepted quote's total", async () => {
     const q = await mkQuote("sent");
-    await svc().from("quotes").update({ status: "accepted" }).eq("id", q);
+    await accept(q);
 
     const bad = await svc().from("quotes").update({ total: 5000 }).eq("id", q);
     expect(bad.error).not.toBeNull();
@@ -140,6 +150,30 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
     expect(ok.error, ok.error?.message).toBeNull();
   });
 
+  // ── Status side-channel is CLOSED (20261007 hardening) ─────────────────────
+  it("REJECTS editing amounts after an accepted quote's status is reverted (no side-channel)", async () => {
+    const q = await mkQuote("sent");
+    await accept(q); // accepted_at now set
+
+    // The bypass the freeze used to allow: flip status away from 'accepted'
+    // (permitted — status is not frozen), then try to edit the amounts.
+    const revert = await svc().from("quotes").update({ status: "sent" }).eq("id", q);
+    expect(revert.error, revert.error?.message).toBeNull(); // status change itself is allowed
+
+    // ...but the amounts stay frozen because accepted_at is still set.
+    const bad = await svc().from("quotes").update({ total: 5000 }).eq("id", q);
+    expect(bad.error).not.toBeNull();
+    expect(bad.error?.message ?? "").toMatch(/frozen/i);
+  });
+
+  it("REJECTS clearing accepted_at to escape the freeze", async () => {
+    const q = await mkQuote("sent");
+    await accept(q);
+    const bad = await svc().from("quotes").update({ accepted_at: null }).eq("id", q);
+    expect(bad.error).not.toBeNull();
+    expect(bad.error?.message ?? "").toMatch(/frozen/i);
+  });
+
   // ── Scope (line items) is frozen once accepted ─────────────────────────────
   it("REJECTS adding a line item to an accepted quote", async () => {
     const q = await mkQuote("accepted");
@@ -152,7 +186,7 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
     const q = await mkQuote("sent");
     const line = await mkLine(q); // added while still 'sent' → allowed
     expect(line.error, line.error?.message).toBeNull();
-    await svc().from("quotes").update({ status: "accepted" }).eq("id", q);
+    await accept(q);
 
     const bad = await svc().from("quote_line_items").update({ line_total: 777 }).eq("quote_id", q);
     expect(bad.error).not.toBeNull();
@@ -163,7 +197,7 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
   it("ALLOWS deleting an accepted quote (cascade removes its frozen lines)", async () => {
     const q = await mkQuote("sent");
     await mkLine(q);
-    await svc().from("quotes").update({ status: "accepted" }).eq("id", q);
+    await accept(q);
 
     const del = await svc().from("quotes").delete().eq("id", q);
     expect(del.error, del.error?.message).toBeNull();
@@ -178,7 +212,7 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
     const q = await mkQuote("sent");
     await mkLine(q);
     await mkLine(q);
-    await svc().from("quotes").update({ status: "accepted" }).eq("id", q);
+    await accept(q);
 
     n += 1;
     const inv = await svc()

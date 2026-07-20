@@ -33,12 +33,16 @@ export default async function PurchaseOrdersPage({
   const { data } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        order: (k: string, o: { ascending: boolean }) => Promise<{ data: PoRow[] | null }>;
+        order: (
+          k: string,
+          o: { ascending: boolean },
+        ) => { limit: (n: number) => Promise<{ data: PoRow[] | null }> };
       };
     }
   )
     .select("id, number, status, total, expected_date, supplier:suppliers ( name )")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500); // bound the list like /assets (1000) and /site-reports (500)
 
   const rows = data ?? [];
 
