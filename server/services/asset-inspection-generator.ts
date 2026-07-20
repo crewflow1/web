@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { emitNotifications } from "@/server/services/notifications-service";
 import {
   cycleKey,
   isDueForGeneration,
@@ -182,7 +183,29 @@ export async function runInspectionGenerator(
       )
       .select("id");
     if (claimError) throw new Error(`generator claim failed: ${claimError.message}`);
-    if ((won ?? []).length > 0) summary.generated += 1;
+    if ((won ?? []).length > 0) {
+      summary.generated += 1;
+      // Idempotent by construction: one emission per WON claim — retried or
+      // concurrent runs lose the conflict and emit nothing (the notifications
+      // table has no DB dedup, so the claim is the dedup).
+      const wonId = won?.[0]?.id;
+      await emitNotifications([
+        {
+          org_id: schedule.org_id,
+          user_id: null,
+          audience: "customer",
+          type: "inspection.due",
+          category: "system",
+          priority: "medium",
+          title: `Inspection due — ${schedule.title?.trim() || published.name}`,
+          body: `Due ${schedule.next_due}. Complete it from the asset's inspections.`,
+          action_url: wonId ? `/assets/${schedule.asset_id}/inspections/${wonId}` : `/assets/${schedule.asset_id}`,
+          source_module: "assets",
+          source_id: wonId ?? schedule.id,
+          metadata: { asset_id: schedule.asset_id, schedule_id: schedule.id, cycle_key: key },
+        },
+      ]).catch((e) => console.error("[inspection-generator] notify failed", e));
+    }
 
     // ADVANCE (win or conflict-loss): CAS on next_due; one-offs deactivate.
     const interval = { interval_days: schedule.interval_days, interval_months: schedule.interval_months };

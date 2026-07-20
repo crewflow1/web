@@ -309,6 +309,21 @@ export function deriveOutcome(sections: TemplateSection[], answers: Answers): De
   };
 }
 
+/**
+ * Items requiring a signature that have no typed attestation — blocks issue.
+ * v1 signature = the inspector types their full name against the item (a
+ * recorded attestation frozen into the evidence); drawn signatures are a
+ * later enhancement.
+ */
+export function missingSignatures(
+  sections: TemplateSection[],
+  signatures: Record<string, string>,
+): TemplateItem[] {
+  return allItems(sections).filter(
+    (i) => i.requires_signature && !isAnswered(signatures[i.key]),
+  );
+}
+
 /** Failed items that require a comment but have none — blocks issue. */
 export function missingFailComments(
   sections: TemplateSection[],

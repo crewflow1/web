@@ -28,6 +28,7 @@ type Row = {
   content: {
     answers?: Record<string, string>;
     comments?: Record<string, string>;
+    signatures?: Record<string, string>;
     failed_keys?: string[];
     critical_failed_keys?: string[];
   } | null;
@@ -46,6 +47,7 @@ const ERROR_MAP: Record<string, string> = {
   inspection_not_draft: "This inspection is already recorded and locked.",
   answers_missing: "Answer every required item (use N/A only where allowed).",
   fail_comment_missing: "Add a comment for each failed item.",
+  signature_missing: "Type your full name to sign each item that requires a signature.",
   inspection_invalid: "This inspection has no checklist attached.",
 };
 
@@ -81,6 +83,7 @@ export default async function InspectionRunPage({
   const snapshot = insp.template_snapshot;
   const answers = insp.content?.answers ?? {};
   const comments = insp.content?.comments ?? {};
+  const signatures = insp.content?.signatures ?? {};
   const failedKeys = new Set(insp.content?.failed_keys ?? []);
   const criticalKeys = new Set(insp.content?.critical_failed_keys ?? []);
   const running = insp.status === "draft";
@@ -148,6 +151,7 @@ export default async function InspectionRunPage({
                     item={item}
                     answer={answers[item.key]}
                     comment={comments[item.key]}
+                    signature={signatures[item.key]}
                     readOnly={!running}
                     failed={failedKeys.has(item.key)}
                     critical={criticalKeys.has(item.key)}
@@ -190,6 +194,7 @@ function ItemField({
   item,
   answer,
   comment,
+  signature,
   readOnly,
   failed,
   critical,
@@ -197,6 +202,7 @@ function ItemField({
   item: TemplateItem;
   answer: string | undefined;
   comment: string | undefined;
+  signature: string | undefined;
   readOnly: boolean;
   failed: boolean;
   critical: boolean;
@@ -213,6 +219,12 @@ function ItemField({
         <span className="font-medium text-slate-900">{item.prompt}</span>
         {item.safety_critical ? (
           <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">Safety-critical</span>
+        ) : null}
+        {item.requires_photo ? (
+          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">Photo required</span>
+        ) : null}
+        {item.requires_photo_on_fail ? (
+          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">Photo on fail</span>
         ) : null}
         {!item.required ? <span className="text-[11px] text-slate-400">Optional</span> : null}
       </div>
@@ -299,6 +311,20 @@ function ItemField({
         <p className="mt-2 text-xs text-slate-600">
           <span className="font-medium">Comment:</span> {comment}
         </p>
+      ) : null}
+      {readOnly && signature ? (
+        <p className="mt-1 text-xs text-slate-600">
+          <span className="font-medium">Signed:</span> {signature}
+        </p>
+      ) : null}
+      {!readOnly && item.requires_signature ? (
+        <input
+          name={`signature.${item.key}`}
+          defaultValue={signature ?? ""}
+          placeholder="Type your full name to sign (required to complete)"
+          aria-label="Type your full name to sign this item"
+          className="mt-2 w-full rounded-md border border-purple-200 bg-purple-50/50 px-3 py-2 text-sm"
+        />
       ) : null}
       {!readOnly ? (
         <input

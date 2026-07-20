@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertTemplateTransition,
+  missingSignatures,
   canStartInspection,
   canTransitionTemplate,
   createTemplateSchema,
@@ -184,6 +185,18 @@ describe("issue validation helpers", () => {
     const answers = { a: "fail", b: "fail" };
     const missing = missingFailComments(secs, answers, { a: "chain worn" });
     expect(missing.map((i) => i.key)).toEqual(["b"]);
+  });
+});
+
+describe("missingSignatures — typed-attestation gate (M4 UX)", () => {
+  it("lists signature-required items lacking a typed name; others never", () => {
+    const secs = sections([
+      item({ key: "sig1", requires_signature: true }),
+      item({ key: "plain" }),
+    ]);
+    expect(missingSignatures(secs, {}).map((i) => i.key)).toEqual(["sig1"]);
+    expect(missingSignatures(secs, { sig1: "  " }).map((i) => i.key)).toEqual(["sig1"]);
+    expect(missingSignatures(secs, { sig1: "Jo Builder" })).toHaveLength(0);
   });
 });
 

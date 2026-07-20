@@ -13,12 +13,14 @@ import {
   type InspectionKind,
   type InspectionStatus,
 } from "@/lib/assets/inspection";
+import { emitNotifications } from "@/server/services/notifications-service";
 import {
   canStartInspection,
   deriveOutcome,
   materializeTemplateSnapshot,
   missingFailComments,
   missingRequired,
+  missingSignatures,
   templateDefinitionSchema,
   type Answers,
   type CheckLevel,
@@ -272,16 +274,22 @@ type TemplatedInspectionRow = {
   assets: { id: string; name: string; asset_ref: string | null } | null;
 };
 
-/** Extract `answer.<key>` / `comment.<key>` fields from the run form. */
-function parseRunForm(formData: FormData): { answers: Answers; comments: Record<string, string> } {
+/** Extract `answer.` / `comment.` / `signature.` fields from the run form. */
+function parseRunForm(formData: FormData): {
+  answers: Answers;
+  comments: Record<string, string>;
+  signatures: Record<string, string>;
+} {
   const answers: Answers = {};
   const comments: Record<string, string> = {};
+  const signatures: Record<string, string> = {};
   for (const [k, v] of formData.entries()) {
     if (typeof v !== "string") continue;
     if (k.startsWith("answer.")) answers[k.slice("answer.".length)] = v;
     else if (k.startsWith("comment.")) comments[k.slice("comment.".length)] = v;
+    else if (k.startsWith("signature.")) signatures[k.slice("signature.".length)] = v;
   }
-  return { answers, comments };
+  return { answers, comments, signatures };
 }
 
 export async function startInspectionFromTemplate(formData: FormData): Promise<void> {
@@ -376,10 +384,10 @@ export async function saveInspectionAnswers(formData: FormData): Promise<void> {
   const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
   if (!insp) redirect(`/assets?error=inspection_missing`);
 
-  const { answers, comments } = parseRunForm(formData);
+  const { answers, comments, signatures } = parseRunForm(formData);
   const tenant = await createClient();
   const { error, count } = await (tenant.from("asset_inspections" as never) as unknown as UpdateChain)
-    .update({ content: { ...(insp.content ?? {}), answers, comments } }, { count: "exact" })
+    .update({ content: { ...(insp.content ?? {}), answers, comments, signatures } }, { count: "exact" })
     .eq("id", inspectionId)
     .eq("org_id", ctx.org.id)
     .eq("status", "draft");
@@ -412,13 +420,16 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     redirect(`${runUrl}?error=inspection_not_draft`);
   }
 
-  const { answers, comments } = parseRunForm(formData);
+  const { answers, comments, signatures } = parseRunForm(formData);
   const sections = insp.template_snapshot.sections;
   if (missingRequired(sections, answers).length > 0) {
     redirect(`${runUrl}?error=answers_missing`);
   }
   if (missingFailComments(sections, answers, comments).length > 0) {
     redirect(`${runUrl}?error=fail_comment_missing`);
+  }
+  if (missingSignatures(sections, signatures).length > 0) {
+    redirect(`${runUrl}?error=signature_missing`);
   }
 
   const derived = deriveOutcome(sections, answers);
@@ -427,6 +438,7 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     ...(insp.content ?? {}),
     answers,
     comments,
+    signatures,
     failed_keys: derived.failed_keys,
     critical_failed_keys: derived.critical_failed_keys,
   };
@@ -467,6 +479,27 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     redirect(`${runUrl}?error=inspection_failed`);
   }
   if (!count) redirect(`${runUrl}?error=inspection_not_draft`);
+
+  // Exactly-once (the issue transition is count-gated): raise org attention
+  // when a safety-critical failure was just recorded.
+  if (derived.safety_critical) {
+    await emitNotifications([
+      {
+        org_id: ctx.org.id,
+        user_id: null,
+        audience: "customer",
+        type: "inspection.failed_safety",
+        category: "system",
+        priority: "urgent",
+        title: `Safety-critical defect recorded — ${insp.assets?.name ?? insp.title}`,
+        body: "The asset is blocked from issue until a passing re-inspection (or an authorised override) is recorded.",
+        action_url: `/assets/${insp.asset_id}`,
+        source_module: "assets",
+        source_id: inspectionId,
+        metadata: { asset_id: insp.asset_id, outcome: derived.outcome },
+      },
+    ]).catch((e) => console.error("[asset-inspection] notify failed", e));
+  }
 
   // Informational writeback for the schedule that generated this inspection
   // (advancement happened at generation — fixed-cadence anchoring).

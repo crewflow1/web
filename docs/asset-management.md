@@ -442,9 +442,34 @@ highest-risk shared object; it changed once). `20261001000000`:
   completion; paused/non-required escape valves; anon denied. The M2/M4c
   custody suites regression-prove the guard replacement in the same run.
 
-**M4 remainder:** the M4 UX/E2E completion slice (org-wide due/overdue +
-blocked-assets views, notifications via `emitNotifications`, per-item
-photo/signature capture, dedicated boundary E2E).
+## Milestone 4 (UX/E2E) — shipped: the completion slice
+
+- **Org-wide attention** (`/assets/inspections`, linked from the assets
+  header): what's overdue, what's due, and **which assets are blocked and
+  why** — with the honest override state — computed by the same unit-tested
+  mirror of the DB clearing predicate the asset detail uses. Bounded reads on
+  the partial indexes.
+- **Notifications** (existing `emitNotifications` bus, in-app first): an
+  `inspection.due` note per **won generator claim** (the claim IS the dedup —
+  the notifications table has none, so retried/concurrent runs emit nothing)
+  and an urgent `inspection.failed_safety` note exactly-once on the
+  count-gated issue transition.
+- **Evidence capture on the run page**: typed-name **signature attestation**
+  per `requires_signature` item (server-validated at completion via
+  `missingSignatures`; frozen into `content.signatures` and the issued
+  snapshot; drawn signatures are a later enhancement), photo-requirement
+  badges per item (binding photos to items is still inspection-level via the
+  attachments panel — documented limitation).
+- **Dedicated M4 boundary E2E** (`e2e/asset-inspections.spec.ts`, real app +
+  real Postgres, 4 specs): the template library/editor, the org-wide overview
+  and an inspection run URL all hit the auth wall and never paint. The full
+  lifecycle stays proven at the integration tier (11 + 7 + 13 real-Postgres
+  cases); the authenticated browser lifecycle E2E awaits the passwordless
+  login harness (its own tracked infra increment).
+
+**M4 status: COMPLETE** under the honest scope above. Remaining M4-adjacent
+work rides later slices: per-item photo binding + drawn signatures (with the
+auth-harness E2E), org-wide notification preferences.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·
