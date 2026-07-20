@@ -129,8 +129,11 @@ describeIntegration("asset_maintenance_cases · state invariants + costs privacy
   });
 
   it("G2: RTS refused while the linked fail is uncleared; a LINKED pass clears it", async () => {
-    const failId = await mkFail(orgA, assetA);
-    const c = await mkCase(orgA, assetA, { source_inspection_id: failId, reinspection_required: true });
+    // Fresh asset: arm 2 (later-pass) is ASSET-wide, so a shared asset would let
+    // another case's pass clear this fail and void the blocked assertion.
+    const asset = await mkAsset(orgA);
+    const failId = await mkFail(orgA, asset);
+    const c = await mkCase(orgA, asset, { source_inspection_id: failId, reinspection_required: true });
     const id = String(c.data?.id);
 
     const blocked = await upd(id, { status: "ready_for_return_to_service" });
@@ -138,7 +141,7 @@ describeIntegration("asset_maintenance_cases · state invariants + costs privacy
 
     // A passing re-inspection EXPLICITLY linked to the fail (arm 1, backdate-safe).
     const pass = await db(serviceClient()).from("asset_inspections").insert({
-      org_id: orgA, asset_id: assetA, title: "re-check", status: "issued",
+      org_id: orgA, asset_id: asset, title: "re-check", status: "issued",
       safety_critical: true, outcome: "pass", snapshot: { frozen: true },
       inspected_at: "2026-01-02T00:00:00.000Z", reinspection_of: failId,
     }).select("id").single();
@@ -149,15 +152,16 @@ describeIntegration("asset_maintenance_cases · state invariants + costs privacy
   });
 
   it("G2 via override: an ACTIVE admin override also satisfies the RTS gate", async () => {
-    const failId = await mkFail(orgA, assetA);
-    const c = await mkCase(orgA, assetA, { source_inspection_id: failId });
+    const asset = await mkAsset(orgA); // fresh asset — same arm-2 isolation
+    const failId = await mkFail(orgA, asset);
+    const c = await mkCase(orgA, asset, { source_inspection_id: failId });
     const id = String(c.data?.id);
 
     const blocked = await upd(id, { status: "ready_for_return_to_service" });
     expect(blocked.error?.message ?? "").toMatch(/unresolved safety block/i);
 
     const ovr = await db(serviceClient()).from("asset_inspection_overrides").insert({
-      org_id: orgA, asset_id: assetA, inspection_id: failId,
+      org_id: orgA, asset_id: asset, inspection_id: failId,
       reason: "Manager decision: restricted duties while parts ship",
     }).select("id").single();
     expect(ovr.error, ovr.error?.message).toBeNull();
