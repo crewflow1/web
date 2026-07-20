@@ -77,6 +77,7 @@ export function CustomerForm({
         name="name"
         label="Name"
         required
+        autoFocus
         placeholder="e.g. Sarah Murphy"
         autoComplete="name"
         defaultValue={v.name ?? defaults?.name ?? ""}

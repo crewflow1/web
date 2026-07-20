@@ -132,6 +132,12 @@ export default async function InvoiceDetailPage({
 
       <header className="flex items-start justify-between gap-4">
         <div>
+          <Link
+            href="/invoices"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Invoices
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{invoice.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
             Created {invoice.created_at.slice(0, 10)}

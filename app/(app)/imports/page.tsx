@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createImport } from "./actions";
 import { CONNECTORS } from "@/lib/imports/connectors";
 import { CreateImportForm } from "./_create-form";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Migration OS entry point. Admins only.
@@ -83,7 +84,11 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
           <h2 className="text-base font-semibold text-slate-900">Past imports</h2>
         </header>
         {(imports ?? []).length === 0 ? (
-          <p className="p-6 text-sm text-slate-500">No imports yet.</p>
+          <EmptyState
+            icon="📦"
+            title="Nothing imported yet"
+            body="Bring your customers, jobs and history across from a CSV, spreadsheet, PDF or photo — you can roll back any time."
+          />
         ) : (
           <ul className="divide-y divide-slate-100">
             {(imports ?? []).map((im) => (

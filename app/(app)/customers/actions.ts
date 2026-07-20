@@ -114,7 +114,7 @@ export async function updateCustomer(
 
   revalidatePath("/customers");
   revalidatePath(`/customers/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Customer updated." });
 }
 
 /**

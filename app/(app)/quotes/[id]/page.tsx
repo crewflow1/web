@@ -225,6 +225,12 @@ export default async function EditQuotePage({
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
+          <Link
+            href="/quotes"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Quotes
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{quote.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
             {GBP.format(Number(quote.total ?? 0))} ·{" "}

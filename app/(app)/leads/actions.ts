@@ -124,7 +124,7 @@ export async function updateLead(
   }
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Lead updated." });
 }
 
 /**

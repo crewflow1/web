@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { seedSampleData } from "@/server/services/sample-data";
 
 /**
  * Ensure a `public.users` row exists that mirrors `auth.users`.
@@ -142,6 +143,18 @@ export async function createOrgWithOwner(input: {
       .from("demo_requests")
       .update({ internal_lead_id: null, status: "approved" } as never)
       .eq("id", approvedDemoId);
+  }
+
+  // First-impression sample data (First Impression Experience milestone): seed one realistic
+  // customer + draft quote + scheduled job so a brand-new org sees the product working from the
+  // first screen. BEST-EFFORT and idempotent — it never throws, and a failure NEVER blocks signup
+  // (the org is fully created above regardless).
+  const sample = await seedSampleData(org.id);
+  if (!sample.seeded && sample.reason === "error") {
+    console.error("[bootstrap] sample-data seed failed (non-fatal)", {
+      orgId: org.id,
+      error: sample.error,
+    });
   }
 
   return { orgId: org.id };

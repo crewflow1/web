@@ -73,7 +73,7 @@ export default async function CompanyPage({
           required
           autoComplete="postal-code"
           placeholder="BT15 1AA"
-          help="Used for callback locality matching."
+          help="So we can match you to leads and jobs near you."
         />
         <Field
           name="vat_number"
