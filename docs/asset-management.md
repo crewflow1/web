@@ -16,7 +16,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
-| **4** | **Inspections** | immutable records (#380) + safety-blocking custody (#381) + **versioned templates (this PR)**; scheduling, overrides, UX/E2E next | ◑ M4a #380 · M4c #381 · **M4b-1 templates — this PR**; M4b-2 scheduling → M4d overrides → M4 UX/E2E |
+| **4** | **Inspections** | immutable records + safety-blocking + versioned templates + **schedules & idempotent due-generation (this PR)**; overrides + UX/E2E next | ◑ M4a #380 · M4c #381 · M4b-1 #382 · **M4b-2 scheduling — this PR**; M4d overrides → M4 UX/E2E |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
@@ -328,10 +328,68 @@ level); draft answers are plain-text in `content` until issue (as site reports);
 publish is member-level pending the M4d capability model; template pickers list
 all published templates (category filtering is soft guidance).
 
-**M4 remainder:** M4b-2 **scheduling + due-work generation** (idempotent cycle
-keys + claims on the existing cron infra; pre-use validity windows at the
-custody guard), then M4d overrides + explicit reinspection lineage, then the M4
-UX/E2E completion slice.
+## Milestone 4b (part 2) — shipped: schedules + idempotent due-work generation
+
+Standing rules that generate due inspections — "pre-use check daily", "PAT
+quarterly", "7-day scaffold inspection". **The due record IS a draft
+inspection** carrying the frozen snapshot of the template family's **current
+published version** — no parallel "due" store; the existing run page executes
+it.
+
+- **`asset_inspection_schedules`** (`20260930000000`): template-family
+  reference (generation resolves the live published version each cycle);
+  cadence = exactly-one of `interval_days`/`interval_months`, **both null =
+  one-off** (generates once, then deactivates); `next_due`, `lead_time_days`,
+  `active`, and **`required_for_assignment`** (the pre-use seam — captured +
+  surfaced now, **enforced at the custody guard in M4d** so the guard changes
+  exactly once). Same-org guard; **admin-only writes** at RLS (standing rules
+  generate work automatically; `ai_receptionist_setups` precedent), member
+  read.
+- **THE IDEMPOTENCY INVARIANT**: `(schedule_id, cycle_key)` **total** unique
+  index on `asset_inspections` (`cycle_key` = the cycle's due date; total not
+  partial — PostgREST's ON CONFLICT arbiter can't use a partial index; manual
+  inspections carry `(null,null)` and never collide). The generator's
+  `INSERT … ON CONFLICT DO NOTHING` **is the claim** (automation_runs 20260912
+  doctrine); advancement is a **count-gated CAS** on `next_due` run on win AND
+  conflict-loss (unstick), one cycle per run (bounded catch-up). Cron timing is
+  never load-bearing. **Deliberately no pair CHECK** tying schedule_id to
+  cycle_key — schedule deletion is `on delete set null` on schedule_id only,
+  which a pair CHECK would turn into an un-deletable schedule.
+- **Generator** (`server/services/asset-inspection-generator.ts`, service
+  client — cron norm): bounded batch (50) of active schedules in their lead
+  window; resolves the family's published version (an unpublished/archived
+  family generates nothing **and does not advance** — resumes, truthfully
+  overdue, on republish); builds the frozen snapshot; claims; advances.
+- **Cron**: `GET /api/cron/inspections-due` (Bearer `CRON_SECRET`,
+  `withCronTelemetry`, `maxDuration 60`) — registered in `vercel.json` daily
+  at 05:00 (18th cron).
+- **Pure domain** (`lib/assets/inspection-schedule.ts`, 10 unit cases):
+  date-only arithmetic (month-end clamping, leap years), cadence presets incl.
+  **6-weekly** (O-licence PMI) and 3-/6-monthly (PAT convention / LOLER
+  accessory cycles), `cycleKey`, generation-window + overdue predicates,
+  schedule schema.
+- **UX**: a Schedules section on the asset detail (cadence, next-due with
+  overdue highlight, paused badge, "Required before issue" badge, admin
+  add/pause/resume/remove) · **Due / Overdue badges** on draft inspections ·
+  completing a generated inspection writes `last_completed_at` back to its
+  schedule (informational — advancement is fixed-cadence at generation).
+- **Security proof** (`asset-inspection-generator.test.ts`, real Postgres, 7
+  cases **running the real generator service**): exactly-one correctly-shaped
+  due inspection + idempotent re-run + exactly-one advance; **concurrent runs
+  → one row, one advance**; paused generates nothing; unpublished family
+  generates nothing and does not advance; one-off deactivates after one;
+  cross-org schedule/asset/template + provenance refs rejected; anon denied.
+
+**Known limitations (M4b-2):** `required_for_assignment` is not yet enforced
+(M4d, with the override path — a hard gate without an override path would strand
+assets); notification events (due-soon/overdue) land with the M4 UX slice via
+`emitNotifications` (the notifications table has no DB dedup, so emission keys
+off the generator's claim win); org-wide due/overdue dashboards land with the M4
+UX slice (the per-asset views ship now).
+
+**M4 remainder:** M4d overrides + explicit reinspection lineage + the A4.9
+supersede-escape hardening + `required_for_assignment` enforcement (one custody
+guard replacement), then the M4 UX/E2E completion slice.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

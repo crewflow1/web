@@ -15,6 +15,7 @@ import { deleteAsset, updateAssetStatus } from "../actions";
 import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
 import { InspectionsSection, type InspectionRow, type PublishedTemplate } from "./_inspections";
+import { SchedulesSection, type ScheduleRow } from "./_schedules";
 
 type AssetRow = {
   id: string;
@@ -63,6 +64,10 @@ const SAVED_MAP: Record<string, string> = {
   inspection: "Inspection recorded.",
   inspection_issued: "Inspection issued. The record is now locked.",
   inspection_archived: "Draft inspection discarded.",
+  schedule: "Schedule added. Due inspections generate automatically.",
+  schedule_paused: "Schedule paused.",
+  schedule_resumed: "Schedule resumed.",
+  schedule_deleted: "Schedule removed. Generated history is preserved.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
@@ -77,6 +82,12 @@ const ERROR_MAP: Record<string, string> = {
   inspection_not_draft: "That inspection is no longer a draft.",
   inspection_missing: "That inspection could not be found.",
   inspection_locked: "That inspection is locked.",
+  template_missing: "That template could not be found.",
+  template_not_published: "Only a published template can start an inspection.",
+  template_failed: "Couldn't load that template. Try again.",
+  schedule_invalid: "Please check the schedule details.",
+  schedule_failed: "Couldn't save the schedule. Try again.",
+  forbidden: "Only an owner or admin can do that.",
 };
 
 export default async function AssetDetailPage({
@@ -216,7 +227,7 @@ export default async function AssetDetailPage({
       };
     }
   )
-    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at, template_id, template_version")
+    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at, due_at, template_id, template_version")
     .eq("asset_id", id)
     .neq("status", "archived")
     .order("created_at", { ascending: false });
@@ -239,6 +250,26 @@ export default async function AssetDetailPage({
     .eq("status", "published")
     .order("name", { ascending: true });
   const publishedTemplates: PublishedTemplate[] = templatesRaw ?? [];
+
+  // Standing inspection schedules for this asset (with their template names).
+  const { data: schedulesRaw } = await (
+    supabase.from("asset_inspection_schedules" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (c: string, o: { ascending: boolean }) => Promise<{ data: ScheduleRow[] | null }>;
+        };
+      };
+    }
+  )
+    .select(
+      "id, template_id, interval_days, interval_months, next_due, lead_time_days, active, required_for_assignment, asset_inspection_templates(name, version)",
+    )
+    .eq("asset_id", id)
+    .order("next_due", { ascending: true });
+  const schedules: ScheduleRow[] = schedulesRaw ?? [];
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
@@ -377,7 +408,15 @@ export default async function AssetDetailPage({
         </div>
       </section>
 
-      <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} />
+      <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} />
+
+      <SchedulesSection
+        assetId={asset.id}
+        schedules={schedules}
+        templates={publishedTemplates}
+        isAdmin={canDelete}
+        today={today}
+      />
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />

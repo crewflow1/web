@@ -10,6 +10,7 @@ import {
   type InspectionOutcome,
   type InspectionStatus,
 } from "@/lib/assets/inspection";
+import { isInspectionOverdue } from "@/lib/assets/inspection-schedule";
 import {
   archiveInspection,
   createInspection,
@@ -26,6 +27,7 @@ export type InspectionRow = {
   outcome: InspectionOutcome | null;
   inspected_at: string | null;
   created_at: string;
+  due_at: string | null;
   template_id: string | null;
   template_version: number | null;
 };
@@ -58,10 +60,12 @@ export function InspectionsSection({
   assetId,
   inspections,
   templates,
+  today,
 }: {
   assetId: string;
   inspections: InspectionRow[];
   templates: PublishedTemplate[];
+  today: string;
 }) {
   const blocking = inspections.some((i) => isSafetyBlocking(i));
 
@@ -139,6 +143,17 @@ export function InspectionsSection({
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[i.status]}`}>
                 {INSPECTION_STATUS_LABELS[i.status]}
               </span>
+              {i.status === "draft" && i.due_at ? (
+                isInspectionOverdue(i.due_at, today) ? (
+                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                    Overdue — was due {i.due_at.slice(0, 10)}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                    Due {i.due_at.slice(0, 10)}
+                  </span>
+                )
+              ) : null}
               {i.outcome ? (
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${OUTCOME_STYLES[i.outcome]}`}>
                   {INSPECTION_OUTCOME_LABELS[i.outcome]}

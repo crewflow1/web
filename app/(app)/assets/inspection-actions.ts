@@ -263,6 +263,7 @@ type TemplatedInspectionRow = {
   kind: InspectionKind | null;
   content: Record<string, unknown> | null;
   template_snapshot: TemplateSnapshot | null;
+  schedule_id: string | null;
   assets: { id: string; name: string; asset_ref: string | null } | null;
 };
 
@@ -356,7 +357,7 @@ async function loadTemplatedInspection(orgId: string, inspectionId: string) {
       };
     };
   })
-    .select("id, asset_id, status, title, kind, content, template_snapshot, assets(id, name, asset_ref)")
+    .select("id, asset_id, status, title, kind, content, template_snapshot, schedule_id, assets(id, name, asset_ref)")
     .eq("id", inspectionId)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -460,6 +461,24 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     redirect(`${runUrl}?error=inspection_failed`);
   }
   if (!count) redirect(`${runUrl}?error=inspection_not_draft`);
+
+  // Informational writeback for the schedule that generated this inspection
+  // (advancement happened at generation — fixed-cadence anchoring).
+  if (insp.schedule_id) {
+    const { error: writebackError } = await (
+      tenant.from("asset_inspection_schedules" as never) as unknown as {
+        update: (p: unknown) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+          };
+        };
+      }
+    )
+      .update({ last_completed_at: issuedAt })
+      .eq("id", insp.schedule_id)
+      .eq("org_id", ctx.org.id);
+    if (writebackError) console.error("[asset-inspection] schedule writeback failed", writebackError);
+  }
 
   await recordAdminActivity({
     actorId: user.id,
