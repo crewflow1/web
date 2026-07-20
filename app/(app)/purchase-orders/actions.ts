@@ -305,3 +305,114 @@ export async function deletePurchaseOrder(id: string) {
   revalidatePath("/purchase-orders");
   redirect("/purchase-orders?saved=deleted");
 }
+
+// ── Supplier bills (Financial Operations — closes committed → actual) ────────
+// Recording a supplier's invoice against a PO posts the ACTUAL cost to
+// `finances` (feeding job profitability) and closes the committed → actual loop.
+// A bill IS a finances entry (no supplier_bills fork); the same-org guard trigger
+// from 20261009 enforces tenancy at the database. It inherits the PO's job +
+// supplier so the cost rolls up to the right job and against this PO.
+const supplierBillSchema = z.object({
+  amount: z.coerce.number().positive("Enter the bill amount").max(10_000_000),
+  vat_rate: z.coerce
+    .number()
+    .refine((v) => [0, 5, 20].includes(v), "VAT must be 0, 5 or 20"),
+  reference: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(120).optional(),
+  ),
+  bill_date: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
+  ),
+  category: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(60).optional(),
+  ),
+  notes: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(2000).optional(),
+  ),
+});
+
+export async function recordSupplierBill(
+  purchaseOrderId: string,
+  _prev: FormState<Record<string, string>>,
+  formData: FormData,
+): Promise<FormState<Record<string, string>>> {
+  const { ctx, user } = await requireOrgContext();
+  if (!idSchema.safeParse(purchaseOrderId).success) {
+    return formError("Invalid purchase order.");
+  }
+
+  const parsed = supplierBillSchema.safeParse({
+    amount: formData.get("amount"),
+    vat_rate: formData.get("vat_rate") ?? 20,
+    reference: formData.get("reference") ?? "",
+    bill_date: formData.get("bill_date") ?? "",
+    category: formData.get("category") ?? "",
+    notes: formData.get("notes") ?? "",
+  });
+  if (!parsed.success) {
+    return formError(parsed.error.issues[0]?.message ?? "Check the bill details.");
+  }
+
+  const supabase = await createClient();
+
+  // Load the PO (RLS-scoped) — inherit its job + supplier.
+  const { data: po } = await (
+    supabase.from("purchase_orders" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: string) => {
+          maybeSingle: () => Promise<{
+            data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+          }>;
+        };
+      };
+    }
+  )
+    .select("id, job_id, supplier_id")
+    .eq("id", purchaseOrderId)
+    .maybeSingle();
+
+  if (!po) return formError("Purchase order not found.");
+
+  const { error } = await (
+    supabase.from("finances" as never) as unknown as {
+      insert: (v: unknown) => Promise<{ error: { message: string } | null }>;
+    }
+  ).insert({
+    org_id: ctx.org.id,
+    purchase_order_id: po.id,
+    supplier_id: po.supplier_id,
+    job_id: po.job_id,
+    amount: parsed.data.amount,
+    vat_rate: parsed.data.vat_rate,
+    category: parsed.data.category ?? "Materials",
+    reference: parsed.data.reference ?? null,
+    bill_date: parsed.data.bill_date ?? null,
+    notes: parsed.data.notes ?? null,
+  });
+  if (error) {
+    console.error("[purchase-orders] record bill failed", error);
+    return formError("Couldn't record the bill. Try again.");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "purchase_order.bill_recorded",
+    targetTable: "purchase_orders",
+    targetId: po.id,
+    metadata: {
+      amount: parsed.data.amount,
+      reference: parsed.data.reference ?? null,
+      job_id: po.job_id,
+    },
+  });
+
+  revalidatePath(`/purchase-orders/${po.id}`);
+  if (po.job_id) revalidatePath(`/jobs/${po.job_id}`);
+  revalidatePath("/finances");
+  return formSuccess({ successMessage: "Bill recorded." });
+}
