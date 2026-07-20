@@ -17,7 +17,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
 | **4** | **Inspections** | immutable records + safety-blocking + templates + scheduling + **overrides/lineage/hardening/pre-use (this PR)**; UX/E2E completion next | ◑ M4a #380 · M4c #381 · M4b-1 #382 · M4b-2 #383 · **M4d — this PR**; M4 UX/E2E next |
-| 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
+| **5** | **Maintenance** | cases + DB-gated state machine + admin-only costs satellite **(M5a — this PR)**; schedules/generator (M5b) + RTS loop UX (M5c) next | ◑ **M5a — this PR** |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
 | 8 | Global search | extend the ⌘K palette + indexed serial/reg/tag search | planned |
@@ -470,6 +470,48 @@ highest-risk shared object; it changed once). `20261001000000`:
 **M4 status: COMPLETE** under the honest scope above. Remaining M4-adjacent
 work rides later slices: per-item photo binding + drawn signatures (with the
 auth-harness E2E), org-wide notification preferences.
+
+## Milestone 5a — shipped: maintenance cases, state machine, costs privacy
+
+One shared repair flow for every entry point (breakdown, failed inspection,
+planned work). `20261002000000`:
+
+- **`asset_maintenance_cases`**: type (breakdown/corrective/preventive/service/
+  calibration/warranty), priority (snags precedent), the 10-state machine,
+  provenance FKs (source inspection/assignment, supplier, assignee),
+  `out_of_service` + downtime stamps, `reinspection_required`, lifecycle stamps.
+  A case born from a failed inspection is reinspection-required by construction.
+- **DB-hard gates**: G1 completed-requires-work-evidence · **G2
+  return-to-service refused while the LINKED safety fail is uncleared — via the
+  SHARED `asset_inspection_fail_is_cleared` predicate (same three arms as the
+  custody guard: linked pass | later pass | active override), so the two sites
+  can never drift** · G3 cancel-requires-reason · G4 completed-is-frozen (even
+  service role) · G0 same-org refs. App owns transition LEGALITY
+  (`lib/assets/maintenance.ts`, documented matrix + ctx edges: a
+  reinspection-required case can never skip its gate; `cancelled → reported` is
+  the only resurrection).
+- **Costs privacy at the DB**: `asset_maintenance_case_costs` satellite with
+  **admin-only RLS on all four verbs** (row-level security can't hide columns —
+  the P4 split-by-table discipline); dual-gated in the action; editable after
+  completion (invoices arrive late) — which is also why costs live off the
+  frozen case.
+- **B3 decision (documented)**: `out_of_service` is a member-visible operational
+  flag + banner — NOT a custody-guard block (moving a broken asset to the
+  fitter IS an open `sent_for_repair` assignment; a dangerous asset is recorded
+  as a failed safety inspection, engaging the full M4 machinery). The custody
+  guard is untouched by M5a.
+- **UX**: a Maintenance section on the asset detail — open/closed cases, legal
+  next-step select from the unit-tested matrix, out-of-service banner, report
+  form, admin costs drawer. In-app `maintenance.reported` notification.
+- **Proof**: unit 10 (matrix incl. ctx edges, downtime, schemas, errors) +
+  real-Postgres 8 (G1/G3/G4 incl. service-role freeze; **G2 blocked → cleared
+  by LINKED pass AND by ACTIVE override**; cross-org matrix incl. the costs
+  smuggle; anon denial on cases AND costs; attachment CHECK 15 targets + prior
+  + bogus).
+
+**M5 remainder:** M5b service schedules + idempotent generator (clone of the
+proven M4b-2 claim model; the design's pair-CHECK bug fixed the same way) and
+M5c the full repair → re-inspection → return-to-service loop UX + E2E.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

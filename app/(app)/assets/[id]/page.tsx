@@ -17,6 +17,7 @@ import { CustodySection, type CurrentAssignment } from "./_custody";
 import { InspectionsSection, type InspectionRow, type PublishedTemplate } from "./_inspections";
 import { SchedulesSection, type ScheduleRow } from "./_schedules";
 import { SafetyBlocksSection } from "./_safety";
+import { MaintenanceSection, type MaintenanceCaseRow } from "./_maintenance";
 import {
   currentSafetyBlocks,
   hasUnbypassedBlock,
@@ -78,6 +79,9 @@ const SAVED_MAP: Record<string, string> = {
   override: "Authorised operational override recorded.",
   override_revoked: "Override revoked. Blocking has resumed.",
   reinspection: "Re-inspection draft created. Complete and issue it to clear the block.",
+  case_reported: "Maintenance case reported.",
+  case_updated: "Maintenance case updated.",
+  case_costs: "Costs saved.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
@@ -102,6 +106,11 @@ const ERROR_MAP: Record<string, string> = {
   override_failed: "Couldn't save the override. Try again.",
   override_already_revoked: "That override was already revoked.",
   inspection_not_issued: "Only an issued inspection can be re-inspected.",
+  case_invalid: "Please check the maintenance details.",
+  case_failed: "Couldn't save the maintenance case. Try again.",
+  case_missing: "That maintenance case could not be found.",
+  case_transition: "That step isn't allowed from the case's current state.",
+  case_stale: "The case changed while you were looking — try again.",
 };
 
 export default async function AssetDetailPage({
@@ -309,6 +318,26 @@ export default async function AssetDetailPage({
   );
   const blockedFromIssue = hasUnbypassedBlock(safetyBlocks);
 
+  // Maintenance cases for this asset (open first, newest first).
+  const { data: casesRaw } = await (
+    supabase.from("asset_maintenance_cases" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (c: string, o: { ascending: boolean }) => Promise<{ data: MaintenanceCaseRow[] | null }>;
+        };
+      };
+    }
+  )
+    .select(
+      "id, case_type, priority, status, title, out_of_service, reinspection_required, work_performed, downtime_start, downtime_end, created_at",
+    )
+    .eq("asset_id", id)
+    .order("created_at", { ascending: false });
+  const maintenanceCases: MaintenanceCaseRow[] = casesRaw ?? [];
+
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -449,6 +478,8 @@ export default async function AssetDetailPage({
       </section>
 
       <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} blocked={blockedFromIssue} />
+
+      <MaintenanceSection assetId={asset.id} cases={maintenanceCases} isAdmin={canDelete} />
 
       <SchedulesSection
         assetId={asset.id}
