@@ -21,6 +21,7 @@ const PORTAL_PAGES = [
   ["quotes", "/quotes"],
   ["invoices", "/invoices"],
   ["reports", "/reports"],
+  ["documents", "/documents"],
 ] as const;
 
 test.describe("customer portal — a bad token reveals nothing on any surface", () => {

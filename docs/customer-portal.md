@@ -34,6 +34,15 @@ so the customer never lands on an orphaned layout. (The Reports pages were
 migrated onto the shell in the action-centre slice — they previously rendered a
 bespoke layout and `notFound()` instead of the friendly invalid-link page.)
 
+## Document library (`/documents`)
+
+`buildDocumentLibrary` (`lib/customers/portal-documents.ts`, pure + unit-tested)
+aggregates the customer's quotes, invoices and progress reports into one
+date-sorted, type-filterable library — each linking to its secure PDF route
+(`/q/<token>/pdf`, the portal invoice/report PDF routes). Only document types
+that already carry an explicit visibility gate are included; arbitrary job
+attachments are never surfaced.
+
 ## Action centre (overview)
 
 `buildPortalActionItems` (`lib/customers/portal-actions.ts`, pure + unit-tested)
@@ -68,10 +77,13 @@ invalid-link page and never paints customer data or the action centre.
 
 ## Known limitations / next slices
 
-- **Document library** — the schema is ready (`portal_uploads` supports
-  `payment_proof|site_photo|signed_doc|message_attachment|other` across
-  invoices/quotes/jobs/customers/tickets) but only payment-proof upload is
-  surfaced; a unified library + report-decision surfacing is the next slice.
+- **Document library** — shipped (`/documents`, `lib/customers/portal-documents.ts`):
+  one date-sorted, type-filterable library of the PDF-backed commercial
+  documents (quotes/invoices/reports), each loaded with the SAME scoped read
+  its own tab uses. Deliberately excludes arbitrary `tenant_attachments`
+  (no portal-visibility flag exists → including them would risk leaking
+  internal docs). Report-**decision** surfacing in the action centre + a
+  customer-upload surface are the remaining document follow-ups.
 - **Job switcher** — the portal is flat per-customer; a per-job context lands
   with the commercial-integration slice (once variations attach to jobs).
 - **End-customer notifications** — `emitNotifications` audience "customer"
