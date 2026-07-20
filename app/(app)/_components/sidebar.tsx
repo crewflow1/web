@@ -25,6 +25,7 @@ const ADMIN_LINKS = [
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
   { href: "/suppliers", label: "Suppliers" },
+  { href: "/purchase-orders", label: "Purchase orders" },
   { href: "/expenses", label: "Expenses" },
   { href: "/finances", label: "Finances" },
   { href: "/invoices", label: "Invoices" },
