@@ -32,11 +32,15 @@ deducted or filed.
 `/purchase-orders` (list) · `/purchase-orders/new` · `/purchase-orders/[id]`
 (summary + status controls + inline edit for draft/sent + admin delete).
 
-## Follow-ups
+## Shipped follow-up
 
-- **Supplier bills** — record the actual invoice against a PO; posts the cost to
-  `finances` (feeding the existing job profitability), closing the committed →
-  actual loop.
-- **Committed-cost view on the job** — surface open POs' `total` next to actual
-  costs on `/jobs/[id]` (the `job_id` link already exists in the data).
+- **Committed-cost view on the job** (#395) — `lib/purchase-orders/committed.ts`
+  (`computeCommittedCosts`) sums non-cancelled PO totals; `/jobs/[id]` renders a
+  "Committed (POs)" tile next to actual costs (`finances`) and profit.
+
+## Follow-ups (pending)
+
+- **Supplier bills** — record the actual invoice against a PO; **extend the
+  existing `finances` / `expense_drafts` cost flow** (do NOT create a parallel
+  `supplier_bills` table), closing the committed → actual loop.
 - PO PDF for emailing suppliers (reuse the react-pdf pipeline).

@@ -15,11 +15,16 @@
 > `docs/asset-management.md`.
 
 ## Standing reality (read first)
-- **Nothing is in production yet.** The directive branch is ~21 PRs / 151
-  migrations ahead of `main`; the CEO merges in batches by explicit
-  authorisation. A release checkpoint (validation PR #363 exists) is the way
-  Stage One value starts landing.
+- **Nothing is in production yet.** The accumulated work is **396 commits / 70
+  new migrations ahead of `main`** (170 total).
+- **RC3 is the current release candidate** (`release/rc3-full-platform`, PR #397
+  → `main`, **DO NOT MERGE**), produced by the Release-Recovery & CTO
+  Consolidation directive. It consolidates the whole platform (Directive #018
+  foundation + Site Mgmt + Assets + Commercial + CX) into one CI-green branch and
+  **supersedes the stale RC2 #375** (which stopped at #374). See
+  `docs/RELEASE-MANIFEST-RC3.md` + `docs/PRODUCTION-DEPLOYMENT-RUNBOOK-RC3.md`.
 - Every vertical here is **additive + dark-safe + reversible** unless flagged.
+  The one irreversible migration is `20260812` (LR5.4B); it has a pre-snapshot.
 
 ## Stage One — remaining Core Platform
 
