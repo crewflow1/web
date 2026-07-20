@@ -40,6 +40,9 @@ export const ALLOWED_ATTACHMENT_MIME = new Set([
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
+// Mirrors the DB CHECK on tenant_attachments.target_table (authority:
+// 20260925 added asset_assignments, 20260927 added asset_inspections). When a
+// migration widens the CHECK, extend this list in the same PR.
 export const ATTACHMENT_TARGET_TABLES = [
   "customers",
   "jobs",
@@ -53,6 +56,8 @@ export const ATTACHMENT_TARGET_TABLES = [
   "toolbox_talks",
   "site_reports",
   "assets",
+  "asset_assignments",
+  "asset_inspections",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

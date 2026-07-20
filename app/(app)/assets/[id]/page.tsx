@@ -14,7 +14,7 @@ import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { deleteAsset, updateAssetStatus } from "../actions";
 import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
-import { InspectionsSection, type InspectionRow } from "./_inspections";
+import { InspectionsSection, type InspectionRow, type PublishedTemplate } from "./_inspections";
 
 type AssetRow = {
   id: string;
@@ -216,11 +216,29 @@ export default async function AssetDetailPage({
       };
     }
   )
-    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at")
+    .select("id, title, kind, safety_critical, status, outcome, inspected_at, created_at, template_id, template_version")
     .eq("asset_id", id)
     .neq("status", "archived")
     .order("created_at", { ascending: false });
   const inspections: InspectionRow[] = inspectionsRaw ?? [];
+
+  // Published templates (the live versions) for the start-from-template picker.
+  const { data: templatesRaw } = await (
+    supabase.from("asset_inspection_templates" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (c: string, o: { ascending: boolean }) => Promise<{ data: PublishedTemplate[] | null }>;
+        };
+      };
+    }
+  )
+    .select("id, name, version, categories")
+    .eq("status", "published")
+    .order("name", { ascending: true });
+  const publishedTemplates: PublishedTemplate[] = templatesRaw ?? [];
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
@@ -359,7 +377,7 @@ export default async function AssetDetailPage({
         </div>
       </section>
 
-      <InspectionsSection assetId={asset.id} inspections={inspections} />
+      <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} />
 
       {/* Images, manuals, certificates — via the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />

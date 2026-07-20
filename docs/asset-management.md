@@ -16,7 +16,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **1** | **Asset register foundation** | `assets` table + RLS + `tenant_attachments` (images/manuals/certs) | ✅ #373 |
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
-| **4** | **Inspections** | `asset_inspections` (immutable snapshot + outcome) + **safety-blocking custody** (extends the M2 guard); templates next | ◑ **M4a #380 + M4c safety-block (this PR)**; M4b templates + scheduling next |
+| **4** | **Inspections** | immutable records (#380) + safety-blocking custody (#381) + **versioned templates (this PR)**; scheduling, overrides, UX/E2E next | ◑ M4a #380 · M4c #381 · **M4b-1 templates — this PR**; M4b-2 scheduling → M4d overrides → M4 UX/E2E |
 | 5 | Maintenance | `asset_maintenance` (preventive/corrective, parts, labour, cost, downtime) | planned |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
@@ -261,8 +261,77 @@ Closes the loop between inspections and custody, **at the database**.
 trivially overridable, so it needs an explicit authorised-override path (role +
 recorded reason), not a quiet flag.
 
-**M4 remainder (next slice):** M4b reusable **versioned templates** that seed a
-draft's `content` + scheduling/reminders (reuse the cron pattern).
+## Milestone 4b (part 1) — shipped: versioned inspection templates
+
+Reusable, versioned checklists seed inspections — grounded in a UK-construction
+domain review (PUWER pre-use checks, WAH-Regs 7-day scaffold inspections,
+INDG367 harness checks, LOLER boundaries). **Not a generic form builder**: a
+bounded jsonb definition (sections → typed items), app-validated, DB-frozen.
+
+- **`asset_inspection_templates`** (`20260929000000`): one row per version;
+  `family_id` groups versions; **(family, version) unique**; **at most ONE
+  PUBLISHED version per family** (partial unique index); `check_level`
+  (pre_use_check / recorded_inspection / thorough_examination — the
+  compliance-honesty boundary: CrewFlow is the record for the first two and
+  stores the external examiner's report for the third, never synthesising a
+  certificate); `categories` applicability; supersedes lineage; RLS (member
+  CRUD, admin delete).
+- **DB-frozen substance** (`tg_asset_inspection_templates_immutable`): once a
+  version leaves draft its definition/name/categories can never change — a
+  checklist someone inspected against can't be silently rewritten. Publishing an
+  empty definition is refused at the DB. **Atomic publish**
+  (`publish_inspection_template` RPC, SECURITY INVOKER): supersede-old +
+  publish-new in one transaction.
+- **Item model** (pure, `lib/assets/inspection-template.ts`, 17 unit cases):
+  response types pass_fail · yes_no · text · number · meter_reading · choice ·
+  date · acknowledgement; per-type fail rules (`fail_on`, `failing_choices`,
+  min/max range); `safety_critical` (block-use), `severity` minor/major,
+  `allow_na` ("not applicable" counts as answered, never fails); evidence flags
+  (photo-always vs photo-on-fail, comment-on-fail, signature). State machine
+  draft → published → superseded → archived; only published versions start
+  inspections.
+- **Outcome derivation** (`deriveOutcome`, the safety bridge to M4c): a failed
+  safety-critical item → `fail` + `safety_critical=true` (the custody block
+  engages unchanged); only non-critical failures → `pass_with_defects` (defect
+  ≠ unsafe); else `pass`. Required-unanswered blocks issue (validation), never
+  auto-fails; mandatory fail-comments enforced.
+- **Inspections keep the exact version they used**: `template_id` /
+  `template_version` / **`template_snapshot`** on `asset_inspections`,
+  **write-once at the DB from the moment of start** (separate
+  `tg_asset_inspections_template_guard`; the proven M4a immutability function
+  is untouched). An in-progress inspection keeps its checklist through later
+  publishes; deleting a template never destroys evidence (`on delete set null`
+  — the snapshot carries the full definition).
+- **UX**: template library (`/assets/templates`, one row per family, search +
+  status filters) · create + draft editor (sections, typed items, fail rules,
+  evidence flags, move/remove, publish with validation problems listed, clear
+  locked-version messaging) · version history · clone / next-version /
+  archive · **Start from template** on the asset detail · a **run page**
+  (`/assets/[id]/inspections/[id]`) with glove-friendly tap targets, per-item
+  comments, **Save progress** (interrupted-draft recovery) and **Complete**
+  (derives the outcome and locks the record) · compliance-safe wording
+  throughout ("record of…", never "certified safe") · evidence photos via the
+  existing attachments pipeline on the inspection.
+- **TS attachment allowlist aligned with the DB CHECK** (added
+  `asset_assignments` + `asset_inspections`, which the DB has accepted since
+  20260925/20260927 — the app-side list had lagged).
+- **Security proof** (`asset-inspection-templates.test.ts`, real Postgres, 11
+  cases): version uniqueness; one-published-per-family; published frozen vs
+  draft editable; empty-publish refused; atomic RPC supersede+publish; RPC
+  refuses non-draft; inspection linkage write-once; cross-org template + 
+  supersedes refs rejected; **new version never alters an existing inspection's
+  snapshot**; anon denied.
+
+**Known limitations (M4b-1):** per-item photo/signature *capture* lands with the
+M4 UX slice (flags are authored + frozen now; photos attach at inspection
+level); draft answers are plain-text in `content` until issue (as site reports);
+publish is member-level pending the M4d capability model; template pickers list
+all published templates (category filtering is soft guidance).
+
+**M4 remainder:** M4b-2 **scheduling + due-work generation** (idempotent cycle
+keys + claims on the existing cron infra; pre-use validity windows at the
+custody guard), then M4d overrides + explicit reinspection lineage, then the M4
+UX/E2E completion slice.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

@@ -13,6 +13,18 @@ import {
   type InspectionKind,
   type InspectionStatus,
 } from "@/lib/assets/inspection";
+import {
+  canStartInspection,
+  deriveOutcome,
+  materializeTemplateSnapshot,
+  missingFailComments,
+  missingRequired,
+  templateDefinitionSchema,
+  type Answers,
+  type CheckLevel,
+  type TemplateSnapshot,
+  type TemplateStatus,
+} from "@/lib/assets/inspection-template";
 
 /**
  * Asset inspection actions (M4a). Create writes a DRAFT; issue MATERIALISES the
@@ -229,4 +241,241 @@ export async function archiveInspection(formData: FormData): Promise<void> {
 
   revalidatePath(`/assets/${assetId}`);
   redirect(`/assets/${assetId}?saved=inspection_archived`);
+}
+
+// ── Templated inspections (M4b) ───────────────────────────────────────────────
+
+type TemplatePickRow = {
+  id: string;
+  family_id: string;
+  version: number;
+  name: string;
+  check_level: CheckLevel;
+  status: TemplateStatus;
+  definition: unknown;
+};
+
+type TemplatedInspectionRow = {
+  id: string;
+  asset_id: string;
+  status: InspectionStatus;
+  title: string;
+  kind: InspectionKind | null;
+  content: Record<string, unknown> | null;
+  template_snapshot: TemplateSnapshot | null;
+  assets: { id: string; name: string; asset_ref: string | null } | null;
+};
+
+/** Extract `answer.<key>` / `comment.<key>` fields from the run form. */
+function parseRunForm(formData: FormData): { answers: Answers; comments: Record<string, string> } {
+  const answers: Answers = {};
+  const comments: Record<string, string> = {};
+  for (const [k, v] of formData.entries()) {
+    if (typeof v !== "string") continue;
+    if (k.startsWith("answer.")) answers[k.slice("answer.".length)] = v;
+    else if (k.startsWith("comment.")) comments[k.slice("comment.".length)] = v;
+  }
+  return { answers, comments };
+}
+
+export async function startInspectionFromTemplate(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const assetId = String(formData.get("asset_id") ?? "");
+  const templateId = String(formData.get("template_id") ?? "");
+  if (!assetId || !templateId) redirect(`/assets/${assetId}?error=inspection_invalid`);
+
+  const tenant = await createClient();
+  const { data: template } = await (
+    tenant.from("asset_inspection_templates" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplatePickRow | null }> };
+        };
+      };
+    }
+  )
+    .select("id, family_id, version, name, check_level, status, definition")
+    .eq("id", templateId)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (!template) redirect(`/assets/${assetId}?error=template_missing`);
+  // Only the LIVE version may seed new inspections (archived/superseded never).
+  if (!canStartInspection(template.status)) redirect(`/assets/${assetId}?error=template_not_published`);
+  const def = templateDefinitionSchema.safeParse(template.definition);
+  if (!def.success) redirect(`/assets/${assetId}?error=template_failed`);
+
+  const snapshot = materializeTemplateSnapshot({
+    id: template.id,
+    family_id: template.family_id,
+    version: template.version,
+    name: template.name,
+    check_level: template.check_level,
+    definition: def.data,
+  });
+
+  const { data, error } = await (tenant.from("asset_inspections" as never) as unknown as InsertChain)
+    .insert({
+      org_id: ctx.org.id,
+      asset_id: assetId,
+      title: template.name,
+      status: "draft",
+      // Derived at issue from the answers; false until then.
+      safety_critical: false,
+      content: {},
+      template_id: template.id,
+      template_version: template.version,
+      template_snapshot: snapshot, // write-once at the DB from this moment
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    console.error("[asset-inspection] start from template failed", error);
+    redirect(`/assets/${assetId}?error=inspection_failed`);
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "asset.inspection_started_from_template",
+    targetTable: "asset_inspections",
+    targetId: data.id,
+    metadata: { asset_id: assetId, template_id: template.id, template_version: template.version },
+  });
+
+  revalidatePath(`/assets/${assetId}`);
+  redirect(`/assets/${assetId}/inspections/${data.id}`);
+}
+
+async function loadTemplatedInspection(orgId: string, inspectionId: string) {
+  const tenant = await createClient();
+  const { data } = await (tenant.from("asset_inspections" as never) as unknown as {
+    select: (c: string) => {
+      eq: (k: string, v: unknown) => {
+        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplatedInspectionRow | null }> };
+      };
+    };
+  })
+    .select("id, asset_id, status, title, kind, content, template_snapshot, assets(id, name, asset_ref)")
+    .eq("id", inspectionId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  return data;
+}
+
+/** Save partial progress on a draft templated inspection (field-interruption recovery). */
+export async function saveInspectionAnswers(formData: FormData): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  const inspectionId = String(formData.get("inspection_id") ?? "");
+  const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
+  if (!insp) redirect(`/assets?error=inspection_missing`);
+
+  const { answers, comments } = parseRunForm(formData);
+  const tenant = await createClient();
+  const { error, count } = await (tenant.from("asset_inspections" as never) as unknown as UpdateChain)
+    .update({ content: { ...(insp.content ?? {}), answers, comments } }, { count: "exact" })
+    .eq("id", inspectionId)
+    .eq("org_id", ctx.org.id)
+    .eq("status", "draft");
+  if (error) {
+    console.error("[asset-inspection] save answers failed", error);
+    redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?error=inspection_failed`);
+  }
+  if (!count) redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?error=inspection_not_draft`);
+
+  revalidatePath(`/assets/${insp.asset_id}/inspections/${inspectionId}`);
+  redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?saved=progress`);
+}
+
+/**
+ * Complete a templated inspection: validate answers against the FROZEN template
+ * snapshot, DERIVE the outcome (a failed safety-critical item → fail +
+ * safety_critical, engaging the M4c custody block), then issue atomically.
+ */
+export async function completeTemplatedInspection(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const inspectionId = String(formData.get("inspection_id") ?? "");
+  const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
+  if (!insp) redirect(`/assets?error=inspection_missing`);
+  const runUrl = `/assets/${insp.asset_id}/inspections/${inspectionId}`;
+  if (!insp.template_snapshot) redirect(`${runUrl}?error=inspection_invalid`);
+
+  try {
+    assertTransition(insp.status, "issued");
+  } catch {
+    redirect(`${runUrl}?error=inspection_not_draft`);
+  }
+
+  const { answers, comments } = parseRunForm(formData);
+  const sections = insp.template_snapshot.sections;
+  if (missingRequired(sections, answers).length > 0) {
+    redirect(`${runUrl}?error=answers_missing`);
+  }
+  if (missingFailComments(sections, answers, comments).length > 0) {
+    redirect(`${runUrl}?error=fail_comment_missing`);
+  }
+
+  const derived = deriveOutcome(sections, answers);
+  const issuedAt = new Date().toISOString();
+  const content = {
+    ...(insp.content ?? {}),
+    answers,
+    comments,
+    failed_keys: derived.failed_keys,
+    critical_failed_keys: derived.critical_failed_keys,
+  };
+  const snapshot = materializeInspectionSnapshot({
+    title: insp.title,
+    kind: insp.kind,
+    safety_critical: derived.safety_critical,
+    outcome: derived.outcome,
+    content,
+    asset: insp.assets ?? { id: insp.asset_id, name: "", asset_ref: null },
+    inspected_at: issuedAt,
+    issuedAt,
+  });
+
+  const tenant = await createClient();
+  // Atomic: outcome + safety flag + evidence + snapshot in ONE write; the M4a
+  // immutability trigger freezes it all, and template_snapshot is already
+  // write-once from start.
+  const { error, count } = await (tenant.from("asset_inspections" as never) as unknown as UpdateChain)
+    .update(
+      {
+        status: "issued",
+        outcome: derived.outcome,
+        safety_critical: derived.safety_critical,
+        snapshot,
+        content,
+        inspected_at: issuedAt,
+        inspected_by: user.id,
+      },
+      { count: "exact" },
+    )
+    .eq("id", inspectionId)
+    .eq("org_id", ctx.org.id)
+    .eq("status", "draft");
+  if (error) {
+    console.error("[asset-inspection] templated issue failed", error);
+    redirect(`${runUrl}?error=inspection_failed`);
+  }
+  if (!count) redirect(`${runUrl}?error=inspection_not_draft`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "asset.inspection_issued",
+    targetTable: "asset_inspections",
+    targetId: inspectionId,
+    metadata: {
+      asset_id: insp.asset_id,
+      outcome: derived.outcome,
+      safety_critical: derived.safety_critical,
+      template_id: insp.template_snapshot.template_id,
+      template_version: insp.template_snapshot.version,
+    },
+  });
+
+  revalidatePath(`/assets/${insp.asset_id}`);
+  redirect(`${runUrl}?saved=issued`);
 }

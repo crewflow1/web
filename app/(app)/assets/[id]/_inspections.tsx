@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   INSPECTION_KIND_LABELS,
   INSPECTION_KINDS,
@@ -9,7 +10,12 @@ import {
   type InspectionOutcome,
   type InspectionStatus,
 } from "@/lib/assets/inspection";
-import { archiveInspection, createInspection, issueInspection } from "../inspection-actions";
+import {
+  archiveInspection,
+  createInspection,
+  issueInspection,
+  startInspectionFromTemplate,
+} from "../inspection-actions";
 
 export type InspectionRow = {
   id: string;
@@ -20,6 +26,15 @@ export type InspectionRow = {
   outcome: InspectionOutcome | null;
   inspected_at: string | null;
   created_at: string;
+  template_id: string | null;
+  template_version: number | null;
+};
+
+export type PublishedTemplate = {
+  id: string;
+  name: string;
+  version: number;
+  categories: string[] | null;
 };
 
 const OUTCOME_STYLES: Record<InspectionOutcome, string> = {
@@ -39,7 +54,15 @@ const STATUS_STYLES: Record<InspectionStatus, string> = {
  * and issues/archives them. A CURRENT issued safety-critical FAIL raises a
  * blocking banner (the same condition the M4b DB guard enforces on custody).
  */
-export function InspectionsSection({ assetId, inspections }: { assetId: string; inspections: InspectionRow[] }) {
+export function InspectionsSection({
+  assetId,
+  inspections,
+  templates,
+}: {
+  assetId: string;
+  inspections: InspectionRow[];
+  templates: PublishedTemplate[];
+}) {
   const blocking = inspections.some((i) => isSafetyBlocking(i));
 
   return (
@@ -56,11 +79,59 @@ export function InspectionsSection({ assetId, inspections }: { assetId: string; 
         </div>
       ) : null}
 
+      {/* Start a templated inspection — the primary path once templates exist. */}
+      {templates.length > 0 ? (
+        <form action={startInspectionFromTemplate} className="mt-4 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="asset_id" value={assetId} />
+          <label className="min-w-0 flex-1 text-xs font-medium text-slate-600">
+            Start from template
+            <select
+              name="template_id"
+              required
+              defaultValue=""
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="" disabled>
+                Choose a checklist…
+              </option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} (v{t.version})
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Start inspection
+          </button>
+        </form>
+      ) : (
+        <p className="mt-3 text-xs text-slate-500">
+          No published templates yet —{" "}
+          <Link href="/assets/templates" className="font-medium text-slate-700 underline">
+            create a checklist
+          </Link>{" "}
+          to run structured inspections, or record an ad-hoc one below.
+        </p>
+      )}
+
       {inspections.length > 0 ? (
         <ul className="mt-4 divide-y divide-slate-100">
           {inspections.map((i) => (
             <li key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-              <span className="font-medium text-slate-900">{i.title}</span>
+              {i.template_id ? (
+                <Link
+                  href={`/assets/${assetId}/inspections/${i.id}`}
+                  className="font-medium text-slate-900 hover:underline"
+                >
+                  {i.title}
+                </Link>
+              ) : (
+                <span className="font-medium text-slate-900">{i.title}</span>
+              )}
+              {i.template_version ? (
+                <span className="text-[11px] text-slate-400">template v{i.template_version}</span>
+              ) : null}
               {i.kind ? <span className="text-xs text-slate-500">{INSPECTION_KIND_LABELS[i.kind]}</span> : null}
               {i.safety_critical ? (
                 <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">Safety-critical</span>
@@ -77,7 +148,24 @@ export function InspectionsSection({ assetId, inspections }: { assetId: string; 
                 {(i.inspected_at ?? i.created_at).slice(0, 10)}
               </span>
 
-              {i.status === "draft" ? (
+              {i.status === "draft" && i.template_id ? (
+                <div className="flex w-full flex-wrap items-center gap-2 pt-2">
+                  <Link
+                    href={`/assets/${assetId}/inspections/${i.id}`}
+                    className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                  >
+                    Continue inspection
+                  </Link>
+                  <form action={archiveInspection}>
+                    <input type="hidden" name="inspection_id" value={i.id} />
+                    <input type="hidden" name="asset_id" value={assetId} />
+                    <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      Discard
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+              {i.status === "draft" && !i.template_id ? (
                 <div className="flex w-full flex-wrap items-end gap-2 pt-2">
                   <form action={issueInspection} className="flex items-end gap-2">
                     <input type="hidden" name="inspection_id" value={i.id} />
