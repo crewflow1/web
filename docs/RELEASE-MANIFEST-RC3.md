@@ -96,7 +96,7 @@ Next.js 15 (App Router, RSC) + Supabase Postgres 17, multi-tenant via RLS (`curr
 
 ## 9. Known tech-debt (non-blocking, tracked)
 
-1. **Stale generated Supabase types** (`lib/supabase/types.ts`, last Jul 16) → 216 `as never` casts across 106 files. Regenerate against the RC3 schema before/just-after launch — highest bug-surface reduction. (Requires DB access.)
+1. **Stale generated Supabase types** (`lib/supabase/types.ts`, frozen ~`20260527`) → **292 `.from(...as never)` casts, 556 total `as never`, across 165 files** (verified count; an earlier draft under-reported this as 216/106). Regenerate against the RC3 schema before/just-after launch — highest bug-surface reduction. (Requires DB access.)
 2. `lib/retention` (customer-health) vs `lib/retentions` (contract holdback) naming collision — rename one post-launch.
 3. `round2` duplicated 5× (all identical today) — collapse the 4 legacy copies onto `lib/money.round2`.
 4. Two deliberate feature limitations, both documented: Toolbox-talks attendance is free-text (no structured sign-off); QR scan resolves a token rather than logging a scan event.

@@ -56,7 +56,7 @@ RC3 is one linear branch containing everything intended for launch, in correct o
 
 ## 10. Technical debt (non-blocking, tracked)
 
-1. **Stale generated Supabase types** → 216 `as never` casts / 106 files. Regenerate against the RC3 schema post-cutover (needs DB access) — biggest type-safety win. *(MEDIUM)*
+1. **Stale generated Supabase types** → **292 `.from(...as never)` casts, 556 total `as never`, 165 files** (verified; an earlier draft said 216/106). Regenerate against the RC3 schema post-cutover (needs DB access) — biggest type-safety win. *(MEDIUM)*
 2. `lib/retention` (customer-health) vs `lib/retentions` (holdback money) naming collision — rename one. *(LOW-MED)*
 3. `round2` duplicated 5× (identical today) — collapse onto `lib/money.round2`. *(LOW)*
 4. Env-schema validation gap (~7 vars). *(LOW)*
