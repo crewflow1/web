@@ -24,6 +24,7 @@ import {
   maxReleasable,
 } from "@/lib/retentions/compute";
 import { setJobRetentionRate, recordRetentionRelease } from "../retention-actions";
+import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/committed";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
 
@@ -155,7 +156,7 @@ export default async function EditJobPage({
 
   // Retention (Programme C) — the rate lives on the job, releases in the ledger.
   // Neither is in the generated Supabase types yet; the held figure is DERIVED.
-  const [retentionMeta, retentionReleases] = await Promise.all([
+  const [retentionMeta, retentionReleases, jobPurchaseOrders] = await Promise.all([
     (
       supabase.from("jobs" as never) as unknown as {
         select: (c: string) => {
@@ -183,7 +184,18 @@ export default async function EditJobPage({
       .select("id, amount, released_on, note")
       .eq("job_id", job.id)
       .order("released_on", { ascending: false }),
+    // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
+    (
+      supabase.from("purchase_orders" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => Promise<{ data: Array<{ status: string; total: number | string | null }> | null }>;
+        };
+      }
+    )
+      .select("status, total")
+      .eq("job_id", job.id),
   ]);
+  const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
   const retentionReleaseRows = retentionReleases.data ?? [];
   const retention = computeRetentionPosition({
     ratePercent: retentionMeta.data?.retention_percent ?? 0,
@@ -495,6 +507,18 @@ export default async function EditJobPage({
                   </dd>
                 </div>
               </>
+            ) : null}
+            {hasCommittedCosts(committed) ? (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Committed (POs)</dt>
+                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                  {GBP.format(committed.committed)}
+                </dd>
+                <p className="text-xs text-slate-400">
+                  {committed.count} order{committed.count === 1 ? "" : "s"}
+                  {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                </p>
+              </div>
             ) : null}
           </dl>
 
