@@ -67,6 +67,8 @@ type CaseRow = {
   work_performed: string | null;
   out_of_service: boolean;
   downtime_start: string | null;
+  schedule_id: string | null;
+  source_inspection_id: string | null;
 };
 
 function isAdmin(role: string): boolean {
@@ -76,7 +78,7 @@ function isAdmin(role: string): boolean {
 async function loadCase(orgId: string, id: string): Promise<CaseRow | null> {
   const tenant = await createClient();
   const { data } = await (tenant.from("asset_maintenance_cases" as never) as unknown as LoadOne)
-    .select("id, asset_id, status, title, reinspection_required, work_performed, out_of_service, downtime_start")
+    .select("id, asset_id, status, title, reinspection_required, work_performed, out_of_service, downtime_start, schedule_id, source_inspection_id")
     .eq("id", id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -217,6 +219,45 @@ export async function transitionMaintenanceCase(formData: FormData): Promise<voi
     );
   }
   if (!count) redirect(`${assetUrl}?error=case_stale`);
+
+  // M5c: completing a schedule-generated case writes the service history back
+  // (informational — cycle advancement happened at generation).
+  if (to === "completed" && row.schedule_id) {
+    const { error: writebackError } = await (
+      tenant.from("asset_service_schedules" as never) as unknown as {
+        update: (p: unknown) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+          };
+        };
+      }
+    )
+      .update({ last_completed_at: new Date().toISOString() })
+      .eq("id", row.schedule_id)
+      .eq("org_id", ctx.org.id);
+    if (writebackError) console.error("[asset-maintenance] schedule writeback failed", writebackError);
+  }
+
+  // M5c: raise attention exactly-once (transition is count-gated) when the case
+  // reaches the return-to-service gate.
+  if (to === "ready_for_return_to_service") {
+    await emitNotifications([
+      {
+        org_id: ctx.org.id,
+        user_id: null,
+        audience: "customer",
+        type: "maintenance.ready_for_return",
+        category: "system",
+        priority: "medium",
+        title: `Ready to return to service — ${row.title}`,
+        body: "Repair work and any required re-inspection are done. Authorise the return from the asset's maintenance section.",
+        action_url: `/assets/${row.asset_id}`,
+        source_module: "assets",
+        source_id: caseId,
+        metadata: { asset_id: row.asset_id },
+      },
+    ]).catch((e) => console.error("[asset-maintenance] notify failed", e));
+  }
 
   await recordAdminActivity({
     actorId: user.id,

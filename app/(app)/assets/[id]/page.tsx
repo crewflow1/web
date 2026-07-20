@@ -333,7 +333,7 @@ export default async function AssetDetailPage({
     }
   )
     .select(
-      "id, case_type, priority, status, title, out_of_service, reinspection_required, work_performed, downtime_start, downtime_end, created_at",
+      "id, case_type, priority, status, title, out_of_service, reinspection_required, work_performed, downtime_start, downtime_end, created_at, source_inspection_id",
     )
     .eq("asset_id", id)
     .order("created_at", { ascending: false });

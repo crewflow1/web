@@ -17,7 +17,7 @@ reuses existing infrastructure; each is dark-safe and additive.
 | **2** | **Assignment & custody engine** | `asset_assignments` + partial-unique-index invariant + guard trigger + transfer RPC | ✅ **this PR** |
 | **3** | **QR platform** | `asset_qr_identities` (opaque token, one-active invariant, atomic rotate, revoke) + vector labels + authed scan resolver + in-app scanner | ✅ M3a #376 · scan #377 · labels #378 · scanner (this PR) |
 | **4** | **Inspections** | immutable records + safety-blocking + templates + scheduling + **overrides/lineage/hardening/pre-use (this PR)**; UX/E2E completion next | ◑ M4a #380 · M4c #381 · M4b-1 #382 · M4b-2 #383 · **M4d — this PR**; M4 UX/E2E next |
-| **5** | **Maintenance** | cases + state machine + costs privacy (M5a) + **service schedules & idempotent generation (M5b — this PR)**; RTS loop UX/E2E (M5c) next | ◑ M5a #386 · **M5b — this PR** |
+| **5** | **Maintenance** | cases + state machine + costs privacy (M5a) + schedules & generation (M5b) + **the connected RTS loop (M5c — this PR)** | ◑ M5a #386 · M5b #387 · **M5c — this PR**; integration/hardening next |
 | 6 | Document management | **reuses `tenant_attachments`** — no new store; category tagging | partial (attachments live now) |
 | 7 | CX polish | skeletons/empty-states (live), bulk actions, mobile/tablet, cards | ongoing |
 | 8 | Global search | extend the ⌘K palette + indexed serial/reg/tag search | planned |
@@ -541,10 +541,34 @@ framework). `20261003000000`:
   schedule refs + generated-provenance smuggle rejected · anon denied. The
   pure date maths is already covered by the 10 M4b-2 unit cases it reuses.
 
-**M5 remainder:** M5c — the full repair → re-inspection → return-to-service
-loop UX (report-fault prefilled from a failed inspection, start re-inspection
-from a case, downtime auto-stamps surfaced) + boundary E2E, then full Asset
-Management integration & hardening.
+## Milestone 5c — shipped: the connected repair → re-inspection → RTS loop
+
+Pure connective tissue (no migration) closing the programme-outcome workflow:
+
+- **Create repair case** directly from a safety block (prefilled: linked
+  inspection, corrective, high priority, out-of-service ⇒ downtime starts) —
+  the fail → repair linkage is one tap and `reinspection_required` is set by
+  construction.
+- **Start re-inspection** from a `ready_for_reinspection` case — the existing
+  M4d `startReinspection` with the case's linked fail (explicit lineage; a
+  passing issue clears exactly that block and G2 opens the RTS gate).
+- **Service history writeback**: completing a schedule-generated case stamps
+  `last_completed_at` on its schedule (informational — cycles advance at
+  generation).
+- **`maintenance.ready_for_return` notification** exactly-once on the
+  count-gated transition into the RTS gate.
+- **Boundary E2E** (`e2e/asset-maintenance.spec.ts`, 2 specs): `/assets` and an
+  asset-detail URL (now carrying maintenance, costs drawers and service
+  schedules) hit the auth wall and never paint.
+
+The full loop's DB legs are proven at the integration tier: M5a's G2 both ways
+(linked pass AND active override), M5b's generator concurrency, M4d's clearing
+suite. The authenticated browser lifecycle E2E remains gated on the login
+harness (tracked).
+
+**M5 status: COMPLETE** (cases · schedules · generation · the connected loop).
+**Next:** full Asset Management integration & hardening (job-detail assets,
+unified timeline, dashboard attention) + Stage One reconciliation.
 
 ## Reused (never duplicated)
 `tenant_attachments` + storage RLS · `suppliers` · `recordAdminActivity` audit ·

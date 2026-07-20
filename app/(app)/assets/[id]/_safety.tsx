@@ -1,5 +1,6 @@
 import type { SafetyBlock } from "@/lib/assets/inspection-override";
 import { startReinspection } from "../inspection-actions";
+import { reportMaintenanceCase } from "../maintenance-actions";
 import { createInspectionOverride, revokeInspectionOverride } from "../override-actions";
 
 /**
@@ -63,6 +64,21 @@ export function SafetyBlocksSection({
                   className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
                 >
                   Record re-inspection
+                </button>
+              </form>
+
+              <form action={reportMaintenanceCase}>
+                <input type="hidden" name="asset_id" value={assetId} />
+                <input type="hidden" name="source_inspection_id" value={inspection.id} />
+                <input type="hidden" name="case_type" value="corrective" />
+                <input type="hidden" name="priority" value="high" />
+                <input type="hidden" name="title" value={`Repair: ${inspection.title}`.slice(0, 200)} />
+                <input type="hidden" name="out_of_service" value="on" />
+                <button
+                  type="submit"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Create repair case
                 </button>
               </form>
 

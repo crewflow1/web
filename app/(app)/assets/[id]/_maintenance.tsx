@@ -11,6 +11,7 @@ import {
   type MaintenanceType,
 } from "@/lib/assets/maintenance";
 import { reportMaintenanceCase, transitionMaintenanceCase, upsertCaseCosts } from "../maintenance-actions";
+import { startReinspection } from "../inspection-actions";
 
 export type MaintenanceCaseRow = {
   id: string;
@@ -24,6 +25,7 @@ export type MaintenanceCaseRow = {
   downtime_start: string | null;
   downtime_end: string | null;
   created_at: string;
+  source_inspection_id: string | null;
 };
 
 const STATUS_STYLES: Partial<Record<MaintenanceStatus, string>> = {
@@ -155,6 +157,14 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
         <span className="ml-auto text-xs text-slate-400">{c.created_at.slice(0, 10)}</span>
       </div>
 
+      {c.status === "ready_for_reinspection" && c.source_inspection_id ? (
+        <form action={startReinspection} className="mt-2">
+          <input type="hidden" name="inspection_id" value={c.source_inspection_id} />
+          <button type="submit" className="rounded-md bg-purple-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-800">
+            Start re-inspection
+          </button>
+        </form>
+      ) : null}
       {isActiveCase(c.status) && nextStates.length > 0 ? (
         <form action={transitionMaintenanceCase} className="mt-2 flex flex-wrap items-end gap-2">
           <input type="hidden" name="case_id" value={c.id} />
