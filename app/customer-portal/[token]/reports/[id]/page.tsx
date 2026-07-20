@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
+import { PortalShell } from "../../_shell";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { loadPortalReport } from "@/app/customer-portal/_reports";
 import { isCurrentReport } from "@/lib/site-reports/portal";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -18,7 +20,7 @@ export default async function PortalReportPage({
 }) {
   const { token, id } = await params;
   const loaded = await loadCustomerByPortalToken(token);
-  if (!loaded) notFound();
+  if (!loaded) return <InvalidLinkPage kind="portal" />;
   const report = await loadPortalReport(loaded.customer.id, loaded.customer.org_id, id);
   if (!report || !report.snapshot) notFound();
 
@@ -33,8 +35,8 @@ export default async function PortalReportPage({
   }>;
 
   return (
-    <div className="mx-auto min-h-screen max-w-2xl px-4 py-8">
-      <div className="mb-4">
+    <PortalShell customer={loaded.customer} org={loaded.org} token={token} active="reports">
+      <div>
         <Link
           href={`/customer-portal/${token}/reports`}
           className="text-xs font-medium text-slate-500 hover:text-slate-900"
@@ -43,11 +45,8 @@ export default async function PortalReportPage({
         </Link>
       </div>
 
-      <header className="mb-4 flex items-center gap-3">
-        {loaded.org.logo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={loaded.org.logo_url} alt="" className="h-9 w-auto" />
-        ) : null}
+      <header className="flex items-center gap-3">
+        {null /* org branding lives in the shell header now */}
         <p className="text-sm font-semibold text-slate-900">{loaded.org.name}</p>
       </header>
 
@@ -132,7 +131,7 @@ export default async function PortalReportPage({
           ) : null}
         </div>
       </div>
-    </div>
+    </PortalShell>
   );
 }
 

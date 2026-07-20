@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
 import { listPortalReports } from "@/app/customer-portal/_reports";
 import { isCurrentReport } from "@/lib/site-reports/portal";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
+import { PortalShell } from "../_shell";
+import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
  * Customer portal — progress reports for this customer's projects. Only issued,
@@ -17,23 +18,16 @@ export default async function PortalReportsPage({
 }) {
   const { token } = await params;
   const loaded = await loadCustomerByPortalToken(token);
-  if (!loaded) notFound();
+  // Same friendly invalid-link treatment as every other portal tab (was a
+  // bare notFound() before the shell unification).
+  if (!loaded) return <InvalidLinkPage kind="portal" />;
   const { customer, org } = loaded;
 
   const reports = await listPortalReports(customer.id, customer.org_id);
 
   return (
-    <div className="mx-auto min-h-screen max-w-2xl px-4 py-8">
-      <header className="mb-6 flex items-center gap-3">
-        {org.logo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={org.logo_url} alt="" className="h-10 w-auto" />
-        ) : null}
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{org.name}</p>
-          <h1 className="text-lg font-bold text-slate-900">Progress reports</h1>
-        </div>
-      </header>
+    <PortalShell customer={customer} org={org} token={token} active="reports">
+      <h2 className="text-base font-semibold text-slate-900">Progress reports</h2>
 
       {reports.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
@@ -100,6 +94,6 @@ export default async function PortalReportsPage({
           })}
         </ul>
       )}
-    </div>
+    </PortalShell>
   );
 }
