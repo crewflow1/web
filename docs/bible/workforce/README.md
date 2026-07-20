@@ -43,6 +43,7 @@ org design and the per-role specifications behind it.
 | `README.md` (this) | The **AI Employee Design Standard** — the inheritance contract, the canonical template, the org model, the roster that seeds every spec. |
 | `employees/NN-<slug>.md` | One file per employee (42), each the full 16-section specification. |
 | `relationships.md` | The **whole-org** view — org chart, reporting lines, communication / event / delegation graphs, approval hierarchy, shared-memory ownership, capability matrix, cross-department workflows, collaboration patterns. |
+| `platform-compatibility-matrix.md` | The **as-built** whole-org view — the canonical migration dashboard: which platform capabilities each AI employee **currently inherits**, how many of the 42 run on the shared engine today, and what a new migration gets for free. Established under Directive **#012**; updated as the *first* artifact of every employee migration. |
 
 Read this README first; it is the law every employee file obeys.
 

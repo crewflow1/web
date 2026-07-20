@@ -23,11 +23,30 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
 
+  // -- WhatsApp Business Cloud API (Meta) --------------------------------
+  // App secret: keys the X-Hub-Signature-256 HMAC on the inbound webhook. Absent
+  // ⇒ verifyMetaSignature fails closed ⇒ the webhook rejects everything (dark).
+  WHATSAPP_APP_SECRET: z.string().optional(),
+  // Verify token: the shared string echoed back during Meta's GET hub.challenge
+  // subscription handshake. Absent ⇒ the handshake fails closed.
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_API_KEY_SID: z.string().optional(),
   TWILIO_API_KEY_SECRET: z.string().optional(),
+  // The outbound SMS sender — the Twilio phone number (E.164) or Messaging
+  // Service SID that missed-call text-backs are sent FROM. Optional at boot;
+  // its absence (even with the account creds present) is what makes the SMS
+  // provider seam return null, so CI sends nothing. (Directive #018 R5.)
+  TWILIO_SMS_FROM: z.string().optional(),
+  // The PUBLIC status-callback URL Twilio is configured to POST delivery receipts to
+  // (Directive #018 R7). Twilio signs THIS exact URL, so when set it is the canonical
+  // value the webhook verifies the X-Twilio-Signature against — authoritative behind a
+  // proxy that rewrites host/proto. Optional: absent, the route reconstructs the URL
+  // from the forwarded request headers. Not a secret; carries no credential.
+  TWILIO_STATUS_CALLBACK_URL: z.string().optional(),
   VAPI_API_KEY: z.string().optional(),
   VAPI_WEBHOOK_SECRET: z.string().optional(),
 
@@ -59,6 +78,26 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
+
+  // -- Communication Layer provider (Directive 010 Phase 4) ---------------
+  // Names the active outbound email provider for the Communication Layer.
+  // Default "auto": use Resend when RESEND_API_KEY is set, else off. As with
+  // the text/embedding seams this is a PLUG-IN, never a dependency: with no
+  // provider configured `deliverDraft` records a terminal `failed`/no_provider
+  // attempt and SENDS NOTHING — the path CI exercises. Switching providers is
+  // configuration only — no application code changes. Free string (not an enum)
+  // so a new provider needs zero env-schema edits.
+  COMMS_EMAIL_PROVIDER: z.string().optional(),
+
+  // -- Communication Layer: SMS provider (Directive #018 R5) --------------
+  // Names the active outbound SMS provider for the receptionist's first
+  // outbound transport (missed-call text-back). Default "auto": use Twilio when
+  // its account creds AND a sender (TWILIO_SMS_FROM) are all set, else off.
+  // Identical PLUG-IN doctrine to the email seam: with no provider configured
+  // the transport records a terminal `failed`/no_provider attempt and SENDS
+  // NOTHING — the path CI exercises. Free string (not an enum) so a new provider
+  // needs zero env-schema edits.
+  COMMS_SMS_PROVIDER: z.string().optional(),
 
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The
@@ -121,6 +160,23 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_VOICE_NOTES: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
+  // The R28 Conversation Execution Engine's organisational control: whether the org has enabled CONTROLLED
+  // LIVE BOOKING EXECUTION. DEFAULTS OFF — until explicitly armed, every prepared booking is `blocked_by_org`.
+  // Even when armed, a booking never executes autonomously: the strongest eligibility is `requires_human_review`.
+  NEXT_PUBLIC_FEATURE_BOOKING_EXECUTION: z.enum(["true", "false"]).default("false"),
+
+  // -- Capability authority source (Directive #015 / D-05) ---------------
+  // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The
+  // CAPABILITY_AUTHORITY_SOURCE rollback lever is gone: the Capability Registry is
+  // the SOLE authority for an AI employee's resolved capabilities, with no operator
+  // switch back to the legacy model. The legacy `ai_employees` resolution is retained
+  // only as the AUTOMATIC fail-safe in the runtime bridge (server/sdk/registry-parity.ts):
+  // a registry read error or a subject the registry is silent about still falls back to
+  // legacy, so the switch can never strand an employee — but that fail-safe is not
+  // operator-selectable, and continued operation no longer depends on rollback being
+  // available. Legacy storage, the confidence audit and the parity tooling remain
+  // (preserved per the LR5.3 authorisation); their removal is a later, separately
+  // reviewed phase under the Removal Sequencing Rule (23rd).
 
   // -- Vercel system vars (populated automatically) -----------------------
   VERCEL_GIT_COMMIT_SHA: z.string().optional(),

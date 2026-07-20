@@ -74,7 +74,10 @@ async function ensureEmployees(admin: Admin): Promise<string[]> {
         slug,
         role: "Benchmark fixture",
         department: BENCH_DEPT,
-        permissions: { can_execute: true, requires_approval: false, scopes: ["read"] },
+        // Authority is sourced from the Capability Registry (Directive #015 / D-05);
+        // LR5.4B removed the legacy ai_employees.permissions column, so the bench
+        // fixtures carry none — a grantless employee resolves to the deny floor, which
+        // is fine for a memory-recall benchmark that exercises no capability gate.
       })
       .select("id")
       .single();

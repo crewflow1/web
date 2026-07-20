@@ -2,7 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import {
+  WRITABLE_INVOICE_STATUSES,
+  type InvoiceStatus,
+  type WritableInvoiceStatus,
+} from "@/lib/invoices/schema";
 
 /**
  * Status-update + delete controls for a single invoice.
@@ -35,7 +39,7 @@ export function InvoiceControls({
   const [remindOverrideEmail, setRemindOverrideEmail] = useState("");
   const [remindMessage, setRemindMessage] = useState("");
 
-  async function setStatus(next: InvoiceStatus) {
+  async function setStatus(next: WritableInvoiceStatus) {
     if (next === status) return;
     setBusy(true);
     setError(null);
@@ -183,7 +187,12 @@ export function InvoiceControls({
           Set status
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
-          {INVOICE_STATUSES.map((s) => (
+          {/* WRITABLE_ only: "overdue" is no longer offered, because it is
+              derived from the due date and the trigger-owned payment status
+              rather than stored. Marking it by hand produced a value nothing
+              kept current. An invoice past its due date now shows as overdue
+              everywhere on its own. */}
+          {WRITABLE_INVOICE_STATUSES.map((s) => (
             <button
               key={s}
               type="button"
@@ -195,7 +204,8 @@ export function InvoiceControls({
                   : "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               }
             >
-              {s}
+              {/* Human label — never show the raw enum ("awaiting_payment") to a customer. */}
+              {s.replace(/_/g, " ")}
             </button>
           ))}
         </div>

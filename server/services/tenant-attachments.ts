@@ -12,7 +12,8 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  * authenticated tenant user.
  *
  * Allowed target_table values (CHECK on the column): customers,
- * jobs, quotes, invoices, suppliers, memberships, leads.
+ * jobs, quotes, invoices, suppliers, memberships, leads, snags,
+ * site_diary_entries, toolbox_talks, site_reports, assets.
  *
  * MIME whitelist: PDF, JPG, PNG, HEIC, HEIF, WebP, Excel, CSV.
  * Size cap: 25 MB.
@@ -39,6 +40,9 @@ export const ALLOWED_ATTACHMENT_MIME = new Set([
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
+// Mirrors the DB CHECK on tenant_attachments.target_table (authority:
+// 20260925 added asset_assignments, 20260927 added asset_inspections). When a
+// migration widens the CHECK, extend this list in the same PR.
 export const ATTACHMENT_TARGET_TABLES = [
   "customers",
   "jobs",
@@ -47,6 +51,13 @@ export const ATTACHMENT_TARGET_TABLES = [
   "suppliers",
   "memberships",
   "leads",
+  "snags",
+  "site_diary_entries",
+  "toolbox_talks",
+  "site_reports",
+  "assets",
+  "asset_assignments",
+  "asset_inspections",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

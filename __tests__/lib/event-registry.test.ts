@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   ACTOR_TYPES,
+  EVENT_SCHEMA_VERSION_BASELINE,
+  EVENT_SCHEMA_VERSION_OVERRIDES,
+  eventSchemaVersion,
   isVerb,
   SEVERITIES,
   VERB_GROUPS,
@@ -39,14 +42,20 @@ describe("event-verb registry — single-source invariants", () => {
 
   it("locks the registry size + per-group counts (a deliberate-change tripwire)", () => {
     // Changing these requires an ADR (Ch.20) + updating this test on purpose.
-    expect(VERBS).toHaveLength(66);
+    // task.* (5) added under ADR 0005 (Directive #012 / D-02, PR-B); task.cancelled
+    // (the 6th) added under ADR 0007 (Directive #013 / D-03, RunContext Runtime Contract).
+    // ai.action_permitted (ai → 11) added under ADR 0008 (Directive #014 / D-04, Phase B):
+    // the audit fact the runtime emits when the doorman permits an autonomous action.
+    expect(VERBS).toHaveLength(79);
     expect(VERB_GROUPS.org).toHaveLength(10);
     expect(VERB_GROUPS.billing).toHaveLength(9);
     expect(VERB_GROUPS.operations).toHaveLength(8);
     expect(VERB_GROUPS.support).toHaveLength(5);
-    expect(VERB_GROUPS.ai).toHaveLength(10);
+    expect(VERB_GROUPS.ai).toHaveLength(11);
     expect(VERB_GROUPS.approval).toHaveLength(6);
     expect(VERB_GROUPS.memory).toHaveLength(5);
+    expect(VERB_GROUPS.comm).toHaveLength(6);
+    expect(VERB_GROUPS.task).toHaveLength(6);
     expect(VERB_GROUPS.permission).toHaveLength(3);
     expect(VERB_GROUPS.system).toHaveLength(7);
     expect(VERB_GROUPS.notification).toHaveLength(3);
@@ -61,6 +70,8 @@ describe("event-verb registry — single-source invariants", () => {
       "ai.run_started",
       "approval.requested",
       "memory.asserted",
+      "comm.sent",
+      "task.created",
       "permission.role_granted",
       "system.alert_raised",
       "notification.emailed",
@@ -89,6 +100,41 @@ describe("verbNamespace", () => {
     expect(verbNamespace("invoice.payment_succeeded")).toBe("invoice");
     expect(verbNamespace("ai.tool_called")).toBe("ai");
     expect(verbNamespace("org.created")).toBe("org");
+  });
+});
+
+/**
+ * Event Spine versioning rule (CEO Directive #012). Every registered event carries
+ * a STABLE schema version (baseline 1), kept registry-first so replay/analytics can
+ * key off it — see docs/bible/substrate/event-versioning.md. These pin the rule:
+ * every verb resolves to a version, and the override map can only record genuine
+ * bumps for real verbs (a typo'd or redundant entry fails here, not in production).
+ */
+describe("event schema versioning — every registered event has a stable version", () => {
+  it("the baseline version is 1", () => {
+    expect(EVENT_SCHEMA_VERSION_BASELINE).toBe(1);
+  });
+
+  it("every registered verb resolves to a positive-integer version", () => {
+    for (const v of VERBS) {
+      const version = eventSchemaVersion(v);
+      expect(
+        Number.isInteger(version) && version >= 1,
+        `verb "${v}" → non-positive-integer version ${version}`,
+      ).toBe(true);
+    }
+  });
+
+  it("overrides are only for registered verbs, and only real bumps (>= 2)", () => {
+    // v1 is the baseline, so any override must be a genuine bump; an entry for an
+    // unregistered verb, or one that merely restates the baseline, fails here.
+    for (const [verb, version] of Object.entries(EVENT_SCHEMA_VERSION_OVERRIDES) as [
+      string,
+      number,
+    ][]) {
+      expect(VERBS as readonly string[], `override for unregistered verb "${verb}"`).toContain(verb);
+      expect(version, `override "${verb}" must be an integer >= 2`).toBeGreaterThanOrEqual(2);
+    }
   });
 });
 

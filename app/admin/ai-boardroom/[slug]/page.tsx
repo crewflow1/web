@@ -24,11 +24,14 @@ import {
   updateAiEmployeeConfig,
   addAiEmployeeTask,
   addAiEmployeeMemory,
+  authorAiEmployeeCapabilities,
+  authorAiEmployeeMemoryScope,
 } from "../actions";
 import {
   getEmployeeMemoryFeed,
   listMemoryTypes,
 } from "@/server/services/hq-memory";
+import { resolveServedCapabilityView } from "@/server/sdk/registry-parity";
 import { MemoryCard, buildTypeMap } from "../../memory/_components";
 
 /**
@@ -40,7 +43,7 @@ import { MemoryCard, buildTypeMap } from "../../memory/_components";
  *
  * FRAMEWORK ONLY. The configuration panel edits SAFE descriptive fields
  * (status, role, description, planned model, memory scope, current task,
- * system prompt). Execution is locked: `permissions.can_execute` is shown
+ * system prompt). Execution is locked: the served approval stance is shown
  * read-only and there is no action anywhere that enables it.
  */
 
@@ -68,13 +71,20 @@ export default async function AiEmployeeDetailPage({
   // loaded above (no extra query). Architecture only: read + derive.
   const stats = computeEmployeeStats(tasks, memory);
 
-  // Read-only shared-memory feed (CEO Directive 002). Permission-aware
-  // slice this employee may READ; it never writes. Best-effort — failures
-  // degrade to an empty feed rather than breaking the profile.
-  const [memoryFeed, memoryTypes] = await Promise.all([
+  // The SERVED capability authority (Directive #015 / D-05, LR5.2 — the Read Migration Rule).
+  // The capability editor + permissions panel below read what the runtime SERVES from the
+  // now-SOLE-authoritative Capability Registry — with the default-deny floor as the automatic
+  // fail-safe (LR5.4B removed the legacy ai_employees.tools_allowed / permissions columns the
+  // page used to read). Resolved alongside the read-only shared-memory feed (CEO Directive 002),
+  // a permission-aware slice this employee may READ; both are best-effort and degrade to a safe
+  // default rather than breaking the profile.
+  const [served, memoryFeed, memoryTypes] = await Promise.all([
+    resolveServedCapabilityView(e),
     getEmployeeMemoryFeed({ id: e.id, department: e.department }),
     listMemoryTypes(),
   ]);
+  // The complete served token set seeds the registry-native authoring editor (one token/line).
+  const capabilityTokens = [...served.tokens];
   const memoryTypeMap = buildTypeMap(memoryTypes);
   const feedGroups = [
     { label: "Pinned", items: memoryFeed.pinned },
@@ -241,24 +251,37 @@ export default async function AiEmployeeDetailPage({
 
         {/* Tools + permissions */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Section title="Allowed tools">
+          <Section
+            title="Capabilities"
+            subtitle="Authored at the Capability Registry. Edits are audit-logged; execution stays locked."
+          >
             <p className="mb-3 text-xs text-slate-500">
-              Capability labels only — no executor is wired to them in Phase 1.
+              The complete capability token set this employee holds — one token per
+              line, as SERVED by the Capability Registry (the single source of
+              authority). Saving authors the set at the registry; tool permissions and
+              scopes are split automatically by the catalogue. Capability labels only —
+              no executor is wired to them.
             </p>
-            {e.tools_allowed.length === 0 ? (
-              <p className="text-sm text-slate-500">No tools configured.</p>
-            ) : (
-              <ul className="flex flex-wrap gap-2">
-                {e.tools_allowed.map((t) => (
-                  <li
-                    key={t}
-                    className="rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-slate-300 ring-1 ring-inset ring-slate-700"
-                  >
-                    {t}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <form action={authorAiEmployeeCapabilities} className="space-y-3">
+              <input type="hidden" name="id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <textarea
+                name="tokens"
+                rows={6}
+                defaultValue={capabilityTokens.join("\n")}
+                placeholder={"e.g.\nread\nmemory.write\ncomm.send"}
+                spellCheck={false}
+                className={`${inputCls} font-mono text-xs leading-relaxed`}
+              />
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+                >
+                  Save capabilities
+                </button>
+              </div>
+            </form>
           </Section>
 
           <Section title="Permissions">
@@ -275,16 +298,16 @@ export default async function AiEmployeeDetailPage({
               <li className="flex items-center justify-between gap-3">
                 <span className="text-slate-300">Requires approval</span>
                 <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
-                  {e.permissions.requires_approval ? "Yes" : "No"}
+                  {served.requiresApproval ? "Yes" : "No"}
                 </span>
               </li>
               <li>
                 <span className="text-slate-300">Scopes</span>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {e.permissions.scopes.length === 0 ? (
+                  {served.scopes.length === 0 ? (
                     <span className="text-xs text-slate-500">None</span>
                   ) : (
-                    e.permissions.scopes.map((s) => (
+                    served.scopes.map((s) => (
                       <span
                         key={s}
                         className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-300 ring-1 ring-inset ring-slate-700"
@@ -304,25 +327,24 @@ export default async function AiEmployeeDetailPage({
           </Section>
         </div>
 
-        {/* Configuration panel (safe fields) */}
-        <Section title="Configuration" subtitle="Edits are audit-logged. Safe fields only — no execution toggle.">
-          <form action={updateAiEmployeeConfig} className="space-y-4">
+        {/* Memory scope — registry-native authoring (Directive #015 / D-05, LR2) */}
+        <Section
+          title="Memory scope"
+          subtitle="Authored at the Capability Registry. The grant is authoritative; the legacy model is a derived mirror (Mirror Integrity Rule)."
+        >
+          <p className="mb-3 text-xs text-slate-500">
+            How widely this employee may read shared memory. Saving authors the
+            scope at the registry and deterministically mirrors it to the legacy
+            model in one atomic write — the legacy column is never edited directly.{" "}
+            {MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}
+          </p>
+          <form
+            action={authorAiEmployeeMemoryScope}
+            className="flex flex-wrap items-end gap-3"
+          >
             <input type="hidden" name="id" value={e.id} />
             <input type="hidden" name="slug" value={e.slug} />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Status">
-                <select
-                  name="status"
-                  defaultValue={e.status}
-                  className={selectCls}
-                >
-                  {AI_EMPLOYEE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            <div className="min-w-[12rem] flex-1 sm:max-w-xs">
               <Field label="Memory scope">
                 <select
                   name="memory_scope"
@@ -332,6 +354,35 @@ export default async function AiEmployeeDetailPage({
                   {MEMORY_SCOPES.map((s) => (
                     <option key={s} value={s}>
                       {MEMORY_SCOPE_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <button
+              type="submit"
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            >
+              Save memory scope
+            </button>
+          </form>
+        </Section>
+
+        {/* Configuration panel (safe fields) */}
+        <Section title="Configuration" subtitle="Edits are audit-logged. Safe fields only — no execution toggle.">
+          <form action={updateAiEmployeeConfig} className="space-y-4">
+            <input type="hidden" name="id" value={e.id} />
+            <input type="hidden" name="slug" value={e.slug} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Status">
+                <select
+                  name="status"
+                  defaultValue={e.status}
+                  className={selectCls}
+                >
+                  {AI_EMPLOYEE_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_LABELS[s]}
                     </option>
                   ))}
                 </select>
@@ -739,6 +790,10 @@ function prettySaved(saved: string): string {
       return "Task logged.";
     case "memory":
       return "Memory entry added.";
+    case "capabilities":
+      return "Capabilities authored at the registry.";
+    case "memory_scope":
+      return "Memory scope authored at the registry.";
     default:
       return "Saved.";
   }

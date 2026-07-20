@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import { csvEscape } from "@/lib/csv";
 
 /**
  * CSV export of an org's invoices.
@@ -33,15 +34,6 @@ const XERO_DATE = (iso: string | null): string => {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${dd}/${mm}/${d.getUTCFullYear()}`;
 };
-
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 // Map a numeric VAT rate to Xero's TaxType string. Anything we can't map
 // falls through to "Tax Exempt" so the import doesn't reject the row —
@@ -77,7 +69,7 @@ type InvoiceRow = {
 };
 
 type LineItemRow = {
-  quote_id: string;
+  invoice_id: string;
   description: string;
   qty: number | string | null;
   unit_price: number | string | null;
@@ -185,24 +177,25 @@ export async function GET(request: NextRequest) {
   // format === "xero" | "sage" — both are one-row-per-line-item accounting
   // exports. Fetch line items once, then branch on format for header /
   // column composition + tax-code mapping.
-  const quoteIds = Array.from(
-    new Set(rows.map((r) => r.quote_id).filter((v): v is string => !!v)),
-  );
+  // Line items come from each invoice's own snapshot (Issue #349 Phase 2),
+  // keyed by invoice_id — so the export reflects what was billed, not the live
+  // (possibly since-edited or deleted) quote.
+  const invoiceIds = rows.map((r) => r.id);
 
-  let lineItemsByQuote = new Map<string, LineItemRow[]>();
-  if (quoteIds.length > 0) {
+  let lineItemsByInvoice = new Map<string, LineItemRow[]>();
+  if (invoiceIds.length > 0) {
     const { data: lis } = await supabase
-      .from("quote_line_items")
-      .select("quote_id, description, qty, unit_price, vat_rate, line_total, sort_order")
-      .in("quote_id", quoteIds)
+      .from("invoice_line_items")
+      .select("invoice_id, description, qty, unit_price, vat_rate, line_total, sort_order")
+      .in("invoice_id", invoiceIds)
       .order("sort_order", { ascending: true });
     const grouped = new Map<string, LineItemRow[]>();
     for (const li of (lis ?? []) as unknown as LineItemRow[]) {
-      const arr = grouped.get(li.quote_id) ?? [];
+      const arr = grouped.get(li.invoice_id) ?? [];
       arr.push(li);
-      grouped.set(li.quote_id, arr);
+      grouped.set(li.invoice_id, arr);
     }
-    lineItemsByQuote = grouped;
+    lineItemsByInvoice = grouped;
   }
 
   const isXero = format === "xero";
@@ -241,7 +234,7 @@ export async function GET(request: NextRequest) {
     const invDate = XERO_DATE(inv.created_at);
     const dueDate = inv.due_date ? XERO_DATE(`${inv.due_date}T00:00:00Z`) : "";
 
-    const liList = inv.quote_id ? lineItemsByQuote.get(inv.quote_id) ?? [] : [];
+    const liList = lineItemsByInvoice.get(inv.id) ?? [];
 
     if (liList.length === 0) {
       // No source line items — collapse to a single fallback row using

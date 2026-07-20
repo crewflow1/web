@@ -61,35 +61,28 @@ export async function dispatchAutomation(
       event.source_id,
     );
 
-    // Idempotency check.
-    const existing = await (
-      admin.from("automation_runs" as never) as unknown as {
-        select: (cols: string) => {
-          eq: (k: string, v: unknown) => {
-            eq: (k: string, v: unknown) => {
-              maybeSingle: () => Promise<{
-                data: { id: string } | null;
-                error: { message: string } | null;
-              }>;
-            };
-          };
-        };
-      }
-    )
-      .select("id")
-      .eq("rule_id", rule.id)
-      .eq("correlation_id", correlationId)
-      .maybeSingle();
-
-    if (existing.data?.id) {
+    if (!rule.enabled) {
+      // Terminal + immediate: claim and stamp complete in one step, so a
+      // disabled rule can never be "reclaimed" and re-skipped forever.
+      await recordDisabled(admin, event, rule, correlationId);
       out.push({ rule_id: rule.id, status: "skipped" });
       continue;
     }
 
-    if (!rule.enabled) {
-      await recordRun(admin, event, rule, correlationId, "skipped", {
-        reason: "rule_disabled",
-      }, null, 0);
+    // THE CLAIM. Postgres decides the winner, not a read.
+    //
+    // This replaced a read-then-insert whose window was the entire action
+    // execution: two callers both read "not found", both ran the actions, and
+    // only the second INSERT collided — so the duplicate alert/notification had
+    // already happened. The unique constraint guarded the row, never the work.
+    const claim = await claimRun(admin, event, rule, correlationId);
+    if (!claim.ok) {
+      // A database error during the claim is surfaced, never swallowed: we do
+      // not know whether we hold the claim, so we must not act.
+      out.push({ rule_id: rule.id, status: "failed", error: claim.error });
+      continue;
+    }
+    if (!claim.won) {
       out.push({ rule_id: rule.id, status: "skipped" });
       continue;
     }
@@ -115,9 +108,8 @@ export async function dispatchAutomation(
     }
 
     const status: "ok" | "failed" = ruleError ? "failed" : "ok";
-    await recordRun(
+    await finishRun(
       admin,
-      event,
       rule,
       correlationId,
       status,
@@ -131,33 +123,226 @@ export async function dispatchAutomation(
   return { ran: out };
 }
 
-async function recordRun(
+/** How long a 'running' claim is honoured before it is treated as orphaned. */
+export const AUTOMATION_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
+type ClaimOutcome =
+  | { ok: true; won: boolean }
+  | { ok: false; won: false; error: string };
+
+/**
+ * Atomically claim (rule_id, correlation_id) before ANY action runs.
+ *
+ * Two steps, both atomic, neither a read-then-write:
+ *
+ *  1. INSERT ... ON CONFLICT DO NOTHING. Postgres admits exactly one winner
+ *     against `unique (rule_id, correlation_id)`. A returned row IS the claim.
+ *
+ *  2. If the insert conflicted, someone else owns the row. Try to RECLAIM it
+ *     with a conditional UPDATE — a single statement, so concurrent reclaimers
+ *     serialise on the row lock and the WHERE is re-evaluated under it. Exactly
+ *     one can win. Reclaim is permitted only when:
+ *       - completed_at IS NULL          (never steal finished work), AND
+ *       - status = 'failed'             (a live dispatcher RELEASED it — nothing
+ *                                        is in flight, so no lease is needed), OR
+ *       - claimed_at < now() - lease    (orphaned: no route can run 300s+).
+ *     An active 'running' lease matches neither, so it is left alone.
+ *
+ * Returns won:false for "someone else holds or finished this" — the caller must
+ * then run NOTHING. Returns ok:false on a database error: we cannot tell whether
+ * we hold the claim, so the only safe action is none.
+ */
+async function claimRun(
   admin: ReturnType<typeof createAdminClient>,
   event: AutomationEvent,
   rule: AutomationRule,
   correlationId: string,
-  status: "ok" | "failed" | "skipped",
+): Promise<ClaimOutcome> {
+  const nowIso = new Date().toISOString();
+
+  const ins = await (
+    admin.from("automation_runs" as never) as unknown as {
+      insert: (row: unknown, opts?: { onConflict?: string }) => {
+        select: (cols: string) => Promise<{
+          data: Array<{ id: string }> | null;
+          error: { message: string; code?: string } | null;
+        }>;
+      };
+    }
+  )
+    .insert(
+      {
+        org_id: event.org_id,
+        event_type: event.type,
+        rule_id: rule.id,
+        correlation_id: correlationId,
+        status: "running",
+        claimed_at: nowIso,
+        completed_at: null,
+      },
+      { onConflict: "rule_id,correlation_id" },
+    )
+    .select("id");
+
+  if (!ins.error) {
+    // Won the insert race outright.
+    if ((ins.data?.length ?? 0) > 0) return { ok: true, won: true };
+    // No row and no error: the insert was ignored as a duplicate. Fall through
+    // to the reclaim path.
+  } else if (ins.error.code !== "23505") {
+    // A real database failure — surfaced, never swallowed. The old code
+    // discarded this entirely (the `{ error }` return was never checked).
+    console.error("[automation] claim insert failed", {
+      rule: rule.id,
+      correlation_id: correlationId,
+      code: ins.error.code,
+      message: ins.error.message,
+    });
+    return { ok: false, won: false, error: `claim_failed: ${ins.error.message}` };
+  }
+
+  // Someone already holds the row. Reclaim ONLY if it is releasable.
+  const leaseCutoff = new Date(Date.now() - AUTOMATION_CLAIM_LEASE_MS).toISOString();
+  const upd = await (
+    admin.from("automation_runs" as never) as unknown as {
+      update: (row: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            is: (k: string, v: unknown) => {
+              or: (f: string) => {
+                select: (cols: string) => Promise<{
+                  data: Array<{ id: string }> | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
+        };
+      };
+    }
+  )
+    .update({ status: "running", claimed_at: nowIso, error_message: null })
+    .eq("rule_id", rule.id)
+    .eq("correlation_id", correlationId)
+    // Never steal completed work — completed_at is the only proof of done.
+    .is("completed_at", null)
+    .or(`status.eq.failed,claimed_at.lt.${leaseCutoff}`)
+    .select("id");
+
+  if (upd.error) {
+    console.error("[automation] claim reclaim failed", {
+      rule: rule.id,
+      correlation_id: correlationId,
+      message: upd.error.message,
+    });
+    return { ok: false, won: false, error: `reclaim_failed: ${upd.error.message}` };
+  }
+  // Rows updated → we reclaimed it. None → it is complete, or an active lease
+  // is held by someone still working. Either way: run nothing.
+  return { ok: true, won: (upd.data?.length ?? 0) > 0 };
+}
+
+/**
+ * Close out a claimed run.
+ *
+ * ONLY a run whose actions all succeeded is stamped `completed_at` — that is
+ * the single fact separating "done, never touch again" from "retryable".
+ *
+ * A failure RELEASES the claim: status 'failed', completed_at stays NULL. The
+ * next caller may reclaim it immediately, because a live dispatcher recorded
+ * this and nothing is in flight — no lease is involved.
+ *
+ * PARTIAL FAILURE, stated honestly: if any action failed, the rule is NOT
+ * completed, so a retry re-runs EVERY action — including those that already
+ * succeeded. That is at-least-once. Per-action claims would fix it and are a
+ * genuine redesign; this does not pretend to a stronger guarantee. Per-action
+ * results are preserved either way, so a successful action is never reported as
+ * failed and vice versa.
+ */
+async function finishRun(
+  admin: ReturnType<typeof createAdminClient>,
+  rule: AutomationRule,
+  correlationId: string,
+  status: "ok" | "failed",
   result: Record<string, unknown>,
   errorMessage: string | null,
   durationMs: number,
 ): Promise<void> {
-  try {
-    await (admin.from("automation_runs" as never) as unknown as {
-      insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
-    }).insert({
+  const res = await (
+    admin.from("automation_runs" as never) as unknown as {
+      update: (row: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    }
+  )
+    .update({
+      status,
+      result,
+      // Cleared on success so a retry that fixes a previously failed run does
+      // not leave the stale error behind.
+      error_message: status === "ok" ? null : errorMessage,
+      duration_ms: durationMs,
+      completed_at: status === "ok" ? new Date().toISOString() : null,
+    })
+    .eq("rule_id", rule.id)
+    .eq("correlation_id", correlationId);
+
+  // Explicit: Supabase RETURNS { error } rather than throwing, so the old
+  // try/catch here could never fire and silently discarded every failure.
+  if (res.error) {
+    console.error("[automation] failed to record run outcome", {
+      rule: rule.id,
+      correlation_id: correlationId,
+      status,
+      message: res.error.message,
+    });
+  }
+}
+
+/**
+ * A disabled rule: terminal immediately, in one write.
+ *
+ * Claimed and completed together — there is no work to interrupt, so it must
+ * never sit 'running' waiting on a lease that will never expire meaningfully.
+ */
+async function recordDisabled(
+  admin: ReturnType<typeof createAdminClient>,
+  event: AutomationEvent,
+  rule: AutomationRule,
+  correlationId: string,
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const res = await (
+    admin.from("automation_runs" as never) as unknown as {
+      insert: (row: unknown, opts?: { onConflict?: string }) => Promise<{
+        error: { message: string; code?: string } | null;
+      }>;
+    }
+  ).insert(
+    {
       org_id: event.org_id,
       event_type: event.type,
       rule_id: rule.id,
       correlation_id: correlationId,
-      status,
-      result,
-      error_message: errorMessage,
-      duration_ms: durationMs,
-    });
-  } catch (e) {
-    console.error("[automation] failed to record run", {
+      status: "skipped",
+      result: { reason: "rule_disabled" },
+      duration_ms: 0,
+      claimed_at: nowIso,
+      completed_at: nowIso,
+    },
+    { onConflict: "rule_id,correlation_id" },
+  );
+  // 23505 is expected and benign here: another caller already recorded this
+  // exact skip. Anything else is surfaced rather than discarded.
+  if (res.error && res.error.code !== "23505") {
+    console.error("[automation] failed to record disabled-rule skip", {
       rule: rule.id,
-      err: e instanceof Error ? e.message : String(e),
+      correlation_id: correlationId,
+      message: res.error.message,
     });
   }
 }

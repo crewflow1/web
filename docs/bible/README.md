@@ -27,8 +27,15 @@ This directory holds:
   volume-by-volume comparison, a percentage-built estimate, the implementation
   dependency graph, the recommended directive sequence, and the decisions to make
   before more code is written).
-- **`decisions/`** *(convention, created when the first ADR lands)* — Architecture
-  Decision Records. See "The rule" below.
+- **[`decisions/`](./decisions/)** — Architecture Decision Records (the "document
+  before you build" rule, below). Three are recorded — `0001` Approval Engine,
+  `0002` Draft Generation, `0003` Communication Layer (all under Directive #010);
+  the next free number is `0004`. ADR numbering is governed by
+  [`governance/numbering.md`](./governance/numbering.md) §5.
+- **[`governance/`](./governance/)** — meta-doctrine: the **canonical** directive /
+  ADR / volume numbering ledger that resolves the repo's historical numbering
+  collisions. Where any branch, commit, tag, comment, or older document disagrees,
+  the ledger wins.
 
 The full text of the twelve volumes is the CEO's canonical copy; this directory
 analyses and operationalises it, and is where the renumbered canon (Appendix A of
@@ -40,7 +47,9 @@ the analysis) will live once ratified.
 
 The adopted canon has internal numbering collisions (two "Volume VII", two
 "Volume VIII"); see `adoption-analysis.md` §2/§4 and Appendix A for the proposed
-fix. As provided:
+map, and [`governance/numbering.md`](./governance/numbering.md) §6 for the governing
+principle (volumes migrate toward Appendix A as they are next edited — no flag-day
+renumber). As provided:
 
 | # | Volume |
 |---|---|
@@ -84,19 +93,26 @@ the other way around.
 The Bible is governed by CEO Directives. Issued to date (see
 `docs/roadmap.md` for detail):
 
-| # | Title |
-|---|---|
-| 001 | AI Employee Framework / AI Boardroom |
-| 002 | Shared Memory Engine |
-| 003 | HQ Sales AI programme |
-| 003.5 | Lock the Foundation |
-| 004 | Engineering Bible / Event Spine / six-gate CI |
-| 005 | Company Research AI |
+| # | Title | Status |
+|---|---|---|
+| 001 | AI Employee Framework / AI Boardroom | framework + seed built |
+| 002 | *(retired — early alias of #009)* | — |
+| 003 | HQ Sales AI programme | Modules 1–3 shipped |
+| 003.5 | Lock the Foundation | issued |
+| 004 | Engineering Bible / Event Spine / six-gate CI | Spine core shipped |
+| 005 | Company Research AI | shipped |
+| 009 | Shared Memory Engine | shipped (prod migration gated) |
+| 010 | The Conversion Arc (Approval · Draft · Comms · Outreach) | phases authored; pending merge |
+| 011 | Governance, Numbering & Scope Reconciliation | *this directive* |
 
-> **Note:** Directives **004 and 005 are already issued.** New volume→directive
-> assignments therefore begin at **#006**. The recommended sequence (#006 Bible
-> Adoption → #007 AI Employee SDK → #008 Event Bus → #009 Design System → …) is in
-> `adoption-analysis.md` §9.
+> **Canonical numbering lives in
+> [`governance/numbering.md`](./governance/numbering.md).** The highest issued
+> directive is **#010** (The Conversion Arc); the next is issued as **#011** and
+> numbering proceeds monotonically from there. `#002` is **retired** — it was an
+> early label for the Shared Memory Engine, whose canonical number is **#009**;
+> `#006`–`#008` were **never issued** (they survive only as directory self-labels,
+> branch names, and an `adoption-analysis.md` §9 recommendation). The earlier
+> "begin at #006" guidance is superseded by the canonical ledger.
 
 ---
 

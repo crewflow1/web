@@ -8,11 +8,23 @@ import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { JobAssetsSection } from "./_job-assets";
 import { JobDocumentsPanel } from "./_job-documents";
+import {
+  computeJobCommercialPosition,
+  formatGbp,
+  hasCommercialPosition,
+} from "@/lib/jobs/commercial-position";
 import {
   computeJobProfitability,
   marginPillClass,
 } from "@/lib/profitability/compute";
+import {
+  computeRetentionPosition,
+  maxReleasable,
+} from "@/lib/retentions/compute";
+import { setJobRetentionRate, recordRetentionRelease } from "../retention-actions";
+import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/committed";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
 
@@ -34,10 +46,10 @@ export default async function EditJobPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string }>;
 }) {
   const { id } = await params;
-  const { error } = await searchParams;
+  const { error, saved } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   // Private job documents are owner/admin only. We compute this here and pass
@@ -60,7 +72,7 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
-  const [customers, staff, invoicesForJob, financesForJob, variationsForJob] = await Promise.all([
+  const [customers, staff, invoicesForJob, financesForJob, variationsForJob, baseQuotesForJob] = await Promise.all([
     listCustomersForOrg(),
     listStaffForOrg(),
     supabase
@@ -82,6 +94,13 @@ export default async function EditJobPage({
       .eq("job_id", job.id)
       .not("variation_number", "is", null)
       .order("variation_number", { ascending: true }),
+    // Base contract quote(s) for this job — the accepted quote with no
+    // variation_number is the original agreed value (Programme B: revised value).
+    supabase
+      .from("quotes")
+      .select("status, total, variation_number")
+      .eq("job_id", job.id)
+      .is("variation_number", null),
   ]);
 
   // Cast: job_id is in the 20260520150000 migration but not yet in
@@ -89,6 +108,8 @@ export default async function EditJobPage({
   type InvRow = {
     job_id: string | null;
     amount: number | string | null;
+    status: string;
+    total: number | string | null;
     quote?: { variation_number: number | null } | null;
   };
   type FinRow = {
@@ -113,8 +134,79 @@ export default async function EditJobPage({
   const invRows = (invoicesForJob.data ?? []) as unknown as InvRow[];
   const finRows = (financesForJob.data ?? []) as unknown as FinRow[];
   const varRows = (variationsForJob.data ?? []) as unknown as VarRow[];
+  const baseQuoteRows = (baseQuotesForJob.data ?? []) as unknown as Array<{
+    status: string;
+    total: number | string | null;
+    variation_number: number | null;
+  }>;
+
+  // Programme B — commercial position: original agreed value, approved
+  // variations, and the DERIVED revised value (the original is never
+  // overwritten). Pure aggregation, unit-tested.
+  const position = computeJobCommercialPosition({
+    quotes: [
+      ...baseQuoteRows,
+      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
+    ],
+    invoices: invRows.map((i) => ({ status: i.status, total: i.total })),
+  });
+  const showPosition = hasCommercialPosition(position);
 
   const profit = computeJobProfitability(job.id, invRows, finRows);
+
+  // Retention (Programme C) — the rate lives on the job, releases in the ledger.
+  // Neither is in the generated Supabase types yet; the held figure is DERIVED.
+  const [retentionMeta, retentionReleases, jobPurchaseOrders] = await Promise.all([
+    (
+      supabase.from("jobs" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: { retention_percent: number | string | null } | null }>;
+          };
+        };
+      }
+    )
+      .select("retention_percent")
+      .eq("id", job.id)
+      .maybeSingle(),
+    (
+      supabase.from("retention_releases" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            order: (
+              k: string,
+              o: { ascending: boolean },
+            ) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string; note: string | null }> | null }>;
+          };
+        };
+      }
+    )
+      .select("id, amount, released_on, note")
+      .eq("job_id", job.id)
+      .order("released_on", { ascending: false }),
+    // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
+    (
+      supabase.from("purchase_orders" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => Promise<{ data: Array<{ status: string; total: number | string | null }> | null }>;
+        };
+      }
+    )
+      .select("status, total")
+      .eq("job_id", job.id),
+  ]);
+  const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+  const retentionReleaseRows = retentionReleases.data ?? [];
+  const retention = computeRetentionPosition({
+    ratePercent: retentionMeta.data?.retention_percent ?? 0,
+    invoices: invRows.map((i) => ({ status: i.status, amount: i.amount })),
+    releases: retentionReleaseRows,
+  });
+  const isAdmin = canViewPrivate; // owner/admin — matches jobs UPDATE RLS
+  // Members see the panel once retention is live; admins always see it so they
+  // can set the contract rate in the first place.
+  const showRetention =
+    retention.isActive || retentionReleaseRows.length > 0 || isAdmin;
 
   // Original vs Variations breakdown — split invoice revenue by whether
   // the source quote has variation_number set.
@@ -165,6 +257,15 @@ export default async function EditJobPage({
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {errorMessage}
+        </div>
+      ) : null}
+
+      {saved === "retention_rate" || saved === "retention_release" ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+        >
+          {saved === "retention_rate" ? "Retention rate saved." : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -219,6 +320,137 @@ export default async function EditJobPage({
       })()}
 
       <PhotoGallery jobId={job.id} />
+
+      {/* Commercial position (Programme B) — contract value + billing state. */}
+      {showPosition ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Commercial position</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            The original agreed value is never overwritten — the revised value adds approved
+            variations.
+          </p>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <PositionCell label="Original value" value={formatGbp(position.original)} />
+            <PositionCell
+              label="Approved variations"
+              value={`${position.approvedVariations > 0 ? "+" : ""}${formatGbp(position.approvedVariations)}`}
+              sub={position.counts.approvedVariations > 0 ? `${position.counts.approvedVariations} approved` : undefined}
+            />
+            <PositionCell label="Revised value" value={formatGbp(position.revised)} strong />
+            <PositionCell label="Invoiced" value={formatGbp(position.invoiced)} />
+            <PositionCell label="Uninvoiced" value={formatGbp(position.uninvoiced)} />
+            <PositionCell
+              label="Outstanding"
+              value={formatGbp(position.outstanding)}
+              tone={position.outstanding > 0 ? "amber" : undefined}
+            />
+          </dl>
+          {position.counts.pendingVariations > 0 ? (
+            <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              {position.counts.pendingVariations} variation
+              {position.counts.pendingVariations === 1 ? "" : "s"} awaiting the customer&apos;s
+              decision ({formatGbp(position.pendingVariations)}) — not yet in the revised value.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Retention (Programme C) — contract holdback held & released. */}
+      {showRetention ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold text-slate-900">Retention</h2>
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+              {retention.ratePercent}% of certified value
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Held back from certified (non-draft) invoices as security, released at completion
+            and end of defects. Calculated on the ex-VAT works value.
+          </p>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <PositionCell label="Accrued" value={formatGbp(retention.accrued)} />
+            <PositionCell label="Released" value={formatGbp(retention.released)} />
+            <PositionCell
+              label="Held"
+              value={formatGbp(retention.held)}
+              strong
+              tone={retention.held > 0 ? "amber" : undefined}
+            />
+            <PositionCell
+              label="Status"
+              value={retention.isFullyReleased ? "Fully released" : retention.held > 0 ? "Outstanding" : "—"}
+            />
+          </dl>
+
+          {retentionReleaseRows.length > 0 ? (
+            <div className="mt-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Release history
+              </h3>
+              <ul className="mt-2 divide-y divide-slate-100 rounded-md border border-slate-200">
+                {retentionReleaseRows.map((r) => (
+                  <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                    <span className="text-slate-600">
+                      {r.released_on}
+                      {r.note ? <span className="text-slate-400"> · {r.note}</span> : null}
+                    </span>
+                    <span className="font-medium text-slate-900">{formatGbp(r.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {isAdmin ? (
+            <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
+              <form action={setJobRetentionRate.bind(null, job.id)} className="flex items-end gap-2">
+                <label className="flex-1 text-xs font-medium text-slate-600">
+                  Retention rate (%)
+                  <input
+                    type="number"
+                    name="retention_percent"
+                    min={0}
+                    max={100}
+                    step="0.5"
+                    defaultValue={retention.ratePercent}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Save rate
+                </button>
+              </form>
+
+              {retention.isActive && maxReleasable(retention) > 0 ? (
+                <form action={recordRetentionRelease.bind(null, job.id)} className="flex items-end gap-2">
+                  <label className="flex-1 text-xs font-medium text-slate-600">
+                    Record release (£)
+                    <input
+                      type="number"
+                      name="amount"
+                      min="0.01"
+                      max={maxReleasable(retention)}
+                      step="0.01"
+                      placeholder={maxReleasable(retention).toFixed(2)}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                  >
+                    Release
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Original / Variations / Total breakdown — the CEO-asked tile */}
       {(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
@@ -275,6 +507,18 @@ export default async function EditJobPage({
                   </dd>
                 </div>
               </>
+            ) : null}
+            {hasCommittedCosts(committed) ? (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Committed (POs)</dt>
+                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                  {GBP.format(committed.committed)}
+                </dd>
+                <p className="text-xs text-slate-400">
+                  {committed.count} order{committed.count === 1 ? "" : "s"}
+                  {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                </p>
+              </div>
             ) : null}
           </dl>
 
@@ -427,6 +671,8 @@ export default async function EditJobPage({
         )}
       </section>
 
+      <JobAssetsSection jobId={job.id} />
+
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
@@ -466,6 +712,30 @@ export default async function EditJobPage({
           Delete job
         </button>
       </ConfirmForm>
+    </div>
+  );
+}
+
+function PositionCell({
+  label,
+  value,
+  sub,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  strong?: boolean;
+  tone?: "amber";
+}) {
+  return (
+    <div className={`rounded-lg border p-3 ${tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+      <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className={`mt-0.5 ${strong ? "text-lg font-bold text-slate-900" : "text-sm font-semibold text-slate-800"}`}>
+        {value}
+      </dd>
+      {sub ? <dd className="text-[11px] text-slate-500">{sub}</dd> : null}
     </div>
   );
 }

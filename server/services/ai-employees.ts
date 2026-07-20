@@ -2,7 +2,6 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listAdminActivity, type AdminActivityRow } from "@/server/services/hq-audit";
 import {
-  normalizePermissions,
   type AiEmployee,
   type AiEmployeeTask,
   type AiEmployeeMemoryEntry,
@@ -38,8 +37,6 @@ const EMPLOYEE_COLUMNS = [
   "model_provider",
   "model_name",
   "system_prompt",
-  "tools_allowed",
-  "permissions",
   "memory_scope",
   "current_task",
   "last_activity_at",
@@ -71,19 +68,6 @@ const MEMORY_COLUMNS = [
   "updated_at",
 ].join(", ");
 
-type RawEmployee = Omit<AiEmployee, "tools_allowed" | "permissions"> & {
-  tools_allowed: string[] | null;
-  permissions: unknown;
-};
-
-function mapEmployee(raw: RawEmployee): AiEmployee {
-  return {
-    ...raw,
-    tools_allowed: raw.tools_allowed ?? [],
-    permissions: normalizePermissions(raw.permissions),
-  };
-}
-
 export async function listAiEmployees(): Promise<AiEmployee[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -94,7 +78,7 @@ export async function listAiEmployees(): Promise<AiEmployee[]> {
     console.error("[ai-employees] listAiEmployees failed", error);
     return [];
   }
-  return ((data ?? []) as unknown as RawEmployee[]).map(mapEmployee);
+  return (data ?? []) as unknown as AiEmployee[];
 }
 
 export type AiEmployeeDetail = {
@@ -115,7 +99,7 @@ export async function loadAiEmployeeBySlug(
     .eq("slug", slug)
     .maybeSingle();
   if (!raw) return null;
-  const employee = mapEmployee(raw as unknown as RawEmployee);
+  const employee = raw as unknown as AiEmployee;
 
   const { data: tasksRaw } = await admin
     .from("ai_employee_tasks" as never)

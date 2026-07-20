@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isMaintenanceMode } from "@/lib/maintenance";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/client";
 import { env } from "@/lib/env";
@@ -25,6 +26,15 @@ export const dynamic = "force-dynamic";
 export const preferredRegion = "lhr1";
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Maintenance-window gate: during a cutover, return a retry-safe 503 so the
+  // provider (Stripe/Meta/Twilio) re-delivers after the window instead of
+  // treating the event as handled. Inert unless MAINTENANCE_MODE=on.
+  if (isMaintenanceMode()) {
+    return NextResponse.json(
+      { ok: false, maintenance: true, message: "Scheduled maintenance — retry shortly." },
+      { status: 503, headers: { "retry-after": "120", "cache-control": "no-store" } },
+    );
+  }
   const stripe = getStripe();
   if (!stripe) {
     return NextResponse.json(

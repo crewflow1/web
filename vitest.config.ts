@@ -3,7 +3,8 @@ import path from "node:path";
 
 /**
  * Vitest config — unit tests only. Fast and dependency-free: mocked
- * Supabase clients, no DB, no network, no PDF rendering.
+ * Supabase clients, no DB, no network. Deterministic in-process PDF template
+ * rendering (react-pdf renderToBuffer) IS allowed — it's pure Node, no I/O.
  *
  * Two tiers run via their own configs and are EXCLUDED here so each CI gate
  * owns exactly one tier (a failure is attributed to the right gate, never
@@ -14,6 +15,10 @@ import path from "node:path";
  *     `npm run test:security` (vitest.security.config.ts).
  */
 export default defineConfig({
+  // Use the automatic JSX runtime (matches Next) so react-pdf templates render
+  // in-process without a manual React import — the classic runtime would throw
+  // "React is not defined".
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts"],

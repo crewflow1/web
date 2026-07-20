@@ -283,10 +283,13 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
     expect(empUpdate).toBeTruthy();
     const payload = empUpdate?.payload as Record<string, unknown>;
     expect(payload.status).toBe("working");
-    expect(payload.memory_scope).toBe("department");
     expect(payload.role).toBe("Outbound sales strategist");
     expect(payload.model_provider).toBe("anthropic");
     expect(payload.model_name).toBe("claude-opus-4-7");
+    // LR2 (Directive #015 / D-05, the Mirror Integrity Rule): memory_scope is
+    // capability authority, authored at the registry — NOT written direct to the
+    // legacy model here. Even when the form submits it, the config action ignores it.
+    expect(payload).not.toHaveProperty("memory_scope");
     // Framework-mode invariant: the config action must NEVER touch
     // execution permissions.
     expect(payload).not.toHaveProperty("permissions");
@@ -386,31 +389,6 @@ describe("authorization — HQ super-admin is allowed and audited", () => {
 });
 
 // ---------- 4. Pure model logic --------------------------------------
-
-describe("model — normalizePermissions enforces the locked-down posture", () => {
-  it("forces can_execute to a real boolean (only literal true survives)", async () => {
-    const { normalizePermissions } = await import("@/lib/ai-employees/model");
-    expect(normalizePermissions({ can_execute: "true" }).can_execute).toBe(
-      false,
-    );
-    expect(normalizePermissions({ can_execute: 1 }).can_execute).toBe(false);
-    expect(normalizePermissions({ can_execute: true }).can_execute).toBe(true);
-    expect(normalizePermissions(null).can_execute).toBe(false);
-    expect(normalizePermissions(undefined).can_execute).toBe(false);
-  });
-
-  it("defaults requires_approval to true and filters scopes to strings", async () => {
-    const { normalizePermissions } = await import("@/lib/ai-employees/model");
-    expect(normalizePermissions({}).requires_approval).toBe(true);
-    expect(
-      normalizePermissions({ requires_approval: false }).requires_approval,
-    ).toBe(false);
-    expect(
-      normalizePermissions({ scopes: ["read", 5, "write", null] }).scopes,
-    ).toEqual(["read", "write"]);
-    expect(normalizePermissions({ scopes: "read" }).scopes).toEqual([]);
-  });
-});
 
 describe("model — countByStatus tallies the roster", () => {
   it("counts known statuses and ignores unknown ones", async () => {

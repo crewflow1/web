@@ -114,7 +114,7 @@ export async function updateCustomer(
 
   revalidatePath("/customers");
   revalidatePath(`/customers/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Customer updated." });
 }
 
 /**
@@ -134,9 +134,21 @@ export async function rotateCustomerPortalToken(id: string) {
   // Token shape is owned by lib/customers/portal-token.ts so the
   // rotate action and any future code path stay in lockstep.
   const token = generateCustomerPortalToken();
+  // Rotation composes with expiry: the new token starts with a CLEAN expiry
+  // state (never-expires) and no stale usage stamp. Overwriting portal_token
+  // invalidates the previous value immediately — the loader matches on the
+  // exact token, so the old UUID simply no longer resolves. `last_used_at` is
+  // cleared so telemetry reflects the NEW link, not the retired one.
   const { error, count } = await supabase
     .from("customers")
-    .update({ portal_token: token }, { count: "exact" })
+    .update(
+      {
+        portal_token: token,
+        portal_token_expires_at: null,
+        portal_token_last_used_at: null,
+      },
+      { count: "exact" },
+    )
     .eq("id", id);
   if (error) {
     console.error("[customers] rotate portal token failed", error);

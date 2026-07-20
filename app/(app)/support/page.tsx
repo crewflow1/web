@@ -187,6 +187,14 @@ export default async function CustomerSupportPage({
                     <span className="text-sm font-semibold text-slate-900">
                       {t.subject}
                     </span>
+                    {/* Segment the two conversations that share this table:
+                        a portal thread with your own customer vs your helpdesk
+                        thread with CrewFlow. customer_id is the only marker. */}
+                    {t.customer_id ? (
+                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+                        From your customer
+                      </span>
+                    ) : null}
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                     <span
@@ -206,7 +214,16 @@ export default async function CustomerSupportPage({
                 </div>
                 <p className="text-[11px] text-slate-500">
                   {t.last_reply_at
-                    ? `Last reply ${t.last_reply_at.slice(0, 10)} (${t.last_reply_kind === "hq" ? "CrewFlow" : "you"})`
+                    ? `Last reply ${t.last_reply_at.slice(0, 10)} (${
+                        t.last_reply_kind === "hq"
+                          ? "CrewFlow"
+                          : // 'customer' on a portal thread is the END-CUSTOMER;
+                            // on a CrewFlow thread it is this org. 'org' is
+                            // always this org replying to its customer.
+                            t.last_reply_kind === "customer" && t.customer_id
+                            ? "your customer"
+                            : "you"
+                      })`
                     : `Created ${t.created_at.slice(0, 10)}`}
                 </p>
               </Link>

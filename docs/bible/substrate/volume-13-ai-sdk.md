@@ -78,6 +78,18 @@ IX–XIII are complete* — this volume defines the mould, not the castings).
 - **Depended on by:** every AI employee; the AI Boardroom (which *uses* the SDK to
   drive employees and compose their tasks — it does not reimplement any subsystem).
 
+**Facet isolation — the runtime composes, the facets do not.** The `ctx` above is a flat
+set of **independently composable** facets — `ctx.memory`, `ctx.events`, `ctx.comms`,
+`ctx.tasks`, … . No facet imports or depends on another. The **runtime** (the runner that
+assembles `ctx`) is the one place capabilities are combined: any cross-facet sequencing —
+for example, draining the memory facet's recalled evidence into the output envelope at
+completion — lives in the runtime, never inside an SDK module. This is the **Facet
+Isolation Rule** (set by CEO directive on the Directive #014 Phase A review), homed as a
+written standard in the [Kernel Contract Map §2](../governance/kernel-contract-map.md); its
+architectural form — *facets expose capability, the runtime composes it* — is §4.2 of the
+same map. It is what keeps the SDK modular as facets are added: each new capability binds
+onto `ctx` on its own, never by reaching into a sibling.
+
 ---
 
 ## 3. Built vs. to-build
@@ -95,7 +107,7 @@ IX–XIII are complete* — this volume defines the mould, not the castings).
 | The unified **`ctx` ABI** (memory/comms/events/tasks/tools/api) | **To build** | one typed surface over IX–XII + gateway. |
 | **Cost metering** + budgets | **To build** | `cost_micros` plumbing + the API gateway. |
 | **API gateway** (LLM/Twilio/… metered, audited, rate-limited) | **To build** | the only path to an external API. |
-| **Approval framework** wiring (P4 at the ABI) | **To build** | `proposeActions()` → XII checkpoint. |
+| **Approval framework** wiring (P4 at the ABI) | **Partial** | The **doorman** is built (#014 Phase B): the pure gate `server/sdk/gate.ts` (`evaluateAction`) + `ctx.proposeActions` route each proposed action by verdict — autonomous → audited (`ai.action_permitted`), needs-approval → the Approval Engine checkpoint (XII §8). The **executor** that applies an approved action (a typed tool acting) is Phase C. |
 | **Versioning / lifecycle / health** | **To build** | employee versions, register→retire, heartbeat. |
 
 **Net:** identity, config, permissions, tools (as labels), memory scope and
@@ -220,6 +232,16 @@ The permission check is **in the SDK and re-asserted in the SQL entry point**
 (defence in depth): even a buggy SDK can't get an unpermitted write past the
 `SECURITY DEFINER` guard (P5). Read calls are scoped too (memory permission
 matrix, X §6).
+
+**Built — the doorman (#014 Phase B).** This gate is now a **pure function**:
+`server/sdk/gate.ts` `evaluateAction(action, posture, capabilities, budget) →
+GateVerdict` composes the three layers above into one declarative verdict (POLICY,
+no I/O, imports no facet). The runtime composes it onto the context: `ctx.proposeActions`
+(`server/sdk/tasks.ts`) routes each verdict by its decision — autonomous → a best-effort
+`ai.action_permitted` audit; needs-approval → the Approval Engine checkpoint (XII §8),
+correlation-threaded — the MECHANISM the gate never knows (the Policy vs Mechanism rule,
+Kernel Contract Map §2). Phase B **classifies and routes**; it does not yet `apply(action)`
+— the executor (a typed tool acting on a permitted/approved action) is Phase C.
 
 ## 9. Inputs *(dimension 4)*
 
@@ -446,6 +468,119 @@ sdk.runEmployee({
 // The author wrote ONLY the handler. That is the blueprint.
 ```
 
+**The runner/handler contract (six rules, enforced — Directive #012 / D-02, PR-C).**
+The blueprint above is not a convention an employee may opt out of; it is the line
+between *protected Operating System infrastructure* (the runner) and *employee code*
+(the handler). The Generic Task Engine (XII) is the durable queue; the SDK runner
+(`server/sdk/tasks.ts`) is the only sanctioned way to drive it. Six rules hold that
+line — the first three are prohibitions, the next two assign ownership, and the sixth
+states the handler's positive shape:
+
+1. **No AI employee may claim tasks directly from SQL.** The atomic dequeue is
+   `hq_ai_task_claim` reached *through the runner*, never a hand-written `select … for
+   update` or a raw `update set status='running'` (the pre-engine sales pattern, now
+   forbidden). One claim primitive, one caller.
+2. **No AI employee may implement its own runner.** There is exactly one run-loop —
+   this one. A bespoke per-employee loop re-opens the race, the lease, and the audit
+   gaps the engine closed once for everyone ("no parallel queue implementations",
+   ADR-0004). Employee #42 inherits the runner; it does not rewrite it.
+3. **No employee handler may complete or fail its own task directly.** A handler
+   never calls `hq_ai_task_complete` / `hq_ai_task_fail` (nor the `ctx.tasks` facet
+   exposes them). It signals outcome by *returning* (success) or *throwing* (failure);
+   the runner translates that into the lease-guarded terminal transition. This is why
+   `ctx.tasks` offers `create` + `checkpoint` only.
+4. **The runner owns claim, heartbeat, checkpoint, completion, failure and retry** —
+   the entire lifecycle mechanism, uniform across every employee, emitted once to the
+   spine (XII PR-B) so the audit is identical whoever runs.
+5. **Handlers own business logic only** — read inputs, reason, produce the output
+   envelope (§10), propose actions (§15). Everything mechanical is the runner's.
+6. **Handler purity — a handler is a deterministic business function** (CEO Directive
+   #012). It receives a `RunContext` and either *returns* a result or *throws*. It
+   never claims, retries, completes, or fails a task; never emits a task-lifecycle
+   event; never touches a lease or a heartbeat. This is the positive statement of
+   rules 1–5: keep the handler simple — input → reasoning → output — so the operating
+   system can own execution *uniformly* for every employee. Everything else belongs
+   to the runtime.
+
+These are the SDK expression of the Task Engine's standing posture: the queue is
+touched *only* through the seven SECURITY DEFINER entry points (XII §11.1), and an
+employee touches *those* only through the runner. The rule is held in code — the
+runner is the single claim/complete/fail caller, `ctx.tasks` deliberately omits the
+terminal verbs, and the source-analysis security test bans raw `hq_ai_tasks` writes
+(`__tests__/security/task-engine-spine.test.ts`) — not left to discipline.
+
+**The SDK surface, generalised (forward principle — Directive #012).** `ctx.tasks` is
+the first of a family, not a one-off. Every capability an employee needs reaches it
+the same way: `ctx.memory` (X) and `ctx.tasks` (XII) today, and — as they land —
+`ctx.company`, `ctx.comms`, `ctx.calendar`, `ctx.analytics`, each a business-friendly
+facet that *hides* its infrastructure beneath the same trust boundary the task
+contract draws here. The SDK is intended to become the **only** interface an AI
+employee touches: ergonomic above, protected substrate below. Every new module ships
+to this architecture — so employee #42 inherits exactly the surface of employee #3.
+
+**The Employee Migration Rule (Directive #012 / D-02, PR-E).** Research AI is the
+first employee moved off its bespoke queue onto this contract — the reference
+migration, proving a real employee can run *entirely* through the Generic Task
+Engine and the SDK with no employee-specific infrastructure. Migrating an existing
+employee is therefore governed, not ad-hoc. A migration may merge only when all
+four conditions hold:
+
+1. **Functional behaviour remains equivalent.** The employee's observable contract
+   — its lifecycle, the `result` it persists, the events and artifacts an operator
+   sees — is the same before and after. A migration changes the substrate *beneath*
+   an employee, never *what it does*.
+2. **No new infrastructure is introduced.** A migration adds no table, no queue, no
+   bespoke runner, no parallel lifecycle, no hand-rolled recovery. It *deletes* the
+   employee's private plumbing and adopts the shared engine; if it needs something
+   the substrate lacks, closing that gap is the substrate's own directive, never the
+   migration's to improvise.
+3. **All execution occurs through the Generic Task Engine (XII).** Every claim,
+   lease, heartbeat, checkpoint, completion, failure and retry is the engine's,
+   reached only through the runner — no employee-specific queue write survives.
+4. **All business logic executes through the SDK.** The employee's work is a handler
+   under the six rules above; it touches the substrate only through `ctx`.
+
+A migration is **complete only when the employee becomes indistinguishable, from the
+operating system's perspective, from every AI employee that will ever be built on the
+substrate** — the same runner drives it, the same audit describes it, the same
+operator surface governs it. Until that is true the migration is unfinished, however
+much code has moved.
+
+**Migration removes infrastructure — it never adds it (architectural principle —
+Directive #012).** Every successful employee migration must *reduce* architectural
+complexity. Migration exists to **remove** bespoke infrastructure — to converge an
+employee onto the one engine and the one SDK — **never to create** new infrastructure.
+The test of a migration is not "does the employee still work?" but "is there now
+*less* of the system to maintain?": fewer queues, fewer runners, fewer lifecycles,
+one substrate. The workforce grows by adding *data* (a row, a capability, a handler);
+the *system* it runs on only ever gets smaller per employee absorbed.
+
+**The Reference Employee Rule (Directive #012 / D-02, PR-G).** The first successfully
+migrated employee is the canonical migration reference, and every future migration
+conforms to the execution model it proved. Research AI (PR-E) is that reference; Lead
+Qualification AI (PR-F) is the first migration to *conform* to it — the same enqueue
+path, the same runner SDK, the same lease-and-reaper recovery, the same audit — which
+is precisely why the second migration **deleted more than it added** and needed no
+infrastructure of its own. The rule's force is its default: **when a migration appears
+to need new infrastructure, assume the platform is missing a capability — not that the
+employee is exceptional.** An employee earns "exceptional" only after the substrate gap
+is named, designed, and shipped as the platform's own directive; until then the burden
+of proof sits on the operating system, never on the employee. A new employee is
+presumed ordinary.
+
+**The architectural health metric (Directive #012 / D-02, PR-G).** Read the migrations
+as a trend line, not as isolated events: **every new AI employee should get smaller, and
+the operating system should get larger.** Platform capability grows; employee complexity
+shrinks. Each employee absorbed onto the engine should leave behind *less*
+employee-specific code than the last and *more* shared substrate — and a genuinely new
+capability should be built once, in the OS, where every employee inherits it. This is a
+standing, long-term health metric, not a one-time migration checkpoint: if employee N+1
+is larger than employee N, or the OS did not grow to absorb what was common between them,
+the architecture is regressing and the next migration is the place to correct it. The
+**AI Task Queue** operator surface (PR-G) is where the metric becomes legible — one
+engine, one runner, one audit, every employee visibly converging on the shared substrate
+rather than each carrying its own.
+
 ---
 
 ## 22. The reference employee (the blueprint, proven)
@@ -471,6 +606,16 @@ every dimension is real, not aspirational:
 The *current* employee already does the domain work; the SDK is what makes the
 **next** ten employees cost a configuration, not a project (C1) — and makes this
 one's autonomy, cost, and audit uniform with all of them.
+
+**Validated through the doorman (#014 Phase B B3).** An acceptance test
+(`__tests__/sdk/reference-employee.test.ts`) casts this reference employee as the
+first caller of `ctx.proposeActions` and drives it through the *real* runner, proving
+the two verdict paths resolve end to end: a reversible HQ-internal write →
+**autonomous**, audited to the spine as `ai.action_permitted` (the bound actor stamped,
+never spoofed); an irreversible customer-facing send → **parked** as a pending approval;
+and, with no posture resolved, the locked floor parks **both** (deny-by-default). The
+blueprint's autonomy is now enforced by source, not merely asserted — and it still only
+**classifies** (Phase B has no executor; applying an approved action is Phase C).
 
 ---
 

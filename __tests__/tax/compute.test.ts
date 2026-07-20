@@ -61,6 +61,34 @@ describe("computePayeMonth", () => {
     expect(r.confidence).toBe("placeholder");
     expect(r.note).toMatch(/payroll/i);
   });
+
+  it("sums PAYE + NI from this month's payroll runs — the computed path the tax page consumes", () => {
+    const now = new Date("2026-05-19T00:00:00Z");
+    const r = computePayeMonth(
+      [
+        {
+          paye_estimate: 120,
+          ni_estimate: 30,
+          run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
+        },
+        {
+          paye_estimate: 80,
+          ni_estimate: 20,
+          run: { period_start: "2026-05-12", status: "draft", cycle: "weekly" },
+        },
+        {
+          // Previous month — excluded from this month's liability.
+          paye_estimate: 999,
+          ni_estimate: 999,
+          run: { period_start: "2026-04-01", status: "finalised", cycle: "monthly" },
+        },
+      ],
+      now,
+    );
+    expect(r.confidence).toBe("computed");
+    expect(r.estimate).toBe(250); // (120 + 30) + (80 + 20)
+    expect(r.note).toMatch(/22nd/); // due date the liabilities row surfaces
+  });
 });
 
 describe("computeCorpTaxYear", () => {

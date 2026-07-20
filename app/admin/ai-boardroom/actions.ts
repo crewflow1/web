@@ -8,6 +8,11 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
+  authorEmployeeCapabilities,
+  authorEmployeeMemoryScope,
+} from "@/server/sdk/registry-authoring";
+import { readEmployeeGrantTokens } from "@/server/sdk/registry-parity";
+import {
   AI_EMPLOYEE_STATUSES,
   MEMORY_SCOPES,
   TASK_STATUSES,
@@ -17,8 +22,13 @@ import {
  * AI Boardroom — server actions (CEO Directive 001, Phase 1).
  *
  * SAFE CONFIG ONLY. Operators can edit descriptive/operational config
- * (status, current task, system prompt, planned model strings, memory
- * scope, role, description) and append task-history / memory entries.
+ * (status, current task, system prompt, planned model strings, role,
+ * description) and append task-history / memory entries.
+ *
+ * Capability AUTHORITY (the token SET and memory scope) is authored AT the
+ * Capability Registry, never written direct to the legacy model (Directive
+ * #015 / D-05, LR1 + LR2 — the Mirror Integrity Rule): see
+ * authorAiEmployeeCapabilities / authorAiEmployeeMemoryScope below.
  *
  * Deliberately NOT exposed: anything that would grant execution. The
  * `permissions.can_execute` flag is never written here — it stays at
@@ -49,11 +59,13 @@ const optionalText = (max: number) =>
 // Update configuration (safe fields only)
 // --------------------------------------------------------------------
 
+// memory_scope is DELIBERATELY absent: it is capability authority, authored at the
+// registry via authorAiEmployeeMemoryScope (Directive #015 / D-05, LR2 — the Mirror
+// Integrity Rule). This action writes descriptive/operational fields only.
 const configSchema = z.object({
   id: z.string().uuid(),
   slug: z.string().regex(SLUG_RE),
   status: z.enum(AI_EMPLOYEE_STATUSES),
-  memory_scope: z.enum(MEMORY_SCOPES),
   role: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000).optional().or(z.literal("")),
   system_prompt: z.string().trim().max(20_000).optional().or(z.literal("")),
@@ -68,7 +80,6 @@ export async function updateAiEmployeeConfig(formData: FormData): Promise<void> 
     id: formData.get("id"),
     slug: formData.get("slug"),
     status: formData.get("status"),
-    memory_scope: formData.get("memory_scope"),
     role: formData.get("role"),
     description: formData.get("description") ?? "",
     system_prompt: formData.get("system_prompt") ?? "",
@@ -88,19 +99,17 @@ export async function updateAiEmployeeConfig(formData: FormData): Promise<void> 
   // Pull previous status so the audit entry can carry old → new.
   const { data: prev } = await supabase
     .from("ai_employees" as never)
-    .select("status, memory_scope")
+    .select("status")
     .eq("id", d.id)
     .maybeSingle();
   const prevRow = prev as unknown as {
     status: string | null;
-    memory_scope: string | null;
   } | null;
 
   const { error } = await supabase
     .from("ai_employees" as never)
     .update({
       status: d.status,
-      memory_scope: d.memory_scope,
       role: d.role,
       description: d.description ?? "",
       system_prompt: d.system_prompt ?? "",
@@ -125,8 +134,6 @@ export async function updateAiEmployeeConfig(formData: FormData): Promise<void> 
     metadata: {
       status_from: prevRow?.status ?? null,
       status_to: d.status,
-      memory_scope_from: prevRow?.memory_scope ?? null,
-      memory_scope_to: d.memory_scope,
     },
   });
 
@@ -259,4 +266,186 @@ export async function addAiEmployeeMemory(formData: FormData): Promise<void> {
 
   revalidatePath(`/admin/ai-boardroom/${d.slug}`);
   redirect(`/admin/ai-boardroom/${d.slug}?saved=memory`);
+}
+
+// --------------------------------------------------------------------
+// Author capabilities — registry-native authoring (Directive #015 / D-05, LR1; reads LR5.2)
+// --------------------------------------------------------------------
+//
+// The token SET only. Authority is authored AT the Capability Registry through the
+// atomic SECURITY DEFINER RPC (server/sdk/registry-authoring.ts), which defines new
+// tokens and upserts the employee-scoped grant (tokens only). The legacy ai_employees
+// mirror is RETIRED (LR5.1 — tools_allowed / permissions are inert), so authoring no longer
+// writes it, and the audit's before-snapshot now reads the registry grant rather than the
+// inert columns (LR5.2 — the Read Migration Rule). Posture (`can_execute`) is deliberately
+// NOT touched here — the execution lock stays where the model has it (Directive 001), exactly
+// as updateAiEmployeeConfig.
+
+// The catalogue token shape (hq_capabilities.token): lowercase segments joined by
+// a single '.', '_' or '-'. Validated here for a clean message; the RPC + the table
+// constraint are the hard backstops.
+const TOKEN_RE = /^[a-z0-9]+([._-][a-z0-9]+)*$/;
+
+const capabilitiesSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string().regex(SLUG_RE),
+  tokens: z.array(z.string().regex(TOKEN_RE).max(120)).max(200),
+});
+
+export async function authorAiEmployeeCapabilities(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+
+  // Accept tokens as a free-text field (comma / whitespace separated), normalised
+  // to a lowercase sorted-distinct set — the forgiving shape a paste-in editor wants.
+  const rawTokens = String(formData.get("tokens") ?? "");
+  const tokens = Array.from(
+    new Set(
+      rawTokens
+        .split(/[\s,]+/)
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0),
+    ),
+  ).sort();
+
+  const parsed = capabilitiesSchema.safeParse({
+    id: formData.get("id"),
+    slug: formData.get("slug"),
+    tokens,
+  });
+  if (!parsed.success) {
+    redirect(
+      `/admin/ai-boardroom?error=${encodeURIComponent(
+        "Invalid capability tokens — use lowercase letters, digits and . _ - only.",
+      )}`,
+    );
+  }
+
+  const d = parsed.data;
+
+  // Snapshot the employee grant's CURRENT token set BEFORE authoring so the audit entry
+  // carries before → after (the immutable admin_activity_log is the audit trail). Read from
+  // the AUTHORITATIVE registry grant — NOT the now-inert legacy columns LR5.1 froze
+  // (Directive #015 / D-05, LR5.2 — the Read Migration Rule). before/after are then symmetric:
+  // both the employee-scoped token set the authoring RPC replaces.
+  const beforeTokens = await readEmployeeGrantTokens(d.slug);
+
+  const result = await authorEmployeeCapabilities({
+    slug: d.slug,
+    tokens: d.tokens,
+    actorId: admin.id,
+    actorEmail: admin.email,
+  });
+
+  if (!result.ok) {
+    const message =
+      result.reason === "invalid_token"
+        ? `Unknown or malformed token: ${result.token}`
+        : result.reason === "unknown_employee"
+          ? "Employee not found."
+          : "Couldn't save capabilities — try again.";
+    console.error("[ai-boardroom] authorAiEmployeeCapabilities failed", result);
+    redirect(`/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent(message)}`);
+  }
+
+  // `redirect` above returns `never`, so `result` is narrowed to the ok variant here.
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "ai_employee.capabilities_authored",
+    targetTable: "ai_employees",
+    targetId: d.id,
+    metadata: {
+      grant_action: result.action,
+      tokens_before: beforeTokens,
+      tokens_after: result.tokens,
+      tools_allowed: result.toolsAllowed,
+      scopes: result.scopes,
+    },
+  });
+
+  revalidatePath(`/admin/ai-boardroom/${d.slug}`);
+  revalidatePath("/admin/ai-boardroom");
+  redirect(`/admin/ai-boardroom/${d.slug}?saved=capabilities`);
+}
+
+// --------------------------------------------------------------------
+// Author memory scope — registry-native authoring (Directive #015 / D-05, LR2)
+// --------------------------------------------------------------------
+//
+// The memory scope only. Authority is authored AT the Capability Registry through the
+// atomic SECURITY DEFINER RPC (server/sdk/registry-authoring.ts), which upserts the
+// employee-scoped grant (memory_scope only — tokens + posture preserved) and mirrors
+// the new value to the retained legacy ai_employees.memory_scope column in ONE
+// transaction. This CLOSES the last direct legacy authoring path — memory_scope used to
+// be written straight to the legacy column by updateAiEmployeeConfig, which left the
+// registry grant to drift. The derived legacy column is now never edited directly (the
+// Mirror Integrity Rule). Posture (`can_execute`) is deliberately NOT touched here.
+
+const memoryScopeSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string().regex(SLUG_RE),
+  memory_scope: z.enum(MEMORY_SCOPES),
+});
+
+export async function authorAiEmployeeMemoryScope(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+
+  const parsed = memoryScopeSchema.safeParse({
+    id: formData.get("id"),
+    slug: formData.get("slug"),
+    memory_scope: formData.get("memory_scope"),
+  });
+  if (!parsed.success) {
+    redirect(
+      `/admin/ai-boardroom?error=${encodeURIComponent("Invalid memory scope.")}`,
+    );
+  }
+
+  const d = parsed.data;
+  const supabase = createAdminClient();
+
+  // Snapshot the legacy memory scope BEFORE authoring so the audit entry carries
+  // before → after (the immutable admin_activity_log is the LR2 audit trail).
+  const { data: prev } = await supabase
+    .from("ai_employees" as never)
+    .select("memory_scope")
+    .eq("id", d.id)
+    .maybeSingle();
+  const prevRow = prev as unknown as { memory_scope: string | null } | null;
+
+  const result = await authorEmployeeMemoryScope({
+    slug: d.slug,
+    memoryScope: d.memory_scope,
+    actorId: admin.id,
+    actorEmail: admin.email,
+  });
+
+  if (!result.ok) {
+    const message =
+      result.reason === "invalid_memory_scope"
+        ? `Invalid memory scope: ${result.memoryScope}`
+        : result.reason === "unknown_employee"
+          ? "Employee not found."
+          : "Couldn't save memory scope — try again.";
+    console.error("[ai-boardroom] authorAiEmployeeMemoryScope failed", result);
+    redirect(`/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent(message)}`);
+  }
+
+  // `redirect` above returns `never`, so `result` is narrowed to the ok variant here.
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "ai_employee.memory_scope_authored",
+    targetTable: "ai_employees",
+    targetId: d.id,
+    metadata: {
+      grant_action: result.action,
+      memory_scope_from: prevRow?.memory_scope ?? null,
+      memory_scope_to: result.memoryScope,
+    },
+  });
+
+  revalidatePath(`/admin/ai-boardroom/${d.slug}`);
+  revalidatePath("/admin/ai-boardroom");
+  redirect(`/admin/ai-boardroom/${d.slug}?saved=memory_scope`);
 }

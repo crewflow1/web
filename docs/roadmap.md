@@ -13,7 +13,7 @@ architectural decisions logged, and a handover summary kept current so anyone �
 human or AI employee — can pick the work up cold.
 
 **Last updated:** 2026-06-24 · on the merge of the **Shared Memory Engine**
-(Directive 002; shipped on a branch labelled "Directive 009 · Module 1") — PR #183,
+(Directive #009; the roadmap previously labelled it #002) — PR #183,
 merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Module 3
 — Lead Qualification AI (#180, `a21389d`)._
 
@@ -24,9 +24,9 @@ merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Modul
 | Workstream | Status | Progress |
 |---|---|---|
 | **HQ Sales AI programme** (Directive 003) | 3 of 7 modules shipped | ▓▓▓░░░░ **~43%** |
-| **AI Boardroom roster** (Directive 001) | 13 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
+| **AI Boardroom roster** (Directive 001) | 14 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
 | **Event Spine** foundation (Directive 004) | core shipped (PR1–PR5) · Realtime + Hooks remain | ▓▓▓▓▓░░ **~71%** |
-| **Shared Memory Engine** (Directive 002) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
+| **Shared Memory Engine** (Directive #009) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
 | **Six-gate CI bar** | enforced on every PR; newest modules at full bar | ▓▓▓▓▓▓ **live** |
 
 Honest reading: the **foundation and the front of the sales funnel are built**.
@@ -63,30 +63,58 @@ in-repo directives:
 | # | Title | What it governs | Anchor |
 |---|---|---|---|
 | **001** | AI Employee Framework / AI Boardroom | The roster of specialised AI employees and the `ai_employees` table; framework + seed. | `supabase/migrations/20260712000100_ai_employees_seed.sql` |
-| **002** | Shared Memory Engine — ✅ **shipped** | The company knowledge graph every AI employee reads/writes — the "company brain". Built end-to-end: `queue→embed→store→ANN→recall`, lifecycle, `forget`, and the `ctx.memory` SDK facet. Merged PR #183 (`91eec1b`), tag `crewflow-shared-memory-v1.0`. _Merge artifacts label it "Directive 009 · Module 1" — see the numbering note below._ | `supabase/migrations/20260722…20260728_*`, `server/sdk/memory.ts` |
 | **003** | HQ Sales AI programme | The umbrella for the Sales-AI module sequence (this roadmap's spine). "Maximum reuse. Minimum complexity. One architecture. One source of truth." | `docs/sales-ai.md`, `docs/lead-qualification.md` |
 | **003.5** | Lock the Foundation | Freeze Architecture v1.0 + the governance "programme pack". | commit `6d63d60` |
 | **004** | Engineering Bible / Event Spine / six-gate CI | The frozen data-model reservation (the `hq_sales_*` family), the Event Spine architecture, and the **mandatory six-gate, production-equivalent verification**. | `docs/event-spine.md`, `.github/workflows/ci.yml` |
 | **005** | Company Research AI | The first **operational** AI employee (Sales programme Module 2). | `docs/research-ai.md` |
+| **009** | Shared Memory Engine — ✅ **shipped** | The company knowledge graph every AI employee reads/writes — the "company brain". Built end-to-end: `queue→embed→store→ANN→recall`, lifecycle, `forget`, and the `ctx.memory` SDK facet. Merged PR #183 (`91eec1b`), tag `crewflow-shared-memory-v1.0`. _Canonical **#009** — the roadmap previously labelled this #002, now retired; see `docs/bible/governance/numbering.md`._ | `supabase/migrations/20260722…20260728_*`, `server/sdk/memory.ts` |
+| **010** | The Conversion Arc | The shared conversion substrate — **Approval Engine**, **Draft Generation**, **Communication Layer** — plus Outreach AI Phases 1–4. Each phase carries an ADR (`0001`–`0003`). Phases authored; PRs #187/#188/#189 pending merge. | `supabase/migrations/20260730…20260801_*`, `docs/bible/decisions/0001-approval-engine.md` |
 
-> Directives 006/007 are not yet issued. "Directive 008" exists only as a branch
-> / directory name for the CI-Postgres harness work, not a numbered directive.
+> ✅ **Numbering — resolved (CEO Directive #011 / Master Roadmap D-01).** One
+> canonical scheme now governs, recorded in full at
+> `docs/bible/governance/numbering.md`: the **thing-name is the identity**, the
+> number is metadata, monotonic from **#011** and never reused. The Shared Memory
+> Engine's canonical number is **#009** (the old **#002** label is retired);
+> `#006`–`#008` were never issued (they survive only as directory self-labels and
+> branch names); the first operational employee is **#005** (the brief that called
+> "the first AI employee #004" collided with the Event Spine, which is #004). The
+> highest substantive directive before this reconciliation is **#010** (The
+> Conversion Arc); this reconciliation is **#011**; the next free number is **#012**.
+
+> **Forward sequence — approved, not yet issued (CEO Directive #011 / D-01).**
+> Since the reconciliation note above was written, **D-02 / #012 — the Generic Task
+> Engine** has been issued and is architecturally complete (PR-A…PR-G merged to the
+> `#011` integration branch; cutover to `main` and the production migration are
+> CEO-gated; record: `docs/bible/governance/directive-012-completion-report.md`). The
+> CEO has **approved the next three directives in this order**, on the evidence of the
+> dependency-ordering analysis
+> (`docs/bible/governance/directive-013-dependency-ordering-analysis.md`, **Option B** —
+> the runtime contract is sequenced first because the Capability Registry depends on it,
+> not the reverse):
 >
-> ⚠️ **Numbering reconciliation needed — CEO ruling.** The Shared Memory Engine is
-> **Directive 002** in this table, but it was built and merged on branch
-> `directive/009-shared-memory` with commits and a tag labelled **"Directive 009 ·
-> Module 1"**, while the Bible's directories self-label differently again (#007
-> Workforce, #008 Operating-model, #009 Shared-Memory-build). **Three schemes now
-> disagree.** This roadmap keeps the **thing-name** ("Shared Memory Engine") as the
-> stable identifier and records both numbers above. Before the next directive is
-> issued, the CEO should fix **one** canonical numbering. In particular: a brief
-> calling the first AI employee **"Directive #004" collides** — #004 here is the
-> Event Spine, and the first executing employee was #005. The next free integer is
-> **≈#010**.
+> 1. **D-03 / #013 — RunContext Runtime Contract** *(next to be issued)* — the
+>    per-employee runtime contract the runner assembles at claim and threads through
+>    every invocation: identity, correlation, budget, deadline, cancellation, and the
+>    permission/capability hooks the SDK enforces. Graduates Architecture-Freeze
+>    contract **#4 (RunContext)** to Established and settles the canonical
+>    runtime-identity decision deferred from D-01.
+> 2. **D-04 / #014 — AI SDK Envelope** — the full per-employee SDK envelope
+>    (`comms`/`events`/`tools`/`api` facets) assembled over the frozen RunContext,
+>    reading the existing `ai_employees` scope columns. Graduates contract **#3 (AI
+>    SDK)** to Established.
+> 3. **D-05 / #015 — Capability Registry** — one declarative source of truth + resolver
+>    consolidating the scattered employee scope/capability data (`tools_allowed`,
+>    `permissions`, `memory_scope`, `department`) and the four registration surfaces
+>    named by the platform-independence audit. Graduates contract **#8 (Capability
+>    Registry)** to Established; sequenced **last** because it consolidates what #013
+>    and #014 settle.
+>
+> Canonical ledger: `docs/bible/governance/numbering.md` §3. No historical directive is
+> renumbered; only the forward sequence is recorded.
 
 ---
 
-## The AI Boardroom — 13 employees seeded
+## The AI Boardroom — 14 employees seeded
 
 The roster (Directive 001) is the org chart. **Seeded ≠ executing**: most
 employees are framework rows awaiting their execution module. Two now perform
@@ -107,6 +135,7 @@ real, gated work — and they are the template for the rest.
 | 11 | `operations-ai` | Operations AI | framework |
 | 12 | `research-ai` | **Company Research AI** | ✅ **executing** (read + draft, human-approved) |
 | 13 | `lead-qualification` | **Lead Qualification AI** | ✅ **executing** (autonomous, deterministic) |
+| 14 | `outreach-ai` | **Outreach AI** | framework — seeded Directive #010 Ph.1 (draft-only; no `send` scope) |
 
 The **12th and 13th** members are the first to leave the framework and do work.
 Each future executing employee follows the same template (see _Architectural
@@ -196,7 +225,7 @@ audit backbone the Sales-AI modules' own timelines complement. Internal sequence
 
 ---
 
-## Workstream C — the Shared Memory Engine (Directive 002)
+## Workstream C — the Shared Memory Engine (Directive #009)
 
 HQ-wide infrastructure, parallel to the Event Spine: the **company brain** every AI
 employee reads and writes through **one** engine. Shipped end-to-end and merged at
@@ -307,6 +336,16 @@ them:
 8. **Tenant decoupling.** No HQ prospect engine ever reads a customer/tenant
    table (`organizations`, `customers`, `leads`, `jobs`, `quotes`, `invoices`)
    or the spine truth log (`hq_events`).
+9. **The Generic Task Engine is a protected platform capability (D-02 / #012).**
+   Every AI employee created after D-02 inherits **one** durable, crash-safe,
+   audited work queue — `hq_ai_tasks`
+   ([ADR 0004](./bible/decisions/0004-generic-task-engine.md)). **No employee may
+   introduce a custom task runner, and no parallel queue implementations are
+   permitted.** The per-employee runner of decision #1 generalises *into* this
+   shared engine; it is not re-cloned. Any exception requires an ADR, an
+   architectural review, **and** CEO approval. This is the work-execution form of
+   the inheritance promise: employee #42 claims, leases, retries, and recovers
+   exactly as employee #3 does.
 
 ---
 
@@ -353,7 +392,7 @@ living-knowledge-base on every change · branch → preview → human-approved m
 
 | Date | Module | PR | Merge |
 |---|---|---|---|
-| 2026-06-24 | Shared Memory Engine — _Directive 002_ (merged as "Directive 009 · Module 1") | #183 | `91eec1b` |
+| 2026-06-24 | Shared Memory Engine — _Directive #009_ (canonical; early artifacts labelled it #002) | #183 | `91eec1b` |
 | 2026-06-21 | Module 3 — Lead Qualification AI | #180 | `a21389d` |
 | — | Module 2 — Company Research AI | #179 | `8d0b531` |
 | — | Module 1 — Company Intelligence Database | #178 | `465937d` |

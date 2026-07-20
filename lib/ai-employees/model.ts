@@ -8,8 +8,9 @@
  *
  * FRAMEWORK ONLY (CEO Directive 001). Nothing here calls a model
  * provider or executes anything. `model_provider` / `model_name` are
- * inert planning strings; `permissions.can_execute` is always treated
- * as locked in Phase 1 and surfaced read-only in the UI.
+ * inert planning strings; execution stays locked in Phase 1 — the
+ * registry-served posture is deny-by-default (Directive #015 / D-05)
+ * and the UI surfaces the approval stance read-only.
  */
 
 // ---------------------------------------------------------------------
@@ -167,38 +168,6 @@ export const ACCENTS = [
 export type Accent = (typeof ACCENTS)[number];
 
 // ---------------------------------------------------------------------
-// Permissions
-// ---------------------------------------------------------------------
-
-export type AiPermissions = {
-  /** Phase 1: always false. Surfaced read-only. */
-  can_execute: boolean;
-  requires_approval: boolean;
-  scopes: string[];
-};
-
-/**
- * Coerce arbitrary jsonb into the permissions shape, defaulting to the
- * locked-down posture. `can_execute` is forced to a boolean and the
- * UI renders it read-only — the framework never grants execution in
- * Phase 1.
- */
-export function normalizePermissions(input: unknown): AiPermissions {
-  const obj = (input && typeof input === "object" ? input : {}) as Record<
-    string,
-    unknown
-  >;
-  const scopes = Array.isArray(obj.scopes)
-    ? obj.scopes.filter((s): s is string => typeof s === "string")
-    : [];
-  return {
-    can_execute: obj.can_execute === true,
-    requires_approval: obj.requires_approval !== false,
-    scopes,
-  };
-}
-
-// ---------------------------------------------------------------------
 // Domain row types (mirror the DB columns)
 // ---------------------------------------------------------------------
 
@@ -215,8 +184,6 @@ export type AiEmployee = {
   model_provider: string | null;
   model_name: string | null;
   system_prompt: string;
-  tools_allowed: string[];
-  permissions: AiPermissions;
   memory_scope: string;
   current_task: string | null;
   last_activity_at: string | null;

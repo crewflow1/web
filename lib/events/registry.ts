@@ -64,6 +64,12 @@ const SUPPORT = [
   "support.csat_recorded",
 ] as const;
 
+// `ai.action_permitted` (the 11th) landed under ADR 0008 (Directive #014 / D-04,
+// Phase B — the AI SDK envelope's doorman). It is the audit fact the RUNTIME emits when
+// the pure gate (`server/sdk/gate.ts`) returns an `autonomous` verdict for a proposed
+// action, so deny-by-default is auditable BOTH ways: a needs-approval verdict lands an
+// `approval.requested` row (the Approval Engine), an autonomous one lands this. Past
+// tense, a fact that happened — the doorman permitted the action without a human.
 const AI = [
   "ai.triggered",
   "ai.run_started",
@@ -75,6 +81,7 @@ const AI = [
   "ai.budget_exceeded",
   "ai.suspended",
   "ai.escalated",
+  "ai.action_permitted",
 ] as const;
 
 const APPROVAL = [
@@ -92,6 +99,58 @@ const MEMORY = [
   "memory.edge_added",
   "memory.access_granted",
   "memory.access_revoked",
+] as const;
+
+// Communication Layer (Directive 010, Phase 4). The DELIVERY lifecycle of an
+// APPROVED draft handed to a replaceable provider — a new domain, not a duplicate
+// vocabulary (cf. approval.*, memory.*). Past tense, facts that happened:
+//   comm.sent       — a provider accepted the message for delivery
+//   comm.delivered  — the recipient's server confirmed receipt (provider webhook)
+//   comm.bounced    — the message bounced (provider webhook)
+//   comm.complained — the recipient marked it as spam (provider webhook)
+//   comm.failed     — delivery failed at the transport (no provider / rejection)
+//   comm.suppressed — a send was blocked by the do-not-contact list
+// There is no `comm.queued`: the send is synchronous, so there is no queued state.
+const COMM = [
+  "comm.sent",
+  "comm.delivered",
+  "comm.bounced",
+  "comm.complained",
+  "comm.failed",
+  "comm.suppressed",
+] as const;
+
+// Generic Task Engine (Directive #012 / D-02, PR-B; ADR-0005). The LIFECYCLE of a
+// durable, crash-safe unit of work that EVERY AI employee inherits — the spine
+// projection of the `hq_ai_tasks` state machine. One verb per WIRED transition,
+// emitted in-transaction from the SECURITY DEFINER entry points (not a trigger:
+// only the function knows the honest actor and reason — see ADR-0005). Past tense,
+// facts that happened:
+//   task.created   — a task was enqueued (hq_ai_task_create)
+//   task.claimed   — a worker leased the next ready task (hq_ai_task_claim)
+//   task.completed — a task finished successfully (hq_ai_task_complete)
+//   task.retried   — a task was re-queued for another attempt, after a worker
+//                    reported a retryable failure OR the reaper recovered an
+//                    expired lease (distinguished by actor + payload.reason)
+//   task.failed    — a task reached terminal failure, worker-reported or
+//                    retries-exhausted (distinguished by actor + payload.reason)
+//   task.cancelled — a live task was cancelled from outside its worker, by an
+//                    operator/parent/OS (hq_ai_task_cancel); payload.prev_status
+//                    records whether queued or in-flight work was stopped
+// `task.cancelled` landed under D-03 / #013 (the RunContext Runtime Contract): the
+// guard has permitted *→cancelled since PR-A, and PR-B reserved the verb in words
+// "registered when that function lands, never as dead vocabulary" — D-03 is that
+// landing (the cancel entry point is the substrate behind RunContext's ctx.signal).
+// Intentionally ABSENT (ADR-0005): no `task.heartbeated` (heartbeats are liveness,
+// not facts — they would drown the spine); no `task.checkpointed` (a checkpoint is
+// internal resumption state, evented only if a consumer ever needs it).
+const TASK = [
+  "task.created",
+  "task.claimed",
+  "task.completed",
+  "task.retried",
+  "task.failed",
+  "task.cancelled",
 ] as const;
 
 const PERMISSION = [
@@ -129,6 +188,8 @@ export const VERB_GROUPS = {
   ai: AI,
   approval: APPROVAL,
   memory: MEMORY,
+  comm: COMM,
+  task: TASK,
   permission: PERMISSION,
   system: SYSTEM,
   notification: NOTIFICATION,
@@ -145,6 +206,8 @@ export const VERBS = [
   ...AI,
   ...APPROVAL,
   ...MEMORY,
+  ...COMM,
+  ...TASK,
   ...PERMISSION,
   ...SYSTEM,
   ...NOTIFICATION,
@@ -163,6 +226,44 @@ export function isVerb(value: unknown): value is Verb {
 /** The namespace before the first dot, e.g. `invoice.created` → `invoice`. */
 export function verbNamespace(verb: Verb): string {
   return verb.slice(0, verb.indexOf("."));
+}
+
+// --- Event schema versions (the Event Spine versioning rule) ------------------
+//
+// Every registered event carries a STABLE schema version, starting at 1. This is
+// the SINGLE SOURCE of those versions, kept registry-first by design: Volume XI
+// §4.2 holds verb + payload-schema validity a PRODUCER contract (a TS registry +
+// contract test), never a hot-path DB constraint — so a bad version can no more
+// wedge the append-only log than a bad verb can. The rule, scope and rationale
+// live in `docs/bible/substrate/event-versioning.md`; the per-event task contract
+// in `docs/bible/substrate/task-event-contract.md`.
+//
+// The contract, in one line: a version is IMMUTABLE once shipped. A
+// backward-incompatible payload change mints a NEW version (an override below) —
+// it never edits or reuses an old one — because events are immutable history that
+// must stay replayable forever (Volume XI §10). This is deliberately NOT a
+// behavioural change: nothing about emission changes today. It is the stable
+// identifier replay, analytics and schema evolution will key off tomorrow.
+//
+// Today every event is v1, so OVERRIDES is empty. Each future bump is one line:
+// `"verb.name": 2,` — added in the same edit as the payload change and its ADR.
+
+/** The version every registered event starts at. */
+export const EVENT_SCHEMA_VERSION_BASELINE = 1 as const;
+
+/**
+ * Per-event version bumps. A verb appears here ONLY once its payload schema has
+ * changed incompatibly; the value is the current version (always ≥ 2 — v1 is the
+ * baseline, so an entry of 1 would be redundant). Absent ⇒ the event is v1.
+ */
+export const EVENT_SCHEMA_VERSION_OVERRIDES: Partial<Record<Verb, number>> = {};
+
+/**
+ * The stable payload-schema version of a registered event — the baseline (1)
+ * unless the verb has been bumped in EVENT_SCHEMA_VERSION_OVERRIDES.
+ */
+export function eventSchemaVersion(verb: Verb): number {
+  return EVENT_SCHEMA_VERSION_OVERRIDES[verb] ?? EVENT_SCHEMA_VERSION_BASELINE;
 }
 
 // --- Envelope enums (mirror the CHECK constraints on hq_events) ---------------

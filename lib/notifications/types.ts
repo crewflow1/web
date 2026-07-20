@@ -131,8 +131,34 @@ export type NotificationRow = {
 };
 
 /**
+ * Opt-in email delivery directive attached to a notification we're about
+ * to create. PRESENCE of this field means "also deliver this notification
+ * by email"; its ABSENCE means in-app only — the historical default. No
+ * email is ever queued for a notification that does not carry this field,
+ * so wiring it in is deliberate and per-notification (never a firehose).
+ *
+ * Recipient resolution (see `resolveEmailRecipient` in email-routing.ts):
+ *   - `to` set        → that exact address, verbatim.
+ *   - `to` omitted     → resolved from the audience (customer/both → the
+ *                         org's `organizations.email`). HQ-audience email
+ *                         has no wired recipient yet, so an hq-only
+ *                         notification without an explicit `to` is skipped.
+ */
+export type NotificationEmailDirective = {
+  /** Explicit recipient override. When omitted, resolved from audience. */
+  to?: string | null;
+  /** Reply-to for the dispatched email. Defaults to the system address. */
+  replyTo?: string | null;
+};
+
+/**
  * Shape of a notification we're about to create. Mirror of the row
  * shape minus DB-managed columns. `user_id = null` = org-wide.
+ *
+ * `email` is NOT persisted on the notification row — it is a transient
+ * delivery instruction consumed by `emitNotifications` to also queue an
+ * email through the existing notification_email_queue → drain → Resend
+ * pipeline. Callers that don't set it get today's in-app-only behaviour.
  */
 export type NotificationCreate = {
   org_id: string;
@@ -147,4 +173,5 @@ export type NotificationCreate = {
   source_id?: string | null;
   action_url?: string | null;
   metadata?: Record<string, unknown>;
+  email?: NotificationEmailDirective;
 };

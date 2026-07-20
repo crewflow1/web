@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnPaymentProofUploaded } from "@/lib/notifications/events";
 
 /**
  * Phase 3 — Portal payment-proof upload.
@@ -84,11 +86,18 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
   // direct customer_id column; we join via quote.
   const { data: invoiceRow } = await admin
     .from("invoices")
-    .select("id, quote:quotes ( customer_id )")
+    .select("id, number, quote:quotes ( customer_id )")
     .eq("id", invoiceId)
     .eq("org_id", customer.org_id)
     .maybeSingle();
-  type InvJoined = { id: string; quote?: { customer_id: string } | null };
+  // `number` rides along on the ownership lookup that already runs — staff need
+  // a human-readable invoice reference in the notification below, and a UUID
+  // identifies nothing. No extra round trip, no behaviour change.
+  type InvJoined = {
+    id: string;
+    number: string | null;
+    quote?: { customer_id: string } | null;
+  };
   const inv = invoiceRow as unknown as InvJoined | null;
   if (!inv || inv.quote?.customer_id !== customer.id) {
     backTo(token, invoiceId, "invoice_not_yours");
@@ -165,6 +174,42 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
     },
   });
 
+  // Tell the org a proof landed. The portal already promises the customer that
+  // "{org} will confirm here once it's matched", and the staff proof panel on
+  // the invoice exists — but nothing announced the arrival, so that promise
+  // relied on someone happening to open the invoice.
+  //
+  // Placement is the contract: both failure branches above call backTo(), which
+  // is typed `never` (it redirects), so reaching this line means the storage
+  // upload AND the authoritative portal_uploads insert have both succeeded. A
+  // failed upload or a failed record can never notify.
+  //
+  // Best-effort by construction: emitNotifications catches and logs its own
+  // errors and never throws (notifications-service.ts), so a notification
+  // failure cannot roll back or invalidate an upload the customer has already
+  // been told succeeded. It is deliberately placed after the audit log, which
+  // is the durable record.
+  //
+  // Exactly one per upload: source_id is `uploadId`, the portal_uploads primary
+  // key generated once per invocation. A retried submission uploads a new file
+  // and inserts a new row with a new id — a genuinely different proof, not a
+  // duplicate of this one — so there is nothing to de-duplicate here.
+  await emitNotifications(
+    notifyOnPaymentProofUploaded({
+      org_id: customer.org_id,
+      upload_id: uploadId,
+      invoice_id: invoiceId,
+      invoice_number: inv.number,
+      customer_id: customer.id,
+      customer_name: customer.name,
+      filename: file.name || `proof.${ext}`,
+      customer_note: notes || null,
+    }),
+  );
+
   revalidatePath(`/customer-portal/${token}/invoices`);
+  // Staff surfaces that now carry the notification + the proof itself.
+  revalidatePath(`/notifications`);
+  revalidatePath(`/invoices/${invoiceId}`);
   backTo(token, invoiceId);
 }
