@@ -239,6 +239,19 @@ export async function updateQuote(
     .select("status")
     .eq("id", id)
     .maybeSingle();
+
+  // Commercial integrity: an accepted quote/variation is a firm agreement — its
+  // amounts and scope are frozen (the DB enforces this too, via triggers
+  // quotes_freeze_accepted / quote_line_items_freeze_accepted). Refuse the edit
+  // up front rather than let the DB reject the line-item re-insert mid-write.
+  // To change agreed scope, the operator raises a variation.
+  if (existing?.status === "accepted") {
+    return formError(
+      "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
+      echoValuesFromForm(formData),
+    );
+  }
+
   const revertToPending =
     existing?.status === "approved" ||
     existing?.status === "sent" ||

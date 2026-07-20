@@ -46,6 +46,16 @@ Never create: second portal auth, second quote/invoice/payment/document/audit
 system, frontend-only approval rules, mutable accepted commercial documents,
 floating-point money, service-role portal reads without explicit scoping.
 
+## Enforced invariants (shipped)
+
+- **Accepted-quote immutability** (20261004000000): once `quotes.status =
+  'accepted'`, its money figures (subtotal/vat_total/total) and its scope
+  (line-item add/edit) are frozen by DB triggers `quotes_freeze_accepted` /
+  `quote_line_items_freeze_accepted`; `updateQuote` also refuses the edit up
+  front ("raise a variation"). DELETE stays open so `ON DELETE CASCADE` works;
+  the invoice snapshot only READS lines, so accept→invoice is unaffected.
+  To change agreed scope, raise a variation — never edit the accepted quote.
+
 ## Carried lessons (from the asset programme)
 
 `next build` is a gate tsc can't replace (node:crypto) · inspect shared
