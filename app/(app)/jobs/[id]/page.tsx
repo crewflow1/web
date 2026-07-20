@@ -11,6 +11,11 @@ import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobDocumentsPanel } from "./_job-documents";
 import {
+  computeJobCommercialPosition,
+  formatGbp,
+  hasCommercialPosition,
+} from "@/lib/jobs/commercial-position";
+import {
   computeJobProfitability,
   marginPillClass,
 } from "@/lib/profitability/compute";
@@ -61,7 +66,7 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
-  const [customers, staff, invoicesForJob, financesForJob, variationsForJob] = await Promise.all([
+  const [customers, staff, invoicesForJob, financesForJob, variationsForJob, baseQuotesForJob] = await Promise.all([
     listCustomersForOrg(),
     listStaffForOrg(),
     supabase
@@ -83,6 +88,13 @@ export default async function EditJobPage({
       .eq("job_id", job.id)
       .not("variation_number", "is", null)
       .order("variation_number", { ascending: true }),
+    // Base contract quote(s) for this job — the accepted quote with no
+    // variation_number is the original agreed value (Programme B: revised value).
+    supabase
+      .from("quotes")
+      .select("status, total, variation_number")
+      .eq("job_id", job.id)
+      .is("variation_number", null),
   ]);
 
   // Cast: job_id is in the 20260520150000 migration but not yet in
@@ -90,6 +102,8 @@ export default async function EditJobPage({
   type InvRow = {
     job_id: string | null;
     amount: number | string | null;
+    status: string;
+    total: number | string | null;
     quote?: { variation_number: number | null } | null;
   };
   type FinRow = {
@@ -114,6 +128,23 @@ export default async function EditJobPage({
   const invRows = (invoicesForJob.data ?? []) as unknown as InvRow[];
   const finRows = (financesForJob.data ?? []) as unknown as FinRow[];
   const varRows = (variationsForJob.data ?? []) as unknown as VarRow[];
+  const baseQuoteRows = (baseQuotesForJob.data ?? []) as unknown as Array<{
+    status: string;
+    total: number | string | null;
+    variation_number: number | null;
+  }>;
+
+  // Programme B — commercial position: original agreed value, approved
+  // variations, and the DERIVED revised value (the original is never
+  // overwritten). Pure aggregation, unit-tested.
+  const position = computeJobCommercialPosition({
+    quotes: [
+      ...baseQuoteRows,
+      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
+    ],
+    invoices: invRows.map((i) => ({ status: i.status, total: i.total })),
+  });
+  const showPosition = hasCommercialPosition(position);
 
   const profit = computeJobProfitability(job.id, invRows, finRows);
 
@@ -220,6 +251,40 @@ export default async function EditJobPage({
       })()}
 
       <PhotoGallery jobId={job.id} />
+
+      {/* Commercial position (Programme B) — contract value + billing state. */}
+      {showPosition ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Commercial position</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            The original agreed value is never overwritten — the revised value adds approved
+            variations.
+          </p>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <PositionCell label="Original value" value={formatGbp(position.original)} />
+            <PositionCell
+              label="Approved variations"
+              value={`${position.approvedVariations > 0 ? "+" : ""}${formatGbp(position.approvedVariations)}`}
+              sub={position.counts.approvedVariations > 0 ? `${position.counts.approvedVariations} approved` : undefined}
+            />
+            <PositionCell label="Revised value" value={formatGbp(position.revised)} strong />
+            <PositionCell label="Invoiced" value={formatGbp(position.invoiced)} />
+            <PositionCell label="Uninvoiced" value={formatGbp(position.uninvoiced)} />
+            <PositionCell
+              label="Outstanding"
+              value={formatGbp(position.outstanding)}
+              tone={position.outstanding > 0 ? "amber" : undefined}
+            />
+          </dl>
+          {position.counts.pendingVariations > 0 ? (
+            <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              {position.counts.pendingVariations} variation
+              {position.counts.pendingVariations === 1 ? "" : "s"} awaiting the customer&apos;s
+              decision ({formatGbp(position.pendingVariations)}) — not yet in the revised value.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Original / Variations / Total breakdown — the CEO-asked tile */}
       {(originalRevenue > 0 || variationRevenue > 0 || varRows.length > 0) ? (
@@ -469,6 +534,30 @@ export default async function EditJobPage({
           Delete job
         </button>
       </ConfirmForm>
+    </div>
+  );
+}
+
+function PositionCell({
+  label,
+  value,
+  sub,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  strong?: boolean;
+  tone?: "amber";
+}) {
+  return (
+    <div className={`rounded-lg border p-3 ${tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+      <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className={`mt-0.5 ${strong ? "text-lg font-bold text-slate-900" : "text-sm font-semibold text-slate-800"}`}>
+        {value}
+      </dd>
+      {sub ? <dd className="text-[11px] text-slate-500">{sub}</dd> : null}
     </div>
   );
 }
