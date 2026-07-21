@@ -10,11 +10,8 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobDocumentsPanel } from "./_job-documents";
-import {
-  computeJobCommercialPosition,
-  formatGbp,
-  hasCommercialPosition,
-} from "@/lib/jobs/commercial-position";
+import { formatGbp } from "@/lib/jobs/commercial-position";
+import { computeCommercialCash } from "@/lib/commercial/cash";
 import {
   computeJobProfitability,
   marginPillClass,
@@ -78,7 +75,7 @@ export default async function EditJobPage({
     supabase
       .from("invoices")
       .select(
-        "id, number, status, amount, vat_total, total, job_id, quote_id, quote:quotes ( variation_number )",
+        "id, number, status, amount, vat_total, total, due_date, job_id, quote_id, quote:quotes ( variation_number )",
       )
       .eq("job_id", job.id),
     supabase
@@ -106,10 +103,12 @@ export default async function EditJobPage({
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types.
   type InvRow = {
+    id: string;
     job_id: string | null;
     amount: number | string | null;
     status: string;
     total: number | string | null;
+    due_date: string | null;
     quote?: { variation_number: number | null } | null;
   };
   type FinRow = {
@@ -139,18 +138,6 @@ export default async function EditJobPage({
     total: number | string | null;
     variation_number: number | null;
   }>;
-
-  // Programme B — commercial position: original agreed value, approved
-  // variations, and the DERIVED revised value (the original is never
-  // overwritten). Pure aggregation, unit-tested.
-  const position = computeJobCommercialPosition({
-    quotes: [
-      ...baseQuoteRows,
-      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
-    ],
-    invoices: invRows.map((i) => ({ status: i.status, total: i.total })),
-  });
-  const showPosition = hasCommercialPosition(position);
 
   const profit = computeJobProfitability(job.id, invRows, finRows);
 
@@ -196,6 +183,22 @@ export default async function EditJobPage({
       .eq("job_id", job.id),
   ]);
   const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+
+  // Programme D — the ledger-truthful cash position (received/outstanding from
+  // real payments, not invoice status). One indexed read, empty-guarded.
+  const invIds = invRows.map((i) => i.id);
+  const jobPayments = invIds.length
+    ? await supabase.from("invoice_payments").select("invoice_id, amount").in("invoice_id", invIds)
+    : { data: [] as Array<{ invoice_id: string; amount: number | string | null }> };
+  const commercialCash = computeCommercialCash({
+    quotes: [
+      ...baseQuoteRows,
+      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
+    ],
+    invoices: invRows.map((i) => ({ id: i.id, status: i.status, total: i.total, due_date: i.due_date })),
+    payments: (jobPayments.data ?? []).map((p) => ({ invoice_id: p.invoice_id, amount: p.amount })),
+  });
+
   const retentionReleaseRows = retentionReleases.data ?? [];
   const retention = computeRetentionPosition({
     ratePercent: retentionMeta.data?.retention_percent ?? 0,
@@ -250,6 +253,35 @@ export default async function EditJobPage({
       <header>
         <h1 className="text-2xl font-bold text-slate-900">Edit job</h1>
       </header>
+
+      {/* Programme D — cash-first commercial strip (ledger-truthful). Links to
+          the full unified commercial position + lifecycle timeline. */}
+      {(commercialCash.billed > 0 || commercialCash.revised > 0) ? (
+        <Link
+          href={`/jobs/${job.id}/commercial`}
+          className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Outstanding</div>
+                <div className="text-2xl font-bold text-slate-900">{formatGbp(commercialCash.outstanding)}</div>
+              </div>
+              {commercialCash.overdue > 0 ? (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-red-500">Overdue</div>
+                  <div className="text-2xl font-bold text-red-700">{formatGbp(commercialCash.overdue)}</div>
+                </div>
+              ) : null}
+              <div className="text-sm text-slate-500">
+                {formatGbp(commercialCash.received)} received of {formatGbp(commercialCash.billed)} billed ·
+                contract {formatGbp(commercialCash.revised)}
+              </div>
+            </div>
+            <span className="text-sm font-medium text-slate-600">Commercial →</span>
+          </div>
+        </Link>
+      ) : null}
 
       {errorMessage ? (
         <div
@@ -321,39 +353,10 @@ export default async function EditJobPage({
 
       <PhotoGallery jobId={job.id} />
 
-      {/* Commercial position (Programme B) — contract value + billing state. */}
-      {showPosition ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Commercial position</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            The original agreed value is never overwritten — the revised value adds approved
-            variations.
-          </p>
-          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <PositionCell label="Original value" value={formatGbp(position.original)} />
-            <PositionCell
-              label="Approved variations"
-              value={`${position.approvedVariations > 0 ? "+" : ""}${formatGbp(position.approvedVariations)}`}
-              sub={position.counts.approvedVariations > 0 ? `${position.counts.approvedVariations} approved` : undefined}
-            />
-            <PositionCell label="Revised value" value={formatGbp(position.revised)} strong />
-            <PositionCell label="Invoiced" value={formatGbp(position.invoiced)} />
-            <PositionCell label="Uninvoiced" value={formatGbp(position.uninvoiced)} />
-            <PositionCell
-              label="Outstanding"
-              value={formatGbp(position.outstanding)}
-              tone={position.outstanding > 0 ? "amber" : undefined}
-            />
-          </dl>
-          {position.counts.pendingVariations > 0 ? (
-            <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-              {position.counts.pendingVariations} variation
-              {position.counts.pendingVariations === 1 ? "" : "s"} awaiting the customer&apos;s
-              decision ({formatGbp(position.pendingVariations)}) — not yet in the revised value.
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+      {/* Full commercial position + lifecycle timeline live at /commercial
+          (linked from the cash strip above). The old status-based position
+          panel was removed — it double-counted partly-paid invoices as fully
+          collected; the strip now shows the ledger-truthful figure. */}
 
       {/* Retention (Programme C) — contract holdback held & released. */}
       {showRetention ? (
