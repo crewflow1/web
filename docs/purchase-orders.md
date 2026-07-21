@@ -38,9 +38,18 @@ deducted or filed.
   (`computeCommittedCosts`) sums non-cancelled PO totals; `/jobs/[id]` renders a
   "Committed (POs)" tile next to actual costs (`finances`) and profit.
 
+- **Supplier bills** (20261009) — record a supplier's invoice against a PO. A
+  bill IS a `finances` entry attributed to a supplier + PO (**no `supplier_bills`
+  fork** — extends the existing cost ledger): `finances` gained `supplier_id`,
+  `purchase_order_id`, `reference`, `bill_date`. Recording one posts the ACTUAL
+  cost to job profitability and closes committed → actual; the PO detail shows
+  **Committed / Billed / Remaining** + a status (unbilled / part / fully / over).
+  DB-enforced same-org guard trigger `finances_bill_org_integrity` prevents
+  cross-tenant links (a bill can only reference a PO/supplier in its own org).
+  `lib/purchase-orders/billing.ts` (`computePoBilling`) + `recordSupplierBill`
+  action + real-Postgres integration test. Follow-up: a job P&L "Billed" tile
+  aggregating PO-linked finances; supplier-level bill view.
+
 ## Follow-ups (pending)
 
-- **Supplier bills** — record the actual invoice against a PO; **extend the
-  existing `finances` / `expense_drafts` cost flow** (do NOT create a parallel
-  `supplier_bills` table), closing the committed → actual loop.
 - PO PDF for emailing suppliers (reuse the react-pdf pipeline).

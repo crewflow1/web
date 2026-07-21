@@ -337,9 +337,9 @@ const supplierBillSchema = z.object({
 
 export async function recordSupplierBill(
   purchaseOrderId: string,
-  _prev: FormState<Record<string, string>>,
+  _prev: FormState,
   formData: FormData,
-): Promise<FormState<Record<string, string>>> {
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(purchaseOrderId).success) {
     return formError("Invalid purchase order.");
