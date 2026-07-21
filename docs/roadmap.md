@@ -26,7 +26,7 @@ merge `91eec1b`, tag `crewflow-shared-memory-v1.0`. _Previous: 2026-06-21, Modul
 | **HQ Sales AI programme** (Directive 003) | 3 of 7 modules shipped | ▓▓▓░░░░ **~43%** |
 | **AI Boardroom roster** (Directive 001) | 14 employees seeded · 2 executing real work | ▓▓░░░░░░░░░░░ seeded; **execution unlocking** |
 | **Event Spine** foundation (Directive 004) | core shipped (PR1–PR5) · Realtime + Hooks remain | ▓▓▓▓▓░░ **~71%** |
-| **Shared Memory Engine** (Directive #009) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **code live; prod migration gated** |
+| **Shared Memory Engine** (Directive #009) | merged · validated to a 100k corpus · the reference implementation | ▓▓▓▓▓▓ **live in prod (shadow) via RC3 cutover 2026-07-20** |
 | **Six-gate CI bar** | enforced on every PR; newest modules at full bar | ▓▓▓▓▓▓ **live** |
 
 Honest reading: the **foundation and the front of the sales funnel are built**.
@@ -252,12 +252,11 @@ is now the standard.
 > **Doctrine adopted (permanent):** _a mock proves orchestration, never the wire._
 > Every service path that reaches Postgres carries at least one real-client test.
 
-**Production migration is a separate, gated step.** The merge is code-only. Prod has
-the base memory schema (`20260713_*`) but **not** the 7 engine migrations
-(`20260722…20260728`). Prod's ledger also lags `main` by two prior migrations
-(`hq_timeline_projection`, `lead_qualification_employee`), so a future
-`supabase db push` would apply **9** migrations — to be scheduled with CEO approval,
-never auto-applied.
+**Production migration — RESOLVED (2026-07-20).** This gate is closed: the RC3
+cutover merged and deployed the whole platform, so the 7 memory engine migrations
+(`20260722…20260728`) and the two prior ones are **now in prod** (`main` @
+`94eeea8`, 170 migrations). The Shared Memory Engine is live (shadow) in
+production, not "prod migration gated". See `docs/stage-one-reconciliation.md`.
 
 ### ◻ Module 1A — Recall Optimisation — _follow-up, not yet built_
 
