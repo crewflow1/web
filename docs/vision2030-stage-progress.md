@@ -63,6 +63,7 @@ in the master directive; they are surfaced, not silently skipped or faked-dark.
 ## Milestone changelog
 | Date | Milestone | PR | Gates |
 |---|---|---|---|
+| 2026-07-22 | Financial → **retention release scheduling** (PC date + defects period → “due back” forecast + dashboard rollup) | `feat/retention-scheduling` | unit 16 · integration 5 · security 2 (unmerged) |
 | 2026-07-20 | Commercial C → **committed costs (POs) on the job P&L** | #395 | 8/8 green |
 | 2026-07-20 | Commercial C → **purchase orders** (procurement / committed spend) | #394 | 8/8 green (`purchase-orders.test.ts` 5) |
 | 2026-07-20 | Commercial C → **construction retention** (contract holdback) | #393 | 8/8 green (`retention.test.ts` 8) |
