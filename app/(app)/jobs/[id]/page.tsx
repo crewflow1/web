@@ -83,7 +83,7 @@ export default async function EditJobPage({
       .eq("job_id", job.id),
     supabase
       .from("finances")
-      .select("id, amount, vat_total, category, created_at, job_id")
+      .select("id, amount, vat_total, category, created_at, job_id, purchase_order_id")
       .eq("job_id", job.id),
     // Variations on this job (any status).
     supabase
@@ -115,7 +115,9 @@ export default async function EditJobPage({
   type FinRow = {
     job_id: string | null;
     amount: number | string | null;
+    vat_total?: number | string | null;
     category: string | null;
+    purchase_order_id?: string | null;
   };
   type VarRow = {
     id: string;
@@ -196,6 +198,13 @@ export default async function EditJobPage({
       .eq("job_id", job.id),
   ]);
   const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+  // Billed (actual): supplier bills recorded against this job's POs — finances
+  // rows carrying a purchase_order_id. Closes committed → actual on the job P&L.
+  const poBilledRows = finRows.filter((r) => r.purchase_order_id);
+  const billedActual =
+    Math.round(
+      poBilledRows.reduce((s, r) => s + Number(r.amount ?? 0) + Number(r.vat_total ?? 0), 0) * 100,
+    ) / 100;
   const retentionReleaseRows = retentionReleases.data ?? [];
   const retention = computeRetentionPosition({
     ratePercent: retentionMeta.data?.retention_percent ?? 0,
@@ -517,6 +526,20 @@ export default async function EditJobPage({
                 <p className="text-xs text-slate-400">
                   {committed.count} order{committed.count === 1 ? "" : "s"}
                   {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                </p>
+              </div>
+            ) : null}
+            {billedActual > 0 ? (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Billed (actual)</dt>
+                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                  {GBP.format(billedActual)}
+                </dd>
+                <p className="text-xs text-slate-400">
+                  {poBilledRows.length} bill{poBilledRows.length === 1 ? "" : "s"}
+                  {committed.committed > 0
+                    ? ` · ${Math.round((billedActual / committed.committed) * 100)}% of committed`
+                    : ""}
                 </p>
               </div>
             ) : null}
