@@ -286,6 +286,39 @@ Built so these need **no** coordinate/DB redesign:
   (the pin model is already client-id/idempotency-compatible), and the hook where
   the Blueprint AI reads the register + pins.
 
+## Authenticated E2E harness (cross-cutting)
+
+The blueprint viewer/pins/markup authenticated journeys are no longer `test.fixme`
+— they run as **real authenticated E2E** every CI pass. A Playwright `globalSetup`
+(`e2e/global-setup.ts`) seeds a deterministic org/user/membership/job/blueprint +
+a real 1-page PDF into the **local** Supabase (service-role, exactly as the
+integration tier does), signs the user in, and mints a `storageState` whose
+Supabase auth cookie is encoded by **`@supabase/ssr`'s own encoder** (correct
+name/base64url/chunking) so the middleware accepts it. Specs opt in with
+`test.use({ storageState: "e2e/.auth/owner.json" })`; the logged-out boundary
+specs stay anonymous. **CI-safe:** Node-only, the service-role key is already in
+the e2e job env, **no app/middleware/auth code changes, no production-reachable
+login route**, and the state file is gitignored (holds a live JWT). This unblocks
+authenticated E2E for the whole blueprint stack (and any future feature).
+
+## Deferred → Programme D — Revision Comparison (fully forward-designed)
+
+Compare two revisions: **side-by-side** + **overlay/onion-skin** (opacity slider,
+swap A/B, hide/show) + **difference** (CSS `mix-blend-mode:difference` — deterministic,
+same-origin, no readback). **Zero migration** — pure application-side composition
+over the existing version chain + the RLS-gated `/f/[versionId]` serve route (both
+revisions independently tenant-gated; no new endpoint). Revision pickers default to
+current-vs-previous; page pairing is manual (ground truth) + a same-index heuristic,
+always showing the active pair; sync via normalized page-box fractions (proportional
++ labelled when aspects differ); overlay gated to ≤1% aspect drift (else warn + fall
+back to side-by-side — never stretch). Annotations are version-scoped by DB invariant
+(A/B never merge); compare is view-only. The build reuses the M2 render engine via an
+extracted `DrawingRenderSurface` (render core only — pins/markup/toolbar stay in the
+viewer) with tiered dual-canvas memory caps (compare peak ≤ 1× the single viewer).
+State lives in the URL (`?compare&a&b&mode&pageA&pageB&op` — UUIDs only, no signed
+URLs). Deferred to a fresh session so the render-core refactor of the tri-feature
+viewer lands at full quality without risking the green M2/pins/markup stack.
+
 ## Known limitations
 - The register loads all revision rows for a job's drawings in one batched query
   (no N+1). A single job carrying >1000 total revisions would need pagination —

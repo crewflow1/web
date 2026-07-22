@@ -21,6 +21,15 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  /**
+   * Authenticated-E2E harness (task #25): seeds a deterministic org/user/job/
+   * blueprint + real PDF into the local Supabase and writes a Playwright
+   * storageState (e2e/.auth/owner.json). Specs opt in with
+   * `test.use({ storageState: "e2e/.auth/owner.json" })`; the logged-out
+   * boundary specs stay anonymous (no project-level storageState). CI-safe:
+   * Node-only, service-role key already in the e2e job env, no app/auth change.
+   */
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,

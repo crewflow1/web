@@ -26,9 +26,9 @@ test.describe("blueprint pins — stay behind the auth wall", () => {
 });
 
 test.describe("blueprint pins — authenticated place-a-snag journey", () => {
-  // FIXME: needs the authenticated-E2E harness (seeded job + blueprint version +
-  // logged-in storageState). Do NOT convert to a passing test by stubbing auth.
-  test.fixme(
+  // Real authenticated E2E via the harness (e2e/global-setup.ts).
+  test.use({ storageState: "e2e/.auth/owner.json" });
+  test(
     "Add pin → tap drawing → create snag → marker appears → open snag deep-links",
     async ({ page }) => {
       await page.goto(`/jobs/${JOB}/blueprints`);

@@ -45,11 +45,11 @@ test.describe("blueprint viewer — stays behind the auth wall", () => {
 });
 
 test.describe("blueprint viewer — authenticated canvas journey", () => {
-  // FIXME: requires the authenticated-E2E harness (a seeded job + blueprint
-  // version + a logged-in storageState). Converting this to a passing test by
-  // stubbing auth would hide the coverage gap — leave it fixme until the harness
-  // exists, then delete this comment and the `.fixme`.
-  test.fixme(
+  // Real authenticated E2E via the harness (e2e/global-setup.ts seeds the org +
+  // job + blueprint + PDF and mints this session). Anonymous boundary specs above
+  // stay logged-out; only this describe opts into the seeded session.
+  test.use({ storageState: "e2e/.auth/owner.json" });
+  test(
     "open → pdf.js paints the canvas → keyboard zoom → Esc closes and restores focus",
     async ({ page }) => {
       await page.goto(`/jobs/${JOB}/blueprints`);

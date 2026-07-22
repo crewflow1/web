@@ -25,9 +25,9 @@ test.describe("blueprint markup — stays behind the auth wall", () => {
 });
 
 test.describe("blueprint markup — authenticated draw journey", () => {
-  // FIXME: needs the authenticated-E2E harness (seeded job + blueprint version +
-  // logged-in storageState). Do NOT convert to a passing test by stubbing auth.
-  test.fixme(
+  // Real authenticated E2E via the harness (e2e/global-setup.ts).
+  test.use({ storageState: "e2e/.auth/owner.json" });
+  test(
     "Markup → pick a tool → drag on the drawing → shape persists → reload shows it",
     async ({ page }) => {
       await page.goto(`/jobs/${JOB}/blueprints`);
