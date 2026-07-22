@@ -18,7 +18,8 @@ export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 8;
 /** Cap the rasterised scale so a big sheet never blows the ~16k-px canvas limit. */
 export const MAX_RENDER_SCALE = 4;
-const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+/** Clamp to [0,1]; NaN → 0 (+Infinity → 1, -Infinity → 0 via min/max). Shared by the pins + markup layers. */
+export const clamp01 = (n: number) => (Number.isNaN(n) ? 0 : Math.min(1, Math.max(0, n)));
 
 /** A PDF user-space point → normalized 0..1 of the page's viewBox. */
 export function normalizePoint(pdfX: number, pdfY: number, viewBox: ViewBox): Norm {

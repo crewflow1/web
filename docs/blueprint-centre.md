@@ -139,13 +139,94 @@ without leaving CrewFlow or fighting a mobile browser's PDF plugin.
   `test.fixme` pending the authenticated-E2E harness; the real pdf.js canvas
   paint is proven in a live browser via the M2 render self-test (not stubbed).
 
-## Deferred → Blueprint milestone 3+
+## Programme B — Blueprint Pins (shipped)
 
-Coordinate-anchored **pins** (Programme B — a generic pin model with
-DB-enforced composite-FK tenant integrity, dropping onto the M2 overlay),
-freehand/box **markup**, **revision compare** (side-by-side / onion-skin),
-large-sheet **tiling** for very high-DPI drawings, an **offline** foundation,
-and the hook where the Blueprint AI reads the register.
+Pins make drawings **operational**: open a drawing, tap the exact location of a
+problem, and create a snag that is now anchored to that spot on that revision —
+connecting the drawing, the snag, its job, its photos, and the audit trail.
+
+### One generic model — `blueprint_pins` (migration `20261016`)
+A single table, not one system per domain. A pin carries an anchor
+(`blueprint_version_id` + 1-based `page_number` + normalized `u,v ∈ [0,1]`), a
+`kind`, and exactly one payload:
+- **`kind='snag'`** → links a snag (create-a-new-snag is the hero flow; link an
+  existing open snag is also supported). Status is **read from the snag** — never
+  duplicated on the pin.
+- **`kind='note'`** → a free text note pinned to the spot (no external entity).
+
+New link targets (site report / diary / toolbox / document, and *task* once that
+domain exists) are a **3-line additive migration** — a nullable `<entity>_id`
+column + a composite FK + one `check` clause — never a redesign.
+
+### DB-enforced integrity (real-Postgres tested — 9 invariants)
+- **Anchored to the immutable revision.** A pin belongs to `blueprint_version_id`,
+  never the drawing + "current version" — re-issuing a drawing does not relocate
+  pins (a construction-safety property; also what lets revision-compare show
+  A's pins on A and B's on B). No carry-forward: "copy my pins to the new
+  revision" would insert new rows, never re-point old ones.
+- **Cross-tenant is impossible, declaratively.** Composite FKs
+  `(blueprint_version_id, org_id) → blueprint_versions(id, org_id)` and
+  `(snag_id, org_id) → snags(id, org_id)` (each needing the additive
+  `unique(id, org_id)` candidate key) mean a pin **cannot** reference another
+  org's version or snag — enforced by Postgres for **every** role incl.
+  service_role, because RLS guards only the row written, never the row it points
+  at (the `invoice_payments` doctrine).
+- **Cross-job is rejected by a trigger** (a static FK can't express it — 4 of the
+  linkable targets have a nullable `job_id`): a pin can't link a snag from a
+  different job.
+- **Anti-spoof.** `org_id`/`job_id` are derived from the parent version in a
+  `SECURITY DEFINER` before-write trigger; client-sent tenancy is ignored.
+- **Coordinates constrained** to `[0,1]`, `page_number ≥ 1`; **kind ↔ payload**
+  consistency (a note needs text; a snag pin carries no free note).
+- **No dangling rows.** Deleting the snag (or version/job/org) cascades the pin
+  away. Creating a snag + its pin is one **atomic** `SECURITY INVOKER` RPC.
+
+### RLS, audit, cost
+- Members **place / move / read** pins; **hard delete is admin-only** (members
+  re-place rather than delete). Tenant-isolated via `current_org_ids()`.
+- Audited via `recordAdminActivity` (the working path — avoids the dead
+  `job_documents` tenant-`_record_activity` gap) on **create / link / delete
+  only** — never per-move (position drift is high-volume, low-signal).
+- No realtime, no polling, no cron: bounded reads (one batched query per
+  version+sheet, no N+1) and ordinary mutations. Storage cost is **zero** — pins
+  are coordinates, not files.
+
+### Viewer integration (no M2 rework)
+The pins layer rides the existing `data-blueprint-overlay` (kept a single
+element). A pin at `(u,v)` renders at `left:u*100% / top:v*100%` inside the page
+box, so the M2 pan/zoom transform positions it for free — no per-pin math. A
+click→`(u,v)` uses the live page-box rect (identical for PDF and image;
+`normalizePoint` is NOT used — it is PDF-user-space, y-up, undefined for images).
+An explicit `mode: 'view' | 'place'` + a tap-vs-drag threshold means placing a
+pin never fights pan/zoom, and the seam is ready for a markup tool layer. 44px
+touch targets, keyboard/`Esc`, focus-safe, status by icon+shape+colour (not
+colour alone).
+
+### Tests
+- **Unit (22):** coordinate model (pointer→normalized, %-anchor, tap-vs-drag),
+  0-based↔1-based page convention, status derivation (snag is authority),
+  filtering, all input schemas.
+- **Integration (9, real Postgres):** the invariants above.
+- **Security (12):** source contracts locking the composite FKs, the derive
+  trigger, RLS admin-delete, the SECURITY INVOKER RPC, and the service's
+  tenant-client + `recordAdminActivity` + no-audit-on-move boundaries.
+- **E2E:** the pin surface never leaks to a logged-out visitor; the authenticated
+  place→snag journey is `test.fixme` pending the auth-E2E harness (not stubbed).
+
+## Deferred → Blueprint milestone C+ (forward-designed)
+
+The pins milestone was built so these need **no** coordinate/DB redesign:
+- **Programme C — Markup** (freehand/line/arrow/rect/ellipse/text): a sibling
+  `blueprint_markup` table, the *same* normalized `{page,u,v}` model + composite-FK
+  tenant integrity, rendered as an SVG (`viewBox="0 0 1 1"`) layer **beneath** the
+  pins layer; the viewer's `mode` union + layered overlay + pointer-ownership rule
+  already accommodate a draw tool.
+- **Programme D — Revision compare** (side-by-side + onion-skin): two RenderSurfaces
+  in one dialog, each per-`versionId`; each surface shows only its own version's
+  pins — free, because pins are version-scoped. Deterministic only (no pixel-diff/AI).
+- Large-sheet **tiling** for very high-DPI drawings, an **offline** foundation
+  (the pin model is already client-id/idempotency-compatible), and the hook where
+  the Blueprint AI reads the register + pins.
 
 ## Known limitations
 - The register loads all revision rows for a job's drawings in one batched query

@@ -26,6 +26,7 @@ export function ViewerLauncher(props: {
   drawingNumber: string;
   revision: string;
   supersededNotice: string | null;
+  canDeletePins: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);

@@ -107,6 +107,7 @@ export default async function JobBlueprintsPage({
                         drawingNumber={b.drawing_number}
                         revision={current.revision}
                         supersededNotice={status === "superseded" ? "This drawing is marked superseded." : null}
+                        canDeletePins={isAdmin}
                       />
                     ) : null}
                     <AddRevisionForm jobId={id} blueprintId={b.id} />

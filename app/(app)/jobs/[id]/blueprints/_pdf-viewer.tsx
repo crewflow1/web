@@ -5,6 +5,12 @@ import {
   fitScale, clampZoom, zoomStep, bitmapScale, clampPage,
   type FitMode,
 } from "@/lib/blueprints/viewer";
+import {
+  pointerToNormalized, isTap, pinsForSheet, filterPins, toStoredPage, DEFAULT_PIN_FILTER,
+  type BlueprintPin,
+} from "@/lib/blueprints/pins";
+import { getPinsAction, getLinkableSnagsAction } from "./pin-actions";
+import { PinMarker, DraftMarker, PlacementSheet, PinDetail, FilterChips } from "./_pins-ui";
 
 /**
  * Blueprint interactive viewer (M2) — a full-screen pdf.js/image canvas.
@@ -30,6 +36,7 @@ type Props = {
   drawingNumber: string;
   revision: string;
   supersededNotice: string | null;
+  canDeletePins: boolean;
   onClose: () => void;
 };
 
@@ -49,6 +56,7 @@ export default function BlueprintViewer(props: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderTaskRef = useRef<any>(null);
   const intrinsicRef = useRef<{ w: number; h: number }>({ w: 1, h: 1 });
+  const pageBoxRef = useRef<HTMLDivElement>(null);
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [pageCount, setPageCount] = useState(1);
@@ -57,6 +65,20 @@ export default function BlueprintViewer(props: Props) {
   const [userZoom, setUserZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [status, setStatus] = useState(""); // aria-live
+
+  // --- pins layer state -----------------------------------------------------
+  const [pins, setPins] = useState<BlueprintPin[]>([]);
+  const [linkable, setLinkable] = useState<{ id: string; title: string; status: string }[]>([]);
+  const [placeMode, setPlaceMode] = useState(false);
+  const [draft, setDraft] = useState<{ u: number; v: number; page: number } | null>(null);
+  const [activePinId, setActivePinId] = useState<string | null>(null);
+  const [pinFilter, setPinFilter] = useState(DEFAULT_PIN_FILTER);
+
+  const refreshPins = useCallback(async () => {
+    try { setPins(await getPinsAction(versionId)); } catch { /* leave prior pins */ }
+  }, [versionId]);
+  useEffect(() => { void refreshPins(); }, [refreshPins]);
+  useEffect(() => { getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }, [jobId]);
 
   // --- load the document once (fetch bytes, then pdf.js) --------------------
   useEffect(() => {
@@ -203,7 +225,21 @@ export default function BlueprintViewer(props: Props) {
     if (!d) return;
     setPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
   }, []);
-  const onPointerUp = useCallback(() => { dragRef.current = null; }, []);
+  const onPointerCancel = useCallback(() => { dragRef.current = null; }, []);
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    // A placement tap (not a pan-drag) in place mode drops a pin here.
+    if (!placeMode || !d || !isTap(d.x, d.y, e.clientX, e.clientY)) return;
+    const box = pageBoxRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0 || box.height === 0) return;
+    // ignore taps in the letterbox margin (outside the page box itself)
+    if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) return;
+    const { u, v } = pointerToNormalized(e.clientX, e.clientY, box);
+    setActivePinId(null);
+    setDraft({ u, v, page });
+    setPlaceMode(false);
+  }, [placeMode, page]);
 
   // --- page nav -------------------------------------------------------------
   const goPage = useCallback((next: number) => {
@@ -234,7 +270,12 @@ export default function BlueprintViewer(props: Props) {
         return;
       }
       switch (e.key) {
-        case "Escape": onClose(); break;
+        case "Escape":
+          if (draft) { setDraft(null); break; }
+          if (activePinId) { setActivePinId(null); break; }
+          if (placeMode) { setPlaceMode(false); break; }
+          onClose();
+          break;
         case "+": case "=": doZoom(1); break;
         case "-": doZoom(-1); break;
         case "0": resetView(); break;
@@ -253,12 +294,14 @@ export default function BlueprintViewer(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, doZoom, resetView, goPage, page, pageCount]);
+  }, [onClose, doZoom, resetView, goPage, page, pageCount, draft, activePinId, placeMode]);
 
   // focus the dialog on mount; restore handled by the opener
   useEffect(() => { dialogRef.current?.focus(); }, []);
 
   const zoomPct = Math.round(computeLayoutScale() * 100);
+  const activePin = activePinId ? pins.find((p) => p.id === activePinId) ?? null : null;
+  const visiblePins = filterPins(pinsForSheet(pins, page), pinFilter);
 
   return (
     <div
@@ -276,7 +319,16 @@ export default function BlueprintViewer(props: Props) {
           <span className="ml-2 text-slate-300">{props.revision}</span>
         </div>
         <div className="flex items-center gap-1">
-          <a href={src} target="_blank" rel="noopener noreferrer" aria-label={`Open or download ${label}`} className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold hover:bg-slate-800">Open / download</a>
+          {pins.length > 0 ? <FilterChips value={pinFilter} onChange={setPinFilter} /> : null}
+          <button
+            type="button"
+            onClick={() => { setPlaceMode((m) => !m); setDraft(null); setActivePinId(null); }}
+            aria-pressed={placeMode}
+            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold ${placeMode ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
+          >
+            {placeMode ? "Tap the drawing…" : "+ Add pin"}
+          </button>
+          <a href={src} target="_blank" rel="noopener noreferrer" aria-label={`Open or download ${label}`} className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold hover:bg-slate-800">Open</a>
           <button type="button" onClick={onClose} aria-label="Close viewer" className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold hover:bg-slate-800">✕ Close</button>
         </div>
       </div>
@@ -291,12 +343,12 @@ export default function BlueprintViewer(props: Props) {
       <div
         ref={stageRef}
         className="relative flex-1 touch-none select-none overflow-hidden"
-        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+        style={{ cursor: placeMode ? "crosshair" : dragRef.current ? "grabbing" : "grab" }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
       >
         {phase === "loading" ? (
           <div className="absolute inset-0 grid place-items-center">
@@ -323,15 +375,22 @@ export default function BlueprintViewer(props: Props) {
           className="absolute left-1/2 top-1/2"
           style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px)`, visibility: phase === "ready" ? "visible" : "hidden" }}
         >
-          <div className="relative">
+          <div ref={pageBoxRef} className="relative">
             {isImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img ref={imgRef} alt={label} className="block max-w-none bg-white shadow-2xl" draggable={false} />
             ) : (
               <canvas ref={canvasRef} role="img" aria-label={`${label}, sheet ${page + 1} of ${pageCount}`} className="block bg-white shadow-2xl" />
             )}
-            {/* pins overlay (Programme B rides this, normalized to the page box) */}
-            <div className="pointer-events-none absolute inset-0" data-blueprint-overlay />
+            {/* pins overlay — Programme B markers ride this, normalized to the page box */}
+            <div className="pointer-events-none absolute inset-0" data-blueprint-overlay>
+              {phase === "ready"
+                ? visiblePins.map((p) => (
+                    <PinMarker key={p.id} pin={p} active={p.id === activePinId} onActivate={(id) => { setDraft(null); setActivePinId(id); }} />
+                  ))
+                : null}
+              {draft && draft.page === page ? <DraftMarker u={draft.u} v={draft.v} /> : null}
+            </div>
           </div>
         </div>
       </div>
@@ -351,6 +410,22 @@ export default function BlueprintViewer(props: Props) {
           </span>
         ) : null}
       </div>
+
+      {draft ? (
+        <PlacementSheet
+          jobId={jobId} versionId={versionId} page={toStoredPage(draft.page)} u={draft.u} v={draft.v}
+          linkable={linkable}
+          onDone={() => { setDraft(null); void refreshPins(); getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }}
+          onCancel={() => setDraft(null)}
+        />
+      ) : null}
+      {activePin ? (
+        <PinDetail pin={activePin} jobId={jobId} canDelete={props.canDeletePins} onClose={() => setActivePinId(null)} onChanged={refreshPins} />
+      ) : null}
+
+      {placeMode ? (
+        <p role="status" className="pointer-events-none absolute inset-x-0 top-16 z-30 text-center text-xs font-medium text-white/90">Tap the drawing to place a pin · Esc to cancel</p>
+      ) : null}
 
       <p className="sr-only" aria-live="polite">{status}</p>
       <p className="sr-only">Interactive drawing viewer. For a screen-reader-accessible copy, use the Open or download link. Press Escape to close.</p>
