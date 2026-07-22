@@ -81,7 +81,7 @@ export default function BlueprintViewer(props: Props) {
             setPhase("ready");
             setStatus("Drawing loaded.");
           };
-          img.onerror = () => { if (!cancelled) setPhase("error"); };
+          img.onerror = () => { URL.revokeObjectURL(url); if (!cancelled) setPhase("error"); };
           img.src = url;
           return;
         }
@@ -217,6 +217,22 @@ export default function BlueprintViewer(props: Props) {
   // --- keyboard + focus trap ------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Focus trap: the dialog is aria-modal, so keyboard focus must not escape
+      // to the (inert) app behind it. Wrap Tab / Shift+Tab at the edges.
+      if (e.key === "Tab") {
+        const root = dialogRef.current;
+        if (!root) return;
+        const f = root.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        );
+        const first = f[0];
+        const last = f[f.length - 1];
+        if (!first || !last) return;
+        const active = document.activeElement;
+        if (e.shiftKey && (active === first || active === root)) { last.focus(); e.preventDefault(); }
+        else if (!e.shiftKey && active === last) { first.focus(); e.preventDefault(); }
+        return;
+      }
       switch (e.key) {
         case "Escape": onClose(); break;
         case "+": case "=": doZoom(1); break;
