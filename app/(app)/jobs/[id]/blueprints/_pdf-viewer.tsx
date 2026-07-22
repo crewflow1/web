@@ -11,6 +11,26 @@ import {
 } from "@/lib/blueprints/pins";
 import { getPinsAction, getLinkableSnagsAction } from "./pin-actions";
 import { PinMarker, DraftMarker, PlacementSheet, PinDetail, FilterChips } from "./_pins-ui";
+import {
+  appendSample, simplifyStroke, isDegenerate, markupForSheet,
+  type BlueprintMarkup, type MarkupKind, type Norm,
+} from "@/lib/blueprints/markup";
+import { getMarkupAction, createMarkupAction, removeMarkupAction, deleteMarkupAction } from "./markup-actions";
+import { MarkupShape, MarkupTextLayer, MarkupTextInput, MarkupToolbar, MARKUP_COLORS, MARKUP_WIDTHS, type MarkupTool } from "./_markup-ui";
+
+type ViewerMode = "view" | "pin" | "markup";
+
+/** SVG path `d` for the live (in-progress) shape preview, in the 0..1 viewBox. */
+function toPathD(kind: MarkupKind, pts: Norm[]): string {
+  if (pts.length === 0) return "";
+  if (kind === "freehand") return "M " + pts.map((p) => `${p.u},${p.v}`).join(" L ");
+  const a = pts[0]!, b = pts[pts.length - 1] ?? a;
+  if (kind === "line" || kind === "arrow" || kind === "text") return `M ${a.u},${a.v} L ${b.u},${b.v}`;
+  const x = Math.min(a.u, b.u), y = Math.min(a.v, b.v), w = Math.abs(b.u - a.u), h = Math.abs(b.v - a.v);
+  if (kind === "rect") return `M ${x},${y} L ${x + w},${y} L ${x + w},${y + h} L ${x},${y + h} Z`;
+  const rx = w / 2, ry = h / 2, cx = x + rx, cy = y + ry;
+  return `M ${cx - rx},${cy} a ${rx},${ry} 0 1,0 ${2 * rx},0 a ${rx},${ry} 0 1,0 ${-2 * rx},0`;
+}
 
 /**
  * Blueprint interactive viewer (M2) — a full-screen pdf.js/image canvas.
@@ -67,17 +87,33 @@ export default function BlueprintViewer(props: Props) {
   const [status, setStatus] = useState(""); // aria-live
 
   // --- pins layer state -----------------------------------------------------
+  const [mode, setMode] = useState<ViewerMode>("view");
+  const placeMode = mode === "pin"; // derived alias — all pin code below reads this unchanged
   const [pins, setPins] = useState<BlueprintPin[]>([]);
   const [linkable, setLinkable] = useState<{ id: string; title: string; status: string }[]>([]);
-  const [placeMode, setPlaceMode] = useState(false);
   const [draft, setDraft] = useState<{ u: number; v: number; page: number } | null>(null);
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pinFilter, setPinFilter] = useState(DEFAULT_PIN_FILTER);
 
+  // markup layer state
+  const [markups, setMarkups] = useState<BlueprintMarkup[]>([]);
+  const [tool, setTool] = useState<MarkupTool>("select");
+  const [mkColor, setMkColor] = useState<string>(MARKUP_COLORS[0]);
+  const [mkWidth, setMkWidth] = useState<number>(MARKUP_WIDTHS[1]);
+  const [selMarkupId, setSelMarkupId] = useState<string | null>(null);
+  const [textDraft, setTextDraft] = useState<{ u: number; v: number } | null>(null);
+  const liveRef = useRef<SVGPathElement>(null);
+  const drawRef = useRef<{ pts: Norm[]; kind: MarkupKind } | null>(null);
+  const rafRef = useRef(0);
+
   const refreshPins = useCallback(async () => {
     try { setPins(await getPinsAction(versionId)); } catch { /* leave prior pins */ }
   }, [versionId]);
+  const refreshMarkups = useCallback(async () => {
+    try { setMarkups(await getMarkupAction(versionId)); } catch { /* leave prior markups */ }
+  }, [versionId]);
   useEffect(() => { void refreshPins(); }, [refreshPins]);
+  useEffect(() => { void refreshMarkups(); }, [refreshMarkups]);
   useEffect(() => { getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }, [jobId]);
 
   // --- load the document once (fetch bytes, then pdf.js) --------------------
@@ -217,9 +253,10 @@ export default function BlueprintViewer(props: Props) {
 
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (mode === "markup" && tool !== "select") return; // the capture layer owns the pointer while drawing
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     dragRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-  }, [pan]);
+  }, [pan, mode, tool]);
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
@@ -238,8 +275,71 @@ export default function BlueprintViewer(props: Props) {
     const { u, v } = pointerToNormalized(e.clientX, e.clientY, box);
     setActivePinId(null);
     setDraft({ u, v, page });
-    setPlaceMode(false);
+    setMode("view");
   }, [placeMode, page]);
+
+  // --- markup drawing (capture layer owns the pointer; live node is imperative) --
+  const flushLive = useCallback(() => {
+    rafRef.current = 0;
+    const d = drawRef.current;
+    if (d && liveRef.current) liveRef.current.setAttribute("d", toPathD(d.kind, d.pts));
+  }, []);
+  const onMarkupDown = useCallback((e: React.PointerEvent) => {
+    if (tool === "select" || tool === "text") return; // select = no capture; text = on up
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    const box = pageBoxRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    drawRef.current = { kind: tool, pts: [pointerToNormalized(e.clientX, e.clientY, box)] };
+  }, [tool]);
+  const onMarkupMove = useCallback((e: React.PointerEvent) => {
+    const d = drawRef.current;
+    if (!d) return;
+    const box = pageBoxRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    const p = pointerToNormalized(e.clientX, e.clientY, box);
+    d.pts = d.kind === "freehand" ? appendSample(d.pts, p) : [d.pts[0]!, p];
+    if (!rafRef.current) rafRef.current = requestAnimationFrame(flushLive);
+  }, [flushLive]);
+  const onMarkupUp = useCallback(async (e: React.PointerEvent) => {
+    if (tool === "text") {
+      const box = pageBoxRef.current?.getBoundingClientRect();
+      if (box && box.width > 0) { const p = pointerToNormalized(e.clientX, e.clientY, box); setTextDraft({ u: p.u, v: p.v }); }
+      return;
+    }
+    const d = drawRef.current;
+    drawRef.current = null;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
+    if (liveRef.current) liveRef.current.setAttribute("d", "");
+    if (!d) return;
+    const pts = d.kind === "freehand" ? simplifyStroke(d.pts) : d.pts;
+    if (pts.length < 2) return;
+    const geom = { kind: d.kind, points: pts };
+    if (isDegenerate(geom)) return; // ignore an accidental zero-size drag
+    const res = await createMarkupAction(jobId, { blueprint_version_id: versionId, page_number: toStoredPage(page), geom, color: mkColor, stroke_width: mkWidth });
+    if (res.ok) void refreshMarkups();
+  }, [tool, jobId, versionId, page, mkColor, mkWidth, refreshMarkups]);
+  const onMarkupCancel = useCallback(() => {
+    drawRef.current = null;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
+    if (liveRef.current) liveRef.current.setAttribute("d", "");
+  }, []);
+  const commitText = useCallback(async (text: string) => {
+    const td = textDraft;
+    setTextDraft(null);
+    if (!td) return;
+    const res = await createMarkupAction(jobId, { blueprint_version_id: versionId, page_number: toStoredPage(page), geom: { kind: "text", points: [{ u: td.u, v: td.v }] }, color: mkColor, text });
+    if (res.ok) void refreshMarkups();
+  }, [textDraft, jobId, versionId, page, mkColor, refreshMarkups]);
+  const removeSelMarkup = useCallback(async () => {
+    if (!selMarkupId) return;
+    const res = await removeMarkupAction(jobId, selMarkupId);
+    if (res.ok) { setSelMarkupId(null); void refreshMarkups(); }
+  }, [selMarkupId, jobId, refreshMarkups]);
+  const deleteSelMarkup = useCallback(async () => {
+    if (!selMarkupId) return;
+    const res = await deleteMarkupAction(jobId, selMarkupId);
+    if (res.ok) { setSelMarkupId(null); void refreshMarkups(); }
+  }, [selMarkupId, jobId, refreshMarkups]);
 
   // --- page nav -------------------------------------------------------------
   const goPage = useCallback((next: number) => {
@@ -269,11 +369,14 @@ export default function BlueprintViewer(props: Props) {
         else if (!e.shiftKey && active === last) { first.focus(); e.preventDefault(); }
         return;
       }
+      if ((e.key === "Delete" || e.key === "Backspace") && selMarkupId) { void removeSelMarkup(); e.preventDefault(); return; }
       switch (e.key) {
         case "Escape":
+          if (textDraft) { setTextDraft(null); break; }
           if (draft) { setDraft(null); break; }
+          if (selMarkupId) { setSelMarkupId(null); break; }
           if (activePinId) { setActivePinId(null); break; }
-          if (placeMode) { setPlaceMode(false); break; }
+          if (mode !== "view") { setMode("view"); break; }
           onClose();
           break;
         case "+": case "=": doZoom(1); break;
@@ -294,7 +397,7 @@ export default function BlueprintViewer(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, doZoom, resetView, goPage, page, pageCount, draft, activePinId, placeMode]);
+  }, [onClose, doZoom, resetView, goPage, page, pageCount, draft, activePinId, placeMode, mode, textDraft, selMarkupId, removeSelMarkup]);
 
   // focus the dialog on mount; restore handled by the opener
   useEffect(() => { dialogRef.current?.focus(); }, []);
@@ -302,6 +405,9 @@ export default function BlueprintViewer(props: Props) {
   const zoomPct = Math.round(computeLayoutScale() * 100);
   const activePin = activePinId ? pins.find((p) => p.id === activePinId) ?? null : null;
   const visiblePins = filterPins(pinsForSheet(pins, page), pinFilter);
+  const visibleMarkups = markupForSheet(markups, page);
+  const selectable = mode === "markup" && tool === "select";
+  const selMarkup = selMarkupId ? markups.find((m) => m.id === selMarkupId) ?? null : null;
 
   return (
     <div
@@ -319,14 +425,22 @@ export default function BlueprintViewer(props: Props) {
           <span className="ml-2 text-slate-300">{props.revision}</span>
         </div>
         <div className="flex items-center gap-1">
-          {pins.length > 0 ? <FilterChips value={pinFilter} onChange={setPinFilter} /> : null}
+          {pins.length > 0 && mode !== "markup" ? <FilterChips value={pinFilter} onChange={setPinFilter} /> : null}
           <button
             type="button"
-            onClick={() => { setPlaceMode((m) => !m); setDraft(null); setActivePinId(null); }}
+            onClick={() => { setMode((mm) => (mm === "pin" ? "view" : "pin")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
             aria-pressed={placeMode}
             className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold ${placeMode ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
           >
             {placeMode ? "Tap the drawing…" : "+ Add pin"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMode((mm) => (mm === "markup" ? "view" : "markup")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
+            aria-pressed={mode === "markup"}
+            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold ${mode === "markup" ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
+          >
+            ✎ Markup
           </button>
           <a href={src} target="_blank" rel="noopener noreferrer" aria-label={`Open or download ${label}`} className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold hover:bg-slate-800">Open</a>
           <button type="button" onClick={onClose} aria-label="Close viewer" className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold hover:bg-slate-800">✕ Close</button>
@@ -382,6 +496,20 @@ export default function BlueprintViewer(props: Props) {
             ) : (
               <canvas ref={canvasRef} role="img" aria-label={`${label}, sheet ${page + 1} of ${pageCount}`} className="block bg-white shadow-2xl" />
             )}
+            {/* markup layer (Programme C) — SVG shapes BENEATH the pins overlay */}
+            <svg data-blueprint-markup viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>
+              {phase === "ready"
+                ? visibleMarkups.map((m) => (
+                    <MarkupShape key={m.id} m={m} selected={m.id === selMarkupId} onSelect={selectable ? setSelMarkupId : undefined} />
+                  ))
+                : null}
+              <path ref={liveRef} fill="none" stroke={mkColor} strokeWidth={mkWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }} />
+            </svg>
+            {/* markup text — HTML sibling (auto-escaped) */}
+            <div className="pointer-events-none absolute inset-0">
+              {phase === "ready" ? <MarkupTextLayer items={visibleMarkups} selectable={selectable} onSelect={setSelMarkupId} /> : null}
+            </div>
+
             {/* pins overlay — Programme B markers ride this, normalized to the page box */}
             <div className="pointer-events-none absolute inset-0" data-blueprint-overlay>
               {phase === "ready"
@@ -391,9 +519,32 @@ export default function BlueprintViewer(props: Props) {
                 : null}
               {draft && draft.page === page ? <DraftMarker u={draft.u} v={draft.v} /> : null}
             </div>
+
+            {/* markup capture layer — owns the pointer while drawing (top of the box) */}
+            {mode === "markup" && tool !== "select" && phase === "ready" ? (
+              <div
+                data-markup-capture
+                className="absolute inset-0 z-40 touch-none"
+                style={{ cursor: tool === "text" ? "text" : "crosshair" }}
+                onPointerDown={onMarkupDown}
+                onPointerMove={onMarkupMove}
+                onPointerUp={onMarkupUp}
+                onPointerCancel={onMarkupCancel}
+              />
+            ) : null}
+            {textDraft ? (
+              <MarkupTextInput u={textDraft.u} v={textDraft.v} color={mkColor} onCommit={commitText} onCancel={() => setTextDraft(null)} />
+            ) : null}
           </div>
         </div>
       </div>
+
+      {mode === "markup" ? (
+        <MarkupToolbar
+          tool={tool} setTool={setTool} color={mkColor} setColor={setMkColor} width={mkWidth} setWidth={setMkWidth}
+          canDelete={props.canDeletePins} selected={selMarkup} onRemove={removeSelMarkup} onDelete={deleteSelMarkup}
+        />
+      ) : null}
 
       {/* controls — bottom bar (thumb zone on mobile) */}
       <div className="flex items-center justify-center gap-1 border-t border-slate-700 bg-slate-900 px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-white">

@@ -213,14 +213,72 @@ colour alone).
 - **E2E:** the pin surface never leaks to a logged-out visitor; the authenticated
   place→snag journey is `test.fixme` pending the auth-E2E harness (not stubbed).
 
-## Deferred → Blueprint milestone C+ (forward-designed)
+## Programme C — Blueprint Markup (shipped)
 
-The pins milestone was built so these need **no** coordinate/DB redesign:
-- **Programme C — Markup** (freehand/line/arrow/rect/ellipse/text): a sibling
-  `blueprint_markup` table, the *same* normalized `{page,u,v}` model + composite-FK
-  tenant integrity, rendered as an SVG (`viewBox="0 0 1 1"`) layer **beneath** the
-  pins layer; the viewer's `mode` union + layered overlay + pointer-ownership rule
-  already accommodate a draw tool.
+Redlines on a drawing: pick a tool (**freehand / line / arrow / rectangle /
+ellipse / text**), a colour and a width, and draw directly on the sheet. A
+sibling of pins — same immutable-revision anchor, same normalized `{page,u,v}`
+model, same composite-FK tenant integrity — with a few deliberate divergences.
+
+### Model — `blueprint_markup` (migration `20261017`)
+- A shape = `(shape, geom {points:[{u,v}...]}, page_number, blueprint_version_id)`
+  + style (`color`, `stroke_width`) + optional `text_content`.
+- **Server-derived `bbox_*`** (the before-write trigger recomputes it from the
+  points — a client-sent bbox is ignored, so it can never poison spatial queries).
+- **Soft-delete lifecycle** (`status` active/removed + `deleted_at`): a **member**
+  retracts their own redline via UPDATE; hard DELETE stays admin-only.
+- No external entity link → one composite FK (the version anchor), no cross-job rule.
+
+### DB-enforced integrity (real-Postgres tested — 8 invariants)
+- **org_id/job_id + bbox derived server-side** in a `SECURITY DEFINER` before-write
+  trigger; client tenancy/bbox ignored.
+- **geom validated in the trigger**: point-count per shape (2 for line/arrow/rect/
+  ellipse, 1 for text, ≥2 for freehand), every point in `[0,1]`, plus a declarative
+  `1..2000`-point DoS cap.
+- **Anchor (version/page) frozen after insert** — a redline never migrates revisions.
+- **Attribution stamped from `auth.uid()`** (unspoofable) — net-new hardening beyond
+  the pins sibling.
+- Composite FK `(blueprint_version_id, org_id) → blueprint_versions(id, org_id)`
+  (cross-tenant defence-in-depth + `ON DELETE CASCADE`); colour/stroke/text-payload/
+  soft-delete-consistency CHECKs; RLS members select/insert/update, admin hard-delete.
+
+### Geometry + rendering
+- **`lib/blueprints/markup.ts`** is the pure core (20 unit tests): `bbox`, an
+  **iterative** RDP `simplify` (no recursion overflow) + hard point cap,
+  `quantize` (so client-preview and the DB-derived bbox agree bit-for-bit),
+  arity/range validation, all reusing the pins/M2 `{u,v}` model.
+- Rendered as an SVG `viewBox="0 0 1 1" preserveAspectRatio="none"` layer **beneath**
+  the pins overlay — so a stored `(u,v)` is used verbatim as `x,y` (zero paint-time
+  JS) and inherits the M2 pan/zoom transform for free. `vector-effect="non-scaling-
+  stroke"` keeps line weight constant at every zoom. **Text renders as an HTML
+  sibling** (React child — auto-escaped, no HTML/SVG injection) to dodge the
+  non-uniform-viewBox skew.
+- The viewer's `mode` is now `'view' | 'pin' | 'markup'` (pins untouched — `placeMode`
+  is a derived alias). In markup mode a capture layer owns the pointer for drawing
+  tools (stage pan early-returns, **wheel-zoom stays live**); **select** keeps pan +
+  lets you tap a shape (pins win z-order ties natively) to Remove/Delete. The
+  in-progress stroke is **one imperatively-mutated node via `requestAnimationFrame`**
+  (one `getBoundingClientRect`/frame) so freehand never thrashes React; committed
+  shapes are a memoized set filtered to the current sheet.
+
+### Tests
+- **Unit (20):** geometry (bbox, RDP + caps, quantise, arity/range, schemas).
+- **Integration (8, real Postgres):** the invariants above.
+- **Security (14):** source contracts on the trigger derivation, geom validation,
+  anchor immutability, attribution stamping, RLS, and the service's tenant-client
+  + `recordAdminActivity` + no-audit-on-reshape + quantise boundaries.
+- **E2E:** markup never leaks to a logged-out visitor; the authenticated draw
+  journey is `test.fixme` pending the auth-E2E harness (not stubbed).
+
+### Deliberately deferred (additive, documented)
+Post-hoc **geometry editing** (drag handles to reshape a committed shape) — the
+draw → view → remove flow is complete; reshape is an additive follow. Also
+per-author edit restriction (currently any member edits any redline, matching the
+pins model).
+
+## Deferred → Blueprint milestone D+ (forward-designed)
+
+Built so these need **no** coordinate/DB redesign:
 - **Programme D — Revision compare** (side-by-side + onion-skin): two RenderSurfaces
   in one dialog, each per-`versionId`; each surface shows only its own version's
   pins — free, because pins are version-scoped. Deterministic only (no pixel-diff/AI).
