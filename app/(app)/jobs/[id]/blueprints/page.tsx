@@ -11,7 +11,8 @@ import {
   DISCIPLINE_LABELS, BLUEPRINT_STATUS_LABELS, BLUEPRINT_STATUS_STYLES, BLUEPRINT_STATUSES,
   type Discipline, type BlueprintStatus,
 } from "@/lib/blueprints/schema";
-import { AddDrawingForm, AddRevisionForm, DrawingViewer } from "./_client";
+import { AddDrawingForm, AddRevisionForm } from "./_client";
+import { ViewerLauncher } from "./_viewer-launcher";
 import { setBlueprintStatus, removeBlueprint } from "./actions";
 
 function fmtSize(bytes: number): string {
@@ -24,10 +25,10 @@ export default async function JobBlueprintsPage({
   params, searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ view?: string; saved?: string; error?: string }>;
+  searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
   const { id } = await params;
-  const { view, saved, error } = await searchParams;
+  const { saved, error } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
@@ -78,7 +79,6 @@ export default async function JobBlueprintsPage({
             const history = versionsByBp[b.id] ?? [];
             const status = b.status as BlueprintStatus;
             const label = `${b.drawing_number} ${b.title}${current ? ` — ${current.revision}` : ""}`;
-            const selected = view === b.id;
             return (
               <li key={b.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -99,17 +99,19 @@ export default async function JobBlueprintsPage({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {current ? (
-                      selected ? (
-                        <Link href={`/jobs/${id}/blueprints`} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Hide</Link>
-                      ) : (
-                        <Link href={`/jobs/${id}/blueprints?view=${b.id}`} className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">View</Link>
-                      )
+                      <ViewerLauncher
+                        jobId={id}
+                        versionId={current.id}
+                        mime={current.mime_type}
+                        label={label}
+                        drawingNumber={b.drawing_number}
+                        revision={current.revision}
+                        supersededNotice={status === "superseded" ? "This drawing is marked superseded." : null}
+                      />
                     ) : null}
                     <AddRevisionForm jobId={id} blueprintId={b.id} />
                   </div>
                 </div>
-
-                {selected && current ? <DrawingViewer jobId={id} versionId={current.id} mime={current.mime_type} label={label} /> : null}
 
                 {history.length > 0 ? (
                   <details className="mt-3">

@@ -36,6 +36,15 @@ export const config = {
   //                          to /login, so search engines can't read the
   //                          robots rules, find the sitemap, or fetch the
   //                          social share image.
+  //   - pdf.worker.min.mjs → the pdf.js web-worker bundle for the Blueprint
+  //                          viewer (a public library asset, no tenant data).
+  //                          The browser fetches it as a module Worker; if a
+  //                          session cookie is expired/mid-refresh, a 307 to
+  //                          /login would hand pdf.js an HTML page as its
+  //                          worker source and the viewer would fail cryptically
+  //                          instead of rendering. Static asset → must bypass
+  //                          auth, and skips a wasted Supabase round-trip per
+  //                          1.3 MB fetch.
   //   - api/health         → public liveness probe
   //   - api/cron           → CRON_SECRET bearer (lib/cron/auth.ts)
   //   - api/demo           → public lead-capture form
@@ -49,6 +58,6 @@ export const config = {
   // verification never gets a chance to run and the webhook delivery fails
   // with 307.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|api/og|api/health|api/cron|api/demo|api/webhooks|api/receptionist).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|api/og|api/health|api/cron|api/demo|api/webhooks|api/receptionist).*)",
   ],
 };

@@ -67,3 +67,4 @@ yarn-error.log*
 
 # Local DB backups/snapshots (never commit)
 .backups/
+public/pdf.worker.min.mjs

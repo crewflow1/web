@@ -4,10 +4,12 @@ A **versioned drawing register** per job: upload a drawing (PDF/image), keep an
 **immutable revision chain**, and view the current drawing + its full history — so
 the site team always builds off the right revision. Migrations `20261015`.
 
-This is **milestone 1** of the Blueprint Centre epic. The interactive canvas
-(zoom/pan, coordinate-anchored pins, markup, revision compare) is **milestone 2**
-— the only part that justifies a new client rendering dependency, deliberately
-kept out of the foundation bundle.
+**Milestone 1** (above) is the versioned register. **Milestone 2** (shipped —
+see [§ Milestone 2](#milestone-2--interactive-canvas-viewer) below) adds the
+**interactive canvas viewer**: in-app pdf.js rasterisation with continuous
+zoom/pan, keyboard control, multi-sheet navigation, and a normalized overlay
+that later milestones anchor pins/markup to. Coordinate-anchored **pins**,
+freehand **markup**, and **revision compare** remain deferred to M3+.
 
 Reuses the `job_documents` versioning **pattern** as a **sibling pair** (as certs
 reused site_reports, POs reused quotes). It is **not** a `job_documents` type — a
@@ -58,8 +60,8 @@ number and revision label.
   in the page's `Promise.all`) links to a dedicated **`/jobs/[id]/blueprints`**
   route (the house sub-route pattern, wide layout).
 - The register lists each drawing with its current revision, discipline/status
-  pills, an inline **native viewer** (`<img>` for images, `<iframe>` for PDFs)
-  with a guaranteed **Open / download** link (the real affordance on mobile), and
+  pills, a **"View"** button that opens the M2 interactive canvas viewer (below),
+  a guaranteed **Open** link per revision (new tab → the 60s signed URL), and
   a `<details>` **revision history**. Admin: status control + delete.
 - Accessibility: real `alt`/`aria-label` (number + title + revision), real links,
   text-labelled pills, native pinch-zoom, empty/loading/error states.
@@ -73,14 +75,77 @@ number and revision label.
 - **Security (6):** signed-URL-after-RLS-read, org re-check, magic-byte+hash,
   count-gated delete, serve-route 404/no-enumeration, private-bucket upload.
 - **E2E:** the register is behind auth; the file route never 302s an
-  unauthenticated caller to a signed storage URL.
+  unauthenticated caller to a signed storage URL. (M2 viewer E2E — worker
+  asset + auth-wall + fixme canvas journey — is in the M2 section below.)
 
-## Deferred → Blueprint milestone 2 (needs a client rendering dependency)
+## Milestone 2 — interactive canvas viewer
 
-pdf.js in-app rasterisation (reliable mobile PDF), continuous zoom/pan + large-sheet
-tiling, multi-sheet navigation, coordinate-anchored **pins**, freehand/box **markup**,
-**revision compare** (side-by-side / onion-skin). Later: the hook where the
-Blueprint AI reads the register.
+The full-screen viewer (`_pdf-viewer.tsx`, opened by `_viewer-launcher.tsx`)
+rasterises the current drawing in-app so the site team can zoom into a detail
+without leaving CrewFlow or fighting a mobile browser's PDF plugin.
+
+### Rendering architecture (why it is safe)
+
+- **Client-only, code-split.** The viewer is loaded via
+  `next/dynamic(… , { ssr: false })`, so pdf.js never runs on the server and
+  never lands in the register route's bundle — the route stays **3.16 kB**;
+  pdf.js resolves as a separate lazy chunk only when a user clicks **View**.
+  The production build proves the SSR boundary holds.
+- **One fetch, no durable link.** The viewer fetches the same-origin serve
+  route (`/jobs/[id]/blueprints/f/[versionId]`) **once** as an `ArrayBuffer`
+  (reusing M1's RLS-read → 60s signed-URL path), then hands the bytes to pdf.js.
+  Images render via a `Blob` `<img>`; PDFs via pdf.js.
+- **Hardened `getDocument`:** `isEvalSupported: false` (no string→JS eval — pdf.js
+  never needs full `'unsafe-eval'`), `enableXfa: false`, `disableAutoFetch: true`,
+  no scripting, no annotation layer. Render caps at **DPR ≤ 2** and a **4096 px**
+  max side so a huge sheet can't allocate an unbounded canvas; each
+  `RenderTask` is **cancellable** (page changes/zoom abort the prior raster).
+- **Worker:** `scripts/copy-pdf-worker.mjs` copies `pdf.worker.min.mjs` into
+  `public/` on `predev`/`prebuild` (the file is a gitignored build artifact).
+  It is served same-origin and **excluded from the auth middleware matcher** —
+  it carries no tenant data, and a 307-to-`/login` on an expired cookie would
+  otherwise hand pdf.js an HTML page as its worker source.
+- **CSP:** the only delta is `'wasm-unsafe-eval'` in `script-src` (permits
+  `WebAssembly.compile/instantiate` for pdf.js's image codecs — strictly
+  narrower than the `'unsafe-inline'` already shipped, and **not** `'unsafe-eval'`;
+  the negative test still guards against full eval). `worker-src 'self' blob:`,
+  `img-src blob:`, and the Supabase `connect-src` were already present. CSP stays
+  **Report-Only** — no enforcing flip.
+
+### Interaction & accessibility
+
+- Continuous **zoom** (wheel anchored to cursor + buttons, clamped 0.1–8×),
+  **pan** (pointer drag, `touch-action:none`), **fit width / fit page / reset**,
+  and multi-sheet **page nav** (only when >1 page).
+- Full **keyboard** map (`+`/`−`/`0`/`f`, arrows, PageUp/Down, Home/End, `Esc`),
+  `role="dialog"` + `aria-modal`, an `aria-live` status line, canvas
+  `role="img"` with a per-sheet label, focus returned to the launcher on close,
+  and a graceful **error → Open/download** fallback.
+- A normalized **0..1 overlay** (`data-blueprint-overlay`) is mounted over the
+  canvas now, so Programme B pins drop onto a coordinate model that is already
+  correct under any zoom/pan — no viewer rework later.
+
+### Pure core + tests
+
+- **`lib/blueprints/viewer.ts`** holds all the coordinate math as pure functions
+  (`normalizePoint`/`denormalizePoint` round-trip, `fitScale`, `clampZoom`,
+  `zoomStep`, `bitmapScale` DPR cap, `clampPage`) — **10 unit tests**
+  (`__tests__/blueprints/viewer.test.ts`), the layer a `node`-env vitest can
+  cover without a DOM/canvas.
+- **E2E (`e2e/blueprint-viewer.spec.ts`):** two real assertions run every CI
+  pass — the worker asset is served same-origin as JavaScript (guards the
+  copy-worker pipeline), and the viewer chrome never leaks to a logged-out
+  visitor. The authenticated **open → canvas paints → zoom → Esc** journey is
+  `test.fixme` pending the authenticated-E2E harness; the real pdf.js canvas
+  paint is proven in a live browser via the M2 render self-test (not stubbed).
+
+## Deferred → Blueprint milestone 3+
+
+Coordinate-anchored **pins** (Programme B — a generic pin model with
+DB-enforced composite-FK tenant integrity, dropping onto the M2 overlay),
+freehand/box **markup**, **revision compare** (side-by-side / onion-skin),
+large-sheet **tiling** for very high-DPI drawings, an **offline** foundation,
+and the hook where the Blueprint AI reads the register.
 
 ## Known limitations
 - The register loads all revision rows for a job's drawings in one batched query

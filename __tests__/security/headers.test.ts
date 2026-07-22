@@ -89,8 +89,14 @@ describe("CSP_REPORT_ONLY — directive contract", () => {
     expect(find("style-src")).toContain("'unsafe-inline'");
   });
 
-  it("does NOT weaken script-src with 'unsafe-eval'", () => {
+  it("does NOT weaken script-src with 'unsafe-eval' (string→JS eval)", () => {
+    // 'wasm-unsafe-eval' does not contain the substring 'unsafe-eval' (leading
+    // quote differs), so this correctly forbids only the dangerous full eval.
     expect(CSP_REPORT_ONLY).not.toContain("'unsafe-eval'");
+  });
+
+  it("allows 'wasm-unsafe-eval' for the pdf.js viewer's WASM image codecs (narrower than 'unsafe-inline' already shipped)", () => {
+    expect(find("script-src")).toContain("'wasm-unsafe-eval'");
   });
 
   it("does NOT include upgrade-insecure-requests (ignored in report-only)", () => {

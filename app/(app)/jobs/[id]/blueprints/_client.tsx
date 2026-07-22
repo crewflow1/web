@@ -107,30 +107,3 @@ export function AddRevisionForm({ jobId, blueprintId }: { jobId: string; bluepri
   );
 }
 
-/** Native viewer: <img> for images, <iframe> preview for PDFs, always an Open link. */
-export function DrawingViewer({
-  jobId, versionId, mime, label,
-}: { jobId: string; versionId: string; mime: string; label: string }) {
-  const src = `/jobs/${jobId}/blueprints/f/${versionId}`;
-  const isImage = mime.startsWith("image/");
-  return (
-    <div className="mt-3">
-      <div className="overflow-auto rounded-md border border-slate-200 bg-slate-50">
-        {isImage ? (
-          <img src={src} alt={label} className="mx-auto max-h-[70vh] max-w-full object-contain" />
-        ) : (
-          <iframe src={src} title={label} className="h-[70vh] w-full" />
-        )}
-      </div>
-      <a
-        href={src}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`Open drawing ${label} in a new tab`}
-        className="mt-2 inline-block rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-      >
-        Open / download
-      </a>
-    </div>
-  );
-}
