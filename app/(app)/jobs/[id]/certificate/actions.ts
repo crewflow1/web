@@ -207,5 +207,9 @@ async function setPortal(jobId: string, certId: string, publish: boolean): Promi
   redirect(`/jobs/${jobId}/certificate?saved=${publish ? "published" : "withdrawn"}`);
 }
 
-export const publishCertificate = (jobId: string, certId: string) => setPortal(jobId, certId, true);
-export const withdrawCertificate = (jobId: string, certId: string) => setPortal(jobId, certId, false);
+export async function publishCertificate(jobId: string, certId: string): Promise<void> {
+  await setPortal(jobId, certId, true);
+}
+export async function withdrawCertificate(jobId: string, certId: string): Promise<void> {
+  await setPortal(jobId, certId, false);
+}
