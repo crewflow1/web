@@ -27,14 +27,15 @@ const EMAIL = "e2e-owner@crewflow.test";
 const PASSWORD = "E2e-Harness-Pw-2f9c1a"; // local-only synthetic credential; never a production account
 const STATE_PATH = join(process.cwd(), "e2e", ".auth", "owner.json");
 
-/** A minimal, valid, single-page PDF (so pdf.js actually paints — the fixmes assert a rendered canvas). */
-function minimalPdf(): Buffer {
+/** A minimal, valid, single-page PDF (so pdf.js actually paints). `text` lets two
+ *  revisions carry visibly different content for the compare fixture. */
+function minimalPdf(text = "CrewFlow E2E"): Buffer {
   const objs = [
     "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
     "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
     "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
   ];
-  const stream = "BT /F1 24 Tf 40 200 Td (CrewFlow E2E) Tj ET";
+  const stream = `BT /F1 24 Tf 40 200 Td (${text}) Tj ET`;
   objs.push(`4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
   objs.push("5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
   let pdf = "%PDF-1.4\n";
@@ -96,15 +97,24 @@ export default async function globalSetup(): Promise<void> {
   }
   if (!bpId) throw new Error("[e2e harness] failed to seed blueprint");
 
-  const hasVersion = (await db.from("blueprint_versions").select("id").eq("blueprint_id", bpId).limit(1).maybeSingle()).data?.id;
-  if (!hasVersion) {
-    const path = `${orgId}/${JOB}/${bpId}/v1.pdf`;
-    const bytes = minimalPdf();
+  // Seed TWO revisions (Rev A then Rev B) with visibly different content, so the
+  // Revision Comparison journey has a real pair. version/current_version are
+  // trigger-derived; inserting A then B yields version 1 then 2.
+  const existing = (await db.from("blueprint_versions").select("id").eq("blueprint_id", bpId)).data as { id: string }[] | null;
+  const have = existing?.length ?? 0;
+  const revs: { rev: string; date: string; text: string }[] = [
+    { rev: "Rev A", date: "2026-01-01", text: "REV A PLAN" },
+    { rev: "Rev B", date: "2026-03-01", text: "REV B CHANGED" },
+  ];
+  for (let i = have; i < revs.length; i++) {
+    const r = revs[i]!;
+    const path = `${orgId}/${JOB}/${bpId}/v${i + 1}.pdf`;
+    const bytes = minimalPdf(r.text);
     const up = await svc.storage.from("blueprints").upload(path, bytes, { contentType: "application/pdf", upsert: true });
     if (up.error) throw new Error(`[e2e harness] PDF upload failed: ${up.error.message}`);
     const ins = await db.from("blueprint_versions").insert({
-      blueprint_id: bpId, org_id: orgId, version: 1, revision: "Rev A", revision_date: "2026-01-01",
-      storage_bucket: "blueprints", storage_path: path, file_name: "A-201.pdf",
+      blueprint_id: bpId, org_id: orgId, revision: r.rev, revision_date: r.date,
+      storage_bucket: "blueprints", storage_path: path, file_name: `A-201-${r.rev}.pdf`,
       mime_type: "application/pdf", size_bytes: bytes.length,
     }).select("id").single();
     if (ins.error) throw new Error(`[e2e harness] version insert failed: ${ins.error.message}`);

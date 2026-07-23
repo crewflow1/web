@@ -13,6 +13,7 @@ import {
 } from "@/lib/blueprints/schema";
 import { AddDrawingForm, AddRevisionForm } from "./_client";
 import { ViewerLauncher } from "./_viewer-launcher";
+import { CompareLauncher } from "./_compare-launcher";
 import { setBlueprintStatus, removeBlueprint } from "./actions";
 
 function fmtSize(bytes: number): string {
@@ -110,6 +111,14 @@ export default async function JobBlueprintsPage({
                         canDeletePins={isAdmin}
                       />
                     ) : null}
+                    <CompareLauncher
+                      jobId={id}
+                      blueprintId={b.id}
+                      drawingNumber={b.drawing_number}
+                      title={b.title}
+                      isAdmin={isAdmin}
+                      versions={history.map((v) => ({ id: v.id, version: v.version, revision: v.revision, revision_date: v.revision_date, uploaded_at: v.uploaded_at, mime_type: v.mime_type }))}
+                    />
                     <AddRevisionForm jobId={id} blueprintId={b.id} />
                   </div>
                 </div>

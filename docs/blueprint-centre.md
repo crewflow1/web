@@ -301,23 +301,70 @@ the e2e job env, **no app/middleware/auth code changes, no production-reachable
 login route**, and the state file is gitignored (holds a live JWT). This unblocks
 authenticated E2E for the whole blueprint stack (and any future feature).
 
-## Deferred → Programme D — Revision Comparison (fully forward-designed)
+## Programme D — Revision Comparison (shipped)
 
-Compare two revisions: **side-by-side** + **overlay/onion-skin** (opacity slider,
-swap A/B, hide/show) + **difference** (CSS `mix-blend-mode:difference` — deterministic,
-same-origin, no readback). **Zero migration** — pure application-side composition
-over the existing version chain + the RLS-gated `/f/[versionId]` serve route (both
-revisions independently tenant-gated; no new endpoint). Revision pickers default to
-current-vs-previous; page pairing is manual (ground truth) + a same-index heuristic,
-always showing the active pair; sync via normalized page-box fractions (proportional
-+ labelled when aspects differ); overlay gated to ≤1% aspect drift (else warn + fall
-back to side-by-side — never stretch). Annotations are version-scoped by DB invariant
-(A/B never merge); compare is view-only. The build reuses the M2 render engine via an
-extracted `DrawingRenderSurface` (render core only — pins/markup/toolbar stay in the
-viewer) with tiered dual-canvas memory caps (compare peak ≤ 1× the single viewer).
-State lives in the URL (`?compare&a&b&mode&pageA&pageB&op` — UUIDs only, no signed
-URLs). Deferred to a fresh session so the render-core refactor of the tri-feature
-viewer lands at full quality without risking the green M2/pins/markup stack.
+Compare two revisions of a drawing to answer "what changed?" A **Compare
+revisions** button (shown only when a drawing has ≥2 versions) opens a
+full-screen, **view-only** comparison.
+
+### Modes
+- **Side-by-side** — Rev A left, Rev B right, each an independent render surface
+  with its revision badge; the default on tablet/desktop.
+- **Overlay / onion-skin** — both stacked, an **opacity slider** cross-fading B
+  over A, plus **swap A/B**.
+- **Difference** — the B layer gets CSS `mix-blend-mode:difference` (deterministic,
+  same-origin, **no pixel read-back** → no extra memory, no taint) so identical
+  areas composite to black and changes glow. Offered only when overlay is valid.
+
+### Rendering — `DrawingRenderSurface`
+A reusable render **core** (`_drawing-render-surface.tsx`) owns the fetch-once
+byte flow + the **hardened pdf.js** path (`isEvalSupported:false`,
+`enableXfa:false`, `disableAutoFetch:true`, worker, cancellable `RenderTask`,
+DPR + max-side caps, destroy-on-unmount). Compare mounts **two**, driven by one
+shared `fit/zoom/pan` when synced. It is a deliberate sibling of the M2 viewer's
+inline core — Programme D does **not** refactor the green tri-feature viewer
+(protecting the shipped M2/pins/markup); a later pass may consolidate the viewer
+onto this surface (tracked debt). Dual-canvas **memory tiers**: `compare-sxs`
+DPR≤1.5, `compare-overlay` DPR≤1 + 3072 px cap — compare's peak stays ≤ 1× the
+single viewer.
+
+### Selection, pairing, sync, dimensions
+- Pickers default **current-vs-previous**; A==B is unselectable.
+- **Page pairing** — same-index seed, per-side sheet stepping; the active pair
+  (`A n/m · B n/m`) is always shown; a non-blocking notice flags count mismatch.
+- **Sync** ("Link views") default on — one shared normalized `fit/zoom/pan`.
+- **Overlay/difference gated to ≤1% aspect drift** (`overlayAllowed`): different
+  sheet sizes ⇒ the modes disable with "Overlay unavailable — different
+  dimensions. Showing side by side." **Never stretches** one drawing onto another.
+
+### Annotations, state, security
+- Version-scoped **A/B pin + markup toggles** (default off); each surface renders
+  only its own `versionId`'s annotations (DB invariant — never merged), A/B badged.
+- State in the **URL** (`?compare&a&b&mode&pageA&pageB&op&sync&fg&ann`) — **UUIDs
+  only**, no signed URLs/paths/tokens; tampered pairs fall back to the safe default.
+- **Zero migration, no new endpoint** — both revisions fetch the existing RLS-gated
+  `/f/[versionId]` route, **each independently tenant-gated**; a cross-tenant B
+  404s while A is unaffected. CSP + pdf.js hardening unchanged.
+
+### Mobile / a11y
+Phone (<768px) → single surface + **A|B toggle** (overlay-friendly); ≥44px
+controls; `role="dialog"` + focus trap; `aria-live` "Comparing Rev A with Rev B";
+real `<input type=range>` opacity; keyboard **S**ide/**O**verlay/**X** swap /
+arrows page / `+`/`-`/`0` zoom / `Esc` (inert while a picker is focused).
+
+### Tests
+- **Unit (16):** revision-pair defaults, page pairing, aspect compatibility,
+  opacity clamp, URL-state parse/serialize (tamper fallback), a11y summary.
+- **Security (7):** no compare endpoint, hardened pdf.js unchanged, fetch-once,
+  view-only (no mutation wired), URL carries no secrets.
+- **E2E:** logged-out boundary + a **real authenticated journey** (open → both
+  revisions paint side-by-side → overlay + opacity → swap → close) with a
+  **zero-console-error** assertion — via the #409 harness, not fixme.
+
+### Deferred (additive)
+Manual A↔B page-pair persistence (kept transient — no speculative table); a
+per-revision manual pan-nudge for content registration; consolidating the M2
+viewer onto `DrawingRenderSurface`.
 
 ## Known limitations
 - The register loads all revision rows for a job's drawings in one batched query
