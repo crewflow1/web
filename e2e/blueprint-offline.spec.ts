@@ -80,6 +80,12 @@ test.describe("blueprint offline — authenticated download → offline open →
     },
   );
 
+});
+
+test.describe("blueprint offline — logout purge (isolated session)", () => {
+  // A SEPARATE seeded member: signing THIS session out revokes only its own token,
+  // leaving the shared owner session the other authenticated specs depend on intact.
+  test.use({ storageState: "e2e/.auth/second.json" });
   test("Sign out purges the offline cache — shared-device gate (§19)", async ({ page }) => {
     const count = async () =>
       page.evaluate(async () => {

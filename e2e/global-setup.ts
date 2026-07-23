@@ -120,37 +120,48 @@ export default async function globalSetup(): Promise<void> {
     if (ins.error) throw new Error(`[e2e harness] version insert failed: ${ins.error.message}`);
   }
 
-  // --- 4. sign in (same primitive the integration tier runs in CI) ---
-  const anonClient = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } });
-  const signIn = await anonClient.auth.signInWithPassword({ email: EMAIL, password: PASSWORD });
-  if (signIn.error || !signIn.data.session) throw new Error(`[e2e harness] sign-in failed: ${signIn.error?.message}`);
-  const { access_token, refresh_token } = signIn.data.session;
-
-  // --- 5. encode cookies via @supabase/ssr's OWN encoder (correct name/base64url/chunking) ---
-  const jar = new Map<string, { value: string; options?: Record<string, unknown> }>();
-  const enc = createServerClient(url, anon, {
-    cookies: {
-      getAll: () => Array.from(jar.entries()).map(([name, c]) => ({ name, value: c.value })),
-      setAll: (cookies) => { for (const c of cookies) jar.set(c.name, { value: c.value, options: c.options }); },
-    },
-  });
-  await enc.auth.setSession({ access_token, refresh_token });
-  // the flush happens on the async SIGNED_IN event — bounded-poll until the auth cookie lands
   const prefix = authCookiePrefix(url);
-  for (let i = 0; i < 100 && !Array.from(jar.keys()).some((k) => k.startsWith(prefix)); i++) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  const cookies = Array.from(jar.entries())
-    .filter(([name]) => name.startsWith(prefix))
-    .map(([name, c]) => ({
-      name, value: c.value, domain: "localhost", path: "/",
-      httpOnly: false, secure: false, sameSite: "Lax" as const,
+
+  // Sign a user in and write a Playwright storageState, cookies encoded by
+  // @supabase/ssr's own encoder (correct name/base64url/chunking).
+  async function mintState(email: string, password: string, statePath: string): Promise<void> {
+    const anonClient = createClient(url!, anon!, { auth: { persistSession: false, autoRefreshToken: false } });
+    const signIn = await anonClient.auth.signInWithPassword({ email, password });
+    if (signIn.error || !signIn.data.session) throw new Error(`[e2e harness] sign-in failed for ${email}: ${signIn.error?.message}`);
+    const { access_token, refresh_token } = signIn.data.session;
+    const jar = new Map<string, { value: string; options?: Record<string, unknown> }>();
+    const enc = createServerClient(url!, anon!, {
+      cookies: {
+        getAll: () => Array.from(jar.entries()).map(([name, c]) => ({ name, value: c.value })),
+        setAll: (cs) => { for (const c of cs) jar.set(c.name, { value: c.value, options: c.options }); },
+      },
+    });
+    await enc.auth.setSession({ access_token, refresh_token });
+    for (let i = 0; i < 100 && !Array.from(jar.keys()).some((k) => k.startsWith(prefix)); i++) await new Promise((r) => setTimeout(r, 20));
+    const cookies = Array.from(jar.entries()).filter(([name]) => name.startsWith(prefix)).map(([name, c]) => ({
+      name, value: c.value, domain: "localhost", path: "/", httpOnly: false, secure: false, sameSite: "Lax" as const,
       expires: Math.floor(Date.now() / 1000) + 3600,
     }));
-  if (cookies.length === 0) throw new Error("[e2e harness] auth cookie was never minted — refusing to write an empty storageState");
+    if (cookies.length === 0) throw new Error(`[e2e harness] auth cookie never minted for ${email}`);
+    mkdirSync(dirname(statePath), { recursive: true });
+    writeFileSync(statePath, JSON.stringify({ cookies, origins: [] }, null, 2));
+  }
 
-  mkdirSync(dirname(STATE_PATH), { recursive: true });
-  writeFileSync(STATE_PATH, JSON.stringify({ cookies, origins: [] }, null, 2));
+  // --- 4. owner session (used by all authenticated journeys) ---
+  await mintState(EMAIL, PASSWORD, STATE_PATH);
+
+  // --- 5. a SECOND member's session, isolated from owner. The logout-purge E2E
+  // signs THIS one out (which revokes only its own session token), so the shared
+  // owner session other specs rely on survives. Same org → can download the drawing.
+  const bEmail = "e2e-second@crewflow.test";
+  const bCreated = await svc.auth.admin.createUser({ email: bEmail, password: PASSWORD, email_confirm: true });
+  let bId = bCreated.data.user?.id;
+  if (!bId) { const list = await svc.auth.admin.listUsers(); bId = list.data.users.find((u) => u.email === bEmail)?.id; if (bId) await svc.auth.admin.updateUserById(bId, { password: PASSWORD, email_confirm: true }); }
+  if (!bId) throw new Error(`[e2e harness] could not seed second user: ${bCreated.error?.message}`);
+  await db.from("users").upsert({ id: bId, email: bEmail, full_name: "E2E Second" });
+  await db.from("memberships").upsert({ org_id: orgId, user_id: bId, role: "staff" }, { onConflict: "org_id,user_id" });
+  await mintState(bEmail, PASSWORD, STATE_PATH.replace("owner.json", "second.json"));
+
   // eslint-disable-next-line no-console
-  console.log(`[e2e harness] seeded org ${orgId} + wrote ${cookies.length} auth cookie(s) → ${STATE_PATH}`);
+  console.log(`[e2e harness] seeded org ${orgId} + owner + second member → ${dirname(STATE_PATH)}`);
 }
