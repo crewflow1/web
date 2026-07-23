@@ -21,6 +21,9 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  // Seeds a deterministic org/user/membership/job into the local Supabase and
+  // writes e2e/.auth/owner.json before any spec runs (see e2e/global-setup.ts).
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,

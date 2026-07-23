@@ -67,3 +67,6 @@ yarn-error.log*
 
 # Local DB backups/snapshots (never commit)
 .backups/
+
+# Playwright authenticated-E2E storageState (live JWT — never commit)
+e2e/.auth/
