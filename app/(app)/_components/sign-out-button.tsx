@@ -1,7 +1,7 @@
 "use client";
 
 import { signOut } from "@/app/(auth)/actions";
-import { clearAll } from "@/lib/blueprints/offline-store";
+import { clearAll, clearOfflineIdentity } from "@/lib/blueprints/offline-store";
 
 /**
  * Sign-out control (Programme E shared-device gate). A server action can't touch
@@ -14,7 +14,10 @@ export function SignOutButton({ className }: { className?: string }) {
   return (
     <form
       action={async () => {
-        try { await clearAll(); } catch { /* never block logout */ }
+        // Purge user-scoped offline data before the server clears the session.
+        // (SW caches hold ONLY public static/shell assets by the strict allowlist,
+        // so there is no private cache to clear here — proven by the security tests.)
+        try { await clearAll(); clearOfflineIdentity(); } catch { /* never block logout */ }
         await signOut();
       }}
     >

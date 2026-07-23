@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { put, getByVersion, list, remove, isOfflineSupported, type OfflineBlueprintMeta } from "@/lib/blueprints/offline-store";
 
 /**
@@ -20,6 +21,7 @@ type Identity = { userId: string; orgId: string } | null;
 type State = "checking" | "not-cached" | "downloading" | "available" | "stale" | "removing" | "error";
 
 export function OfflineControls({ drawing, identity }: { drawing: Drawing; identity: Identity }) {
+  const router = useRouter();
   const [state, setState] = useState<State>("checking");
   const [cached, setCached] = useState<OfflineBlueprintMeta | null>(null); // any cached revision of this drawing
   const [error, setError] = useState<string>("");
@@ -46,7 +48,7 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
       const r = await put({
         userId: identity.userId, orgId: identity.orgId, bytes,
         descriptor: {
-          blueprintId: drawing.blueprintId, versionId: drawing.currentVersionId, version: drawing.currentVersion,
+          jobId: drawing.jobId, blueprintId: drawing.blueprintId, versionId: drawing.currentVersionId, version: drawing.currentVersion,
           revision: drawing.currentRevision, revisionDate: null, drawingName: drawing.drawingName,
           fileName: drawing.fileName, mimeType: drawing.mimeType, currentAtDownload: true,
         },
@@ -55,11 +57,27 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
         setError(r.error === "quota_exceeded" ? "Not enough device storage to save this drawing offline." : r.error === "too_large" ? "This drawing is too large to save offline." : "Download failed.");
         setState("error"); return;
       }
+      // Warm the offline-critical code so "Available offline" truly means openable
+      // offline: the SW caches the /offline shell route + the viewer + pdf.js chunks
+      // + the pdf.js render WORKER (the viewer paints nothing without it) — opt-in on
+      // download, no eager per-page cost. Best-effort, time-bounded.
+      try {
+        router.prefetch("/offline");
+        if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+          await Promise.race([navigator.serviceWorker.ready, new Promise((res) => setTimeout(res, 4000))]);
+        }
+        await Promise.allSettled([
+          import("./_pdf-viewer"),
+          import("pdfjs-dist"),
+          // fully drain the worker body so the SW's cache-first clone finishes writing
+          fetch("/pdf.worker.min.mjs", { credentials: "same-origin" }).then((r) => r.blob()),
+        ]);
+      } catch { /* warming is best-effort */ }
       await refresh();
     } catch {
       setError("Download failed — check your connection."); setState("error");
     }
-  }, [identity, drawing, refresh]);
+  }, [identity, drawing, refresh, router]);
 
   const removeDownload = useCallback(async (versionId: string) => {
     if (!identity) return;

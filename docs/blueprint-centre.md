@@ -366,6 +366,30 @@ Manual A↔B page-pair persistence (kept transient — no speculative table); a
 per-revision manual pan-nudge for content registration; consolidating the M2
 viewer onto `DrawingRenderSurface`.
 
+## Programme E — Blueprint Offline Read (shipped → `docs/blueprints-offline.md`)
+
+Download an authorized drawing for offline use; the **real** viewer renders it from
+local **IndexedDB** bytes with no connectivity, without weakening the online security
+model. One atomic `{metadata+Blob}` record partitioned by `userId+orgId`, SHA-256
+integrity, quota-aware download, stale-revision warning, **online-first** byte source
+(cache is fallback, never an auth bypass), and a **logout purge** (the load-bearing
+shared-device control). Offline **READ only**; zero migration, zero server cost. Full
+threat model in `docs/blueprints-offline.md`.
+
+## Programme F — PWA Foundation + Offline Application Shell (shipped → `docs/pwa.md`)
+
+A hardened installable PWA and a small hand-written **service worker** that serves
+CrewFlow's **own** public `/offline` shell on a cold no-network launch (never Chrome's
+error screen) and opens the Programme E viewer on the device's downloaded drawings. The
+security core is a **deny-by-default cache allowlist** (`lib/pwa/cache-policy.ts`,
+mirrored in `public/sw.js`): only content-hashed static assets and public shell assets
+(icons, manifest, `/offline`, the pdf.js worker) are ever cached — **navigations, `/api`,
+Supabase, signed URLs and blueprint bytes are never cached**, proven at runtime by an
+adversarial `CacheStorage`-inspection E2E. Versioned caches + `activate` cleanup give a
+one-deploy rollback; the worker never self-`skipWaiting`s (no mid-task code swap). The
+genuine-offline E2E cuts **both** the page and service-worker network threads. Full
+design, rollback procedure and threat model in `docs/pwa.md`.
+
 ## Known limitations
 - The register loads all revision rows for a job's drawings in one batched query
   (no N+1). A single job carrying >1000 total revisions would need pagination —

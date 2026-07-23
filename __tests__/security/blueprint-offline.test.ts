@@ -24,7 +24,7 @@ describe("offline store — partition isolation (shared-device safety)", () => {
     expect(recordMatchesPartition({ userId: "a", orgId: "o1" }, "a", "o2")).toBe(false);
   });
   it("the stored metadata contains NO url/token/path/secret (never-persist)", () => {
-    const m = buildOfflineMeta({ userId: "a", orgId: "o", blueprintId: "bp", versionId: "v", version: 1, revision: "Rev A", revisionDate: null, drawingName: "d", fileName: "f.pdf", mimeType: "application/pdf", sizeBytes: 1, sha256: "a".repeat(64), downloadedAt: "t", currentAtDownload: true });
+    const m = buildOfflineMeta({ userId: "a", orgId: "o", jobId: "j", blueprintId: "bp", versionId: "v", version: 1, revision: "Rev A", revisionDate: null, drawingName: "d", fileName: "f.pdf", mimeType: "application/pdf", sizeBytes: 1, sha256: "a".repeat(64), downloadedAt: "t", currentAtDownload: true });
     expect(Object.keys(m).join(",")).not.toMatch(/url|token|path|bucket|signed|secret|cookie|authorization|bearer/i);
   });
 });

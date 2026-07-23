@@ -18,10 +18,12 @@ transaction → partial-write hazard; Cache API has no node test fake) and Cache
 storage (disk-backed — not pinned in the JS heap, iOS-safe), and full testability
 under `fake-indexeddb`.
 
-- **No service worker.** Offline **document data** (Programme E) is served from
-  IndexedDB by the already-loaded page. Offline **app shell** (a cold no-network
-  launch) is a separate PWA concern = Programme F. The E2E deliberately proves the
-  former without the latter.
+- **Document data needs no service worker.** Offline **document data** (Programme E) is
+  served from IndexedDB by the already-loaded page. The offline **app shell** (a cold
+  no-network launch) is a separate PWA concern, now shipped as **Programme F**
+  (`docs/pwa.md`). Crucially, Programme F's service worker **still never caches the
+  document bytes** — they remain owned by this IndexedDB store (cache class E =
+  never-cached). The two layers compose without the SW ever touching private bytes.
 - **Split for testability:** pure helpers (`offlineKey`, `recordMatchesPartition`,
   `isValidOfflineMeta`, `buildOfflineMeta`, `hasRoomFor`, `bytesToHex`,
   `isOfflineSupported`) unit-test with no IndexedDB; the async adapter
@@ -125,7 +127,10 @@ Browser storage: **$0 server idle cost**, no realtime/cron/queue/edge/Redis. Off
 re-opening **reduces** repeated Supabase Storage egress (bytes served from the device).
 
 ## Known limitations / future
-- No offline app-shell (cold no-network launch) — Programme F (PWA/service worker).
+- ~~No offline app-shell (cold no-network launch)~~ — **shipped as Programme F**
+  (`docs/pwa.md`): a PWA service worker serves a public `/offline` shell that opens this
+  same viewer on the device's downloaded drawings, with a strict deny-by-default cache
+  allowlist that never caches the document bytes.
 - No offline authoring/sync — later roadmap (the pin/markup models are already
   client-id/idempotency-friendly for it).
 - `navigator.storage.persist()` not requested — cached data may be browser-evicted;

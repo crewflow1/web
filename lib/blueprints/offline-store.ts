@@ -14,7 +14,7 @@ import { MAX_BLUEPRINT_BYTES } from "./schema";
  */
 
 // ── constants ────────────────────────────────────────────────────────────────
-export const OFFLINE_SCHEMA_VERSION = 1;
+export const OFFLINE_SCHEMA_VERSION = 2; // v2: added jobId (so the offline shell can reopen the viewer)
 const DB_NAME = "crewflow-blueprints-offline";
 const DB_VERSION = 1;
 const STORE = "drawings";
@@ -26,6 +26,7 @@ export type OfflineBlueprintMeta = {
   schemaVersion: number;
   userId: string;
   orgId: string;
+  jobId: string;
   blueprintId: string;
   versionId: string;
   version: number;
@@ -64,7 +65,7 @@ export function isValidOfflineMeta(v: unknown): v is OfflineBlueprintMeta {
     m.schemaVersion === OFFLINE_SCHEMA_VERSION &&
     typeof m.userId === "string" && m.userId.length > 0 &&
     typeof m.orgId === "string" && m.orgId.length > 0 &&
-    typeof m.blueprintId === "string" && typeof m.versionId === "string" &&
+    typeof m.jobId === "string" && typeof m.blueprintId === "string" && typeof m.versionId === "string" &&
     typeof m.revision === "string" && typeof m.drawingName === "string" &&
     typeof m.fileName === "string" && typeof m.mimeType === "string" &&
     typeof m.version === "number" &&
@@ -77,7 +78,7 @@ export function isValidOfflineMeta(v: unknown): v is OfflineBlueprintMeta {
 export function buildOfflineMeta(input: Omit<OfflineBlueprintMeta, "schemaVersion">): OfflineBlueprintMeta {
   return {
     schemaVersion: OFFLINE_SCHEMA_VERSION,
-    userId: input.userId, orgId: input.orgId, blueprintId: input.blueprintId, versionId: input.versionId,
+    userId: input.userId, orgId: input.orgId, jobId: input.jobId, blueprintId: input.blueprintId, versionId: input.versionId,
     version: input.version, revision: input.revision, revisionDate: input.revisionDate,
     drawingName: input.drawingName, fileName: input.fileName, mimeType: input.mimeType,
     sizeBytes: input.sizeBytes, sha256: input.sha256, downloadedAt: input.downloadedAt,
@@ -257,3 +258,27 @@ export async function clearAll(): Promise<void> {
 
 /** Test-only: reset the memoized handle so a fresh fake-indexeddb is picked up. */
 export function _resetForTest(): void { dbPromise = null; }
+
+// ── offline identity marker (client-only) ────────────────────────────────────
+// The offline shell renders with no server session, so it needs the last active
+// user+org to scope its IndexedDB read. userId/orgId are opaque UUIDs (not
+// secrets, not credentials). Written when authenticated, cleared on logout — a
+// stale/tampered value only points at a different partition, which holds no data
+// unless that user actually cached on this device.
+const IDENTITY_KEY = "crewflow-offline-identity";
+export type OfflineIdentity = { userId: string; orgId: string };
+
+export function writeOfflineIdentity(userId: string, orgId: string): void {
+  try { localStorage.setItem(IDENTITY_KEY, JSON.stringify({ userId, orgId })); } catch { /* no localStorage */ }
+}
+export function readOfflineIdentity(): OfflineIdentity | null {
+  try {
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    return typeof p?.userId === "string" && typeof p?.orgId === "string" ? { userId: p.userId, orgId: p.orgId } : null;
+  } catch { return null; }
+}
+export function clearOfflineIdentity(): void {
+  try { localStorage.removeItem(IDENTITY_KEY); } catch { /* no localStorage */ }
+}

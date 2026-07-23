@@ -10,7 +10,7 @@ import { MAX_BLUEPRINT_BYTES } from "@/lib/blueprints/schema";
 
 const A = "user-a", B = "user-b", ORG1 = "org-1", ORG2 = "org-2";
 const descriptor = (versionId = "v1", over: Partial<OfflineBlueprintMeta> = {}) => ({
-  blueprintId: "bp-1", versionId, version: 1, revision: "Rev A", revisionDate: "2026-01-01",
+  jobId: "job-1", blueprintId: "bp-1", versionId, version: 1, revision: "Rev A", revisionDate: "2026-01-01",
   drawingName: "A-201 GA", fileName: "A-201.pdf", mimeType: "application/pdf", currentAtDownload: true, ...over,
 });
 const bytes = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
