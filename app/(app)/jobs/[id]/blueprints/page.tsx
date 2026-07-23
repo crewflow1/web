@@ -14,6 +14,7 @@ import {
 import { AddDrawingForm, AddRevisionForm } from "./_client";
 import { ViewerLauncher } from "./_viewer-launcher";
 import { CompareLauncher } from "./_compare-launcher";
+import { OfflineControls } from "./_offline-controls";
 import { setBlueprintStatus, removeBlueprint } from "./actions";
 
 function fmtSize(bytes: number): string {
@@ -31,7 +32,8 @@ export default async function JobBlueprintsPage({
   const { id } = await params;
   const { saved, error } = await searchParams;
 
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
+  const identity = { userId: user.id, orgId: ctx.org.id };
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
   const { data: job } = await supabase.from("jobs").select("id").eq("id", id).maybeSingle();
@@ -109,6 +111,17 @@ export default async function JobBlueprintsPage({
                         revision={current.revision}
                         supersededNotice={status === "superseded" ? "This drawing is marked superseded." : null}
                         canDeletePins={isAdmin}
+                        identity={identity}
+                      />
+                    ) : null}
+                    {current ? (
+                      <OfflineControls
+                        identity={identity}
+                        drawing={{
+                          jobId: id, blueprintId: b.id,
+                          currentVersionId: current.id, currentVersion: current.version, currentRevision: current.revision,
+                          drawingName: `${b.drawing_number} ${b.title}`, fileName: current.file_name, mimeType: current.mime_type,
+                        }}
                       />
                     ) : null}
                     <CompareLauncher

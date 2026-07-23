@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
 import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
-import { signOut } from "@/app/(auth)/actions";
+import { SignOutButton } from "./_components/sign-out-button";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
@@ -87,14 +87,7 @@ export default async function AppLayout({
             <span className="hidden text-xs text-slate-500 md:inline">
               {user.email}
             </span>
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-              >
-                Sign out
-              </button>
-            </form>
+            <SignOutButton className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50" />
           </div>
         </div>
       </header>

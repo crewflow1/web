@@ -16,6 +16,7 @@ import {
   type BlueprintMarkup, type MarkupKind, type Norm,
 } from "@/lib/blueprints/markup";
 import { getMarkupAction, createMarkupAction, removeMarkupAction, deleteMarkupAction } from "./markup-actions";
+import { loadBlueprintBytes, type ByteSource } from "@/lib/blueprints/byte-source";
 import { MarkupShape, MarkupTextLayer, MarkupTextInput, MarkupToolbar, MARKUP_COLORS, MARKUP_WIDTHS, type MarkupTool } from "./_markup-ui";
 
 type ViewerMode = "view" | "pin" | "markup";
@@ -57,6 +58,7 @@ type Props = {
   revision: string;
   supersededNotice: string | null;
   canDeletePins: boolean;
+  identity?: { userId: string; orgId: string } | null;
   onClose: () => void;
 };
 
@@ -89,6 +91,9 @@ export default function BlueprintViewer(props: Props) {
   // --- pins layer state -----------------------------------------------------
   const [mode, setMode] = useState<ViewerMode>("view");
   const placeMode = mode === "pin"; // derived alias — all pin code below reads this unchanged
+  const [byteSource, setByteSource] = useState<ByteSource | null>(null);
+  const [online, setOnline] = useState(true);
+  const editingDisabled = !online || byteSource === "offline";
   const [pins, setPins] = useState<BlueprintPin[]>([]);
   const [linkable, setLinkable] = useState<{ id: string; title: string; status: string }[]>([]);
   const [draft, setDraft] = useState<{ u: number; v: number; page: number } | null>(null);
@@ -123,10 +128,12 @@ export default function BlueprintViewer(props: Props) {
       try {
         setPhase("loading");
         setStatus("Loading drawing…");
-        const res = await fetch(src, { credentials: "same-origin" });
-        if (!res.ok) throw new Error(`fetch ${res.status}`);
-        const buf = await res.arrayBuffer();
+        const { bytes: buf, source } = await loadBlueprintBytes({
+          jobId, versionId, identity: props.identity ?? null,
+          preferOffline: typeof navigator !== "undefined" && !navigator.onLine,
+        });
         if (cancelled) return;
+        setByteSource(source);
 
         if (isImage) {
           const url = URL.createObjectURL(new Blob([buf], { type: mime }));
@@ -402,6 +409,14 @@ export default function BlueprintViewer(props: Props) {
   // focus the dialog on mount; restore handled by the opener
   useEffect(() => { dialogRef.current?.focus(); }, []);
 
+  // online/offline signal (a hint only — the loader falls back on real fetch failure)
+  useEffect(() => {
+    const set = () => setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+    set();
+    window.addEventListener("online", set); window.addEventListener("offline", set);
+    return () => { window.removeEventListener("online", set); window.removeEventListener("offline", set); };
+  }, []);
+
   const zoomPct = Math.round(computeLayoutScale() * 100);
   const activePin = activePinId ? pins.find((p) => p.id === activePinId) ?? null : null;
   const visiblePins = filterPins(pinsForSheet(pins, page), pinFilter);
@@ -428,17 +443,21 @@ export default function BlueprintViewer(props: Props) {
           {pins.length > 0 && mode !== "markup" ? <FilterChips value={pinFilter} onChange={setPinFilter} /> : null}
           <button
             type="button"
-            onClick={() => { setMode((mm) => (mm === "pin" ? "view" : "pin")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
+            disabled={editingDisabled}
+            title={editingDisabled ? "Editing is unavailable offline" : undefined}
+            onClick={() => { if (editingDisabled) return; setMode((mm) => (mm === "pin" ? "view" : "pin")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
             aria-pressed={placeMode}
-            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold ${placeMode ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
+            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${placeMode ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
           >
             {placeMode ? "Tap the drawing…" : "+ Add pin"}
           </button>
           <button
             type="button"
-            onClick={() => { setMode((mm) => (mm === "markup" ? "view" : "markup")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
+            disabled={editingDisabled}
+            title={editingDisabled ? "Editing is unavailable offline" : undefined}
+            onClick={() => { if (editingDisabled) return; setMode((mm) => (mm === "markup" ? "view" : "markup")); setDraft(null); setActivePinId(null); setSelMarkupId(null); }}
             aria-pressed={mode === "markup"}
-            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold ${mode === "markup" ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
+            className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${mode === "markup" ? "bg-white text-slate-900" : "border border-slate-600 hover:bg-slate-800"}`}
           >
             ✎ Markup
           </button>
@@ -450,6 +469,12 @@ export default function BlueprintViewer(props: Props) {
       {props.supersededNotice ? (
         <div role="status" className="flex items-center gap-2 bg-amber-100 px-4 py-1.5 text-xs font-medium text-amber-900">
           ⚠ {props.supersededNotice}
+        </div>
+      ) : null}
+
+      {byteSource === "offline" ? (
+        <div role="status" data-offline-copy className="flex items-center gap-2 bg-sky-100 px-4 py-1.5 text-xs font-medium text-sky-900">
+          ⤓ OFFLINE COPY · {props.revision} · Editing is unavailable offline.
         </div>
       ) : null}
 

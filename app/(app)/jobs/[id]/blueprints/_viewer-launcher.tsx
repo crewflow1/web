@@ -27,6 +27,7 @@ export function ViewerLauncher(props: {
   revision: string;
   supersededNotice: string | null;
   canDeletePins: boolean;
+  identity?: { userId: string; orgId: string } | null;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
