@@ -98,9 +98,50 @@ carried in text.
   authenticated journey (create → add hazard → issue → the record is frozen), via the
   seeded `storageState` harness (`e2e/global-setup.ts`).
 
-## Notes / limitations (M1)
-- Method statement is free-form prose in M1; structured, numbered method steps are a later increment.
-- Permits-to-work, operative distribution + sign-off (the work-blocking safety gate),
-  PDF export and portal/site visibility are milestones M2–M4.
+## Milestone 2 — Permits-to-Work (`20261019_health_safety_permits.sql`)
+
+High-risk tasks (hot works, working at height, confined space, excavation,
+electrical isolation/LOTO, roof work, temporary works, lifting, demolition,
+asbestos, general) need a **permit**: a controlled, time-bound authorisation that
+the work is safe to start *now*. A permit is an operational record referencing the
+relevant RAMS, **not** legal advice.
+
+- **`permits_to_work`** — header (`permit_type`, `title`, `scope`, `location`,
+  optional `job_id` + `risk_assessment_id`, `responsible_person`, `isolation_details`,
+  `emergency_arrangements`, a `valid_from`/`valid_until` window, `status`, `PTW-NNNN`,
+  closeout + lifecycle stamps).
+- **`permit_conditions`** — the control checks that gate issue (fire watch, isolation
+  confirmed, gas test, edge protection, rescue plan…): `label`, `required`, `confirmed` + who/when.
+
+**Lifecycle (DB state machine):** `draft → issued → active → (suspended ⇄ active) →
+closed`; cancel from any live state; terminal states. **Expiry is DERIVED at read**
+(`valid_until < now`) — no stored expiry, **no cron, $0**.
+
+**Invariants — enforced in Postgres, proven on real Postgres (14 integration):** RLS
+tenant isolation; a permit can't bind another org's job/RAMS, nor a job-scoped permit a
+different job's RAMS; condition `org_id` trigger-derived (anti-spoof) + composite-FK.
+**Issue gate** — only a draft with a full window, every required condition confirmed,
+and (if linked) an **issued** RAMS. **Immutability (evidence-grade)** — issued
+contractual/safety fields + provenance frozen (the check runs whenever the permit has
+left draft, so an edit can't ride in on a transition); a **direct INSERT can't mint a
+born-issued permit**; a confirmed control can't be un-confirmed / its who-when rewritten;
+conditions can't be deleted or reparented off a live permit. **Numbering** `PTW-NNNN`
+gates the caller to their own org (no cross-org count leak).
+
+These were shaped by an **adversarial DB review** that found + closed two issue-gate /
+immutability bypasses and a condition-tamper cluster before ship; each fix has a named
+regression test (`[P0-1]…[P2-7]`). `lib/health-safety/permits.ts` mirrors the rules
+(11 unit); actions are tenant-client-only + count-checked (10 security, 4 RLS). UI at
+`/health-safety/permits`.
+
+## Notes / limitations
+- Method statement is free-form prose (M1); structured numbered steps are a later increment.
+- A per-transition audit trail (`permit_events` — suspension reason, re-activation
+  authoriser) is a tracked enhancement; issuance is audited via `recordAdminActivity`.
+- Operative distribution + sign-off (the work-blocking safety gate), PDF export and
+  portal/site visibility are milestones **M3–M6**.
 - `e2e/global-setup.ts` is the same authenticated harness the blueprint stack (#409)
   introduces; when both land it merges to the superset — a trivial resolution.
+- The app middleware's `getUser()` bounces authenticated **write-POSTs** to `/login` in
+  the LOCAL harness (not our code — an existing action reproduces it; not reproducible in
+  CI, where authenticated writes pass); write journeys are validated in CI.

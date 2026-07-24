@@ -144,6 +144,24 @@ export default async function HealthSafetyPage({
         </Link>
       </header>
 
+      <nav
+        aria-label="Health and safety sections"
+        className="flex flex-wrap gap-2 text-sm"
+      >
+        <span
+          aria-current="page"
+          className="inline-flex min-h-[44px] items-center rounded-md bg-slate-100 px-3 font-medium text-slate-900"
+        >
+          Risk assessments
+        </span>
+        <Link
+          href="/health-safety/permits"
+          className="inline-flex min-h-[44px] items-center rounded-md px-3 font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+        >
+          Permits to work
+        </Link>
+      </nav>
+
       {errorMessage ? (
         <div
           role="alert"
