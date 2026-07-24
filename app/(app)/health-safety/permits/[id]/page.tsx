@@ -15,6 +15,8 @@ import {
   type PermitType,
 } from "@/lib/health-safety/permits";
 import { getPermit, listRamsOptions } from "../_data";
+import { SignoffPanel } from "../../_signoff-panel";
+import { listAcknowledgements, countOrgMembers } from "../../_signoff-data";
 import {
   addPermitCondition,
   confirmPermitCondition,
@@ -69,7 +71,8 @@ export default async function PermitDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { user } = await requireOrgContext();
+  const userId = user.id;
 
   const result = await getPermit(id);
   if (!result) notFound();
@@ -79,6 +82,9 @@ export default async function PermitDetailPage({
     listJobOptions(),
     listRamsOptions(),
   ]);
+  const live = permit.status === "issued" || permit.status === "active";
+  const acks = live ? await listAcknowledgements("permit_to_work", permit.id) : [];
+  const memberCount = live ? await countOrgMembers() : 0;
 
   const status = permit.status as PermitStatus;
   const editable = isEditable(status);
@@ -604,6 +610,17 @@ export default async function PermitDetailPage({
           </div>
         )}
       </section>
+
+      {(status === "issued" || status === "active") ? (
+        <SignoffPanel
+          subjectType="permit_to_work"
+          subjectId={permit.id}
+          reference={permit.reference ?? ""}
+          acks={acks}
+          currentUserId={userId}
+          memberCount={memberCount}
+        />
+      ) : null}
     </div>
   );
 }

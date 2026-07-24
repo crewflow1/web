@@ -15,6 +15,8 @@ const data = readFileSync(join(root, "app/(app)/health-safety/_data.ts"), "utf8"
 const permMig = readFileSync(join(root, "supabase/migrations/20261019000000_health_safety_permits.sql"), "utf8");
 const permActions = readFileSync(join(root, "app/(app)/health-safety/permits/actions.ts"), "utf8");
 const permData = readFileSync(join(root, "app/(app)/health-safety/permits/_data.ts"), "utf8");
+const ackMig = readFileSync(join(root, "supabase/migrations/20261020000000_health_safety_acknowledgements.sql"), "utf8");
+const ackActions = readFileSync(join(root, "app/(app)/health-safety/signoff-actions.ts"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -124,5 +126,36 @@ describe("permits (M2) — lifecycle + evidence integrity are DB-enforced", () =
     expect(permActions).toMatch(/\.eq\("org_id", ctx\.org\.id\)/);
     expect(permActions).toMatch(/if \(!count\)/);
     expect(permActions).toMatch(/canIssue\(/);
+  });
+});
+
+describe("operative sign-off (M3) — append-only, tamper-proof, self-signed evidence", () => {
+  it("RLS: members read; insert only AS THEMSELVES; NO update or delete policy", () => {
+    expect(ackMig).toMatch(/alter table public\.safety_acknowledgements enable row level security/);
+    expect(ackMig).toMatch(/user_id = auth\.uid\(\)/);
+    expect(ackMig).not.toMatch(/for delete/);      // non-erasable evidence
+    expect(ackMig).not.toMatch(/for update/);      // append-only
+  });
+  it("append-only trigger blocks UPDATE even for the service role", () => {
+    expect(ackMig).toMatch(/tg_safety_ack_no_update/);
+    expect(ackMig).toMatch(/append-only and cannot be modified/);
+  });
+  it("validate trigger: membership-first, session-bound, timestamp-pinned, version-anchored, live-only", () => {
+    expect(ackMig).toMatch(/tg_safety_ack_validate/);
+    expect(ackMig).toMatch(/signer is not a member/);
+    expect(ackMig).toMatch(/can only acknowledge as themselves/);
+    expect(ackMig).toMatch(/new\.acknowledged_at := now\(\)/);
+    expect(ackMig).toMatch(/version mismatch/);
+    expect(ackMig).toMatch(/outside its validity window/);
+  });
+  it("org_id derived from the subject (anti cross-tenant) + statement/name non-empty", () => {
+    expect(ackMig).toMatch(/new\.org_id := s_org/);
+    expect(ackMig).toMatch(/length\(trim\(signed_name\)\) > 0/);
+  });
+  it("the sign-off action is tenant-client-only + requireOrgContext-gated + signs as auth user", () => {
+    expect(ackActions).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(ackActions).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+    expect(ackActions).toMatch(/requireOrgContext\(\)/);
+    expect(ackActions).toMatch(/user_id: user\.id/);
   });
 });

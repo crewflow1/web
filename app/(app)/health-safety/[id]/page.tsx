@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { getRiskAssessment, listAssessors } from "../_data";
+import { SignoffPanel } from "../_signoff-panel";
+import { listAcknowledgements, countOrgMembers } from "../_signoff-data";
 import {
   canIssue,
   isEditable,
@@ -91,11 +93,14 @@ export default async function RiskAssessmentDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { user } = await requireOrgContext();
+  const userId = user.id;
 
   const result = await getRiskAssessment(id);
   if (!result) notFound();
   const { ra, hazards } = result;
+  const acks = ra.status === "issued" ? await listAcknowledgements("risk_assessment", ra.id) : [];
+  const memberCount = ra.status === "issued" ? await countOrgMembers() : 0;
 
   const assessors = await listAssessors();
   const assessorName = ra.assessor_id
@@ -693,6 +698,17 @@ export default async function RiskAssessmentDetailPage({
           </p>
         )}
       </section>
+
+      {status === "issued" ? (
+        <SignoffPanel
+          subjectType="risk_assessment"
+          subjectId={ra.id}
+          reference={ra.reference ?? ""}
+          acks={acks}
+          currentUserId={userId}
+          memberCount={memberCount}
+        />
+      ) : null}
     </div>
   );
 }

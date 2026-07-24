@@ -134,6 +134,57 @@ regression test (`[P0-1]…[P2-7]`). `lib/health-safety/permits.ts` mirrors the 
 (11 unit); actions are tenant-client-only + count-checked (10 security, 4 RLS). UI at
 `/health-safety/permits`.
 
+## Milestone 3 — Operative Sign-off / Acknowledgement (`20261020_health_safety_acknowledgements.sql`)
+
+A worker confirms *"I have read and understood this RAMS / permit"* — evidence that
+answers **who, which issued version, when**, and is immutable. **One generic
+subject-based table** (`safety_acknowledgements`, subject_type ∈ {risk_assessment,
+permit_to_work}, extensible to toolbox) serves every H&S document — not one signature
+table per type.
+
+**Signature model (deliberate):** authenticated user + immutable server-pinned
+timestamp + version anchor + a **typed-name attestation**. No drawn-signature image —
+an authenticated identity bound to a specific issued snapshot is stronger,
+privacy-lighter structured evidence than an unauthenticated scribble. **No IP, device
+or geolocation is collected.**
+
+**Version-anchored (§17):** the acknowledgement binds to the subject's issued reference
+(`RA-NNNN` / `PTW-NNNN`) at sign time; superseding/revising the document leaves this
+record historical and requires a fresh acknowledgement of the new version. **Append-only.**
+
+**Invariants — enforced in Postgres, proven on real Postgres (9 integration + 4 RLS):**
+- **Sign as yourself only** — RLS `user_id = auth.uid()` + a trigger session-bind; a
+  worker (or a service key) can't record a signature on another operative's behalf.
+- **Live document only** — a RAMS must be `issued`; a permit must be `issued`/`active`
+  **and inside its validity window** (no signing an expired permit).
+- **Version anchor** — the signed version must equal the subject's current issued reference.
+- **Membership** — the signer must be a current member of the subject's org; `org_id` is
+  trigger-derived from the subject (anti cross-tenant); membership is checked **before**
+  any status/reference is revealed (no cross-tenant probe via error text).
+- **Tamper-proof evidence** — the signing timestamp is **pinned server-side** (no
+  backdating); the row is **append-only** (no UPDATE, even for the service role) and
+  **non-erasable** (no DELETE policy — not even an org admin can destroy it; GDPR erasure
+  is a future controlled, audited `signed_name` redaction, never a hard delete).
+- **No duplicates** — unique per (org, subject, version, operative).
+
+These were shaped by an **adversarial DB review** that found + closed a backdating hole,
+an evidence-erasing admin-delete, a service-key impersonation path and an expired-permit
+sign gap before ship; each fix has a regression test.
+
+**UI:** a shared `SignoffPanel` on the issued RAMS + issued/active permit detail — the
+sign-off register (who signed, their attestation, when) and, if the current worker hasn't
+signed this version, an explicit non-dark-pattern acknowledge form (the statement + a
+typed-name field). Mobile-first, ≥44px, `aria-live`. `lib/health-safety/acknowledgements.ts`
+owns the wording + progress (5 unit); the action is tenant-client-only, signs as the auth
+user (5 security source-contracts). Toolbox-talks attendance can adopt the same model later
+(the subject_type is extensible) — not refactored here.
+
+**Work-blocking gate (§21) — founder decision surfaced, not invented:** M3 makes
+outstanding acknowledgements **visible** (the "N of M signed" register) — a **WARN**
+posture. Whether to **HARD-BLOCK** a worker from being assigned / clocking into
+high-risk work until the required RAMS/permit is acknowledged is an operational **policy
+decision** (it touches assignment/clock-in) that needs your call before it's built.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation
