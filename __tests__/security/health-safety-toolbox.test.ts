@@ -11,10 +11,15 @@ import { join } from "node:path";
 
 const root = join(__dirname, "..", "..");
 const migration = readFileSync(join(root, "supabase/migrations/20261025000000_health_safety_toolbox_talks.sql"), "utf8");
+const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000_toolbox_talk_acknowledgements.sql"), "utf8");
 const actions = readFileSync(join(root, "app/(app)/toolbox/actions.ts"), "utf8");
 const options = readFileSync(join(root, "app/(app)/toolbox/_form-options.ts"), "utf8");
 const snapshotLib = readFileSync(join(root, "lib/toolbox-talks/snapshot.ts"), "utf8");
 const domainLib = readFileSync(join(root, "lib/health-safety/toolbox-talks.ts"), "utf8");
+const ackLib = readFileSync(join(root, "lib/health-safety/acknowledgements.ts"), "utf8");
+const signoffActions = readFileSync(join(root, "app/(app)/health-safety/signoff-actions.ts"), "utf8");
+const signoffData = readFileSync(join(root, "app/(app)/health-safety/_signoff-data.ts"), "utf8");
+const detailPage = readFileSync(join(root, "app/(app)/toolbox/[id]/page.tsx"), "utf8");
 
 describe("toolbox migration — evidence lifecycle is DB-enforced (20261025)", () => {
   it("[born-draft] no INSERT can mint an issued talk — the trigger fires on INSERT too", () => {
@@ -162,5 +167,58 @@ describe("toolbox pure domain — mirrors the DB lifecycle (single source of tru
     expect(domainLib).toMatch(/export function canTransition/);
     // "issued" presents as "Delivered" — construction-natural, but the DB status is unchanged
     expect(domainLib).toMatch(/issued: \{ label: "Delivered"/);
+  });
+});
+
+// ===========================================================================
+// M2 — acknowledgement engine integration (20261026)
+// ===========================================================================
+describe("toolbox M2 — reuses safety_acknowledgements, gates to the issued talk", () => {
+  it("EXTENDS the shared engine — there is no toolbox_acknowledgements table", () => {
+    expect(ackMigration).toMatch(/safety_acknowledgements/);
+    expect(ackMigration).not.toMatch(/create table[\s\S]*?toolbox_acknowledgements/i);
+  });
+
+  it("widens the subject_type CHECK to admit 'toolbox_talk' (drop + re-add idiom)", () => {
+    expect(ackMigration).toMatch(/drop constraint if exists safety_acknowledgements_subject_type_check/);
+    expect(ackMigration).toMatch(/check \(subject_type in \('risk_assessment', 'permit_to_work', 'toolbox_talk'\)\)/);
+  });
+
+  it("the validator resolves a toolbox talk's org/reference/status and gates to ISSUED only", () => {
+    expect(ackMigration).toMatch(/new\.subject_type = 'toolbox_talk'/);
+    expect(ackMigration).toMatch(/from public\.toolbox_talks where id = new\.subject_id/);
+    // only a delivered (issued) talk is acknowledgeable — superseded/withdrawn/draft are not
+    expect(ackMigration).toMatch(/cannot acknowledge a % toolbox talk/);
+    // org_id is still authoritatively derived from the subject (inherited, anti-spoof)
+    expect(ackMigration).toMatch(/new\.org_id := s_org/);
+  });
+
+  it("the shared ack action routes a toolbox acknowledgement back to /toolbox (tenant-client)", () => {
+    expect(signoffActions).toMatch(/subjectType === "toolbox_talk"/);
+    expect(signoffActions).toMatch(/`\/toolbox\/\$\{subjectId\}`/);
+    expect(signoffActions).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+
+  it("the pure ack lib knows toolbox_talk + a revisable-subject config (no hardcoded literals downstream)", () => {
+    expect(ackLib).toMatch(/ACK_SUBJECT_TYPES = \["risk_assessment", "permit_to_work", "toolbox_talk"\]/);
+    expect(ackLib).toMatch(/TOOLBOX_REVISABLE/);
+    expect(ackLib).toMatch(/rootColumn/);
+  });
+
+  it("priorRevisionSignoff is generic — it uses the subject config, not RAMS literals", () => {
+    // the three former RAMS literals are now driven by the RevisableSubject config
+    expect(signoffData).toMatch(/subject: RevisableSubject/);
+    expect(signoffData).toMatch(/\.from\(subject\.table\)/);
+    expect(signoffData).toMatch(/\.eq\(subject\.rootColumn, rootId\)/);
+    expect(signoffData).toMatch(/\.eq\("subject_type", subject\.subjectType\)/);
+  });
+
+  it("the toolbox detail page shows Tier-A acks ONLY for an issued talk, and never counts Tier-B", () => {
+    // SignoffPanel (authenticated Tier A) is gated behind isIssued
+    expect(detailPage).toMatch(/isIssued \? \(\s*<SignoffPanel/);
+    expect(detailPage).toMatch(/subjectType="toolbox_talk"/);
+    // Tier B recorded attendance is a separate, explicitly-not-counted section
+    expect(detailPage).toMatch(/Recorded attendance/);
+    expect(detailPage).toMatch(/[Nn]ot counted as an authenticated acknowledgement/);
   });
 });

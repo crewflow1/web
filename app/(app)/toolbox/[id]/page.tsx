@@ -11,6 +11,9 @@ import {
   isEditable,
   type ToolboxTalkStatus,
 } from "@/lib/health-safety/toolbox-talks";
+import { SignoffPanel } from "../../health-safety/_signoff-panel";
+import { listAcknowledgements, requiredOperatives, priorRevisionSignoff } from "../../health-safety/_signoff-data";
+import { summariseSignoff, TOOLBOX_REVISABLE } from "@/lib/health-safety/acknowledgements";
 import { deleteToolboxTalk, issueToolboxTalk, withdrawToolboxTalk } from "../actions";
 
 type TalkRow = {
@@ -18,6 +21,7 @@ type TalkRow = {
   status: ToolboxTalkStatus;
   reference: string | null;
   revision_number: number | null;
+  root_toolbox_talk_id: string | null;
   talk_date: string;
   topic: string;
   key_points: string | null;
@@ -41,6 +45,7 @@ const SAVED_MAP: Record<string, string> = {
   updated: "Draft updated.",
   issued: "Talk delivered — it's now frozen evidence with a reference.",
   withdrawn: "Talk withdrawn.",
+  acknowledged: "Acknowledgement recorded — thank you.",
 };
 const ERROR_MAP: Record<string, string> = {
   not_editable: "That talk has been delivered — it's frozen evidence and can't be edited.",
@@ -59,7 +64,7 @@ export default async function ToolboxTalkPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data: talk } = await (
@@ -70,12 +75,26 @@ export default async function ToolboxTalkPage({
     }
   )
     .select(
-      "id, status, reference, revision_number, talk_date, topic, key_points, location, presenter, ppe, attendees, attendee_count, notes, job_id, risk_assessment_id, permit_to_work_id, created_by, issued_by, issued_at, created_at",
+      "id, status, reference, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, presenter, ppe, attendees, attendee_count, notes, job_id, risk_assessment_id, permit_to_work_id, created_by, issued_by, issued_at, created_at",
     )
     .eq("id", id)
     .maybeSingle();
 
   if (!talk) notFound();
+
+  // --- Operative sign-off (M2) — Tier A: authenticated acknowledgements against the
+  // crew rota'd to this talk's job. Only a delivered (issued) talk is acknowledgeable;
+  // the same reads power the manager's completion view. Parallel (mobile-latency).
+  const isIssued = talk.status === "issued";
+  const [acks, required, priorSignoff] = await Promise.all([
+    isIssued ? listAcknowledgements("toolbox_talk", talk.id) : Promise.resolve([]),
+    isIssued ? requiredOperatives(talk.job_id) : Promise.resolve([]),
+    isIssued && (talk.revision_number ?? 1) > 1 && talk.root_toolbox_talk_id
+      ? priorRevisionSignoff(talk.root_toolbox_talk_id, talk.revision_number ?? 1, user.id, TOOLBOX_REVISABLE)
+      : Promise.resolve(null),
+  ]);
+  const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
+  const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
 
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const editable = isEditable(talk.status);
@@ -213,13 +232,45 @@ export default async function ToolboxTalkPage({
           ) : null}
         </dl>
         <div className="space-y-4 border-t border-slate-100 pt-4">
-          <Field label="Who attended">{talk.attendees}</Field>
           <Field label="Notes">{talk.notes}</Field>
         </div>
       </section>
 
-      {/* Signed attendance sheet + photos — universal attachments pipeline. */}
-      <AttachmentsPanel targetTable="toolbox_talks" targetId={talk.id} />
+      {/* Tier A — authenticated CrewFlow acknowledgements (issued talks only). */}
+      {isIssued ? (
+        <SignoffPanel
+          subjectType="toolbox_talk"
+          subjectId={talk.id}
+          reference={talk.reference ?? ""}
+          docTitle={talk.topic}
+          revisionLabel={(talk.revision_number ?? 1) > 1 ? `Revision ${talk.revision_number}` : null}
+          isCurrent={talk.status === "issued"}
+          acks={acks}
+          currentUserId={user.id}
+          summary={signoff}
+          outstanding={outstanding}
+          priorSignoff={priorSignoff}
+        />
+      ) : null}
+
+      {/* Tier B — recorded (manual/paper) attendance. Deliberately SEPARATE from the
+          authenticated acknowledgements above and never counted toward N-of-M: these
+          are names written down or a photographed sign-off sheet, not CrewFlow-verified
+          identities. The honesty rule (attendance ≠ authenticated acknowledgement). */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-900">Recorded attendance</h2>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Manual record for anyone not signing in CrewFlow — external or subcontract attendees, or a paper
+          sign-off sheet. Not counted as an authenticated acknowledgement above.
+        </p>
+        <div className="mt-4">
+          <Field label="Who attended (names / trades)">{talk.attendees}</Field>
+        </div>
+        {/* Signed attendance sheet + site photos — universal attachments pipeline. */}
+        <div className="mt-4">
+          <AttachmentsPanel targetTable="toolbox_talks" targetId={talk.id} />
+        </div>
+      </section>
 
       {/* Lifecycle actions. */}
       {editable && isAdmin ? (

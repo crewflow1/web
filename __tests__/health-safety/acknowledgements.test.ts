@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ackStatement, hasAcknowledged, acknowledgementProgress, validateSignature,
-  ACK_SUBJECT_TYPES, ACK_STATEMENT_VERSION,
+  ACK_SUBJECT_TYPES, ACK_STATEMENT_VERSION, RAMS_REVISABLE, TOOLBOX_REVISABLE,
 } from "@/lib/health-safety/acknowledgements";
 
 describe("ackStatement — version-anchored wording", () => {
@@ -9,9 +9,21 @@ describe("ackStatement — version-anchored wording", () => {
     expect(ackStatement("risk_assessment", "RA-0001")).toMatch(/risk assessment RA-0001/);
     expect(ackStatement("permit_to_work", "PTW-0002")).toMatch(/permit to work PTW-0002/);
   });
-  it("has a stable statement version", () => {
+  it("a toolbox talk attests ATTENDANCE + understanding (a briefing, not a document to read)", () => {
+    const s = ackStatement("toolbox_talk", "TBT-0007");
+    expect(s).toMatch(/attended and understood toolbox talk TBT-0007/);
+    expect(s).not.toMatch(/read and understood/); // distinct wording from RAMS/permits
+  });
+  it("has a stable statement version + the three subject types", () => {
     expect(ACK_STATEMENT_VERSION).toBe("v1");
-    expect(ACK_SUBJECT_TYPES).toEqual(["risk_assessment", "permit_to_work"]);
+    expect(ACK_SUBJECT_TYPES).toEqual(["risk_assessment", "permit_to_work", "toolbox_talk"]);
+  });
+});
+
+describe("RevisableSubject config — parameterises the revision-aware queries", () => {
+  it("carries the table, series-root column and ack subject type for each revisable subject", () => {
+    expect(RAMS_REVISABLE).toEqual({ subjectType: "risk_assessment", table: "risk_assessments", rootColumn: "root_risk_assessment_id" });
+    expect(TOOLBOX_REVISABLE).toEqual({ subjectType: "toolbox_talk", table: "toolbox_talks", rootColumn: "root_toolbox_talk_id" });
   });
 });
 

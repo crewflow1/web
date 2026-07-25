@@ -17,9 +17,9 @@ import { ackStatement, ACK_STATEMENT_VERSION, type AckSubjectType } from "@/lib/
 type FromChain = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 function subjectPath(subjectType: AckSubjectType, subjectId: string): string {
-  return subjectType === "permit_to_work"
-    ? `/health-safety/permits/${subjectId}`
-    : `/health-safety/${subjectId}`;
+  if (subjectType === "permit_to_work") return `/health-safety/permits/${subjectId}`;
+  if (subjectType === "toolbox_talk") return `/toolbox/${subjectId}`;
+  return `/health-safety/${subjectId}`;
 }
 
 export async function acknowledgeSafetyDocument(formData: FormData): Promise<void> {
