@@ -26,7 +26,10 @@ import { getRiskAssessment } from "./_data";
 type FromChain = {
   from: (t: string) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 };
-const tbl = (c: unknown) => (c as FromChain).from;
+// Bind `this` to the client — `.from` is a prototype method, so extracting it
+// unbound (const f = client.from; f(...)) makes `this` undefined and supabase-js
+// throws "Cannot read properties of undefined (reading 'rest')" on the first call.
+const tbl = (c: unknown) => (c as FromChain).from.bind(c);
 
 function firstError(issues: { message: string }[]): string {
   return issues[0]?.message ?? "Invalid input";

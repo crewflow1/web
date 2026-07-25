@@ -21,7 +21,9 @@ import { canIssue } from "@/lib/health-safety/permits";
  */
 
 type FromChain = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
-const tbl = (c: unknown) => (c as FromChain).from;
+// Bind `this` to the client — extracting `.from` unbound makes `this` undefined and
+// supabase-js throws "Cannot read properties of undefined (reading 'rest')".
+const tbl = (c: unknown) => (c as FromChain).from.bind(c);
 const firstError = (issues: { message: string }[]) => issues[0]?.message ?? "Invalid input";
 const base = "/health-safety/permits";
 

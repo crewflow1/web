@@ -27,6 +27,7 @@ const searchRoute = readFileSync(join(root, "app/api/search/route.ts"), "utf8");
 const hsSnapshot = readFileSync(join(root, "server/services/health-safety-snapshot.ts"), "utf8");
 const signoffData = readFileSync(join(root, "app/(app)/health-safety/_signoff-data.ts"), "utf8");
 const signoffPanel = readFileSync(join(root, "app/(app)/health-safety/_signoff-panel.tsx"), "utf8");
+const hygiene = readFileSync(join(root, "supabase/migrations/20261023000000_health_safety_evidence_hygiene.sql"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -299,5 +300,22 @@ describe("H&S operational surfaces (M6b) — RLS-scoped + required-operative mod
     expect(signoffPanel).toMatch(/summary:\s*SignoffSummary/);
     expect(signoffPanel).toMatch(/outstandingNames/);
     expect(signoffPanel).not.toMatch(/memberCount/);
+  });
+});
+
+describe("H&S evidence hygiene (M6 final review) — timestamps + provenance frozen", () => {
+  it("[F-A] permit lifecycle timestamps change only on a status transition", () => {
+    expect(hygiene).toMatch(/tg_permit_evidence_hygiene/);
+    expect(hygiene).toMatch(/permit lifecycle timestamps change only on a status transition/);
+  });
+  it("[F-A] a control condition's confirmed_at/by is pinned server-side on confirm", () => {
+    expect(hygiene).toMatch(/tg_permit_condition_pin_confirm/);
+    expect(hygiene).toMatch(/new\.confirmed_at := now\(\)/);
+    expect(hygiene).toMatch(/new\.confirmed_by := auth\.uid\(\)/);
+  });
+  it("[F-B] org + creation provenance freeze once a RAMS / permit is issued", () => {
+    expect(hygiene).toMatch(/tg_ra_evidence_hygiene/);
+    expect(hygiene).toMatch(/org \/ creation provenance is immutable once a permit is issued/);
+    expect(hygiene).toMatch(/org \/ creation provenance is immutable once a risk assessment is issued/);
   });
 });

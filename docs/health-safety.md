@@ -347,6 +347,41 @@ permit reads EXPIRED, never a stale "active").
 `recordAdminActivity` with ids/reference/status only — never method statements, close-out
 notes or signatures.
 
+## Milestone 6 finalisation — authenticated write E2E, evidence-hygiene, final review
+
+**Authenticated write E2E + a latent bug it caught.** The long-standing "authenticated
+writes bounce to /login locally" belief was diagnosed as a **local build artifact**: the
+placeholder `test-anon-key` in `.env.local` is inlined into `.next` at build, so the app
+validated the (real-key) auth cookie with the wrong key. CI builds with the real key, so
+authenticated POSTs are genuinely exercised. Authoring the write journey then surfaced a
+real **latent bug**: the RAMS + permit actions extracted the Supabase `.from` helper
+*unbound* (`const tbl = c => c.from`), so every H&S UI write threw `undefined (reading
+'rest')` — the read-only E2E workaround had hidden it. Fixed by binding `this`
+(`app/(app)/health-safety/{actions,permits/actions}.ts`). `e2e/health-safety-write.spec.ts`
+now drives a real authenticated create (Server Action POST → row written under the user's
+JWT → redirect to the editable draft). The rest of the lifecycle
+(add-hazard → issue → revise → supersede → sign-off) is proven end-to-end at the
+integration tier against real Postgres; the multi-form detail page's Server-Action submits
+race hydration under `next start` at Playwright speed (a harness-timing limitation, not an
+app defect — the identical `<form action>` pattern works for create) so they are proven at
+the DB tier rather than gating CI on a flaky multi-step browser journey.
+
+**Final epic-wide adversarial review** (M1–M6, direct-JWT attacker model): verdict
+**evidence-grade + tenant-safe** — no P0/P1/P2, no cross-tenant break, no two-current-revision
+break. All load-bearing invariants (single current revision, same-org/same-series lineage,
+live-doc-only + append-only signatures, pinned issue provenance, frozen contractual fields,
+RLS-scoped reads + PDFs) are DB-enforced. Two P3 within-tenant evidence-hygiene items were
+closed (`20261023_health_safety_evidence_hygiene.sql`):
+- **F-A** — a permit's lifecycle timestamps (`activated_at`/…/`closed_at`) could be
+  back-dated while the status was unchanged (and `closed_at` prints on the evidence PDF);
+  a control condition's `confirmed_at` was trusted from the client on the first confirm.
+  Now lifecycle stamps change **only on a real status transition**, and `confirmed_at/by`
+  are pinned server-side on confirm.
+- **F-B** — `org_id` (+ `created_by`/`created_at`) were not in the issued-immutability
+  freeze lists, so a member of two orgs could re-home a zero-child issued RAMS/permit. Now
+  frozen once the record leaves draft.
+Proven on real Postgres (`evidence-hygiene.test.ts`, 4 tests) + source-contracts.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation
