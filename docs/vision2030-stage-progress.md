@@ -39,10 +39,14 @@
 | **7. Customer Experience** | ◑ ongoing | Premium-feel polish shipped across PRs #364–#366 (onboarding, empty states, loading, copy, breadcrumbs, autofocus). Ranked backlog in `docs/cx-acceleration.md`. |
 
 **Dependency-safe next verticals (no CEO decision / no external creds):** supplier
-bills (extend the existing expense→finances flow) → committed-cost rollups / finance
-dashboard → payment allocation (invoice_payments 1↔1 → allocations join; concurrency
-proof required) → unified commercial lifecycle timeline (Programme D). Then Blueprint
-Centre (its own plan) and the gated items (CIS, warranties, weather API).
+bills (shipped, PR #399) → payment allocation (shipped, PR #400) → **unified
+commercial lifecycle (Programme D — shipped, `feat/commercial-lifecycle`:
+`/jobs/[id]/commercial` cash-first position + timeline; also fixed the
+status-based "outstanding" defect by deriving cash from the payment ledger — see
+`docs/commercial-lifecycle.md`)**. Remaining commercial fast-follows: a
+customer-safe portal projection, retention release due-dates/reminders,
+outstanding rollups on the jobs list + dashboard. Then Blueprint Centre (its own
+plan) and the gated items (CIS, warranties, weather API).
 
 ## Stage Two — AI employees
 
@@ -63,6 +67,7 @@ in the master directive; they are surfaced, not silently skipped or faked-dark.
 ## Milestone changelog
 | Date | Milestone | PR | Gates |
 |---|---|---|---|
+| 2026-07-21 | Commercial D → **unified commercial lifecycle** (cash-first position + timeline; fixes ledger-truth outstanding) | `feat/commercial-lifecycle` | unit 21 · integration/RLS 3 (real PG) · security 3 |
 | 2026-07-20 | Commercial C → **committed costs (POs) on the job P&L** | #395 | 8/8 green |
 | 2026-07-20 | Commercial C → **purchase orders** (procurement / committed spend) | #394 | 8/8 green (`purchase-orders.test.ts` 5) |
 | 2026-07-20 | Commercial C → **construction retention** (contract holdback) | #393 | 8/8 green (`retention.test.ts` 8) |
