@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { listPortalReports } from "@/app/customer-portal/_reports";
+import { listPortalCertificates } from "@/app/customer-portal/_certificates";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import {
@@ -18,6 +19,7 @@ const TYPE_STYLES: Record<PortalDocType, string> = {
   quote: "bg-blue-100 text-blue-700",
   invoice: "bg-emerald-100 text-emerald-800",
   report: "bg-purple-100 text-purple-700",
+  certificate: "bg-amber-100 text-amber-800",
 };
 
 /**
@@ -59,15 +61,23 @@ export default async function PortalDocumentsPage({
     .limit(100);
 
   const reports = await listPortalReports(customer.id, customer.org_id);
+  const certRows = await listPortalCertificates(customer.id, customer.org_id);
 
   const documents = buildDocumentLibrary({
     token,
     quotes: (quotesData ?? []) as LibQuote[],
     invoices: (invoicesData ?? []) as LibInvoice[],
     reports,
+    certificates: certRows.map((c) => ({
+      id: c.id,
+      certificate_number: c.certificate_number,
+      completion_date: c.snapshot?.completion_date ?? null,
+      issued_at: c.issued_at,
+      portal_published_at: c.portal_published_at,
+    })),
   });
 
-  const filter = (["quote", "invoice", "report"] as const).includes(sp.type as PortalDocType)
+  const filter = (["quote", "invoice", "report", "certificate"] as const).includes(sp.type as PortalDocType)
     ? (sp.type as PortalDocType)
     : null;
   const shown = filter ? documents.filter((d) => d.type === filter) : documents;

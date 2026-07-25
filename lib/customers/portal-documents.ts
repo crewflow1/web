@@ -12,7 +12,7 @@
  * Pure — the caller passes already-scoped rows; no clocks, no IO.
  */
 
-export type PortalDocType = "quote" | "invoice" | "report";
+export type PortalDocType = "quote" | "invoice" | "report" | "certificate";
 
 export type PortalDocument = {
   type: PortalDocType;
@@ -30,6 +30,7 @@ export const PORTAL_DOC_TYPE_LABELS: Record<PortalDocType, string> = {
   quote: "Quote",
   invoice: "Invoice",
   report: "Report",
+  certificate: "Certificate",
 };
 
 export type LibQuote = {
@@ -56,6 +57,13 @@ export type LibReport = {
   issued_at: string | null;
   portal_published_at: string | null;
 };
+export type LibCertificate = {
+  id: string;
+  certificate_number: string;
+  completion_date: string | null;
+  issued_at: string | null;
+  portal_published_at: string | null;
+};
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -72,6 +80,7 @@ export function buildDocumentLibrary(input: {
   quotes: LibQuote[];
   invoices: LibInvoice[];
   reports: LibReport[];
+  certificates?: LibCertificate[];
 }): PortalDocument[] {
   const { token } = input;
   const docs: PortalDocument[] = [];
@@ -108,6 +117,17 @@ export function buildDocumentLibrary(input: {
       sub: r.report_number ? `Report ${r.report_number}` : "Progress report",
       viewHref: `/customer-portal/${token}/reports/${r.id}`,
       pdfHref: `/customer-portal/${token}/reports/${r.id}/pdf`,
+    });
+  }
+
+  for (const cert of input.certificates ?? []) {
+    docs.push({
+      type: "certificate",
+      date: isoDate(cert.issued_at ?? cert.portal_published_at),
+      title: `Completion certificate ${cert.certificate_number}`.trim(),
+      sub: cert.completion_date ? `Practical completion ${cert.completion_date}` : "Practical Completion Certificate",
+      viewHref: `/customer-portal/${token}/certificates/${cert.id}/pdf`,
+      pdfHref: `/customer-portal/${token}/certificates/${cert.id}/pdf`,
     });
   }
 

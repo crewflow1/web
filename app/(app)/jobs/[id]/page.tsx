@@ -742,12 +742,20 @@ export default async function EditJobPage({
             We&rsquo;ll schedule a request the customer can act on at the right
             moment. Pick the platform and a delay.
           </p>
-          <Link
-            href={`/reviews/new?customer_id=${job.customer_id}&job_id=${job.id}`}
-            className="mt-3 inline-block rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
-          >
-            Request a review
-          </Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href={`/reviews/new?customer_id=${job.customer_id}&job_id=${job.id}`}
+              className="inline-block rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            >
+              Request a review
+            </Link>
+            <Link
+              href={`/jobs/${job.id}/certificate`}
+              className="inline-block rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50"
+            >
+              Completion certificate
+            </Link>
+          </div>
         </section>
       ) : null}
 
