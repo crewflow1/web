@@ -49,7 +49,9 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
   const savedMessage = sp.saved
-    ? sp.saved === "uploaded"
+    ? sp.saved === "payment"
+      ? "Payment recorded and allocated."
+      : sp.saved === "uploaded"
       ? "Statement uploaded — review matches below."
       : sp.saved === "matched"
         ? "Match confirmed."
@@ -69,16 +71,24 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             payments, doesn&apos;t process them.
           </p>
         </div>
-        <div className="text-right text-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">
-            Outstanding
+        <div className="flex items-center gap-4">
+          <div className="text-right text-sm">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              Outstanding
+            </div>
+            <div className="text-xl font-semibold text-slate-900">
+              {GBP.format(outstandingTotal)}
+            </div>
+            <div className="text-xs text-slate-500">
+              {(outstandingRows ?? []).length} unpaid invoices
+            </div>
           </div>
-          <div className="text-xl font-semibold text-slate-900">
-            {GBP.format(outstandingTotal)}
-          </div>
-          <div className="text-xs text-slate-500">
-            {(outstandingRows ?? []).length} unpaid invoices
-          </div>
+          <Link
+            href="/payments/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Record payment
+          </Link>
         </div>
       </header>
 
