@@ -193,7 +193,7 @@ export default async function ToolboxTalkPage({
             <div className="flex items-center gap-2">
               <Link
                 href={`/toolbox/${talk.id}/edit`}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="inline-flex min-h-[44px] items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Edit
               </Link>
@@ -202,7 +202,7 @@ export default async function ToolboxTalkPage({
                 <button
                   type="submit"
                   disabled={!gate.ok}
-                  className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {isRevisionDraft ? "Deliver revision" : "Deliver talk"}
                 </button>
@@ -319,10 +319,10 @@ export default async function ToolboxTalkPage({
                   <span className="flex items-center gap-2">
                     <span className="font-medium text-slate-800">Revision {s.revision_number}</span>
                     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${sMeta.tone}`}>{sMeta.label}</span>
-                    {s.reference ? <span className="font-mono text-xs text-slate-400">{s.reference}</span> : null}
+                    {s.reference ? <span className="font-mono text-xs text-slate-500">{s.reference}</span> : null}
                   </span>
                   {isThis ? (
-                    <span className="text-xs font-medium text-slate-400">Viewing</span>
+                    <span className="text-xs font-medium text-slate-500">Viewing</span>
                   ) : (
                     <Link href={`/toolbox/${s.id}`} className="text-xs font-medium text-slate-600 hover:text-slate-900 hover:underline">
                       Open
@@ -420,7 +420,7 @@ function Field({ label, children }: { label: string; children: string | null }) 
       {children ? (
         <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{children}</p>
       ) : (
-        <p className="mt-1 text-sm italic text-slate-400">—</p>
+        <p className="mt-1 text-sm italic text-slate-500">—</p>
       )}
     </div>
   );

@@ -131,7 +131,7 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.tone}`}>
                         {meta.label}
                       </span>
-                      {row.reference ? <span className="font-mono text-xs text-slate-400">{row.reference}</span> : null}
+                      {row.reference ? <span className="font-mono text-xs text-slate-500">{row.reference}</span> : null}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
                       <span className="font-medium text-slate-700">
