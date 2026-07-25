@@ -43,6 +43,19 @@ export default defineConfig({
     baseURL,
     trace: "retain-on-failure",
     video: "off",
+    /**
+     * Service workers OFF by default (Programme F is a cross-cutting PWA layer,
+     * not part of most features). The SW registers on every authenticated page
+     * and performs a one-time reload when it first CLAIMS the page — correct PWA
+     * behaviour, and load-bearing for the offline flow, but it races any spec that
+     * navigates then immediately interacts/evaluates (axe scans, multi-step forms,
+     * pdf.js canvas dialogs) with "Execution context was destroyed". Scoping the SW
+     * to the specs that actually exercise it removes that interference at the source
+     * (not a retry mask); the two offline specs re-enable it with `serviceWorkers:
+     * "allow"`. The SW is invisible to the accessibility tree and to online feature
+     * flows, so nothing under test loses coverage.
+     */
+    serviceWorkers: "block",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   /**

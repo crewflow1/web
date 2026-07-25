@@ -12,6 +12,11 @@ import { test, expect } from "@playwright/test";
 
 const JOB = "00000000-0000-0000-0000-000000000000";
 
+// This IS the PWA spec — re-enable the service worker that the global config
+// blocks by default (see playwright.config.ts). The offline journeys below need
+// a real, registered, controlling SW.
+test.use({ serviceWorkers: "allow" });
+
 test.describe("pwa — installability assets are public", () => {
   test("manifest, service worker, and icons are served to a logged-out visitor (no 307)", async ({ request }) => {
     for (const [path, type] of [["/manifest.webmanifest", /json|manifest/], ["/sw.js", /javascript/], ["/icons/icon-192.png", /image\/png/]] as const) {

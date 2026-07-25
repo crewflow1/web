@@ -14,6 +14,10 @@ import { test, expect } from "@playwright/test";
 const JOB = "00000000-0000-0000-0000-000000000000";
 const F_ROUTE = "**/jobs/**/blueprints/f/**";
 
+// This spec exercises the real offline flow — re-enable the service worker that
+// the global config blocks by default (see playwright.config.ts).
+test.use({ serviceWorkers: "allow" });
+
 test.describe("blueprint offline — stays behind the auth wall", () => {
   test("a logged-out visitor never sees the Download-for-offline control", async ({ page }) => {
     await page.goto(`/jobs/${JOB}/blueprints`);
