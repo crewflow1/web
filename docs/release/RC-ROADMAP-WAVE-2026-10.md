@@ -65,6 +65,24 @@ All additive; rollback = drop the new object(s) / restore prior function body. N
 
 **CI (PR #421):** see the PR checks — `integration (real Postgres)`, `e2e (real app, real Postgres)`, `security`, `tests`, `typecheck`, `lint`, `Vercel`. CI is authoritative for the DB-backed gates (fresh-DB migration apply, RLS, real-app E2E) that cannot run locally. GO requires all green **by name**.
 
+**Consolidation-exposed E2E interaction (found + fixed here):** the blueprint PWA
+service worker registers on every authenticated page and reloads once when it first
+CLAIMS the page. That one-time reload — real, and load-bearing for the offline flow —
+races any spec that navigates then immediately interacts/evaluates, and it surfaced
+only in the *consolidated* tree (the H&S branch shipped no SW). It intermittently hit
+a different spec each run (H&S axe scans, the RAMS write form, the pdf.js viewer
+dialog). Fixed at the source by scoping the SW to the two specs that actually exercise
+it (`serviceWorkers: "block"` by default in `playwright.config.ts`; `"allow"` in
+`pwa-offline` + `blueprint-offline`) — **not** a retry mask, and **no app code changed**
+(`sw-register.tsx` is byte-identical to the shipped blueprint branch). This is the kind
+of cross-stack interaction a single-branch release train exists to catch.
+
+**Known follow-up (non-blocking, post-release):** the SW's reload-on-first-claim can, on
+a user's first-ever visit, briefly reload the page out from under them. It is currently
+load-bearing for the offline flow (removing it naively broke the offline journey), so a
+proper fix is a small blueprint-offline hardening task — tracked for after this release,
+not a release blocker.
+
 ---
 
 ## 5. Types decision (`lib/supabase/types.ts` unchanged from `main`)
