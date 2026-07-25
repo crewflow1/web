@@ -39,7 +39,12 @@
  * once this Report-Only policy is validated in production.
  *
  * `'unsafe-eval'` is deliberately OMITTED so the Report-Only stream tells us
- * whether any dependency genuinely needs it.
+ * whether any dependency genuinely needs it. `'wasm-unsafe-eval'` IS present
+ * (added for the Blueprint pdf.js viewer, whose bundled OpenJPEG/JBIG2 image
+ * codecs decode via WebAssembly): it permits `WebAssembly.compile/instantiate`
+ * from bytes ONLY — NOT string→JS eval — so it is far narrower than the
+ * `'unsafe-inline'` already shipped, and pdf.js is configured with
+ * `isEvalSupported:false` so it never needs `'unsafe-eval'` itself.
  *
  * `upgrade-insecure-requests` is intentionally absent: it is IGNORED inside a
  * report-only policy (browsers emit a console warning), so it belongs only in
@@ -55,7 +60,7 @@ export const CSP_REPORT_ONLY: string = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self' https://checkout.stripe.com https://billing.stripe.com",
-  "script-src 'self' 'unsafe-inline' https://eu-assets.i.posthog.com https://vercel.live",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://eu-assets.i.posthog.com https://vercel.live",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.supabase.co https://eu.i.posthog.com",
   "font-src 'self' data:",

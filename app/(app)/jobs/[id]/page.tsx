@@ -9,12 +9,11 @@ import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
+import { JobSafetySection } from "./_job-safety";
 import { JobDocumentsPanel } from "./_job-documents";
-import {
-  computeJobCommercialPosition,
-  formatGbp,
-  hasCommercialPosition,
-} from "@/lib/jobs/commercial-position";
+import { JobBlueprintsPanel } from "./_blueprints";
+import { formatGbp } from "@/lib/jobs/commercial-position";
+import { computeCommercialCash } from "@/lib/commercial/cash";
 import {
   computeJobProfitability,
   marginPillClass,
@@ -24,6 +23,8 @@ import {
   maxReleasable,
 } from "@/lib/retentions/compute";
 import { setJobRetentionRate, recordRetentionRelease } from "../retention-actions";
+import { computeRetentionSchedule } from "@/lib/retentions/schedule";
+import { RetentionScheduleSection } from "./_retention-schedule";
 import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/committed";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
@@ -78,12 +79,12 @@ export default async function EditJobPage({
     supabase
       .from("invoices")
       .select(
-        "id, number, status, amount, vat_total, total, job_id, quote_id, quote:quotes ( variation_number )",
+        "id, number, status, amount, vat_total, total, due_date, job_id, quote_id, quote:quotes ( variation_number )",
       )
       .eq("job_id", job.id),
     supabase
       .from("finances")
-      .select("id, amount, vat_total, category, created_at, job_id")
+      .select("id, amount, vat_total, category, created_at, job_id, purchase_order_id")
       .eq("job_id", job.id),
     // Variations on this job (any status).
     supabase
@@ -106,16 +107,20 @@ export default async function EditJobPage({
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types.
   type InvRow = {
+    id: string;
     job_id: string | null;
     amount: number | string | null;
     status: string;
     total: number | string | null;
+    due_date: string | null;
     quote?: { variation_number: number | null } | null;
   };
   type FinRow = {
     job_id: string | null;
     amount: number | string | null;
+    vat_total?: number | string | null;
     category: string | null;
+    purchase_order_id?: string | null;
   };
   type VarRow = {
     id: string;
@@ -140,18 +145,6 @@ export default async function EditJobPage({
     variation_number: number | null;
   }>;
 
-  // Programme B — commercial position: original agreed value, approved
-  // variations, and the DERIVED revised value (the original is never
-  // overwritten). Pure aggregation, unit-tested.
-  const position = computeJobCommercialPosition({
-    quotes: [
-      ...baseQuoteRows,
-      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
-    ],
-    invoices: invRows.map((i) => ({ status: i.status, total: i.total })),
-  });
-  const showPosition = hasCommercialPosition(position);
-
   const profit = computeJobProfitability(job.id, invRows, finRows);
 
   // Retention (Programme C) — the rate lives on the job, releases in the ledger.
@@ -161,12 +154,17 @@ export default async function EditJobPage({
       supabase.from("jobs" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { retention_percent: number | string | null } | null }>;
+            maybeSingle: () => Promise<{ data: {
+              retention_percent: number | string | null;
+              practical_completion_date: string | null;
+              defects_liability_months: number | string | null;
+              retention_first_release_pct: number | string | null;
+            } | null }>;
           };
         };
       }
     )
-      .select("retention_percent")
+      .select("retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
       .eq("id", job.id)
       .maybeSingle(),
     (
@@ -196,6 +194,29 @@ export default async function EditJobPage({
       .eq("job_id", job.id),
   ]);
   const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+
+  // Programme D — the ledger-truthful cash position (received/outstanding from
+  // real payments, not invoice status). One indexed read, empty-guarded.
+  const invIds = invRows.map((i) => i.id);
+  const jobPayments = invIds.length
+    ? await supabase.from("invoice_payments").select("invoice_id, amount").in("invoice_id", invIds)
+    : { data: [] as Array<{ invoice_id: string; amount: number | string | null }> };
+  const commercialCash = computeCommercialCash({
+    quotes: [
+      ...baseQuoteRows,
+      ...varRows.map((v) => ({ status: v.status, total: v.total, variation_number: v.variation_number })),
+    ],
+    invoices: invRows.map((i) => ({ id: i.id, status: i.status, total: i.total, due_date: i.due_date })),
+    payments: (jobPayments.data ?? []).map((p) => ({ invoice_id: p.invoice_id, amount: p.amount })),
+  });
+
+  // Billed (actual): supplier bills recorded against this job's POs — finances
+  // rows carrying a purchase_order_id. Closes committed → actual on the job P&L.
+  const poBilledRows = finRows.filter((r) => r.purchase_order_id);
+  const billedActual =
+    Math.round(
+      poBilledRows.reduce((s, r) => s + Number(r.amount ?? 0) + Number(r.vat_total ?? 0), 0) * 100,
+    ) / 100;
   const retentionReleaseRows = retentionReleases.data ?? [];
   const retention = computeRetentionPosition({
     ratePercent: retentionMeta.data?.retention_percent ?? 0,
@@ -207,6 +228,18 @@ export default async function EditJobPage({
   // can set the contract rate in the first place.
   const showRetention =
     retention.isActive || retentionReleaseRows.length > 0 || isAdmin;
+
+  // Retention release schedule (Programme C extension) — DERIVED forecast of
+  // when held retention is due back. Terms live on the job.
+  const retentionScheduleTerms = {
+    practicalCompletionDate: retentionMeta.data?.practical_completion_date ?? null,
+    defectsLiabilityMonths: Number(retentionMeta.data?.defects_liability_months ?? 12),
+    firstReleasePct: Number(retentionMeta.data?.retention_first_release_pct ?? 50),
+  };
+  const retentionSchedule = computeRetentionSchedule({
+    position: retention,
+    ...retentionScheduleTerms,
+  });
 
   // Original vs Variations breakdown — split invoice revenue by whether
   // the source quote has variation_number set.
@@ -251,6 +284,35 @@ export default async function EditJobPage({
         <h1 className="text-2xl font-bold text-slate-900">Edit job</h1>
       </header>
 
+      {/* Programme D — cash-first commercial strip (ledger-truthful). Links to
+          the full unified commercial position + lifecycle timeline. */}
+      {(commercialCash.billed > 0 || commercialCash.revised > 0) ? (
+        <Link
+          href={`/jobs/${job.id}/commercial`}
+          className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Outstanding</div>
+                <div className="text-2xl font-bold text-slate-900">{formatGbp(commercialCash.outstanding)}</div>
+              </div>
+              {commercialCash.overdue > 0 ? (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-red-500">Overdue</div>
+                  <div className="text-2xl font-bold text-red-700">{formatGbp(commercialCash.overdue)}</div>
+                </div>
+              ) : null}
+              <div className="text-sm text-slate-500">
+                {formatGbp(commercialCash.received)} received of {formatGbp(commercialCash.billed)} billed ·
+                contract {formatGbp(commercialCash.revised)}
+              </div>
+            </div>
+            <span className="text-sm font-medium text-slate-600">Commercial →</span>
+          </div>
+        </Link>
+      ) : null}
+
       {errorMessage ? (
         <div
           role="alert"
@@ -260,12 +322,16 @@ export default async function EditJobPage({
         </div>
       ) : null}
 
-      {saved === "retention_rate" || saved === "retention_release" ? (
+      {saved === "retention_rate" || saved === "retention_release" || saved === "retention_schedule" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
         >
-          {saved === "retention_rate" ? "Retention rate saved." : "Retention release recorded."}
+          {saved === "retention_rate"
+            ? "Retention rate saved."
+            : saved === "retention_schedule"
+              ? "Release schedule saved."
+              : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -321,39 +387,10 @@ export default async function EditJobPage({
 
       <PhotoGallery jobId={job.id} />
 
-      {/* Commercial position (Programme B) — contract value + billing state. */}
-      {showPosition ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Commercial position</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            The original agreed value is never overwritten — the revised value adds approved
-            variations.
-          </p>
-          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <PositionCell label="Original value" value={formatGbp(position.original)} />
-            <PositionCell
-              label="Approved variations"
-              value={`${position.approvedVariations > 0 ? "+" : ""}${formatGbp(position.approvedVariations)}`}
-              sub={position.counts.approvedVariations > 0 ? `${position.counts.approvedVariations} approved` : undefined}
-            />
-            <PositionCell label="Revised value" value={formatGbp(position.revised)} strong />
-            <PositionCell label="Invoiced" value={formatGbp(position.invoiced)} />
-            <PositionCell label="Uninvoiced" value={formatGbp(position.uninvoiced)} />
-            <PositionCell
-              label="Outstanding"
-              value={formatGbp(position.outstanding)}
-              tone={position.outstanding > 0 ? "amber" : undefined}
-            />
-          </dl>
-          {position.counts.pendingVariations > 0 ? (
-            <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-              {position.counts.pendingVariations} variation
-              {position.counts.pendingVariations === 1 ? "" : "s"} awaiting the customer&apos;s
-              decision ({formatGbp(position.pendingVariations)}) — not yet in the revised value.
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+      {/* Full commercial position + lifecycle timeline live at /commercial
+          (linked from the cash strip above). The old status-based position
+          panel was removed — it double-counted partly-paid invoices as fully
+          collected; the strip now shows the ledger-truthful figure. */}
 
       {/* Retention (Programme C) — contract holdback held & released. */}
       {showRetention ? (
@@ -382,6 +419,13 @@ export default async function EditJobPage({
               value={retention.isFullyReleased ? "Fully released" : retention.held > 0 ? "Outstanding" : "—"}
             />
           </dl>
+
+          <RetentionScheduleSection
+            jobId={job.id}
+            schedule={retentionSchedule}
+            isAdmin={isAdmin}
+            current={retentionScheduleTerms}
+          />
 
           {retentionReleaseRows.length > 0 ? (
             <div className="mt-4">
@@ -517,6 +561,20 @@ export default async function EditJobPage({
                 <p className="text-xs text-slate-400">
                   {committed.count} order{committed.count === 1 ? "" : "s"}
                   {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                </p>
+              </div>
+            ) : null}
+            {billedActual > 0 ? (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Billed (actual)</dt>
+                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                  {GBP.format(billedActual)}
+                </dd>
+                <p className="text-xs text-slate-400">
+                  {poBilledRows.length} bill{poBilledRows.length === 1 ? "" : "s"}
+                  {committed.committed > 0
+                    ? ` · ${Math.round((billedActual / committed.committed) * 100)}% of committed`
+                    : ""}
                 </p>
               </div>
             ) : null}
@@ -673,6 +731,10 @@ export default async function EditJobPage({
 
       <JobAssetsSection jobId={job.id} />
 
+      <JobBlueprintsPanel jobId={job.id} />
+
+      <JobSafetySection jobId={job.id} />
+
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
@@ -686,12 +748,20 @@ export default async function EditJobPage({
             We&rsquo;ll schedule a request the customer can act on at the right
             moment. Pick the platform and a delay.
           </p>
-          <Link
-            href={`/reviews/new?customer_id=${job.customer_id}&job_id=${job.id}`}
-            className="mt-3 inline-block rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
-          >
-            Request a review
-          </Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href={`/reviews/new?customer_id=${job.customer_id}&job_id=${job.id}`}
+              className="inline-block rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            >
+              Request a review
+            </Link>
+            <Link
+              href={`/jobs/${job.id}/certificate`}
+              className="inline-block rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50"
+            >
+              Completion certificate
+            </Link>
+          </div>
         </section>
       ) : null}
 

@@ -1,5 +1,13 @@
 # Commercial programme — shared execution brief (Portal → Variations → Finance → Integration)
 
+> **⚠ ARCHIVED point-in-time brief.** The commercial programme A–E is complete
+> (A–C in prod via RC3; supplier bills #399, payment allocation #400, commercial
+> lifecycle #401 built + unmerged). Baseline SHAs / "unmerged / no production
+> claims" language below is historical. The "shipped invariant" it describes for
+> accepted-quote immutability is the pre-hardening `20261004`; the live version
+> is `20261007` (`accepted_at`-keyed). Current state:
+> `docs/stage-one-reconciliation.md`.
+
 > Coordination contract for the Stage One continuation after Asset Management.
 > The lead agent owns final architecture, all shared DB objects, migration
 > sequencing, security sign-off, CI classification and milestone reports.

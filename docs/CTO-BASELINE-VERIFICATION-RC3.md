@@ -1,5 +1,9 @@
 # CrewFlow — CTO Baseline Verification & GO/NO-GO (RC3)
 
+> **⚠ SUPERSEDED — RC3 was cut over to production 2026-07-20 (`94eeea8`); the
+> GO decision was taken and executed.** Pre-cutover record. Current state:
+> `docs/stage-one-reconciliation.md`.
+
 **Independent re-verification pass.** Every prior report (including my own) was treated as untrusted; findings below are from Git, file reads, locally-executed gates, and 12 parallel read-only specialist agents. **Constraint disclosed up front:** 6 of 12 agents completed cleanly; the other 6 terminated early on a hard **account monthly spend limit** (not a code fault), each after emitting a key partial finding. Where a claim rests on the prior full audit rather than this pass's independent re-run, it is marked. The candidate under review is **RC3 = `release/rc3-full-platform` (PR #397 → `main`), DO NOT MERGE / DO NOT DEPLOY.**
 
 ## 1. Executive summary

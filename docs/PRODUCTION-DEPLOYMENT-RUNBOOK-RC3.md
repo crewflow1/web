@@ -1,5 +1,9 @@
 # CrewFlow — Production Deployment Runbook (RC3)
 
+> **⚠ SUPERSEDED — this cutover was EXECUTED on 2026-07-20 (`94eeea8`).**
+> Historical runbook of the completed deployment. Current state:
+> `docs/stage-one-reconciliation.md`.
+
 Companion to `docs/RELEASE-MANIFEST-RC3.md`. Covers the cutover of `release/rc3-full-platform` (PR #397) into production `main`. **Single production Supabase, no staging** — so pre-flight verification and backups are load-bearing.
 
 > **Authorization gate:** this runbook is not to be executed without an explicit human go/no-go. The one irreversible step (LR5.4B) additionally requires named authorization. Nothing here is run by the assistant.

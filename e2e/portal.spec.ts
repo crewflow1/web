@@ -37,4 +37,12 @@ test.describe("customer portal — a bad token reveals nothing on any surface", 
       await expect(page.getByText(/Needs your attention/i)).toHaveCount(0);
     });
   }
+
+  test("a completion-certificate PDF with an unknown token + guessed id returns 404, no bytes", async ({ request }) => {
+    const res = await request.get(
+      `/customer-portal/${FAKE_TOKEN}/certificates/00000000-0000-0000-0000-000000000000/pdf`,
+    );
+    expect(res.status()).toBe(404);
+    expect(res.headers()["content-type"] ?? "").not.toContain("application/pdf");
+  });
 });

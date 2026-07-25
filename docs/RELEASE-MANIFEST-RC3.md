@@ -1,5 +1,9 @@
 # CrewFlow — Production Release Manifest (RC3)
 
+> **⚠ SUPERSEDED — RC3 was cut over to production on 2026-07-20 (`94eeea8`).**
+> This is the pre-cutover record; the "DO NOT MERGE / DO NOT DEPLOY" language
+> below is historical. Current state: `docs/stage-one-reconciliation.md`.
+
 **Candidate branch:** `release/rc3-full-platform` → `main` (PR #397) · **DO NOT MERGE / DO NOT DEPLOY**
 **Supersedes:** RC2 #375 (stale — stopped at #374 / 158 migrations) and RC #363.
 **Produced by:** the Release-Recovery & CTO Consolidation directive — a 20-role multi-agent audit + serial consolidation. Every claim below is evidence-backed against the repository, not prior milestone reports.

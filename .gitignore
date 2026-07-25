@@ -67,3 +67,7 @@ yarn-error.log*
 
 # Local DB backups/snapshots (never commit)
 .backups/
+public/pdf.worker.min.mjs
+
+# Authenticated-E2E harness storageState (live JWT — never commit)
+/e2e/.auth/
