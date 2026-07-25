@@ -21,6 +21,7 @@ const ADMIN_LINKS = [
   { href: "/snags", label: "Snagging" },
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
+  { href: "/health-safety", label: "Health & safety" },
   { href: "/site-reports", label: "Site reports" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
