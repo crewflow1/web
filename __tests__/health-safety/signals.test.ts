@@ -4,6 +4,7 @@ import { buildHealthSafetySignals, type HsSnapshot } from "@/lib/health-safety/s
 const zero: HsSnapshot = {
   ramsDraft: 0, ramsReviewOverdue: 0, permitsExpiringSoon: 0,
   permitsExpiredLive: 0, activeJobsNoCurrentRams: 0, highResidualRams: 0,
+  toolboxAwaitingAck: 0,
 };
 
 describe("buildHealthSafetySignals", () => {
@@ -24,6 +25,7 @@ describe("buildHealthSafetySignals", () => {
     const signals = buildHealthSafetySignals({
       ramsDraft: 9, ramsReviewOverdue: 1, permitsExpiringSoon: 2,
       permitsExpiredLive: 5, activeJobsNoCurrentRams: 4, highResidualRams: 1,
+      toolboxAwaitingAck: 0,
     });
     const tones = signals.map((s) => s.tone);
     // every danger precedes every warn, every warn precedes every info
@@ -41,12 +43,24 @@ describe("buildHealthSafetySignals", () => {
     expect(many.title).toContain("3 permits ");
   });
 
-  it("every signal has a destination link", () => {
+  it("every RAMS/permit signal has a health-safety destination link", () => {
     const signals = buildHealthSafetySignals({
       ramsDraft: 1, ramsReviewOverdue: 1, permitsExpiringSoon: 1,
       permitsExpiredLive: 1, activeJobsNoCurrentRams: 1, highResidualRams: 1,
+      toolboxAwaitingAck: 0,
     });
     expect(signals).toHaveLength(6);
     for (const s of signals) expect(s.href).toMatch(/^\/health-safety/);
+  });
+
+  it("surfaces a warn-tone toolbox awaiting-acknowledgement signal linking to /toolbox", () => {
+    const one = buildHealthSafetySignals({ ...zero, toolboxAwaitingAck: 1 });
+    expect(one).toHaveLength(1);
+    expect(one[0]!.id).toBe("toolbox-awaiting-ack");
+    expect(one[0]!.tone).toBe("warn");
+    expect(one[0]!.href).toBe("/toolbox");
+    expect(one[0]!.title).toContain("1 toolbox talk ");
+    const many = buildHealthSafetySignals({ ...zero, toolboxAwaitingAck: 4 });
+    expect(many[0]!.title).toContain("4 toolbox talks ");
   });
 });

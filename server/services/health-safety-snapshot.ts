@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import type { HsSnapshot } from "@/lib/health-safety/signals";
+import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
 
 /**
  * Gather the H&S dashboard signals in a small, fixed set of bounded, RLS-scoped
@@ -54,6 +55,8 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
       .filter((id) => issuedRamsIds.has(id)),
   ).size;
 
+  const toolboxAwaitingAck = await toolboxAwaitingAckCount(supabase, orgId);
+
   return {
     ramsDraft: draftRes.count ?? 0,
     ramsReviewOverdue: reviewRes.count ?? 0,
@@ -61,5 +64,47 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
     permitsExpiredLive: expiredRes.count ?? 0,
     activeJobsNoCurrentRams,
     highResidualRams,
+    toolboxAwaitingAck,
   };
+}
+
+/**
+ * Count DELIVERED (current issued) toolbox talks whose assigned job crew has NOT
+ * fully acknowledged — the actionable "operatives still need to sign today's talk"
+ * exception. Bounded + no N+1: three batched reads (current talks, their jobs' rota,
+ * their acks) diffed in JS, mirroring the active-jobs-without-RAMS cross-reference.
+ * A talk with no job crew has no required-operative denominator → never counted
+ * (attendance ≠ authenticated-acknowledgement; we never invent a requirement).
+ */
+async function toolboxAwaitingAckCount(supabase: unknown, orgId: string): Promise<number> {
+  const q = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const talksRes = await q.from("toolbox_talks")
+    .select("id, job_id").eq("org_id", orgId).eq("status", "issued").not("job_id", "is", null).limit(500);
+  const talks = (talksRes.data ?? []) as { id: string; job_id: string }[];
+  if (talks.length === 0) return 0;
+
+  const jobIds = [...new Set(talks.map((t) => t.job_id))];
+  const talkIds = talks.map((t) => t.id);
+  const [rotaRes, acksRes] = await Promise.all([
+    q.from("rota_entries").select("job_id, user_id").in("job_id", jobIds),
+    q.from("safety_acknowledgements").select("subject_id, user_id").eq("subject_type", "toolbox_talk").in("subject_id", talkIds),
+  ]);
+
+  const crewByJob = new Map<string, Set<string>>();
+  for (const r of (rotaRes.data ?? []) as { job_id: string; user_id: string }[]) {
+    (crewByJob.get(r.job_id) ?? crewByJob.set(r.job_id, new Set()).get(r.job_id)!).add(r.user_id);
+  }
+  const acksByTalk = new Map<string, Set<string>>();
+  for (const a of (acksRes.data ?? []) as { subject_id: string; user_id: string }[]) {
+    (acksByTalk.get(a.subject_id) ?? acksByTalk.set(a.subject_id, new Set()).get(a.subject_id)!).add(a.user_id);
+  }
+
+  let awaiting = 0;
+  for (const t of talks) {
+    // Reuse the exact required-vs-signed semantics the SignoffPanel uses: no crew →
+    // not_tracked (never flagged); fully_signed → done; partial/unsigned → awaiting.
+    const summary = summariseSignoff([...(crewByJob.get(t.job_id) ?? [])], [...(acksByTalk.get(t.id) ?? [])]);
+    if (summary.state === "partially_signed" || summary.state === "unsigned") awaiting++;
+  }
+  return awaiting;
 }

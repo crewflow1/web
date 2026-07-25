@@ -15,6 +15,9 @@ const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000
 const revMigration = readFileSync(join(root, "supabase/migrations/20261027000000_toolbox_talk_revision_snapshot.sql"), "utf8");
 const attMigration = readFileSync(join(root, "supabase/migrations/20261028000000_toolbox_talk_attachment_freeze.sql"), "utf8");
 const attachPanel = readFileSync(join(root, "components/attachments/AttachmentsPanel.tsx"), "utf8");
+const hsSnapshot = readFileSync(join(root, "server/services/health-safety-snapshot.ts"), "utf8");
+const hsSignals = readFileSync(join(root, "lib/health-safety/signals.ts"), "utf8");
+const jobSafety = readFileSync(join(root, "app/(app)/jobs/[id]/_job-safety.tsx"), "utf8");
 const actions = readFileSync(join(root, "app/(app)/toolbox/actions.ts"), "utf8");
 const options = readFileSync(join(root, "app/(app)/toolbox/_form-options.ts"), "utf8");
 const snapshotLib = readFileSync(join(root, "lib/toolbox-talks/snapshot.ts"), "utf8");
@@ -326,5 +329,36 @@ describe("toolbox M5 — signed-sheet evidence is append-only once delivered", (
 
   it("the toolbox detail page freezes attachments the moment a talk leaves draft", () => {
     expect(detailPage).toMatch(/frozen=\{talk\.status !== "draft"\}/);
+  });
+});
+
+// ===========================================================================
+// M6 — operational intelligence (dashboard signal + job hub)
+// ===========================================================================
+describe("toolbox M6 — actionable awaiting-ack signal, RLS-scoped, no N+1", () => {
+  it("the dashboard snapshot computes awaiting-ack on the tenant client (never service-role)", () => {
+    expect(hsSnapshot).toMatch(/server-only/);
+    expect(hsSnapshot).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(hsSnapshot).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+  it("awaiting-ack is bounded + batched (no N+1): one talk read, then batched rota + acks diffed in JS", () => {
+    expect(hsSnapshot).toMatch(/toolboxAwaitingAckCount/);
+    expect(hsSnapshot).toMatch(/\.limit\(500\)/); // bounded current-talk read
+    expect(hsSnapshot).toMatch(/\.in\("job_id", jobIds\)/); // batched rota
+    expect(hsSnapshot).toMatch(/\.in\("subject_id", talkIds\)/); // batched acks
+    // reuses the unit-tested summariseSignoff → no-crew is not_tracked (never flagged),
+    // identical honesty semantics to the SignoffPanel (no invented requirement)
+    expect(hsSnapshot).toMatch(/summariseSignoff/);
+  });
+  it("the signal is a warn-tone exception linking to /toolbox, only when count > 0", () => {
+    expect(hsSignals).toMatch(/toolbox-awaiting-ack/);
+    expect(hsSignals).toMatch(/awaiting operative acknowledgement/);
+    expect(hsSignals).toMatch(/href: "\/toolbox"/);
+    expect(hsSignals).toMatch(/if \(s\.toolboxAwaitingAck > 0\)/);
+  });
+  it("the job safety hub reads the job's toolbox talks on the tenant client", () => {
+    expect(jobSafety).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(jobSafety).toMatch(/\.from\("toolbox_talks"\)/);
+    expect(jobSafety).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
   });
 });
