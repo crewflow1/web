@@ -1,5 +1,11 @@
 # Asset Management programme — shared execution brief (M4b → M5 → integration)
 
+> **⚠ ARCHIVED — superseded by `docs/asset-management.md`.** Frozen at the M4b-1
+> moment: its baseline table (attachment-CHECK "14 targets", "open asset PRs
+> #376–#381 unmerged", RC2 #375, base SHA) is stale — the CHECK authority is now
+> `20261002` with **15 targets** and Asset Management is in prod via RC3. Current
+> state: `docs/stage-one-reconciliation.md`.
+
 > Coordination contract for the multi-agent build of inspection templates,
 > scheduling, overrides/reinspection, maintenance, and full integration.
 > The lead agent owns final architecture, all shared DB objects, conflict

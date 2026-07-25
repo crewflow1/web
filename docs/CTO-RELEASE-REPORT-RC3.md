@@ -1,5 +1,8 @@
 # CrewFlow — CTO Release-Recovery Report (RC3)
 
+> **⚠ SUPERSEDED — RC3 was cut over to production 2026-07-20 (`94eeea8`).**
+> Pre-cutover record. Current state: `docs/stage-one-reconciliation.md`.
+
 **Prepared under:** the Release-Recovery & CTO Consolidation directive.
 **Method:** a 20-role multi-agent audit (7 independent specialist agents) + serial release engineering. Every finding is evidence-backed against the repository at `release/rc3-full-platform`; prior milestone reports were **not** trusted.
 **Deliverable:** RC3 = `release/rc3-full-platform` → `main` (PR #397), **DO NOT MERGE / DO NOT DEPLOY**.
@@ -21,7 +24,7 @@ Every CEO-forbidden parallel system was explicitly checked and verified **single
 
 ## 3. Codebase health — STRONG
 
-TypeScript strict compiles clean; ESLint clean (0 errors, 6 pre-existing warnings in unrelated files). The vertical pattern (migration → pure lib → tenant-client server action → UI) is consistent across every new feature. The one systemic smell is the 216 `as never` Supabase-type casts driven by stale generated types (§10.1) — it compiles and runs, but it is a real type-safety loss to clear post-cutover.
+TypeScript strict compiles clean; ESLint clean (0 errors, 6 pre-existing warnings in unrelated files). The vertical pattern (migration → pure lib → tenant-client server action → UI) is consistent across every new feature. The one systemic smell is the ~292 `.from(...as never)` Supabase-type casts (556 total `as never`, ~167 files) driven by stale generated types (§10.1; an earlier draft of this line said 216/106 — corrected) — it compiles and runs, but it is a real type-safety loss to clear post-cutover.
 
 ## 4. Database health — SAFE-WITH-NOTES
 
