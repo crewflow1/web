@@ -3,14 +3,18 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
+import { TOOLBOX_TALK_STATUS_META, type ToolboxTalkStatus } from "@/lib/health-safety/toolbox-talks";
 
 /**
- * /toolbox — recorded on-site safety briefings (toolbox talks / RAMS).
- * One org-scoped read; job names resolve in one batched lookup.
+ * /toolbox — on-site safety briefings that evolve into acknowledgeable evidence.
+ * One org-scoped read; job names resolve in one batched lookup. A row shows its
+ * lifecycle status (Draft / Delivered / Superseded / Withdrawn) and reference.
  */
 
 type TalkRow = {
   id: string;
+  status: ToolboxTalkStatus;
+  reference: string | null;
   talk_date: string;
   topic: string;
   presenter: string | null;
@@ -24,11 +28,12 @@ const ERROR_MAP: Record<string, string> = {
   bad_id: "Invalid talk.",
   forbidden: "Only an owner or admin can delete a toolbox talk.",
   delete_failed: "Couldn't delete that talk.",
+  not_deletable: "Only a draft can be deleted.",
   not_found: "That talk no longer exists.",
 };
 const SAVED_MAP: Record<string, string> = {
-  created: "Toolbox talk recorded.",
-  deleted: "Toolbox talk deleted.",
+  created: "Toolbox talk drafted.",
+  deleted: "Draft deleted.",
 };
 
 type SP = Promise<{ saved?: string; error?: string }>;
@@ -54,7 +59,7 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
     }
   )
     .select(
-      "id, talk_date, topic, presenter, attendees, attendee_count, job_id, created_at",
+      "id, status, reference, talk_date, topic, presenter, attendees, attendee_count, job_id, created_at",
     )
     .order("talk_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -116,11 +121,18 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
         <ul className="space-y-3">
           {rows.map((row) => {
             const jobName = row.job_id ? jobsMap.get(row.job_id) : null;
+            const meta = TOOLBOX_TALK_STATUS_META[row.status] ?? TOOLBOX_TALK_STATUS_META.draft;
             return (
               <li key={row.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-slate-900">{row.topic}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium text-slate-900">{row.topic}</p>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.tone}`}>
+                        {meta.label}
+                      </span>
+                      {row.reference ? <span className="font-mono text-xs text-slate-500">{row.reference}</span> : null}
+                    </div>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
                       <span className="font-medium text-slate-700">
                         {formatDiaryDate(row.talk_date)}

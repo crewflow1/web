@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { AcknowledgementRow } from "@/lib/health-safety/acknowledgements-schema";
-import type { AckSubjectType } from "@/lib/health-safety/acknowledgements";
+import type { AckSubjectType, RevisableSubject } from "@/lib/health-safety/acknowledgements";
+import { RAMS_REVISABLE } from "@/lib/health-safety/acknowledgements";
 
 /**
  * Operative sign-off read layer (shared by the RAMS + permit detail pages).
@@ -38,24 +39,30 @@ export async function countOrgMembers(): Promise<number> {
 }
 
 /**
- * Did the current user acknowledge an EARLIER revision of this RAMS series? Used to
- * prompt re-acknowledgement on a new revision (M6c): "you signed Rev N — please
+ * Did the current user acknowledge an EARLIER revision of this series? Used to prompt
+ * re-acknowledgement on a new revision (M6c / toolbox M3): "you signed Rev N — please
  * re-acknowledge Rev N+1". Two bounded, RLS-scoped reads. Returns the highest earlier
- * revision the user signed, or null. RAMS-only (permits have no revision series).
+ * revision the user signed, or null.
+ *
+ * Generic over any RevisableSubject (RAMS, toolbox talk) — the table, series-root
+ * column and ack subject_type come from the config, so there are no hardcoded RAMS
+ * literals here. `subjectRef` defaults to RAMS to keep the existing RAMS callers
+ * working unchanged.
  */
 export type PriorSignoff = { reference: string | null; revisionNumber: number; acknowledgedAt: string };
 export async function priorRevisionSignoff(
   rootId: string,
   currentRevision: number,
   userId: string,
+  subject: RevisableSubject = RAMS_REVISABLE,
 ): Promise<PriorSignoff | null> {
   if (currentRevision <= 1) return null;
   const supabase = await createClient();
   const { data: earlier } = await (supabase as unknown as {
     from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { lt: (k: string, v: number) => Promise<{ data: Array<{ id: string; reference: string | null; revision_number: number }> | null }> } } };
   })
-    .from("risk_assessments").select("id, reference, revision_number")
-    .eq("root_risk_assessment_id", rootId).lt("revision_number", currentRevision);
+    .from(subject.table).select("id, reference, revision_number")
+    .eq(subject.rootColumn, rootId).lt("revision_number", currentRevision);
   const revs = earlier ?? [];
   if (revs.length === 0) return null;
   const byId = new Map(revs.map((r) => [r.id, r]));
@@ -63,7 +70,7 @@ export async function priorRevisionSignoff(
     from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { in: (k: string, v: string[]) => Promise<{ data: Array<{ subject_id: string; acknowledged_at: string }> | null }> } } } };
   })
     .from("safety_acknowledgements").select("subject_id, acknowledged_at")
-    .eq("subject_type", "risk_assessment").eq("user_id", userId).in("subject_id", revs.map((r) => r.id));
+    .eq("subject_type", subject.subjectType).eq("user_id", userId).in("subject_id", revs.map((r) => r.id));
   let best: PriorSignoff | null = null;
   for (const a of acks ?? []) {
     const rev = byId.get(a.subject_id);

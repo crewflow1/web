@@ -303,7 +303,11 @@ describe("H&S operational surfaces (M6b) — RLS-scoped + required-operative mod
   });
   it("[M6c] re-acknowledgement is detected across the revision series, RLS-scoped, no ack copying", () => {
     expect(signoffData).toMatch(/priorRevisionSignoff/);
-    expect(signoffData).toMatch(/root_risk_assessment_id/);
+    // Generalised over any RevisableSubject (RAMS + toolbox, M2): the series-root
+    // column is driven by the subject config, not a hardcoded RAMS literal. RAMS
+    // stays anchored on root_risk_assessment_id via RAMS_REVISABLE (the default).
+    expect(signoffData).toMatch(/\.eq\(subject\.rootColumn, rootId\)/);
+    expect(signoffData).toMatch(/RAMS_REVISABLE/);
     expect(signoffData).toMatch(/from "@\/lib\/supabase\/server"/); // tenant client (RLS)
     expect(signoffData).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
   });

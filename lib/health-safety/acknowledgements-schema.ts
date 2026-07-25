@@ -15,7 +15,7 @@ export type AcknowledgeInput = z.infer<typeof acknowledgeSchema>;
 export type AcknowledgementRow = {
   id: string;
   org_id: string;
-  subject_type: "risk_assessment" | "permit_to_work";
+  subject_type: "risk_assessment" | "permit_to_work" | "toolbox_talk";
   subject_id: string;
   subject_version: string;
   user_id: string;

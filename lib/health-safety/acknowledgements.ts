@@ -4,12 +4,13 @@
  * later toolbox) means ONE acknowledgement system, version-anchored + append-only.
  */
 
-export const ACK_SUBJECT_TYPES = ["risk_assessment", "permit_to_work"] as const;
+export const ACK_SUBJECT_TYPES = ["risk_assessment", "permit_to_work", "toolbox_talk"] as const;
 export type AckSubjectType = (typeof ACK_SUBJECT_TYPES)[number];
 
 export const ACK_SUBJECT_LABELS: Record<AckSubjectType, string> = {
   risk_assessment: "risk assessment",
   permit_to_work: "permit to work",
+  toolbox_talk: "toolbox talk",
 };
 
 /** The current attestation wording + version (bump the version if the wording
@@ -17,8 +18,39 @@ export const ACK_SUBJECT_LABELS: Record<AckSubjectType, string> = {
 export const ACK_STATEMENT_VERSION = "v1";
 export function ackStatement(subjectType: AckSubjectType, reference: string): string {
   const noun = ACK_SUBJECT_LABELS[subjectType];
+  // A toolbox talk is a briefing that was delivered — "attended and understood" is
+  // the honest attestation, not "read". The document types keep "read and understood".
+  if (subjectType === "toolbox_talk") {
+    return `I confirm I attended and understood ${noun} ${reference}, and I will work in accordance with the safety points briefed.`;
+  }
   return `I confirm I have read and understood ${noun} ${reference}, and I will work in accordance with its controls.`;
 }
+
+/**
+ * A subject type that carries a revision series (root + revision_number). Captures
+ * the three things a revision-aware query needs so priorRevisionSignoff (and future
+ * series helpers) work for ANY revisable subject, not just RAMS. Permits have no
+ * series, so there is deliberately no permit entry.
+ */
+export type RevisableSubject = {
+  subjectType: AckSubjectType;
+  /** the subject table (e.g. "risk_assessments"). */
+  table: string;
+  /** the self-referential series-root column (e.g. "root_risk_assessment_id"). */
+  rootColumn: string;
+};
+
+export const RAMS_REVISABLE: RevisableSubject = {
+  subjectType: "risk_assessment",
+  table: "risk_assessments",
+  rootColumn: "root_risk_assessment_id",
+};
+
+export const TOOLBOX_REVISABLE: RevisableSubject = {
+  subjectType: "toolbox_talk",
+  table: "toolbox_talks",
+  rootColumn: "root_toolbox_talk_id",
+};
 
 /** Has this specific operative acknowledged this specific issued version? */
 export function hasAcknowledged(

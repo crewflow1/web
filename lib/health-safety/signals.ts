@@ -13,6 +13,7 @@ export type HsSnapshot = {
   permitsExpiredLive: number; // live permits already past valid_until (need closeout)
   activeJobsNoCurrentRams: number; // in-progress jobs with no issued RAMS
   highResidualRams: number; // issued RAMS carrying a Critical (16–25) residual hazard
+  toolboxAwaitingAck: number; // delivered (current) toolbox talks whose job crew hasn't fully acknowledged
 };
 
 export type HsSignalTone = "danger" | "warn" | "info";
@@ -84,6 +85,16 @@ export function buildHealthSafetySignals(s: HsSnapshot): HsSignal[] {
       title: `${s.highResidualRams} issued RAMS with a critical residual risk`,
       body: "A hazard still scores 16–25 after controls. Check the controls are adequate.",
       href: "/health-safety",
+    });
+  }
+  if (s.toolboxAwaitingAck > 0) {
+    out.push({
+      id: "toolbox-awaiting-ack",
+      tone: "warn",
+      count: s.toolboxAwaitingAck,
+      title: `${s.toolboxAwaitingAck} toolbox talk${plural(s.toolboxAwaitingAck, "", "s")} awaiting operative acknowledgement`,
+      body: "Some assigned operatives haven't acknowledged a current briefing. Chase the sign-off on site.",
+      href: "/toolbox",
     });
   }
   if (s.ramsDraft > 0) {
