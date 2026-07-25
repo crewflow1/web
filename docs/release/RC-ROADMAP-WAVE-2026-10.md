@@ -121,7 +121,9 @@ All 8 stacks are green against `main`'s partial `types.ts` via the established `
 
 ## Pre-release hardening (2026-07-25)
 
-A 12-agent adversarial pre-release pass found and closed **4 P1s** (zero P0) before the boundary — this is why the RC now carries **18** migrations (`…08→…24`):
+**Production migration reconciliation (2026-07-25):** prod was already at `20261008` (applied out-of-band from #398 — verified: prod numbering functions use `current_org_ids`), so of the 18 wave files only **17 are pending** (`20261009 → 20261024`); `20261008` must not be reapplied. No prod-only drift / collision / reorder / missing migration.
+
+A 12-agent adversarial pre-release pass found and closed **4 P1s** (zero P0) before the boundary — this is why the RC now carries **18** migration files (`…08→…24`):
 - **completion_certificates** bare FKs → cross-tenant write + one-live-per-job DoS: new migration `20261024` adds `tg_completion_certificate_org_integrity` (+ closes inert `blueprints.job_id`/`payments.customer_id` gaps) · real-PG cross-tenant test.
 - **cash.ts** cross-invoice overpay understated `outstanding` → per-invoice cap · test.
 - **allocate + supplier-bill** had no double-submit guard → added `DEDUPE_WINDOW_MS` idempotency · source-contract test.

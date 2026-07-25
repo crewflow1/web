@@ -13,7 +13,8 @@
 | RC tip SHA | `96fa4e5` (confirm `git rev-parse origin/release/roadmap-wave-2026-10` before acting) |
 | Production baseline (main) | `94eeea8` (RC3) |
 | Supabase prod ref | `jzntbskdqdopzwdqwvkp` (crewflow, West EU / Ireland) |
-| Migrations | **18 additive**, `20261008 → 20261024` |
+| Migrations in wave | **18 additive files**, `20261008 → 20261024` |
+| **Pending to prod** | **17** (`20261009 → 20261024`) — `20261008` was applied out-of-band and is **already on prod** (verified: prod `next_quote/invoice_number` use `current_org_ids`). `db push` applies only the 17; do **NOT** reapply `20261008`. |
 | New fixed cost | none (one private Storage bucket within plan) |
 | External providers | all DARK (no activation) |
 
@@ -66,10 +67,12 @@ against the linked prod project. Recommended order:
 2. **Apply migrations** (low-traffic window, because of the `20261016` snags index):
    ```
    supabase link --project-ref jzntbskdqdopzwdqwvkp    # if not already linked
-   supabase db push --linked                            # applies 20261008 → 20261024 in order
+   supabase db push --linked --dry-run                  # CONFIRM it lists exactly 17: 20261009 → 20261024
+   supabase db push --linked                            # applies the 17 pending in order
    ```
-   Expect 18 migrations applied, exit 0. If any fails, it rolls that file back atomically (all are
-   transaction-safe) — STOP, diagnose, do not force.
+   Expect **17** migrations applied, exit 0 (`20261008` is already on prod and is skipped by version —
+   never reapplied). If any fails, it rolls that file back atomically (all are transaction-safe) —
+   STOP, diagnose, do not force.
 3. **Merge PR #421** into `main` (this triggers the Vercel production build + deploy of the app whose
    code matches the just-applied schema).
 4. Watch the Vercel deployment to `Ready`.
