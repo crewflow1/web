@@ -306,6 +306,47 @@ The operator flow: an issued RAMS shows **Create revision** (a draft copied from
 snapshot) → edit hazards/controls/method → **Issue revision N** (supersedes the previous
 in one step) → the previous revision stays immutable in the **Revision history** rail.
 
+## Milestone 6b — Operational surfaces (register, signals, hub, required-operative, search)
+
+The RAMS + permits verticals become a coherent safety-management system.
+
+**Required-operative sign-off model.** Sign-off is now measured against the operatives
+**required** to acknowledge a document — the distinct crew rota'd to its job
+(`rota_entries`, the platform's canonical job-workforce; H&S reuses it rather than keeping
+a second list). The detail panels show `signedRequired / required`, an explicit **Awaiting
+sign-off** list (the WARN signal), and — honestly — **Not tracked** when a document has no
+job link, because we never invent a requirement (directive §10-11). The status is a pure,
+unit-tested function (`summariseSignoff`); a real member (JWT) can read the rota to derive
+the crew, per job, org-scoped (proven in `required-operatives.test.ts`). The whole-org
+`countOrgMembers()` denominator is gone.
+
+**Work-block seam (WARN, not block).** The infrastructure to *detect and signal* "RAMS
+acknowledgement required before work" is in place (the outstanding-operative list + the
+dashboard signals). Hard-blocking a paid operative from clocking in is a product-policy
+decision and is **not** built — the detection/signal is the safe default; the hard-block
+seam is architected on top of the required-operative set.
+
+**Dashboard action signals** (`lib/health-safety/signals.ts` + `server/services/
+health-safety-snapshot.ts`). Deterministic, bounded, RLS-scoped — mirrors the retention
+snapshot pattern, not the per-user notifications engine. Signals (danger → warn → info):
+permits expired-but-open, active jobs with no current RAMS, permits expiring within 24h,
+RAMS past review date, critical (16-25) residual risk, drafts awaiting issue. Surfaced as a
+"Needs attention" panel on the H&S register; hidden entirely when all-clear.
+
+**Register filters.** The H&S register filters by status (All / Draft / Issued /
+Superseded-withdrawn) with live counts, bounded reads.
+
+**Job Safety hub** (`app/(app)/jobs/[id]/_job-safety.tsx`). A per-job H&S section (mirrors
+the job-assets pattern): the job's RAMS (current issued highlighted, a "no current RAMS"
+warning when work is in progress) and its permits with the **derived** status (an expired
+permit reads EXPIRED, never a stale "active").
+
+**Search.** RA and permit numbers + titles are in the ⌘K palette (RLS-scoped, sanitised).
+
+**Observability.** `risk_assessment.revised` (and the existing `.issued`) are audited via
+`recordAdminActivity` with ids/reference/status only — never method statements, close-out
+notes or signatures.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation

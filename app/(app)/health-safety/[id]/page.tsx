@@ -5,7 +5,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { getRiskAssessment, listAssessors, getRevisionSiblings } from "../_data";
 import { SignoffPanel } from "../_signoff-panel";
-import { listAcknowledgements, countOrgMembers } from "../_signoff-data";
+import { listAcknowledgements, requiredOperatives } from "../_signoff-data";
+import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
 import {
   canIssue,
   isEditable,
@@ -102,7 +103,10 @@ export default async function RiskAssessmentDetailPage({
   if (!result) notFound();
   const { ra, hazards } = result;
   const acks = ra.status === "issued" ? await listAcknowledgements("risk_assessment", ra.id) : [];
-  const memberCount = ra.status === "issued" ? await countOrgMembers() : 0;
+  // Required operatives = the crew rota'd to this RAMS's job (M6b). No job → not tracked.
+  const required = ra.status === "issued" ? await requiredOperatives(ra.job_id) : [];
+  const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
+  const outstandingNames = required.filter((o) => signoff.outstanding.includes(o.id)).map((o) => o.name);
 
   // Revision lineage: the whole series (newest first) + the currently-live revision.
   const siblings = await getRevisionSiblings(ra.root_risk_assessment_id);
@@ -777,7 +781,8 @@ export default async function RiskAssessmentDetailPage({
           reference={ra.reference ?? ""}
           acks={acks}
           currentUserId={userId}
-          memberCount={memberCount}
+          summary={signoff}
+          outstandingNames={outstandingNames}
           pdfHref={`/api/health-safety/${ra.id}/pdf`}
         />
       ) : null}

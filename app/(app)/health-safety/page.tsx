@@ -3,12 +3,23 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { listRiskAssessments } from "./_data";
+import { HealthSafetySignals } from "./_hs-signals";
+import { buildHealthSafetySnapshot } from "@/server/services/health-safety-snapshot";
+import { buildHealthSafetySignals } from "@/lib/health-safety/signals";
 import {
   overallRiskBand,
   RISK_BAND_META,
   type RaStatus,
   type RiskBand,
 } from "@/lib/health-safety/rams";
+
+const RA_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "draft", label: "Draft" },
+  { key: "issued", label: "Issued" },
+  { key: "archived", label: "Superseded / withdrawn" },
+] as const;
+type RaFilter = (typeof RA_FILTERS)[number]["key"];
 
 /**
  * /health-safety — the RAMS register (Risk Assessment & Method Statement).
@@ -65,17 +76,30 @@ type HazardBandRow = {
   residual_severity: number | null;
 };
 
-type SP = Promise<{ saved?: string; error?: string }>;
+type SP = Promise<{ saved?: string; error?: string; status?: string }>;
 
 export default async function HealthSafetyPage({
   searchParams,
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 
-  const rows = await listRiskAssessments();
+  const [rows, snapshot] = await Promise.all([
+    listRiskAssessments(),
+    buildHealthSafetySnapshot(ctx.org.id),
+  ]);
+  const signals = buildHealthSafetySignals(snapshot);
+
+  const filter: RaFilter = (RA_FILTERS.find((f) => f.key === sp.status)?.key ?? "all");
+  const visibleRows = rows.filter((r) =>
+    filter === "all"
+      ? true
+      : filter === "archived"
+        ? r.status === "superseded" || r.status === "withdrawn"
+        : r.status === filter,
+  );
 
   // Worst-risk band per RA needs the hazard scores, which the list read omits.
   // Pull them for every listed RA in a single org-scoped query and group in
@@ -162,6 +186,8 @@ export default async function HealthSafetyPage({
         </Link>
       </nav>
 
+      <HealthSafetySignals signals={signals} />
+
       {errorMessage ? (
         <div
           role="alert"
@@ -181,6 +207,32 @@ export default async function HealthSafetyPage({
         </div>
       ) : null}
 
+      {rows.length > 0 ? (
+        <div role="tablist" aria-label="Filter risk assessments" className="flex flex-wrap gap-1.5 text-xs">
+          {RA_FILTERS.map((f) => {
+            const active = f.key === filter;
+            const count =
+              f.key === "all"
+                ? rows.length
+                : f.key === "archived"
+                  ? rows.filter((r) => r.status === "superseded" || r.status === "withdrawn").length
+                  : rows.filter((r) => r.status === f.key).length;
+            return (
+              <Link
+                key={f.key}
+                href={f.key === "all" ? "/health-safety" : `/health-safety?status=${f.key}`}
+                aria-current={active ? "page" : undefined}
+                className={`inline-flex min-h-[36px] items-center rounded-full px-3 font-medium ${
+                  active ? "bg-slate-900 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {f.label} <span className="ml-1 opacity-70">{count}</span>
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+
       {rows.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <EmptyState
@@ -193,9 +245,13 @@ export default async function HealthSafetyPage({
             }}
           />
         </div>
+      ) : visibleRows.length === 0 ? (
+        <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          No matching risk assessments in this view.
+        </p>
       ) : (
         <ul className="space-y-3">
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const status = row.status as RaStatus;
             const band = bandByRa.get(row.id) ?? null;
             const bandMeta = band ? RISK_BAND_META[band] : null;
@@ -257,8 +313,8 @@ export default async function HealthSafetyPage({
 
       {rows.length > 0 ? (
         <p className="text-xs text-slate-500">
-          {rows.length} risk assessment{rows.length === 1 ? "" : "s"} · {issuedCount}{" "}
-          issued.
+          Showing {visibleRows.length} of {rows.length} risk assessment
+          {rows.length === 1 ? "" : "s"} · {issuedCount} issued.
         </p>
       ) : null}
     </div>

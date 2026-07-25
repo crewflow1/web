@@ -23,6 +23,10 @@ const ramsPdfLib = readFileSync(join(root, "lib/pdf/rams-pdf.tsx"), "utf8");
 const permitPdfLib = readFileSync(join(root, "lib/pdf/permit-pdf.tsx"), "utf8");
 const hardening = readFileSync(join(root, "supabase/migrations/20261021000000_health_safety_evidence_hardening.sql"), "utf8");
 const revising = readFileSync(join(root, "supabase/migrations/20261022000000_health_safety_rams_revisioning.sql"), "utf8");
+const searchRoute = readFileSync(join(root, "app/api/search/route.ts"), "utf8");
+const hsSnapshot = readFileSync(join(root, "server/services/health-safety-snapshot.ts"), "utf8");
+const signoffData = readFileSync(join(root, "app/(app)/health-safety/_signoff-data.ts"), "utf8");
+const signoffPanel = readFileSync(join(root, "app/(app)/health-safety/_signoff-panel.tsx"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -270,5 +274,30 @@ describe("RAMS revisioning (M6a) — lineage + one-current + atomic supersede ar
     expect(actions).toMatch(/createRamsRevision/);
     // still tenant-client only (no service-role) for the revision path
     expect(actions).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+});
+
+describe("H&S operational surfaces (M6b) — RLS-scoped + required-operative model", () => {
+  it("search over RAMS/permits is auth-gated + tenant-client (RLS keeps it intra-org)", () => {
+    expect(searchRoute).toMatch(/requireOrgContext\(\)/);
+    expect(searchRoute).toMatch(/risk_assessments/);
+    expect(searchRoute).toMatch(/permits_to_work/);
+    expect(searchRoute).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+    expect(searchRoute).toMatch(/sanitizeSearchTerm/); // structural-char neutralisation before .or()
+  });
+  it("the dashboard snapshot is server-only + tenant-client (never service-role)", () => {
+    expect(hsSnapshot).toMatch(/server-only/);
+    expect(hsSnapshot).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(hsSnapshot).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+  it("required operatives derive from the job rota (rota_entries), not a second workforce list", () => {
+    expect(signoffData).toMatch(/requiredOperatives/);
+    expect(signoffData).toMatch(/rota_entries/);
+    expect(signoffData).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+  it("the sign-off panel shows the required-operative summary, not a whole-org count", () => {
+    expect(signoffPanel).toMatch(/summary:\s*SignoffSummary/);
+    expect(signoffPanel).toMatch(/outstandingNames/);
+    expect(signoffPanel).not.toMatch(/memberCount/);
   });
 });

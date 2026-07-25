@@ -9,7 +9,7 @@
  */
 
 export type SearchHit = {
-  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff";
+  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff" | "risk_assessment" | "permit";
   id: string;
   title: string;
   subtitle: string | null;
@@ -21,8 +21,10 @@ const TYPE_PRIORITY: Record<SearchHit["type"], number> = {
   invoice: 1,
   quote: 2,
   job: 3,
-  lead: 4,
-  staff: 5,
+  risk_assessment: 4,
+  permit: 5,
+  lead: 6,
+  staff: 7,
 };
 
 export function normaliseQuery(q: string): string {

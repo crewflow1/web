@@ -38,6 +38,48 @@ export function acknowledgementProgress(
   return { signed, expected, complete: expected > 0 && signed >= expected };
 }
 
+export type SignoffState = "fully_signed" | "partially_signed" | "unsigned" | "not_tracked";
+
+export type SignoffSummary = {
+  state: SignoffState;
+  required: number; // required operatives (0 when the document isn't job-tracked)
+  signedRequired: number; // required operatives who have signed the current version
+  outstanding: string[]; // required user_ids not yet signed
+  extraSigned: number; // signers not in the required set (e.g. a visiting manager)
+};
+
+export const SIGNOFF_STATE_LABEL: Record<SignoffState, string> = {
+  fully_signed: "Fully acknowledged",
+  partially_signed: "Partially acknowledged",
+  unsigned: "Not acknowledged",
+  not_tracked: "Not tracked",
+};
+
+/**
+ * Sign-off status of a document against the REQUIRED operatives — the crew rota'd
+ * to its job (M6b). We NEVER invent a requirement: when no operatives can be
+ * derived (no job link, or an empty rota) the document is `not_tracked` — signatures
+ * are still recorded, but there is no N-of-M denominator to imply an obligation.
+ * Pure + deterministic; the acknowledged set is the signers of the CURRENT version.
+ */
+export function summariseSignoff(
+  requiredUserIds: string[],
+  acknowledgedUserIds: string[],
+): SignoffSummary {
+  const required = [...new Set(requiredUserIds)];
+  const signed = new Set(acknowledgedUserIds);
+  if (required.length === 0) {
+    return { state: "not_tracked", required: 0, signedRequired: 0, outstanding: [], extraSigned: signed.size };
+  }
+  const requiredSet = new Set(required);
+  const outstanding = required.filter((u) => !signed.has(u));
+  const signedRequired = required.length - outstanding.length;
+  const extraSigned = [...signed].filter((u) => !requiredSet.has(u)).length;
+  const state: SignoffState =
+    outstanding.length === 0 ? "fully_signed" : signedRequired > 0 ? "partially_signed" : "unsigned";
+  return { state, required: required.length, signedRequired, outstanding, extraSigned };
+}
+
 /** Validate a typed-name attestation before a write is attempted. */
 export function validateSignature(signedName: string): string[] {
   const errs: string[] = [];

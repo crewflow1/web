@@ -36,3 +36,30 @@ export async function countOrgMembers(): Promise<number> {
     .select("user_id", { count: "exact", head: true });
   return count ?? 0;
 }
+
+export type Operative = { id: string; name: string };
+
+/**
+ * The operatives REQUIRED to acknowledge a job's safety documents — the distinct
+ * users rota'd to the job. `rota_entries` is the platform's canonical "who is on
+ * this job" source (declared canonical in 20260523), so H&S reuses it rather than
+ * keeping a second workforce list. Empty when the document has no job link: we
+ * never invent a requirement. RLS-scoped (rota is org-member-readable).
+ */
+export async function requiredOperatives(jobId: string | null): Promise<Operative[]> {
+  if (!jobId) return [];
+  const supabase = await createClient();
+  const { data: rows } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => Promise<{ data: Array<{ user_id: string }> | null }> } };
+  })
+    .from("rota_entries").select("user_id").eq("job_id", jobId);
+  const ids = [...new Set((rows ?? []).map((r) => r.user_id))];
+  if (ids.length === 0) return [];
+  // Names via the same memberships→users embed listAssessors uses (unambiguous FK).
+  const { data: members } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { in: (k: string, v: string[]) => Promise<{ data: Array<{ user_id: string; users: { full_name: string | null; email: string | null } | null }> | null }> } };
+  })
+    .from("memberships").select("user_id, users(full_name, email)").in("user_id", ids);
+  const nameById = new Map((members ?? []).map((m) => [m.user_id, m.users?.full_name || m.users?.email || "Operative"]));
+  return ids.map((id) => ({ id, name: nameById.get(id) ?? "Operative" }));
+}

@@ -9,6 +9,7 @@ import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
+import { JobSafetySection } from "./_job-safety";
 import { JobDocumentsPanel } from "./_job-documents";
 import {
   computeJobCommercialPosition,
@@ -672,6 +673,8 @@ export default async function EditJobPage({
       </section>
 
       <JobAssetsSection jobId={job.id} />
+
+      <JobSafetySection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

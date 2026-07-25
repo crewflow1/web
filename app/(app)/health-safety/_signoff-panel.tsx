@@ -1,28 +1,41 @@
 import { acknowledgeSafetyDocument } from "./signoff-actions";
-import { ackStatement, acknowledgementProgress, type AckSubjectType } from "@/lib/health-safety/acknowledgements";
+import {
+  ackStatement,
+  SIGNOFF_STATE_LABEL,
+  type AckSubjectType,
+  type SignoffSummary,
+} from "@/lib/health-safety/acknowledgements";
 
 type Ack = { id: string; user_id: string; acknowledged_at: string; signed_name: string; signer_name: string };
 
 /**
  * Operative sign-off panel (shared by the RAMS + permit detail pages). Shows the
- * sign-off register and — if the current worker hasn't yet signed THIS issued
- * version — an explicit, non-dark-pattern acknowledgement form (typed-name
- * attestation). Version-anchored via `reference`. Server component: the form
- * posts a server action, no client JS needed.
+ * sign-off register, the status against the REQUIRED operatives (the crew rota'd
+ * to the job — M6b), who is still outstanding, and — if the current worker hasn't
+ * yet signed THIS issued version — an explicit typed-name acknowledgement form.
+ * Version-anchored via `reference`. Server component; the form posts a server action.
  */
+
+const STATE_STYLES: Record<SignoffSummary["state"], string> = {
+  fully_signed: "bg-emerald-100 text-emerald-800",
+  partially_signed: "bg-amber-100 text-amber-800",
+  unsigned: "bg-red-100 text-red-800",
+  not_tracked: "bg-slate-100 text-slate-600",
+};
+
 export function SignoffPanel({
-  subjectType, subjectId, reference, acks, currentUserId, memberCount, pdfHref,
+  subjectType, subjectId, reference, acks, currentUserId, summary, outstandingNames, pdfHref,
 }: {
   subjectType: AckSubjectType;
   subjectId: string;
   reference: string;
   acks: Ack[];
   currentUserId: string;
-  memberCount: number;
+  summary: SignoffSummary;
+  outstandingNames: string[];
   pdfHref?: string;
 }) {
   const mine = acks.find((a) => a.user_id === currentUserId);
-  const progress = acknowledgementProgress(acks, memberCount);
   const statement = ackStatement(subjectType, reference);
 
   return (
@@ -38,11 +51,34 @@ export function SignoffPanel({
               ⤓ Download PDF
             </a>
           ) : null}
-          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-            {progress.signed} of {progress.expected} signed
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATE_STYLES[summary.state]}`}>
+            {SIGNOFF_STATE_LABEL[summary.state]}
+            {summary.state !== "not_tracked" ? ` · ${summary.signedRequired}/${summary.required}` : ""}
           </span>
         </div>
       </div>
+
+      {/* Status line: required-operative denominator (or an honest "not tracked"). */}
+      <p className="mt-2 text-xs text-slate-500" aria-live="polite">
+        {summary.state === "not_tracked" ? (
+          <>
+            {acks.length} signed. No crew is assigned to this document&rsquo;s job, so there is
+            no required-operative list — link it to a job to track who must sign.
+          </>
+        ) : (
+          <>
+            {summary.signedRequired} of {summary.required} assigned operative
+            {summary.required === 1 ? "" : "s"} have acknowledged the current version
+            {summary.extraSigned > 0 ? ` (+${summary.extraSigned} other${summary.extraSigned === 1 ? "" : "s"})` : ""}.
+          </>
+        )}
+      </p>
+
+      {outstandingNames.length > 0 ? (
+        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-semibold">Awaiting sign-off:</span> {outstandingNames.join(", ")}
+        </p>
+      ) : null}
 
       {acks.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">No one has acknowledged this version yet.</p>
@@ -51,7 +87,7 @@ export function SignoffPanel({
           {acks.map((a) => (
             <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-x-3 py-2 text-sm">
               <span className="font-medium text-slate-800">{a.signer_name}</span>
-              <span className="text-slate-500">signed “{a.signed_name}” · {a.acknowledged_at.slice(0, 10)}</span>
+              <span className="text-slate-500">signed &ldquo;{a.signed_name}&rdquo; · {a.acknowledged_at.slice(0, 10)}</span>
             </li>
           ))}
         </ul>

@@ -16,7 +16,8 @@ import {
 } from "@/lib/health-safety/permits";
 import { getPermit, listRamsOptions } from "../_data";
 import { SignoffPanel } from "../../_signoff-panel";
-import { listAcknowledgements, countOrgMembers } from "../../_signoff-data";
+import { listAcknowledgements, requiredOperatives } from "../../_signoff-data";
+import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
 import {
   addPermitCondition,
   confirmPermitCondition,
@@ -84,7 +85,10 @@ export default async function PermitDetailPage({
   ]);
   const live = permit.status === "issued" || permit.status === "active";
   const acks = live ? await listAcknowledgements("permit_to_work", permit.id) : [];
-  const memberCount = live ? await countOrgMembers() : 0;
+  // Required operatives = the crew rota'd to this permit's job (M6b). No job → not tracked.
+  const required = live ? await requiredOperatives(permit.job_id) : [];
+  const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
+  const outstandingNames = required.filter((o) => signoff.outstanding.includes(o.id)).map((o) => o.name);
 
   const status = permit.status as PermitStatus;
   const editable = isEditable(status);
@@ -618,7 +622,8 @@ export default async function PermitDetailPage({
           reference={permit.reference ?? ""}
           acks={acks}
           currentUserId={userId}
-          memberCount={memberCount}
+          summary={signoff}
+          outstandingNames={outstandingNames}
           pdfHref={`/api/health-safety/permits/${permit.id}/pdf`}
         />
       ) : null}
