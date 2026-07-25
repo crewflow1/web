@@ -22,6 +22,7 @@ const permitPdfRoute = readFileSync(join(root, "app/api/health-safety/permits/[i
 const ramsPdfLib = readFileSync(join(root, "lib/pdf/rams-pdf.tsx"), "utf8");
 const permitPdfLib = readFileSync(join(root, "lib/pdf/permit-pdf.tsx"), "utf8");
 const hardening = readFileSync(join(root, "supabase/migrations/20261021000000_health_safety_evidence_hardening.sql"), "utf8");
+const revising = readFileSync(join(root, "supabase/migrations/20261022000000_health_safety_rams_revisioning.sql"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -239,5 +240,35 @@ describe("evidence-integrity hardening (M5, final adversarial review)", () => {
   it("[P2] both PDF routes label the header with the SUBJECT's own org, not the active org", () => {
     expect(permitPdfRoute).toMatch(/\.eq\("id", permit\.org_id\)/);
     expect(ramsPdfRoute).toMatch(/\.eq\("id", ra\.org_id\)/);
+  });
+});
+
+describe("RAMS revisioning (M6a) — lineage + one-current + atomic supersede are DB-enforced", () => {
+  it("the series has DB-enforced lineage (root + revision) and lineage integrity", () => {
+    expect(revising).toMatch(/root_risk_assessment_id/);
+    expect(revising).toMatch(/revision_number/);
+    expect(revising).toMatch(/tg_ra_revision_integrity/);
+    expect(revising).toMatch(/a risk assessment cannot supersede itself/);
+    expect(revising).toMatch(/must be another revision of the same series/);
+  });
+  it("exactly one issued + one draft per series (partial unique indexes)", () => {
+    expect(revising).toMatch(/unique index[\s\S]*?root_risk_assessment_id\)\s*where status = 'issued'/);
+    expect(revising).toMatch(/unique index[\s\S]*?root_risk_assessment_id\)\s*where status = 'draft'/);
+    expect(revising).toMatch(/\(root_risk_assessment_id, revision_number\)/);
+  });
+  it("issuing a revision is ATOMIC (supersede current + promote draft in one RPC)", () => {
+    expect(revising).toMatch(/function public\.issue_rams_revision/);
+    expect(revising).toMatch(/for update/);
+    expect(revising).toMatch(/set status = 'superseded'\s*\n?\s*where root_risk_assessment_id = v_root and status = 'issued'/);
+    expect(revising).toMatch(/security invoker/); // RLS + M5 triggers still gate the caller
+  });
+  it("lineage fields are frozen once issued (immutability list extended)", () => {
+    expect(revising).toMatch(/new\.root_risk_assessment_id, new\.revision_number/);
+  });
+  it("the action issues a revision via the atomic RPC, not a bare status flip", () => {
+    expect(actions).toMatch(/issue_rams_revision/);
+    expect(actions).toMatch(/createRamsRevision/);
+    // still tenant-client only (no service-role) for the revision path
+    expect(actions).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
   });
 });

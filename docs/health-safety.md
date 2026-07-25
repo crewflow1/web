@@ -264,6 +264,48 @@ sign), the epic's evidence chain — RAMS → hazards → permit → conditions 
 acknowledgement → PDF — is DB-enforced, tenant-isolated, append-only where it must be,
 provenance-pinned at issue, and non-erasable once issued for **every** role.
 
+## Milestone 6a — RAMS revisioning (`20261022_health_safety_rams_revisioning.sql`)
+
+An issued RAMS is a frozen legal record and is **never edited in place**. When the
+assessment changes you raise a **revision**: a new draft is created from the issued
+snapshot (header + hazards copied), edited, then issued — at which point the previous
+issued revision becomes `superseded` and the new one is the single current record. This
+mirrors the versioned-publish house pattern proven for asset inspection templates
+(`20260929`).
+
+**Lineage (smallest clear shape).** Two new columns on `risk_assessments`:
+`root_risk_assessment_id` (the series identity — equals `id` for revision 1, copied
+forward; defaulted by a trigger so the client never sets it) and `revision_number`. The
+already-present `supersedes_id` (backward pointer) is finally used. No forward
+`superseded_by_id` — it is derived. A single `tg_ra_revision_integrity` trigger blocks
+self-supersede, cross-series and cross-org lineage.
+
+**DB-enforced invariants (proven on real Postgres — `revisioning.test.ts`, 8 tests):**
+- `unique (root, revision_number)` — no duplicate revision numbers.
+- `unique (root) where status = 'issued'` — **exactly one current revision per series** (the load-bearing guarantee).
+- `unique (root) where status = 'draft'` — at most one revision-in-progress; a concurrent second draft is rejected (proven with a real race — exactly one of two wins).
+- Lineage fields are added to the `tg_ra_immutable_when_issued` frozen list, so they can't be rewritten post-issue.
+
+**Atomic issue.** `issue_rams_revision(p_id)` (SECURITY INVOKER, so RLS + the M5 issue-gate
++ provenance pin still apply) locks the draft `FOR UPDATE`, supersedes the series'
+currently-issued revision, and promotes the draft — in one transaction, so there is never
+a window with two current revisions or an old-retired/new-failed split. A race rolls back
+on the one-issued partial index. The revision keeps the series number and appends its
+revision (`RA-0001` → `RA-0001-R02`); revisions don't consume a new RA-NNNN.
+
+**Re-acknowledgement falls out for free.** Each revision is its own subject row, so a new
+revision starts with **zero** acknowledgements and the superseded revision can no longer
+be signed (the M3 ack trigger only permits signing an *issued* document). No
+acknowledgement is ever copied or mutated; old signatures stay attached to the old
+revision. "Who must re-acknowledge" is surfaced against the current revision (M6b).
+
+**PDF evidence.** The RAMS PDF header now carries `Revision N · Current (issued)` /
+`Superseded`, so a downloaded historical PDF is unambiguous years later.
+
+The operator flow: an issued RAMS shows **Create revision** (a draft copied from the
+snapshot) → edit hazards/controls/method → **Issue revision N** (supersedes the previous
+in one step) → the previous revision stays immutable in the **Revision history** rail.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation

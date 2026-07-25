@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
-import { getRiskAssessment, listAssessors } from "../_data";
+import { getRiskAssessment, listAssessors, getRevisionSiblings } from "../_data";
 import { SignoffPanel } from "../_signoff-panel";
 import { listAcknowledgements, countOrgMembers } from "../_signoff-data";
 import {
@@ -18,9 +18,10 @@ import {
 } from "@/lib/health-safety/rams";
 import {
   addHazard,
+  createRamsRevision,
   deleteHazard,
+  issueRamsRevision,
   issueRiskAssessment,
-  supersedeRiskAssessment,
   updateRiskAssessment,
   withdrawRiskAssessment,
 } from "../actions";
@@ -30,8 +31,8 @@ import {
  *
  * A draft is fully editable: its header, its hazards (each scored on a 5×5
  * matrix, initial and residual), and the gated Issue action. Once issued the
- * document is a frozen legal record — read-only, with only Supersede / Withdraw
- * left. Editability is driven entirely by isEditable(status); the DB is the real
+ * document is a frozen legal record — read-only, with only Create revision /
+ * Withdraw left. Editability is driven entirely by isEditable(status); the DB is the real
  * gate, so the UI simply mirrors it.
  */
 
@@ -62,6 +63,8 @@ const ERROR_MAP: Record<string, string> = {
   not_found: "That risk assessment no longer exists.",
   not_editable: "This risk assessment is issued and can no longer be edited.",
   numbering_failed: "Couldn't allocate a reference number. Try again.",
+  only_issued_can_be_revised: "Only an issued risk assessment can be revised.",
+  revision_in_progress: "A revision of this risk assessment is already in progress — issue or discard it first.",
 };
 
 const SAVED_MAP: Record<string, string> = {
@@ -70,6 +73,7 @@ const SAVED_MAP: Record<string, string> = {
   issued: "Risk assessment issued. It's now a frozen record.",
   superseded: "Risk assessment superseded.",
   withdrawn: "Risk assessment withdrawn.",
+  revision_created: "Revision draft created from the issued version. Edit it, then issue it — issuing supersedes the previous version.",
   hazard: "Hazard added.",
   hazard_removed: "Hazard removed.",
 };
@@ -81,8 +85,6 @@ const inputClass =
 const labelClass = "block text-sm font-medium text-slate-800";
 const primaryBtn =
   "inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2";
-const secondaryBtn =
-  "inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2";
 
 export default async function RiskAssessmentDetailPage({
   params,
@@ -101,6 +103,12 @@ export default async function RiskAssessmentDetailPage({
   const { ra, hazards } = result;
   const acks = ra.status === "issued" ? await listAcknowledgements("risk_assessment", ra.id) : [];
   const memberCount = ra.status === "issued" ? await countOrgMembers() : 0;
+
+  // Revision lineage: the whole series (newest first) + the currently-live revision.
+  const siblings = await getRevisionSiblings(ra.root_risk_assessment_id);
+  const currentIssued = siblings.find((s) => s.status === "issued") ?? null;
+  const isRevisionDraft = ra.revision_number > 1;
+  const issueAction = isRevisionDraft ? issueRamsRevision : issueRiskAssessment;
 
   const assessors = await listAssessors();
   const assessorName = ra.assessor_id
@@ -152,6 +160,11 @@ export default async function RiskAssessmentDetailPage({
               >
                 {RA_STATUS_LABELS[status]}
               </span>
+              {ra.revision_number > 1 ? (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
+                  Revision {ra.revision_number}
+                </span>
+              ) : null}
               {overall ? (
                 <span
                   className={`rounded-full px-2 py-0.5 font-medium ${BAND_STYLES[overall]}`}
@@ -192,13 +205,58 @@ export default async function RiskAssessmentDetailPage({
           <p className="font-medium text-slate-700">This is a frozen record.</p>
           <p className="mt-0.5">
             {status === "issued"
-              ? "It was issued and can no longer be changed. Supersede it to publish a revised version, or withdraw it if the work is no longer being done."
+              ? "It was issued and can no longer be changed. Create a revision to publish an updated version, or withdraw it if the work is no longer being done."
               : status === "superseded"
                 ? "It has been superseded by a newer version and is kept for the audit trail."
                 : "It has been withdrawn and is kept for the audit trail."}
             {ra.issued_at ? ` Issued ${ra.issued_at.slice(0, 10)}.` : ""}
           </p>
         </div>
+      ) : null}
+
+      {siblings.length > 1 ? (
+        <section
+          aria-labelledby="revisions-heading"
+          className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <h2 id="revisions-heading" className="text-base font-semibold text-slate-900">
+            Revision history
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Each issued revision is a frozen record. Issuing a new revision supersedes the
+            previous one; workers re-acknowledge the current revision.
+          </p>
+          <ol className="mt-4 space-y-1.5">
+            {siblings.map((s) => {
+              const isThis = s.id === ra.id;
+              const label = `${s.reference ?? "Draft"} · Revision ${s.revision_number}`;
+              return (
+                <li key={s.id}>
+                  <div
+                    className={`flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm ${
+                      isThis ? "border-slate-300 bg-slate-50" : "border-slate-200"
+                    }`}
+                  >
+                    {isThis ? (
+                      <span className="font-mono font-medium text-slate-900">{label}</span>
+                    ) : (
+                      <Link href={`/health-safety/${s.id}`} className="font-mono font-medium text-slate-700 underline-offset-2 hover:underline">
+                        {label}
+                      </Link>
+                    )}
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RA_STATUS_STYLES[s.status as RaStatus]}`}>
+                      {RA_STATUS_LABELS[s.status as RaStatus]}
+                    </span>
+                    {s.status === "issued" ? (
+                      <span className="text-xs font-medium text-emerald-700">Current</span>
+                    ) : null}
+                    {isThis ? <span className="text-xs text-slate-400">(viewing)</span> : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
       ) : null}
 
       {/* ---- Details: an edit form on a draft, a read-only summary once issued ---- */}
@@ -632,8 +690,19 @@ export default async function RiskAssessmentDetailPage({
         {status === "draft" ? (
           <div className="mt-2">
             <p className="text-sm text-slate-600">
-              Issuing allocates a permanent reference and freezes the document as
-              the version the site works to. It can&rsquo;t be edited afterwards.
+              {isRevisionDraft ? (
+                <>
+                  Issuing this revision freezes it as the version the site works to and{" "}
+                  <strong className="font-semibold">supersedes the current version
+                  {currentIssued?.reference ? ` (${currentIssued.reference})` : ""}</strong>{" "}
+                  in one step. Workers must re-acknowledge the new revision.
+                </>
+              ) : (
+                <>
+                  Issuing allocates a permanent reference and freezes the document as
+                  the version the site works to. It can&rsquo;t be edited afterwards.
+                </>
+              )}
             </p>
             {!gate.ok ? (
               <div
@@ -649,7 +718,7 @@ export default async function RiskAssessmentDetailPage({
                 </ul>
               </div>
             ) : null}
-            <form action={issueRiskAssessment} className="mt-3">
+            <form action={issueAction} className="mt-3">
               <input type="hidden" name="id" value={ra.id} />
               <button
                 type="submit"
@@ -661,22 +730,24 @@ export default async function RiskAssessmentDetailPage({
                     : "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-400"
                 }
               >
-                Issue risk assessment
+                {isRevisionDraft ? `Issue revision ${ra.revision_number}` : "Issue risk assessment"}
               </button>
             </form>
           </div>
         ) : status === "issued" ? (
           <div className="mt-2 space-y-3">
             <p className="text-sm text-slate-600">
-              Publish a revised version by superseding this one, or withdraw it if
-              the work is no longer going ahead. Both keep this record for the
-              audit trail.
+              This is the current version. To change it, create a revision — a new
+              draft copied from this snapshot that you edit and re-issue; issuing it
+              supersedes this version and asks workers to re-acknowledge. Withdraw it
+              instead if the work is no longer going ahead. Both keep this record for
+              the audit trail.
             </p>
             <div className="flex flex-wrap gap-3">
-              <form action={supersedeRiskAssessment}>
+              <form action={createRamsRevision}>
                 <input type="hidden" name="id" value={ra.id} />
-                <button type="submit" className={secondaryBtn}>
-                  Supersede
+                <button type="submit" className={primaryBtn}>
+                  Create revision
                 </button>
               </form>
               <form action={withdrawRiskAssessment}>

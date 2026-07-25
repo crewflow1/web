@@ -28,6 +28,9 @@ export type RamsPdfInput = {
   ppe: string[];
   method_statement: string | null;
   status: string;
+  // Revision lineage (M6a) — so a downloaded historical PDF is unambiguous years
+  // later about which revision it is and whether it was still current.
+  revision_number: number;
   issued_at: string | null;
   hazards: RamsPdfHazard[];
   signoffs: RamsPdfSignoff[];
@@ -71,7 +74,9 @@ export function RamsPdf({ ra }: { ra: RamsPdfInput }) {
           </View>
           <View>
             <Text style={s.ref}>{ra.reference}</Text>
-            <Text style={{ ...s.docType, textAlign: "right" }}>{ra.status === "issued" ? "Issued" : ra.status}</Text>
+            <Text style={{ ...s.docType, textAlign: "right" }}>
+              Revision {ra.revision_number} · {ra.status === "issued" ? "Current (issued)" : ra.status === "superseded" ? "Superseded" : ra.status}
+            </Text>
           </View>
         </View>
 

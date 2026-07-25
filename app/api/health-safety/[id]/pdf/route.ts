@@ -43,6 +43,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     ppe: ra.ppe ?? [],
     method_statement: ra.method_statement,
     status: ra.status,
+    revision_number: ra.revision_number,
     issued_at: ra.issued_at,
     hazards: hazards.map((h) => ({
       hazard: h.hazard, who_at_risk: h.who_at_risk,

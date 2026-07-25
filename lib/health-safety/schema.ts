@@ -62,8 +62,20 @@ export type RiskAssessmentRow = {
   issued_at: string | null;
   issued_by: string | null;
   supersedes_id: string | null;
+  // Revision lineage (M6a, 20261022): the series identity (= id for revision 1)
+  // and this record's revision number within it.
+  root_risk_assessment_id: string;
+  revision_number: number;
   created_at: string;
   updated_at: string;
+};
+
+/** A sibling in a RAMS revision series, for the lineage rail on the detail page. */
+export type RevisionSibling = {
+  id: string;
+  reference: string | null;
+  revision_number: number;
+  status: RiskAssessmentRow["status"];
 };
 
 export type HazardRow = {

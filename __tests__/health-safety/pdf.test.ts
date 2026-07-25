@@ -7,7 +7,7 @@ const rams: RamsPdfInput = {
   org_name: "Acme Build", reference: "RA-0007", title: "Roof works", activity: "Tiling",
   location: "Plot 4", assessor_name: "J. Smith", assessment_date: "2026-01-01", review_date: "2026-06-01",
   ppe: ["Hard hat", "Harness"], method_statement: "Erect scaffold, then tile from the eaves up.",
-  status: "issued", issued_at: "2026-01-02T09:00:00Z",
+  status: "issued", revision_number: 1, issued_at: "2026-01-02T09:00:00Z",
   hazards: [{ hazard: "Fall from height", who_at_risk: "Roofers", likelihood: 4, severity: 5, control_measures: "Edge protection + harness", residual_likelihood: 1, residual_severity: 3 }],
   signoffs: [{ signer_name: "Jordan Lee", signed_name: "Jordan Lee", acknowledged_at: "2026-01-03T08:00:00Z" }],
   generated_at: "2026-01-04T12:00:00Z",

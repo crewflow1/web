@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import type { RiskAssessmentRow, HazardRow } from "@/lib/health-safety/schema";
+import type { RiskAssessmentRow, HazardRow, RevisionSibling } from "@/lib/health-safety/schema";
 
 /**
  * Health & Safety — RAMS read layer. Every query runs on the tenant (user-JWT)
@@ -11,7 +11,7 @@ import type { RiskAssessmentRow, HazardRow } from "@/lib/health-safety/schema";
 type RaListItem = RiskAssessmentRow & { hazard_count: number };
 
 const RA_COLUMNS =
-  "id, org_id, job_id, reference, title, activity, location, assessor_id, assessment_date, review_date, ppe, method_statement, status, issued_at, issued_by, supersedes_id, created_at, updated_at";
+  "id, org_id, job_id, reference, title, activity, location, assessor_id, assessment_date, review_date, ppe, method_statement, status, issued_at, issued_by, supersedes_id, root_risk_assessment_id, revision_number, created_at, updated_at";
 
 export async function listRiskAssessments(): Promise<RaListItem[]> {
   const supabase = await createClient();
@@ -57,6 +57,22 @@ export async function getRiskAssessment(
     .order("created_at", { ascending: true });
 
   return { ra, hazards: hazards ?? [] };
+}
+
+/**
+ * Every revision in a RAMS series (by root), newest first — for the lineage rail
+ * on the detail page. RLS-scoped, so only the caller's org is visible.
+ */
+export async function getRevisionSiblings(rootId: string): Promise<RevisionSibling[]> {
+  const supabase = await createClient();
+  const { data } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: RevisionSibling[] | null }> } } };
+  })
+    .from("risk_assessments")
+    .select("id, reference, revision_number, status")
+    .eq("root_risk_assessment_id", rootId)
+    .order("revision_number", { ascending: false });
+  return data ?? [];
 }
 
 /** Org members who can be named as the assessor (for the create/edit form). */
