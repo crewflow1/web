@@ -65,12 +65,38 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
         router.prefetch("/offline");
         if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
           await Promise.race([navigator.serviceWorker.ready, new Promise((res) => setTimeout(res, 4000))]);
+          // The warm below only caches if the SW is actually CONTROLLING this page
+          // (claim routes future fetches through it). On a first install the page
+          // loaded uncontrolled, so wait — bounded — for the claim to land first.
+          if (!navigator.serviceWorker.controller) {
+            await new Promise<void>((res) => {
+              const done = () => res();
+              navigator.serviceWorker.addEventListener("controllerchange", done, { once: true });
+              setTimeout(done, 2000);
+            });
+          }
         }
+        // Explicit app-shell warm (replaces the old first-install reload's ACCIDENTAL
+        // side-effect). clients.claim() controls only FUTURE fetches — it does not
+        // retroactively cache the shared /_next/static chunks this page loaded while
+        // still uncontrolled. The /offline route shares those webpack/framework/
+        // main-app chunks and cannot HYDRATE offline without them (its list() effect
+        // would never run). So re-fetch this document's own /_next/static chunks
+        // THROUGH the now-controlling SW, which caches them cache-first into STATIC_CACHE.
+        const shellChunks =
+          typeof document === "undefined"
+            ? []
+            : Array.from(document.querySelectorAll("script[src], link[href]"))
+                .map((el) => el.getAttribute("src") || el.getAttribute("href") || "")
+                .filter((u) => {
+                  try { return new URL(u, location.origin).pathname.startsWith("/_next/static/"); } catch { return false; }
+                });
         await Promise.allSettled([
           import("./_pdf-viewer"),
           import("pdfjs-dist"),
           // fully drain the worker body so the SW's cache-first clone finishes writing
           fetch("/pdf.worker.min.mjs", { credentials: "same-origin" }).then((r) => r.blob()),
+          ...shellChunks.map((u) => fetch(u, { credentials: "same-origin" })),
         ]);
       } catch { /* warming is best-effort */ }
       await refresh();

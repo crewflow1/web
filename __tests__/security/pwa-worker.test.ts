@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyRequest, isCacheable } from "@/lib/pwa/cache-policy";
+import { shouldReloadOnControllerChange } from "@/lib/pwa/sw-lifecycle";
 
 /**
  * PWA service worker — security source-contracts (§37/§51). The worker must NEVER
@@ -14,6 +15,8 @@ const root = join(__dirname, "..", "..");
 const sw = readFileSync(join(root, "public/sw.js"), "utf8");
 const manifest = readFileSync(join(root, "app/manifest.ts"), "utf8");
 const signOut = readFileSync(join(root, "app/(app)/_components/sign-out-button.tsx"), "utf8");
+const swRegister = readFileSync(join(root, "app/(app)/_components/sw-register.tsx"), "utf8");
+const offlineControls = readFileSync(join(root, "app/(app)/jobs/[id]/blueprints/_offline-controls.tsx"), "utf8");
 
 describe("cache policy — deny by default", () => {
   it("only static + icon are cacheable; private/blueprint/navigation/passthrough are NOT", () => {
@@ -70,5 +73,29 @@ describe("manifest + logout", () => {
   it("logout clears the offline identity marker + IndexedDB before signOut", () => {
     expect(signOut).toMatch(/clearAll\(\);\s*clearOfflineIdentity\(\)/);
     expect(signOut.indexOf("clearOfflineIdentity")).toBeLessThan(signOut.indexOf("await signOut()"));
+  });
+});
+
+describe("service-worker lifecycle — first install is silent, only user-accepted updates reload", () => {
+  it("reloads ONLY on a user-accepted update, never on the first-install claim", () => {
+    expect(shouldReloadOnControllerChange(false, false)).toBe(false); // first-install claim → no reload
+    expect(shouldReloadOnControllerChange(true, false)).toBe(true); // user clicked Refresh → reload once
+    expect(shouldReloadOnControllerChange(true, true)).toBe(false); // single-fire guard holds
+    expect(shouldReloadOnControllerChange(false, true)).toBe(false);
+  });
+
+  it("SwRegister gates the controllerchange reload behind a user-intent ref (no unconditional reload)", () => {
+    expect(swRegister).toMatch(/controllerchange/);
+    // the reload must be gated by the pure policy on a user-intent ref, not fire unconditionally
+    expect(swRegister).toMatch(/shouldReloadOnControllerChange\(\s*userAcceptedUpdate\.current/);
+    expect(swRegister).toMatch(/const\s+userAcceptedUpdate\s*=\s*useRef\(false\)/);
+    // the ref is armed BEFORE asking the SW to skip waiting (so the update reload still fires)
+    expect(swRegister).toMatch(/userAcceptedUpdate\.current\s*=\s*true[\s\S]*?SKIP_WAITING/);
+  });
+
+  it("the download flow explicitly warms the app-shell /_next/static chunks (no reliance on a reload)", () => {
+    // replaces the old first-install reload's accidental shell-caching side-effect
+    expect(offlineControls).toMatch(/_next\/static/);
+    expect(offlineControls).toMatch(/script\[src\], link\[href\]/);
   });
 });
