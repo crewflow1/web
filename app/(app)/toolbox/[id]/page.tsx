@@ -192,7 +192,7 @@ export default async function ToolboxTalkPage({
                 <button
                   type="submit"
                   disabled={!gate.ok}
-                  className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   {isRevisionDraft ? "Deliver revision" : "Deliver talk"}
                 </button>

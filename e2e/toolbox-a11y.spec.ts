@@ -45,7 +45,14 @@ test.describe("toolbox talks — accessibility + mobile", () => {
       permit_reference: null, permit_status_at_issue: null, external_attendees: [],
       issued_by_name: "Site Manager", issued_on: new Date().toISOString().slice(0, 10),
     };
-    await t("toolbox_talks").update({ status: "issued", reference: ref, issued_at: new Date().toISOString(), snapshot }).eq("id", issuedId);
+    const iss = await t("toolbox_talks")
+      .update({ status: "issued", reference: ref, issued_at: new Date().toISOString(), snapshot })
+      .eq("id", issuedId).select("status").single();
+    // Fail loudly if the delivered-talk seed didn't actually issue — otherwise the
+    // "delivered" case would silently test a draft (which still shows the Deliver panel).
+    if (iss.error || iss.data?.status !== "issued") {
+      throw new Error(`a11y seed: delivered talk did not issue (${iss.error?.message ?? `status=${iss.data?.status}`})`);
+    }
   });
 
   for (const [name, path] of [
