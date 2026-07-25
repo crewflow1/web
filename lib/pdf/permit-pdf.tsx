@@ -23,6 +23,9 @@ export type PermitPdfInput = {
   valid_from: string | null;
   valid_until: string | null;
   status: string;
+  // Derived display status: "expired" when a live permit is past valid_until, so
+  // an evidence PDF can never read "active" for a permit whose window has passed.
+  effective_status: string;
   issued_at: string | null;
   closeout_notes: string | null;
   closed_at: string | null;
@@ -64,7 +67,9 @@ export function PermitPdf({ p }: { p: PermitPdfInput }) {
           </View>
           <View>
             <Text style={s.ref}>{p.reference}</Text>
-            <Text style={{ ...s.docType, textAlign: "right" }}>{p.status}</Text>
+            <Text style={{ ...s.docType, textAlign: "right", color: p.effective_status === "expired" ? c.warn : c.sub }}>
+              {p.effective_status === "expired" ? "EXPIRED" : p.effective_status}
+            </Text>
           </View>
         </View>
 

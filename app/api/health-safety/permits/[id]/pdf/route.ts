@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { getPermit } from "@/app/(app)/health-safety/permits/_data";
 import { listAcknowledgements } from "@/app/(app)/health-safety/_signoff-data";
 import { PermitPdf, type PermitPdfInput } from "@/lib/pdf/permit-pdf";
+import { effectiveStatus, type PermitStatus } from "@/lib/health-safety/permits";
 
 /**
  * Permit-to-Work evidence PDF (H&S M4). RLS-scoped. Only a permit that has been
@@ -14,7 +15,7 @@ import { PermitPdf, type PermitPdfInput } from "@/lib/pdf/permit-pdf";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  await requireOrgContext(); // auth gate; the header + data are scoped by RLS + the subject's own org
   const { id } = await params;
 
   const result = await getPermit(id);
@@ -24,7 +25,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
   const supabase = await createClient();
   const t = (name: string) => (supabase as unknown as { from: (t: string) => any }).from(name); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const orgRow = await t("organizations").select("name").eq("id", ctx.org.id).maybeSingle();
+  // Label the evidence with the SUBJECT's own org (RLS already proved the caller
+  // is a member of it), not the caller's currently-active org — a member of
+  // several orgs must never see one org's permit under another's letterhead.
+  const orgRow = await t("organizations").select("name").eq("id", permit.org_id).maybeSingle();
   const ramsRef = permit.risk_assessment_id
     ? (await t("risk_assessments").select("reference").eq("id", permit.risk_assessment_id).maybeSingle()).data?.reference ?? null
     : null;
@@ -44,6 +48,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     valid_from: permit.valid_from,
     valid_until: permit.valid_until,
     status: permit.status,
+    effective_status: effectiveStatus(permit.status as PermitStatus, permit.valid_until, new Date()),
     issued_at: permit.issued_at,
     closeout_notes: permit.closeout_notes,
     closed_at: permit.closed_at,

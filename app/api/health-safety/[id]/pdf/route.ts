@@ -14,7 +14,7 @@ import { RamsPdf, type RamsPdfInput } from "@/lib/pdf/rams-pdf";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  await requireOrgContext(); // auth gate; the header + data are scoped by RLS + the subject's own org
   const { id } = await params;
 
   const result = await getRiskAssessment(id);
@@ -23,8 +23,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (ra.status === "draft") return NextResponse.json({ error: "Not issued" }, { status: 409 });
 
   const supabase = await createClient();
+  // Label the evidence with the SUBJECT's own org (RLS already proved the caller is
+  // a member of it), not the caller's currently-active org.
   const orgRow = await (supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: { name: string } | null }> } } } })
-    .from("organizations").select("name").eq("id", ctx.org.id).maybeSingle();
+    .from("organizations").select("name").eq("id", ra.org_id).maybeSingle();
 
   const assessors = await listAssessors();
   const signoffs = await listAcknowledgements("risk_assessment", ra.id);

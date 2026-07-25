@@ -20,6 +20,8 @@ const ackActions = readFileSync(join(root, "app/(app)/health-safety/signoff-acti
 const ramsPdfRoute = readFileSync(join(root, "app/api/health-safety/[id]/pdf/route.ts"), "utf8");
 const permitPdfRoute = readFileSync(join(root, "app/api/health-safety/permits/[id]/pdf/route.ts"), "utf8");
 const ramsPdfLib = readFileSync(join(root, "lib/pdf/rams-pdf.tsx"), "utf8");
+const permitPdfLib = readFileSync(join(root, "lib/pdf/permit-pdf.tsx"), "utf8");
+const hardening = readFileSync(join(root, "supabase/migrations/20261021000000_health_safety_evidence_hardening.sql"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -183,5 +185,59 @@ describe("evidence PDF (M4) — auth-gated, RLS-scoped, issued-only, no internal
   it("the RAMS PDF component references no cost/margin/price data field", () => {
     // (data fields — not CSS margin*): a cost/margin/price leak into evidence
     expect(ramsPdfLib).not.toMatch(/profit|unit_price|day_rate|_cost|cost_|net_amount|vat_/i);
+  });
+});
+
+describe("evidence-integrity hardening (M5, final adversarial review)", () => {
+  it("[P0] a RAMS is born a draft — a direct INSERT can never mint an issued record", () => {
+    expect(hardening).toMatch(/tg_ra_lifecycle/);
+    expect(hardening).toMatch(/before insert or update on public\.risk_assessments/);
+    expect(hardening).toMatch(/a risk assessment is created as a draft/);
+  });
+  it("[P0] the issue-gate (assessor + >=1 hazard) is DB-enforced, not only in the action", () => {
+    expect(hardening).toMatch(/cannot issue: a risk assessment needs a named assessor/);
+    expect(hardening).toMatch(/needs at least one hazard/);
+    expect(hardening).toMatch(/risk_assessment_hazards\s*\n?\s*where risk_assessment_id = new\.id/);
+  });
+  it("[P1] issue provenance is pinned server-side on BOTH tables (no forged/back-dated issuer)", () => {
+    // RAMS pins in tg_ra_lifecycle; permits pin in a dedicated tg_permit_pin_provenance.
+    expect(hardening).toMatch(/new\.issued_by := auth\.uid\(\)/);
+    expect(hardening).toMatch(/new\.issued_at := now\(\)/);
+    expect(hardening).toMatch(/tg_permit_pin_provenance/);
+    // and only for real (JWT) callers — the trusted service role keeps explicit values.
+    expect(hardening).toMatch(/auth\.uid\(\) is not null/);
+  });
+  it("[P1] issued evidence is non-deletable via a TRIGGER (role-independent, not just RLS)", () => {
+    expect(hardening).toMatch(/tg_ra_block_delete_when_issued/);
+    expect(hardening).toMatch(/tg_permit_block_delete_when_issued/);
+    expect(hardening).toMatch(/before delete on public\.risk_assessments/);
+    expect(hardening).toMatch(/before delete on public\.permits_to_work/);
+    expect(hardening).toMatch(/an issued risk assessment is evidence and cannot be deleted/);
+    // org teardown (cascade) is still allowed — the org row is gone by then.
+    expect(hardening).toMatch(/exists \(select 1 from public\.organizations where id = old\.org_id\)/);
+  });
+  it("[P1] the draft-only DELETE policies remain as defence-in-depth on the JWT path", () => {
+    expect(hardening).toMatch(/risk_assessments_delete[\s\S]*?is_org_admin\(org_id\) and status = 'draft'/);
+    expect(hardening).toMatch(/permits_delete[\s\S]*?is_org_admin\(org_id\) and status = 'draft'/);
+  });
+  it("[P2] next_ra_number gates the caller to their own org (no cross-org count oracle)", () => {
+    expect(hardening).toMatch(/next_ra_number/);
+    expect(hardening).toMatch(/forbidden: not a member of organisation/);
+    expect(hardening).toMatch(/target_org not in \(select public\.current_org_ids\(\)\)/);
+  });
+  it("every SECURITY DEFINER in the hardening migration pins search_path", () => {
+    const defs = hardening.match(/security definer/g) ?? [];
+    const pins = hardening.match(/set search_path = public/g) ?? [];
+    expect(defs.length).toBeGreaterThan(0);
+    expect(pins.length).toBeGreaterThanOrEqual(defs.length);
+  });
+  it("[P2] the permit evidence PDF shows a derived status (never a stale 'active' when expired)", () => {
+    expect(permitPdfRoute).toMatch(/effectiveStatus\(/);
+    expect(permitPdfLib).toMatch(/effective_status/);
+    expect(permitPdfLib).toMatch(/EXPIRED/);
+  });
+  it("[P2] both PDF routes label the header with the SUBJECT's own org, not the active org", () => {
+    expect(permitPdfRoute).toMatch(/\.eq\("id", permit\.org_id\)/);
+    expect(ramsPdfRoute).toMatch(/\.eq\("id", ra\.org_id\)/);
   });
 });

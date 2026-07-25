@@ -221,12 +221,56 @@ states; the input carries no cost/margin field) · 4 PDF security source-contrac
 E2E** — a real owner GET of the RAMS PDF returns `application/pdf` starting `%PDF-`; a
 draft returns 409.
 
+## Milestone 5 — Security hardening (final adversarial review)
+
+A final adversarial review of the **whole** H&S surface (RAMS, permits, sign-off, PDF) was
+run before calling the operational chain done. Its driving fact: the browser ships the anon
+key, so a server action is **not** a trust boundary — any authenticated member can hit
+PostgREST directly with their JWT, and only **RLS + triggers + CHECKs** enforce anything.
+Judged by that standard the review found the RAMS *issue path* was permissive where the
+permit path (M2) had already been hardened. All P0/P1 findings, plus the P2 correctness
+leaks, are closed in **`20261021_health_safety_evidence_hardening.sql`** and the two PDF
+routes. Findings and fixes:
+
+| # | Sev | Finding | Fix |
+|---|-----|---------|-----|
+| 1 | **P0** | A RAMS could be `INSERT`ed already-`issued` — forged reference/issuer, back-dated, **zero hazards** — because `risk_assessments` had no born-a-draft guard (the permit table did). | `tg_ra_lifecycle` (BEFORE INSERT OR UPDATE): a RAMS is always born a draft; issue is only reachable via the gated UPDATE. |
+| 2 | **P0** | The `canIssue` readiness gate (assessor + ≥1 hazard) lived **only** in the server action, so a direct draft→issued PATCH could mint a hazard-less/assessor-less issued record. | The gate is re-enforced in `tg_ra_lifecycle` for every real (JWT) caller. |
+| 3 | **P1** | On draft→issued, `issued_by` / `issued_at` were **client-supplied** on both tables (the immutability freeze only bites *after* issue) → forge the issuer, back-date the issuance. | Pinned server-side to `auth.uid()` / `now()` on the issue transition — RAMS in `tg_ra_lifecycle`, permits in `tg_permit_pin_provenance` (which also pins the lifecycle stamps). |
+| 4 | **P1** | The issued-record delete-guard was an **RLS policy** → bypassed by the `service_role`, unlike every other evidence invariant here (which are triggers). | Re-expressed as BEFORE DELETE **triggers** (`tg_ra_block_delete_when_issued`, `tg_permit_block_delete_when_issued`) — role-independent; org teardown still cascades (the org row is gone by then). The draft-only DELETE *policies* stay as JWT-path defence-in-depth. |
+| 5 | **P2** | `next_ra_number` was SECURITY DEFINER with no membership check → a cross-org issued-RAMS **count oracle**. | Gated to the caller's own org (`current_org_ids()`), mirroring `next_ptw_number`. |
+| 6 | **P2** | The permit evidence PDF printed the stored status, so an `active` permit past `valid_until` read "active". | The route computes `effectiveStatus(...)`; the PDF renders **EXPIRED** when the window has passed. |
+| 7 | **P2** | Both PDF routes labelled the header with the caller's *active* org, so a multi-org member could see one org's document under another's letterhead. | The header now uses the **subject's own** `org_id`. |
+
+**Trusted-role asymmetry.** Pinning and the DB issue-gate fire when `auth.uid()` is present
+(every browser caller). The `service_role` — trusted server-side code that is never shipped
+to the browser (fixtures, migrations) — keeps its explicit values, the same asymmetry the
+acknowledgements validate-trigger already uses (M3). The born-a-draft and delete-guard
+triggers are unconditional (they hold for the service role too).
+
+**Proof (real Postgres).** `__tests__/integration/health-safety/issue-hardening.test.ts` (6)
+proves, as a real **staff** member (JWT): a born-issued INSERT is refused; issuing with no
+hazard / no assessor is refused; `issued_by`/`issued_at` are pinned (a forged issuer +
+back-dated instant are ignored) on **RAMS and permit**; and `next_ra_number` refuses another
+org's number but allows the caller's own. `health-safety-delete-guard.test.ts` (8) proves an
+issued RAMS/permit survives an admin **and** a service-role delete (the trigger, not just the
+policy), a draft deletes, an issued record cannot be flipped back to draft, and org teardown
+still cascades through issued evidence. Source-contracts are locked in
+`__tests__/security/health-safety.test.ts`.
+
+Combined with the per-milestone adversarial reviews (M2 permits: issue-gate + immutability
+bypasses; M3 sign-off: backdating, admin-delete, service-key impersonation, expired-permit
+sign), the epic's evidence chain — RAMS → hazards → permit → conditions → operative
+acknowledgement → PDF — is DB-enforced, tenant-isolated, append-only where it must be,
+provenance-pinned at issue, and non-erasable once issued for **every** role.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation
   authoriser) is a tracked enhancement; issuance is audited via `recordAdminActivity`.
-- Operative distribution + sign-off (the work-blocking safety gate), PDF export and
-  portal/site visibility are milestones **M3–M6**.
+- Operative sign-off (M3) and evidence PDFs (M4) have shipped. RAMS revisioning /
+  re-acknowledgement, the global H&S register + dashboard signals, the required-operative
+  work-block **signal** (WARN, not hard-block), and mobile/a11y are milestone **M6**.
 - `e2e/global-setup.ts` is the same authenticated harness the blueprint stack (#409)
   introduces; when both land it merges to the superset — a trivial resolution.
 - The app middleware's `getUser()` bounces authenticated **write-POSTs** to `/login` in

@@ -17,7 +17,7 @@ const permit: PermitPdfInput = {
   org_name: "Acme Build", reference: "PTW-0003", permit_type: "hot_works", title: "Welding beam", scope: "Weld the RSJ",
   location: "Level 2", responsible_person: "A. Foreman", isolation_details: null, emergency_arrangements: "Muster at gate",
   rams_reference: "RA-0007", valid_from: "2026-01-05T08:00:00Z", valid_until: "2026-01-05T16:00:00Z",
-  status: "active", issued_at: "2026-01-05T07:30:00Z", closeout_notes: null, closed_at: null,
+  status: "active", effective_status: "active", issued_at: "2026-01-05T07:30:00Z", closeout_notes: null, closed_at: null,
   conditions: [{ label: "Fire watch in place", required: true, confirmed: true, confirmed_at: "2026-01-05T07:45:00Z" }],
   signoffs: [], generated_at: "2026-01-05T12:00:00Z",
 };
@@ -46,8 +46,15 @@ describe("PermitPdf", () => {
     expect(b.length).toBeGreaterThan(1000);
   });
   it("renders with no conditions / closed state (no throw)", async () => {
-    const b = await renderToBuffer(PermitPdf({ p: { ...permit, status: "closed", closed_at: "2026-01-05T17:00:00Z", closeout_notes: "Area cleared", conditions: [] } }));
+    const b = await renderToBuffer(PermitPdf({ p: { ...permit, status: "closed", effective_status: "closed", closed_at: "2026-01-05T17:00:00Z", closeout_notes: "Area cleared", conditions: [] } }));
     expect(isPdf(b)).toBe(true);
+  });
+  it("an expired (past-window) permit renders its derived EXPIRED status, never a stale 'active'", async () => {
+    // effective_status is what the route computes via effectiveStatus(); a live
+    // permit past valid_until must never read 'active' on an evidence document.
+    const b = await renderToBuffer(PermitPdf({ p: { ...permit, status: "active", effective_status: "expired" } }));
+    expect(isPdf(b)).toBe(true);
+    expect(b.length).toBeGreaterThan(1000);
   });
   it("the PDF input carries H&S content only — no cost/margin/internal fields", () => {
     expect(Object.keys(permit).join(",")).not.toMatch(/margin|profit|price|\bcost\b|unit_|day_rate|hourly/i);
