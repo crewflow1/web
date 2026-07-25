@@ -457,6 +457,7 @@ describe("getJobDocumentDownloadUrl", () => {
 
   it("reads the version via the TENANT client (RLS gate) then signs via admin (60s)", async () => {
     h.cfg.version = {
+      org_id: "org-1",
       document_id: "doc-2",
       visibility: "private",
       storage_bucket: "job-docs-private",

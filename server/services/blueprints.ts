@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import {
   validateBlueprintFile, sniffBlueprintType, blueprintStorageKey, extForMime,
   type CreateBlueprintInput, type Discipline, type BlueprintMime,
@@ -200,8 +201,10 @@ export async function getBlueprintVersionUrl(versionId: string): Promise<Bluepri
   await requireOrgContext();
   const tenant = await createClient();
   const { data: version } = await bp(tenant).from("blueprint_versions")
-    .select("id, storage_path, mime_type, file_name").eq("id", versionId).maybeSingle();
+    .select("id, org_id, storage_path, mime_type, file_name").eq("id", versionId).maybeSingle();
   if (!version) return { ok: false, error: "not_found" };
+  // Refuse to sign a path not under the row's own org (poisoned cross-tenant pointer).
+  if (!storagePathBelongsToOrg(String(version.storage_path), String(version.org_id))) return { ok: false, error: "not_found" };
 
   const admin = createAdminClient();
   const signed = await admin.storage.from(BUCKET).createSignedUrl(String(version.storage_path), 60);
