@@ -117,7 +117,15 @@ All 8 stacks are green against `main`'s partial `types.ts` via the established `
 - **Cost (§23):** no new fixed monthly cost. Only new infra is one **private Supabase Storage bucket** (`blueprints`) within the existing plan — marginal per-GB only. No new cron/queue/external service.
 - **Env/flags (§24):** RC references only the three existing Supabase vars already in prod (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`). No new provider vars. No secret values recorded here.
 - **External providers (§25):** **stay dark.** No activation code (WhatsApp/Twilio/Stripe-send/OpenAI/Anthropic/SendGrid) is introduced. All AI/comms/telephony/payment-send paths remain gated on absent external credentials.
-- **PITR (§22):** **must be human-verified in the Supabase dashboard (Database → Backups) before the irreversible merge/deploy step.** This environment holds only DB credentials, not the management API, so PITR state cannot be confirmed programmatically here. Do **not** disable PITR.
+- **PITR (§22):** **VERIFIED ENABLED (2026-07-25)** via the Supabase Management API (`supabase backups list --project-ref jzntbskdqdopzwdqwvkp`, read-only): `WALG=true`, `PITR=true`, rolling ~7-day window. Re-confirm immediately before migrating. Do **not** disable PITR.
+
+## Pre-release hardening (2026-07-25)
+
+A 12-agent adversarial pre-release pass found and closed **4 P1s** (zero P0) before the boundary — this is why the RC now carries **18** migrations (`…08→…24`):
+- **completion_certificates** bare FKs → cross-tenant write + one-live-per-job DoS: new migration `20261024` adds `tg_completion_certificate_org_integrity` (+ closes inert `blueprints.job_id`/`payments.customer_id` gaps) · real-PG cross-tenant test.
+- **cash.ts** cross-invoice overpay understated `outstanding` → per-invoice cap · test.
+- **allocate + supplier-bill** had no double-submit guard → added `DEDUPE_WINDOW_MS` idempotency · source-contract test.
+- P2s: future-valid permit showed "Active" on lists → `not_yet_valid` state; untracked committed test JWTs; portal route-array coverage.
 
 ---
 
