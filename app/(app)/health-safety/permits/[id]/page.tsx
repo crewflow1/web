@@ -619,6 +619,7 @@ export default async function PermitDetailPage({
           acks={acks}
           currentUserId={userId}
           memberCount={memberCount}
+          pdfHref={`/api/health-safety/permits/${permit.id}/pdf`}
         />
       ) : null}
     </div>

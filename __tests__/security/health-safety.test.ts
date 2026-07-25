@@ -17,6 +17,9 @@ const permActions = readFileSync(join(root, "app/(app)/health-safety/permits/act
 const permData = readFileSync(join(root, "app/(app)/health-safety/permits/_data.ts"), "utf8");
 const ackMig = readFileSync(join(root, "supabase/migrations/20261020000000_health_safety_acknowledgements.sql"), "utf8");
 const ackActions = readFileSync(join(root, "app/(app)/health-safety/signoff-actions.ts"), "utf8");
+const ramsPdfRoute = readFileSync(join(root, "app/api/health-safety/[id]/pdf/route.ts"), "utf8");
+const permitPdfRoute = readFileSync(join(root, "app/api/health-safety/permits/[id]/pdf/route.ts"), "utf8");
+const ramsPdfLib = readFileSync(join(root, "lib/pdf/rams-pdf.tsx"), "utf8");
 
 describe("migration — tenant isolation + immutability are DB-enforced", () => {
   it("RLS is enabled on both RAMS tables", () => {
@@ -157,5 +160,28 @@ describe("operative sign-off (M3) — append-only, tamper-proof, self-signed evi
     expect(ackActions).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
     expect(ackActions).toMatch(/requireOrgContext\(\)/);
     expect(ackActions).toMatch(/user_id: user\.id/);
+  });
+});
+
+describe("evidence PDF (M4) — auth-gated, RLS-scoped, issued-only, no internal leak", () => {
+  it("both PDF routes require org context + use the tenant client (never service-role)", () => {
+    for (const r of [ramsPdfRoute, permitPdfRoute]) {
+      expect(r).toMatch(/requireOrgContext\(\)/);
+      expect(r).toMatch(/from "@\/lib\/supabase\/server"/);
+      expect(r).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+    }
+  });
+  it("a draft (unissued) document produces no evidence PDF", () => {
+    expect(ramsPdfRoute).toMatch(/status === "draft"/);
+    expect(ramsPdfRoute).toMatch(/Not issued/);
+    expect(permitPdfRoute).toMatch(/status === "draft"/);
+  });
+  it("the PDF is private-cached (no shared cache of an evidence document)", () => {
+    expect(ramsPdfRoute).toMatch(/private, no-store/);
+    expect(permitPdfRoute).toMatch(/private, no-store/);
+  });
+  it("the RAMS PDF component references no cost/margin/price data field", () => {
+    // (data fields — not CSS margin*): a cost/margin/price leak into evidence
+    expect(ramsPdfLib).not.toMatch(/profit|unit_price|day_rate|_cost|cost_|net_amount|vat_/i);
   });
 });

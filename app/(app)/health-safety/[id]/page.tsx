@@ -707,6 +707,7 @@ export default async function RiskAssessmentDetailPage({
           acks={acks}
           currentUserId={userId}
           memberCount={memberCount}
+          pdfHref={`/api/health-safety/${ra.id}/pdf`}
         />
       ) : null}
     </div>

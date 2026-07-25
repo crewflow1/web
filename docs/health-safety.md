@@ -185,6 +185,42 @@ posture. Whether to **HARD-BLOCK** a worker from being assigned / clocking into
 high-risk work until the required RAMS/permit is acknowledged is an operational **policy
 decision** (it touches assignment/clock-in) that needs your call before it's built.
 
+## Milestone 4 — Evidence-grade PDF
+
+RAMS and permits produce **evidence-grade PDFs** — the artefact a firm hands to the HSE,
+a principal contractor, or its own records. Built on the **existing** `@react-pdf`
+architecture (`lib/pdf/*`, `renderToBuffer`) — no new engine.
+
+- **`lib/pdf/rams-pdf.tsx`** — header (company, `RA-NNNN`, status), activity, meta
+  (location, assessor, dates, PPE), the **hazards & controls table** (initial `L×S`
+  rating + band, controls, residual band), the method statement, and the **operative
+  sign-off register**. Footer: generated-at + "not a substitute for a competent H&S
+  professional".
+- **`lib/pdf/permit-pdf.tsx`** — header (`PTW-NNNN`, type, status), scope, validity
+  window, RAMS reference, the **control-conditions checklist** (✓/✗ + confirmed-at),
+  isolation/emergency detail, sign-off register, and close-out. Footer: "operational
+  record — not legal advice".
+- **Routes** `GET /api/health-safety/[id]/pdf` and `/api/health-safety/permits/[id]/pdf`
+  — `requireOrgContext` + tenant (RLS) client (never service-role); a **draft returns
+  409** (no evidence to produce); `Cache-Control: private, no-store`. Wired as a
+  "⤓ Download PDF" control on the issued document's sign-off panel.
+
+**Document-delivery decision (§24, made deliberately):** RAMS and permits are **INTERNAL
+/ principal-contractor** evidence, **not end-customer (homeowner) documents**. CrewFlow's
+portal serves the homeowner, who neither needs nor should see RAMS/permits, so these are
+**not** auto-exposed to the customer portal (§24: *"do not automatically expose internal
+H&S documents to customers"*). A dedicated **principal-contractor sharing** surface (with
+an explicit publish + customer-safe snapshot) is a **product decision surfaced for the
+founder**, not built here. The PDF input types already carry **H&S content only** (no
+cost/margin/price fields — asserted in tests), so a customer-safe snapshot is trivial if
+that surface is later approved.
+
+**Tests:** 6 PDF unit (well-formed `%PDF-` buffers for RAMS + permit incl. empty/closed
+states; the input carries no cost/margin field) · 4 PDF security source-contracts
+(auth-gated, tenant-client, issued-only, private-cache, no-cost-leak) · **2 authenticated
+E2E** — a real owner GET of the RAMS PDF returns `application/pdf` starting `%PDF-`; a
+draft returns 409.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation
