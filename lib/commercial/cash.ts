@@ -116,7 +116,17 @@ export function computeCommercialCash(input: {
   const received = round2(
     [...paidByInvoice.values()].reduce((s, v) => round2(s + v), 0),
   );
-  const outstanding = round2(Math.max(0, billed - received));
+  // Outstanding = Σ per-invoice remaining balance, capping each invoice's payment at
+  // its OWN total. An overpayment on one invoice must not silently pay down another —
+  // that would understate the true debtor (the exact defect this module exists to fix,
+  // and it would let `overdue` exceed `outstanding`). `received` stays the true cash
+  // received (which may legitimately exceed `billed` when a customer overpays).
+  const outstanding = round2(
+    raised.reduce(
+      (s, inv) => round2(s + Math.max(0, toPounds(inv.total) - (paidByInvoice.get(inv.id) ?? 0))),
+      0,
+    ),
+  );
 
   // Overdue = Σ per-invoice remaining balance on invoices past due.
   let overdue = 0;

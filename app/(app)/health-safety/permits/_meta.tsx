@@ -23,6 +23,7 @@ export const PERMIT_STATUS_LABELS: Record<EffectiveStatus, string> = {
   closed: "Closed",
   cancelled: "Cancelled",
   expired: "Expired",
+  not_yet_valid: "Not yet valid",
 };
 
 export const PERMIT_STATUS_STYLES: Record<EffectiveStatus, string> = {
@@ -33,6 +34,7 @@ export const PERMIT_STATUS_STYLES: Record<EffectiveStatus, string> = {
   closed: "bg-slate-100 text-slate-600",
   cancelled: "bg-slate-100 text-slate-500",
   expired: "bg-red-100 text-red-800",
+  not_yet_valid: "bg-amber-100 text-amber-900",
 };
 
 /** Per-type pill tones — distinguishable but restrained; the label does the work. */

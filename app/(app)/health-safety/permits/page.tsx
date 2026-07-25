@@ -109,6 +109,7 @@ export default async function PermitsRegisterPage({
               row.status as PermitStatus,
               row.valid_until,
               now,
+              row.valid_from,
             );
             const job = row.job_id
               ? (jobLabel.get(row.job_id) ?? "Linked job")

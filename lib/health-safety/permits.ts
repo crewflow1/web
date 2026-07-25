@@ -70,15 +70,26 @@ export function isNotYetValid(validFrom: string | null, now: Date): boolean {
   return new Date(validFrom).getTime() > now.getTime();
 }
 
-export type EffectiveStatus = PermitStatus | "expired";
+export type EffectiveStatus = PermitStatus | "expired" | "not_yet_valid";
 
-/** What to SHOW: the stored status, unless a live permit's window has passed. */
+/**
+ * What to SHOW: the stored status, unless a live permit's window has passed
+ * (expired) or has NOT YET opened (not_yet_valid — a permit issued/activated ahead
+ * of its start must never read as currently "Active", on lists or anywhere). Pass
+ * `validFrom` to enable the not-yet-valid check; omitting it preserves the prior
+ * expiry-only behaviour for callers that don't have the start date.
+ */
 export function effectiveStatus(
   status: PermitStatus,
   validUntil: string | null,
   now: Date,
+  validFrom: string | null = null,
 ): EffectiveStatus {
-  return isExpired(validUntil, status, now) ? "expired" : status;
+  if (isExpired(validUntil, status, now)) return "expired";
+  if ((status === "issued" || status === "active") && isNotYetValid(validFrom, now)) {
+    return "not_yet_valid";
+  }
+  return status;
 }
 
 export type ConditionState = { required: boolean; confirmed: boolean };

@@ -10,7 +10,7 @@ import { effectiveStatus, PERMIT_TYPE_LABELS, type PermitStatus, type PermitType
  */
 
 type RaRow = { id: string; reference: string | null; title: string; status: string; revision_number: number };
-type PermitRow = { id: string; reference: string | null; title: string; permit_type: string; status: string; valid_until: string | null };
+type PermitRow = { id: string; reference: string | null; title: string; permit_type: string; status: string; valid_from: string | null; valid_until: string | null };
 
 const RA_STATUS_STYLE: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
@@ -37,7 +37,7 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
   };
   const [ramsRes, permitsRes] = await Promise.all([
     s.from("risk_assessments").select("id, reference, title, status, revision_number").eq("job_id", jobId).order("created_at", { ascending: false }).limit(50),
-    s.from("permits_to_work").select("id, reference, title, permit_type, status, valid_until").eq("job_id", jobId).order("created_at", { ascending: false }).limit(50),
+    s.from("permits_to_work").select("id, reference, title, permit_type, status, valid_from, valid_until").eq("job_id", jobId).order("created_at", { ascending: false }).limit(50),
   ]);
   const rams = (ramsRes.data ?? []) as RaRow[];
   const permits = (permitsRes.data ?? []) as PermitRow[];
@@ -85,7 +85,7 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
           <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Permits to work</h3>
           <ul className="mt-2 divide-y divide-slate-100 text-sm">
             {permits.map((p) => {
-              const eff = effectiveStatus(p.status as PermitStatus, p.valid_until, now);
+              const eff = effectiveStatus(p.status as PermitStatus, p.valid_until, now, p.valid_from);
               const typeLabel = PERMIT_TYPE_LABELS[p.permit_type as PermitType] ?? p.permit_type;
               return (
                 <li key={p.id} className="flex flex-wrap items-center gap-2 py-2">

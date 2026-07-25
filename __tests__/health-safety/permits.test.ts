@@ -53,6 +53,18 @@ describe("derived expiry (never stored, no cron)", () => {
     expect(effectiveStatus("active", "2026-06-15T13:00:00Z", NOW)).toBe("active");
     expect(effectiveStatus("closed", "2026-06-15T11:00:00Z", NOW)).toBe("closed");
   });
+
+  it("effectiveStatus shows not_yet_valid for a live permit whose window has not opened", () => {
+    // valid_from in the FUTURE (> NOW) + a live status ⇒ must NOT read "active".
+    expect(effectiveStatus("active", "2026-06-15T20:00:00Z", NOW, "2026-06-15T14:00:00Z")).toBe("not_yet_valid");
+    expect(effectiveStatus("issued", "2026-06-16T00:00:00Z", NOW, "2026-06-15T18:00:00Z")).toBe("not_yet_valid");
+    // window already open (valid_from in the past) ⇒ the stored status again
+    expect(effectiveStatus("active", "2026-06-15T20:00:00Z", NOW, "2026-06-15T11:00:00Z")).toBe("active");
+    // only live permits gate on the window — a draft is never not-yet-valid
+    expect(effectiveStatus("draft", "2026-06-15T20:00:00Z", NOW, "2026-06-15T14:00:00Z")).toBe("draft");
+    // omitting validFrom preserves the prior expiry-only behaviour (backward-compatible)
+    expect(effectiveStatus("active", "2026-06-15T20:00:00Z", NOW)).toBe("active");
+  });
 });
 
 describe("canIssue — the DB-enforced issue gate, mirrored", () => {

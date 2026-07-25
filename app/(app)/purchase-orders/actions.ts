@@ -377,6 +377,44 @@ export async function recordSupplierBill(
 
   if (!po) return formError("Purchase order not found.");
 
+  // Idempotency / double-submit guard — a retried POST or a double-click racing the
+  // client-side disable would otherwise insert the SAME supplier bill twice, doubling
+  // the job's ACTUAL cost and understating profit (finances has no natural-key
+  // uniqueness on bills). Match an identical bill on the same PO within a few seconds
+  // and treat it as an idempotent no-op.
+  type DupeQ = {
+    select: (c: string) => DupeQ;
+    eq: (k: string, v: unknown) => DupeQ;
+    is: (k: string, v: unknown) => DupeQ;
+    gte: (k: string, v: unknown) => DupeQ;
+    limit: (n: number) => DupeQ;
+    maybeSingle: () => Promise<{ data: { id: string } | null }>;
+  };
+  const DEDUPE_WINDOW_MS = 10_000;
+  const sinceIso = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
+  let dupQuery = (supabase.from("finances" as never) as unknown as DupeQ)
+    .select("id")
+    .eq("org_id", ctx.org.id)
+    .eq("purchase_order_id", po.id)
+    .eq("amount", parsed.data.amount)
+    .gte("created_at", sinceIso)
+    .limit(1);
+  dupQuery = parsed.data.reference
+    ? dupQuery.eq("reference", parsed.data.reference)
+    : dupQuery.is("reference", null);
+  const { data: existingBill } = await dupQuery.maybeSingle();
+  if (existingBill) {
+    console.warn("[purchase-orders] duplicate supplier bill suppressed", {
+      orgId: ctx.org.id,
+      poId: po.id,
+      billId: existingBill.id,
+    });
+    revalidatePath(`/purchase-orders/${po.id}`);
+    if (po.job_id) revalidatePath(`/jobs/${po.job_id}`);
+    revalidatePath("/finances");
+    return formSuccess({ successMessage: "Bill recorded." });
+  }
+
   const { error } = await (
     supabase.from("finances" as never) as unknown as {
       insert: (v: unknown) => Promise<{ error: { message: string } | null }>;

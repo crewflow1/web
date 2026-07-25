@@ -63,6 +63,48 @@ export async function recordAllocatedPayment(
   }
 
   const supabase = await createClient();
+
+  // Idempotency / double-submit guard (mirrors invoices/[id]/payment-actions.ts).
+  // A retried POST or a double-click that races the client-side disable would
+  // otherwise record the SAME receipt twice — a second `payments` row plus a full
+  // set of duplicate allocations — silently overstating cash received and
+  // understating the debtor. The DB over-allocation guard cannot catch it (each
+  // duplicate is a distinct payment_id, each within its own amount), so before
+  // writing we look for an identical receipt from the same user in the last few
+  // seconds and treat a match as an idempotent no-op. `payments` isn't in the
+  // generated types yet — same cast idiom as the RPC below.
+  type DupeQ = {
+    select: (c: string) => DupeQ;
+    eq: (k: string, v: unknown) => DupeQ;
+    is: (k: string, v: unknown) => DupeQ;
+    gte: (k: string, v: unknown) => DupeQ;
+    limit: (n: number) => DupeQ;
+    maybeSingle: () => Promise<{ data: { id: string } | null }>;
+  };
+  const DEDUPE_WINDOW_MS = 10_000;
+  const sinceIso = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
+  let dupQuery = (supabase.from("payments" as never) as unknown as DupeQ)
+    .select("id")
+    .eq("org_id", ctx.org.id)
+    .eq("amount", input.amount)
+    .eq("paid_at", input.paid_at)
+    .eq("method", input.method)
+    .eq("created_by", user.id)
+    .gte("created_at", sinceIso)
+    .limit(1);
+  dupQuery = input.reference ? dupQuery.eq("reference", input.reference) : dupQuery.is("reference", null);
+  const { data: existingPayment } = await dupQuery.maybeSingle();
+  if (existingPayment) {
+    console.warn("[payment-allocation] duplicate submit suppressed", {
+      orgId: ctx.org.id,
+      paymentId: existingPayment.id,
+    });
+    revalidatePath("/payments");
+    revalidatePath("/invoices");
+    revalidatePath("/dashboard");
+    return formSuccess({ redirectTo: "/payments?saved=payment" });
+  }
+
   const { data: paymentId, error } = await (
     supabase.rpc as unknown as (
       fn: string,

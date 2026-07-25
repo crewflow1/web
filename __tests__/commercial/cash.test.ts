@@ -91,6 +91,26 @@ describe("computeCommercialCash — the ledger-truth fix (the headline defect)",
     });
     expect(c.outstanding).toBe(0);
   });
+
+  it("an overpayment on ONE invoice does not pay down another (per-invoice cap)", () => {
+    // Two £10k invoices on this job; A over-allocated £15k, B unpaid + past due.
+    // The true debtor is B's full £10k — an overpayment on A must NOT net it down to
+    // £5k (billed−received), and `overdue` (already per-invoice capped) must never
+    // exceed `outstanding`. This is the cross-invoice understatement the naive
+    // `billed − received` produced.
+    const c = cash({
+      invoices: [
+        { id: "invA", status: "partially_paid", total: 10000, due_date: "2026-08-01" },
+        { id: "invB", status: "sent", total: 10000, due_date: "2026-06-01" },
+      ],
+      payments: [{ invoice_id: "invA", amount: 15000 }],
+    });
+    expect(c.billed).toBe(20000);
+    expect(c.received).toBe(15000); // true cash received (uncapped)
+    expect(c.outstanding).toBe(10000); // B's balance — NOT billed − received (£5k)
+    expect(c.overdue).toBe(10000); // B is past due
+    expect(c.overdue).toBeLessThanOrEqual(c.outstanding); // the invariant that was violable
+  });
 });
 
 describe("computeCommercialCash — F2 tenancy invariant", () => {
