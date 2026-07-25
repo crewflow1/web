@@ -65,23 +65,44 @@ All additive; rollback = drop the new object(s) / restore prior function body. N
 
 **CI (PR #421):** see the PR checks — `integration (real Postgres)`, `e2e (real app, real Postgres)`, `security`, `tests`, `typecheck`, `lint`, `Vercel`. CI is authoritative for the DB-backed gates (fresh-DB migration apply, RLS, real-app E2E) that cannot run locally. GO requires all green **by name**.
 
-**Consolidation-exposed E2E interaction (found + fixed here):** the blueprint PWA
-service worker registers on every authenticated page and reloads once when it first
-CLAIMS the page. That one-time reload — real, and load-bearing for the offline flow —
-races any spec that navigates then immediately interacts/evaluates, and it surfaced
-only in the *consolidated* tree (the H&S branch shipped no SW). It intermittently hit
-a different spec each run (H&S axe scans, the RAMS write form, the pdf.js viewer
-dialog). Fixed at the source by scoping the SW to the two specs that actually exercise
-it (`serviceWorkers: "block"` by default in `playwright.config.ts`; `"allow"` in
-`pwa-offline` + `blueprint-offline`) — **not** a retry mask, and **no app code changed**
-(`sw-register.tsx` is byte-identical to the shipped blueprint branch). This is the kind
-of cross-stack interaction a single-branch release train exists to catch.
+**PWA service-worker first-install reload — REAL DEFECT, FIXED PRE-RELEASE.**
 
-**Known follow-up (non-blocking, post-release):** the SW's reload-on-first-claim can, on
-a user's first-ever visit, briefly reload the page out from under them. It is currently
-load-bearing for the offline flow (removing it naively broke the offline journey), so a
-proper fix is a small blueprint-offline hardening task — tracked for after this release,
-not a release blocker.
+*Defect:* the service worker registered on every authenticated page and, on first
+install, reloaded the page the instant it CLAIMED control (`controllerchange` →
+`window.location.reload()`). On a user's first-ever visit this could flash a reload
+out from under them mid-form (RAMS entry, quotes, onboarding) and lose unsaved input.
+
+*Why the naive fix broke offline (root cause, traced from source):* the first-install
+reload was the only path that loaded the page *through* the controlling SW, which is
+the only mechanism that writes the shared `/_next/static/**` app-shell chunks into
+`STATIC_CACHE`. `clients.claim()` controls *future* fetches but does not retroactively
+cache the page's already-completed uncontrolled loads. Without those chunks the
+precached `/offline` shell serves but cannot **hydrate** offline, so its `list()` effect
+never runs and downloaded drawings never appear.
+
+*Fix (two coordinated app changes; no migration, no cache-policy change):*
+1. `app/(app)/_components/sw-register.tsx` — reload ONLY on a **user-accepted update**
+   (a `useRef` armed by the Refresh click; both first-install and post-`SKIP_WAITING`
+   claims fire the same `controllerchange`, so user intent is the only reliable
+   discriminator). Decision extracted to pure `lib/pwa/sw-lifecycle.ts` for unit tests.
+2. `app/(app)/jobs/[id]/blueprints/_offline-controls.tsx` — on download, after the SW
+   is controlling, explicitly re-fetch this document's `/_next/static` chunks through
+   the SW so the shared app-shell the `/offline` route needs is cached. Replaces the
+   reload's accidental caching side-effect; makes offline init explicit.
+
+*Proof:* new `e2e/pwa-first-install-no-reload.spec.ts` (real browser) asserts first
+install does **not** reload (main-frame nav counter + document-start controller canary
++ window sentinel) and that unsaved form input survives the claim; new unit +
+source-contract tests in `__tests__/security/pwa-worker.test.ts` lock the reload gate
+and the app-shell warm. The real offline journey (`pwa-offline.spec.ts`) stays green
+with the SW enabled. Update→refresh reload is proven at the unit tier (`next start`
+serves an immutable `/sw.js`, so a byte-changed update can't be simulated in-browser
+without a race the `retries:0` policy forbids). **This issue is pre-release closed.**
+
+**E2E service-worker scoping (retained, complementary):** the SW is a cross-cutting PWA
+layer, so the E2E config blocks it by default and `pwa-offline` + `blueprint-offline`
+re-enable it (`serviceWorkers: "allow"`). This keeps unrelated specs deterministic and
+is orthogonal to the app fix above.
 
 ---
 
