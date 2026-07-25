@@ -31,6 +31,8 @@ export type ToolboxTalkPdfInput = {
   permit_reference: string | null;
   permit_status_at_issue: string | null;
   external_attendees: ToolboxTalkPdfAttendee[];
+  attendance_note: string | null;
+  attendee_count: number | null;
   issued_by_name: string | null;
   issued_on: string;
   signoffs: ToolboxTalkPdfSignoff[];
@@ -120,12 +122,16 @@ export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
         )}
 
         {/* Tier B — recorded attendance, explicitly not authenticated. */}
-        {t.external_attendees.length ? (
+        {t.attendance_note || t.attendee_count != null || t.external_attendees.length ? (
           <>
-            <Text style={s.sectionH}>Recorded attendees (manual record)</Text>
+            <Text style={s.sectionH}>Recorded attendance (manual record)</Text>
             <Text style={s.note}>
               Manually recorded — not CrewFlow-authenticated. Any signed paper sheet is attached to the record.
             </Text>
+            {t.attendee_count != null ? (
+              <Text style={s.para}>Headcount recorded: {t.attendee_count}.</Text>
+            ) : null}
+            {t.attendance_note ? <Text style={s.para}>{t.attendance_note}</Text> : null}
             {t.external_attendees.map((a, i) => (
               <View key={i} style={s.tr} wrap={false}>
                 <Text style={{ ...s.cell, width: "60%" }}>{a.name}</Text>

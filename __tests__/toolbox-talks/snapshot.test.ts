@@ -20,6 +20,8 @@ describe("buildToolboxTalkSnapshot — worker-safe evidence by construction", ()
     permitReference: "PTW-0003",
     permitStatusAtIssue: "active",
     externalAttendees: [{ name: "J. Bloggs", company: "ACME Roofing Ltd" }],
+    attendanceNote: "J. Smith, K. Patel, the groundworks crew",
+    attendeeCount: 6,
     issuedByName: "A. Foreman",
     issuedOn: "2026-07-18",
   });
@@ -29,6 +31,11 @@ describe("buildToolboxTalkSnapshot — worker-safe evidence by construction", ()
     expect(snap.rams_revision).toBe(2);
     expect(snap.permit_reference).toBe("PTW-0003");
     expect(snap.permit_status_at_issue).toBe("active"); // status-at-issue, never re-derived live
+  });
+
+  it("freezes the Tier-B recorded attendance (free-text + headcount) — the subcontractor sign-in", () => {
+    expect(snap.attendance_note).toBe("J. Smith, K. Patel, the groundworks crew");
+    expect(snap.attendee_count).toBe(6);
   });
 
   it("contains EXACTLY the worker-safe key set — no internal/commercial field can leak", () => {
@@ -55,6 +62,8 @@ describe("buildToolboxTalkSnapshot — worker-safe evidence by construction", ()
     });
     expect(minimal.ppe).toEqual([]);
     expect(minimal.external_attendees).toEqual([]);
+    expect(minimal.attendance_note).toBeNull();
+    expect(minimal.attendee_count).toBeNull();
     expect(minimal.rams_reference).toBeNull();
     expect(minimal.permit_reference).toBeNull();
     expect(minimal.location).toBeNull();

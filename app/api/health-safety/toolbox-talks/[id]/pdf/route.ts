@@ -54,6 +54,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     permit_reference: snap.permit_reference,
     permit_status_at_issue: snap.permit_status_at_issue,
     external_attendees: snap.external_attendees ?? [],
+    attendance_note: snap.attendance_note ?? null,
+    attendee_count: snap.attendee_count ?? null,
     issued_by_name: snap.issued_by_name,
     issued_on: snap.issued_on,
     signoffs: signoffs.map((so) => ({ signer_name: so.signer_name, signed_name: so.signed_name, acknowledged_at: so.acknowledged_at })),

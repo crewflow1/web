@@ -14,6 +14,7 @@ const migration = readFileSync(join(root, "supabase/migrations/20261025000000_he
 const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000_toolbox_talk_acknowledgements.sql"), "utf8");
 const revMigration = readFileSync(join(root, "supabase/migrations/20261027000000_toolbox_talk_revision_snapshot.sql"), "utf8");
 const attMigration = readFileSync(join(root, "supabase/migrations/20261028000000_toolbox_talk_attachment_freeze.sql"), "utf8");
+const hardMigration = readFileSync(join(root, "supabase/migrations/20261029000000_toolbox_talk_evidence_hardening.sql"), "utf8");
 const attachPanel = readFileSync(join(root, "components/attachments/AttachmentsPanel.tsx"), "utf8");
 const hsSnapshot = readFileSync(join(root, "server/services/health-safety-snapshot.ts"), "utf8");
 const hsSignals = readFileSync(join(root, "lib/health-safety/signals.ts"), "utf8");
@@ -141,7 +142,7 @@ describe("toolbox server actions — RLS-scoped, never service-role, count-check
   });
 
   it("delete is admin-gated AND draft-only (the DB delete-guard backstops issued evidence)", () => {
-    expect(actions).toMatch(/membership\.role !== "owner" && ctx\.membership\.role !== "admin"/);
+    expect(actions).toMatch(/deleteToolboxTalk[\s\S]*?isManager\(ctx\.membership\.role\)/);
     expect(actions).toMatch(/deleteToolboxTalk[\s\S]*?\.eq\("status", "draft"\)/);
   });
 });
@@ -299,7 +300,7 @@ describe("toolbox M4 — evidence PDF: auth-gated, RLS-scoped, snapshot-rendered
     // `marginTop` etc. is not a false hit; the unit test also scans the input keys.
     expect(pdfLib).not.toMatch(/profit|unit_price|day_rate|_cost|cost_|net_amount|vat_|markup|supplier/i);
     expect(pdfLib).toMatch(/CrewFlow-authenticated acknowledgements/);
-    expect(pdfLib).toMatch(/Recorded attendees/);
+    expect(pdfLib).toMatch(/Recorded attendance \(manual record\)/);
     expect(pdfLib).toMatch(/not platform-authenticated/);
   });
 });
@@ -329,6 +330,55 @@ describe("toolbox M5 — signed-sheet evidence is append-only once delivered", (
 
   it("the toolbox detail page freezes attachments the moment a talk leaves draft", () => {
     expect(detailPage).toMatch(/frozen=\{talk\.status !== "draft"\}/);
+  });
+});
+
+// ===========================================================================
+// Final adversarial-review hardening (20261029 + app)
+// ===========================================================================
+describe("toolbox hardening — final 5-agent review fixes", () => {
+  it("[evidence] the Tier-B attendance record (attendees/count/notes) is now in the frozen tuple", () => {
+    expect(hardMigration).toMatch(/new\.attendees, new\.attendee_count, new\.notes/);
+    expect(hardMigration).toMatch(/old\.attendees, old\.attendee_count, old\.notes/);
+    // and it reaches the frozen snapshot + PDF (the P0 attendance-dropped gap)
+    expect(snapshotLib).toMatch(/attendance_note/);
+    expect(actions).toMatch(/attendanceNote: talk\.attendees/);
+    expect(pdfLib).toMatch(/Recorded attendance \(manual record\)/);
+  });
+
+  it("[evidence] a JWT draft->issued transition MUST carry the evidence snapshot (no null-then-forge)", () => {
+    expect(hardMigration).toMatch(/must be delivered with its evidence snapshot/);
+    expect(hardMigration).toMatch(/auth\.uid\(\) is not null/); // JWT-only; service role keeps the trusted asymmetry
+  });
+
+  it("[evidence] the attachment-freeze trigger is TG_OP-correct (a permitted UPDATE is not discarded)", () => {
+    expect(hardMigration).toMatch(/v_ret := case when tg_op = 'DELETE' then old else new end/);
+    expect(hardMigration).toMatch(/return v_ret/);
+  });
+
+  it("[hygiene] the dead delivered_by column is dropped from the live H&S table", () => {
+    expect(hardMigration).toMatch(/drop column if exists delivered_by/);
+  });
+
+  it("[PII] the snapshot resolver never falls back to a user's email (worker-distributed evidence)", () => {
+    expect(actions).toMatch(/Display name ONLY — never the email/);
+    expect(actions).not.toMatch(/u\?\.full_name \?\? u\?\.email/);
+  });
+
+  it("[authz] the supervisory lifecycle actions re-check owner/admin server-side (a POST is not a boundary)", () => {
+    expect(actions).toMatch(/const isManager/);
+    // withdraw (via transition), create-revision, issue-revision, delete all gate on isManager
+    const guards = actions.match(/if \(!isManager\(ctx\.membership\.role\)\)/g) ?? [];
+    expect(guards.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("[robustness] the first-issue path refuses a crafted revision (mirrors the RPC rev>=2 guard)", () => {
+    expect(actions).toMatch(/use_revision_flow/);
+  });
+
+  it("[perf] the awaiting-ack dashboard read is recency-windowed + ordered (not an unbounded cap)", () => {
+    expect(hsSnapshot).toMatch(/\.gte\("issued_at", sinceIso\)/);
+    expect(hsSnapshot).toMatch(/toolboxAwaitingAckP/); // computed in parallel with the main batch
   });
 });
 

@@ -32,8 +32,14 @@ export type ToolboxTalkSnapshot = {
   rams_revision: number | null;
   permit_reference: string | null; // "PTW-0003" as it stood at issue
   permit_status_at_issue: string | null; // frozen effectiveStatus
-  // external / manual attendees captured in the room (Tier B) — frozen names, NO PII beyond company
+  // structured external / manual attendees captured in the room (Tier B) — frozen
+  // names, NO PII beyond company. (Reserved for a future structured capture UI.)
   external_attendees: ToolboxAttendee[];
+  // Tier B — the manager's free-text attendance record + headcount as typed at
+  // delivery (the subcontractor paper sign-in for anyone not signing in-app). Frozen
+  // here so the evidence PDF carries what was recorded, honestly labelled Tier B.
+  attendance_note: string | null;
+  attendee_count: number | null;
   // issue stamps
   issued_by_name: string | null; // display name only
   issued_on: string; // YYYY-MM-DD
@@ -43,7 +49,7 @@ export const TOOLBOX_TALK_SNAPSHOT_KEYS: ReadonlyArray<keyof ToolboxTalkSnapshot
   "talk_reference", "revision", "talk_date", "location", "site_label",
   "delivered_by", "topic", "key_points", "ppe",
   "rams_reference", "rams_revision", "permit_reference", "permit_status_at_issue",
-  "external_attendees", "issued_by_name", "issued_on",
+  "external_attendees", "attendance_note", "attendee_count", "issued_by_name", "issued_on",
 ];
 
 export type BuildToolboxTalkSnapshotInput = {
@@ -61,6 +67,8 @@ export type BuildToolboxTalkSnapshotInput = {
   permitReference?: string | null;
   permitStatusAtIssue?: string | null;
   externalAttendees?: ToolboxAttendee[] | null;
+  attendanceNote?: string | null;
+  attendeeCount?: number | null;
   issuedByName?: string | null;
   issuedOn: string;
 };
@@ -87,6 +95,8 @@ export function buildToolboxTalkSnapshot(input: BuildToolboxTalkSnapshotInput): 
     permit_reference: input.permitReference ?? null,
     permit_status_at_issue: input.permitStatusAtIssue ?? null,
     external_attendees: input.externalAttendees ?? [],
+    attendance_note: input.attendanceNote ?? null,
+    attendee_count: input.attendeeCount ?? null,
     issued_by_name: input.issuedByName ?? null,
     issued_on: input.issuedOn,
   };

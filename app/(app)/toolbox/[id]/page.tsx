@@ -92,51 +92,41 @@ export default async function ToolboxTalkPage({
 
   if (!talk) notFound();
 
-  // --- Operative sign-off (M2) — Tier A: authenticated acknowledgements against the
-  // crew rota'd to this talk's job. Only a delivered (issued) talk is acknowledgeable;
-  // the same reads power the manager's completion view. Parallel (mobile-latency).
+  // Pure, no-I/O scalars first.
   const isIssued = talk.status === "issued";
-  const [acks, required, priorSignoff] = await Promise.all([
-    isIssued ? listAcknowledgements("toolbox_talk", talk.id) : Promise.resolve([]),
-    isIssued ? requiredOperatives(talk.job_id) : Promise.resolve([]),
-    isIssued && (talk.revision_number ?? 1) > 1 && talk.root_toolbox_talk_id
-      ? priorRevisionSignoff(talk.root_toolbox_talk_id, talk.revision_number ?? 1, user.id, TOOLBOX_REVISABLE)
-      : Promise.resolve(null),
-  ]);
-  const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
-  const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
-
-  // Revision lineage (M3): the whole series (newest first) + which one is current.
-  // A revision draft (revision_number > 1) delivers via the atomic supersede RPC.
-  const siblings = await loadRevisionSeries(supabase, talk.root_toolbox_talk_id ?? talk.id);
-  const currentIssued = siblings.find((s) => s.status === "issued") ?? null;
-  const isRevisionDraft = (talk.revision_number ?? 1) > 1;
-  const issueAction = isRevisionDraft ? issueToolboxTalkRevision : issueToolboxTalk;
-  const isCurrentIssued = talk.status === "issued" && currentIssued?.id === talk.id;
-
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const editable = isEditable(talk.status);
   const gate = canIssue({ status: talk.status, topic: talk.topic, key_points: talk.key_points });
   const meta = TOOLBOX_TALK_STATUS_META[talk.status];
+  const isRevisionDraft = (talk.revision_number ?? 1) > 1;
+  const issueAction = isRevisionDraft ? issueToolboxTalkRevision : issueToolboxTalk;
 
-  const staff = await listStaffForOrg();
-  const nameOf = (uid: string | null) =>
-    uid ? (staff.find((s) => s.id === uid)?.full_name ?? staff.find((s) => s.id === uid)?.email ?? null) : null;
-
-  let jobName: string | null = null;
-  if (talk.job_id) {
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("id, customer:customers ( name )")
-      .eq("id", talk.job_id)
-      .maybeSingle();
-    jobName = job?.customer?.name ?? "Job";
-  }
-
-  const [rams, permit] = await Promise.all([
+  // Every downstream read depends only on `talk` (or nothing), so run them in ONE
+  // parallel batch rather than a serial waterfall (M7 perf — ~5 RTTs → 1 on mobile):
+  // Tier-A acks + required crew (issued only), the re-ack prompt, the revision series,
+  // the org staff (for display names), the job name, and the linked RAMS/permit labels.
+  const [acks, required, priorSignoff, siblings, staff, jobRow, rams, permit] = await Promise.all([
+    isIssued ? listAcknowledgements("toolbox_talk", talk.id) : Promise.resolve([]),
+    isIssued ? requiredOperatives(talk.job_id) : Promise.resolve([]),
+    isIssued && isRevisionDraft && talk.root_toolbox_talk_id
+      ? priorRevisionSignoff(talk.root_toolbox_talk_id, talk.revision_number ?? 1, user.id, TOOLBOX_REVISABLE)
+      : Promise.resolve(null),
+    loadRevisionSeries(supabase, talk.root_toolbox_talk_id ?? talk.id),
+    listStaffForOrg(),
+    talk.job_id
+      ? supabase.from("jobs").select("id, customer:customers ( name )").eq("id", talk.job_id).maybeSingle()
+      : Promise.resolve({ data: null as { customer?: { name?: string | null } | null } | null }),
     talk.risk_assessment_id ? loadDocLabel(supabase, "risk_assessments", talk.risk_assessment_id) : Promise.resolve(null),
     talk.permit_to_work_id ? loadDocLabel(supabase, "permits_to_work", talk.permit_to_work_id) : Promise.resolve(null),
   ]);
+
+  const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
+  const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
+  const currentIssued = siblings.find((s) => s.status === "issued") ?? null;
+  const isCurrentIssued = talk.status === "issued" && currentIssued?.id === talk.id;
+  const nameOf = (uid: string | null) =>
+    uid ? (staff.find((s) => s.id === uid)?.full_name ?? staff.find((s) => s.id === uid)?.email ?? null) : null;
+  const jobName = talk.job_id ? (jobRow?.data?.customer?.name ?? "Job") : null;
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;

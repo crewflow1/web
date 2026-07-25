@@ -69,6 +69,7 @@ const toolbox: ToolboxTalkPdfInput = {
   ppe: ["Hard hat", "Harness"], rams_reference: "RA-0007", rams_revision: 2,
   permit_reference: "PTW-0003", permit_status_at_issue: "active",
   external_attendees: [{ name: "J. Bloggs", company: "ACME Roofing Ltd" }],
+  attendance_note: "J. Smith, K. Patel, groundworks crew", attendee_count: 6,
   issued_by_name: "A. Foreman", issued_on: "2026-07-18",
   signoffs: [{ signer_name: "Jordan Lee", signed_name: "Jordan Lee", acknowledged_at: "2026-07-18T08:00:00Z" }],
   generated_at: "2026-07-19T12:00:00Z",

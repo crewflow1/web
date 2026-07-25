@@ -43,6 +43,15 @@ function firstFieldError(issues: Record<string, string[] | undefined>): string {
   return Object.values(issues).flat()[0] ?? "validation";
 }
 
+/**
+ * Owner/admin gate for the supervisory lifecycle actions (revise, withdraw, delete).
+ * The UI hides these controls for non-admins, but a server action is a POST endpoint —
+ * a non-admin member can replay it — so the server MUST re-check the role, not the UI.
+ * The first delivery of a talk is deliberately NOT gated here (a foreman delivers the
+ * day's briefing); superseding live evidence or neutralising it is a manager decision.
+ */
+const isManager = (role: string): boolean => role === "owner" || role === "admin";
+
 // ---------------------------------------------------------------------------
 // Create — always a draft (the DB born-draft trigger backstops this).
 // ---------------------------------------------------------------------------
@@ -183,12 +192,15 @@ export async function issueToolboxTalk(formData: FormData): Promise<void> {
   // Load current state (RLS-scoped) + linked docs for the frozen snapshot.
   const { data: talk } = await tbl(supabase)("toolbox_talks")
     .select(
-      "id, status, reference, revision_number, talk_date, topic, key_points, location, ppe, presenter, job_id, risk_assessment_id, permit_to_work_id",
+      "id, status, reference, revision_number, talk_date, topic, key_points, location, ppe, presenter, attendees, attendee_count, job_id, risk_assessment_id, permit_to_work_id",
     )
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!talk) redirect(`/toolbox?error=not_found`);
+  // Only the first issue of a series runs here (revisions use the atomic RPC path);
+  // a crafted rev>=2 POST to this action is refused (defence-in-depth, mirrors the RPC).
+  if ((talk.revision_number ?? 1) !== 1) redirect(`/toolbox/${id}?error=use_revision_flow`);
 
   const gate = canIssue({ status: talk.status, topic: talk.topic, key_points: talk.key_points });
   if (!gate.ok) redirect(`/toolbox/${id}?error=${encodeURIComponent(gate.reasons[0]!)}`);
@@ -235,10 +247,14 @@ export async function issueToolboxTalk(formData: FormData): Promise<void> {
 // ---------------------------------------------------------------------------
 // Terminal transitions — supersede / withdraw an issued talk.
 // ---------------------------------------------------------------------------
-async function transition(formData: FormData, to: "superseded" | "withdrawn"): Promise<void> {
+// `superseded` is reached only via the atomic revision RPC, so the sole caller here
+// is withdraw; keep the union tight to that one manual terminal transition.
+async function transition(formData: FormData, to: "withdrawn"): Promise<void> {
   const { ctx, user } = await requireOrgContext();
   if (!toolboxTalkIdSchema.safeParse(formData.get("id")).success) redirect(`/toolbox?error=bad_id`);
   const id = String(formData.get("id"));
+  // Server re-check (the UI hides this from non-admins, but a POST is not a boundary).
+  if (!isManager(ctx.membership.role)) redirect(`/toolbox/${id}?error=forbidden`);
   if (!canTransition("issued", to)) redirect(`/toolbox/${id}?error=bad_transition`);
 
   const supabase = await createClient();
@@ -278,6 +294,7 @@ export async function createToolboxTalkRevision(formData: FormData): Promise<voi
   const { ctx, user } = await requireOrgContext();
   if (!toolboxTalkIdSchema.safeParse(formData.get("id")).success) redirect(`/toolbox?error=bad_id`);
   const sourceId = String(formData.get("id"));
+  if (!isManager(ctx.membership.role)) redirect(`/toolbox/${sourceId}?error=forbidden`);
   const supabase = await createClient();
 
   const { data: src } = await tbl(supabase)("toolbox_talks")
@@ -324,10 +341,11 @@ export async function issueToolboxTalkRevision(formData: FormData): Promise<void
   const { ctx, user } = await requireOrgContext();
   if (!toolboxTalkIdSchema.safeParse(formData.get("id")).success) redirect(`/toolbox?error=bad_id`);
   const id = String(formData.get("id"));
+  if (!isManager(ctx.membership.role)) redirect(`/toolbox/${id}?error=forbidden`);
   const supabase = await createClient();
 
   const { data: talk } = await tbl(supabase)("toolbox_talks")
-    .select("id, status, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, ppe, presenter, job_id, risk_assessment_id, permit_to_work_id")
+    .select("id, status, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, ppe, presenter, attendees, attendee_count, job_id, risk_assessment_id, permit_to_work_id")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
   if (!talk) redirect(`/toolbox?error=not_found`);
 
@@ -369,9 +387,7 @@ export async function issueToolboxTalkRevision(formData: FormData): Promise<void
 export async function deleteToolboxTalk(id: string): Promise<void> {
   const { ctx, user } = await requireOrgContext();
   if (!toolboxTalkIdSchema.safeParse(id).success) redirect(`/toolbox?error=bad_id`);
-  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
-    redirect(`/toolbox?error=forbidden`);
-  }
+  if (!isManager(ctx.membership.role)) redirect(`/toolbox?error=forbidden`);
 
   const supabase = await createClient();
 
@@ -421,6 +437,8 @@ type SnapshotTalk = {
   presenter: string | null;
   topic: string;
   key_points: string;
+  attendees: string | null;
+  attendee_count: number | null;
   job_id: string | null;
   risk_assessment_id: string | null;
   permit_to_work_id: string | null;
@@ -453,7 +471,11 @@ async function assembleSnapshot(
     ramsRevision: rams?.revision ?? null,
     permitReference: permit?.reference ?? null,
     permitStatusAtIssue: permit?.status ?? null,
-    externalAttendees: [], // Tier-B external attendees are recorded, never in the ack roster
+    externalAttendees: [], // reserved for a future structured-attendee UI
+    // Tier B — the manager's free-text attendance + headcount as typed at delivery,
+    // frozen so the evidence PDF carries what was recorded (never counted as Tier A).
+    attendanceNote: talk.attendees,
+    attendeeCount: talk.attendee_count,
     issuedByName: issuerName,
     issuedOn: now.toISOString().slice(0, 10),
   });
@@ -479,12 +501,15 @@ async function resolveSiteLabel(supabase: unknown, jobId: string | null): Promis
 }
 
 async function resolveUserName(supabase: unknown, userId: string): Promise<string | null> {
+  // Display name ONLY — never the email. The snapshot is worker-distributed evidence
+  // and its contract forbids PII beyond a display name; a freshly-invited user with no
+  // full_name yields null here (the caller falls back to a generic role label).
   const { data } = await tbl(supabase)("users")
-    .select("id, full_name, email")
+    .select("id, full_name")
     .eq("id", userId)
     .maybeSingle();
-  const u = data as { full_name?: string | null; email?: string | null } | null;
-  return u?.full_name ?? u?.email ?? null;
+  const u = data as { full_name?: string | null } | null;
+  return u?.full_name ?? null;
 }
 
 async function resolveRams(

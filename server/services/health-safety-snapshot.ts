@@ -30,6 +30,10 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
   const soonIso = new Date(Date.now() + DAY_MS).toISOString();
   const today = nowIso.slice(0, 10);
 
+  // Independent of the main batch — start it now so it resolves in parallel, not
+  // serially after (avoids ~1 RTT of added latency on the shared H&S dashboard).
+  const toolboxAwaitingAckP = toolboxAwaitingAckCount(supabase, orgId);
+
   const [
     draftRes, reviewRes, expiringRes, expiredRes,
     activeJobsRes, issuedRamsJobsRes, highResidualRes, issuedRamsRes,
@@ -55,7 +59,7 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
       .filter((id) => issuedRamsIds.has(id)),
   ).size;
 
-  const toolboxAwaitingAck = await toolboxAwaitingAckCount(supabase, orgId);
+  const toolboxAwaitingAck = await toolboxAwaitingAckP;
 
   return {
     ramsDraft: draftRes.count ?? 0,
@@ -78,8 +82,16 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
  */
 async function toolboxAwaitingAckCount(supabase: unknown, orgId: string): Promise<number> {
   const q = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // Recency-windowed: "awaiting acknowledgement" is only actionable for RECENT talks —
+  // an old delivered talk whose in-person crew never signed in-app would otherwise
+  // read as perpetual noise and eventually be truncated at an arbitrary, unordered cap.
+  const sinceIso = new Date(Date.now() - 30 * DAY_MS).toISOString();
   const talksRes = await q.from("toolbox_talks")
-    .select("id, job_id").eq("org_id", orgId).eq("status", "issued").not("job_id", "is", null).limit(500);
+    .select("id, job_id")
+    .eq("org_id", orgId).eq("status", "issued").not("job_id", "is", null)
+    .gte("issued_at", sinceIso)
+    .order("issued_at", { ascending: false })
+    .limit(500);
   const talks = (talksRes.data ?? []) as { id: string; job_id: string }[];
   if (talks.length === 0) return 0;
 

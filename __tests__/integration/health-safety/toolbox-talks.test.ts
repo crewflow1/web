@@ -114,6 +114,20 @@ describeIntegration("Toolbox Talks M1 · DB invariants (service role, 20261025)"
     const del = await svc().from("toolbox_talks").delete().eq("id", id);
     expect(del.error, "a draft is freely deletable").toBeNull();
   });
+
+  it("[hardening] freezes the Tier-B attendance record (attendees/count/notes) once delivered", async () => {
+    const d = await svc().from("toolbox_talks")
+      .insert({ org_id: orgA, topic: "Manual handling", key_points: "k", attendees: "J. Smith, K. Patel", attendee_count: 2, notes: "n" })
+      .select("id").single();
+    const id = String(d.data?.id);
+    await svc().from("toolbox_talks").update({ status: "issued", reference: "TBT-FREEZE", issued_at: new Date().toISOString() }).eq("id", id);
+    // who attended is the ONLY record for subcontractors who never sign in-app — it must
+    // not be silently rewritten on delivered evidence (the frozen tuple now covers it).
+    for (const patch of [{ attendees: "TAMPERED — added a name" }, { attendee_count: 9 }, { notes: "rewritten" }]) {
+      const edit = await svc().from("toolbox_talks").update(patch).eq("id", id);
+      expect(edit.error?.message ?? "", `${Object.keys(patch)[0]} must be frozen once delivered`).toMatch(/immutable/i);
+    }
+  });
 });
 
 // ===========================================================================
@@ -180,11 +194,20 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
     expect(error?.message ?? "", "issuing with no key points must fail").toMatch(/topic and key points/i);
   });
 
+  it("[hardening] a JWT caller cannot issue a talk without its evidence snapshot", async () => {
+    const id = await draft({ keyPoints: true });
+    const ref = String((await me().rpc("next_tbt_number", { target_org: orgA })).data);
+    const { error } = await me().from("toolbox_talks")
+      .update({ status: "issued", reference: ref }).eq("id", id); // no snapshot
+    expect(error?.message ?? "", "a null-snapshot issue must be rejected (closes the post-date-the-snapshot hole)")
+      .toMatch(/must be delivered with its evidence snapshot/i);
+  });
+
   it("[P1] issuing pins issued_by=caller and issued_at=now — a forged/back-dated issue is ignored", async () => {
     const id = await draft({ keyPoints: true });
     const ref = String((await me().rpc("next_tbt_number", { target_org: orgA })).data);
     const { error } = await me().from("toolbox_talks")
-      .update({ status: "issued", reference: ref, issued_at: BACKDATE, issued_by: FORGED_USER }).eq("id", id);
+      .update({ status: "issued", reference: ref, issued_at: BACKDATE, issued_by: FORGED_USER, snapshot: { talk_reference: ref, revision: 1 } }).eq("id", id);
     expect(error, error?.message).toBeNull();
     const row = (await svc().from("toolbox_talks").select("issued_by, issued_at, status").eq("id", id).maybeSingle()).data;
     expect(row?.status).toBe("issued");
