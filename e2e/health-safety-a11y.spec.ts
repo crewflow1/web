@@ -20,7 +20,12 @@ function svc() {
 }
 
 test.describe("health & safety — accessibility + mobile", () => {
-  test.use({ storageState: "e2e/.auth/owner.json" });
+  // Block the service worker for these specs: this audits the a11y of the H&S
+  // surfaces, not the PWA. The SW's one-time reload-on-first-claim (blueprint
+  // Programme F) otherwise races axe's page.evaluate ("Execution context was
+  // destroyed"). The SW is invisible to the accessibility tree, so blocking it
+  // changes nothing axe measures — the real shell + content are still evaluated.
+  test.use({ storageState: "e2e/.auth/owner.json", serviceWorkers: "block" });
 
   let raId = "";
   let permitId = "";

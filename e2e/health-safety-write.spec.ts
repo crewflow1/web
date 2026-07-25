@@ -26,7 +26,11 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("health & safety — authenticated RAMS create write", () => {
-  test.use({ storageState: "e2e/.auth/owner.json" });
+  // Block the service worker: this exercises the RAMS create-write journey, not
+  // the PWA. The SW's one-time reload-on-first-claim (blueprint Programme F)
+  // otherwise races the multi-step form navigation ("Execution context was
+  // destroyed" / toHaveURL). The SW plays no part in the write path.
+  test.use({ storageState: "e2e/.auth/owner.json", serviceWorkers: "block" });
 
   test("a logged-in user creates a RAMS draft through the real form", async ({ page }) => {
     const title = `Roof works — authored ${Date.now()}`;

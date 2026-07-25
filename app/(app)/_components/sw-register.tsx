@@ -16,17 +16,9 @@ export function SwRegister() {
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
     let reloaded = false;
-    // Only a GENUINE UPDATE — a new worker replacing an EXISTING controller — may
-    // reload. The FIRST install claims this page with no prior controller, so the
-    // page is already running the latest code: reloading then is pointless, flashes
-    // a reload out from under a first-time visitor mid-form, and races any in-flight
-    // page.evaluate (e.g. an axe a11y scan). Capture whether a controller was present
-    // at load and gate the reload on it. Matches this component's stated intent that
-    // first install is seamless (no prompt, no swap).
-    const hadControllerAtLoad = !!navigator.serviceWorker.controller;
 
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (reloaded || !hadControllerAtLoad) return;
+      if (reloaded) return;
       reloaded = true;
       window.location.reload();
     });
