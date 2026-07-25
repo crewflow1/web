@@ -7,9 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
-import { canIssue, canTransition } from "@/lib/health-safety/toolbox-talks";
+import { canIssue, canTransition, revisionReference } from "@/lib/health-safety/toolbox-talks";
 import { effectiveStatus, type PermitStatus } from "@/lib/health-safety/permits";
-import { buildToolboxTalkSnapshot } from "@/lib/toolbox-talks/snapshot";
+import { buildToolboxTalkSnapshot, type ToolboxTalkSnapshot } from "@/lib/toolbox-talks/snapshot";
 import {
   createToolboxTalkSchema,
   updateToolboxTalkSchema,
@@ -199,34 +199,8 @@ export async function issueToolboxTalk(formData: FormData): Promise<void> {
   });
   if (numErr || !reference) redirect(`/toolbox/${id}?error=numbering_failed`);
 
-  // Denormalise the linked documents + names to point-in-time strings.
   const now = new Date();
-  const [siteLabel, deliveredName, issuerName, rams, permit] = await Promise.all([
-    resolveSiteLabel(supabase, talk.job_id),
-    Promise.resolve(talk.presenter as string | null),
-    resolveUserName(supabase, user.id),
-    resolveRams(supabase, talk.risk_assessment_id),
-    resolvePermit(supabase, talk.permit_to_work_id, now),
-  ]);
-
-  const snapshot = buildToolboxTalkSnapshot({
-    talkReference: reference,
-    revision: talk.revision_number ?? 1,
-    talkDate: talk.talk_date,
-    location: talk.location,
-    siteLabel,
-    deliveredBy: deliveredName ?? issuerName ?? "Site team",
-    topic: talk.topic,
-    keyPoints: talk.key_points,
-    ppe: talk.ppe ?? [],
-    ramsReference: rams?.reference ?? null,
-    ramsRevision: rams?.revision ?? null,
-    permitReference: permit?.reference ?? null,
-    permitStatusAtIssue: permit?.status ?? null,
-    externalAttendees: [], // Tier-B external attendee capture lands in M2
-    issuedByName: issuerName,
-    issuedOn: now.toISOString().slice(0, 10),
-  });
+  const snapshot = await assembleSnapshot(supabase, talk, reference, user.id, now);
 
   const { error, count } = await tbl(supabase)("toolbox_talks")
     .update(
@@ -293,6 +267,102 @@ export async function withdrawToolboxTalk(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Revisions (M3) — an issued talk is never edited in place. A revision is a NEW
+// draft copied from the current issued talk; issuing it atomically supersedes the
+// prior revision (issue_toolbox_talk_revision, 20261027) and freezes a fresh
+// snapshot. The one-draft-per-series index makes a concurrent second revision a
+// friendly "already in progress", and re-acknowledgement is required (each revision
+// is its own ack subject_version — zero acks carry forward).
+// ---------------------------------------------------------------------------
+export async function createToolboxTalkRevision(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!toolboxTalkIdSchema.safeParse(formData.get("id")).success) redirect(`/toolbox?error=bad_id`);
+  const sourceId = String(formData.get("id"));
+  const supabase = await createClient();
+
+  const { data: src } = await tbl(supabase)("toolbox_talks")
+    .select("id, status, topic, key_points, location, ppe, presenter, job_id, risk_assessment_id, permit_to_work_id, root_toolbox_talk_id, revision_number")
+    .eq("id", sourceId).eq("org_id", ctx.org.id).maybeSingle();
+  if (!src) redirect(`/toolbox?error=not_found`);
+  if (src.status !== "issued") redirect(`/toolbox/${sourceId}?error=only_issued_can_be_revised`);
+
+  const newId = randomUUID();
+  const { error } = await tbl(supabase)("toolbox_talks").insert({
+    id: newId,
+    org_id: ctx.org.id,
+    topic: src.topic,
+    key_points: src.key_points,
+    location: src.location,
+    ppe: src.ppe ?? [],
+    presenter: src.presenter,
+    // A revision is a re-brief — default to today; the manager can adjust in the draft.
+    talk_date: new Date().toISOString().slice(0, 10),
+    job_id: src.job_id,
+    risk_assessment_id: src.risk_assessment_id,
+    permit_to_work_id: src.permit_to_work_id,
+    root_toolbox_talk_id: src.root_toolbox_talk_id,
+    revision_number: (src.revision_number ?? 1) + 1,
+    supersedes_id: src.id,
+    created_by: user.id,
+  });
+  if (error) {
+    const code = /duplicate key|unique/i.test(error.message) ? "revision_in_progress" : encodeURIComponent(error.message);
+    redirect(`/toolbox/${sourceId}?error=${code}`);
+  }
+
+  await recordAdminActivity({
+    actorId: user.id, actorEmail: user.email ?? null,
+    action: "toolbox_talk.revision_created", targetTable: "toolbox_talks", targetId: newId,
+    metadata: { supersedes: sourceId },
+  }).catch(() => {});
+
+  revalidatePath(`/toolbox/${newId}`);
+  redirect(`/toolbox/${newId}?saved=revision_created`);
+}
+
+export async function issueToolboxTalkRevision(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!toolboxTalkIdSchema.safeParse(formData.get("id")).success) redirect(`/toolbox?error=bad_id`);
+  const id = String(formData.get("id"));
+  const supabase = await createClient();
+
+  const { data: talk } = await tbl(supabase)("toolbox_talks")
+    .select("id, status, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, ppe, presenter, job_id, risk_assessment_id, permit_to_work_id")
+    .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  if (!talk) redirect(`/toolbox?error=not_found`);
+
+  const gate = canIssue({ status: talk.status, topic: talk.topic, key_points: talk.key_points });
+  if (!gate.ok) redirect(`/toolbox/${id}?error=${encodeURIComponent(gate.reasons[0]!)}`);
+
+  // Compute the revision reference deterministically from the series origin (rev 1);
+  // the RPC recomputes the same value authoritatively, so the frozen snapshot carries
+  // the correct TBT-NNNN-R0n even though the DB is the source of truth for numbering.
+  const { data: origin } = await tbl(supabase)("toolbox_talks")
+    .select("reference").eq("root_toolbox_talk_id", talk.root_toolbox_talk_id).eq("revision_number", 1).maybeSingle();
+  const originRef = (origin?.reference as string | null) ?? null;
+  if (!originRef) redirect(`/toolbox/${id}?error=no_origin_revision`);
+  const reference = revisionReference(originRef, talk.revision_number ?? 2);
+
+  const now = new Date();
+  const snapshot = await assembleSnapshot(supabase, talk, reference, user.id, now);
+
+  const { data: newref, error } = await (supabase as unknown as Rpc).rpc("issue_toolbox_talk_revision", {
+    p_id: id,
+    p_snapshot: snapshot,
+  });
+  if (error || !newref) redirect(`/toolbox/${id}?error=${encodeURIComponent(error?.message ?? "issue_failed")}`);
+
+  await recordAdminActivity({
+    actorId: user.id, actorEmail: user.email ?? null,
+    action: "toolbox_talk.revised", targetTable: "toolbox_talks", targetId: id,
+    metadata: { reference: newref },
+  }).catch(() => {});
+
+  revalidatePath(`/toolbox/${id}`);
+  redirect(`/toolbox/${id}?saved=issued`);
+}
+
+// ---------------------------------------------------------------------------
 // Delete — draft only (admin). The DB delete-guard blocks any issued evidence
 // regardless of role; here we also clean up the draft's attachments first.
 // ---------------------------------------------------------------------------
@@ -336,6 +406,57 @@ export async function deleteToolboxTalk(id: string): Promise<void> {
 
   revalidatePath("/toolbox");
   redirect(`/toolbox?saved=deleted`);
+}
+
+// ---------------------------------------------------------------------------
+// Shared evidence-snapshot assembly — used by the first issue (rev 1) AND every
+// later revision, so the frozen record is built identically however a talk is
+// delivered. Denormalises the linked docs/site/names to point-in-time strings.
+// ---------------------------------------------------------------------------
+type SnapshotTalk = {
+  revision_number: number | null;
+  talk_date: string;
+  location: string | null;
+  ppe: string[] | null;
+  presenter: string | null;
+  topic: string;
+  key_points: string;
+  job_id: string | null;
+  risk_assessment_id: string | null;
+  permit_to_work_id: string | null;
+};
+
+async function assembleSnapshot(
+  supabase: unknown,
+  talk: SnapshotTalk,
+  reference: string,
+  issuerId: string,
+  now: Date,
+): Promise<ToolboxTalkSnapshot> {
+  const [siteLabel, issuerName, rams, permit] = await Promise.all([
+    resolveSiteLabel(supabase, talk.job_id),
+    resolveUserName(supabase, issuerId),
+    resolveRams(supabase, talk.risk_assessment_id),
+    resolvePermit(supabase, talk.permit_to_work_id, now),
+  ]);
+  return buildToolboxTalkSnapshot({
+    talkReference: reference,
+    revision: talk.revision_number ?? 1,
+    talkDate: talk.talk_date,
+    location: talk.location,
+    siteLabel,
+    deliveredBy: talk.presenter ?? issuerName ?? "Site team",
+    topic: talk.topic,
+    keyPoints: talk.key_points,
+    ppe: talk.ppe ?? [],
+    ramsReference: rams?.reference ?? null,
+    ramsRevision: rams?.revision ?? null,
+    permitReference: permit?.reference ?? null,
+    permitStatusAtIssue: permit?.status ?? null,
+    externalAttendees: [], // Tier-B external attendees are recorded, never in the ack roster
+    issuedByName: issuerName,
+    issuedOn: now.toISOString().slice(0, 10),
+  });
 }
 
 // ---------------------------------------------------------------------------

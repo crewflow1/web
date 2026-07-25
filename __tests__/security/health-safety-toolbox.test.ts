@@ -12,6 +12,7 @@ import { join } from "node:path";
 const root = join(__dirname, "..", "..");
 const migration = readFileSync(join(root, "supabase/migrations/20261025000000_health_safety_toolbox_talks.sql"), "utf8");
 const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000_toolbox_talk_acknowledgements.sql"), "utf8");
+const revMigration = readFileSync(join(root, "supabase/migrations/20261027000000_toolbox_talk_revision_snapshot.sql"), "utf8");
 const actions = readFileSync(join(root, "app/(app)/toolbox/actions.ts"), "utf8");
 const options = readFileSync(join(root, "app/(app)/toolbox/_form-options.ts"), "utf8");
 const snapshotLib = readFileSync(join(root, "lib/toolbox-talks/snapshot.ts"), "utf8");
@@ -220,5 +221,46 @@ describe("toolbox M2 — reuses safety_acknowledgements, gates to the issued tal
     // Tier B recorded attendance is a separate, explicitly-not-counted section
     expect(detailPage).toMatch(/Recorded attendance/);
     expect(detailPage).toMatch(/[Nn]ot counted as an authenticated acknowledgement/);
+  });
+});
+
+// ===========================================================================
+// M3 — revision + re-acknowledgement (20261027)
+// ===========================================================================
+describe("toolbox M3 — atomic revision issue freezes a fresh snapshot, zero ack carry-forward", () => {
+  it("the revision-issue RPC is atomic (supersede + promote) AND sets the snapshot in one txn", () => {
+    // widened to take the snapshot so a promoted revision can never exist as issued
+    // evidence with a null snapshot (the old 1-arg signature is dropped)
+    expect(revMigration).toMatch(/drop function if exists public\.issue_toolbox_talk_revision\(uuid\)/);
+    expect(revMigration).toMatch(/function public\.issue_toolbox_talk_revision\(p_id uuid, p_snapshot jsonb\)/);
+    expect(revMigration).toMatch(/security invoker/); // RLS + triggers still gate the caller
+    expect(revMigration).toMatch(/for update/); // row lock → one issue wins a race
+    expect(revMigration).toMatch(/set status = 'superseded'\s*\n?\s*where root_toolbox_talk_id = v_root and status = 'issued'/);
+    expect(revMigration).toMatch(/snapshot = p_snapshot/);
+    // reference is computed server-side (authoritative) — the caller cannot forge it
+    expect(revMigration).toMatch(/v_newref := v_base \|\| '-R' \|\| lpad/);
+  });
+
+  it("createToolboxTalkRevision only revises an ISSUED talk, born a fresh draft (no ack copy)", () => {
+    expect(actions).toMatch(/export async function createToolboxTalkRevision/);
+    expect(actions).toMatch(/only_issued_can_be_revised/);
+    expect(actions).toMatch(/revision_number: \(src\.revision_number \?\? 1\) \+ 1/);
+    expect(actions).toMatch(/supersedes_id: src\.id/);
+    // a revision is a new row; the action NEVER touches safety_acknowledgements
+    // (zero carry-forward is structural — each revision is its own ack subject_version)
+    expect(actions).not.toMatch(/safety_acknowledgements/);
+  });
+
+  it("issueToolboxTalkRevision delivers via the atomic RPC (not a bare status flip)", () => {
+    expect(actions).toMatch(/export async function issueToolboxTalkRevision/);
+    expect(actions).toMatch(/issue_toolbox_talk_revision/);
+    expect(actions).toMatch(/canIssue\(/); // re-gate before issue
+    expect(actions).toMatch(/assembleSnapshot\(/); // the same frozen-evidence builder as rev 1
+  });
+
+  it("the detail page delivers a revision draft through the revision action, not the first-issue path", () => {
+    expect(detailPage).toMatch(/isRevisionDraft \? issueToolboxTalkRevision : issueToolboxTalk/);
+    // a re-brief creates a deliberate revision; the current version is linkable from history
+    expect(detailPage).toMatch(/Create revision/);
   });
 });

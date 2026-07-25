@@ -14,7 +14,13 @@ import {
 import { SignoffPanel } from "../../health-safety/_signoff-panel";
 import { listAcknowledgements, requiredOperatives, priorRevisionSignoff } from "../../health-safety/_signoff-data";
 import { summariseSignoff, TOOLBOX_REVISABLE } from "@/lib/health-safety/acknowledgements";
-import { deleteToolboxTalk, issueToolboxTalk, withdrawToolboxTalk } from "../actions";
+import {
+  createToolboxTalkRevision,
+  deleteToolboxTalk,
+  issueToolboxTalk,
+  issueToolboxTalkRevision,
+  withdrawToolboxTalk,
+} from "../actions";
 
 type TalkRow = {
   id: string;
@@ -46,6 +52,7 @@ const SAVED_MAP: Record<string, string> = {
   issued: "Talk delivered — it's now frozen evidence with a reference.",
   withdrawn: "Talk withdrawn.",
   acknowledged: "Acknowledgement recorded — thank you.",
+  revision_created: "Revision draft created from the delivered talk. Edit it, then deliver — delivering supersedes the previous version and re-opens acknowledgement.",
 };
 const ERROR_MAP: Record<string, string> = {
   not_editable: "That talk has been delivered — it's frozen evidence and can't be edited.",
@@ -53,6 +60,9 @@ const ERROR_MAP: Record<string, string> = {
   not_found: "That talk no longer exists.",
   numbering_failed: "Couldn't allocate a reference. Try again.",
   forbidden: "Only an owner or admin can do that.",
+  only_issued_can_be_revised: "Only a delivered talk can be revised.",
+  revision_in_progress: "A revision of this talk is already in progress — deliver or delete that draft first.",
+  no_origin_revision: "Couldn't find the original delivered version to number against.",
 };
 
 export default async function ToolboxTalkPage({
@@ -95,6 +105,14 @@ export default async function ToolboxTalkPage({
   ]);
   const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
   const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
+
+  // Revision lineage (M3): the whole series (newest first) + which one is current.
+  // A revision draft (revision_number > 1) delivers via the atomic supersede RPC.
+  const siblings = await loadRevisionSeries(supabase, talk.root_toolbox_talk_id ?? talk.id);
+  const currentIssued = siblings.find((s) => s.status === "issued") ?? null;
+  const isRevisionDraft = (talk.revision_number ?? 1) > 1;
+  const issueAction = isRevisionDraft ? issueToolboxTalkRevision : issueToolboxTalk;
+  const isCurrentIssued = talk.status === "issued" && currentIssued?.id === talk.id;
 
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const editable = isEditable(talk.status);
@@ -179,14 +197,14 @@ export default async function ToolboxTalkPage({
               >
                 Edit
               </Link>
-              <form action={issueToolboxTalk}>
+              <form action={issueAction}>
                 <input type="hidden" name="id" value={talk.id} />
                 <button
                   type="submit"
                   disabled={!gate.ok}
                   className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
-                  Deliver talk
+                  {isRevisionDraft ? "Deliver revision" : "Deliver talk"}
                 </button>
               </form>
             </div>
@@ -272,7 +290,59 @@ export default async function ToolboxTalkPage({
         </div>
       </section>
 
+      {/* Revision series (M3) — the full lineage, current marked, historical accessible. */}
+      {siblings.length > 1 ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">Revisions</h2>
+          <ul className="mt-3 divide-y divide-slate-100">
+            {siblings.map((s) => {
+              const sMeta = TOOLBOX_TALK_STATUS_META[s.status] ?? TOOLBOX_TALK_STATUS_META.draft;
+              const isThis = s.id === talk.id;
+              return (
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium text-slate-800">Revision {s.revision_number}</span>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${sMeta.tone}`}>{sMeta.label}</span>
+                    {s.reference ? <span className="font-mono text-xs text-slate-400">{s.reference}</span> : null}
+                  </span>
+                  {isThis ? (
+                    <span className="text-xs font-medium text-slate-400">Viewing</span>
+                  ) : (
+                    <Link href={`/toolbox/${s.id}`} className="text-xs font-medium text-slate-600 hover:text-slate-900 hover:underline">
+                      Open
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {!isCurrentIssued && currentIssued && currentIssued.id !== talk.id ? (
+            <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              This isn&rsquo;t the current version.{" "}
+              <Link href={`/toolbox/${currentIssued.id}`} className="font-semibold hover:underline">
+                Open the current revision ({currentIssued.reference ?? `Revision ${currentIssued.revision_number}`})
+              </Link>
+              .
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       {/* Lifecycle actions. */}
+      {isCurrentIssued && isAdmin ? (
+        <form action={createToolboxTalkRevision}>
+          <input type="hidden" name="id" value={talk.id} />
+          <button
+            type="submit"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Create revision
+          </button>
+          <span className="ml-3 text-xs text-slate-500">
+            Re-briefed the crew? Raise a revision — delivering it supersedes this version and re-opens acknowledgement.
+          </span>
+        </form>
+      ) : null}
       {editable && isAdmin ? (
         <form action={deleteToolboxTalk.bind(null, talk.id)}>
           <button
@@ -300,6 +370,18 @@ export default async function ToolboxTalkPage({
       ) : null}
     </div>
   );
+}
+
+type SiblingRow = { id: string; status: ToolboxTalkStatus; revision_number: number; reference: string | null };
+async function loadRevisionSeries(supabase: unknown, rootId: string): Promise<SiblingRow[]> {
+  const { data } = await (
+    supabase as { from: (t: string) => any } // eslint-disable-line @typescript-eslint/no-explicit-any
+  )
+    .from("toolbox_talks")
+    .select("id, status, revision_number, reference")
+    .eq("root_toolbox_talk_id", rootId)
+    .order("revision_number", { ascending: false });
+  return (data ?? []) as SiblingRow[];
 }
 
 async function loadDocLabel(supabase: unknown, table: string, id: string): Promise<string | null> {
