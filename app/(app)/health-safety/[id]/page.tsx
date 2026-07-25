@@ -5,7 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { getRiskAssessment, listAssessors, getRevisionSiblings } from "../_data";
 import { SignoffPanel } from "../_signoff-panel";
-import { listAcknowledgements, requiredOperatives } from "../_signoff-data";
+import { listAcknowledgements, requiredOperatives, priorRevisionSignoff } from "../_signoff-data";
 import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
 import {
   canIssue,
@@ -82,7 +82,7 @@ const SAVED_MAP: Record<string, string> = {
 const LS_OPTIONS = [1, 2, 3, 4, 5] as const;
 
 const inputClass =
-  "mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
+  "mt-1.5 block min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
 const labelClass = "block text-sm font-medium text-slate-800";
 const primaryBtn =
   "inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2";
@@ -102,11 +102,19 @@ export default async function RiskAssessmentDetailPage({
   const result = await getRiskAssessment(id);
   if (!result) notFound();
   const { ra, hazards } = result;
-  const acks = ra.status === "issued" ? await listAcknowledgements("risk_assessment", ra.id) : [];
   // Required operatives = the crew rota'd to this RAMS's job (M6b). No job → not tracked.
-  const required = ra.status === "issued" ? await requiredOperatives(ra.job_id) : [];
+  // Prior-revision sign-off (M6c) → re-acknowledgement prompt. These reads only depend on
+  // `ra`, so run them in parallel rather than serially (mobile-latency win, M6c perf).
+  const isIssued = ra.status === "issued";
+  const [acks, required, priorSignoff] = await Promise.all([
+    isIssued ? listAcknowledgements("risk_assessment", ra.id) : Promise.resolve([]),
+    isIssued ? requiredOperatives(ra.job_id) : Promise.resolve([]),
+    isIssued && ra.revision_number > 1
+      ? priorRevisionSignoff(ra.root_risk_assessment_id, ra.revision_number, userId)
+      : Promise.resolve(null),
+  ]);
   const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
-  const outstandingNames = required.filter((o) => signoff.outstanding.includes(o.id)).map((o) => o.name);
+  const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
 
   // Revision lineage: the whole series (newest first) + the currently-live revision.
   const siblings = await getRevisionSiblings(ra.root_risk_assessment_id);
@@ -218,6 +226,22 @@ export default async function RiskAssessmentDetailPage({
         </div>
       ) : null}
 
+      {status === "superseded" && currentIssued && currentIssued.id !== ra.id ? (
+        <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p className="font-semibold">A newer revision is current.</p>
+          <p className="mt-0.5">
+            {currentIssued.reference ?? "The current revision"} has replaced this version.
+            Workers must acknowledge the current revision.
+          </p>
+          <Link
+            href={`/health-safety/${currentIssued.id}`}
+            className="mt-2 inline-flex min-h-[44px] items-center rounded-md bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+          >
+            Open the current revision →
+          </Link>
+        </div>
+      ) : null}
+
       {siblings.length > 1 ? (
         <section
           aria-labelledby="revisions-heading"
@@ -254,7 +278,7 @@ export default async function RiskAssessmentDetailPage({
                     {s.status === "issued" ? (
                       <span className="text-xs font-medium text-emerald-700">Current</span>
                     ) : null}
-                    {isThis ? <span className="text-xs text-slate-400">(viewing)</span> : null}
+                    {isThis ? <span className="text-xs text-slate-500">(viewing)</span> : null}
                   </div>
                 </li>
               );
@@ -377,7 +401,7 @@ export default async function RiskAssessmentDetailPage({
                     defaultValue={val}
                     aria-label={`PPE item ${i + 1}`}
                     placeholder="Add PPE…"
-                    className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                    className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                   />
                 ))}
               </div>
@@ -425,7 +449,7 @@ export default async function RiskAssessmentDetailPage({
                       ))}
                     </ul>
                   ) : (
-                    <span className="text-sm text-slate-400">None specified</span>
+                    <span className="text-sm text-slate-500">None specified</span>
                   )}
                 </dd>
               </div>
@@ -439,7 +463,7 @@ export default async function RiskAssessmentDetailPage({
                   {ra.method_statement}
                 </p>
               ) : (
-                <p className="mt-1 text-sm italic text-slate-400">
+                <p className="mt-1 text-sm italic text-slate-500">
                   No method statement recorded.
                 </p>
               )}
@@ -456,7 +480,7 @@ export default async function RiskAssessmentDetailPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="hazards-heading" className="text-base font-semibold text-slate-900">
             Hazards{" "}
-            <span className="font-normal text-slate-400">({hazards.length})</span>
+            <span className="font-normal text-slate-500">({hazards.length})</span>
           </h2>
           {overall ? (
             <span
@@ -485,8 +509,12 @@ export default async function RiskAssessmentDetailPage({
             />
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <>
+          {/* Desktop: a scannable table. Mobile: stacked cards (below) so no column
+              — least of all Controls/Residual — is pushed off a phone screen. */}
+          <div className="mt-4 hidden overflow-x-auto md:block">
             <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <caption className="sr-only">Hazards with their initial and residual risk ratings</caption>
               <thead>
                 <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                   <th scope="col" className="py-2 pr-3 font-medium">
@@ -521,9 +549,9 @@ export default async function RiskAssessmentDetailPage({
                     : null;
                   return (
                     <tr key={h.id}>
-                      <td className="py-3 pr-3 font-medium text-slate-900">
+                      <th scope="row" className="py-3 pr-3 text-left font-medium text-slate-900">
                         {h.hazard}
-                      </td>
+                      </th>
                       <td className="px-3 py-3 text-slate-700">
                         {h.who_at_risk ?? "—"}
                       </td>
@@ -553,7 +581,7 @@ export default async function RiskAssessmentDetailPage({
                             <BandPill rating={residual} className="mt-1" />
                           </>
                         ) : (
-                          <span className="text-slate-400">Not assessed</span>
+                          <span className="text-slate-500">Not assessed</span>
                         )}
                       </td>
                       {editable ? (
@@ -581,6 +609,56 @@ export default async function RiskAssessmentDetailPage({
               </tbody>
             </table>
           </div>
+
+          <ul className="mt-4 space-y-3 md:hidden">
+            {hazards.map((h) => {
+              const initial = riskRating(h.likelihood, h.severity);
+              const hasResidual = h.residual_likelihood != null && h.residual_severity != null;
+              const residual = hasResidual ? riskRating(h.residual_likelihood!, h.residual_severity!) : null;
+              return (
+                <li key={h.id} className="rounded-lg border border-slate-200 p-4">
+                  <p className="text-base font-semibold text-slate-900">{h.hazard}</p>
+                  <dl className="mt-2 space-y-2 text-sm">
+                    <MobileField label="Who's at risk">{h.who_at_risk ?? "—"}</MobileField>
+                    <MobileField label="Initial risk">
+                      <span className="text-slate-700">
+                        {h.likelihood} × {h.severity} = <span className="font-semibold text-slate-900">{initial}</span>
+                      </span>
+                      <BandPill rating={initial} className="ml-2" />
+                    </MobileField>
+                    <MobileField label="Controls">
+                      <span className="whitespace-pre-wrap text-slate-700">{h.control_measures}</span>
+                    </MobileField>
+                    <MobileField label="Residual risk">
+                      {residual != null ? (
+                        <>
+                          <span className="text-slate-700">
+                            {h.residual_likelihood} × {h.residual_severity} = <span className="font-semibold text-slate-900">{residual}</span>
+                          </span>
+                          <BandPill rating={residual} className="ml-2" />
+                        </>
+                      ) : (
+                        <span className="text-slate-500">Not assessed</span>
+                      )}
+                    </MobileField>
+                  </dl>
+                  {editable ? (
+                    <form action={deleteHazard} className="mt-3">
+                      <input type="hidden" name="id" value={h.id} />
+                      <input type="hidden" name="riskAssessmentId" value={ra.id} />
+                      <button
+                        type="submit"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md border border-red-300 bg-white px-3 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2"
+                      >
+                        Remove hazard<span className="sr-only">: {h.hazard}</span>
+                      </button>
+                    </form>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          </>
         )}
 
         {editable ? (
@@ -731,7 +809,7 @@ export default async function RiskAssessmentDetailPage({
                 className={
                   gate.ok
                     ? primaryBtn
-                    : "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-400"
+                    : "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-500"
                 }
               >
                 {isRevisionDraft ? `Issue revision ${ra.revision_number}` : "Issue risk assessment"}
@@ -779,10 +857,14 @@ export default async function RiskAssessmentDetailPage({
           subjectType="risk_assessment"
           subjectId={ra.id}
           reference={ra.reference ?? ""}
+          docTitle={ra.title}
+          revisionLabel={ra.revision_number > 1 ? `Revision ${ra.revision_number}` : null}
+          isCurrent={ra.status === "issued"}
           acks={acks}
           currentUserId={userId}
           summary={signoff}
-          outstandingNames={outstandingNames}
+          outstanding={outstanding}
+          priorSignoff={priorSignoff}
           pdfHref={`/api/health-safety/${ra.id}/pdf`}
         />
       ) : null}
@@ -797,6 +879,16 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
         {label}
       </dt>
       <dd className="mt-0.5 text-slate-900">{children}</dd>
+    </div>
+  );
+}
+
+/** A labelled field inside a mobile hazard card (label above, value below). */
+function MobileField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="mt-0.5 flex flex-wrap items-center gap-x-1 text-slate-900">{children}</dd>
     </div>
   );
 }
@@ -837,7 +929,7 @@ function ScoreSelect({
         name={name}
         required={required}
         defaultValue=""
-        className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        className="mt-1 block min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
       >
         <option value="">{optional ? "Not assessed" : "Choose 1–5"}</option>
         {LS_OPTIONS.map((n) => (

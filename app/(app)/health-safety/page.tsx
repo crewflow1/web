@@ -208,7 +208,7 @@ export default async function HealthSafetyPage({
       ) : null}
 
       {rows.length > 0 ? (
-        <div role="tablist" aria-label="Filter risk assessments" className="flex flex-wrap gap-1.5 text-xs">
+        <nav aria-label="Filter risk assessments" className="flex flex-wrap gap-2 text-sm">
           {RA_FILTERS.map((f) => {
             const active = f.key === filter;
             const count =
@@ -222,15 +222,15 @@ export default async function HealthSafetyPage({
                 key={f.key}
                 href={f.key === "all" ? "/health-safety" : `/health-safety?status=${f.key}`}
                 aria-current={active ? "page" : undefined}
-                className={`inline-flex min-h-[36px] items-center rounded-full px-3 font-medium ${
-                  active ? "bg-slate-900 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                className={`inline-flex min-h-[44px] items-center rounded-full px-3.5 font-medium ${
+                  active ? "bg-slate-900 text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50"
                 }`}
               >
                 {f.label} <span className="ml-1 opacity-70">{count}</span>
               </Link>
             );
           })}
-        </div>
+        </nav>
       ) : null}
 
       {rows.length === 0 ? (

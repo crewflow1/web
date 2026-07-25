@@ -37,6 +37,43 @@ export async function countOrgMembers(): Promise<number> {
   return count ?? 0;
 }
 
+/**
+ * Did the current user acknowledge an EARLIER revision of this RAMS series? Used to
+ * prompt re-acknowledgement on a new revision (M6c): "you signed Rev N — please
+ * re-acknowledge Rev N+1". Two bounded, RLS-scoped reads. Returns the highest earlier
+ * revision the user signed, or null. RAMS-only (permits have no revision series).
+ */
+export type PriorSignoff = { reference: string | null; revisionNumber: number; acknowledgedAt: string };
+export async function priorRevisionSignoff(
+  rootId: string,
+  currentRevision: number,
+  userId: string,
+): Promise<PriorSignoff | null> {
+  if (currentRevision <= 1) return null;
+  const supabase = await createClient();
+  const { data: earlier } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { lt: (k: string, v: number) => Promise<{ data: Array<{ id: string; reference: string | null; revision_number: number }> | null }> } } };
+  })
+    .from("risk_assessments").select("id, reference, revision_number")
+    .eq("root_risk_assessment_id", rootId).lt("revision_number", currentRevision);
+  const revs = earlier ?? [];
+  if (revs.length === 0) return null;
+  const byId = new Map(revs.map((r) => [r.id, r]));
+  const { data: acks } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { in: (k: string, v: string[]) => Promise<{ data: Array<{ subject_id: string; acknowledged_at: string }> | null }> } } } };
+  })
+    .from("safety_acknowledgements").select("subject_id, acknowledged_at")
+    .eq("subject_type", "risk_assessment").eq("user_id", userId).in("subject_id", revs.map((r) => r.id));
+  let best: PriorSignoff | null = null;
+  for (const a of acks ?? []) {
+    const rev = byId.get(a.subject_id);
+    if (rev && (!best || rev.revision_number > best.revisionNumber)) {
+      best = { reference: rev.reference, revisionNumber: rev.revision_number, acknowledgedAt: a.acknowledged_at };
+    }
+  }
+  return best;
+}
+
 export type Operative = { id: string; name: string };
 
 /**

@@ -9,6 +9,7 @@ import {
   DEFAULT_CONDITIONS,
   effectiveStatus,
   isEditable,
+  isNotYetValid,
   isTerminal,
   PERMIT_TYPE_LABELS,
   type PermitStatus,
@@ -88,7 +89,7 @@ export default async function PermitDetailPage({
   // Required operatives = the crew rota'd to this permit's job (M6b). No job → not tracked.
   const required = live ? await requiredOperatives(permit.job_id) : [];
   const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
-  const outstandingNames = required.filter((o) => signoff.outstanding.includes(o.id)).map((o) => o.name);
+  const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
 
   const status = permit.status as PermitStatus;
   const editable = isEditable(status);
@@ -96,6 +97,8 @@ export default async function PermitDetailPage({
   const now = new Date();
   const eff = effectiveStatus(status, permit.valid_until, now);
   const expired = eff === "expired";
+  // M6c safety: a live permit whose window hasn't opened yet must NOT read as valid.
+  const notYetValid = live && isNotYetValid(permit.valid_from, now);
 
   const conditionStates = conditions.map((c) => ({
     required: c.required,
@@ -188,6 +191,20 @@ export default async function PermitDetailPage({
         </div>
       ) : null}
 
+      {notYetValid ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <p className="font-semibold">This permit is not valid yet.</p>
+          <p className="mt-0.5">
+            It becomes valid on {formatDateTime(permit.valid_from)}. Do not start the
+            work authorised under it until then.
+          </p>
+        </div>
+      ) : null}
+
       {terminal ? (
         <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
           <p className="font-medium text-slate-700">This is a frozen record.</p>
@@ -268,7 +285,7 @@ export default async function PermitDetailPage({
               </dt>
               <dd className="mt-0.5 whitespace-pre-wrap text-slate-900">
                 {permit.isolation_details ?? (
-                  <span className="italic text-slate-400">None recorded</span>
+                  <span className="italic text-slate-500">None recorded</span>
                 )}
               </dd>
             </div>
@@ -278,7 +295,7 @@ export default async function PermitDetailPage({
               </dt>
               <dd className="mt-0.5 whitespace-pre-wrap text-slate-900">
                 {permit.emergency_arrangements ?? (
-                  <span className="italic text-slate-400">None recorded</span>
+                  <span className="italic text-slate-500">None recorded</span>
                 )}
               </dd>
             </div>
@@ -296,7 +313,7 @@ export default async function PermitDetailPage({
           className="text-base font-semibold text-slate-900"
         >
           Control conditions{" "}
-          <span className="font-normal text-slate-400">
+          <span className="font-normal text-slate-500">
             ({conditions.length})
           </span>
         </h2>
@@ -307,7 +324,7 @@ export default async function PermitDetailPage({
         </p>
 
         {conditions.length === 0 ? (
-          <p className="mt-4 text-sm italic text-slate-400">
+          <p className="mt-4 text-sm italic text-slate-500">
             {editable
               ? "No conditions yet. Add them below, or start from the suggested set for this permit type."
               : "No control conditions were recorded on this permit."}
@@ -326,7 +343,7 @@ export default async function PermitDetailPage({
                       className={
                         c.required
                           ? "font-medium text-slate-600"
-                          : "text-slate-400"
+                          : "text-slate-500"
                       }
                     >
                       {c.required ? "Required to issue" : "Optional"}
@@ -342,7 +359,7 @@ export default async function PermitDetailPage({
                       {c.confirmed ? "Confirmed" : "Not confirmed"}
                     </span>
                     {c.confirmed && c.confirmed_at ? (
-                      <span className="text-slate-400">
+                      <span className="text-slate-500">
                         {" "}
                         · {formatDateTime(c.confirmed_at)}
                       </span>
@@ -620,10 +637,14 @@ export default async function PermitDetailPage({
           subjectType="permit_to_work"
           subjectId={permit.id}
           reference={permit.reference ?? ""}
+          docTitle={permit.title}
+          revisionLabel={null}
+          isCurrent={!expired && !notYetValid}
           acks={acks}
           currentUserId={userId}
           summary={signoff}
-          outstandingNames={outstandingNames}
+          outstanding={outstanding}
+          priorSignoff={null}
           pdfHref={`/api/health-safety/permits/${permit.id}/pdf`}
         />
       ) : null}

@@ -70,7 +70,7 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
                   {r.reference ?? "Draft"}
                 </Link>
                 <span className="min-w-0 flex-1 truncate text-slate-800">{r.title}</span>
-                {r.revision_number > 1 ? <span className="text-xs text-slate-400">rev {r.revision_number}</span> : null}
+                {r.revision_number > 1 ? <span className="text-xs text-slate-500">rev {r.revision_number}</span> : null}
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${RA_STATUS_STYLE[r.status] ?? "bg-slate-100 text-slate-600"}`}>
                   {r.status === "issued" ? "Current" : r.status}
                 </span>
@@ -92,7 +92,7 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
                   <Link href={`/health-safety/permits/${p.id}`} className="font-mono text-xs font-medium text-slate-600 hover:underline">
                     {p.reference ?? "Draft"}
                   </Link>
-                  <span className="min-w-0 flex-1 truncate text-slate-800">{p.title} <span className="text-xs text-slate-400">· {typeLabel}</span></span>
+                  <span className="min-w-0 flex-1 truncate text-slate-800">{p.title} <span className="text-xs text-slate-500">· {typeLabel}</span></span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PERMIT_STATUS_STYLE[eff] ?? "bg-slate-100 text-slate-600"}`}>
                     {eff === "expired" ? "EXPIRED" : eff}
                   </span>

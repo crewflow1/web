@@ -382,6 +382,48 @@ closed (`20261023_health_safety_evidence_hygiene.sql`):
   frozen once the record leaves draft.
 Proven on real Postgres (`evidence-hygiene.test.ts`, 4 tests) + source-contracts.
 
+## Milestone 6c — field-first mobile + accessibility (WCAG 2.2 AA)
+
+Driven by a 5-agent review fleet (mobile-RAMS, mobile-permits, WCAG-2.2-AA, field-worker
+sign-off, mobile-performance) over the actual code. The surface was already strong (colour
+never carries meaning alone, labelled landmarks, native `required`, live regions, clean
+focus, near-zero client JS); M6c closes the real gaps:
+
+**Safety.** A permit that is **not yet valid** (window not open) previously displayed as
+"Active" — `isNotYetValid()` existed but was unused, so a worker could start work under it.
+Now a prominent `role="alert"` banner: "not valid yet — do not start work until {date}".
+
+**Field-worker re-acknowledgement.** A worker who signed an earlier RAMS revision now sees a
+re-acknowledgement prompt on the current revision ("You acknowledged {ref} (Revision N) on
+{date} … please sign again"), and a superseded revision they open carries a "newer revision
+is current — open it" call-to-action. Detection is a bounded query across the series by
+`root_risk_assessment_id`; no acknowledgement is copied.
+
+**Sign panel.** A compact "You are signing" identity header (title · reference · revision ·
+whether current) so the worker has an anchor at the moment of signing; outstanding operatives
+render as a scannable chip list rather than a comma-run.
+
+**Mobile layout.** The RAMS hazards table (the one 760px-wide horizontal-scroll surface)
+becomes stacked per-hazard **cards** below `md:` — every column, including Controls and
+Residual, is readable one-handed; the desktop table is unchanged. Verified: **no horizontal
+overflow at 375px** (`health-safety-a11y.spec.ts`). Touch targets lifted to 44px (score
+selects, filter chips, PDF button, inputs); `p-4 sm:p-6`; sign button full-width on mobile.
+
+**Accessibility.** `role="tablist"` misuse on the register filters replaced with a labelled
+`<nav>`; meaningful `text-slate-400` (≈2.5:1) darkened to `text-slate-500` (≈4.8:1, passes
+AA); hazards table gains a `<caption>` + `<th scope="row">`; PDF link announces "(opens in a
+new tab)" + `rel="noopener noreferrer"`; decorative glyphs `aria-hidden`. Regression-guarded
+by **`@axe-core/playwright`** over all six H&S routes (WCAG 2.0/2.1/2.2 A + AA, zero
+violations).
+
+**Performance.** The RAMS detail read-waterfall is parallelised (`Promise.all`), and the
+detail routes gain a `loading.tsx` skeleton so a flaky field link shows a skeleton, not a
+frozen prior route.
+
+Deferred (documented, non-gating): a dashboard/register "N/M signed" badge (perf-sensitive
+per-doc ack counts), a client submit-disable for draft double-taps (consequential writes are
+already idempotent), register pagination, and PDF `immutable` caching.
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation

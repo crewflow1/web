@@ -298,8 +298,14 @@ describe("H&S operational surfaces (M6b) — RLS-scoped + required-operative mod
   });
   it("the sign-off panel shows the required-operative summary, not a whole-org count", () => {
     expect(signoffPanel).toMatch(/summary:\s*SignoffSummary/);
-    expect(signoffPanel).toMatch(/outstandingNames/);
+    expect(signoffPanel).toMatch(/outstanding:\s*Outstanding\[\]/);
     expect(signoffPanel).not.toMatch(/memberCount/);
+  });
+  it("[M6c] re-acknowledgement is detected across the revision series, RLS-scoped, no ack copying", () => {
+    expect(signoffData).toMatch(/priorRevisionSignoff/);
+    expect(signoffData).toMatch(/root_risk_assessment_id/);
+    expect(signoffData).toMatch(/from "@\/lib\/supabase\/server"/); // tenant client (RLS)
+    expect(signoffData).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
   });
 });
 
