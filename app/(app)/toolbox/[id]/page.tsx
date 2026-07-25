@@ -298,9 +298,11 @@ export default async function ToolboxTalkPage({
         <div className="mt-4">
           <Field label="Who attended (names / trades)">{talk.attendees}</Field>
         </div>
-        {/* Signed attendance sheet + site photos — universal attachments pipeline. */}
+        {/* Signed attendance sheet + site photos — universal attachments pipeline.
+            Once the talk is delivered the evidence is frozen (append-only): the DB
+            attachment-freeze trigger + the panel's `frozen` UX both enforce it. */}
         <div className="mt-4">
-          <AttachmentsPanel targetTable="toolbox_talks" targetId={talk.id} />
+          <AttachmentsPanel targetTable="toolbox_talks" targetId={talk.id} frozen={talk.status !== "draft"} />
         </div>
       </section>
 

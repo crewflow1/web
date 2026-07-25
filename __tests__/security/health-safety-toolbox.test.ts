@@ -13,6 +13,8 @@ const root = join(__dirname, "..", "..");
 const migration = readFileSync(join(root, "supabase/migrations/20261025000000_health_safety_toolbox_talks.sql"), "utf8");
 const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000_toolbox_talk_acknowledgements.sql"), "utf8");
 const revMigration = readFileSync(join(root, "supabase/migrations/20261027000000_toolbox_talk_revision_snapshot.sql"), "utf8");
+const attMigration = readFileSync(join(root, "supabase/migrations/20261028000000_toolbox_talk_attachment_freeze.sql"), "utf8");
+const attachPanel = readFileSync(join(root, "components/attachments/AttachmentsPanel.tsx"), "utf8");
 const actions = readFileSync(join(root, "app/(app)/toolbox/actions.ts"), "utf8");
 const options = readFileSync(join(root, "app/(app)/toolbox/_form-options.ts"), "utf8");
 const snapshotLib = readFileSync(join(root, "lib/toolbox-talks/snapshot.ts"), "utf8");
@@ -296,5 +298,33 @@ describe("toolbox M4 — evidence PDF: auth-gated, RLS-scoped, snapshot-rendered
     expect(pdfLib).toMatch(/CrewFlow-authenticated acknowledgements/);
     expect(pdfLib).toMatch(/Recorded attendees/);
     expect(pdfLib).toMatch(/not platform-authenticated/);
+  });
+});
+
+// ===========================================================================
+// M5 — evidence/attachment immutability hardening (20261028)
+// ===========================================================================
+describe("toolbox M5 — signed-sheet evidence is append-only once delivered", () => {
+  it("a TRIGGER freezes attachments of a delivered talk (role-independent, before delete+update)", () => {
+    expect(attMigration).toMatch(/tg_tenant_attachment_freeze_delivered_toolbox/);
+    expect(attMigration).toMatch(/before delete or update on public\.tenant_attachments/);
+    expect(attMigration).toMatch(/evidence attached to a delivered toolbox talk is frozen/);
+    expect(attMigration).toMatch(/security definer set search_path = public/);
+  });
+
+  it("the freeze governs ONLY toolbox talks, spares drafts, and allows org-teardown cascade", () => {
+    expect(attMigration).toMatch(/old\.target_table <> 'toolbox_talks'/); // other targets untouched
+    expect(attMigration).toMatch(/v_status is null or v_status = 'draft'/); // drafts + gone talks are mutable
+    expect(attMigration).toMatch(/not exists \(select 1 from public\.organizations where id = old\.org_id\)/); // cascade
+  });
+
+  it("the attachments panel hides Delete when the evidence is frozen (append-only affordance)", () => {
+    expect(attachPanel).toMatch(/frozen\?: boolean/);
+    expect(attachPanel).toMatch(/!frozen && \(ctx\.membership\.role === "owner"/);
+    expect(attachPanel).toMatch(/files can be added but not removed/);
+  });
+
+  it("the toolbox detail page freezes attachments the moment a talk leaves draft", () => {
+    expect(detailPage).toMatch(/frozen=\{talk\.status !== "draft"\}/);
   });
 });

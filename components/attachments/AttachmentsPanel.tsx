@@ -26,16 +26,23 @@ type Row = {
 export async function AttachmentsPanel({
   targetTable,
   targetId,
+  frozen = false,
 }: {
   targetTable: AttachmentTargetTable;
   targetId: string;
+  // When true, attached files are APPEND-ONLY: new uploads are allowed but nothing
+  // already attached can be removed (delivered H&S evidence — the DB enforces this
+  // too via the toolbox attachment-freeze trigger). Hides the Delete control so the
+  // affordance never lies.
+  frozen?: boolean;
 }) {
   const { ctx } = await requireOrgContext();
   // SECURITY (P2 audit M-5): deleting an attachment is owner/admin-only (RLS +
   // in-code gate in deleteTenantAttachment). Only surface the Delete control to
-  // those roles so members aren't shown an action the server will refuse.
+  // those roles so members aren't shown an action the server will refuse — and
+  // never when the evidence is frozen.
   const canDelete =
-    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+    !frozen && (ctx.membership.role === "owner" || ctx.membership.role === "admin");
   const supabase = await createClient();
 
   const { data } = await (
@@ -70,6 +77,12 @@ export async function AttachmentsPanel({
       >
         Attachments ({rows.length})
       </h2>
+
+      {frozen ? (
+        <p className="mt-1 text-xs text-slate-500">
+          Delivered evidence — files can be added but not removed or replaced.
+        </p>
+      ) : null}
 
       <AttachmentsUploadForm
         targetTable={targetTable}
