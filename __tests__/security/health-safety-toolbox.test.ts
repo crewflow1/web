@@ -21,6 +21,8 @@ const ackLib = readFileSync(join(root, "lib/health-safety/acknowledgements.ts"),
 const signoffActions = readFileSync(join(root, "app/(app)/health-safety/signoff-actions.ts"), "utf8");
 const signoffData = readFileSync(join(root, "app/(app)/health-safety/_signoff-data.ts"), "utf8");
 const detailPage = readFileSync(join(root, "app/(app)/toolbox/[id]/page.tsx"), "utf8");
+const pdfRoute = readFileSync(join(root, "app/api/health-safety/toolbox-talks/[id]/pdf/route.ts"), "utf8");
+const pdfLib = readFileSync(join(root, "lib/pdf/toolbox-talk-pdf.tsx"), "utf8");
 
 describe("toolbox migration — evidence lifecycle is DB-enforced (20261025)", () => {
   it("[born-draft] no INSERT can mint an issued talk — the trigger fires on INSERT too", () => {
@@ -262,5 +264,37 @@ describe("toolbox M3 — atomic revision issue freezes a fresh snapshot, zero ac
     expect(detailPage).toMatch(/isRevisionDraft \? issueToolboxTalkRevision : issueToolboxTalk/);
     // a re-brief creates a deliberate revision; the current version is linkable from history
     expect(detailPage).toMatch(/Create revision/);
+  });
+});
+
+// ===========================================================================
+// M4 — evidence PDF (route + component)
+// ===========================================================================
+describe("toolbox M4 — evidence PDF: auth-gated, RLS-scoped, snapshot-rendered, no leak", () => {
+  it("the PDF route requires org context + uses the tenant client (never service-role)", () => {
+    expect(pdfRoute).toMatch(/requireOrgContext\(\)/);
+    expect(pdfRoute).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(pdfRoute).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+  it("a draft (or a talk with no frozen snapshot) yields NO evidence PDF (409)", () => {
+    expect(pdfRoute).toMatch(/status === "draft" \|\| !talk\.snapshot/);
+    expect(pdfRoute).toMatch(/status: 409/);
+  });
+  it("the document body is the FROZEN snapshot; only the ack roster is pulled live", () => {
+    expect(pdfRoute).toMatch(/talk\.snapshot as ToolboxTalkSnapshot/);
+    expect(pdfRoute).toMatch(/snap\.key_points/);
+    expect(pdfRoute).toMatch(/listAcknowledgements\("toolbox_talk"/); // live sign-offs, like RAMS/permit
+  });
+  it("the evidence is private-cached + labelled with the SUBJECT's own org (not the active org)", () => {
+    expect(pdfRoute).toMatch(/private, no-store/);
+    expect(pdfRoute).toMatch(/\.eq\("id", talk\.org_id\)/);
+  });
+  it("the PDF component leaks no cost/rate/price FIELD + keeps the Tier A/B honesty split", () => {
+    // field-shaped tokens (the RAMS/permit-PDF convention) so @react-pdf's CSS
+    // `marginTop` etc. is not a false hit; the unit test also scans the input keys.
+    expect(pdfLib).not.toMatch(/profit|unit_price|day_rate|_cost|cost_|net_amount|vat_|markup|supplier/i);
+    expect(pdfLib).toMatch(/CrewFlow-authenticated acknowledgements/);
+    expect(pdfLib).toMatch(/Recorded attendees/);
+    expect(pdfLib).toMatch(/not platform-authenticated/);
   });
 });

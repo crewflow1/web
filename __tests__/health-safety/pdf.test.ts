@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { RamsPdf, type RamsPdfInput } from "@/lib/pdf/rams-pdf";
 import { PermitPdf, type PermitPdfInput } from "@/lib/pdf/permit-pdf";
+import { ToolboxTalkPdf, type ToolboxTalkPdfInput } from "@/lib/pdf/toolbox-talk-pdf";
 
 const rams: RamsPdfInput = {
   org_name: "Acme Build", reference: "RA-0007", title: "Roof works", activity: "Tiling",
@@ -58,5 +59,40 @@ describe("PermitPdf", () => {
   });
   it("the PDF input carries H&S content only — no cost/margin/internal fields", () => {
     expect(Object.keys(permit).join(",")).not.toMatch(/margin|profit|price|\bcost\b|unit_|day_rate|hourly/i);
+  });
+});
+
+const toolbox: ToolboxTalkPdfInput = {
+  org_name: "Acme Build", reference: "TBT-0007", revision: 1, talk_date: "2026-07-18",
+  location: "Plot 4, mansard roof", site_label: "1 High St, Belfast", delivered_by: "A. Foreman",
+  topic: "Working at height", key_points: "Edge protection checked; harness clipped on above 2m.",
+  ppe: ["Hard hat", "Harness"], rams_reference: "RA-0007", rams_revision: 2,
+  permit_reference: "PTW-0003", permit_status_at_issue: "active",
+  external_attendees: [{ name: "J. Bloggs", company: "ACME Roofing Ltd" }],
+  issued_by_name: "A. Foreman", issued_on: "2026-07-18",
+  signoffs: [{ signer_name: "Jordan Lee", signed_name: "Jordan Lee", acknowledged_at: "2026-07-18T08:00:00Z" }],
+  generated_at: "2026-07-19T12:00:00Z",
+};
+
+describe("ToolboxTalkPdf", () => {
+  it("renders a well-formed, non-trivial PDF from the frozen snapshot shape", async () => {
+    const b = await renderToBuffer(ToolboxTalkPdf({ t: toolbox }));
+    expect(isPdf(b)).toBe(true);
+    expect(b.length).toBeGreaterThan(1000);
+  });
+  it("renders with no PPE / acknowledgements / external attendees / links (no throw)", async () => {
+    const b = await renderToBuffer(ToolboxTalkPdf({ t: {
+      ...toolbox, ppe: [], signoffs: [], external_attendees: [],
+      rams_reference: null, rams_revision: null, permit_reference: null, permit_status_at_issue: null,
+    } }));
+    expect(isPdf(b)).toBe(true);
+  });
+  it("a revision renders its revision number (historical evidence)", async () => {
+    const b = await renderToBuffer(ToolboxTalkPdf({ t: { ...toolbox, reference: "TBT-0007-R02", revision: 2 } }));
+    expect(isPdf(b)).toBe(true);
+    expect(b.length).toBeGreaterThan(1000);
+  });
+  it("the PDF input carries H&S content only — no cost/margin/internal fields", () => {
+    expect(Object.keys(toolbox).join(",")).not.toMatch(/margin|profit|price|\bcost\b|unit_|day_rate|hourly/i);
   });
 });

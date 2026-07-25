@@ -268,7 +268,21 @@ export default async function ToolboxTalkPage({
           summary={signoff}
           outstanding={outstanding}
           priorSignoff={priorSignoff}
+          pdfHref={`/api/health-safety/toolbox-talks/${talk.id}/pdf`}
         />
+      ) : null}
+
+      {/* A delivered-but-superseded/withdrawn talk keeps its evidence PDF (the panel
+          above only renders for the current issued revision). */}
+      {!isIssued && talk.status !== "draft" ? (
+        <a
+          href={`/api/health-safety/toolbox-talks/${talk.id}/pdf`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-[44px] items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          <span aria-hidden>⤓ </span>Download evidence PDF<span className="sr-only"> (opens in a new tab)</span>
+        </a>
       ) : null}
 
       {/* Tier B — recorded (manual/paper) attendance. Deliberately SEPARATE from the
