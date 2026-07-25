@@ -424,6 +424,41 @@ Deferred (documented, non-gating): a dashboard/register "N/M signed" badge (perf
 per-doc ack counts), a client submit-disable for draft double-taps (consequential writes are
 already idempotent), register pagination, and PDF `immutable` caching.
 
+## Toolbox Talks — evidence-grade briefings (wave 20261025–28)
+
+The pre-existing basic `toolbox_talks` log (`20260921`, Site Management) is evolved
+**in place** into acknowledgeable, revisable H&S evidence — reusing this epic's spine
+(the shared acknowledgement engine, `SignoffPanel`, the RAMS revision pattern, immutable
+snapshots, the PDF language, `tenant_attachments`, the dashboard/job-safety surfaces).
+Full reference: **`docs/health-safety/toolbox-talks.md`**.
+
+- **M1 (`20261025`)** — lifecycle `draft → issued("Delivered") → superseded|withdrawn`;
+  born-draft, issue-gate (topic+key points), provenance-pinned, immutable-on-issue,
+  same-org links, per-org `TBT-NNNN`, one-current/one-draft revision indexes, delete-guard
+  — all DB-enforced (role-independent). Pure lib + operator UI.
+- **M2 (`20261026`)** — `safety_acknowledgements` gains `subject_type = 'toolbox_talk'`
+  (no fork); Tier A authenticated acknowledgements (crew rota'd to the job) vs Tier B
+  recorded attendance (never counted). `priorRevisionSignoff` generalised over any
+  revisable subject (the three RAMS literals removed).
+- **M3 (`20261027`)** — RAMS-style revisions; atomic `issue_toolbox_talk_revision(uuid,
+  jsonb)` supersedes + promotes + freezes the snapshot in one txn; **zero acks carry
+  forward** (structural); concurrency proven (one-draft/one-current + FOR UPDATE).
+- **M4** — a dedicated Toolbox Talk Record PDF rendered from the **frozen snapshot**
+  (body) + live ack roster; draft → 409; Tier A/B split on the page.
+- **M5 (`20261028`)** — delivered talks' signed-sheet attachments are **append-only** (a
+  trigger blocks delete/repoint; add-only) — closes the Photo-A→Photo-B evidence swap.
+- **M6** — Job Safety hub shows the job's talks; a bounded, no-N+1 `toolboxAwaitingAck`
+  dashboard exception signal (reuses `summariseSignoff`).
+- **M7** — 44px field targets, WCAG 2.2 AA (axe over all toolbox routes, zero violations),
+  no 375px overflow; poor-connectivity (idempotent online ack) + performance documented.
+
+**Templates (§14): deferred with evidence** — a template library's value is pre-filled
+H&S wording, which must not be shipped as fabricated "compliant" content; the create-draft
+form is the seam to add "create from template" later.
+
+Status: banked on `feat/health-safety-toolbox-talks` (migrations `20261025`–`20261028`),
+CI-green locally, **unmerged + undeployed** (production remains `73ba21f`).
+
 ## Notes / limitations
 - Method statement is free-form prose (M1); structured numbered steps are a later increment.
 - A per-transition audit trail (`permit_events` — suspension reason, re-activation
