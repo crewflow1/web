@@ -54,6 +54,7 @@ export function AttachmentsUploadForm({
         type="file"
         name="file"
         required
+        aria-label="Choose a file to attach"
         accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,image/webp,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="block w-full max-w-xs rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium hover:file:bg-slate-200"
       />
