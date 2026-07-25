@@ -10,6 +10,7 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobDocumentsPanel } from "./_job-documents";
+import { JobBlueprintsPanel } from "./_blueprints";
 import { formatGbp } from "@/lib/jobs/commercial-position";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import {
@@ -728,6 +729,8 @@ export default async function EditJobPage({
       </section>
 
       <JobAssetsSection jobId={job.id} />
+
+      <JobBlueprintsPanel jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

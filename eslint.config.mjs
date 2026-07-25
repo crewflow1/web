@@ -17,6 +17,7 @@ const config = [
       "dist/**",
       "next-env.d.ts",
       "supabase/migrations/**",
+      "public/pdf.worker.min.mjs",
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),

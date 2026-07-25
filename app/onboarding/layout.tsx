@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser, getOrgForUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { signOut } from "@/app/(auth)/actions";
+import { SignOutButton } from "@/app/(app)/_components/sign-out-button";
 
 export default async function OnboardingLayout({
   children,
@@ -28,14 +28,7 @@ export default async function OnboardingLayout({
         <Link href="/" className="text-lg font-semibold tracking-tight text-slate-900">
           CrewFlow
         </Link>
-        <form action={signOut}>
-          <button
-            type="submit"
-            className="text-xs font-medium text-slate-500 hover:text-slate-900"
-          >
-            Sign out
-          </button>
-        </form>
+        <SignOutButton className="text-xs font-medium text-slate-500 hover:text-slate-900" />
       </header>
 
       <main className="container flex flex-1 items-start justify-center px-4 pb-12 sm:items-center">
