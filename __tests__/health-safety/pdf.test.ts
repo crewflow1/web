@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { RamsPdf, type RamsPdfInput } from "@/lib/pdf/rams-pdf";
 import { PermitPdf, type PermitPdfInput } from "@/lib/pdf/permit-pdf";
-import { ToolboxTalkPdf, type ToolboxTalkPdfInput } from "@/lib/pdf/toolbox-talk-pdf";
+import { ToolboxTalkPdf, toolboxStatusLabel, toolboxEvidenceStatement, type ToolboxTalkPdfInput } from "@/lib/pdf/toolbox-talk-pdf";
 
 const rams: RamsPdfInput = {
   org_name: "Acme Build", reference: "RA-0007", title: "Roof works", activity: "Tiling",
@@ -63,7 +63,7 @@ describe("PermitPdf", () => {
 });
 
 const toolbox: ToolboxTalkPdfInput = {
-  org_name: "Acme Build", reference: "TBT-0007", revision: 1, talk_date: "2026-07-18",
+  org_name: "Acme Build", reference: "TBT-0007", revision: 1, status: "issued", talk_date: "2026-07-18",
   location: "Plot 4, mansard roof", site_label: "1 High St, Belfast", delivered_by: "A. Foreman",
   topic: "Working at height", key_points: "Edge protection checked; harness clipped on above 2m.",
   ppe: ["Hard hat", "Harness"], rams_reference: "RA-0007", rams_revision: 2,
@@ -92,6 +92,34 @@ describe("ToolboxTalkPdf", () => {
     const b = await renderToBuffer(ToolboxTalkPdf({ t: { ...toolbox, reference: "TBT-0007-R02", revision: 2 } }));
     expect(isPdf(b)).toBe(true);
     expect(b.length).toBeGreaterThan(1000);
+  });
+  it("renders each lifecycle status (issued / superseded / withdrawn) as a valid PDF", async () => {
+    for (const status of ["issued", "superseded", "withdrawn"] as const) {
+      const b = await renderToBuffer(ToolboxTalkPdf({ t: { ...toolbox, status } }));
+      expect(isPdf(b), status).toBe(true);
+      expect(b.length, status).toBeGreaterThan(1000);
+    }
+  });
+  // Regression for the audit P1: a retracted record must never read "Delivered". Asserted
+  // on the pure label/statement helpers (react-pdf's buffer is non-deterministic, so the
+  // rendered text can't be scanned directly).
+  it("the status LABEL never reads 'Delivered' for a retracted record", () => {
+    expect(toolboxStatusLabel("issued", 1)).toBe("Delivered");
+    expect(toolboxStatusLabel("issued", 3)).toBe("Revision 3");
+    expect(toolboxStatusLabel("superseded", 1)).toBe("Superseded");
+    expect(toolboxStatusLabel("superseded", 2)).toBe("Superseded");
+    expect(toolboxStatusLabel("withdrawn", 1)).toBe("Withdrawn");
+  });
+  it("the evidence STATEMENT reflects the true lifecycle status", () => {
+    const withdrawn = toolboxEvidenceStatement({ status: "withdrawn", talk_date: "2026-07-18", issued_by_name: "A. Foreman" });
+    expect(withdrawn).toMatch(/WITHDRAWN/);
+    expect(withdrawn).toMatch(/no longer in force/);
+    const superseded = toolboxEvidenceStatement({ status: "superseded", talk_date: "2026-07-18", issued_by_name: "A. Foreman" });
+    expect(superseded).toMatch(/SUPERSEDED/);
+    expect(superseded).toMatch(/no longer the current briefing/);
+    const issued = toolboxEvidenceStatement({ status: "issued", talk_date: "2026-07-18", issued_by_name: "A. Foreman" });
+    expect(issued).toMatch(/confirms the above toolbox talk was delivered/);
+    expect(issued).not.toMatch(/WITHDRAWN|SUPERSEDED/);
   });
   it("the PDF input carries H&S content only — no cost/margin/internal fields", () => {
     expect(Object.keys(toolbox).join(",")).not.toMatch(/margin|profit|price|\bcost\b|unit_|day_rate|hourly/i);

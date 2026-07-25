@@ -45,6 +45,9 @@ export type ToolboxTalkSnapshot = {
   issued_on: string; // YYYY-MM-DD
 };
 
+// NOTE: this allowlist is ALSO enforced at the DB (tg_tt_a_lifecycle, migration
+// 20261030) so a crafted PostgREST write cannot inject non-allowlist keys into the
+// frozen evidence. Keep the two in sync — adding a key here means adding it there.
 export const TOOLBOX_TALK_SNAPSHOT_KEYS: ReadonlyArray<keyof ToolboxTalkSnapshot> = [
   "talk_reference", "revision", "talk_date", "location", "site_label",
   "delivered_by", "topic", "key_points", "ppe",

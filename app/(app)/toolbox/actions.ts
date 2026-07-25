@@ -228,7 +228,13 @@ export async function issueToolboxTalk(formData: FormData): Promise<void> {
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .eq("status", "draft");
-  if (error) redirect(`/toolbox/${id}?error=${encodeURIComponent(error.message)}`);
+  if (error) {
+    // Two supervisors delivering different drafts at once can both allocate the same
+    // TBT-NNNN; unique(org_id, reference) rejects the loser. Surface a friendly retry
+    // (a fresh attempt computes N+1), mirroring the revision path — never raw SQL.
+    const code = /duplicate key|unique/i.test(error.message) ? "numbering_clash" : encodeURIComponent(error.message);
+    redirect(`/toolbox/${id}?error=${code}`);
+  }
   if (!count) redirect(`/toolbox/${id}?error=not_found`);
 
   await recordAdminActivity({
@@ -391,15 +397,10 @@ export async function deleteToolboxTalk(id: string): Promise<void> {
 
   const supabase = await createClient();
 
-  const { data: atts } = await tbl(supabase)("tenant_attachments")
-    .select("id")
-    .eq("target_table", "toolbox_talks")
-    .eq("target_id", id)
-    .eq("org_id", ctx.org.id);
-  for (const a of (atts ?? []) as { id: string }[]) {
-    await deleteTenantAttachment(a.id).catch(() => undefined);
-  }
-
+  // Delete the DRAFT talk FIRST (status-guarded; the DB delete-guard blocks any delivered
+  // evidence regardless of role). Only after a draft row is confirmed removed do we clean
+  // up its attachments — so a crafted/replayed call on a *delivered* talk (or a talk issued
+  // between page-load and this POST) never reaches, and never destroys, frozen evidence files.
   const { error, count } = await tbl(supabase)("toolbox_talks")
     .delete({ count: "exact" })
     .eq("id", id)
@@ -410,6 +411,16 @@ export async function deleteToolboxTalk(id: string): Promise<void> {
     redirect(`/toolbox/${id}?error=delete_failed`);
   }
   if (!count) redirect(`/toolbox/${id}?error=not_deletable`);
+
+  // The draft row is gone; its (draft-era, never-frozen) attachments are now safe to remove.
+  const { data: atts } = await tbl(supabase)("tenant_attachments")
+    .select("id")
+    .eq("target_table", "toolbox_talks")
+    .eq("target_id", id)
+    .eq("org_id", ctx.org.id);
+  for (const a of (atts ?? []) as { id: string }[]) {
+    await deleteTenantAttachment(a.id).catch(() => undefined);
+  }
 
   await recordAdminActivity({
     actorId: user.id,

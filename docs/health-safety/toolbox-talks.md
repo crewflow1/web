@@ -110,7 +110,67 @@ fabricated "compliant"/authoritative content. It would add a table + RLS + CRUD 
 that materially expands this wave without a roadmap or evidence-integrity driver. The
 create-draft form is the clean seam to add "create from template" in a later wave.
 
+## Post-release-audit hardening (20261030)
+
+A 16-agent independent production-release audit re-examined the DB as the **sole boundary**
+against a crafted PostgREST/RPC write by an authenticated member (the base UPDATE RLS is
+org-member-only). Migration `20261030` closes a convergent evidence-integrity cluster the
+earlier 5-agent pass missed — all **JWT-gated** (the trusted service role stays exempt, so
+fixtures/migrations are unaffected):
+
+- **[P0] draft → superseded/withdrawn bypass.** `tg_tt_a_lifecycle` gated only
+  `draft→issued`; `tg_tt_m_immutable` early-returns on `old.status='draft'`. So one crafted
+  `PATCH {status:'superseded', reference, issued_at:<backdated>, issued_by:<spoofed>,
+  snapshot:<forged>}` on a member's own draft minted a PDF-renderable "evidence" record with
+  a backdated issue date, a spoofed issuer and a forged body — none reachable through the
+  honest flow. A draft may now **only** be delivered (`→issued`, through the pinned gate) or
+  edited (`→draft`).
+- **[P1] caller-authored snapshot never validated.** The frozen snapshot (the PDF body) is
+  now **bound to the row at issue**: `talk_reference`, `revision`, `topic`, `key_points`
+  must match, so the distributed PDF cannot misrepresent the briefing. Covers both the
+  first-issue path and the revision RPC.
+- **[P1] supervisory lifecycle DB-unenforced.** Withdraw/supersede of delivered evidence,
+  and raising/issuing a revision, were gated **only** in the server action. Now enforced at
+  the DB with `is_org_admin` (= the app's `isManager`, `owner|admin` — no owner/admin
+  lock-out). A non-manager can no longer neutralise a live briefing via a direct write/RPC.
+- **[P2] snapshot key-allowlist** enforced at the DB (mirrors `TOOLBOX_TALK_SNAPSHOT_KEYS`)
+  — no crafted cost/rate/PII key can enter the frozen evidence.
+- **[P3]** `id` added to the immutable frozen tuple.
+
+App-layer fixes in the same pass: the evidence **PDF threads the live status** (a
+withdrawn/superseded record renders "Withdrawn"/"Superseded", never "Delivered", with a
+status-aware evidence statement); `deleteToolboxTalk` deletes the draft-guarded row **before**
+touching attachments; the numbering-clash error is mapped friendly; the "Deliver revision"
+button and sign-off panel are gated to the current issued revision / owner-admin.
+
+Regression coverage: `__tests__/integration/health-safety/toolbox-talks.test.ts` (JWT
+staff-vs-admin proofs for every gate + the forgery/binding/allowlist refusals, and that an
+**admin still succeeds**); `__tests__/security/health-safety-toolbox.test.ts` (source
+contracts); `__tests__/health-safety/pdf.test.ts` (status-honesty via pure helpers).
+
+## Tracked follow-ups (out of this wave — platform-scoped)
+
+These are **real** but deliberately **not** fixed here: each is platform-wide (touches live
+RAMS/permits/other attachment surfaces), so it belongs to a dedicated hardening pass with its
+own review, not a toolbox release.
+
+- **Storage-object byte freeze.** The `tenant_attachments` *row* freezes on delivery, but the
+  storage-object *bytes* are governed by the shared `storage.objects` RLS (admins can DELETE,
+  members INSERT) — an admin could, via a direct Storage API call, swap a signed-sheet photo's
+  bytes at the known path (detectable via the frozen `size_bytes`, but not cryptographically
+  prevented). Fix = a RESTRICTIVE `storage.objects` policy freezing delivered-evidence bytes,
+  applied across all H&S attachment surfaces. Admin-only + direct-API + out of app reach.
+- **RAMS/permit lifecycle-authz consistency.** The `is_org_admin` DB gate added here for
+  withdraw/supersede/revision is stricter than the *live* RAMS/permit lifecycle (which ships
+  the same app-only gate). A platform pass should bring RAMS/permits to the same DB-enforced
+  standard.
+- **Snapshot content hash.** A per-attachment content hash frozen into the evidence would make
+  any post-hoc byte swap cryptographically detectable (design enhancement).
+- **A11y polish** (shared `AttachmentsClient`): announce upload/delete success via `aria-live`
+  (WCAG 4.1.3); broaden the toolbox a11y e2e fixtures to exercise the disabled-Deliver /
+  crewed-N-of-M / attachment-row branches. Non-blocking; the machine-checkable axe gate is green.
+
 ## Status
 
-Built on `feat/health-safety-toolbox-talks`, migrations `20261025`–`20261028`.
-**Unmerged, undeployed** — production remains `73ba21f`.
+Built on `feat/health-safety-toolbox-talks`, migrations `20261025`–`20261030` (next free
+slot `20261031`). **Unmerged, undeployed** — production remains `73ba21f`.

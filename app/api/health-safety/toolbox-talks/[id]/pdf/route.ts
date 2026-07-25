@@ -42,6 +42,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     org_name: orgRow.data?.name ?? "CrewFlow",
     reference: snap.talk_reference,
     revision: snap.revision,
+    // Live status (never draft here — guarded above) so a superseded/withdrawn talk is
+    // rendered honestly, not as "Delivered". The body stays the frozen snapshot.
+    status: talk.status as "issued" | "superseded" | "withdrawn",
     talk_date: snap.talk_date,
     location: snap.location,
     site_label: snap.site_label,

@@ -19,6 +19,9 @@ export type ToolboxTalkPdfInput = {
   org_name: string;
   reference: string;
   revision: number;
+  // Live lifecycle status of the underlying record — a superseded/withdrawn talk is
+  // still evidence (frozen body) but must NOT be presented as the current briefing.
+  status: "issued" | "superseded" | "withdrawn";
   talk_date: string;
   location: string | null;
   site_label: string | null;
@@ -61,6 +64,33 @@ const s = StyleSheet.create({
 
 function d(x: string | null): string { return x ? x.slice(0, 16).replace("T", " ") : "—"; }
 
+/**
+ * The lifecycle label shown top-right + in the meta grid. A current briefing reads
+ * "Delivered" (or "Revision N"); a retracted record reads "Superseded"/"Withdrawn" — it
+ * must NEVER read "Delivered". Pure + exported so the honesty rule is unit-tested directly
+ * (react-pdf's buffer is non-deterministic, so text can't be asserted on the render).
+ */
+export function toolboxStatusLabel(status: ToolboxTalkPdfInput["status"], revision: number): string {
+  if (status === "withdrawn") return "Withdrawn";
+  if (status === "superseded") return "Superseded";
+  return revision > 1 ? `Revision ${revision}` : "Delivered";
+}
+
+/** The evidence statement paragraph — status-aware, so a withdrawn/superseded record is
+ *  never presented as a current, in-force briefing. Pure + exported for the same reason. */
+export function toolboxEvidenceStatement(
+  t: Pick<ToolboxTalkPdfInput, "status" | "talk_date" | "issued_by_name">,
+): string {
+  const by = t.issued_by_name ? ` and issued by ${t.issued_by_name}` : "";
+  const lead =
+    t.status === "withdrawn"
+      ? `This toolbox talk was delivered on ${t.talk_date}${by}, and has since been WITHDRAWN. It is retained as a historical H&S record and is no longer in force.`
+      : t.status === "superseded"
+      ? `This toolbox talk was delivered on ${t.talk_date}${by}, and has since been SUPERSEDED by a later revision. It is retained as historical evidence and is no longer the current briefing.`
+      : `This record confirms the above toolbox talk was delivered on ${t.talk_date}${by}.`;
+  return `${lead} The key points and PPE shown are the briefing as it stood when delivered, with the linked RAMS and permit references frozen at that time. CrewFlow-authenticated acknowledgements are operatives who signed in the platform; recorded attendees are noted manually and are not platform-authenticated.`;
+}
+
 export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
   const ramsLabel = t.rams_reference
     ? `${t.rams_reference}${t.rams_revision && t.rams_revision > 1 ? ` (rev ${t.rams_revision})` : ""}`
@@ -69,9 +99,13 @@ export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
     ? `${t.permit_reference}${t.permit_status_at_issue ? ` · ${t.permit_status_at_issue}` : ""}`
     : "—";
   const site = t.site_label ?? t.location ?? "—";
+  const isCurrent = t.status === "issued";
+  // Retracted records render in the warning colour (see below) so they can never be
+  // mistaken for the live briefing; the text itself comes from the pure helpers.
+  const statusLabel = toolboxStatusLabel(t.status, t.revision);
 
   return (
-    <Document title={`Toolbox Talk ${t.reference}`}>
+    <Document title={`Toolbox Talk ${t.reference}${isCurrent ? "" : ` (${statusLabel})`}`}>
       <Page size="A4" style={s.page}>
         <View style={s.headRow}>
           <View>
@@ -80,8 +114,8 @@ export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
           </View>
           <View>
             <Text style={s.ref}>{t.reference}</Text>
-            <Text style={{ ...s.docType, textAlign: "right" }}>
-              {t.revision > 1 ? `Revision ${t.revision}` : "Delivered"}
+            <Text style={{ ...s.docType, textAlign: "right", ...(isCurrent ? {} : { color: c.warn, fontFamily: "Helvetica-Bold" }) }}>
+              {statusLabel}
             </Text>
           </View>
         </View>
@@ -95,6 +129,8 @@ export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
           <View style={s.metaCell}><Text style={s.metaLabel}>Delivered by</Text><Text style={s.metaVal}>{t.delivered_by}</Text></View>
           <View style={s.metaCell}><Text style={s.metaLabel}>Linked RAMS</Text><Text style={s.metaVal}>{ramsLabel}</Text></View>
           <View style={s.metaCell}><Text style={s.metaLabel}>Linked permit</Text><Text style={s.metaVal}>{permitLabel}</Text></View>
+          <View style={s.metaCell}><Text style={s.metaLabel}>Issued on</Text><Text style={s.metaVal}>{t.issued_on}</Text></View>
+          <View style={s.metaCell}><Text style={s.metaLabel}>Record status</Text><Text style={{ ...s.metaVal, ...(isCurrent ? {} : { color: c.warn, fontFamily: "Helvetica-Bold" }) }}>{statusLabel}</Text></View>
         </View>
 
         <Text style={s.sectionH}>Key points briefed</Text>
@@ -142,17 +178,12 @@ export function ToolboxTalkPdf({ t }: { t: ToolboxTalkPdfInput }) {
         ) : null}
 
         <Text style={s.sectionH}>Evidence statement</Text>
-        <Text style={s.para}>
-          This record confirms the above toolbox talk was delivered on {t.talk_date}
-          {t.issued_by_name ? ` and issued by ${t.issued_by_name}` : ""}. The key points and PPE shown are the
-          briefing as it stood when delivered, with the linked RAMS and permit references frozen at that time.
-          CrewFlow-authenticated acknowledgements are operatives who signed in the platform; recorded attendees
-          are noted manually and are not platform-authenticated.
-        </Text>
+        <Text style={s.para}>{toolboxEvidenceStatement(t)}</Text>
 
         <View style={s.footer} fixed>
           <Text>{t.reference} · {t.org_name}</Text>
-          <Text>Generated {t.generated_at.slice(0, 16).replace("T", " ")} · Operational record — not legal advice</Text>
+          <Text>Generated {t.generated_at.slice(0, 16).replace("T", " ")} UTC · not legal advice</Text>
+          <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
         </View>
       </Page>
     </Document>

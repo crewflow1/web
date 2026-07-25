@@ -59,10 +59,16 @@ const ERROR_MAP: Record<string, string> = {
   not_deletable: "Only a draft can be deleted. Withdraw a delivered talk instead.",
   not_found: "That talk no longer exists.",
   numbering_failed: "Couldn't allocate a reference. Try again.",
+  numbering_clash: "Another talk took that reference just now — deliver again to get the next one.",
   forbidden: "Only an owner or admin can do that.",
   only_issued_can_be_revised: "Only a delivered talk can be revised.",
   revision_in_progress: "A revision of this talk is already in progress — deliver or delete that draft first.",
   no_origin_revision: "Couldn't find the original delivered version to number against.",
+  use_revision_flow: "This is a revision — deliver it using the revision flow.",
+  bad_transition: "That change isn't allowed for this talk.",
+  bad_id: "That link looks invalid.",
+  delete_failed: "Couldn't delete the draft. Try again.",
+  issue_failed: "Couldn't deliver the revision. Try again.",
 };
 
 export default async function ToolboxTalkPage({
@@ -100,6 +106,9 @@ export default async function ToolboxTalkPage({
   const meta = TOOLBOX_TALK_STATUS_META[talk.status];
   const isRevisionDraft = (talk.revision_number ?? 1) > 1;
   const issueAction = isRevisionDraft ? issueToolboxTalkRevision : issueToolboxTalk;
+  // First delivery (rev 1) is open to a foreman; delivering a REVISION is an owner/admin
+  // action (matches the server action + DB gate) — don't offer a button that will 403.
+  const canDeliver = !isRevisionDraft || isAdmin;
 
   // Every downstream read depends only on `talk` (or nothing), so run them in ONE
   // parallel batch rather than a serial waterfall (M7 perf — ~5 RTTs → 1 on mobile):
@@ -187,16 +196,20 @@ export default async function ToolboxTalkPage({
               >
                 Edit
               </Link>
-              <form action={issueAction}>
-                <input type="hidden" name="id" value={talk.id} />
-                <button
-                  type="submit"
-                  disabled={!gate.ok}
-                  className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  {isRevisionDraft ? "Deliver revision" : "Deliver talk"}
-                </button>
-              </form>
+              {canDeliver ? (
+                <form action={issueAction}>
+                  <input type="hidden" name="id" value={talk.id} />
+                  <button
+                    type="submit"
+                    disabled={!gate.ok}
+                    className="inline-flex min-h-[44px] items-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {isRevisionDraft ? "Deliver revision" : "Deliver talk"}
+                  </button>
+                </form>
+              ) : (
+                <span className="text-xs text-slate-500">Only an owner or admin can deliver a revision.</span>
+              )}
             </div>
           </div>
           {!gate.ok ? (
@@ -252,7 +265,7 @@ export default async function ToolboxTalkPage({
           reference={talk.reference ?? ""}
           docTitle={talk.topic}
           revisionLabel={(talk.revision_number ?? 1) > 1 ? `Revision ${talk.revision_number}` : null}
-          isCurrent={talk.status === "issued"}
+          isCurrent={isCurrentIssued}
           acks={acks}
           currentUserId={user.id}
           summary={signoff}

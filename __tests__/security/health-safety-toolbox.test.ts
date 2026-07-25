@@ -15,6 +15,7 @@ const ackMigration = readFileSync(join(root, "supabase/migrations/20261026000000
 const revMigration = readFileSync(join(root, "supabase/migrations/20261027000000_toolbox_talk_revision_snapshot.sql"), "utf8");
 const attMigration = readFileSync(join(root, "supabase/migrations/20261028000000_toolbox_talk_attachment_freeze.sql"), "utf8");
 const hardMigration = readFileSync(join(root, "supabase/migrations/20261029000000_toolbox_talk_evidence_hardening.sql"), "utf8");
+const authzMigration = readFileSync(join(root, "supabase/migrations/20261030000000_toolbox_talk_authz_and_snapshot_integrity.sql"), "utf8");
 const attachPanel = readFileSync(join(root, "components/attachments/AttachmentsPanel.tsx"), "utf8");
 const hsSnapshot = readFileSync(join(root, "server/services/health-safety-snapshot.ts"), "utf8");
 const hsSignals = readFileSync(join(root, "lib/health-safety/signals.ts"), "utf8");
@@ -410,5 +411,84 @@ describe("toolbox M6 — actionable awaiting-ack signal, RLS-scoped, no N+1", ()
     expect(jobSafety).toMatch(/from "@\/lib\/supabase\/server"/);
     expect(jobSafety).toMatch(/\.from\("toolbox_talks"\)/);
     expect(jobSafety).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+});
+
+// ===========================================================================
+// Post-release-audit hardening (20261030 + app) — the DB is the sole boundary
+// against a crafted PostgREST/RPC write by an authenticated member. Runtime
+// behaviour is proven in the integration + security integration suites; these
+// lock the invariants at the source so a later edit can't quietly undo them.
+// ===========================================================================
+describe("toolbox post-audit hardening — evidence integrity is DB-enforced (20261030)", () => {
+  it("[P0] a draft may ONLY be delivered (->issued) or edited (->draft), never straight to superseded/withdrawn (JWT)", () => {
+    expect(authzMigration).toMatch(/a draft toolbox talk can only be delivered \(issued\), not moved directly to/);
+    expect(authzMigration).toMatch(/new\.status not in \('draft', 'issued'\)/);
+    // JWT-gated: the trusted service role (fixtures/migrations) keeps seeding historical states
+    expect(authzMigration).toMatch(/old\.status = 'draft' and auth\.uid\(\) is not null/);
+  });
+
+  it("[P1] the caller-authored snapshot is BOUND to the record at issue (reference/revision/topic/key_points)", () => {
+    expect(authzMigration).toMatch(/snapshot->>'talk_reference' is distinct from new\.reference/);
+    expect(authzMigration).toMatch(/snapshot->>'revision'\)::int is distinct from new\.revision_number/);
+    expect(authzMigration).toMatch(/snapshot->>'topic' is distinct from new\.topic/);
+    expect(authzMigration).toMatch(/snapshot->>'key_points' is distinct from new\.key_points/);
+  });
+
+  it("[P2] the frozen snapshot may carry ONLY the worker-safe allowlist keys (enforced at the DB, not just TS)", () => {
+    expect(authzMigration).toMatch(/jsonb_object_keys\(new\.snapshot\)/);
+    expect(authzMigration).toMatch(/the evidence snapshot carries an unexpected field/);
+    expect(authzMigration).toMatch(/'talk_reference','revision','talk_date'/); // mirrors TOOLBOX_TALK_SNAPSHOT_KEYS
+    expect(snapshotLib).toMatch(/enforced at the DB \(tg_tt_a_lifecycle, migration/); // the sync pointer
+  });
+
+  it("[P1] withdraw/supersede of DELIVERED evidence is owner/admin-gated at the DB (JWT), not app-only", () => {
+    expect(authzMigration).toMatch(/only an owner or admin can supersede or withdraw delivered evidence/);
+    expect(authzMigration).toMatch(/auth\.uid\(\) is not null and not public\.is_org_admin\(new\.org_id\)/);
+  });
+
+  it("[P1] raising a revision (rev>=2 / supersedes a prior) is owner/admin-gated at the DB (JWT)", () => {
+    expect(authzMigration).toMatch(/only an owner or admin can raise a toolbox talk revision/);
+    expect(authzMigration).toMatch(/new\.revision_number > 1 or new\.supersedes_id is not null/);
+  });
+
+  it("[P1] the revision-issue RPC re-checks owner/admin at the DB boundary (JWT)", () => {
+    expect(authzMigration).toMatch(/only an owner or admin can issue a toolbox talk revision/);
+    expect(authzMigration).toMatch(/function public\.issue_toolbox_talk_revision\(p_id uuid, p_snapshot jsonb\)/);
+  });
+
+  it("[P3] the primary key `id` is now inside the immutable frozen tuple", () => {
+    expect(authzMigration).toMatch(/\(new\.id, new\.topic/);
+    expect(authzMigration).toMatch(/\(old\.id, old\.topic/);
+  });
+
+  it("the DB manager-gate uses is_org_admin, which equals the app's isManager (owner|admin) — no owner lock-out", () => {
+    // if these two ever diverge, a legitimate owner is refused at the DB while the UI offers the action
+    expect(actions).toMatch(/role === "owner" \|\| role === "admin"/);
+    expect(authzMigration).toMatch(/is_org_admin/);
+  });
+
+  it("every SECURITY DEFINER in the hardening migration still pins search_path (no mutable-path escalation)", () => {
+    const defs = authzMigration.match(/security definer/g) ?? [];
+    const pins = authzMigration.match(/set search_path = public/g) ?? [];
+    expect(defs.length).toBeGreaterThan(0);
+    expect(pins.length).toBeGreaterThanOrEqual(defs.length);
+  });
+
+  it("[P1] the evidence PDF threads the LIVE lifecycle status — a withdrawn/superseded record never reads 'Delivered'", () => {
+    expect(pdfRoute).toMatch(/status: talk\.status as/);
+    expect(pdfLib).toMatch(/export function toolboxStatusLabel/);
+    expect(pdfLib).toMatch(/export function toolboxEvidenceStatement/);
+    expect(pdfLib).toMatch(/return "Withdrawn"/);
+    expect(pdfLib).toMatch(/return "Superseded"/);
+  });
+
+  it("[P2] deleteToolboxTalk deletes the draft-guarded row BEFORE touching attachments (no frozen-evidence reach)", () => {
+    // the guarded delete + count check must precede the attachment cleanup loop
+    const delFn = actions.slice(actions.indexOf("export async function deleteToolboxTalk"));
+    const guardIdx = delFn.indexOf('.eq("status", "draft")');
+    const attIdx = delFn.indexOf("deleteTenantAttachment");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(attIdx).toBeGreaterThan(guardIdx); // attachments cleaned only AFTER the draft delete
   });
 });
