@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
@@ -257,6 +258,50 @@ export default async function DashboardPage() {
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
   const allLeads = leadsAllRes.data ?? [];
+
+  // Contract retention "due back" (Programme C extension) — the portfolio view
+  // of held retention + what's due for release. Read on the TENANT client (RLS)
+  // and PAGED (never a truncated `.select()`); the rollup reuses the same
+  // per-job derivation as the job page so the numbers agree. The `jobs`
+  // retention columns aren't in the generated types yet — cast the reads.
+  type RetTermsRow = {
+    id: string;
+    retention_percent: number | string | null;
+    practical_completion_date: string | null;
+    defects_liability_months: number | string | null;
+    retention_first_release_pct: number | string | null;
+  };
+  type RetRelRow = { job_id: string | null; amount: number | string | null };
+  type Paged<T> = {
+    order: (k: string, o: { ascending: boolean }) => {
+      range: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
+    };
+  };
+  const [retentionJobsRes, retentionReleasesRes] = await Promise.all([
+    fetchAllRows<RetTermsRow>((from, to) =>
+      (supabase.from("jobs" as never) as unknown as { select: (c: string) => Paged<RetTermsRow> })
+        .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<RetRelRow>((from, to) =>
+      (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
+        .select("job_id, amount")
+        .order("job_id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+  const retentionRollup = computeRetentionDueRollup({
+    jobs: (retentionJobsRes.data ?? []).map((j) => ({
+      id: j.id,
+      ratePercent: j.retention_percent,
+      practicalCompletionDate: j.practical_completion_date,
+      defectsLiabilityMonths: j.defects_liability_months,
+      firstReleasePct: j.retention_first_release_pct,
+    })),
+    invoices: invoices.map((i) => ({ job_id: i.job_id, status: i.status, amount: i.amount })),
+    releases: retentionReleasesRes.data ?? [],
+  });
   const activity = (activityRes.data ?? []) as unknown as ActivityRow[];
   const activityTotal = activityRes.count ?? 0;
   const activityHasMore = activity.length < activityTotal;
@@ -699,10 +744,14 @@ export default async function DashboardPage() {
           sub={`${dueThisWeekCount} ${dueThisWeekCount === 1 ? "invoice" : "invoices"} in next 7 days`}
         />
         <Kpi
-          label="Reminders enabled"
-          value="auto + manual"
-          href="/invoices"
-          sub="day 3 / 7 / 14 / 21 after sent"
+          label="Retention due back"
+          value={GBP.format(retentionRollup.dueNow)}
+          href="/jobs"
+          sub={
+            retentionRollup.totalHeld > 0
+              ? `${GBP.format(retentionRollup.totalHeld)} held · ${retentionRollup.heldJobCount} ${retentionRollup.heldJobCount === 1 ? "job" : "jobs"}`
+              : "no retention held"
+          }
         />
       </section>
 

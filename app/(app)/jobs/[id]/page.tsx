@@ -21,6 +21,8 @@ import {
   maxReleasable,
 } from "@/lib/retentions/compute";
 import { setJobRetentionRate, recordRetentionRelease } from "../retention-actions";
+import { computeRetentionSchedule } from "@/lib/retentions/schedule";
+import { RetentionScheduleSection } from "./_retention-schedule";
 import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/committed";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { MapActions } from "@/components/maps/MapActions";
@@ -150,12 +152,17 @@ export default async function EditJobPage({
       supabase.from("jobs" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { retention_percent: number | string | null } | null }>;
+            maybeSingle: () => Promise<{ data: {
+              retention_percent: number | string | null;
+              practical_completion_date: string | null;
+              defects_liability_months: number | string | null;
+              retention_first_release_pct: number | string | null;
+            } | null }>;
           };
         };
       }
     )
-      .select("retention_percent")
+      .select("retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
       .eq("id", job.id)
       .maybeSingle(),
     (
@@ -219,6 +226,18 @@ export default async function EditJobPage({
   // can set the contract rate in the first place.
   const showRetention =
     retention.isActive || retentionReleaseRows.length > 0 || isAdmin;
+
+  // Retention release schedule (Programme C extension) — DERIVED forecast of
+  // when held retention is due back. Terms live on the job.
+  const retentionScheduleTerms = {
+    practicalCompletionDate: retentionMeta.data?.practical_completion_date ?? null,
+    defectsLiabilityMonths: Number(retentionMeta.data?.defects_liability_months ?? 12),
+    firstReleasePct: Number(retentionMeta.data?.retention_first_release_pct ?? 50),
+  };
+  const retentionSchedule = computeRetentionSchedule({
+    position: retention,
+    ...retentionScheduleTerms,
+  });
 
   // Original vs Variations breakdown — split invoice revenue by whether
   // the source quote has variation_number set.
@@ -301,12 +320,16 @@ export default async function EditJobPage({
         </div>
       ) : null}
 
-      {saved === "retention_rate" || saved === "retention_release" ? (
+      {saved === "retention_rate" || saved === "retention_release" || saved === "retention_schedule" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
         >
-          {saved === "retention_rate" ? "Retention rate saved." : "Retention release recorded."}
+          {saved === "retention_rate"
+            ? "Retention rate saved."
+            : saved === "retention_schedule"
+              ? "Release schedule saved."
+              : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -394,6 +417,13 @@ export default async function EditJobPage({
               value={retention.isFullyReleased ? "Fully released" : retention.held > 0 ? "Outstanding" : "—"}
             />
           </dl>
+
+          <RetentionScheduleSection
+            jobId={job.id}
+            schedule={retentionSchedule}
+            isAdmin={isAdmin}
+            current={retentionScheduleTerms}
+          />
 
           {retentionReleaseRows.length > 0 ? (
             <div className="mt-4">

@@ -204,3 +204,88 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
   revalidatePath(`/jobs/${jobId}`);
   back(jobId, "saved=retention_release");
 }
+
+/**
+ * Set the retention release schedule terms on a job (Programme C extension):
+ * Practical Completion date, Defects Liability Period (months), and the % of
+ * accrued retention released at PC. These drive the DERIVED release forecast
+ * (`lib/retentions/schedule.ts`) — nothing here touches the releases ledger.
+ *
+ * Admin-only, exactly like `setJobRetentionRate`: the tenant client + the
+ * admin-only `jobs` UPDATE RLS mean a non-admin's UPDATE matches 0 rows. The DB
+ * CHECK constraints (months 0–120, pct 0–100) are the backstop; zod gives a
+ * friendly message first. No service-role path.
+ */
+const scheduleSchema = z.object({
+  practical_completion_date: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a valid completion date (YYYY-MM-DD)").nullable(),
+  ),
+  defects_liability_months: z.coerce
+    .number()
+    .int("Months must be a whole number")
+    .min(0, "Can't be negative")
+    .max(120, "Defects period can't exceed 120 months"),
+  retention_first_release_pct: z.coerce
+    .number()
+    .min(0, "Can't be negative")
+    .max(100, "Can't exceed 100%"),
+});
+
+export async function setRetentionSchedule(jobId: string, formData: FormData) {
+  const { user } = await requireOrgContext();
+  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
+
+  const parsed = scheduleSchema.safeParse({
+    practical_completion_date: formData.get("practical_completion_date"),
+    defects_liability_months: formData.get("defects_liability_months"),
+    retention_first_release_pct: formData.get("retention_first_release_pct"),
+  });
+  if (!parsed.success) {
+    back(jobId, `error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Check the retention schedule")}`);
+  }
+  const values = parsed.success
+    ? parsed.data
+    : { practical_completion_date: null, defects_liability_months: 12, retention_first_release_pct: 50 };
+
+  const supabase = await createClient();
+  // These jobs columns (20261013) aren't in the generated Supabase types — cast
+  // the writer, same idiom as setJobRetentionRate. (Types regen is tracked in #398.)
+  const { data, error } = await (
+    supabase.from("jobs" as never) as unknown as {
+      update: (row: unknown) => {
+        eq: (k: string, v: unknown) => {
+          select: (c: string) => {
+            maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
+          };
+        };
+      };
+    }
+  )
+    .update({
+      practical_completion_date: values.practical_completion_date,
+      defects_liability_months: values.defects_liability_months,
+      retention_first_release_pct: values.retention_first_release_pct,
+    })
+    .eq("id", jobId)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    // RLS filters the row out for non-admins → zero rows, no error.
+    console.error("[retention] set schedule failed", error);
+    back(jobId, "error=retention_schedule_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "retention.schedule_set",
+    targetTable: "jobs",
+    targetId: jobId,
+    metadata: { ...values },
+  });
+
+  revalidatePath(`/jobs/${jobId}`);
+  back(jobId, "saved=retention_schedule");
+}

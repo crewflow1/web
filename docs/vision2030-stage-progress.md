@@ -71,7 +71,7 @@ in the master directive; they are surfaced, not silently skipped or faked-dark.
 > Status legend: **PROD** = merged + live · **UNMERGED** = built + CI-green on a branch, not in prod.
 | Date | Milestone | PR / branch | Status · Gates |
 |---|---|---|---|
-| 2026-07-21 | Financial Ops → **payment allocation** (one receipt → many invoices; concurrency-safe over-allocation guard) | `feat/payment-allocation` | unit 14 · integration/RLS/**concurrency** 5 (real PG) |
+| 2026-07-22 | Financial → **retention release scheduling** (PC date + defects period → “due back” forecast + dashboard rollup) | `feat/retention-scheduling` | unit 16 · integration 5 · security 2 (unmerged) |
 | 2026-07-20 | Commercial C → **committed costs (POs) on the job P&L** | #395 | 8/8 green |
 | 2026-07-20 | Commercial C → **purchase orders** (procurement / committed spend) | #394 | 8/8 green (`purchase-orders.test.ts` 5) |
 | 2026-07-20 | Commercial C → **construction retention** (contract holdback) | #393 | 8/8 green (`retention.test.ts` 8) |
