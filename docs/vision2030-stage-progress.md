@@ -14,29 +14,16 @@
 > authenticated E2E** (login-harness gated).
 
 ## Standing reality (read first)
-- **Production is LIVE.** RC3 — the whole platform (Directive #018 foundation +
-  Site Mgmt + Assets + Commercial + CX) — was merged to `main` (`295d810`) and
-  deployed on **2026-07-20** (`94eeea8` "reopen production after RC3 cutover";
-  crewflow.uk serves 200; Vercel prod Ready). **`main` = 170 migrations, tip
-  `20261007`.** RC3 superseded the stale RC2 #375. Pre-cutover RC3 artifacts
-  (`RELEASE-MANIFEST-RC3.md`, `CTO-RELEASE-REPORT-RC3.md`,
-  `PRODUCTION-DEPLOYMENT-RUNBOOK-RC3.md`, `CTO-BASELINE-VERIFICATION-RC3.md`)
-  are **superseded records** — their "DO NOT MERGE/DEPLOY" language is historical.
-- **Prod is one migration AHEAD of `main`.** The `20261008` impersonation
-  quote/invoice-numbering fix was applied out-of-band during QA, so prod has 171
-  migrations (latest `20261008`) while `main` stops at `20261007`. That fix lives
-  on unmerged PR #398 — merging #398 realigns `main` with prod. (Prod's current
-  behaviour is fail-closed stricter, so this is a workflow gap, not a security
-  regression.)
-- **Unmerged after RC3, NOT in prod:** #398 (types regen + `20261008`), #399
-  (supplier bills, `20261009`), #400 (payment allocation, `20261010`), #401
-  (commercial lifecycle / Programme D, no migration), plus Programme E's own
-  reconciliation fixes (`20261011` PO org-integrity, `20261012` retention
-  concurrency). "CI-green on a branch" ≠ "shipped to prod".
-- **Known LIVE defect (fixed only on unmerged #401):** the job page derives
-  "outstanding" from invoice *status*, so a partly-paid invoice reads as fully
-  collected (£0 outstanding). Programme D fixes it from the payment ledger;
-  until #401 merges the defect is in production.
+- **RC3 is LIVE in production** (merged #397 → `main`, deployed to crewflow.uk,
+  **171 migrations** after the impersonation-numbering hotfix 20261008). The core
+  money loop (customer → quote → accept → auto job+invoice → portal) was
+  QA-verified end-to-end in prod. Post-launch work now stacks on `main`.
+- **RC3 is the current release candidate** (`release/rc3-full-platform`, PR #397
+  → `main`, **DO NOT MERGE**), produced by the Release-Recovery & CTO
+  Consolidation directive. It consolidates the whole platform (Directive #018
+  foundation + Site Mgmt + Assets + Commercial + CX) into one CI-green branch and
+  **supersedes the stale RC2 #375** (which stopped at #374). See
+  `docs/RELEASE-MANIFEST-RC3.md` + `docs/PRODUCTION-DEPLOYMENT-RUNBOOK-RC3.md`.
 - Every vertical here is **additive + dark-safe + reversible** unless flagged.
   The one irreversible migration is `20260812` (LR5.4B); it has a pre-snapshot.
 
@@ -48,7 +35,7 @@
 | **2. Customer Portal (remainder)** | ◑ largely shipped | In prod (RC3). Portal completion #390 — shell coherence (7 tabs incl. Reports + Documents on one `PortalShell`), an **action centre** (overdue/due payments + quote decisions with precise £ + deep-links), a **document library** (quote/invoice/report PDFs; excludes arbitrary attachments = no leak). Single auth authority (`loadCustomerByPortalToken`), uniform org_id+customer_id query scoping (security-audited). **Correction (Programme E):** report-decision surfacing in the action centre is NOT shipped (`page.tsx` passes `reports: []`; the branch carries no £) — do not describe it as done. Warranties, completion certs, maintenance reminders, online pay, customer upload — pending. |
 | **3. Variation Management** | ✅ **materially complete** | Variation model/creation/lifecycle/register pre-existed (`20260520180000`). Added: **job commercial position** #391 (original preserved, revised value DERIVED from approved variations, pending shown separately) + **accepted-quote immutability** #392 (DB triggers freeze an accepted quote's amounts & line items; "raise a variation" is now the *only* scope-change path). Shared `lib/money`. Doc generation via the existing quote PDF. |
 | **4. Site Management** | ◑ largely shipped | Snagging #367 · Daily Diary #368 · Toolbox Talks #369 · Site Reports #370–#372 (immutable, PDF, portal). Progress-photo galleries + weather intelligence (external API, gated) remain. |
-| **5. Financial Operations** | ◑ largely shipped | Expenses/finances/tax/profitability pre-existed. Added: **construction retention** #393 (`jobs.retention_percent` + append-only `retention_releases`; held DERIVED, DB-enforced no-over-release/immutability/org-integrity; commercial holdback, NOT CIS) · **purchase orders** #394 (per-org PO-NNNN, status lifecycle, committed spend kept separate from `finances`) · **committed vs actual on the job P&L** #395 · **supplier bills** (PR #399 — extends `finances` with a PO/supplier link + org-integrity guard; committed→actual loop) · **payment allocation** (`20261010`, this PR — one receipt across many invoices, DB-enforced over-allocation guard with `FOR UPDATE` concurrency safety, atomic `allocate_payment` RPC; **extends `invoice_payments` — no `payment_allocations` fork, existing status trigger reused unchanged**, see `docs/payment-allocation.md`). **CIS = HMRC correctness → explicit product decision, excluded.** |
+| **5. Financial Operations** | ◑ largely shipped | Expenses/finances/tax/profitability pre-existed. Added: **construction retention** #393 (`jobs.retention_percent` + append-only `retention_releases`; held DERIVED, DB-enforced no-over-release/immutability/org-integrity; commercial holdback, NOT CIS) · **purchase orders** #394 (per-org PO-NNNN, status lifecycle, committed spend kept separate from `finances`) · **committed vs actual on the job P&L** #395. **Supplier bills** #399 (20261009) — a bill IS a `finances` entry attributed to a supplier + PO (`finances` += supplier_id/purchase_order_id/reference/bill_date; DB guard `finances_bill_org_integrity` blocks cross-tenant links); PO detail shows Committed/Billed/Remaining + status, job P&L shows Billed (actual). No `supplier_bills` fork. CI-green, unmerged. Pending: **payment allocation** (invoice_payments is 1↔1; needs a `payment_allocations` join + a retargeted status-sync trigger — flagged concurrency-sensitive) → supplier-level bills view. **CIS = HMRC correctness → explicit product decision, excluded.** |
 | **6. Asset Management** | ✅ **complete (M1–M5 + integration)** | Register #373 · custody #374 · QR #376–#379 · inspections #380–#385 (immutable records, safety-blocking custody, versioned templates, idempotent scheduling, audited overrides + explicit reinspection lineage, org-wide attention) · maintenance #386–#388 (state machine, costs privacy, service scheduler, connected RTS loop) · integration (job-linked assets, holdings, unified history). DB-enforced invariants + real-Postgres proofs throughout; authenticated lifecycle E2E gated on the login harness (tracked). |
 | **7. Customer Experience** | ◑ ongoing | Premium-feel polish shipped across PRs #364–#366 (onboarding, empty states, loading, copy, breadcrumbs, autofocus). Ranked backlog in `docs/cx-acceleration.md`. |
 

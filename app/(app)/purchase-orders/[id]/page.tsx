@@ -15,6 +15,12 @@ import {
   poStatusLabel,
   type PurchaseOrderStatus,
 } from "@/lib/purchase-orders/schema";
+import {
+  computePoBilling,
+  PO_BILL_STATUS_LABEL,
+  PO_BILL_STATUS_CLASS,
+} from "@/lib/purchase-orders/billing";
+import { RecordBillForm } from "./_bill-form";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 
@@ -85,6 +91,32 @@ export default async function PurchaseOrderDetailPage({
     .maybeSingle();
 
   if (!po) notFound();
+
+  // Supplier bills recorded against this PO (finances entries) — the ACTUAL cost
+  // that closes the committed → actual loop.
+  type BillRow = {
+    id: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    reference: string | null;
+    bill_date: string | null;
+    category: string | null;
+    created_at: string;
+  };
+  const { data: billRows } = await (
+    supabase.from("finances" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          order: (k: string, o: { ascending: boolean }) => Promise<{ data: BillRow[] | null }>;
+        };
+      };
+    }
+  )
+    .select("id, amount, vat_total, reference, bill_date, category, created_at")
+    .eq("purchase_order_id", id)
+    .order("created_at", { ascending: false });
+  const bills = billRows ?? [];
+  const billing = computePoBilling({ poTotal: po.total, bills });
 
   const status = po.status as PurchaseOrderStatus;
   const nextStates = PO_TRANSITIONS[status] ?? [];
@@ -193,6 +225,63 @@ export default async function PurchaseOrderDetailPage({
           </div>
         </dl>
         {po.notes ? <p className="mt-4 whitespace-pre-wrap border-t border-slate-100 pt-3 text-sm text-slate-600">{po.notes}</p> : null}
+      </section>
+
+      {/* Supplier bills — committed vs actual */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-900">Supplier bills</h2>
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${PO_BILL_STATUS_CLASS[billing.status]}`}
+          >
+            {PO_BILL_STATUS_LABEL[billing.status]}
+          </span>
+        </div>
+        <p className="mt-1 text-sm text-slate-500">
+          Record the supplier&apos;s invoice — it posts the actual cost to this job and closes it
+          against the order.
+        </p>
+
+        <dl className="mt-4 grid grid-cols-3 gap-4">
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-slate-500">Committed</dt>
+            <dd className="mt-0.5 text-lg font-semibold text-slate-900">{GBP.format(billing.poTotal)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-slate-500">Billed</dt>
+            <dd className="mt-0.5 text-lg font-semibold text-slate-900">{GBP.format(billing.billedGross)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-slate-500">Remaining</dt>
+            <dd
+              className={`mt-0.5 text-lg font-semibold ${billing.remaining < 0 ? "text-red-700" : "text-slate-900"}`}
+            >
+              {GBP.format(billing.remaining)}
+            </dd>
+          </div>
+        </dl>
+
+        {bills.length > 0 ? (
+          <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">
+            {bills.map((b) => (
+              <li key={b.id} className="flex items-center justify-between py-2 text-sm">
+                <span className="text-slate-700">
+                  {b.reference ?? b.category ?? "Bill"}
+                  {b.bill_date ? ` · ${b.bill_date}` : ""}
+                </span>
+                <span className="font-medium text-slate-900">
+                  {GBP.format(Number(b.amount ?? 0) + Number(b.vat_total ?? 0))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-500">
+            No bills recorded yet.
+          </p>
+        )}
+
+        <RecordBillForm poId={po.id} />
       </section>
 
       {/* Edit (draft/sent only) */}
