@@ -1,0 +1,166 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/**
+ * Toolbox Talks — security source-contracts. Runtime behaviour is proven against
+ * real Postgres in __tests__/integration/health-safety/toolbox-talks + the RLS
+ * isolation suite; these lock the load-bearing rules AT THE SOURCE so a later edit
+ * that quietly weakens an invariant fails CI. Mirrors health-safety.test.ts.
+ */
+
+const root = join(__dirname, "..", "..");
+const migration = readFileSync(join(root, "supabase/migrations/20261025000000_health_safety_toolbox_talks.sql"), "utf8");
+const actions = readFileSync(join(root, "app/(app)/toolbox/actions.ts"), "utf8");
+const options = readFileSync(join(root, "app/(app)/toolbox/_form-options.ts"), "utf8");
+const snapshotLib = readFileSync(join(root, "lib/toolbox-talks/snapshot.ts"), "utf8");
+const domainLib = readFileSync(join(root, "lib/health-safety/toolbox-talks.ts"), "utf8");
+
+describe("toolbox migration — evidence lifecycle is DB-enforced (20261025)", () => {
+  it("[born-draft] no INSERT can mint an issued talk — the trigger fires on INSERT too", () => {
+    expect(migration).toMatch(/tg_tt_a_lifecycle/);
+    expect(migration).toMatch(/before insert or update on public\.toolbox_talks/);
+    expect(migration).toMatch(/a toolbox talk is created as a draft/);
+  });
+
+  it("[issue-gate] delivering (draft->issued) needs a topic + key points, only for JWT callers", () => {
+    expect(migration).toMatch(/a toolbox talk needs a topic and key points before it can be delivered/);
+    // gate + provenance pin apply only to real callers; the trusted service role keeps explicit values
+    expect(migration).toMatch(/auth\.uid\(\) is not null/);
+  });
+
+  it("[provenance] issue pins issued_by = auth.uid() and issued_at = now() server-side", () => {
+    expect(migration).toMatch(/new\.issued_by := auth\.uid\(\)/);
+    expect(migration).toMatch(/new\.issued_at := now\(\)/);
+  });
+
+  it("[immutable] an issued talk is frozen: content/links/lineage/provenance + write-once snapshot", () => {
+    expect(migration).toMatch(/tg_tt_m_immutable/);
+    expect(migration).toMatch(/a % toolbox talk is immutable; raise a new revision instead/);
+    expect(migration).toMatch(/the toolbox talk evidence snapshot is frozen once set/);
+    // forward-only status: issued -> superseded|withdrawn only
+    expect(migration).toMatch(/invalid toolbox talk status transition/);
+  });
+
+  it("[reference] a draft carries no reference; a non-draft must (CHECK), unique per org", () => {
+    expect(migration).toMatch(/\(status = 'draft'\) = \(reference is null\)/);
+    expect(migration).toMatch(/toolbox_talks_org_reference_key unique \(org_id, reference\)/);
+    expect(migration).toMatch(/status = 'draft' or issued_at is not null/); // issued_stamp
+  });
+
+  it("[one-current] exactly one issued + one draft per revision series (partial unique indexes)", () => {
+    expect(migration).toMatch(/toolbox_talks_one_current_idx[\s\S]*?root_toolbox_talk_id\) where status = 'issued'/);
+    expect(migration).toMatch(/toolbox_talks_one_draft_idx[\s\S]*?root_toolbox_talk_id\) where status = 'draft'/);
+    expect(migration).toMatch(/\(root_toolbox_talk_id, revision_number\)/);
+  });
+
+  it("[lineage] revision integrity: self-root on insert, same-org/same-series, never self-supersede", () => {
+    expect(migration).toMatch(/tg_tt_revision_integrity/);
+    expect(migration).toMatch(/new\.root_toolbox_talk_id := new\.id/);
+    expect(migration).toMatch(/a toolbox talk cannot supersede itself/);
+    expect(migration).toMatch(/must be another revision of the same series/);
+  });
+
+  it("[links] job/RAMS/permit links are validated same-org via a trigger (not a cascade FK)", () => {
+    expect(migration).toMatch(/tg_tt_validate_links/);
+    expect(migration).toMatch(/is not in this organisation/);
+    // bare FK + ON DELETE SET NULL (evidence survives the linked doc's deletion)
+    expect(migration).toMatch(/references public\.risk_assessments\(id\)\s+on delete set null/);
+    expect(migration).toMatch(/references public\.permits_to_work\(id\)\s+on delete set null/);
+  });
+
+  it("[delete-guard] issued evidence is non-deletable via a TRIGGER (role-independent), draft-only RLS", () => {
+    expect(migration).toMatch(/tg_tt_block_delete_when_issued/);
+    expect(migration).toMatch(/before delete on public\.toolbox_talks/);
+    expect(migration).toMatch(/a delivered toolbox talk is H&S evidence and cannot be deleted/);
+    // org teardown (cascade) is still allowed — the org row is gone by then
+    expect(migration).toMatch(/exists \(select 1 from public\.organizations where id = old\.org_id\)/);
+    // JWT-path defence-in-depth: admin + draft only
+    expect(migration).toMatch(/toolbox_talks_delete[\s\S]*?is_org_admin\(org_id\) and status = 'draft'/);
+  });
+
+  it("[numbering] next_tbt_number gates the caller to their own org (no cross-org count oracle)", () => {
+    expect(migration).toMatch(/function public\.next_tbt_number/);
+    expect(migration).toMatch(/not a member of organisation/);
+    expect(migration).toMatch(/target_org not in \(select public\.current_org_ids\(\)\)/);
+    // TBT-NNNN, and revisions (-R0n) never advance the sequence
+    expect(migration).toMatch(/'TBT-' \|\| lpad/);
+    expect(migration).toMatch(/reference ~ '\^TBT-\\d\+'/);
+  });
+
+  it("[atomic revision] issue_toolbox_talk_revision is SECURITY INVOKER, row-locked, supersede+promote", () => {
+    expect(migration).toMatch(/function public\.issue_toolbox_talk_revision/);
+    expect(migration).toMatch(/security invoker/);
+    expect(migration).toMatch(/for update/);
+    expect(migration).toMatch(/set status = 'superseded'\s*\n?\s*where root_toolbox_talk_id = v_root and status = 'issued'/);
+  });
+
+  it("every SECURITY DEFINER in the migration pins search_path (no mutable-path escalation)", () => {
+    const defs = migration.match(/security definer/g) ?? [];
+    const pins = migration.match(/set search_path = public/g) ?? [];
+    expect(defs.length).toBeGreaterThan(0);
+    expect(pins.length).toBeGreaterThanOrEqual(defs.length);
+  });
+});
+
+describe("toolbox server actions — RLS-scoped, never service-role, count-checked", () => {
+  it("all writes go through the tenant (user-JWT) client; the service-role client is never used", () => {
+    expect(actions).toMatch(/from "@\/lib\/supabase\/server"/);
+    expect(actions).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+    expect(options).not.toMatch(/serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/);
+  });
+
+  it("every mutation is requireOrgContext-gated, org-scoped, and count-checked (no false success)", () => {
+    expect(actions).toMatch(/requireOrgContext\(\)/);
+    expect(actions).toMatch(/\.eq\("org_id", ctx\.org\.id\)/);
+    expect(actions).toMatch(/if \(!count\)/);
+  });
+
+  it("issuing re-checks readiness (canIssue) and allocates via next_tbt_number", () => {
+    expect(actions).toMatch(/canIssue\(/);
+    expect(actions).toMatch(/next_tbt_number/);
+  });
+
+  it("edit + issue are guarded to the draft state (.eq status draft) so an issued write is an honest 404", () => {
+    // update + issue both pin status='draft'; a delivered talk can never be re-written by the action
+    const draftPins = actions.match(/\.eq\("status", "draft"\)/g) ?? [];
+    expect(draftPins.length).toBeGreaterThanOrEqual(3); // update, issue, delete
+  });
+
+  it("delete is admin-gated AND draft-only (the DB delete-guard backstops issued evidence)", () => {
+    expect(actions).toMatch(/membership\.role !== "owner" && ctx\.membership\.role !== "admin"/);
+    expect(actions).toMatch(/deleteToolboxTalk[\s\S]*?\.eq\("status", "draft"\)/);
+  });
+});
+
+describe("toolbox evidence snapshot — worker-safe by construction (no commercial/PII leak)", () => {
+  it("the snapshot source references no cost/rate/margin/price/commercial FIELD", () => {
+    // field-shaped tokens only (mirrors the RAMS-PDF convention) so prose like the
+    // module's own "no path for cost/rate/margin to enter" doc-comment is not a hit.
+    // The runtime snapshot.test.ts scans the BUILT object for the broader word set.
+    expect(snapshotLib).not.toMatch(/profit|unit_price|day_rate|_cost|cost_|net_amount|vat_|_margin|margin_|markup|_rate\b/i);
+  });
+
+  it("the allowlist carries NO raw foreign keys (job_id / org_id / user_id) — only denormalised strings", () => {
+    // links are frozen as reference STRINGS (rams_reference, permit_reference), never live ids
+    expect(snapshotLib).toMatch(/TOOLBOX_TALK_SNAPSHOT_KEYS/);
+    expect(snapshotLib).not.toMatch(/"job_id"|"org_id"|"user_id"|"customer_id"/);
+    expect(snapshotLib).toMatch(/rams_reference/);
+    expect(snapshotLib).toMatch(/permit_reference/);
+  });
+
+  it("the builder takes only worker-safe inputs — there is no ...spread of an arbitrary row", () => {
+    expect(snapshotLib).toMatch(/export function buildToolboxTalkSnapshot/);
+    expect(snapshotLib).not.toMatch(/\.\.\.(row|talk|input\b)/); // no wholesale row spread into the snapshot
+  });
+});
+
+describe("toolbox pure domain — mirrors the DB lifecycle (single source of truth for the UI)", () => {
+  it("the four statuses + the issue-gate + transition matrix live in the pure lib", () => {
+    expect(domainLib).toMatch(/TOOLBOX_TALK_STATUSES = \["draft", "issued", "superseded", "withdrawn"\]/);
+    expect(domainLib).toMatch(/export function canIssue/);
+    expect(domainLib).toMatch(/export function canTransition/);
+    // "issued" presents as "Delivered" — construction-natural, but the DB status is unchanged
+    expect(domainLib).toMatch(/issued: \{ label: "Delivered"/);
+  });
+});
