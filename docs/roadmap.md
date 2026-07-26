@@ -1,3 +1,7 @@
+> ⚠️ **STALE — superseded 2026-07-26.** Historical roadmap. **Canonical roadmap is now**
+> [roadmap/MASTER-ROADMAP-POST-20261037.md](./roadmap/MASTER-ROADMAP-POST-20261037.md)
+> (+ [roadmap/STATUS.md](./roadmap/STATUS.md)). Kept for history only — do not use as current truth.
+
 # CrewFlow Vision 2030 — programme roadmap
 
 > **The destination.** CrewFlow is the operating system for UK construction

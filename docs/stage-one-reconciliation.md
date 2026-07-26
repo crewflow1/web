@@ -1,3 +1,7 @@
+> ⚠️ **STALE — superseded 2026-07-26.** Point-in-time Stage-One reconciliation. **Current
+> canonical roadmap:** [roadmap/MASTER-ROADMAP-POST-20261037.md](./roadmap/MASTER-ROADMAP-POST-20261037.md)
+> (+ [roadmap/STATUS.md](./roadmap/STATUS.md)). Kept for history only.
+
 # Programme E — Stage One repository-grounded reconciliation
 
 **Date:** 2026-07-21 · **Method:** independent 5-agent CTO audit (architecture,

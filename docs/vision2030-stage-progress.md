@@ -1,3 +1,8 @@
+> ⚠️ **STALE — superseded 2026-07-26.** This tracker pre-dates the recent production waves and
+> its statuses/percentages are out of date (e.g. Blueprint Centre + H&S are LIVE in prod, not
+> "unmerged"). **Canonical roadmap:** [roadmap/MASTER-ROADMAP-POST-20261037.md](./roadmap/MASTER-ROADMAP-POST-20261037.md)
+> and [roadmap/STATUS.md](./roadmap/STATUS.md). Kept for history only — do not use as current truth.
+
 # Vision 2030 — customer-platform programme progress
 
 > Tracks the **Master Execution Directive**: finish the remaining Core
