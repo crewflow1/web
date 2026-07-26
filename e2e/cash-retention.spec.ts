@@ -55,7 +55,7 @@ test.describe("owner cash — retention is netted precisely (only what's still w
     // (The M2 approximation would have shown £11,000 by netting the full £1,000.)
     await expect(page.getByText(/£11,500/).first()).toBeVisible();
 
-    // The precise netting is surfaced honestly.
-    await expect(page.getByText(/£500 retention still withheld/i).first()).toBeVisible();
+    // The precise netting is surfaced honestly (formatGbp renders "£500.00").
+    await expect(page.getByText(/£500\.00 retention still withheld/i).first()).toBeVisible();
   });
 });
