@@ -71,9 +71,11 @@ Vercel, no cron, no realtime, no provider, no LLM.
 
 ## Tests
 
-- **Unit (16 new):** org-cash summary + buckets + retention netting + queues; portal-payments
-  (customer-safe, part-paid, draft-excluded); the briefing `billing_ready` signal.
-- **Integration (2 new, real Postgres):** cross-tenant + anon isolation of the cash surface.
+- **Unit (9 new):** org-cash (5 — summary reconciliation, collectable-floor, overdue-not-
+  double-counted, buckets, queues); portal-payments (3 — paid/due/overdue sums, draft-excluded,
+  part-paid shows remaining); the briefing `billing_ready` signal (1).
+- **Integration (3 new, real Postgres):** cross-tenant isolation, the **[P0] dual-org-member**
+  regression (bare RLS blends both orgs; the `org_id` pin scopes to one), and anon isolation.
 - The E2E "owner cash / portal / briefing" journeys run against the authenticated harness;
   dedicated Playwright specs for the three journeys are a tracked M3 follow-up.
 
