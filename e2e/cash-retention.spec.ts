@@ -44,7 +44,9 @@ test.describe("owner cash — retention is netted precisely (only what's still w
 
   test("the job's collectable nets only the £500 still withheld, not the full £1,000 accrued", async ({ page }) => {
     await page.goto(`/jobs/${jobId}/billing`);
-    await expect(page.getByRole("heading", { name: /get paid/i })).toBeVisible();
+    // Exact match: the job billing page's h1 is "Get paid" AND (with no plan) an
+    // h2 "Set up how you'll get paid" also exists — target the h1 unambiguously.
+    await expect(page.getByRole("heading", { name: "Get paid", exact: true })).toBeVisible();
 
     // Retention held across both invoices = 5% × £20,000 net = £1,000.
     await expect(page.getByText(/£1,000/).first()).toBeVisible();
