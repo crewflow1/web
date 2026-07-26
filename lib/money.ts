@@ -31,3 +31,37 @@ export function sumMoney(values: Array<number | string | null | undefined>): num
 export function formatGbp(v: number | string | null | undefined): string {
   return GBP.format(toPounds(v));
 }
+
+/**
+ * Split `total` into parts proportional to `weights`, PENNY-EXACT: the returned
+ * amounts always sum to EXACTLY round2(total) (largest-remainder method), so a
+ * percentage stage split like 33.33 / 33.33 / 33.34 of £10,000 yields
+ * £3,333.00 / £3,333.00 / £3,334.00 = £10,000.00, never £9,999.99.
+ *
+ * Weights need not sum to 100 — each part is `weight / Σweights` of the total.
+ * Non-positive weights are treated as 0. A zero total or all-zero weights yields
+ * all-zero parts. Works in integer pennies internally to avoid float drift.
+ */
+export function apportion(total: number, weights: number[]): number[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  const clean = weights.map((w) => (Number.isFinite(w) && w > 0 ? w : 0));
+  const totalWeight = clean.reduce((a, b) => a + b, 0);
+  const totalPennies = Math.round(round2(toPounds(total)) * 100);
+  if (totalPennies === 0 || totalWeight <= 0) return new Array<number>(n).fill(0);
+
+  const raw = clean.map((w) => (w / totalWeight) * totalPennies);
+  const floors = raw.map((r) => Math.floor(r));
+  let remainder = totalPennies - floors.reduce((a, b) => a + b, 0);
+
+  // Give the leftover pennies to the largest fractional parts (stable by index).
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  const pennies = floors.slice();
+  for (let k = 0; k < order.length && remainder > 0; k++) {
+    pennies[order[k]!.i] = (pennies[order[k]!.i] ?? 0) + 1;
+    remainder -= 1;
+  }
+  return pennies.map((p) => p / 100);
+}
