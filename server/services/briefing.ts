@@ -48,6 +48,7 @@ type AnyBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   is: (k: string, v: null) => AnyBuilder;
   not: (k: string, op: string, v: null) => AnyBuilder;
   lte: (k: string, v: unknown) => AnyBuilder;
+  in: (k: string, v: unknown[]) => AnyBuilder;
 };
 type LooseClient = { from: (t: string) => AnyBuilder };
 
@@ -184,6 +185,21 @@ export async function buildDailyBriefing(
 
     const dismissedKeys = new Set(((dismissRes.data ?? []) as Row[]).map((d) => String(d.item_key)));
 
+    // H2-CASH: work ready to invoice = planned (un-invoiced) stages of active plans.
+    let readyTotal = 0;
+    const readyJobs = new Set<string>();
+    try {
+      const activePlans = ((await db.from("job_billing_plans").select("id").eq("status", "active")).data ?? []) as Row[];
+      const planIds = activePlans.map((p) => String(p.id));
+      if (planIds.length > 0) {
+        const stageRows = ((await db.from("job_billing_stages").select("job_id, amount").is("invoice_id", null).in("plan_id", planIds)).data ?? []) as Row[];
+        for (const s of stageRows) {
+          const a = num(s.amount);
+          if (a > 0) { readyTotal = Math.round((readyTotal + a) * 100) / 100; readyJobs.add(String(s.job_id)); }
+        }
+      }
+    } catch { /* best-effort — billing tables may be absent pre-migration */ }
+
     const input: BriefingInput = {
       now,
       overdue: { count: overdueCount, totalAmount: overdueTotal, maxDaysOverdue: overdueMaxDays },
@@ -197,6 +213,7 @@ export async function buildDailyBriefing(
       complianceExpiring: { count: complianceCount, soonestDays },
       coldLeads: { count: coldCount, totalValue: coldValue },
       retentionDue: { dueNow: retentionRollup.dueNow, dueJobCount: retentionRollup.dueJobCount },
+      readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobs.size },
       dismissedKeys,
     };
 

@@ -7,6 +7,7 @@ import {
   invoiceBusinessToday,
   invoiceDisplayStatus,
 } from "@/lib/invoices/overdue";
+import { computePortalPayments } from "@/lib/customers/portal-payments";
 
 const UPLOAD_ERRORS: Record<string, string> = {
   no_file: "Choose a file to upload first.",
@@ -173,8 +174,31 @@ export default async function PortalInvoicesPage({
     }
   }
 
+  // H2-CASH M2 — customer-safe payments summary (their own invoices only).
+  const paySummary = computePortalPayments(
+    invoices.map((i) => ({ status: i.status, total: i.total, due_date: i.due_date, paid: paidByInvoice.get(i.id) ?? 0 })),
+  );
+
   return (
     <PortalShell customer={customer} org={org} token={token} active="invoices">
+      {paySummary.paidToDate > 0 || paySummary.dueNow > 0 ? (
+        <section aria-label="Your payments" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Paid to date</p>
+            <p className="mt-1 text-xl font-bold text-green-700">{GBP.format(paySummary.paidToDate)}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Due now</p>
+            <p className="mt-1 text-xl font-bold text-slate-900">{GBP.format(paySummary.dueNow)}</p>
+          </div>
+          {paySummary.overdue > 0 ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+              <p className="text-xs uppercase tracking-wide text-red-600">Overdue</p>
+              <p className="mt-1 text-xl font-bold text-red-700">{GBP.format(paySummary.overdue)}</p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       {banner ? (
         <div
           role="alert"

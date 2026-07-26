@@ -21,6 +21,7 @@ function base(overrides: Partial<BriefingInput> = {}): BriefingInput {
     complianceExpiring: { count: 0, soonestDays: null },
     coldLeads: { count: 0, totalValue: 0 },
     retentionDue: { dueNow: 0, dueJobCount: 0 },
+    readyToInvoice: { totalAmount: 0, jobCount: 0 },
     dismissedKeys: new Set(),
     ...overrides,
   };
@@ -95,6 +96,15 @@ describe("composeBriefing", () => {
     const keys = items.map((i) => i.key);
     expect(new Set(keys).size).toBe(keys.length); // no dupes
     for (const k of keys) expect(isBriefingItemKey(k)).toBe(true);
+  });
+
+  it("surfaces H2-CASH ready-to-invoice work as a money item linking to /cash", () => {
+    const [item] = composeBriefing(base({ readyToInvoice: { totalAmount: 12_000, jobCount: 2 } }));
+    expect(item?.key).toBe("billing_ready");
+    expect(item?.category).toBe("money");
+    expect(item?.href).toBe("/cash");
+    expect(item?.title).toContain("£12,000");
+    expect(item?.detail).toContain("2 jobs");
   });
 
   it("filters out items the user dismissed today", () => {

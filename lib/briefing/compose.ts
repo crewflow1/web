@@ -30,6 +30,8 @@ export interface BriefingInput {
   coldLeads: { count: number; totalValue: number };
   /** Construction retention now due for release. */
   retentionDue: { dueNow: number; dueJobCount: number };
+  /** H2-CASH: planned billing-stage work not yet invoiced (money ready to bill). */
+  readyToInvoice: { totalAmount: number; jobCount: number };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -191,6 +193,15 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
       "/dashboard", { amount: input.retentionDue.dueNow, count: n },
     );
   }
+  if (input.readyToInvoice.totalAmount > 0) {
+    const n = input.readyToInvoice.jobCount;
+    add(
+      "billing_ready", "money", "medium",
+      `${gbp(input.readyToInvoice.totalAmount)} ready to invoice`,
+      `${gbp(input.readyToInvoice.totalAmount)} of planned work across ${n} ${plural(n, "job")} is ready to invoice.`,
+      "/cash", { amount: input.readyToInvoice.totalAmount, count: n },
+    );
+  }
 
   // --- OPERATIONS ----------------------------------------------------------
   if (input.jobsTomorrowUnassigned > 0) {
@@ -248,6 +259,7 @@ export const BRIEFING_ITEM_KEYS = [
   "toolbox_awaiting_ack",
   "overdue_invoices",
   "retention_due",
+  "billing_ready",
   "jobs_unassigned_tomorrow",
   "quotes_follow_up",
   "leads_cold",
