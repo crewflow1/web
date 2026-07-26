@@ -22,6 +22,8 @@ function base(overrides: Partial<BriefingInput> = {}): BriefingInput {
     coldLeads: { count: 0, totalValue: 0 },
     retentionDue: { dueNow: 0, dueJobCount: 0 },
     readyToInvoice: { totalAmount: 0, jobCount: 0 },
+    cashDueSoon: 0,
+    unscheduled: { totalAmount: 0, jobCount: 0 },
     dismissedKeys: new Set(),
     ...overrides,
   };
@@ -105,6 +107,42 @@ describe("composeBriefing", () => {
     expect(item?.href).toBe("/cash");
     expect(item?.title).toContain("£12,000");
     expect(item?.detail).toContain("2 jobs");
+  });
+
+  it("[M3] surfaces forward cash-due-soon as a LOW-severity money item to /cash", () => {
+    const [item] = composeBriefing(base({ cashDueSoon: 18_000 }));
+    expect(item?.key).toBe("cash_due_soon");
+    expect(item?.category).toBe("money");
+    expect(item?.severity).toBe("low");
+    expect(item?.href).toBe("/cash");
+    expect(item?.title).toContain("£18,000");
+  });
+
+  it("[M3] surfaces unscheduled contract value as a LOW-severity 'plan how to bill' nudge", () => {
+    const [item] = composeBriefing(base({ unscheduled: { totalAmount: 42_000, jobCount: 3 } }));
+    expect(item?.key).toBe("unscheduled_value");
+    expect(item?.severity).toBe("low");
+    expect(item?.title).toContain("£42,000");
+    expect(item?.detail).toContain("3 jobs");
+    expect(item?.href).toBe("/cash");
+  });
+
+  it("[M3] a huge forecast signal NEVER outranks a safety breach or overdue debt (severity dominates)", () => {
+    const items = composeBriefing(
+      base({
+        activeJobsNoCurrentRams: 1, // critical safety
+        overdue: { count: 1, totalAmount: 500, maxDaysOverdue: 2 }, // small overdue
+        cashDueSoon: 250_000, // enormous forecast
+        unscheduled: { totalAmount: 999_000, jobCount: 9 },
+      }),
+    );
+    // Safety first, overdue second, forecast (low) strictly last — money weight
+    // can never lift a low-severity item above a medium/high one.
+    expect(items[0]?.key).toBe("jobs_without_rams");
+    expect(items[1]?.key).toBe("overdue_invoices");
+    const forecastKeys = items.filter((i) => i.key === "cash_due_soon" || i.key === "unscheduled_value");
+    const forecastRanks = forecastKeys.map((i) => items.indexOf(i));
+    expect(Math.min(...forecastRanks)).toBeGreaterThan(1); // both below safety + overdue
   });
 
   it("filters out items the user dismissed today", () => {

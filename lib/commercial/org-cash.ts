@@ -40,7 +40,14 @@ export interface OrgCashSummary {
   retentionHeld: number;
   /** Retention past its release date — from computeRetentionDueRollup. */
   retentionDueNow: number;
-  /** owedNow − retentionHeld, floored at 0 — the true chase-now figure. */
+  /**
+   * Retention actually EMBEDDED in unpaid invoice balances (M3 precise netting),
+   * capped per job at what is still held. This — not the full retentionHeld — is
+   * what reduces collectable, so retention on already-settled invoices no longer
+   * understates chase-now cash. See lib/commercial/retention-attribution.
+   */
+  retentionWithheldFromCollectable: number;
+  /** owedNow − retentionWithheldFromCollectable, floored at 0 — the true chase-now figure. */
   collectableNow: number;
   /** Σ planned (un-invoiced) billing-stage net — work ready to bill. */
   readyToInvoice: number;
@@ -64,6 +71,13 @@ export function computeOrgCashSummary(input: {
   retentionHeld: number;
   retentionDueNow: number;
   readyToInvoice: number;
+  /**
+   * M3: precise retention embedded in unpaid balances (Σ per-job min(held,
+   * embedded)) from computeOrgRetentionNetting. When provided it drives
+   * collectableNow; when absent we fall back to the M2 approximation
+   * (retentionHeld) so older callers keep working.
+   */
+  retentionWithheldFromCollectable?: number;
   now?: Date;
 }): OrgCashSummary {
   const now = input.now ?? new Date();
@@ -88,6 +102,16 @@ export function computeOrgCashSummary(input: {
   }
 
   const retentionHeld = round2(Math.max(0, toPounds(input.retentionHeld)));
+  // Precise (M3) when supplied, else the M2 fallback. Cap at owedNow so
+  // collectableNow never goes negative even if a caller passes a stale figure.
+  const withheld = round2(
+    Math.min(
+      owedNow,
+      input.retentionWithheldFromCollectable != null
+        ? Math.max(0, toPounds(input.retentionWithheldFromCollectable))
+        : retentionHeld,
+    ),
+  );
   return {
     owedNow,
     overdue,
@@ -95,7 +119,8 @@ export function computeOrgCashSummary(input: {
     dueThisMonth,
     retentionHeld,
     retentionDueNow: round2(Math.max(0, toPounds(input.retentionDueNow))),
-    collectableNow: round2(Math.max(0, owedNow - retentionHeld)),
+    retentionWithheldFromCollectable: withheld,
+    collectableNow: round2(Math.max(0, owedNow - withheld)),
     readyToInvoice: round2(Math.max(0, toPounds(input.readyToInvoice))),
     overdueCount,
     invoiceCount,

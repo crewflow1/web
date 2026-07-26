@@ -70,6 +70,21 @@ describe("computeGetPaidSummary — the retention-netting fix", () => {
     expect(s.collectableNow).toBe(0);
   });
 
+  it("[M3 precise] nets retentionWithheldFromCollectable when supplied, not the full held", () => {
+    // Held £4,000 but only £1,000 embedded in unpaid invoices → collectable nets £1,000.
+    const s = computeGetPaidSummary({
+      cash: cash({ outstanding: 6000 }),
+      retentionHeld: 4000,
+      retentionWithheldFromCollectable: 1000,
+      contractNet: 0,
+      scheduledNet: 0,
+      hasPlan: false,
+    });
+    expect(s.retentionHeld).toBe(4000);
+    expect(s.retentionWithheldFromCollectable).toBe(1000);
+    expect(s.collectableNow).toBe(5000); // 6000 − 1000 (precise), not 6000 − 4000
+  });
+
   it("computes unscheduled contract on the net axis", () => {
     const s = computeGetPaidSummary({
       cash: cash({}),

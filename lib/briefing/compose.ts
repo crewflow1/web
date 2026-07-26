@@ -32,6 +32,10 @@ export interface BriefingInput {
   retentionDue: { dueNow: number; dueJobCount: number };
   /** H2-CASH: planned billing-stage work not yet invoiced (money ready to bill). */
   readyToInvoice: { totalAmount: number; jobCount: number };
+  /** H2-CASH M3: issued invoices falling due within the next 7 days (forward cash). */
+  cashDueSoon: number;
+  /** H2-CASH M3: agreed contract value with no billing stage and no invoice. */
+  unscheduled: { totalAmount: number; jobCount: number };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -202,6 +206,26 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
       "/cash", { amount: input.readyToInvoice.totalAmount, count: n },
     );
   }
+  // Forward-looking cash — LOW severity so it can never rank above a safety
+  // breach or overdue debt (severity strictly dominates). Planned billing is a
+  // plan, never presented as guaranteed cash.
+  if (input.cashDueSoon > 0) {
+    add(
+      "cash_due_soon", "money", "low",
+      `${gbp(input.cashDueSoon)} due from customers this week`,
+      `${gbp(input.cashDueSoon)} of issued invoices falls due in the next 7 days.`,
+      "/cash", { amount: input.cashDueSoon, urgencyDays: 3 },
+    );
+  }
+  if (input.unscheduled.totalAmount > 0 && input.unscheduled.jobCount > 0) {
+    const n = input.unscheduled.jobCount;
+    add(
+      "unscheduled_value", "money", "low",
+      `${gbp(input.unscheduled.totalAmount)} not yet scheduled to bill`,
+      `${n} ${plural(n, "job")} ${n === 1 ? "has" : "have"} ${gbp(input.unscheduled.totalAmount)} of agreed contract value with no billing stage or invoice yet — plan how you'll bill it.`,
+      "/cash", { amount: input.unscheduled.totalAmount, count: n },
+    );
+  }
 
   // --- OPERATIONS ----------------------------------------------------------
   if (input.jobsTomorrowUnassigned > 0) {
@@ -260,6 +284,8 @@ export const BRIEFING_ITEM_KEYS = [
   "overdue_invoices",
   "retention_due",
   "billing_ready",
+  "cash_due_soon",
+  "unscheduled_value",
   "jobs_unassigned_tomorrow",
   "quotes_follow_up",
   "leads_cold",

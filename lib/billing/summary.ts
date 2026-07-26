@@ -32,13 +32,25 @@ export interface GetPaidSummary {
   stillToBill: number;
   // Retention (ex-VAT) — lib/retentions (authority).
   retentionHeld: number;
-  // Reconciled: the true chase-now debtor with withheld retention removed.
+  /**
+   * M3: retention actually EMBEDDED in this job's unpaid invoices (capped at
+   * held). This — not the full retentionHeld — is netted from collectableNow, so
+   * retention on already-settled invoices no longer understates chase-now cash.
+   */
+  retentionWithheldFromCollectable: number;
+  // Reconciled: the true chase-now debtor with only embedded withheld retention removed.
   collectableNow: number;
 }
 
 export function computeGetPaidSummary(input: {
   cash: CommercialCashPosition;
   retentionHeld: number;
+  /**
+   * M3 precise: retention embedded in unpaid balances (min(held, Σ embedded))
+   * from computeJobRetentionNetting. When absent we fall back to retentionHeld
+   * (the M2 approximation), so older callers keep working.
+   */
+  retentionWithheldFromCollectable?: number;
   /** Ex-VAT contract basis from the plan (0 when there's no plan). */
   contractNet: number;
   /** Ex-VAT Σ of stage amounts (0 when there's no plan). */
@@ -49,6 +61,16 @@ export function computeGetPaidSummary(input: {
   const scheduledNet = round2(toPounds(input.scheduledNet));
   const outstanding = round2(toPounds(input.cash.outstanding));
   const retentionHeld = round2(Math.max(0, toPounds(input.retentionHeld)));
+  // Precise (M3) when supplied, else fall back to held. Capped at outstanding so
+  // collectableNow can never go negative.
+  const withheld = round2(
+    Math.min(
+      outstanding,
+      input.retentionWithheldFromCollectable != null
+        ? Math.max(0, toPounds(input.retentionWithheldFromCollectable))
+        : retentionHeld,
+    ),
+  );
 
   return {
     contractNet,
@@ -61,6 +83,7 @@ export function computeGetPaidSummary(input: {
     overdue: round2(toPounds(input.cash.overdue)),
     stillToBill: round2(toPounds(input.cash.stillToBill)),
     retentionHeld,
-    collectableNow: round2(Math.max(0, outstanding - retentionHeld)),
+    retentionWithheldFromCollectable: withheld,
+    collectableNow: round2(Math.max(0, outstanding - withheld)),
   };
 }

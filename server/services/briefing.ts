@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/lib/invoices/overdue";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
+import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
 import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
@@ -58,10 +59,16 @@ function num(v: unknown): number {
 }
 
 /** Read every row of a paged select, swallowing errors to a partial/empty set. */
-async function pagedRows(db: LooseClient, table: string, cols: string, orderKey: string): Promise<Row[]> {
-  const { data } = await fetchAllRows<Row>((from, to) =>
-    db.from(table).select(cols).order(orderKey, { ascending: true }).range(from, to),
-  );
+async function pagedRows(db: LooseClient, table: string, cols: string, orderKey: string, orgId: string): Promise<Row[]> {
+  const { data } = await fetchAllRows<Row>((from, to) => {
+    // org_id-PINNED, not RLS-only: current_org_ids() returns EVERY org a viewer
+    // belongs to, so a dual-org member would otherwise see BOTH orgs' invoices /
+    // quotes / retention / leads BLENDED on one org's dashboard briefing (the M2
+    // P0 class). Plus a unique `id` tiebreaker (fetchAllRows needs a total order;
+    // a non-unique FK sort key can drop/duplicate rows at a page edge).
+    const base = db.from(table).select(cols).eq("org_id", orgId).order(orderKey, { ascending: true });
+    return (orderKey === "id" ? base : base.order("id", { ascending: true })).range(from, to);
+  });
   return data;
 }
 
@@ -94,17 +101,17 @@ export async function buildDailyBriefing(
       hs,
       dismissRes,
     ] = await Promise.all([
-      pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id"),
-      pagedRows(db, "quotes", "id, total, sent_at, accepted_at, declined_at", "id"),
+      pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
+      pagedRows(db, "quotes", "id, total, sent_at, accepted_at, declined_at", "id", orgId),
       pagedRows(
         db, "jobs",
         "id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct",
-        "id",
+        "id", orgId,
       ),
-      pagedRows(db, "retention_releases", "job_id, amount", "job_id"),
-      db.from("jobs").select("id").eq("scheduled_date", tomorrowIso).is("assigned_to", null),
-      db.from("compliance_documents").select("id, expires_at").not("expires_at", "is", null).lte("expires_at", complianceCutoffIso),
-      pagedRows(db, "leads", "id, status, estimated_value, created_at", "id"),
+      pagedRows(db, "retention_releases", "job_id, amount", "job_id", orgId),
+      db.from("jobs").select("id").eq("org_id", orgId).eq("scheduled_date", tomorrowIso).is("assigned_to", null),
+      db.from("compliance_documents").select("id, expires_at").eq("org_id", orgId).not("expires_at", "is", null).lte("expires_at", complianceCutoffIso),
+      pagedRows(db, "leads", "id, status, estimated_value, created_at", "id", orgId),
       buildHealthSafetySnapshot(orgId),
       db.from("briefing_dismissals").select("item_key").eq("user_id", userId).eq("dismissed_on", todayIso),
     ]);
@@ -185,20 +192,16 @@ export async function buildDailyBriefing(
 
     const dismissedKeys = new Set(((dismissRes.data ?? []) as Row[]).map((d) => String(d.item_key)));
 
-    // H2-CASH: work ready to invoice = planned (un-invoiced) stages of active plans.
-    let readyTotal = 0;
-    const readyJobs = new Set<string>();
-    try {
-      const activePlans = ((await db.from("job_billing_plans").select("id").eq("status", "active")).data ?? []) as Row[];
-      const planIds = activePlans.map((p) => String(p.id));
-      if (planIds.length > 0) {
-        const stageRows = ((await db.from("job_billing_stages").select("job_id, amount").is("invoice_id", null).in("plan_id", planIds)).data ?? []) as Row[];
-        for (const s of stageRows) {
-          const a = num(s.amount);
-          if (a > 0) { readyTotal = Math.round((readyTotal + a) * 100) / 100; readyJobs.add(String(s.job_id)); }
-        }
-      }
-    } catch { /* best-effort — billing tables may be absent pre-migration */ }
+    // H2-CASH M3: reuse the ONE org-cash authority (never a second computation) so
+    // the briefing's ready-to-invoice + forecast numbers are IDENTICAL to /cash.
+    // buildOrgCash is itself best-effort (returns an empty view on failure), so a
+    // billing-tables-absent env degrades to zero signals rather than throwing.
+    const orgCash = await buildOrgCash(orgId, now);
+    const readyTotal = orgCash.summary.readyToInvoice;
+    const readyJobCount = new Set(orgCash.readyStages.map((s) => s.jobId)).size;
+    const cashDueSoon = orgCash.forecast.dueNext7;
+    const unscheduledTotal = orgCash.forecast.unscheduled;
+    const unscheduledJobCount = orgCash.unscheduledJobs.length;
 
     const input: BriefingInput = {
       now,
@@ -213,7 +216,9 @@ export async function buildDailyBriefing(
       complianceExpiring: { count: complianceCount, soonestDays },
       coldLeads: { count: coldCount, totalValue: coldValue },
       retentionDue: { dueNow: retentionRollup.dueNow, dueJobCount: retentionRollup.dueJobCount },
-      readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobs.size },
+      readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobCount },
+      cashDueSoon,
+      unscheduled: { totalAmount: unscheduledTotal, jobCount: unscheduledJobCount },
       dismissedKeys,
     };
 

@@ -70,14 +70,24 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
         <Stat label="Contract (ex-VAT)" value={formatGbp(s.contractNet)} hint={s.hasPlan ? `${formatGbp(s.scheduledNet)} scheduled` : "no plan yet"} />
         <Stat label="Billed to date" value={formatGbp(s.billed)} hint={`${formatGbp(s.stillToBill)} still to bill`} />
         <Stat label="Received" value={formatGbp(s.received)} accent="text-green-700" />
-        <Stat label="Collectable now" value={formatGbp(s.collectableNow)} accent="text-slate-900" hint={s.retentionHeld > 0 ? `${formatGbp(s.retentionHeld)} retention held back` : undefined} />
+        <Stat label="Collectable now" value={formatGbp(s.collectableNow)} accent="text-slate-900" hint={s.retentionWithheldFromCollectable > 0 ? `${formatGbp(s.retentionWithheldFromCollectable)} retention still withheld` : undefined} />
       </section>
       {(s.outstanding > 0 || s.overdue > 0) ? (
         <section aria-label="Debtor detail" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Stat label="Outstanding (gross)" value={formatGbp(s.outstanding)} />
           <Stat label="Overdue" value={formatGbp(s.overdue)} accent={s.overdue > 0 ? "text-red-700" : undefined} />
           <Stat label="Retention held" value={formatGbp(s.retentionHeld)} hint="due back later, not overdue" />
-          <Stat label="Unscheduled" value={formatGbp(s.unscheduledNet)} hint="contract not yet in a stage" />
+          <Stat label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} hint="contract, no stage & no invoice" />
+        </section>
+      ) : null}
+
+      {/* ── Cash outlook (M3) — honest due vs planned vs unscheduled ────── */}
+      {(b.forecast.overdue > 0 || b.forecast.due.next7 + b.forecast.due.next30 + b.forecast.due.later > 0 || b.forecast.plannedTotal > 0 || b.forecast.unscheduled > 0) ? (
+        <section aria-label="Cash outlook" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="Due — next 7 days" value={formatGbp(b.forecast.due.next7)} hint="invoiced &amp; due" />
+          <Stat label="Due — next 30 days" value={formatGbp(b.forecast.due.next7 + b.forecast.due.next30)} hint="invoiced &amp; due" />
+          <Stat label="Planned billing" value={formatGbp(b.forecast.plannedCapped)} hint="agreed stages, not yet invoiced" />
+          <Stat label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} accent={b.forecast.unscheduled > 0 ? "text-amber-700" : undefined} hint="no stage, no invoice" />
         </section>
       ) : null}
 

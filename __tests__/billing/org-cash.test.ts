@@ -52,6 +52,27 @@ describe("computeOrgCashSummary", () => {
     expect(s.collectableNow).toBe(0);
   });
 
+  it("[M3 precise] collectableNow nets retentionWithheldFromCollectable, NOT the full retentionHeld", () => {
+    // Held is £1,500 but only £500 is actually embedded in unpaid balances (the
+    // rest accrued on already-settled invoices). collectableNow must net the £500.
+    const s = computeOrgCashSummary({
+      invoices, retentionHeld: 1500, retentionWithheldFromCollectable: 500,
+      retentionDueNow: 0, readyToInvoice: 0, now: NOW,
+    });
+    expect(s.retentionHeld).toBe(1500); // the held tile is unchanged
+    expect(s.retentionWithheldFromCollectable).toBe(500);
+    expect(s.collectableNow).toBe(11_500); // 12,000 − 500 (precise), not 12,000 − 1,500
+  });
+
+  it("[M3 precise] caps the withheld figure at owedNow so a stale input can't drive it negative", () => {
+    const s = computeOrgCashSummary({
+      invoices: [inv({ total: 1000, paid: 0, status: "sent" })],
+      retentionHeld: 0, retentionWithheldFromCollectable: 9999, retentionDueNow: 0, readyToInvoice: 0, now: NOW,
+    });
+    expect(s.collectableNow).toBe(0);
+    expect(s.retentionWithheldFromCollectable).toBe(1000); // capped at owedNow
+  });
+
   it("an overdue invoice is not also counted as due-soon", () => {
     const s = computeOrgCashSummary({ invoices: [inv({ total: 1000, paid: 0, status: "sent", due_date: "2026-07-01" })], retentionHeld: 0, retentionDueNow: 0, readyToInvoice: 0, now: NOW });
     expect(s.overdue).toBe(1000);

@@ -19,8 +19,12 @@ import type { RetentionPosition } from "@/lib/retentions/compute";
  * The second moiety is "due FROM" its date (the Certificate of Making Good can
  * slip later than PC + DLP), so it is a reminder, not an overdue alarm.
  *
- * Staff-internal: retention is the customer's money the builder is chasing back;
- * this schedule is never exposed on the customer portal.
+ * Mostly staff-internal: the rate, certified base, accrued/released amounts and
+ * the two-moiety split stay on the operator side. As of H2-CASH M3 a NARROW
+ * subset — the earliest release date (`nextDueDate`) and the held £ — is surfaced
+ * to the customer via the portal payment schedule (both are contract terms the
+ * customer already agreed). Only those two fields may cross to the portal; if you
+ * expose more here, re-check app/customer-portal/[token]/_schedule.ts.
  */
 
 const TOL = 0.005;

@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { round2, toPounds } from "@/lib/money";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
+import { computeJobRetentionNetting } from "@/lib/commercial/retention-attribution";
+import { computeJobCashForecast, type JobCashForecast } from "@/lib/commercial/cash-forecast";
 import { computeGetPaidSummary, type GetPaidSummary } from "@/lib/billing/summary";
 import { deriveStageStatus } from "@/lib/billing/plan";
 import type { StageStatus } from "@/lib/billing/types";
@@ -50,6 +52,8 @@ export interface JobBillingView {
   plan: { id: string; structure: string; basisAmount: number; status: string } | null;
   stages: BillingStageView[];
   summary: GetPaidSummary;
+  /** M3: this job's due-vs-planned-vs-unscheduled forecast (gross cash axis). */
+  forecast: JobCashForecast;
   /** Planned (un-invoiced) stages, for the ready-to-invoice signal. */
   readyStages: { name: string; amount: number }[];
   jobHasCustomer: boolean;
@@ -60,7 +64,20 @@ export interface JobBillingView {
 const EMPTY_SUMMARY: GetPaidSummary = {
   contractNet: 0, scheduledNet: 0, unscheduledNet: 0, hasPlan: false,
   billed: 0, received: 0, outstanding: 0, overdue: 0, stillToBill: 0,
-  retentionHeld: 0, collectableNow: 0,
+  retentionHeld: 0, retentionWithheldFromCollectable: 0, collectableNow: 0,
+};
+
+const EMPTY_FORECAST: JobCashForecast = {
+  overdue: 0,
+  due: { next7: 0, next30: 0, later: 0, undated: 0 },
+  draftedNotIssued: 0,
+  planned: { next7: 0, next30: 0, later: 0, undated: 0 },
+  plannedTotal: 0,
+  plannedCapped: 0,
+  revised: 0,
+  billed: 0,
+  stillToBill: 0,
+  unscheduled: 0,
 };
 
 const ACCEPTED = "accepted";
@@ -139,19 +156,58 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
       };
     });
 
+    // M3 precise retention netting: attribute retention per invoice and net only
+    // what is still EMBEDDED in unpaid balances (min(held, Σ embedded)) — so
+    // retention on already-settled invoices no longer understates collectableNow.
+    const ratePercent = toPounds((jobRes.data as Row | null)?.retention_percent as number | string | null);
+    const netting = computeJobRetentionNetting({
+      ratePercent,
+      retentionHeld: retention.held,
+      invoices: invoiceRows
+        .filter((i) => String(i.status ?? "") !== "draft")
+        .map((i) => ({
+          net: i.amount as number | string | null,
+          grossRemaining: round2(Math.max(0, toPounds(mv(i.total)) - (paidByInvoice.get(String(i.id)) ?? 0))),
+        })),
+    });
+
     const scheduledNet = stages.reduce((acc, s) => round2(acc + s.amount), 0);
     const summary = computeGetPaidSummary({
       cash,
       retentionHeld: retention.held,
+      retentionWithheldFromCollectable: netting.withheldFromCollectable,
       contractNet: plan ? round2(toPounds(mv(plan.basis_amount))) : 0,
       scheduledNet,
       hasPlan: Boolean(plan),
+    });
+
+    // M3 forecast: due vs planned vs unscheduled for THIS job (reconciles top to
+    // bottom — see the reconciliation identity in cash-forecast).
+    const forecast = computeJobCashForecast({
+      quotes: ((quotesRes.data ?? []) as Row[]).map((q) => ({
+        variation_number: (q.variation_number as number | null) ?? null,
+        status: String(q.status ?? ""),
+        total: q.total as number | string | null,
+      })),
+      invoices: invoiceRows.map((i) => ({
+        status: String(i.status ?? ""),
+        total: i.total as number | string | null,
+        due_date: (i.due_date as string | null) ?? null,
+        paid: paidByInvoice.get(String(i.id)) ?? 0,
+      })),
+      stages: stageRows.map((s) => ({
+        invoice_id: (s.invoice_id as string | null) ?? null,
+        amount: s.amount as number | string | null,
+        vat_rate: s.vat_rate as number | string | null,
+        due_date: (s.due_date as string | null) ?? null,
+      })),
     });
 
     return {
       plan: plan ? { id: String(plan.id), structure: String(plan.structure), basisAmount: round2(toPounds(mv(plan.basis_amount))), status: String(plan.status) } : null,
       stages,
       summary,
+      forecast,
       readyStages: stages.filter((s) => s.status === "planned" && s.amount > 0).map((s) => ({ name: s.name, amount: s.amount })),
       jobHasCustomer: Boolean((jobRes.data as Row | null)?.customer_id),
       suggestedBasisNet: ((quotesRes.data ?? []) as Row[])
@@ -160,6 +216,6 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
     };
   } catch (err) {
     console.warn("[billing] loadJobBilling failed", err);
-    return { plan: null, stages: [], summary: EMPTY_SUMMARY, readyStages: [], jobHasCustomer: false, suggestedBasisNet: 0 };
+    return { plan: null, stages: [], summary: EMPTY_SUMMARY, forecast: EMPTY_FORECAST, readyStages: [], jobHasCustomer: false, suggestedBasisNet: 0 };
   }
 }

@@ -6,9 +6,15 @@ construction-retention system (`jobs.retention_percent` + the `retention_release
 ledger); adds no new table and no new cash-path invariant. Migration
 `20261013000000`.
 
-> **Staff-internal.** Retention is the customer's money the builder is chasing
-> back; the schedule (and the dashboard rollup) are **never** exposed on the
-> customer portal — pinned by a security test.
+> **Mostly staff-internal.** The rate, certified base, accrued/released amounts
+> and the two-moiety split stay on the operator side (the dashboard rollup reads
+> on the RLS client and computes in pure TS). **H2-CASH M3 reversal:** the
+> customer portal now surfaces a NARROW subset — the **held £ + earliest release
+> date** — on the payment schedule, because it's the customer's own money and
+> both are contract terms they already agreed. The security contract (pinned by
+> `__tests__/security/retention-schedule-pure.test.ts`) is now: the portal's
+> customer-facing DTO exposes only `{held, releaseDate}`; the rate/base/moiety
+> terms are read server-side to derive the date and never reach the customer.
 
 ## Terms (on the job)
 
@@ -62,7 +68,11 @@ Degrades safely: no retention (rate 0) → no schedule; retention but no PC date
   pattern as `setJobRetentionRate`). DB CHECKs are the backstop.
 - The rollup reads on the tenant client (RLS), never the admin client. The pure
   libs import no Supabase client.
-- No portal exposure (the terms are never selected on any `customer-portal` query).
+- Portal exposure is a **narrow, deliberate** M3 subset: only the held £ and the
+  earliest release date reach the customer (their own money + agreed dates). The
+  jobs page still selects no terms; the schedule loader reads them server-side to
+  derive the date but the customer DTO carries only `{held, releaseDate}` — pinned
+  by `__tests__/security/retention-schedule-pure.test.ts`.
 
 ## Tests
 
