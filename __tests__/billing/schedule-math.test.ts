@@ -84,6 +84,25 @@ describe("resolveStages", () => {
     expect(r.overBasis).toBe(true);
   });
 
+  it("all-percent plans on an odd-penny basis stay penny-exact and NOT over-basis", () => {
+    const two = resolveStages(100.01, [
+      draft({ name: "A", basis: "percent", percent: 50 }),
+      draft({ name: "B", basis: "percent", percent: 50 }),
+    ]);
+    expect(two.stages.map((s) => s.amount)).toEqual([50.01, 50.0]); // last absorbs the penny
+    expect(two.scheduledNet).toBe(100.01);
+    expect(two.overBasis).toBe(false);
+
+    const four = resolveStages(100.02, [
+      draft({ name: "A", basis: "percent", percent: 25 }),
+      draft({ name: "B", basis: "percent", percent: 25 }),
+      draft({ name: "C", basis: "percent", percent: 25 }),
+      draft({ name: "D", basis: "percent", percent: 25 }),
+    ]);
+    expect(four.scheduledNet).toBe(100.02);
+    expect(four.overBasis).toBe(false);
+  });
+
   it("basis 0 = no ceiling; balance resolves to 0, never negative", () => {
     const r = resolveStages(0, [
       draft({ name: "Progress 1", basis: "fixed", amount: 5000 }),

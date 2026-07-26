@@ -76,17 +76,25 @@ export async function addBillingStage(formData: FormData): Promise<void> {
     amount = round2(Math.max(0, planBasis - existingSum));
   } else if (basis === "percent") {
     percent = num(formData.get("percent"));
-    amount = planBasis > 0 ? round2((planBasis * percent) / 100) : 0;
+    // Cap a percent stage at the running remainder so k independently-rounded
+    // percent stages never overshoot the basis (which the DB Σ≤basis guard would
+    // otherwise reject); the last stage absorbs the penny.
+    const nominal = planBasis > 0 ? round2((planBasis * percent) / 100) : 0;
+    const remaining = planBasis > 0 ? round2(Math.max(0, planBasis - existingSum)) : 0;
+    amount = planBasis > 0 ? Math.min(nominal, remaining) : 0;
   } else {
     amount = num(formData.get("amount"));
   }
 
-  await db.from("job_billing_stages").insert({
+  const { error } = await db.from("job_billing_stages").insert({
     org_id: ctx.org.id, plan_id: planId, job_id: jobId, sequence: nextSeq,
     name, kind, basis: kind === "balance" ? "fixed" : basis, percent,
     amount, vat_rate: vatRate === 0 || vatRate === 5 || vatRate === 20 ? vatRate : 20,
     due_date: dueDate, created_by: user.id,
   }).select("id").single();
+  // Surface (log) a rejected insert instead of silently no-op'ing (e.g. a fixed
+  // stage that over-carves the contract is refused by the Σ≤basis guard).
+  if (error) console.error("[billing] addBillingStage rejected", error);
   revalidatePath(`/jobs/${jobId}/billing`);
 }
 

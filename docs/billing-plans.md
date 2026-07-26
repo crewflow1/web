@@ -124,6 +124,31 @@ no UI. Activating it is a product + credentials decision.
 Near-zero: additive tables + one RPC on existing Postgres; no provider, cron,
 realtime or egress. Reads compose already-fetched authorities.
 
+## Adversarial review (2-agent, on the implemented code)
+
+Payments-security + commercial-maths red-teams (500k+ fuzz cases on the money
+maths). **No P0/P1 security or cross-tenant/privilege hole**; all 10 forgery/
+double-bill/replay attacks blocked. Fixed:
+- **P1 (functional):** all-percent plans were silently rejected for ~25–50% of
+  contract values — k independently-rounded percent stages overshot the basis by
+  up to k×½p, tripping the fixed-tolerance Σ≤basis guard, and the action swallowed
+  the error. Fixed at the root: percent stages are capped at the running remainder
+  (Σ penny-exact ≤ basis; last stage absorbs the penny), the DB tolerance scales
+  with stage count, and the action now logs a rejected insert.
+- **P2:** an invoiced stage's `invoice_id` could be nulled/relinked via direct
+  PostgREST → re-invoice. The freeze trigger now forbids changing `invoice_id`
+  once set (only the FK-cascade unlink, when the invoice is already gone, is
+  allowed) — teardown-safe.
+- **P3:** stage.job_id must equal plan.job_id (attribution) — now enforced.
+
+**Residual P3 (documented, non-blocking):** (a) a direct-PostgREST admin deleting
+an invoiced stage orphans (does not hide) its invoice — the invoice survives and
+stays customer-visible; a DB delete-guard was rejected because it would block
+legitimate org/job cascade teardown. (b) lowering `plan.basis_amount` below Σ
+stages isn't re-validated (cosmetic; all consumers clamp ≥ 0). (c) the per-org
+invoice-number allocation inherits `next_invoice_number`'s known non-atomicity
+(platform-wide; a concurrent same-org generation retries, never double-bills).
+
 ## Known limitations / follow-ups (tracked)
 
 - **Online payment** deferred (dark seam above) — needs provider creds + product decision.

@@ -40,13 +40,28 @@ function vatRateOf(d: StageDraft): number {
 export function resolveStages(basis: number, drafts: StageDraft[]): ResolveResult {
   const b = round2(toPounds(basis));
 
-  // Pass 1: fixed + percent resolve directly; balance is deferred.
+  // Pass 1: fixed + percent resolve in order; balance is deferred. A percent
+  // stage is CAPPED at the running remainder so k independently-rounded percent
+  // stages can never overshoot the basis by k half-pennies — the last stage
+  // absorbs the rounding, keeping Σ penny-exact ≤ basis (a fixed stage is NOT
+  // capped: an explicit over-carve is surfaced via `overBasis`).
+  let used = 0;
   const interim = drafts.map((d) => {
     if (d.kind === "balance") return { draft: d, amount: null as number | null };
+    let amount: number;
     if (d.basis === "percent") {
-      return { draft: d, amount: b > 0 ? round2((b * toPounds(d.percent)) / 100) : 0 };
+      if (b <= 0) {
+        amount = 0;
+      } else {
+        const nominal = round2((b * toPounds(d.percent)) / 100);
+        const remaining = round2(Math.max(0, b - used));
+        amount = Math.min(nominal, remaining);
+      }
+    } else {
+      amount = round2(toPounds(d.amount));
     }
-    return { draft: d, amount: round2(toPounds(d.amount)) };
+    used = round2(used + amount);
+    return { draft: d, amount };
   });
 
   // Pass 2: split the remainder across balance stages (usually one).

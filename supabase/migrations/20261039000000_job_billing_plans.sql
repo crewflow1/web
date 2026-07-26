@@ -171,14 +171,17 @@ create trigger job_billing_stages_frozen before update on public.job_billing_sta
 -- mirrors the retention over-release guard). +0.005 half-penny tolerance.
 create or replace function public.tg_billing_stage_within_basis()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare v_basis numeric(12,2); v_sum numeric(12,2);
+declare v_basis numeric(12,2); v_sum numeric(12,2); v_count int;
 begin
   select basis_amount into v_basis from public.job_billing_plans where id = new.plan_id for update;
   if v_basis is null or v_basis <= 0 then return new; end if;  -- no ceiling
-  select coalesce(sum(amount), 0) into v_sum
+  select coalesce(sum(amount), 0), count(*) into v_sum, v_count
     from public.job_billing_stages
     where plan_id = new.plan_id and id is distinct from new.id;
-  if round(v_sum + new.amount, 2) > round(v_basis, 2) + 0.005 then
+  -- Tolerance scales with stage count: k independently-rounded percent stages can
+  -- each round a half-penny up, so allow up to (k+2) half-pennies of accumulated
+  -- rounding (immaterial vs a contract basis) before calling it a real over-carve.
+  if round(v_sum + new.amount, 2) > round(v_basis, 2) + 0.005 * (v_count + 2) then
     raise exception 'billing stages (%) would exceed the contract basis (%)', round(v_sum + new.amount, 2), v_basis;
   end if;
   return new;

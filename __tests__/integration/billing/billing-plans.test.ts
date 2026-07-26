@@ -164,6 +164,17 @@ describeIntegration("H2-CASH billing plans (real Postgres)", () => {
     await svc().from("job_billing_plans").delete().eq("id", plan);
   });
 
+  it("[P1] independently-rounded percent stages within rounding tolerance are accepted", async () => {
+    // 2 × 50% of £100.01 each round to 50.01 → Σ 100.02, one penny over basis.
+    // The scaled Σ≤basis tolerance must accept this (not reject the second stage).
+    const plan = await mkPlan(orgA, jobA, 100.01);
+    const s1 = await svc().from("job_billing_stages").insert({ org_id: orgA, plan_id: plan, job_id: jobA, sequence: 0, name: "A", kind: "stage", basis: "percent", percent: 50, amount: 50.01, vat_rate: 20 }).select("id").single();
+    expect(s1.error, s1.error?.message).toBeNull();
+    const s2 = await svc().from("job_billing_stages").insert({ org_id: orgA, plan_id: plan, job_id: jobA, sequence: 1, name: "B", kind: "stage", basis: "percent", percent: 50, amount: 50.01, vat_rate: 20 }).select("id").single();
+    expect(s2.error, "50.01 + 50.01 on a £100.01 basis is within rounding tolerance").toBeNull();
+    await svc().from("job_billing_plans").delete().eq("id", plan);
+  });
+
   it("[tenant] anon cannot read billing plans", async () => {
     const plan = await mkPlan(orgA, jobA, 1000);
     const sel = await db(anonClient()).from("job_billing_plans").select("id").eq("id", plan);
