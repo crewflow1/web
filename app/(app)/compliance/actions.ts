@@ -6,6 +6,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
@@ -234,16 +235,18 @@ export async function getComplianceDocSignedUrl(id: string): Promise<string | nu
     tenant.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: { storage_path: string | null } | null }>;
+          maybeSingle: () => Promise<{ data: { org_id: string | null; storage_path: string | null } | null }>;
         };
       };
     }
   )
-    .select("storage_path")
+    .select("org_id, storage_path")
     .eq("id", id)
     .maybeSingle();
 
   if (!row?.storage_path) return null;
+  // Refuse to sign a path that isn't under the row's own org (poisoned cross-tenant pointer).
+  if (!storagePathBelongsToOrg(row.storage_path, row.org_id)) return null;
 
   const { data: signed } = await admin.storage
     .from("compliance-docs")

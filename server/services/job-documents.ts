@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 
 /**
  * P4 — Job Documents service layer.
@@ -394,7 +395,7 @@ export async function getJobDocumentDownloadUrl(
 
   const { data, error } = await tenant
     .from("job_document_versions" as never)
-    .select("document_id, visibility, storage_bucket, storage_path")
+    .select("org_id, document_id, visibility, storage_bucket, storage_path")
     .eq("id", versionId)
     .maybeSingle();
   if (error) {
@@ -402,6 +403,7 @@ export async function getJobDocumentDownloadUrl(
     return { ok: false, error: "lookup_failed" };
   }
   const version = data as {
+    org_id: string;
     document_id: string;
     visibility: JobDocVisibility;
     storage_bucket: string;
@@ -409,6 +411,13 @@ export async function getJobDocumentDownloadUrl(
   } | null;
   if (!version) {
     // Either missing or RLS-denied (a staff user hitting a private version).
+    return { ok: false, error: "not_found" };
+  }
+  // Never sign a path that isn't under the row's own org (poisoned cross-tenant pointer),
+  // and only ever from the two job-doc buckets — the row carries the bucket name, so pin it
+  // to an allowlist rather than trusting a stored value.
+  if (!storagePathBelongsToOrg(version.storage_path, version.org_id)) return { ok: false, error: "not_found" };
+  if (version.storage_bucket !== "job-docs" && version.storage_bucket !== "job-docs-private") {
     return { ok: false, error: "not_found" };
   }
 

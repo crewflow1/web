@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
@@ -91,6 +92,10 @@ export async function uploadTenantAttachment(input: {
   const { ctx, user } = await requireOrgContext();
   const admin = createAdminClient();
 
+  // Evidence hash — SHA-256 of the EXACT bytes we store, frozen (immutable once set) so a
+  // later byte swap is detectable. Binary-safe on the raw Uint8Array (mirrors blueprints.ts).
+  const contentHash = createHash("sha256").update(input.bytes).digest("hex");
+
   const ext = mimeToExt(input.mimeType);
   const id = crypto.randomUUID();
   const storagePath = `${ctx.org.id}/${input.targetTable}/${input.targetId}/${id}.${ext}`;
@@ -117,6 +122,7 @@ export async function uploadTenantAttachment(input: {
     storage_path: storagePath,
     mime_type: input.mimeType,
     size_bytes: input.bytes.byteLength,
+    content_hash: contentHash,
     uploaded_by: user.id,
   } as never);
   if (insErr) {
