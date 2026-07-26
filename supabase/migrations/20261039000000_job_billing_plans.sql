@@ -110,6 +110,12 @@ begin
   if j_org is distinct from new.org_id then
     raise exception 'a billing row org must match its job''s org';
   end if;
+  -- A stage must belong to the SAME job as its plan (attribution integrity).
+  if tg_table_name = 'job_billing_stages' then
+    if (select job_id from public.job_billing_plans where id = new.plan_id) is distinct from new.job_id then
+      raise exception 'a billing stage must belong to its plan''s job';
+    end if;
+  end if;
   return new;
 end $$;
 drop trigger if exists job_billing_plans_assert_job_org on public.job_billing_plans;
@@ -133,6 +139,19 @@ begin
        or new.retention_applies is distinct from old.retention_applies then
       raise exception 'a billing stage cannot be re-priced once it has been invoiced';
     end if;
+    -- The stage↔invoice binding is immutable for tenants: only the FK cascade
+    -- (the invoice itself being deleted) may unlink it. A manual relink or a
+    -- manual null-out while the invoice still exists would let the stage be
+    -- re-invoiced → a SECOND live invoice for one milestone. Distinguish the
+    -- legitimate cascade (invoice gone) from tampering (invoice still present).
+    if new.invoice_id is distinct from old.invoice_id then
+      if new.invoice_id is not null then
+        raise exception 'a billing stage cannot be relinked to a different invoice';
+      end if;
+      if exists (select 1 from public.invoices where id = old.invoice_id) then
+        raise exception 'a billing stage cannot be unlinked from its live invoice';
+      end if;
+    end if;
   end if;
   new.updated_at := now();
   return new;
@@ -140,6 +159,12 @@ end $$;
 drop trigger if exists job_billing_stages_frozen on public.job_billing_stages;
 create trigger job_billing_stages_frozen before update on public.job_billing_stages
   for each row execute function public.tg_billing_stage_frozen_when_invoiced();
+-- NOTE: a DELETE guard on invoiced stages was considered but rejected — a cascade
+-- delete (job/plan/org teardown) fires the same BEFORE DELETE and would block
+-- legitimate teardown. The freeze above is teardown-safe (cascade unlink sets
+-- invoice_id null AFTER the invoice row is gone, which it allows). Residual (P3):
+-- an admin directly deleting an invoiced stage orphans (does not hide) its
+-- invoice — the invoice survives and stays visible to the customer.
 
 -- ── invariant: Σ(stage net) ≤ plan basis (unless basis == 0 = no ceiling) ─────
 -- FOR UPDATE-locks the plan so concurrent stage writes serialise (TOCTOU-safe,

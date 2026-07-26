@@ -136,6 +136,25 @@ describeIntegration("H2-CASH billing plans (real Postgres)", () => {
     await svc().from("job_billing_plans").delete().eq("id", plan);
   });
 
+  it("[P2] an invoiced stage's invoice link cannot be nulled-out or relinked (no double-bill)", async () => {
+    const plan = await mkPlan(orgA, jobA, 8000);
+    const stage = await mkStage(orgA, plan, jobA, 2000, 0);
+    const gen = await db(userClient(admin.token)).rpc("generate_stage_invoice", { p_stage_id: stage, p_due_date: null });
+    expect(gen.error, gen.error?.message).toBeNull();
+    // Manual null-out while the invoice is live must be rejected (else re-generate = second invoice).
+    const unlink = await svc().from("job_billing_stages").update({ invoice_id: null }).eq("id", stage);
+    expect(unlink.error?.message ?? "", "manual unlink of a live invoice must be blocked").toMatch(/unlinked|relinked|invoiced/i);
+    await svc().from("job_billing_plans").delete().eq("id", plan);
+  });
+
+  it("[P3] a stage must belong to its plan's job", async () => {
+    const plan = await mkPlan(orgA, jobA, 5000);
+    const bad = await svc().from("job_billing_stages")
+      .insert({ org_id: orgA, plan_id: plan, job_id: jobNoCust, sequence: 0, name: "X", kind: "stage", basis: "fixed", amount: 100, vat_rate: 20 }).select("id").single();
+    expect(bad.error?.message ?? "", "stage job must match plan job").toMatch(/plan.*job|belong/i);
+    await svc().from("job_billing_plans").delete().eq("id", plan);
+  });
+
   it("[guard] a cancelled plan cannot generate invoices", async () => {
     const plan = await mkPlan(orgA, jobA, 5000);
     const stage = await mkStage(orgA, plan, jobA, 1000, 0);
