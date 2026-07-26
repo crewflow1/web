@@ -57,6 +57,39 @@ lifecycle trigger enforces the full transition matrix, rejecting `draft→closed
    needs a deliberate GDPR/teardown design (a service-role erasure path that sweeps storage) — a
    product/legal decision, tracked as the next milestone.
 
+## Final adversarial wave (results)
+
+A fresh adversarial fleet (assume an org admin actively rewriting historical evidence)
+attacked the finished design. The core claims **held**: S0 cross-tenant poison (every
+obfuscation — leading `/`, `..`, url-encoding, org-id-not-first, UPDATE org_id, service-role
+insert — blocked), S1 lockdown (all 15 DROP-policy names verified exact, no survivor), S2
+hash/immutability (bytes-B/hash-A impossible; content_hash/path/size/mime write-once all
+roles), and S4 RAMS draft→terminal all survive. Portal isolation + completion-cert
+immutability clean. Cost neutral (hash 8.6 ms at the 25 MB cap; no cron/realtime/egress).
+
+Findings, classified + dispositioned:
+
+- **P1 (fixed, `20261036`)** — RAMS issued-hazard **reparent** bypass: `tg_rah_derive_org`
+  checked only the destination parent on UPDATE, so a member could move a hazard OFF an issued
+  (frozen) RAMS onto a throwaway draft, stripping a documented hazard from a legal record and
+  falsifying acknowledgements. Now the source parent must also be a draft. Regression-tested.
+- **P2 (fixed, `20261035`)** — `compliance_documents` (sibling evidence table) was UPDATE-able
+  with no immutability; write-once `storage_path`/`size`/`mime` added, mirroring S2.
+- **P3 (fixed, `20261036`)** — `append_job_photo` accepted a client `photo_path` with no org
+  check (the S0 class on the fifth path-store `jobs.photos`); now org-bound. Inert today.
+- **P3 (fixed)** — path guard now rejects `..`/leading-slash/backslash; the S0 signer-guard
+  contract now asserts the invocation (not just the import); +mime_type/compliance/reparent/
+  job-photo runtime tests.
+- **Low (documented, out of scope — completion certs)** — `issueCertificate(jobId, certId)`
+  doesn't bind `cert.job_id === jobId`; crafted args could freeze job-A's customer details into
+  job-B's cert. Same-org, crafted-args, no boundary break. One-line fast-follow (`.eq("job_id",
+  jobId)`).
+- **Low (documented — RAMS)** — `reference` / `assessor_id` / pre-issue `revision_number` are
+  client-settable; provenance (`issued_by`/`issued_at`) stays pinned, so no misattribution.
+  Optional hardening (pin reference to `next_ra_number`; require `assessor_id` ∈ org members).
+
+**P0: 0. Unresolved P1: 0.** (The one P1 found was fixed in this wave.)
+
 ## Deferred (assessed, no code)
 
 - **S3 evidence manifest** — S2's per-file `content_hash` + universal immutability already deliver

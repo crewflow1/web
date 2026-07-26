@@ -387,4 +387,27 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
     // svc bypasses RLS but not the immutable trigger — id is now in the frozen tuple
     expect(r.error?.message ?? "", "the PK of delivered evidence must be immutable").toMatch(/immutable/i);
   });
+
+  it("[P2] a crafted issue snapshot cannot forge provenance — the DB overwrites issued_on/issuer + strips fabricated links", async () => {
+    const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Real", key_points: "Real points" }).select("id").single();
+    const id = String(d.data?.id);
+    const ref = String((await staff().rpc("next_tbt_number", { target_org: orgA })).data);
+    // no RAMS/permit linked on the row; the crafted snapshot claims backdated issue, a spoofed
+    // issuer, and fabricated RAMS + permit control references.
+    const crafted = {
+      talk_reference: ref, revision: 1, topic: "Real", key_points: "Real points",
+      issued_on: "2020-01-01", issued_by_name: "FORGED Safety Manager",
+      rams_reference: "RA-9999", rams_revision: 7,
+      permit_reference: "PTW-9999", permit_status_at_issue: "active",
+    };
+    const iss = await staff().from("toolbox_talks").update({ status: "issued", reference: ref, snapshot: crafted }).eq("id", id);
+    expect(iss.error, "the issue succeeds; the DB corrects the snapshot").toBeNull();
+    const snap = (await svc().from("toolbox_talks").select("snapshot").eq("id", id).maybeSingle()).data?.snapshot as Record<string, unknown>;
+    expect(snap.issued_on, "backdated issued_on is overwritten to the real issue date").not.toBe("2020-01-01");
+    expect(snap.issued_by_name, "spoofed issuer name is overwritten (not the forged value)").not.toBe("FORGED Safety Manager");
+    expect(snap.rams_reference, "fabricated RAMS reference stripped (no RAMS linked)").toBeNull();
+    expect(snap.rams_revision, "fabricated RAMS revision stripped").toBeNull();
+    expect(snap.permit_reference, "fabricated permit reference stripped (no permit linked)").toBeNull();
+    expect(snap.permit_status_at_issue, "fabricated permit status stripped").toBeNull();
+  });
 });

@@ -57,6 +57,18 @@ describe("S2 — content_hash + universal write-once immutability (20261033 + ap
   });
 });
 
+describe("S2c — toolbox snapshot provenance binding (20261037)", () => {
+  const m = read("supabase/migrations/20261037000000_toolbox_snapshot_provenance_binding.sql");
+  it("derives issued_on/issued_by_name + RAMS/permit references from the DB at issue", () => {
+    expect(m).toMatch(/jsonb_set\(new\.snapshot, '\{issued_on\}'/);
+    expect(m).toMatch(/jsonb_set\(new\.snapshot, '\{issued_by_name\}'/);
+    expect(m).toMatch(/jsonb_set\(new\.snapshot, '\{rams_reference\}'/);
+    expect(m).toMatch(/jsonb_set\(new\.snapshot, '\{permit_reference\}'/);
+    // provenance pinned before the derive block references new.issued_at
+    expect(m).toMatch(/new\.issued_at := now\(\);[\s\S]*jsonb_set/);
+  });
+});
+
 describe("S4 — RAMS draft->terminal integrity fix (20261034)", () => {
   const m = read("supabase/migrations/20261034000000_rams_draft_terminal_integrity.sql");
   it("rejects a JWT draft->non-issued transition (closes the forgery bypass), service role exempt", () => {
