@@ -12,6 +12,7 @@ import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import { ensureMilestoneNotifications } from "@/server/services/retention-milestones";
 import { RetentionPanel } from "./_retention";
+import { DailyBriefing } from "./_daily-briefing";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -685,6 +686,12 @@ export default async function DashboardPage() {
           </Link>
         </div>
       </header>
+
+      {/* Daily Briefing — the first thing an owner sees: "what needs you today".
+          Composes existing live signals (money · safety · operations · sales)
+          into a ranked, deep-linked, per-user-dismissible attention feed.
+          Additive + best-effort: never blocks the rest of the dashboard. */}
+      <DailyBriefing orgId={ctx.org.id} userId={user.id} />
 
       {/* Onboarding checklist — pinned at the top until setup is 100% */}
       <SetupChecklist snapshot={onboardingSnapshot} />
