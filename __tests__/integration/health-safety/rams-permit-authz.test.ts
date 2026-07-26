@@ -91,4 +91,23 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     expect((await me().from("permits_to_work").update({ status: "active" }).eq("id", id)).error, "member reactivate must succeed").toBeNull();
     expect((await me().from("permits_to_work").update({ status: "closed", closed_at: now() }).eq("id", id)).error, "member close must succeed").toBeNull();
   });
+
+  // ---- Adversarial follow-up: issued-hazard reparent immutability -----------
+  it("[integrity] a member cannot reparent a hazard OFF an issued RAMS (hazard-strip bypass closed)", async () => {
+    // seed an ISSUED RA_1 carrying one hazard
+    const d1 = await me().from("risk_assessments").insert({ org_id: orgA, title: "Frozen", activity: "roofing", assessor_id: memberId }).select("id").single();
+    expect(d1.error, d1.error?.message).toBeNull();
+    const ra1 = String(d1.data?.id);
+    const h = await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: ra1, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" }).select("id").single();
+    const hz = String(h.data?.id);
+    expect((await me().from("risk_assessments").update({ status: "issued", reference: `RA-${T}-fz`, issued_at: now() }).eq("id", ra1)).error, "seed issue").toBeNull();
+    // a throwaway DRAFT to reparent into
+    const ra2 = String((await me().from("risk_assessments").insert({ org_id: orgA, title: "Throwaway", activity: "x" }).select("id").single()).data?.id);
+    // attack: move the hazard off the frozen RA_1 → must be rejected
+    const move = await me().from("risk_assessment_hazards").update({ risk_assessment_id: ra2 }).eq("id", hz);
+    expect(move.error?.message ?? "", "reparenting a hazard off an issued RAMS must be rejected").toMatch(/cannot move a hazard off|immutable/i);
+    // the issued RAMS still carries its documented hazard
+    const remaining = await svc().from("risk_assessment_hazards").select("id").eq("risk_assessment_id", ra1);
+    expect((remaining.data ?? []).length, "the issued RAMS keeps its hazard").toBe(1);
+  });
 });

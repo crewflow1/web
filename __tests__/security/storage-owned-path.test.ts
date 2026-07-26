@@ -29,6 +29,11 @@ describe("storagePathBelongsToOrg", () => {
     // a prefix that merely STARTS with the org string but isn't the segment must fail
     expect(storagePathBelongsToOrg(`${ORG_A}x/y`, ORG_A)).toBe(false);
   });
+  it("rejects traversal-shaped keys even when segment[0] equals the org (P3-B hardening)", () => {
+    expect(storagePathBelongsToOrg(`${ORG_A}/../${ORG_B}/x`, ORG_A)).toBe(false);
+    expect(storagePathBelongsToOrg(`/${ORG_A}/x`, ORG_A)).toBe(false);
+    expect(storagePathBelongsToOrg(`${ORG_A}\\x`, ORG_A)).toBe(false);
+  });
 });
 
 const root = join(__dirname, "..", "..");
@@ -42,10 +47,12 @@ describe("every evidence signer enforces the org-owned-path guard (source contra
     ["server/services/job-documents.ts", "job-docs"],
   ];
   for (const [file] of signers) {
-    it(`${file} imports + calls storagePathBelongsToOrg before signing`, () => {
+    it(`${file} INVOKES the guard in a conditional before signing (not just imports it)`, () => {
       const src = read(file);
-      expect(src, file).toMatch(/storagePathBelongsToOrg/);
-      // the guard must select org_id (so it can compare the path against the row's own org)
+      // require the actual guard invocation `if (!storagePathBelongsToOrg(` — a bare import
+      // would satisfy a looser regex, so a "keep import, drop guard" revert must fail here.
+      expect(src, file).toMatch(/if \(!storagePathBelongsToOrg\(/);
+      // and org_id must be selected so the guard can compare the path against the row's own org
       expect(src, file).toMatch(/org_id/);
     });
   }

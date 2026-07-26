@@ -128,6 +128,7 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
       [{ content_hash: HASH_B }, "content_hash"],
       [{ storage_path: `${orgA}/jobs/${jobA}/${T}-moved.pdf` }, "storage_path"],
       [{ size_bytes: 99 }, "size_bytes"],
+      [{ mime_type: "image/png" }, "mime_type"],
     ] as const) {
       const upd = await svc().from("tenant_attachments").update(patch as Row).eq("id", id);
       expect(upd.error?.message ?? "", `${label} must be immutable once set`).toMatch(/immutable/i);
@@ -147,5 +148,32 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
     expect(set.error, "null -> value backfill must be allowed once").toBeNull();
     const change = await svc().from("tenant_attachments").update({ content_hash: HASH_B }).eq("id", id);
     expect(change.error?.message ?? "", "value -> different must be rejected").toMatch(/immutable/i);
+  });
+
+  // ---- S2b: compliance_documents evidence immutability (adversarial follow-up)
+  it("[S2b] compliance_documents storage_path/size/mime are write-once; benign edits still allowed", async () => {
+    const r = await svc().from("compliance_documents").insert({
+      org_id: orgA, kind: "insurance", title: "Cert", storage_path: `${orgA}/${T}-cert.pdf`, mime_type: "application/pdf", size_bytes: 10,
+    }).select("id").single();
+    expect(r.error, r.error?.message).toBeNull();
+    const id = String(r.data?.id);
+    for (const [patch, label] of [
+      [{ storage_path: `${orgA}/${T}-swap.pdf` }, "storage_path"],
+      [{ size_bytes: 99 }, "size_bytes"],
+      [{ mime_type: "image/png" }, "mime_type"],
+    ] as const) {
+      const upd = await svc().from("compliance_documents").update(patch as Row).eq("id", id);
+      expect(upd.error?.message ?? "", `compliance ${label} must be immutable`).toMatch(/immutable/i);
+    }
+    const okTitle = await svc().from("compliance_documents").update({ title: "Renamed" }).eq("id", id);
+    expect(okTitle.error, "compliance title edits stay allowed").toBeNull();
+  });
+
+  // ---- S0 extension: jobs.photos path binding (append_job_photo) ------------
+  it("[S0] append_job_photo rejects a foreign-org photo_path; an org-first path is accepted", async () => {
+    const bad = await userClient(memberTok).rpc("append_job_photo", { target_job_id: jobA, photo_path: `${orgB}/${jobA}/hack.jpg` });
+    expect(bad.error?.message ?? "", "a cross-org photo path must be rejected").toMatch(/under the job|org/i);
+    const ok = await userClient(memberTok).rpc("append_job_photo", { target_job_id: jobA, photo_path: `${orgA}/${jobA}/ok.jpg` });
+    expect(ok.error, "an org-first photo path must be accepted").toBeNull();
   });
 });

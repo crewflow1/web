@@ -12,10 +12,10 @@ export function storagePathBelongsToOrg(
   storagePath: string | null | undefined,
   orgId: string | null | undefined,
 ): boolean {
-  return (
-    typeof storagePath === "string" &&
-    typeof orgId === "string" &&
-    orgId.length > 0 &&
-    storagePath.split("/")[0] === orgId
-  );
+  if (typeof storagePath !== "string" || typeof orgId !== "string" || orgId.length === 0) return false;
+  // Reject traversal-shaped keys defensively: a leading '/', any '..' segment, or a backslash
+  // could, on a normalizing backend, resolve outside the org prefix even though segment[0]
+  // still equals org_id. Not exploitable on S3-exact-key storage today, but cheap to forbid.
+  if (storagePath.startsWith("/") || storagePath.includes("..") || storagePath.includes("\\")) return false;
+  return storagePath.split("/")[0] === orgId;
 }
