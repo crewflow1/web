@@ -16,6 +16,7 @@ const T = `it-orgcash-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 describeIntegration("H2-CASH org cash isolation (real Postgres)", () => {
   let orgA = "", orgB = "", custA = "", jobA = "", planA = "";
   let memberB = { id: "", token: "" };
+  let dual = { id: "", token: "" }; // a member of BOTH org A and org B
   const svc = () => db(serviceClient());
 
   beforeAll(async () => {
@@ -36,11 +37,23 @@ describeIntegration("H2-CASH org cash isolation (real Postgres)", () => {
     await svc().from("memberships").insert({ org_id: orgB, user_id: id, role: "admin" });
     const s = await anonClient().auth.signInWithPassword({ email, password: `Pw-${T}` });
     memberB = { id, token: s.data.session?.access_token ?? "" };
+
+    // An org-B invoice + a user who is a member of BOTH orgs (the P0 scenario).
+    await svc().from("invoices").insert({ org_id: orgB, number: `${T}-INVB`, amount: 4000, vat_total: 800, status: "sent" });
+    const de = `${T}-dual@x.test`;
+    const dc = await serviceClient().auth.admin.createUser({ email: de, password: `Pw-${T}`, email_confirm: true });
+    const did = dc.data.user?.id ?? "";
+    await svc().from("users").insert({ id: did, email: de, full_name: "dual" });
+    await svc().from("memberships").insert({ org_id: orgA, user_id: did, role: "admin" });
+    await svc().from("memberships").insert({ org_id: orgB, user_id: did, role: "admin" });
+    const ds = await anonClient().auth.signInWithPassword({ email: de, password: `Pw-${T}` });
+    dual = { id: did, token: ds.data.session?.access_token ?? "" };
   });
   afterAll(async () => {
     if (orgA) await svc().from("organizations").delete().eq("id", orgA);
     if (orgB) await svc().from("organizations").delete().eq("id", orgB);
     if (memberB.id) await serviceClient().auth.admin.deleteUser(memberB.id);
+    if (dual.id) await serviceClient().auth.admin.deleteUser(dual.id);
   });
 
   it("a member of another org sees NONE of org A's invoices / payments / billing stages", async () => {
@@ -48,6 +61,18 @@ describeIntegration("H2-CASH org cash isolation (real Postgres)", () => {
     expect(((await asB.from("invoices").select("id").eq("org_id", orgA)).data ?? []).length).toBe(0);
     expect(((await asB.from("invoice_payments").select("id").eq("org_id", orgA)).data ?? []).length).toBe(0);
     expect(((await asB.from("job_billing_stages").select("id").eq("org_id", orgA)).data ?? []).length).toBe(0);
+  });
+
+  it("[P0] a dual-org member's reads are RLS-blended, so buildOrgCash's org_id filter is load-bearing", async () => {
+    const asDual = db(userClient(dual.token));
+    // Bare RLS returns BOTH orgs' invoices (memberships are many-to-many).
+    const both = (await asDual.from("invoices").select("org_id")).data ?? [];
+    const orgs = new Set(both.map((r) => String(r.org_id)));
+    expect(orgs.has(orgA) && orgs.has(orgB), "RLS alone blends both orgs for a dual member").toBe(true);
+    // The explicit org_id filter (what buildOrgCash now applies) scopes to one org.
+    const justA = (await asDual.from("invoices").select("org_id").eq("org_id", orgA)).data ?? [];
+    expect(justA.length, "org A has invoices").toBeGreaterThan(0);
+    expect(justA.every((r) => String(r.org_id) === orgA), "org_id filter scopes to the active org").toBe(true);
   });
 
   it("anon sees none of the cash surface", async () => {

@@ -77,6 +77,26 @@ Vercel, no cron, no realtime, no provider, no LLM.
 - The E2E "owner cash / portal / briefing" journeys run against the authenticated harness;
   dedicated Playwright specs for the three journeys are a tracked M3 follow-up.
 
+## Adversarial review (commercial-maths + RLS, on the implemented code)
+
+Every figure traced to the ledger; reconciliation, bucketing, VAT bases and portal
+customer-safety verified correct. Fixed:
+- **P0** — `buildOrgCash` ignored its `orgId`; because `current_org_ids()` returns
+  *every* org a viewer belongs to (many-to-many memberships), a user in two orgs
+  would see **blended** cash on one org's `/cash`. Now every read is explicitly
+  `.eq("org_id", orgId)`-pinned (matching `retention-snapshot.ts`). Regression-tested
+  (a dual-org member's bare RLS read blends both orgs; the pinned read scopes to one).
+- **P2** — the `job_billing_stages` read was unbounded (silent 1000-row truncation of
+  `readyToInvoice`); now paged via `fetchAllRows` + org-pinned.
+
+**Residual P3 (documented):** `collectableNow = owedNow − retentionHeld` is a portfolio
+heuristic — `owedNow` is inc-VAT and `retentionHeld` is ex-VAT and accrues on *all*
+non-draft invoices (incl. fully-paid), so it can understate chase-now cash when
+retention is held on already-settled invoices. Precise per-invoice retention
+attribution is an M3 refinement. (Same formula as M1's job-level summary.) Minor: the
+portal invoice read is `.limit(200)`; whole-table in-memory aggregation is fine to
+low-thousands (SQL aggregates are the later step).
+
 ## Known limitations / M3
 
 - Portal **upcoming agreed stages** + **retention line** (needs per-job billing-plan joins) — deferred.

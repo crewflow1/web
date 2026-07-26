@@ -61,9 +61,15 @@ const EMPTY: OrgCashView = {
   readyStages: [],
 };
 
-async function paged(db: LooseClient, table: string, cols: string, orderKey: string): Promise<Row[]> {
+/**
+ * Read every row of a table for ONE org — RLS-scoped AND explicitly `org_id`-
+ * pinned. The pin is load-bearing, not just defence-in-depth: current_org_ids()
+ * returns EVERY org the viewer belongs to (memberships are many-to-many), so a
+ * user in two orgs would otherwise see both orgs' cash blended on one org's page.
+ */
+async function paged(db: LooseClient, table: string, cols: string, orderKey: string, orgId: string): Promise<Row[]> {
   const { data } = await fetchAllRows<Row>((from, to) =>
-    db.from(table).select(cols).order(orderKey, { ascending: true }).range(from, to),
+    db.from(table).select(cols).eq("org_id", orgId).order(orderKey, { ascending: true }).range(from, to),
   );
   return data;
 }
@@ -74,12 +80,12 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
     const db = supabase as unknown as LooseClient;
 
     const [invoiceRows, paymentRows, jobRows, customerRows, releaseRows, planRows] = await Promise.all([
-      paged(db, "invoices", "id, number, status, total, amount, due_date, job_id, paid_at", "id"),
-      paged(db, "invoice_payments", "invoice_id, amount, paid_at", "invoice_id"),
-      paged(db, "jobs", "id, customer_id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct", "id"),
-      paged(db, "customers", "id, name", "id"),
-      paged(db, "retention_releases", "job_id, amount", "job_id"),
-      paged(db, "job_billing_plans", "id, status", "id"),
+      paged(db, "invoices", "id, number, status, total, amount, due_date, job_id, paid_at", "id", orgId),
+      paged(db, "invoice_payments", "invoice_id, amount, paid_at", "invoice_id", orgId),
+      paged(db, "jobs", "id, customer_id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct", "id", orgId),
+      paged(db, "customers", "id, name", "id", orgId),
+      paged(db, "retention_releases", "job_id, amount", "job_id", orgId),
+      paged(db, "job_billing_plans", "id, status", "id", orgId),
     ]);
 
     // Per-invoice paid (ledger).
@@ -122,7 +128,16 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
     const activePlanIds = planRows.filter((p) => String(p.status) === "active").map((p) => String(p.id));
     let readyStages: ReadyStage[] = [];
     if (activePlanIds.length > 0) {
-      const stageRows = (await db.from("job_billing_stages").select("job_id, name, amount, plan_id, invoice_id").is("invoice_id", null).in("plan_id", activePlanIds)).data ?? [];
+      // Paged + org-pinned (never a silently-truncated bare select).
+      const { data: stageRows } = await fetchAllRows<Row>((from, to) =>
+        db.from("job_billing_stages")
+          .select("job_id, name, amount, plan_id, invoice_id")
+          .eq("org_id", orgId)
+          .is("invoice_id", null)
+          .in("plan_id", activePlanIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
       readyStages = stageRows
         .filter((s) => toPounds(mv(s.amount)) > 0)
         .map((s) => ({ jobId: String(s.job_id), jobLabel: jobLabel.get(String(s.job_id)) ?? null, name: String(s.name ?? ""), amount: round2(toPounds(mv(s.amount))) }));
