@@ -15,6 +15,7 @@ import { usePathname } from "next/navigation";
 
 const ADMIN_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/cash", label: "Get paid" },
   { href: "/inbox", label: "Inbox" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },

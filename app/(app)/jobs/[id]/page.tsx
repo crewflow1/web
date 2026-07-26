@@ -284,6 +284,16 @@ export default async function EditJobPage({
         <h1 className="text-2xl font-bold text-slate-900">Edit job</h1>
       </header>
 
+      {/* H2-CASH — get-paid billing plan (deposit / staged invoicing). */}
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Link
+          href={`/jobs/${job.id}/billing`}
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Get paid — billing plan
+        </Link>
+      </div>
+
       {/* Programme D — cash-first commercial strip (ledger-truthful). Links to
           the full unified commercial position + lifecycle timeline. */}
       {(commercialCash.billed > 0 || commercialCash.revised > 0) ? (
