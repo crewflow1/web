@@ -288,7 +288,11 @@ export default async function DashboardPage() {
     fetchAllRows<RetRelRow>((from, to) =>
       (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
         .select("job_id, amount")
-        .order("job_id", { ascending: true })
+        // Order by the UNIQUE primary key, not the non-unique job_id: fetchAllRows
+        // needs a stable total order or rows sharing a sort-key value can be
+        // dropped/duplicated at a 500-row page boundary (the F-1 truncation class).
+        // The rollup groups by job_id in JS, so the order only has to be stable.
+        .order("id", { ascending: true })
         .range(from, to),
     ),
   ]);
