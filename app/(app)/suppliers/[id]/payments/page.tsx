@@ -12,8 +12,24 @@ import {
   SUPPLIER_PAYMENT_METHOD_LABEL,
   isSupplierPaymentMethod,
 } from "@/lib/suppliers/payments";
-import { RecordSupplierPaymentForm, VoidPaymentForm, type PayableBill } from "./_forms";
-import { recordPayment, voidPayment } from "./actions";
+import { NO_PRIOR, resolveCisRate } from "@/lib/cis/deduction";
+import { cisTaxMonthLabel } from "@/lib/cis/tax-month";
+import {
+  billBasisMap,
+  getBillCisDetails,
+  getCisAllocations,
+  getCisPaymentSnapshots,
+  priorSettlementByBill,
+} from "@/server/services/cis-deduction";
+import {
+  BillCisDetailsForm,
+  RecordCisPaymentForm,
+  RecordSupplierPaymentForm,
+  VoidPaymentForm,
+  type BillCisRow,
+  type PayableBill,
+} from "./_forms";
+import { recordCisPaymentAction, recordPayment, saveBillDetails, voidPayment } from "./actions";
 
 /**
  * Supplier payments — the money-OUT surface (H2-CIS M2).
@@ -152,6 +168,58 @@ export default async function SupplierPaymentsPage({
     allocByPayment.set(a.payment_id, (allocByPayment.get(a.payment_id) ?? 0) + Number(a.amount ?? 0));
   }
 
+  // ── H2-CIS M3 ────────────────────────────────────────────────────────────
+  // The deduction surface only appears for an actual CIS subcontractor with a
+  // usable rate. `resolveCisRate` refuses a pre-outcome status outright rather
+  // than defaulting to 20% or 30% — guessing files a wrong return, so the page
+  // shows the reason instead of a form. Non-CIS suppliers keep the M2 form.
+  const rateAuthority = resolveCisRate(
+    cis ? { cis_status: cis.cis_status, deduction_rate: cis.deduction_rate } : null,
+  );
+
+  const livePaymentIds = payments.filter((p) => !p.voided_at).map((p) => p.id);
+  const [cisDetails, cisSnapshots, cisAllocations] = cis
+    ? await Promise.all([
+        getBillCisDetails(ctx.org.id, id),
+        getCisPaymentSnapshots(ctx.org.id, id),
+        getCisAllocations(ctx.org.id, livePaymentIds),
+      ])
+    : [new Map(), new Map(), []];
+
+  // A bill is LOCKED once a live CIS allocation names it — matching the database
+  // freeze exactly, so the UI never offers an edit the DB will refuse.
+  const lockedBills = new Set(
+    cisAllocations.filter((a) => a.cis_deduction != null).map((a) => a.finance_id),
+  );
+
+  const basisByBill = billBasisMap(ledger.bills, cisDetails);
+  const settlementById = new Map(settlements.map((s) => [s.billId, s]));
+  // Live-only: a voided payment settles nothing and deducted nothing, so it must
+  // not appear in the priors the cumulative method works from. `cisAllocations`
+  // was already fetched for live payment ids only.
+  const priorByBill = priorSettlementByBill(cisAllocations);
+
+  const cisBills: BillCisRow[] = ledger.bills.map((bill) => {
+    const basis = basisByBill.get(bill.id)!;
+    const settlement = settlementById.get(bill.id);
+    return {
+      id: bill.id,
+      label: bill.reference?.trim()
+        ? bill.reference.trim()
+        : `${bill.category?.trim() || "Bill"} · ${formatGbp(basis.gross)}`,
+      net: basis.net,
+      gross: basis.gross,
+      outstanding: settlement?.outstanding ?? 0,
+      materials: basis.materials,
+      citbLevy: basis.citbLevy,
+      vatTreatment: basis.vatTreatment,
+      reverseChargeRate: basis.reverseChargeRate,
+      locked: lockedBills.has(bill.id),
+      prior: priorByBill.get(bill.id) ?? NO_PRIOR,
+    };
+  });
+  const payableCisBills = cisBills.filter((b) => b.outstanding > 0);
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {crumb}
@@ -213,16 +281,76 @@ export default async function SupplierPaymentsPage({
       </section>
 
       {/* ── Record a payment ────────────────────────────────────────────── */}
-      <section>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Record a payment</h2>
-        <RecordSupplierPaymentForm
-          action={recordPayment.bind(null, id)}
-          bills={payableBills}
-          defaultDate={todayIso()}
-          cisRate={cis?.deduction_rate != null ? Number(cis.deduction_rate) : null}
-          hasCisProfile={Boolean(cis)}
-        />
-      </section>
+      {/* A CIS subcontractor with a verified rate gets the DEDUCTION ENGINE:
+          the withholding is worked out from the labour element rather than
+          typed in. Everyone else keeps the plain M2 form, which is still the
+          right tool for a builders' merchant or an on-account payment. */}
+      {cis && rateAuthority.ok ? (
+        <>
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">
+              What part of each bill is labour?
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              CIS comes off the labour element only — never materials, plant hire, the CITB levy or
+              VAT. Set the split before you pay, or CrewFlow treats the whole bill as labour and
+              deducts more than it should.
+            </p>
+            {cisBills.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">No bills recorded yet.</p>
+            ) : (
+              <ul className="mt-3 space-y-4">
+                {cisBills.map((bill) => (
+                  <li key={bill.id}>
+                    <p className="mb-1.5 text-sm font-medium text-slate-900">{bill.label}</p>
+                    <BillCisDetailsForm
+                      action={saveBillDetails.bind(null, id, bill.id)}
+                      bill={bill}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section>
+            <h2 className="mb-1 text-base font-semibold text-slate-900">Record a CIS payment</h2>
+            <p className="mb-3 text-sm text-slate-600">
+              Verified at {rateAuthority.rate}%. CrewFlow works the deduction out — you don&apos;t
+              type it in, and it can&apos;t be overridden.
+            </p>
+            <RecordCisPaymentForm
+              action={recordCisPaymentAction.bind(null, id)}
+              bills={payableCisBills}
+              defaultDate={todayIso()}
+              rate={rateAuthority.rate}
+              rateLabel={`${rateAuthority.rate}%`}
+            />
+          </section>
+        </>
+      ) : (
+        <section>
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Record a payment</h2>
+          {cis && !rateAuthority.ok ? (
+            <div
+              role="alert"
+              className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            >
+              {rateAuthority.reason}{" "}
+              <Link href={`/suppliers/${id}/cis`} className="font-medium underline">
+                Manage CIS details
+              </Link>
+            </div>
+          ) : null}
+          <RecordSupplierPaymentForm
+            action={recordPayment.bind(null, id)}
+            bills={payableBills}
+            defaultDate={todayIso()}
+            cisRate={cis?.deduction_rate != null ? Number(cis.deduction_rate) : null}
+            hasCisProfile={Boolean(cis)}
+          />
+        </section>
+      )}
 
       {/* ── Open bills ──────────────────────────────────────────────────── */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -299,6 +427,23 @@ export default async function SupplierPaymentsPage({
                         : ""}
                       {` · allocated ${formatGbp(allocByPayment.get(p.id) ?? 0)}`}
                     </p>
+                    {/* The FROZEN tax facts, as they were at posting. These are
+                        copies, not a live join — re-verifying the subcontractor
+                        or editing the bill cannot change what is shown here, and
+                        that is the whole point of the snapshot. */}
+                    {(() => {
+                      const snap = cisSnapshots.get(p.id);
+                      if (!snap) return null;
+                      const month = cisTaxMonthLabel(p.paid_at);
+                      return (
+                        <p className="mt-1 text-xs leading-tight text-slate-500 tabular-nums">
+                          Labour {formatGbp(snap.cis_basis)} · materials{" "}
+                          {formatGbp(snap.materials_total)} · {Number(snap.deduction_rate ?? 0)}%
+                          {snap.verification_reference ? ` · ${snap.verification_reference}` : ""}
+                          {month ? ` · tax month ${month}` : ""}
+                        </p>
+                      );
+                    })()}
                     {voided ? (
                       <p className="mt-1 text-xs font-medium text-red-700">
                         Voided — {p.void_reason}
