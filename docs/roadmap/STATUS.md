@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Continuation 7 — worktree reconciliation)
-**Production `main`:** `7b2308a`
-**Production migration tip:** `20261051`
+**Last reconciled:** 2026-07-27 (Continuation 8 — loose-train reconciliation)
+**Production `main`:** `935f7fe`
+**Production migration tip:** `20261052`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -32,6 +32,7 @@
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **9** | 2026-07-27 | `20261052` | **Org-teardown P1** (#448): deleting an organization failed — cascade DELETE fired `_record_activity`, which INSERTed into `activity_log` referencing the org being deleted (`activity_log_org_id_fkey` violation). Guard skips the write when the org no longer exists. Blast radius **proven** exhaustive (recursive `pg_proc` closure → 14 functions ∩ `pg_trigger` DELETE-firing on cascade-to-org tables = exactly 6 triggers), not assumed; two inherited claims found false and corrected | `397dab3` → `935f7fe`, verified |
 | **7** | 2026-07-27 | — | **Job Site Hub** (#442): ZERO tables — composes the already-live diary/snags/inspections/toolbox/photos onto the job page + a pure totally-ordered site timeline | `0096a56` → `656f5b8`, verified |
 | **6** | 2026-07-27 | `20261047` | **CIS M2 — supplier/subcontractor money-out ledger** (#438): `supplier_payments` + `supplier_payment_allocations`; general payable engine with optional CIS; composite-FK org/supplier/bill binding valid for service_role; deadlock-free allocation guard; write-once + void. Plus test-isolation fixes (#436, #439) and roadmap corrections (#437) | `266d9e9` → `28b2d85`, verified |
 | **3** | 2026-07-27 | `20261041`, `20261042` | PWA offline-shell hydration **product bug** (#431) · company-logo private bucket with the storage regression stripped (#137) · launch-checklist runtime probe (#148) · address-first search (#136) | `aa8b810` → `636a794`, verified |
@@ -154,9 +155,9 @@ file added later replays out of order from scratch. We have hit this twice (#128
 | Slot | Owner | Status |
 |---|---|---|
 | …`20261047` | CIS M2 `supplier_payments` | **APPLIED** |
-| `20261051` | CIS M3 `cis_deduction` | **APPLIED (prod tip)** |
+| `20261051` | CIS M3 `cis_deduction` | **APPLIED** |
 | ~~`20261050`~~ | ~~org-teardown~~ | **DEAD — below applied tip** |
-| `20261052` | **org-teardown P1** `activity_cascade_guard` (renumbered; ships FIRST) | in flight — `fix/org-teardown-activity-guard` |
+| `20261052` | org-teardown P1 `activity_cascade_guard` | **APPLIED (prod tip)** — Train 9, #448 |
 | `20261053` | CIS bill value freeze | in flight — `fix/payables-financial-guards` |
 | `20261054` | Supplier bill settlement floor | in flight — `fix/payables-financial-guards` |
 | `20261055+` | CIS M4 (statements) and beyond | reserved |
