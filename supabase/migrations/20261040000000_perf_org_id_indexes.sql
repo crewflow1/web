@@ -30,6 +30,17 @@
 -- If this is ever re-applied AFTER significant data growth, switch each
 -- statement to the CONCURRENTLY form (and run the file outside a transaction)
 -- to avoid an ACCESS EXCLUSIVE lock on a large, live table.
+--
+-- Verified against production immediately before release (2026-07-27, prod
+-- migration tip 20261039): all five tables exist, all are effectively empty
+-- (reltuples 0, 48–192 kB), and none carries an (org_id) index yet — so every
+-- index below is still needed and the plain build carries no lock risk.
+--
+-- Timestamp note: this migration was authored as `20260711000000`, which is far
+-- BEHIND the applied production tip. It had never been applied anywhere, so it
+-- was renamed to the next free slot (`20261040000000`) rather than being
+-- inserted into already-applied history — keeping the migration ledger strictly
+-- ordered and replayable from scratch.
 
 create index if not exists import_rows_org_id_idx
   on public.import_rows (org_id);

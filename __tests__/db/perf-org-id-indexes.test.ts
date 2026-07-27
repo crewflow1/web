@@ -22,7 +22,7 @@ import { resolve } from "node:path";
 
 const root = resolve(__dirname, "../..");
 const raw = readFileSync(
-  resolve(root, "supabase/migrations/20260711000000_perf_org_id_indexes.sql"),
+  resolve(root, "supabase/migrations/20261040000000_perf_org_id_indexes.sql"),
   "utf-8",
 );
 // Assert on executable SQL only — strip line comments so the explanatory
