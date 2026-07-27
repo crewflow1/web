@@ -96,8 +96,11 @@ const ENV = "lib/env.ts";
 const ROUTE = "app/api/receptionist/inbound/route.ts";
 const TWILIO_PROVIDER = "lib/comms/providers/twilio.ts";
 const COMMS_TYPES = "lib/comms/types.ts";
+/** The single channel-eligibility authority (R6 → WhatsApp): decides which channels reach the engine. */
+const ELIGIBILITY = "server/services/receptionist-channel-eligibility.ts";
 
 const FLAG = "NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK";
+const WHATSAPP_FLAG = "NEXT_PUBLIC_FEATURE_WHATSAPP";
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
 /** The live dispatch — the SAME callable primitive R5 shipped; the only door to a send. */
@@ -148,20 +151,40 @@ describe("receptionist live execution — the flag defaults OFF in the env schem
 describe("receptionist live execution — the wiring is gated, phone-only and never-throw", () => {
   const code = codeOf(read(SERVICE));
 
-  // NOTE (R15): the live wiring no longer calls `dispatchReceptionistReply` directly — it delegates
-  // to the single orchestration layer `runConversationTurn`, which performs GENERATE → POLICY →
-  // AUDIT → ROUTE via that same canonical dispatch. So each gate below is faithfully re-anchored to
-  // `runConversationTurn(` (the thing that now dispatches). The intent is unchanged: the send is
-  // flag-gated, phone-only, and wrapped so an outbound failure never breaks ingestion.
-  it("checks the live-execution flag BEFORE it would ever dispatch", () => {
+  const eligibility = codeOf(read(ELIGIBILITY));
+
+  // NOTE (R15 → WhatsApp): the wiring delegates to `runConversationTurn` (the single orchestration
+  // layer), and the channel gate is no longer an inline `channel !== "phone"` / `isMissedCallTextbackLive()`
+  // pair — it is the ONE canonical decision `canRunReceptionistChannel`, consulted BEFORE any dispatch
+  // and fail-closed. The intent is unchanged and STRENGTHENED: the send is eligibility-gated, the
+  // eligibility authority is the single decision point (not scattered flag checks), and the whole
+  // delegation is wrapped so an outbound failure never breaks ingestion.
+  it("consults the single eligibility authority BEFORE it would ever dispatch", () => {
     expect(code).toMatch(
-      /async function maybeTextBackMissedCall\([\s\S]*?isMissedCallTextbackLive\(\)[\s\S]*?runConversationTurn\(/,
+      /async function maybeTextBackMissedCall\([\s\S]*?canRunReceptionistChannel\([\s\S]*?runConversationTurn\(/,
     );
   });
 
-  it("activates ONLY the missed-call (phone) channel — every other channel is inert", () => {
-    expect(code).toMatch(
-      /async function maybeTextBackMissedCall\([\s\S]*?channel\s*!==\s*["']phone["'][\s\S]*?runConversationTurn\(/,
+  it("does NOT inline a phone-only channel gate — eligibility is delegated to the one authority", () => {
+    // The old inline `input.channel !== "phone"` gate is gone from the service; eligibility is decided
+    // ONLY by canRunReceptionistChannel. Scattered flag/channel checks are exactly what Part 5 forbids.
+    expect(code).toMatch(/canRunReceptionistChannel\(/);
+    expect(code).not.toMatch(/input\.channel\s*!==\s*["']phone["']/);
+  });
+
+  it("the eligibility authority is FAIL-CLOSED and opens ONLY phone + whatsapp_msg", () => {
+    // phone → the missed-call flag (unchanged); whatsapp_msg → the WhatsApp flag AND per-org
+    // enablement; EVERY other channel → default-deny. This is the security boundary that replaced
+    // the inline phone gate — the one place a channel is cleared to reach the reasoning engine.
+    expect(eligibility).toMatch(/export async function canRunReceptionistChannel\(/);
+    expect(eligibility).toMatch(/case\s+["']phone["']/);
+    expect(eligibility).toMatch(/case\s+["']whatsapp_msg["']/);
+    expect(eligibility).toMatch(/default:[\s\S]*?return false/); // fail-closed default-deny
+    expect(eligibility).toMatch(
+      new RegExp(`process\\.env\\.${FLAG}\\s*===\\s*["']true["']`),
+    );
+    expect(eligibility).toMatch(
+      new RegExp(`process\\.env\\.${WHATSAPP_FLAG}\\s*!==\\s*["']true["']`),
     );
   });
 
@@ -180,8 +203,12 @@ describe("receptionist live execution — the wiring is gated, phone-only and ne
 describe("receptionist live execution — the live path introduces no new execution path", () => {
   const code = codeOf(read(SERVICE));
 
-  it("reaches a provider factory in EXACTLY ONE place — unchanged by the wiring", () => {
-    expect((code.match(/getSmsProvider\s*\(/g) ?? []).length).toBe(1);
+  it("reaches a provider factory in EXACTLY ONE place — the channel-aware transport registry", () => {
+    // The service's ONLY door to a provider is getTransportProvider (the no-fallback channel→provider
+    // registry). getSmsProvider is no longer called directly here — it lives behind that registry — so
+    // the single-door guarantee is preserved and STRENGTHENED: one door for both SMS and WhatsApp.
+    expect((code.match(/getTransportProvider\s*\(/g) ?? []).length).toBe(1);
+    expect((code.match(/getSmsProvider\s*\(/g) ?? []).length).toBe(0);
   });
 
   it("reaches a vendor send in EXACTLY ONE place — unchanged by the wiring", () => {

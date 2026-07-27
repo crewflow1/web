@@ -132,8 +132,8 @@ const INTENT_MIGRATION = "supabase/migrations/20260823000000_receptionist_conver
 /** The harvested policy's decision surface. */
 const DECISION_FNS = /\b(?:evaluateReply|isAutoSendable|redactReply)\b/;
 const POLICY_SPEC = "@/lib/receptionist/policy";
-/** The provider factory — the only door to a vendor adapter. */
-const PROVIDER_FACTORY = /\bgetSmsProvider\b/;
+/** The service's only door to a provider — the no-fallback channel→provider registry (SMS + WhatsApp). */
+const PROVIDER_FACTORY = /\bgetTransportProvider\b/;
 /** The transport ledger's write primitive. */
 const TRANSPORT_WRITE_FN = /\brecord_ai_reply_transport\b/;
 /** The runtime state's write primitive — the only door that advances a conversation's state. */

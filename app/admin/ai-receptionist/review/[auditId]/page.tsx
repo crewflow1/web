@@ -4,6 +4,7 @@ import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getReviewItem } from "@/server/services/receptionist-review";
 import type { ReviewQueueItem } from "@/server/services/receptionist-review";
+import { ChannelBadge } from "@/app/admin/ai-receptionist/_components/channel-badge";
 import type { TimelineEvent } from "@/server/services/receptionist-conversation-reads";
 import {
   REVIEW_STATE_LABELS,
@@ -118,6 +119,9 @@ export default async function HqReceptionistReviewDetailPage({
               </>
             ) : null}
           </p>
+          <div className="mt-2">
+            <ChannelBadge channel={item.channel} />
+          </div>
         </div>
         <span
           className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${REVIEW_STATE_STYLES[state]}`}
