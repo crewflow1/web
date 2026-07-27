@@ -48,6 +48,7 @@ const ERROR_MAP: Record<string, string> = {
   summary_failed: "AI summary failed — try again.",
   bad_kind: "Invalid action.",
   bad_id: "Invalid lead.",
+  not_found: "That lead no longer exists.",
 };
 
 const SAVED_MAP: Record<string, string> = {

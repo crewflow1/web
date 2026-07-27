@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { queueNotificationEmail } from "@/lib/notifications/email";
+import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
 import {
   notificationCategoryForType,
   type NotificationRow,
@@ -100,11 +102,21 @@ export async function createNotification(
   return (res.data as NotificationRow | null) ?? null;
 }
 
-export async function createBulkNotifications(
+/**
+ * The single insert path for the notification bus: inserts the rows AND
+ * returns their persisted representation (with ids). The ids are what the
+ * email bridge needs to populate notification_email_queue.notification_id,
+ * so both `createBulkNotifications` and `emitNotifications` funnel through
+ * here — one authoritative writer, no duplicated payload building.
+ *
+ * Best-effort: returns [] on error. A single insert statement is atomic,
+ * so on success the returned rows align 1:1 (and in order) with `inputs`.
+ */
+async function insertNotificationsReturning(
   inputs: ReadonlyArray<NotificationCreate>,
-): Promise<number> {
-  if (inputs.length === 0) return 0;
-  const rows = inputs.map((n) => ({
+): Promise<NotificationRow[]> {
+  if (inputs.length === 0) return [];
+  const payload = inputs.map((n) => ({
     org_id: n.org_id,
     user_id: n.user_id,
     audience: n.audience,
@@ -117,14 +129,32 @@ export async function createBulkNotifications(
     source_id: n.source_id ?? null,
     action_url: n.action_url ?? null,
     metadata: n.metadata ?? {},
+    // Legacy aliases — keeps the old NotificationsBell + any existing
+    // readers working (mirror of createNotification's dual-write).
     related_table: n.source_module ?? null,
     related_id: n.source_id ?? null,
   }));
-  const res = await admin().insert(rows);
-  if (res.error) {
-    console.error("[notifications] createBulkNotifications failed", res.error.message);
-    return 0;
+  const c = createAdminClient();
+  const { data, error } = await c
+    .from("notifications" as never)
+    .insert(payload as never)
+    .select(ALL_COLS as never);
+  if (error) {
+    console.error(
+      "[notifications] insertNotificationsReturning failed",
+      (error as { message?: string }).message ?? String(error),
+    );
+    return [];
   }
+  const list = (data as unknown as unknown[] | null) ?? [];
+  return list.map(coerce);
+}
+
+export async function createBulkNotifications(
+  inputs: ReadonlyArray<NotificationCreate>,
+): Promise<number> {
+  if (inputs.length === 0) return 0;
+  const rows = await insertNotificationsReturning(inputs);
   return rows.length;
 }
 
@@ -133,6 +163,13 @@ export async function createBulkNotifications(
  * failure NEVER breaks the primary action. The directive is firm:
  * "Real actions must create real notifications" — but if the
  * notification insert errors out, we log + swallow.
+ *
+ * This is also the ONE place the in-app bus bridges to EMAIL. After the
+ * rows persist, any input that opted in via its `email` directive is fanned
+ * out to the existing notification_email_queue (drained → Resend by the
+ * /api/cron/notifications-drain cron). Notifications without an `email`
+ * directive stay in-app only — byte-for-byte the historical behaviour — so
+ * email delivery is deliberate and per-notification, never a firehose.
  */
 export async function emitNotifications(
   inputs: NotificationCreate | ReadonlyArray<NotificationCreate>,
@@ -140,13 +177,88 @@ export async function emitNotifications(
   try {
     const list = Array.isArray(inputs) ? inputs : [inputs];
     if (list.length === 0) return;
-    await createBulkNotifications(list);
+    const rows = await insertNotificationsReturning(list);
+    await queueEmailsForNotifications(list, rows);
   } catch (e) {
     console.error(
       "[notifications] emitNotifications threw",
       e instanceof Error ? e.message : String(e),
     );
   }
+}
+
+/**
+ * The notification→email bridge. For every input that carried an opt-in
+ * `email` directive, resolve a recipient (via the pure `resolveEmailRecipient`)
+ * and enqueue a row on notification_email_queue. Best-effort throughout: a
+ * resolution or queue failure for one row NEVER blocks the others and NEVER
+ * bubbles out of the caller's primary action.
+ *
+ * A single insert is atomic, so on success `rows` aligns 1:1 and in order
+ * with `inputs`; if the lengths ever disagree we skip email entirely rather
+ * than risk mis-addressing a notification.
+ */
+async function queueEmailsForNotifications(
+  inputs: ReadonlyArray<NotificationCreate>,
+  rows: ReadonlyArray<NotificationRow>,
+): Promise<void> {
+  if (inputs.length === 0 || inputs.length !== rows.length) return;
+
+  const pending = inputs
+    .map((input, i) => ({ input, row: rows[i] as NotificationRow }))
+    .filter((p) => p.input.email != null);
+  if (pending.length === 0) return;
+
+  // One roster read for all opted-in orgs in this emit — not one per row.
+  const orgEmails = await fetchOrgEmails(
+    Array.from(new Set(pending.map((p) => p.row.org_id))),
+  );
+
+  for (const { input, row } of pending) {
+    try {
+      const recipient = resolveEmailRecipient({
+        directive: input.email,
+        audience: row.audience,
+        orgEmail: orgEmails.get(row.org_id) ?? null,
+      });
+      if (!recipient) continue;
+      await queueNotificationEmail({
+        notification: row,
+        to_email: recipient.to,
+        reply_to_email: recipient.replyTo,
+      });
+    } catch (e) {
+      console.error(
+        "[notifications] queueEmailsForNotifications row failed",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+}
+
+/**
+ * Resolve org id → contact email (`organizations.email`) for the given
+ * ids in a single service-role read. Missing/errored reads degrade to an
+ * empty map so the bridge simply skips those rows (in-app still fired).
+ */
+async function fetchOrgEmails(
+  orgIds: string[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (orgIds.length === 0) return out;
+  const c = createAdminClient();
+  const { data, error } = await c
+    .from("organizations")
+    .select("id, email")
+    .in("id", orgIds);
+  if (error) {
+    console.error("[notifications] fetchOrgEmails failed", error.message);
+    return out;
+  }
+  for (const r of data ?? []) {
+    out.set(r.id, r.email ?? null);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------

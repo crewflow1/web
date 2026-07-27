@@ -6,6 +6,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/overdue-invoices",
+      "schedule": "30 9 * * *"
+    },
+    {
       "path": "/api/cron/quote-followup",
       "schedule": "0 11 * * *"
     },
@@ -32,6 +36,46 @@
     {
       "path": "/api/cron/review-requests",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/research-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/qualification-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/spine-partitions",
+      "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/spine-drain",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/spine-backfill",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/memory-embed",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/memory-lifecycle",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/task-reaper",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/inspections-due",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/maintenance-due",
+      "schedule": "30 5 * * *"
     }
   ]
 }

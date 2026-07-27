@@ -85,14 +85,42 @@ export default async function FinancesPage({
 
   const { data: rows, count } = await q;
 
-  // Separate query for the monthly summary — pulls just amount + vat_total +
-  // created_at so we can aggregate client-side. Capped at 5000 rows for safety
-  // (large orgs should switch to a SQL view / RPC; sufficient for MVP).
-  const { data: summaryRows } = await supabase
-    .from("finances")
-    .select("amount, vat_total, created_at")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  // Monthly summary. We render the most recent 6 months (see the slice below),
+  // so we only need rows from that window — and we page through it in chunks
+  // BELOW the PostgREST max-rows cap (1000) so the totals can't be silently
+  // truncated. The old fixed 5000-row fetch *exceeded* that cap, so a busy
+  // org's chart quietly dropped every entry past the most recent 1000 rows. The
+  // `id`
+  // tiebreaker keeps paging stable across rows that share a created_at.
+  type SummaryRow = {
+    amount: number | string | null;
+    vat_total: number | string | null;
+    created_at: string;
+  };
+  const now = new Date();
+  const summaryFloor = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1),
+  ).toISOString();
+  const SUMMARY_PAGE = 500;
+  const MAX_SUMMARY_PAGES = 200; // 100k six-month rows ≫ any single org
+  const summaryRows: SummaryRow[] = [];
+  for (let p = 0; p < MAX_SUMMARY_PAGES; p++) {
+    const start = p * SUMMARY_PAGE;
+    const { data: chunk, error: summaryError } = await supabase
+      .from("finances")
+      .select("amount, vat_total, created_at")
+      .gte("created_at", summaryFloor)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(start, start + SUMMARY_PAGE - 1);
+    if (summaryError) {
+      console.error("[finances] monthly summary page failed", summaryError);
+      break;
+    }
+    const batch = chunk ?? [];
+    summaryRows.push(...batch);
+    if (batch.length < SUMMARY_PAGE) break;
+  }
 
   const monthly = new Map<string, { net: number; vat: number; count: number }>();
   for (const r of summaryRows ?? []) {

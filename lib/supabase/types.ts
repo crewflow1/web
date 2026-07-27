@@ -363,6 +363,8 @@ export type Database = {
           org_id: string
           phone: string | null
           portal_token: string | null
+          portal_token_expires_at: string | null
+          portal_token_last_used_at: string | null
           postcode: string | null
           updated_at: string
         }
@@ -380,6 +382,8 @@ export type Database = {
           org_id: string
           phone?: string | null
           portal_token?: string | null
+          portal_token_expires_at?: string | null
+          portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
         }
@@ -397,6 +401,8 @@ export type Database = {
           org_id?: string
           phone?: string | null
           portal_token?: string | null
+          portal_token_expires_at?: string | null
+          portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
         }
@@ -774,6 +780,48 @@ export type Database = {
           },
         ]
       }
+      invoice_line_items: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          invoice_id: string
+          line_total: number
+          org_id: string
+          qty: number
+          sort_order: number
+          unit: string
+          unit_price: number
+          vat_rate: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          id?: string
+          invoice_id: string
+          line_total?: number
+          org_id: string
+          qty?: number
+          sort_order?: number
+          unit?: string
+          unit_price?: number
+          vat_rate?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          invoice_id?: string
+          line_total?: number
+          org_id?: string
+          qty?: number
+          sort_order?: number
+          unit?: string
+          unit_price?: number
+          vat_rate?: number
+        }
+        Relationships: []
+      }
       invoice_payments: {
         Row: {
           amount: number
@@ -900,6 +948,7 @@ export type Database = {
         Row: {
           amount: number
           created_at: string
+          customer_id: string | null
           due_date: string | null
           id: string
           job_id: string | null
@@ -917,6 +966,7 @@ export type Database = {
         Insert: {
           amount?: number
           created_at?: string
+          customer_id?: string | null
           due_date?: string | null
           id?: string
           job_id?: string | null
@@ -934,6 +984,7 @@ export type Database = {
         Update: {
           amount?: number
           created_at?: string
+          customer_id?: string | null
           due_date?: string | null
           id?: string
           job_id?: string | null
@@ -2266,6 +2317,11 @@ export type Database = {
       next_invoice_number: { Args: { target_org: string }; Returns: string }
       next_quote_number: { Args: { target_org: string }; Returns: string }
       next_variation_number: { Args: { target_job: string }; Returns: number }
+      rate_limit_hit: {
+        Args: { p_key: string; p_limit: number; p_window_seconds: number }
+        Returns: { allowed: boolean; remaining: number; reset_at: string }[]
+      }
+      rate_limit_sweep: { Args: never; Returns: undefined }
       remove_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined

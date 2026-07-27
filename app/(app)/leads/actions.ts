@@ -42,7 +42,7 @@ export async function createLead(
   const now = new Date().toISOString();
   const supabase = await createClient();
   // contact_name/email/phone columns landed in migration
-  // 20260601000000_leads_contact_fields and aren't yet in the generated
+  // 20260601000100_leads_contact_fields and aren't yet in the generated
   // Supabase types — the `as never` keeps the typed client happy until
   // `pnpm db:generate` next runs.
   const { data, error } = await supabase
@@ -124,7 +124,7 @@ export async function updateLead(
   }
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Lead updated." });
 }
 
 /**
@@ -177,6 +177,23 @@ export async function acknowledgeLead(id: string, formData: FormData) {
   const parsed = ACTED_KIND_SCHEMA.safeParse(formData.get("kind") ?? "");
   if (!parsed.success) redirect(`/leads/${id}?error=bad_kind`);
 
+  // SECURITY (P2 audit M-2): markLeadActed writes lead_followup_state via the
+  // SERVICE-ROLE admin client, which BYPASSES RLS, and stamps the row with
+  // the caller's OWN org_id — so the org-scoped lead_followup_state policies
+  // (org_id in current_org_ids(), migration 20260623000000) can never reject
+  // a foreign lead_id. Without an explicit ownership check a member who knows
+  // another org's lead id could acknowledge it, silently suppressing that
+  // org's 72h/7d follow-up reminders and corrupting its state row. Confirm the
+  // lead is in this org on the RLS-scoped tenant client BEFORE any admin write.
+  const supabase = await createClient();
+  const { data: lead } = await supabase
+    .from("leads")
+    .select("id")
+    .eq("id", id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (!lead) redirect(`/leads/${id}?error=not_found`);
+
   const { markLeadActed } = await import("@/server/services/lead-followups");
   await markLeadActed({
     lead_id: id,
@@ -187,7 +204,6 @@ export async function acknowledgeLead(id: string, formData: FormData) {
 
   // Archive also moves the lead status so it drops out of pipeline view.
   if (parsed.success && parsed.data === "archive") {
-    const supabase = await createClient();
     await supabase
       .from("leads")
       .update({
@@ -197,7 +213,6 @@ export async function acknowledgeLead(id: string, formData: FormData) {
       .eq("id", id);
   } else {
     // Otherwise just bump last_activity_at so recency sorts still work.
-    const supabase = await createClient();
     await supabase
       .from("leads")
       .update({ last_activity_at: new Date().toISOString() })
@@ -217,11 +232,15 @@ export async function acknowledgeLead(id: string, formData: FormData) {
  * field as a postfix (the leads table doesn't have a dedicated column).
  */
 export async function regenerateLeadSummary(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
+  // SECURITY (P2 audit H-1): summariseLead reads via the service-role admin
+  // client (RLS bypassed), so it MUST be scoped to the caller's org. Pass
+  // ctx.org.id; a foreign-org lead returns null and we redirect below
+  // without sending PII to the LLM or persisting anything.
   const { summariseLead } = await import("@/server/services/lead-summary");
-  const result = await summariseLead(id);
+  const result = await summariseLead(id, ctx.org.id);
   if (!result) {
     redirect(`/leads/${id}?error=summary_failed`);
   }

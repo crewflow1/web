@@ -250,10 +250,13 @@ describe("Phase H — Review request UI", () => {
     expect(src).toMatch(/sendEmail/);
   });
 
-  it("done jobs link to /reviews/new with prefilled params", () => {
+  it("completed jobs link to /reviews/new with prefilled params", () => {
     const src = read("app/(app)/jobs/[id]/page.tsx");
     expect(src).toMatch(/reviews\/new\?customer_id=/);
-    expect(src).toMatch(/job\.status === "done"/);
+    // The review CTA must gate on the real job-status enum value
+    // ("completed" — see lib/jobs/schema.ts). It previously read "done",
+    // which is not a valid status, so the CTA never rendered.
+    expect(src).toMatch(/job\.status === "completed"/);
   });
 
   it("reviews list page renders 3 action buttons + status filter", () => {

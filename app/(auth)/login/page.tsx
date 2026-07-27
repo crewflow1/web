@@ -127,6 +127,10 @@ export default async function LoginPage({
         >
           {isRecoverableError ? "Send me a fresh magic link" : "Email me a magic link"}
         </button>
+        <p className="text-center text-[11px] text-slate-500">
+          The link can take a minute to arrive and may land in your spam or
+          junk folder.
+        </p>
       </form>
 
       <p className="text-center text-xs text-slate-500">

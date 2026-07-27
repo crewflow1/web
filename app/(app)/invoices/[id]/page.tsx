@@ -4,8 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
+import { PaymentProofsPanel } from "./_payment-proofs-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import {
+  invoiceBusinessToday,
+  invoiceDisplayStatus,
+} from "@/lib/invoices/overdue";
 
 /**
  * Invoice detail view.
@@ -93,18 +98,27 @@ export default async function InvoiceDetailPage({
   const invTotal = Number(invoice.total ?? 0);
   const outstanding = Math.max(0, invTotal - paidTotal);
 
-  // Line items from the source quote (if still present).
-  const lineItems = invoice.quote_id
-    ? (
-        await supabase
-          .from("quote_line_items")
-          .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
-          .eq("quote_id", invoice.quote_id)
-          .order("sort_order", { ascending: true })
-      ).data ?? []
-    : [];
+  // Line items from the invoice's own immutable snapshot (Issue #349 Phase 2),
+  // not the live quote — so a later quote edit or deletion can't rewrite this
+  // historical invoice. The snapshot is created atomically by the
+  // invoices_snapshot_line_items trigger, so every invoice has one.
+  const lineItems =
+    (
+      await supabase
+        .from("invoice_line_items")
+        .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", id)
+        .order("sort_order", { ascending: true })
+    ).data ?? [];
 
+  // Two different questions, deliberately kept apart:
+  //   status        — what is STORED. The controls need this to know which
+  //                   button is current, and it is what a write would replace.
+  //   displayStatus — what a human should SEE. Overdue is derived, so a
+  //                   past-due invoice reads "overdue" without anything having
+  //                   been written. See lib/invoices/overdue.ts.
   const status = invoice.status as InvoiceStatus;
+  const displayStatus = invoiceDisplayStatus(invoice, invoiceBusinessToday());
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -118,6 +132,12 @@ export default async function InvoiceDetailPage({
 
       <header className="flex items-start justify-between gap-4">
         <div>
+          <Link
+            href="/invoices"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Invoices
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{invoice.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
             Created {invoice.created_at.slice(0, 10)}
@@ -134,9 +154,9 @@ export default async function InvoiceDetailPage({
             Download PDF
           </a>
           <span
-            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
+            className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[displayStatus]}`}
           >
-            {status}
+            {displayStatus}
           </span>
         </div>
       </header>
@@ -211,6 +231,11 @@ export default async function InvoiceDetailPage({
           has no line items.
         </p>
       )}
+
+      {/* Proofs the customer sent via their portal. Sits directly above the
+          payments panel because it's the evidence for the record-payment
+          decision made there. Renders nothing when no proof was submitted. */}
+      <PaymentProofsPanel invoiceId={invoice.id} />
 
       {/* Payments panel — manual record + history. Wave 3. */}
       <PaymentsPanel

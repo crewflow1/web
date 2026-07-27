@@ -8,6 +8,7 @@ import {
   declineQuoteByToken,
 } from "@/app/(app)/quotes/actions";
 import { publicAcceptSchema, publicDeclineSchema } from "@/lib/quotes/schema";
+import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 /**
  * Public-portal accept / decline server actions.
@@ -55,6 +56,13 @@ export async function publicAcceptQuote(token: string, formData: FormData) {
   }
 
   const h = await headers();
+  const ip = getIpFromHeaders(h) ?? "anonymous";
+  const rl = await consume("quote_action", ip, DEFAULT_LIMITS.quote_action);
+  if (!rl.allowed) {
+    redirect(
+      `/q/${token}?error=${encodeURIComponent("Too many attempts. Please wait a few minutes and try again.")}`,
+    );
+  }
   const ipHash = hashIp(getIpFromHeaders(h));
   const userAgent = h.get("user-agent");
 
@@ -72,6 +80,13 @@ export async function publicAcceptQuote(token: string, formData: FormData) {
 }
 
 export async function publicDeclineQuote(token: string, formData: FormData) {
+  const ip = getIpFromHeaders(await headers()) ?? "anonymous";
+  const rl = await consume("quote_action", ip, DEFAULT_LIMITS.quote_action);
+  if (!rl.allowed) {
+    redirect(
+      `/q/${token}?error=${encodeURIComponent("Too many attempts. Please wait a few minutes and try again.")}`,
+    );
+  }
   const parsed = publicDeclineSchema.safeParse({
     reason: formData.get("reason") ?? "",
     comment: formData.get("comment") ?? "",

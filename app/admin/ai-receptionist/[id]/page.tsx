@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import {
   AI_RECEPTIONIST_STATUSES,
   AI_RECEPTIONIST_STATUS_LABELS,
@@ -71,8 +70,7 @@ export default async function HqAiReceptionistDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const { id } = await params;
   const sp = await searchParams;

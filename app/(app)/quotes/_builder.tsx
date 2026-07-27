@@ -187,6 +187,9 @@ export function QuoteBuilder({
           </div>
           <Link
             href="/customers/new"
+            target="_blank"
+            rel="noopener"
+            title="Opens in a new tab so your quote isn't lost"
             className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
           >
             + Add customer

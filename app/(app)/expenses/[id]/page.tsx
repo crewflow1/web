@@ -41,6 +41,9 @@ const ERROR_MAP: Record<string, string> = {
   validation: "Some fields look off — check amount and VAT rate.",
   approve_failed: "Couldn't approve the draft. Try again.",
   reject_failed: "Couldn't reject the draft. Try again.",
+  forbidden: "Only an owner or admin can approve or reject expense drafts.",
+  not_found: "That draft no longer exists.",
+  already_approved: "That draft was already approved — it can't be rejected.",
 };
 
 type SP = Promise<{ error?: string }>;

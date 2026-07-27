@@ -32,21 +32,29 @@ export default async function PortalMessagesPage({
 
   const admin = createAdminClient();
 
-  // List tickets created via the portal. We surface ones either
-  // created by this customer's user_id OR (more commonly) tagged
-  // with portal metadata.
+  // SECURITY: scope strictly to THIS customer. The portal runs under the
+  // service-role admin client (no Supabase JWT, so RLS cannot scope it), so we
+  // MUST filter by customer_id explicitly — filtering by org_id alone exposed
+  // every other customer's tickets in the org (cross-customer leak, fixed here).
+  // support_tickets.customer_id is added by migration
+  // 20260706000000_support_tickets_customer_scope.sql and stamped on write by
+  // sendPortalMessage(). Tickets predating that column (customer_id IS NULL)
+  // intentionally do not appear in the portal.
+  type TicketQuery = {
+    eq: (k: string, v: unknown) => TicketQuery;
+    order: (
+      k: string,
+      opts: { ascending: boolean },
+    ) => {
+      limit: (n: number) => Promise<{
+        data: unknown[] | null;
+        error: { message: string } | null;
+      }>;
+    };
+  };
   const { data: ticketsRaw } = await (
     admin.from("support_tickets" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          order: (k: string, opts: { ascending: boolean }) => {
-            limit: (n: number) => Promise<{
-              data: unknown[] | null;
-              error: { message: string } | null;
-            }>;
-          };
-        };
-      };
+      select: (cols: string) => TicketQuery;
     }
   )
     .select(
@@ -57,11 +65,9 @@ export default async function PortalMessagesPage({
       `,
     )
     .eq("org_id", customer.org_id)
+    .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(20);
-  // We can't filter by customer at the DB level without an extra
-  // column, so filter in app — tickets created via portal carry the
-  // customer_id in metadata. Keep this conservative.
   type TicketRow = {
     id: string;
     ticket_number: number;
@@ -78,12 +84,8 @@ export default async function PortalMessagesPage({
       internal: boolean;
     }>;
   };
-  // Pull the rows the customer would naturally see in their tenant
-  // support inbox (excluding internal messages). The portal customer
-  // is NOT the tenant user — for now we just show ALL tickets for
-  // their org so a portal user can see the conversation thread,
-  // matching the public-quote pattern (token IS the auth, scope is
-  // the customer).
+  // Already scoped to this customer at the query level (org_id + customer_id);
+  // internal HQ notes are excluded from the preview below (see lastVisible).
   const tickets = (ticketsRaw ?? []) as unknown as TicketRow[];
 
   const banner = (() => {
@@ -162,33 +164,41 @@ export default async function PortalMessagesPage({
         ) : (
           <ul className="space-y-2">
             {tickets.map((t) => {
-              // Last visible (non-internal) message for the preview line.
+              // Last visible message for the preview line: non-internal, and
+              // one of the two parties to this conversation. 'hq' is CrewFlow
+              // talking to the org on its own helpdesk — not addressed to this
+              // customer, and previously previewed as though the org sent it.
               const lastVisible = (t.last_message ?? []).find(
-                (m) => !m.internal,
+                (m) => !m.internal && m.author_kind !== "hq",
               );
               return (
-                <li
-                  key={t.id}
-                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-slate-900">
-                      #{t.ticket_number} · {t.subject}
-                    </p>
-                    <span className="shrink-0 text-[11px] text-slate-500">
-                      {t.status}
-                    </span>
-                  </div>
-                  {lastVisible ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-600">
-                      <span className="font-medium">
-                        {lastVisible.author_kind === "hq"
-                          ? `${org.name}: `
-                          : "You: "}
+                <li key={t.id}>
+                  <a
+                    href={`/customer-portal/${token}/messages/${t.id}`}
+                    className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        #{t.ticket_number} · {t.subject}
+                      </p>
+                      <span className="shrink-0 text-[11px] text-slate-500">
+                        {t.status}
                       </span>
-                      {lastVisible.body}
+                    </div>
+                    {lastVisible ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">
+                        <span className="font-medium">
+                          {lastVisible.author_kind === "customer"
+                            ? "You: "
+                            : `${org.name}: `}
+                        </span>
+                        {lastVisible.body}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-[11px] font-medium text-slate-400">
+                      View conversation →
                     </p>
-                  ) : null}
+                  </a>
                 </li>
               );
             })}

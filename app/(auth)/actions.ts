@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 function getOrigin(headerList: Headers): string {
   const fromHeader = headerList.get("origin") ?? headerList.get("referer");
@@ -73,6 +74,20 @@ export async function signInWithMagicLink(formData: FormData) {
 
   if (!parsed.success) {
     redirect("/login?error=invalid_email");
+  }
+
+  // Throttle magic-link sends per destination address — blocks email-bomb /
+  // Supabase cost abuse. Fails open (see lib/security/rate-limit) so a limiter
+  // fault can never lock users out of sign-in.
+  const limit = await consume(
+    "auth",
+    parsed.data.email.toLowerCase(),
+    DEFAULT_LIMITS.auth,
+  );
+  if (!limit.allowed) {
+    redirect(
+      `/login?error=${encodeURIComponent("Too many sign-in attempts. Please wait a few minutes and try again.")}`,
+    );
   }
 
   const supabase = await createClient();

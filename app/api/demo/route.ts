@@ -45,6 +45,27 @@ function logStep(step: string, info?: Record<string, unknown>) {
   );
 }
 
+/** Normalise a free-text field for duplicate comparison. */
+function normField(s: string | null | undefined): string {
+  return (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * True only when an incoming submission is a genuine duplicate of a
+ * recent row — same company AND contact name. Same email alone is NOT
+ * enough: distinct people/requests legitimately share an inbox, and
+ * dropping them silently loses real leads.
+ */
+function isSameSubmission(
+  recent: { company: string | null; name: string | null },
+  incoming: { company: string; name: string },
+): boolean {
+  return (
+    normField(recent.company) === normField(incoming.company) &&
+    normField(recent.name) === normField(incoming.name)
+  );
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   logStep("invoked");
 
@@ -94,19 +115,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Idempotency.
+    // Idempotency — absorb cold-lambda double-submits WITHOUT swallowing
+    // genuinely distinct leads that happen to share an inbox.
+    //
+    // The old check matched on email alone within a 5-minute window: a
+    // second, *different* submission from the same address (e.g. an agency
+    // booking two clients, or one person correcting the company they typed)
+    // was silently discarded — no row, no HQ notification, no lead — yet the
+    // browser still showed "We'll be in touch." That's a silent lead drop.
+    //
+    // Now we only short-circuit when the recent row is the SAME submission
+    // (same company AND contact name, normalised). Anything distinct flows
+    // through to a real insert + notifications.
     try {
       const since = new Date(Date.now() - FIVE_MIN_MS).toISOString();
       const { data: recent } = await admin
         .from("demo_requests")
-        .select("id")
+        .select("id, company, name")
         .eq("email", data.email)
         .gte("created_at", since)
+        .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (recent) {
+      if (recent && isSameSubmission(recent, data)) {
         logStep("dedup_hit", { request_id: recent.id });
         return NextResponse.json({ ok: true, deduped: true });
+      }
+      if (recent) {
+        logStep("dedup_skipped_distinct", { recent_id: recent.id });
       }
     } catch (e) {
       console.error("[demo] dedup check failed (proceeding anyway)", e);

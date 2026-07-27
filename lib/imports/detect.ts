@@ -470,7 +470,13 @@ function normaliseValue(
   if (field === "status" && entity === "invoice") {
     const s = String(raw).toLowerCase().trim();
     if (["paid", "yes", "y", "true"].includes(s)) return "paid";
-    if (["overdue"].includes(s)) return "overdue";
+    // "overdue" is NOT mapped to a stored status: it is derived from due_date
+    // plus the trigger-owned payment status (lib/invoices/overdue.ts), so
+    // storing it would create a value nothing keeps current. No information is
+    // lost — an invoice a CSV calls overdue is unpaid and past its date, which
+    // `sent` + its due_date already says, and the derived authority will show
+    // it as overdue on the same terms as every other invoice.
+    if (["overdue"].includes(s)) return "sent";
     if (["sent", "issued"].includes(s)) return "sent";
     if (["draft"].includes(s)) return "draft";
     return "sent"; // safe default

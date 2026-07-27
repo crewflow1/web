@@ -161,6 +161,10 @@ export function notifyOnFailedPayment(input: {
       source_module: "stripe",
       source_id: input.stripe_invoice_id ?? null,
       metadata: { amount_gbp: input.amount_gbp, reason: input.reason ?? null },
+      // Also deliver by email — a declined card is money-critical and the
+      // customer may not be logged in to see the in-app notice. Recipient
+      // resolves to the org's `organizations.email` (see emitNotifications).
+      email: {},
     }),
     hqForOrg(input.org_id, "stripe.payment_failed", {
       category: "stripe",
@@ -465,6 +469,68 @@ function shortenBody(text: string): string {
   return text.slice(0, 277) + "…";
 }
 
+// =====================================================================
+// PAYMENTS (tenant ↔ their own customer)
+// =====================================================================
+
+/**
+ * A customer submitted payment proof through their portal.
+ *
+ * The first event here about the TENANT's own money rather than CrewFlow's
+ * subscription billing. The portal already tells the customer "{org} will
+ * confirm here once it's matched to your payment", and the staff proof panel
+ * on the invoice exists — but nothing told staff a proof had arrived, so the
+ * promise depended on someone happening to open that invoice.
+ *
+ * Audience is the org, org-wide: `customerOrgWide` sets audience 'customer'
+ * (which in Support OS terms means the CrewFlow customer = THIS TENANT) with
+ * user_id null, and the notifications RLS resolves that to every member of the
+ * org. So org isolation comes from `org_id` alone — the end-customer is never a
+ * recipient, and no other org can be.
+ *
+ * category 'billing' rather than 'stripe': /notifications filters on category,
+ * and both live 'stripe' emitters are CrewFlow's own subscription events —
+ * filing a tenant's bank-transfer proof there would mix two unrelated things
+ * under the "Payment" label. 'billing' labels correctly and its only other
+ * emitter (notifyOnOverdueInvoice) has no call sites. Widening the category
+ * CHECK would need a migration, which this doesn't justify.
+ *
+ * `source_id` is the portal_uploads row id — the authoritative record's own
+ * primary key — so a notification is traceable back to exactly one upload.
+ */
+export function notifyOnPaymentProofUploaded(input: {
+  org_id: string;
+  upload_id: string;
+  invoice_id: string;
+  invoice_number: string | null;
+  customer_id: string;
+  customer_name: string;
+  filename: string;
+  customer_note?: string | null;
+}): NotificationCreate {
+  const invoiceLabel = input.invoice_number ?? "an invoice";
+  return customerOrgWide(input.org_id, "payment.proof_uploaded", {
+    category: "billing",
+    priority: "medium",
+    title: `${input.customer_name} sent payment proof for ${invoiceLabel}`,
+    body: shortenBody(
+      `${input.filename} — open the invoice to check it against your bank, then record the payment.${
+        input.customer_note ? ` Their note: ${input.customer_note}` : ""
+      }`,
+    ),
+    // The staff proof panel lives on the invoice detail page.
+    action_url: `/invoices/${input.invoice_id}`,
+    source_module: "payments",
+    source_id: input.upload_id,
+    metadata: {
+      invoice_id: input.invoice_id,
+      customer_id: input.customer_id,
+      upload_id: input.upload_id,
+      filename: input.filename,
+    },
+  });
+}
+
 // Stable list of event helper names — used by tests to ensure
 // nothing was renamed silently.
 export const EVENT_HELPERS = [
@@ -484,4 +550,5 @@ export const EVENT_HELPERS = [
   "notifyOnDemoRequested",
   "notifyOnCustomerSignup",
   "notifyOnUrgentHqAlert",
+  "notifyOnPaymentProofUploaded",
 ] as const;

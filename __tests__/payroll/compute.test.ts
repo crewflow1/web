@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   annualIncomeTax,
   annualEmployeeNi,
@@ -157,6 +159,29 @@ describe("payrollCsv", () => {
     );
     expect(csv).toContain('"Smith, ""Big"" Bob"');
   });
+
+  it("quotes a newline-bearing name and renders a null NI as an empty field (shared escaper)", () => {
+    const csv = payrollCsv(
+      [
+        {
+          full_name: "Ops\nTeam",
+          ni_number: null,
+          hours: 5,
+          hourly_pay: 12,
+          gross_pay: 60,
+          paye_estimate: 0,
+          ni_estimate: 0,
+          net_pay: 60,
+        },
+      ],
+      { period_start: "2026-05-19", period_end: "2026-05-25", cycle: "weekly" },
+    );
+    // The newline forces RFC-4180 quoting via the shared csvEscape...
+    expect(csv).toContain('"Ops\nTeam"');
+    // ...and a null NI number collapses to an empty field — never the text "null".
+    expect(csv).toContain(`weekly,"Ops\nTeam",,`);
+    expect(csv).not.toContain("null");
+  });
 });
 
 describe("computePayeMonth (tax integration)", () => {
@@ -206,5 +231,23 @@ describe("computePayeMonth (tax integration)", () => {
       now,
     );
     expect(r.estimate).toBe(131);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Source-pinned architecture — one authoritative CSV escaper
+// ---------------------------------------------------------------------
+
+describe("payrollCsv wiring (shared escaper authority)", () => {
+  const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
+  const SRC = "lib/payroll/compute.ts";
+
+  it("routes through the one shared csvEscape and defines no local escaper", () => {
+    const code = read(SRC);
+    expect(code).toMatch(/import \{ csvEscape \} from ["']@\/lib\/csv["']/);
+    // The private csvCell copy is gone — no fourth escaper anywhere in the tree.
+    expect(code).not.toMatch(/function csvCell/);
+    // The quoting body now lives only in lib/csv.ts, never duplicated here.
+    expect(code).not.toMatch(/replace\(\/"\/g/);
   });
 });

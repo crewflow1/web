@@ -5,9 +5,18 @@ import { buildQuoteFollowup } from "@/lib/email/templates/reminders";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { env } from "@/lib/env";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
+import { mapWithConcurrency } from "@/lib/async/concurrent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Full Vercel Pro budget — a busy day can queue hundreds of follow-ups,
+// and the short default timeout would kill the run mid-list.
+export const maxDuration = 300;
+
+// In-flight sends. Bounded to overlap network latency without tripping
+// Resend's rate limit; a rate-limited send fails soft and the quote
+// (still followup_sent_at IS NULL) is simply retried next run.
+const SEND_CONCURRENCY = 3;
 
 /**
  * Phase 8.2d — Daily cron: quote follow-up.
@@ -94,12 +103,19 @@ async function runFollowup() {
   const stats = { scanned: rows?.length ?? 0, sent: 0, skipped_no_email: 0, failed: 0 };
   const nowMs = Date.now();
 
-  for (const q of rows ?? []) {
-    const to = q.customer?.email;
-    if (!to) {
+  // Drop the no-email rows synchronously so the counter stays deterministic;
+  // the send + stamp run concurrently below.
+  const pending = (rows ?? []).filter((q) => {
+    if (!q.customer?.email) {
       stats.skipped_no_email++;
-      continue;
+      return false;
     }
+    return true;
+  });
+
+  await mapWithConcurrency(pending, SEND_CONCURRENCY, async (q) => {
+    const to = q.customer?.email;
+    if (!to) return; // already filtered, but keeps the type narrow
 
     const daysSinceSent = Math.max(
       1,
@@ -119,9 +135,12 @@ async function runFollowup() {
     if (!res.sent) {
       stats.failed++;
       console.error("[cron/quote-followup] send failed", { id: q.id, reason: res });
-      continue;
+      return;
     }
 
+    // Stamp only AFTER a confirmed send — the followup_sent_at IS NULL
+    // filter is the idempotency guard, so stamping a quote whose email
+    // never sent would silently drop its follow-up forever.
     const { error: updErr } = await admin
       .from("quotes")
       .update({ followup_sent_at: new Date().toISOString() })
@@ -129,11 +148,11 @@ async function runFollowup() {
     if (updErr) {
       stats.failed++;
       console.error("[cron/quote-followup] stamp failed", { id: q.id, updErr });
-      continue;
+      return;
     }
 
     stats.sent++;
-  }
+  });
 
   return { ok: true, ...stats };
 }

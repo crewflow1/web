@@ -1086,9 +1086,22 @@ type InvoiceStatusEnum =
   | "sent"
   | "awaiting_payment"
   | "partially_paid"
-  | "paid"
-  | "overdue";
+  | "paid";
 
+/**
+ * Map an imported status cell onto a WRITABLE invoice status.
+ *
+ * `overdue` is deliberately not accepted. It is derived from `due_date` plus
+ * the trigger-owned payment status (lib/invoices/overdue.ts), so importing it
+ * would store a value nothing keeps current — the row would read "overdue"
+ * forever, including after payment.
+ *
+ * A legacy CSV column saying "overdue" is not discarded information: such an
+ * invoice is unpaid and past its date, which is exactly what `sent` + its
+ * `due_date` already expresses. It will be shown as overdue by the derived
+ * authority, on the same terms as every other invoice — so the import lands on
+ * `sent` (the existing fallback) and the truth is recovered from the facts.
+ */
 function normaliseInvoiceStatus(raw: unknown): InvoiceStatusEnum {
   if (typeof raw !== "string") return "sent";
   const allowed: InvoiceStatusEnum[] = [
@@ -1097,7 +1110,6 @@ function normaliseInvoiceStatus(raw: unknown): InvoiceStatusEnum {
     "awaiting_payment",
     "partially_paid",
     "paid",
-    "overdue",
   ];
   const v = raw.toLowerCase().trim() as InvoiceStatusEnum;
   return allowed.includes(v) ? v : "sent";

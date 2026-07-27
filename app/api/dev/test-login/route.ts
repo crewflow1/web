@@ -24,8 +24,15 @@ import { env } from "@/lib/env";
  */
 
 export async function GET(request: NextRequest) {
-  // Production lockout.
-  if (process.env.VERCEL_ENV === "production") {
+  // Environment lockout — FAIL CLOSED. Enable only on an affirmative non-prod
+  // signal (Vercel preview/development, or a local `next dev` run). Any other
+  // environment — production, an unknown/unset VERCEL_ENV, or a non-Vercel host
+  // — is a hard 404. A deny-list ("block if == 'production'") would leave this
+  // route open wherever VERCEL_ENV isn't set; an allow-list closes that gap.
+  const vercelEnv = process.env.VERCEL_ENV;
+  const isPreviewOrDev = vercelEnv === "preview" || vercelEnv === "development";
+  const isLocalDev = process.env.NODE_ENV === "development"; // only under `next dev`
+  if (!isPreviewOrDev && !isLocalDev) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 

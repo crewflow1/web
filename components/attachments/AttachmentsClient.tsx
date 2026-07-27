@@ -54,6 +54,7 @@ export function AttachmentsUploadForm({
         type="file"
         name="file"
         required
+        aria-label="Choose a file to attach"
         accept="application/pdf,image/jpeg,image/png,image/heic,image/heif,image/webp,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="block w-full max-w-xs rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-medium hover:file:bg-slate-200"
       />
@@ -73,10 +74,16 @@ export function AttachmentsUploadForm({
   );
 }
 
+const DELETE_ERROR_MAP: Record<string, string> = {
+  forbidden: "Only an owner or admin can delete attachments.",
+  not_deleted: "That file is already gone. Refresh to see the latest list.",
+};
+
 export function AttachmentRow({
   attachment,
   targetTable,
   targetId,
+  canDelete,
 }: {
   attachment: {
     id: string;
@@ -87,6 +94,7 @@ export function AttachmentRow({
   };
   targetTable: AttachmentTargetTable;
   targetId: string;
+  canDelete: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -110,7 +118,7 @@ export function AttachmentRow({
     startTransition(async () => {
       const result = await removeAttachment(attachment.id, targetTable, targetId);
       if (!result.ok) {
-        setError(result.error);
+        setError(DELETE_ERROR_MAP[result.error] ?? result.error);
         return;
       }
       router.refresh();
@@ -140,14 +148,16 @@ export function AttachmentRow({
           </p>
         ) : null}
       </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        disabled={pending}
-        className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait"
-      >
-        Delete
-      </button>
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={pending}
+          className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait"
+        >
+          Delete
+        </button>
+      ) : null}
     </li>
   );
 }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { enforcePersistent, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 /**
  * Public waitlist signup endpoint.
@@ -26,6 +27,14 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Public, admin-client-backed insert → throttle by IP to block signup spam.
+  const limited = await enforcePersistent(
+    request,
+    "waitlist",
+    DEFAULT_LIMITS.demo_booking,
+  );
+  if (limited) return limited;
+
   const json = await request.json().catch(() => null);
   const parsed = schema.safeParse(json);
   if (!parsed.success) {

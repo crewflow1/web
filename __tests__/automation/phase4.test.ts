@@ -177,11 +177,16 @@ describe("Phase 4 — dispatchAutomation", () => {
   });
 
   it("records one automation_runs row per (rule, event) — ok / failed / skipped", () => {
-    expect(DISPATCHER).toMatch(/insert: \(row: unknown\) =>/);
-    expect(DISPATCHER).toMatch(/status,\s*result,\s*error_message:/);
+    // Was pinned to the literal type signature `insert: (row: unknown) =>`,
+    // which broke when the claim added an onConflict parameter — a change that
+    // STRENGTHENED this very guarantee. Assert the invariant instead: one row
+    // per (rule_id, correlation_id), now enforced by an atomic claim against
+    // the unique constraint rather than by a read-then-insert that could race.
+    expect(DISPATCHER).toMatch(/onConflict: "rule_id,correlation_id"/);
+    expect(DISPATCHER).toMatch(/status,\s*result,/);
   });
 
-  it("never throws — wraps the whole dispatcher in try/catch via recordRun", () => {
+  it("never throws — database errors are logged, not propagated", () => {
     expect(DISPATCHER).toMatch(/console\.error\("\[automation\]/);
   });
 
@@ -197,9 +202,7 @@ describe("Phase 4 — dispatchAutomation", () => {
 
 describe("Phase 4 — /admin/automations page", () => {
   it("is HQ-only (defence in depth)", () => {
-    expect(PAGE).toMatch(/requireUser/);
-    expect(PAGE).toMatch(/isSuperAdminEmail/);
-    expect(PAGE).toMatch(/notFound\(\)/);
+    expect(PAGE).toMatch(/requireHqPage\(\)/);
   });
 
   it("renders the rule catalogue with last-run + 7d counts", () => {

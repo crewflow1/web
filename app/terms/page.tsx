@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Terms of service",
   description:
     "The rules of using CrewFlow. Written for UK construction operators in plain English.",
+  alternates: { canonical: "/terms" },
 };
 
 /**
