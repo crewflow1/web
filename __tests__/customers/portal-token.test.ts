@@ -105,10 +105,13 @@ describe("rotateCustomerPortalToken still works + uses the helper", () => {
     );
   });
 
-  it("rotate action still UPDATEs portal_token + redirects with saved=portal_link", () => {
-    expect(ACTIONS).toMatch(
-      /\.update\(\{ portal_token: token \}/,
-    );
+  it("rotate action UPDATEs portal_token + redirects with saved=portal_link", () => {
+    // Rotation now mints a new token AND resets its expiry/usage state so the
+    // new link is born clean (never-expires, unused) and composes with the
+    // expiry feature — see 20260914000000_portal_token_expiry.
+    expect(ACTIONS).toMatch(/portal_token: token/);
+    expect(ACTIONS).toMatch(/portal_token_expires_at: null/);
+    expect(ACTIONS).toMatch(/portal_token_last_used_at: null/);
     expect(ACTIONS).toMatch(/saved=portal_link/);
   });
 });

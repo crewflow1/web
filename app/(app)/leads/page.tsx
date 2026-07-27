@@ -11,6 +11,7 @@ import {
   type LeadStage,
 } from "@/lib/leads/schema";
 import { LeadCard, type PipelineLead } from "./_card";
+import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 
 /**
  * /leads — kanban pipeline.
@@ -65,8 +66,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (sp.assigned) {
     query = query.eq("assigned_to", sp.assigned);
   }
-  // q applies to service or postcode (cheap LIKE)
-  const q = sp.q?.trim();
+  // q applies to service or postcode (cheap LIKE). Sanitize first:
+  // raw interpolation into a PostgREST `.or()` string lets characters
+  // like `,` `(` `)` `*` break out of the ilike pattern and inject
+  // extra filter branches. sanitizeSearchTerm strips those + wildcards
+  // and returns "" when nothing searchable remains.
+  const q = sanitizeSearchTerm(sp.q);
   if (q) {
     query = query.or(`service.ilike.%${q}%,postcode.ilike.%${q}%`);
   }

@@ -47,6 +47,7 @@ export function SupplierForm({
         name="name"
         label="Supplier name"
         required
+        autoFocus
         defaultValue={defaults?.name}
         error={fieldErrors.name}
       />

@@ -1,9 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { computeActivitySummary } from "@/lib/ai/aggregates";
-import { maybeGenerateSummary } from "@/lib/ai/llm";
-import { buildCacheKey, cacheGet, cacheSet, isKvConfigured } from "@/lib/cache/kv";
-import type { CacheStatus } from "@/lib/ai/types";
+import { resolveInsightNarrative } from "@/server/services/ai-insights";
 
 /**
  * GET /api/ai/activity_summary?window=7
@@ -16,25 +14,19 @@ import type { CacheStatus } from "@/lib/ai/types";
  *     action_counts, daily_volume, key_metrics, stalled_actions
  *   }
  *
- * Phase 6 flow:
- *   1. Compute deterministic metrics (RLS-scoped under user JWT).
- *   2. Build cache key including org + ISO date + window.
- *   3. Cache lookup. If hit → return with cache: "hit".
- *   4. Otherwise call LLM (max 8s). Strip org_id from prompt input.
- *   5. On success → write to KV with 24h TTL → cache: "miss".
- *   6. On LLM failure / no key / KV disabled → summary stays null,
- *      cache: "disabled". Deterministic body is always intact.
+ * Flow:
+ *   1. Compute the deterministic metrics (RLS-scoped under the user JWT) —
+ *      these are the authoritative product output, always intact.
+ *   2. Resolve the prose narrative through the ONE shared funnel
+ *      (`resolveInsightNarrative` → `lib/ai/text` provider abstraction): cache
+ *      lookup, then (on miss) a narrate-only generation, cached + cost-recorded.
+ *   3. On no provider / failure the summary is null and cache "disabled"; the
+ *      deterministic body is unchanged.
  *
- * Privacy:
- *   - org_id is stripped from the LLM prompt input (never reaches
- *     Anthropic/OpenAI). It's part of the KV cache key only — KV is
- *     server-side, token-gated, never exposed to clients.
- *   - All deterministic metrics derive from RLS-scoped queries; no
- *     PII beyond what's already visible to org members.
+ * Privacy: `org_id` is used only in the server-side KV cache key; the generator
+ * strips it before any model sees the payload. Every metric derives from
+ * RLS-scoped queries — no PII beyond what org members already see.
  */
-
-const CACHE_TTL_HOURS = 24;
-const KV_NAMESPACE = "ai:activity";
 
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
@@ -44,32 +36,14 @@ export async function GET(request: NextRequest) {
 
   const payload = await computeActivitySummary(ctx.org.id, windowDays);
 
-  // Cache key includes the day-bucket so summaries roll over at UTC midnight.
-  const today = new Date().toISOString().slice(0, 10);
-  const cacheKey = buildCacheKey([KV_NAMESPACE, ctx.org.id, today, String(windowDays)]);
-
-  if (isKvConfigured()) {
-    const cached = await cacheGet<string>(cacheKey);
-    if (cached) {
-      payload.summary = cached;
-      payload.cache = "hit" as CacheStatus;
-      return NextResponse.json(payload);
-    }
-  }
-
-  // Strip org_id before the LLM sees the prompt input.
-  const { org_id: _strippedOrgId, ...promptInput } = payload;
-  void _strippedOrgId;
-  const summary = await maybeGenerateSummary("activity", promptInput);
-
-  if (summary) {
-    payload.summary = summary;
-    const written = await cacheSet(cacheKey, summary, CACHE_TTL_HOURS);
-    payload.cache = (written ? "miss" : "disabled") as CacheStatus;
-  } else {
-    payload.summary = null;
-    payload.cache = "disabled" as CacheStatus;
-  }
+  const { summary, cache } = await resolveInsightNarrative({
+    orgId: ctx.org.id,
+    kind: "activity",
+    windowDays,
+    payload,
+  });
+  payload.summary = summary;
+  payload.cache = cache;
 
   return NextResponse.json(payload);
 }

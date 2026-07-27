@@ -25,6 +25,54 @@ export const addPaymentSchema = z.object({
 });
 export type AddPaymentInput = z.infer<typeof addPaymentSchema>;
 
+// ---------------------------------------------------------------------------
+// Payment allocation — one real-world receipt split across several invoices.
+// The header is a `payments` row; each allocation becomes an `invoice_payments`
+// row carrying that payment_id. The DB (guard trigger + composite FKs) is the
+// authority; this schema is the friendly first line of validation.
+// ---------------------------------------------------------------------------
+
+export const PAYMENT_METHODS = [
+  "bank_transfer",
+  "card",
+  "cash",
+  "cheque",
+  "other",
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  bank_transfer: "Bank transfer",
+  card: "Card",
+  cash: "Cash",
+  cheque: "Cheque",
+  other: "Other",
+};
+
+export const allocationLineSchema = z.object({
+  invoice_id: z.string().uuid("Pick a valid invoice"),
+  amount: z.coerce
+    .number()
+    .positive("Allocation must be greater than zero")
+    .max(10_000_000),
+});
+export type AllocationLineInput = z.infer<typeof allocationLineSchema>;
+
+export const recordPaymentSchema = z.object({
+  amount: z.coerce
+    .number()
+    .positive("Amount must be greater than zero")
+    .max(10_000_000),
+  paid_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+  method: z.enum(PAYMENT_METHODS).default("bank_transfer"),
+  reference: optionalString(200),
+  notes: optionalString(2000),
+  allocations: z
+    .array(allocationLineSchema)
+    .min(1, "Allocate the payment to at least one invoice"),
+});
+export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
+
 // Bank reconciliation
 export const BANK_MATCH_STATUSES = [
   "unmatched",

@@ -1,6 +1,11 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import {
+  OVERDUE_COLLECTABLE_STATUSES,
+  invoiceBusinessToday,
+} from "@/lib/invoices/overdue";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
+import type { OnboardingSnapshot } from "@/lib/onboarding/checklist";
 import type {
   MilestoneId,
   NudgeId,
@@ -29,6 +34,16 @@ const DISMISSED_NUDGES_KEY = "dismissed_nudges" as const;
 
 export async function buildRetentionSnapshot(
   orgId: string,
+  opts?: {
+    /**
+     * Pre-built onboarding snapshot (or its in-flight promise) to reuse
+     * instead of building a fresh one. The dashboard already builds this
+     * for its SetupChecklist card, so passing it in avoids a duplicate
+     * org-row fetch + 5 count round-trips per page load. When omitted
+     * (e.g. the AI-question path) we build our own as before.
+     */
+    onboarding?: OnboardingSnapshot | Promise<OnboardingSnapshot>;
+  },
 ): Promise<RetentionSignals> {
   const supabase = await createClient();
   const nowMs = Date.now();
@@ -36,8 +51,9 @@ export async function buildRetentionSnapshot(
   const sevenDaysAgo = new Date(nowMs - SEVEN_DAYS_MS).toISOString();
 
   // Reuse the onboarding snapshot wholesale — gives us org + counts +
-  // dismissed + timestamps in one call.
-  const onboarding = await buildOnboardingSnapshot(orgId);
+  // dismissed + timestamps in one call. Awaiting a passed-in promise is
+  // safe: promises memoise, so a shared promise runs the work only once.
+  const onboarding = await (opts?.onboarding ?? buildOnboardingSnapshot(orgId));
 
   // ------------------------------------------------------------------
   // Parallel batched reads. All RLS-scoped via user JWT.
@@ -86,11 +102,28 @@ export async function buildRetentionSnapshot(
       .select("total, status")
       .eq("org_id", orgId)
       .in("status", ["sent", "paid", "awaiting_payment", "partially_paid", "overdue"]),
+    // Overdue count — DERIVED, matching lib/invoices/overdue.ts exactly.
+    //
+    // This previously filtered `.eq("status", "overdue")`, which counted only
+    // invoices someone had manually marked. Nothing kept that value current, so
+    // the figure was effectively always 0 — and it feeds `signals.ts`
+    // (`score -= min(overdue * 4, 20)`) and ai-question's "No overdue invoices
+    // right now." Both were therefore reporting on a number that never moved.
+    //
+    // BEHAVIOUR CHANGE, called out deliberately: this now returns real counts,
+    // so health scores can drop by up to 20 points where overdue invoices
+    // genuinely exist. That is the correct figure finally being counted, not a
+    // regression — and suppressing it to preserve the old score would be
+    // preserving a bug. See the PR report.
+    //
+    // The predicate is expressed at the DB (status ∈ collectable AND due_date <
+    // today) so it selects exactly the population isInvoiceOverdue() accepts.
     supabase
       .from("invoices")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
-      .eq("status", "overdue"),
+      .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
+      .lt("due_date", invoiceBusinessToday()),
     // Phase 2 — open support tickets count toward health drag.
     // "open" = anything not 'resolved' / 'closed'. Cast past the
     // generated supabase types since `support_tickets` is not yet

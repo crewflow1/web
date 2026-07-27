@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { defaultPeriod } from "@/lib/payroll/compute";
 import { createPayrollRun } from "./actions";
 import { CreateRunForm } from "./_create-run-form";
+import { EmptyState } from "../_components/empty-state";
 
 /**
  * Payroll overview — admins only.
@@ -119,7 +120,11 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
           <h2 className="text-base font-semibold text-slate-900">Run history</h2>
         </header>
         {(runs ?? []).length === 0 ? (
-          <p className="p-6 text-sm text-slate-500">No payroll runs yet.</p>
+          <EmptyState
+            icon="📆"
+            title="No payroll runs yet"
+            body="Start a weekly run above to calculate gross-to-net pay and export it for payment."
+          />
         ) : (
           <ul className="divide-y divide-slate-100">
             {(runs ?? []).map((r) => {

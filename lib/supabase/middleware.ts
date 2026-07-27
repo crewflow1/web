@@ -98,6 +98,14 @@ export async function updateSession(request: NextRequest) {
   const isPublicRoute =
     pathname === "/" ||
     pathname.startsWith("/pricing") ||
+    // Public SEO / marketing surface — see app/(marketing) + app/robots.ts.
+    // These MUST stay public so visitors and crawlers reach them, not /login.
+    pathname.startsWith("/features") ||
+    pathname.startsWith("/compare") ||
+    pathname.startsWith("/industries") ||
+    pathname.startsWith("/construction-software") ||
+    pathname.startsWith("/tools") ||
+    pathname.startsWith("/blog") ||
     pathname.startsWith("/for/") ||
     pathname.startsWith("/privacy") ||
     pathname.startsWith("/terms") ||

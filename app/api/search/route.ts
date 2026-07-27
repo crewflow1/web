@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 
 export const runtime = "nodejs";
 
@@ -15,7 +16,7 @@ export const runtime = "nodejs";
  */
 
 type Hit = {
-  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff";
+  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff" | "risk_assessment" | "permit";
   id: string;
   title: string;
   subtitle: string | null;
@@ -30,10 +31,25 @@ export async function GET(req: NextRequest) {
   if (q.length < 2) {
     return NextResponse.json({ hits: [] satisfies Hit[] });
   }
-  const like = `%${q.replace(/[%_]/g, "")}%`;
+  // Neutralise control + PostgREST structural/wildcard chars (% _ , ( ) *)
+  // before building the .or() filter — otherwise a crafted term like
+  // `x,email.ilike.*` injects extra OR branches or breaks the filter grammar
+  // (broadened matches / 400s). RLS keeps results intra-org, but the
+  // over-matching is still a defect. Shared with the customers list via
+  // lib/search/sanitize.ts (sanitizeSearchTerm).
+  const safe = sanitizeSearchTerm(q);
+  if (safe.length === 0) {
+    return NextResponse.json({ hits: [] satisfies Hit[] });
+  }
+  const like = `%${safe}%`;
+
+  // risk_assessments + permits_to_work post-date the generated types → loose cast.
+  const loose = supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { or: (f: string) => { limit: (n: number) => Promise<{ data: Array<Record<string, string | null>> | null }> } } };
+  };
 
   // Fire all queries in parallel under RLS.
-  const [customers, jobs, quotes, invoices, leads, memberships] = await Promise.all([
+  const [customers, jobs, quotes, invoices, leads, memberships, rams, permits] = await Promise.all([
     supabase
       .from("customers")
       .select("id, name, email, phone")
@@ -63,6 +79,10 @@ export async function GET(req: NextRequest) {
       .from("memberships")
       .select("user_id, role, user:users ( id, full_name, email )")
       .limit(40),
+    // RA number (reference) + RAMS title.
+    loose.from("risk_assessments").select("id, reference, title, status").or(`reference.ilike.${like},title.ilike.${like}`).limit(8),
+    // Permit number (reference) + title.
+    loose.from("permits_to_work").select("id, reference, title, status").or(`reference.ilike.${like},title.ilike.${like}`).limit(8),
   ]);
 
   const hits: Hit[] = [];
@@ -136,6 +156,24 @@ export async function GET(req: NextRequest) {
       });
       if (hits.filter((h) => h.type === "staff").length >= 8) break;
     }
+  }
+  for (const r of rams.data ?? []) {
+    hits.push({
+      type: "risk_assessment",
+      id: String(r.id),
+      title: r.reference ?? r.title ?? "RAMS",
+      subtitle: `RAMS · ${r.status}${r.reference ? ` · ${r.title}` : ""}`,
+      href: `/health-safety/${r.id}`,
+    });
+  }
+  for (const p of permits.data ?? []) {
+    hits.push({
+      type: "permit",
+      id: String(p.id),
+      title: p.reference ?? p.title ?? "Permit",
+      subtitle: `Permit · ${p.status}${p.reference ? ` · ${p.title}` : ""}`,
+      href: `/health-safety/permits/${p.id}`,
+    });
   }
 
   return NextResponse.json({ hits });

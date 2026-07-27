@@ -42,9 +42,13 @@ export default async function CheckEmailPage({
         Click the link in the email to sign in.
       </p>
       <p className="text-xs text-slate-500">
-        The link expires in 15 minutes. Most arrive within a minute — check
-        your spam folder if not.
+        The link expires in 15 minutes. Most arrive within a minute.
       </p>
+      <div className="mx-auto max-w-sm rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900">
+        Don&apos;t see it? Check your <strong>spam or junk</strong> folder. If
+        it&apos;s there, mark it &ldquo;not spam&rdquo; so future sign-in links
+        land in your inbox.
+      </div>
 
       {email ? (
         <form

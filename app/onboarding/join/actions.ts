@@ -8,8 +8,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
   org_id: z.string().uuid(),
-  role: z.enum(["admin", "staff"]),
   full_name: z.string().trim().min(1).max(120),
+  // NOTE: `role` is intentionally NOT parsed from the form. The membership
+  // role is derived below from the server-set invite metadata, never from
+  // client-supplied input — see the SECURITY note in acceptOrgInvite.
 });
 
 /**
@@ -21,13 +23,12 @@ export async function acceptOrgInvite(formData: FormData) {
   const user = await requireUser();
   const parsed = schema.safeParse({
     org_id: formData.get("org_id"),
-    role: formData.get("role"),
     full_name: formData.get("full_name"),
   });
   if (!parsed.success) {
     redirect("/onboarding/join?error=invalid_input");
   }
-  const { org_id, role, full_name } = parsed.data;
+  const { org_id, full_name } = parsed.data;
 
   // Sanity-check the metadata against the URL form. Don't trust the form
   // alone — only let users join orgs they were actually invited to.
@@ -38,6 +39,15 @@ export async function acceptOrgInvite(formData: FormData) {
   if (meta.invited_org_id !== org_id) {
     redirect("/onboarding/join?error=invite_mismatch");
   }
+
+  // SECURITY: the membership role is taken from the server-set invite metadata
+  // (user_metadata.invited_role), NEVER the hidden `role` form field. That
+  // field is client-controllable, so trusting it let a staff invitee POST
+  // role=admin and self-promote past the role they were actually invited as —
+  // the invited_org_id check above still passed. Mirror the page's derivation
+  // (app/onboarding/join/page.tsx); owner is never grantable via invite-accept
+  // (bootstrap-only, same rule as inviteStaff in app/(app)/staff/actions.ts).
+  const role = meta.invited_role === "admin" ? "admin" : "staff";
 
   const admin = createAdminClient();
 

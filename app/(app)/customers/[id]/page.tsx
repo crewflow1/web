@@ -149,11 +149,13 @@ export default async function EditCustomerPage({
   const errorMessage = error
     ? error === "delete_failed"
       ? "Couldn't delete. Only admins/owners can delete customers."
-      : error === "portal_token_failed"
-        ? "Couldn't generate the portal link. Try again."
-        : error === "not_allowed"
-          ? "You don't have permission for that action."
-          : decodeURIComponent(error)
+      : error === "customer_has_records"
+        ? "Can't delete this customer yet — they still have linked quotes, jobs, or invoices. Remove or reassign those first, then try again."
+        : error === "portal_token_failed"
+          ? "Couldn't generate the portal link. Try again."
+          : error === "not_allowed"
+            ? "You don't have permission for that action."
+            : decodeURIComponent(error)
     : null;
 
   const portalSaved = saved === "portal_link";
@@ -180,6 +182,12 @@ export default async function EditCustomerPage({
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
+          <Link
+            href="/customers"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Customers
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
           <p className="mt-1 text-sm text-slate-600">
             Customer since {customer.created_at.slice(0, 10)}
@@ -207,6 +215,7 @@ export default async function EditCustomerPage({
         title="Quotes"
         href={`/quotes?customer=${id}`}
         empty="No quotes yet."
+        emptyCta={{ label: "Create a quote", href: `/quotes/new?customer=${id}` }}
         items={((quotesRes.data ?? []) as Array<{ id: string; number: string; status: string; total: number | string | null }>).map((q) => ({
           id: q.id,
           left: q.number,
@@ -221,6 +230,7 @@ export default async function EditCustomerPage({
         title="Jobs"
         href={`/jobs?customer=${id}`}
         empty="No jobs yet."
+        emptyCta={{ label: "Add a job", href: `/jobs/new?customer=${id}` }}
         items={((jobsRes.data ?? []) as Array<{ id: string; status: string; scheduled_date: string | null; created_at: string }>).map((j) => ({
           id: j.id,
           left: `Job · ${j.id.slice(0, 8)}`,
@@ -451,11 +461,14 @@ function SummaryCard({
   href,
   items,
   empty,
+  emptyCta,
 }: {
   title: string;
   href: string;
   items: Array<{ id: string; left: string; mid: string; right: string; href: string }>;
   empty: string;
+  /** Optional primary action shown in the empty state — turns a dead-end into a next step. */
+  emptyCta?: { label: string; href: string };
 }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -466,7 +479,17 @@ function SummaryCard({
         </Link>
       </header>
       {items.length === 0 ? (
-        <p className="p-6 text-sm text-slate-500">{empty}</p>
+        <div className="p-6">
+          <p className="text-sm text-slate-500">{empty}</p>
+          {emptyCta ? (
+            <Link
+              href={emptyCta.href}
+              className="mt-3 inline-flex items-center rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              {emptyCta.label}
+            </Link>
+          ) : null}
+        </div>
       ) : (
         <ul className="divide-y divide-slate-100">
           {items.slice(0, 5).map((it) => (

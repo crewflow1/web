@@ -1,0 +1,329 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
+import { createClient } from "@/lib/supabase/server";
+import { requireOrgContext } from "@/server/auth/session";
+import { recordAdminActivity } from "@/server/services/hq-audit";
+import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
+import {
+  createSnagSchema,
+  reassignSnagSchema,
+  resolvedAtForTransition,
+  setSnagPrioritySchema,
+  snagIdSchema,
+  updateSnagStatusSchema,
+  type SnagStatus,
+} from "@/lib/snags/schema";
+
+/**
+ * Snagging server actions.
+ *
+ * `snags` is newer than the generated Supabase types, so every query is
+ * cast through a minimal precise shape — the same idiom compliance_documents
+ * uses (app/(app)/compliance/actions.ts). All writes go through the tenant
+ * (user-JWT) client so RLS scopes them; the service-role client is never used
+ * here (snags carry no storage of their own — photos ride tenant_attachments).
+ *
+ * Every mutation is count-gated: an update/delete that RLS turns into a no-op
+ * returns count 0 and we surface "not found" rather than a false success.
+ */
+
+type InsertChain = {
+  insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
+};
+type SelectStatusChain = {
+  select: (cols: string) => {
+    eq: (k: string, v: unknown) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: { status: string; title: string | null } | null;
+        }>;
+      };
+    };
+  };
+};
+type UpdateChain = {
+  update: (
+    patch: unknown,
+    opts?: { count?: string },
+  ) => {
+    eq: (k: string, v: unknown) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => Promise<{ error: { message: string } | null; count: number | null }>;
+    };
+  };
+};
+type DeleteChain = {
+  delete: (opts?: { count?: string }) => {
+    eq: (k: string, v: unknown) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => Promise<{ error: { message: string } | null; count: number | null }>;
+    };
+  };
+};
+type AttachmentIdsChain = {
+  select: (cols: string) => {
+    eq: (k: string, v: unknown) => {
+      eq: (k: string, v: unknown) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => Promise<{ data: { id: string }[] | null }>;
+      };
+    };
+  };
+};
+
+export async function createSnag(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+
+  const parsed = createSnagSchema.safeParse({
+    title: formData.get("title") ?? "",
+    description: formData.get("description") ?? "",
+    location: formData.get("location") ?? "",
+    trade: formData.get("trade") ?? "",
+    priority: formData.get("priority") ?? "medium",
+    job_id: formData.get("job_id") ?? "",
+    assigned_to: formData.get("assigned_to") ?? "",
+    due_date: formData.get("due_date") ?? "",
+  });
+  if (!parsed.success) {
+    const issues = parsed.error.flatten().fieldErrors;
+    const firstError = Object.values(issues).flat()[0] ?? "validation";
+    redirect(`/snags/new?error=${encodeURIComponent(firstError)}`);
+  }
+  const data = parsed.success ? parsed.data : null;
+
+  const id = randomUUID();
+  const tenant = await createClient();
+  const { error } = await (
+    tenant.from("snags" as never) as unknown as InsertChain
+  ).insert({
+    id,
+    org_id: ctx.org.id,
+    title: data?.title,
+    description: data?.description ?? null,
+    location: data?.location ?? null,
+    trade: data?.trade ?? null,
+    priority: data?.priority ?? "medium",
+    status: "open",
+    job_id: data?.job_id ?? null,
+    assigned_to: data?.assigned_to ?? null,
+    reported_by: user.id,
+    due_date: data?.due_date ?? null,
+  });
+  if (error) {
+    console.error("[snags] insert failed", error);
+    redirect(`/snags/new?error=record_failed`);
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.created",
+    targetTable: "snags",
+    targetId: id,
+    metadata: {
+      title: data?.title,
+      priority: data?.priority ?? "medium",
+      job_id: data?.job_id ?? null,
+    },
+  });
+
+  revalidatePath("/snags");
+  redirect(`/snags/${id}?saved=created`);
+}
+
+export async function updateSnagStatus(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const parsed = updateSnagStatusSchema.safeParse({
+    id: formData.get("id") ?? "",
+    status: formData.get("status") ?? "",
+  });
+  if (!parsed.success) redirect(`/snags?error=bad_status`);
+  const { id, status } = parsed.success
+    ? parsed.data
+    : { id: "", status: "open" as SnagStatus };
+
+  const tenant = await createClient();
+
+  // Read the current status (org-scoped) so we can derive resolved_at.
+  const { data: row } = await (
+    tenant.from("snags" as never) as unknown as SelectStatusChain
+  )
+    .select("status, title")
+    .eq("id", id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (!row) redirect(`/snags?error=not_found`);
+
+  const resolved = resolvedAtForTransition(
+    row.status as SnagStatus,
+    status,
+    new Date(),
+  );
+  const patch: Record<string, unknown> = { status };
+  if (resolved !== undefined) {
+    patch.resolved_at = resolved ? resolved.toISOString() : null;
+  }
+
+  const { error, count } = await (
+    tenant.from("snags" as never) as unknown as UpdateChain
+  )
+    .update(patch, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[snags] status update failed", error);
+    redirect(`/snags/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/snags?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.status_changed",
+    targetTable: "snags",
+    targetId: id,
+    metadata: { from: row.status, to: status, title: row.title ?? null },
+  });
+
+  revalidatePath("/snags");
+  revalidatePath(`/snags/${id}`);
+  redirect(`/snags/${id}?saved=status`);
+}
+
+export async function reassignSnag(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const parsed = reassignSnagSchema.safeParse({
+    id: formData.get("id") ?? "",
+    assigned_to: formData.get("assigned_to") ?? "",
+  });
+  if (!parsed.success) redirect(`/snags?error=bad_assignee`);
+  const id = parsed.success ? parsed.data.id : "";
+  const assignedTo = parsed.success ? (parsed.data.assigned_to ?? null) : null;
+
+  const tenant = await createClient();
+  const { error, count } = await (
+    tenant.from("snags" as never) as unknown as UpdateChain
+  )
+    .update({ assigned_to: assignedTo }, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[snags] reassign failed", error);
+    redirect(`/snags/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/snags?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.reassigned",
+    targetTable: "snags",
+    targetId: id,
+    metadata: { assigned_to: assignedTo },
+  });
+
+  revalidatePath(`/snags/${id}`);
+  redirect(`/snags/${id}?saved=assigned`);
+}
+
+export async function setSnagPriority(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const parsed = setSnagPrioritySchema.safeParse({
+    id: formData.get("id") ?? "",
+    priority: formData.get("priority") ?? "",
+  });
+  if (!parsed.success) redirect(`/snags?error=bad_priority`);
+  const { id, priority } = parsed.success
+    ? parsed.data
+    : { id: "", priority: "medium" as const };
+
+  const tenant = await createClient();
+  const { error, count } = await (
+    tenant.from("snags" as never) as unknown as UpdateChain
+  )
+    .update({ priority }, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[snags] priority update failed", error);
+    redirect(`/snags/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/snags?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.priority_changed",
+    targetTable: "snags",
+    targetId: id,
+    metadata: { priority },
+  });
+
+  revalidatePath(`/snags/${id}`);
+  redirect(`/snags/${id}?saved=priority`);
+}
+
+export async function deleteSnag(id: string): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!snagIdSchema.safeParse(id).success) redirect(`/snags?error=bad_id`);
+
+  // Hard delete is admin-only. The RLS delete policy is is_org_admin(org_id);
+  // re-enforce in code so a member gets a deterministic "forbidden" and we
+  // never even attempt the attachment cleanup below for a non-admin. Mirrors
+  // the compliance/tenant-attachments delete gate.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect(`/snags?error=forbidden`);
+  }
+
+  const tenant = await createClient();
+
+  // Best-effort: remove this snag's photos first so we don't orphan them in the
+  // tenant_attachments bucket. Reuses the universal delete (which re-checks the
+  // admin role + count-gates each removal) rather than duplicating storage code.
+  const { data: atts } = await (
+    tenant.from("tenant_attachments" as never) as unknown as AttachmentIdsChain
+  )
+    .select("id")
+    .eq("target_table", "snags")
+    .eq("target_id", id)
+    .eq("org_id", ctx.org.id);
+  for (const a of atts ?? []) {
+    await deleteTenantAttachment(a.id).catch(() => undefined);
+  }
+
+  const { error, count } = await (
+    tenant.from("snags" as never) as unknown as DeleteChain
+  )
+    .delete({ count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[snags] delete failed", error);
+    redirect(`/snags?error=delete_failed`);
+  }
+  if (!count) redirect(`/snags?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.deleted",
+    targetTable: "snags",
+    targetId: id,
+    metadata: { org_id: ctx.org.id },
+  });
+
+  revalidatePath("/snags");
+  redirect(`/snags?saved=deleted`);
+}

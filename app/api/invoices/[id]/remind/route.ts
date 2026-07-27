@@ -41,6 +41,13 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .maybeSingle();
   if (!inv) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  // Defence in depth: the read above is RLS-scoped, but assert org ownership
+  // explicitly so a reminder can never be triggered for another org's invoice
+  // even if the invoices SELECT policy is ever loosened. 404 (not 403) avoids
+  // leaking whether the id exists in another tenant.
+  if (inv.org_id !== ctx.org.id) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
   if (inv.status === "paid") {
     return NextResponse.json(
       { error: "already_paid", detail: "This invoice is marked paid. No reminder sent." },
@@ -102,6 +109,5 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     });
   }
 
-  void ctx;
   return NextResponse.json({ sent: true, email_id: result.emailId, to: result.to });
 }

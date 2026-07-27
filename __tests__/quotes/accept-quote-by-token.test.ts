@@ -324,17 +324,21 @@ describe("acceptQuoteAsOwner", () => {
   } as unknown as FormData;
 
   it("creates a job, links the invoice to it, and sets a net-14 due date (BUG-03 + BUG-04)", async () => {
-    // 1. update quote → accepted (returns the quote row via .select().single())
+    // 1. idempotency pre-read: quote not yet accepted → no short-circuit
+    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
+    // 2. update quote → accepted (returns the quote row via .select().single())
     mockAdmin.enqueue("update", { data: SAMPLE_QUOTE, error: null });
-    // 2. insert job (auto-create, returns id via .select().single())
+    // 3. insert job (auto-create, returns id via .select().single())
     mockAdmin.enqueue("insert", { data: { id: "owner-job-1" }, error: null });
-    // 3. update quote with the new job_id (backlink)
+    // 4. update quote with the new job_id (backlink)
     mockAdmin.enqueue("update", { data: null, error: null });
-    // 4. next_invoice_number rpc
+    // 5. existing-invoice lookup for this quote → none yet
+    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
+    // 6. next_invoice_number rpc
     mockAdmin.enqueue("rpc", { data: "INV-0009", error: null });
-    // 5. insert invoice
+    // 7. insert invoice
     mockAdmin.enqueue("insert", { data: { id: "owner-invoice-1" }, error: null });
-    // 6. lead lookup (no linked lead)
+    // 8. lead lookup (no linked lead)
     mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
 
     await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
@@ -381,11 +385,15 @@ describe("acceptQuoteAsOwner", () => {
   });
 
   it("does NOT create a second job for a variation, but still links the invoice to the existing job", async () => {
+    // idempotency pre-read: not yet accepted → no short-circuit
+    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
     mockAdmin.enqueue("update", {
       data: { ...SAMPLE_QUOTE, job_id: "existing-job-9", variation_number: 2 },
       error: null,
     });
     // No job insert queued — variations reuse the parent job.
+    // existing-invoice lookup → none yet
+    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
     mockAdmin.enqueue("rpc", { data: "INV-0010", error: null });
     mockAdmin.enqueue("insert", { data: { id: "owner-invoice-2" }, error: null });
     mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
@@ -408,6 +416,56 @@ describe("acceptQuoteAsOwner", () => {
     );
     expect(invoiceInserts).toHaveLength(1);
     expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-9" });
+  });
+
+  it("is idempotent: re-accepting an already-accepted quote posts NO second invoice, job, or email", async () => {
+    // Owner clicks accept again (or accepts a quote the customer already
+    // accepted via the portal). The pre-read sees status=accepted.
+    mockAdmin.enqueue("maybeSingle", { data: { status: "accepted" }, error: null });
+    // In production redirect() throws here and we stop. The test mock makes
+    // redirect a no-op, so execution falls through — which lets us prove the
+    // SECOND line of defence (the existing-invoice guard) also holds: the
+    // re-stamp UPDATE returns a quote that already has a job + invoice.
+    mockAdmin.enqueue("update", {
+      data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job-x" },
+      error: null,
+    });
+    // existing-invoice lookup → an invoice already exists for this quote
+    mockAdmin.enqueue("maybeSingle", { data: { id: "existing-inv-x" }, error: null });
+    // lead lookup
+    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+
+    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
+
+    // No job insert (job_id already set) AND no invoice insert (reused).
+    expect(mockAdmin.inserts).toHaveLength(0);
+    // No duplicate email — the customer already got the invoice on first accept.
+    expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses an existing invoice for the quote rather than inserting a duplicate", async () => {
+    // Status guard bypassed (quote not flagged accepted yet) but an invoice
+    // already exists — e.g. a concurrent submit that raced past the pre-read.
+    // The existing-invoice guard must still prevent a duplicate insert.
+    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
+    mockAdmin.enqueue("update", {
+      data: { ...SAMPLE_QUOTE, job_id: "existing-job-y" },
+      error: null,
+    });
+    // existing-invoice lookup → found
+    mockAdmin.enqueue("maybeSingle", { data: { id: "existing-inv-y" }, error: null });
+    // lead lookup
+    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+
+    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
+
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { quote_id: string } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts).toHaveLength(0);
+    // No re-email when an invoice is reused.
+    expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
 });
 

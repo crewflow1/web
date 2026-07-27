@@ -75,6 +75,43 @@ export function SkeletonTable({
   );
 }
 
+/**
+ * A DETAIL-page skeleton — a header + primary action, a main column of content cards, and a side
+ * summary card. Drop into `loading.tsx` for `/[id]` detail routes so a drill-down paints instantly
+ * (no freeze-on-the-old-page) and every detail route feels identically fast.
+ */
+export function SkeletonDetail({ cards = 3 }: { cards?: number }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <SkeletonHeader />
+        <Skeleton className="h-9 w-28 shrink-0" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          {Array.from({ length: cards }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="mt-3 h-4 w-full" />
+              <Skeleton className="mt-2 h-4 w-5/6" />
+              <Skeleton className="mt-2 h-4 w-2/3" />
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="mt-3 h-8 w-28" />
+          <Skeleton className="mt-4 h-9 w-full" />
+          <Skeleton className="mt-2 h-9 w-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** A simple header (title + subtitle) skeleton — drop above the table skeleton. */
 export function SkeletonHeader() {
   return (

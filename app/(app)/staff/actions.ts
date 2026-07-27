@@ -5,6 +5,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  sendStaffInvite,
+  type StaffInviteMetadata,
+} from "@/server/services/staff-invite";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   updateStaffProfileSchema,
@@ -117,28 +121,28 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
       }
     : null;
 
-  // Case A — brand-new email. Send a magic-link with metadata so
-  // /onboarding/join can hydrate the profile after they click.
+  // Case A — brand-new email. Send a branded magic-link (via Resend) with
+  // metadata so /onboarding/join can hydrate the profile after they click.
+  // generateLink + verifyOtp (not Supabase's PKCE-locked invite email) so
+  // the link works cross-device — see server/services/staff-invite.ts.
   if (!existing) {
-    const admin = createAdminClient();
-    try {
-      await admin.auth.admin.inviteUserByEmail(data.email, {
-        data: {
-          invited_org_id: ctx.org.id,
-          invited_role: data.role,
-          invited_full_name: data.full_name ?? null,
-          invited_phone: data.phone ?? null,
-          invited_employment_type: data.employment_type ?? null,
-          invited_hourly_pay: data.hourly_pay ?? null,
-          invited_emergency_contact: emergencyContact,
-          source: "staff_invite",
-        },
-        redirectTo: process.env.NEXT_PUBLIC_APP_URL
-          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${data.role}`
-          : undefined,
-      });
-    } catch (e) {
-      console.error("[staff] magic-link invite failed", e);
+    const result = await sendStaffInvite({
+      email: data.email,
+      fullName: data.full_name ?? null,
+      orgName: ctx.org.name ?? "your team",
+      metadata: {
+        invited_org_id: ctx.org.id,
+        invited_role: data.role,
+        invited_full_name: data.full_name ?? null,
+        invited_phone: data.phone ?? null,
+        invited_employment_type: data.employment_type ?? null,
+        invited_hourly_pay: data.hourly_pay ?? null,
+        invited_emergency_contact: emergencyContact,
+        source: "staff_invite",
+      },
+    });
+    if (!result.ok) {
+      console.error("[staff] magic-link invite failed", result.reason);
       return {
         ok: false,
         error: "Couldn't send the invite email. Check the address and try again.",
@@ -243,21 +247,36 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
     return { ok: false, error: "That person has already joined this org." };
   }
 
-  try {
-    // Re-use the original invite metadata so the accept flow hydrates the
-    // same profile pre-fill. inviteUserByEmail re-sends the email for an
-    // existing UNCONFIRMED user (the email_confirmed_at guard above means
-    // we never hit the "already registered" path for confirmed accounts).
-    await admin.auth.admin.inviteUserByEmail(target, {
-      data: meta,
-      redirectTo: process.env.NEXT_PUBLIC_APP_URL
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=${
-            typeof meta.invited_role === "string" ? meta.invited_role : "staff"
-          }`
-        : undefined,
-    });
-  } catch (e) {
-    console.error("[staff] resend invite failed", e);
+  // Re-use the original invite metadata so the accept flow hydrates the
+  // same profile pre-fill. sendStaffInvite's already-exists path refreshes
+  // the metadata on the existing UNCONFIRMED user and re-sends a fresh
+  // branded magic link (the email_confirmed_at guard above means we never
+  // resend to a confirmed/joined account).
+  const metadata: StaffInviteMetadata = {
+    invited_org_id: ctx.org.id,
+    invited_role: typeof meta.invited_role === "string" ? meta.invited_role : "staff",
+    invited_full_name:
+      typeof meta.invited_full_name === "string" ? meta.invited_full_name : null,
+    invited_phone: typeof meta.invited_phone === "string" ? meta.invited_phone : null,
+    invited_employment_type:
+      typeof meta.invited_employment_type === "string"
+        ? meta.invited_employment_type
+        : null,
+    invited_hourly_pay:
+      typeof meta.invited_hourly_pay === "number" ? meta.invited_hourly_pay : null,
+    invited_emergency_contact:
+      (meta.invited_emergency_contact as StaffInviteMetadata["invited_emergency_contact"]) ??
+      null,
+    source: "staff_invite",
+  };
+  const result = await sendStaffInvite({
+    email: target,
+    fullName: metadata.invited_full_name,
+    orgName: ctx.org.name ?? "your team",
+    metadata,
+  });
+  if (!result.ok) {
+    console.error("[staff] resend invite failed", result.reason);
     return { ok: false, error: "Couldn't resend the invite email. Try again." };
   }
 
