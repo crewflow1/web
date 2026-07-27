@@ -132,7 +132,7 @@ export function AttachmentRow({
           type="button"
           onClick={onOpen}
           disabled={pending}
-          className="truncate text-left font-medium text-slate-900 hover:text-slate-700 disabled:cursor-wait"
+          className="max-w-full truncate text-left font-medium text-slate-900 hover:text-slate-700 disabled:cursor-wait"
         >
           {attachment.filename}
         </button>
