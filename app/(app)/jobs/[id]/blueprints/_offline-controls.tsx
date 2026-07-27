@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { put, getByVersion, list, remove, isOfflineSupported, type OfflineBlueprintMeta } from "@/lib/blueprints/offline-store";
 
 /**
@@ -21,7 +20,6 @@ type Identity = { userId: string; orgId: string } | null;
 type State = "checking" | "not-cached" | "downloading" | "available" | "stale" | "removing" | "error";
 
 export function OfflineControls({ drawing, identity }: { drawing: Drawing; identity: Identity }) {
-  const router = useRouter();
   const [state, setState] = useState<State>("checking");
   const [cached, setCached] = useState<OfflineBlueprintMeta | null>(null); // any cached revision of this drawing
   const [error, setError] = useState<string>("");
@@ -70,9 +68,10 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
         // (1) CLAIM FIRST — before warming anything. clients.claim() only routes
         // FUTURE fetches through the SW, so any asset fetched while this page is
         // still uncontrolled is silently NEVER cached. The previous version fired
-        // router.prefetch("/offline") *before* this wait and never awaited it, so on
+        // that prefetch call *before* this wait and never awaited it, so on
         // a first install the shell's own chunk regularly escaped the cache — the
         // page then served offline but could never HYDRATE ("Checking…" forever).
+        // (The old call was a fire-and-forget Next router prefetch of the shell route.)
         let controlled = false;
         if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
           await Promise.race([navigator.serviceWorker.ready, new Promise((res) => setTimeout(res, 4000))]);
@@ -89,8 +88,8 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
         // tags (the old approach) can only ever cache the blueprints route's chunks —
         // it structurally cannot cover `/offline`'s own page chunk, which is exactly
         // what hydration needs. Instead fetch the shell document and every
-        // /_next/static asset it references. router.prefetch() returns nothing to
-        // await, so it can never be sequenced correctly; a real fetch can.
+        // /_next/static asset it references. A Next router prefetch returns nothing
+        // to await, so it can never be sequenced correctly; a real fetch can.
         const shellHtml = await fetch("/offline", { credentials: "same-origin" }).then((r) => r.text());
         const shellAssets = [
           ...new Set(
@@ -117,7 +116,7 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
     } catch {
       setError("Download failed — check your connection."); setState("error");
     }
-  }, [identity, drawing, refresh, router]);
+  }, [identity, drawing, refresh]);
 
   const removeDownload = useCallback(async (versionId: string) => {
     if (!identity) return;
