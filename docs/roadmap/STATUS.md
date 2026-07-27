@@ -5,8 +5,8 @@
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
 **Last reconciled:** 2026-07-27 (Train 4 + CIS M1 shipped)
-**Production `main`:** `28b2d85`
-**Production migration tip:** `20261047`
+**Production `main`:** `3d6f724`
+**Production migration tip:** `20261051`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -31,6 +31,8 @@
 | **2** | 2026-07-27 | `20261040` | Customer/staff import correctness (#121, launch blocker) + org_id perf indexes (#128) | `82cb5b7` → `aa8b810`, verified |
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
+| **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **7** | 2026-07-27 | — | **Job Site Hub** (#442): ZERO tables — composes the already-live diary/snags/inspections/toolbox/photos onto the job page + a pure totally-ordered site timeline | `0096a56` → `656f5b8`, verified |
 | **6** | 2026-07-27 | `20261047` | **CIS M2 — supplier/subcontractor money-out ledger** (#438): `supplier_payments` + `supplier_payment_allocations`; general payable engine with optional CIS; composite-FK org/supplier/bill binding valid for service_role; deadlock-free allocation guard; write-once + void. Plus test-isolation fixes (#436, #439) and roadmap corrections (#437) | `266d9e9` → `28b2d85`, verified |
 | **3** | 2026-07-27 | `20261041`, `20261042` | PWA offline-shell hydration **product bug** (#431) · company-logo private bucket with the storage regression stripped (#137) · launch-checklist runtime probe (#148) · address-first search (#136) | `aa8b810` → `636a794`, verified |
 
@@ -70,7 +72,8 @@
 | Digital inspections + templates | **PRODUCTION** | inspections M4/M4b (immutable snapshots, scheduling) |
 | Progress tracking | **PARTIAL** | `progress_percent` DOES ship inside `site_reports.content` (validated 0–100) and is surfaced to the customer portal. True gap: no job-level progress log / time series / S-curve |
 | Weather intelligence + Extension-of-Time letters | **NOT BUILT** | needs a weather provider (free tiers exist) |
-| Site timeline | **NOT BUILT (site)** | `lib/commercial/timeline.ts` is commercial-only; `server/services/spine-timeline.ts` is HQ-internal (service_role); asset timeline is asset-scoped. No unified operational timeline over diary+snags+inspections+toolbox+photos — all source tables exist, so this is a pure read/compose |
+| Site timeline | **PRODUCTION** | `lib/site-ops/timeline.ts` (#442) — pure, total order, Europe/London day buckets; composes diary+snags+inspections+toolbox+RAMS/permits+docs+photos onto the job page |
+| ~~Site timeline (old)~~ | superseded | `lib/commercial/timeline.ts` is commercial-only; `server/services/spine-timeline.ts` is HQ-internal (service_role); asset timeline is asset-scoped. No unified operational timeline over diary+snags+inspections+toolbox+photos — all source tables exist, so this is a pure read/compose |
 
 ## PHASE 5 — FINANCE
 
@@ -158,7 +161,7 @@ on that prefix — a collision is **invisible to git** because filenames differ)
 | ~~`20261048`~~ | ~~CIS M3~~ — **RETIRED, never written** (see slot-order note) | skipped |
 | ~~`20261049`~~ | ~~CIS M4~~ — **RETIRED, never written** (see slot-order note) | skipped |
 | `20261050` | **Org-teardown P1** — `activity_cascade_guard` (in flight, separate session) | in flight |
-| `20261051` | CIS M3 — deduction engine + reverse-charge VAT | reserved |
+| `20261051` | CIS M3 — deduction engine + reverse-charge VAT | **SHIPPED** |
 | `20261052` | CIS M4 — monthly statements + return dataset | reserved |
 | `20261053+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
 
