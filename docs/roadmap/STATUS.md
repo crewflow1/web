@@ -4,8 +4,8 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Release Train 3 complete)
-**Production `main`:** `636a794`
+**Last reconciled:** 2026-07-27 (Train 3 complete; Train 4 + CIS M1 in flight)
+**Production `main`:** `dffd68a`
 **Production migration tip:** `20261042`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
@@ -135,6 +135,40 @@
 
 ---
 
+## MIGRATION SLOT ALLOCATION (read before authoring any migration)
+
+Production tip is **`20261042`**. Slots are pre-allocated to parallel workstreams so
+two branches can never collide on a numeric prefix (Supabase keys migration identity
+on that prefix — a collision is **invisible to git** because filenames differ):
+
+| Slot | Owner | Status |
+|---|---|---|
+| `20261043` | Train 4 — `inbound_enquiries_provider_dedup` (renumbered from `20260919`) | in flight |
+| `20261044` | Train 4 — `widen_transport_channel_whatsapp` (renumbered from `20260920`) | in flight |
+| `20261045` | Train 4 — `whatsapp_read_receipt_status` (renumbered from `20260921`) | in flight |
+| `20261046` | CIS M1 — `cis_subcontractors` | in flight |
+| `20261047+` | **next free** | — |
+
+Before pushing any migration, prove no duplicate prefixes:
+`ls supabase/migrations | sed 's/_.*//' | sort | uniq -d` must print nothing.
+
+## In-flight workstreams (Continuation 4)
+
+- **TRAIN 4 — WhatsApp consolidation (ships DARK).** Branch `feat/whatsapp-consolidated`
+  off main. Verified: **#362 is the cumulative tip** containing #360+#361, and
+  `directive/018-r6` **is already an ancestor of main** (so #359 inbound is LIVE and
+  #360/#361 point at a dead base). Work: single merge of #362 → renumber the 3
+  colliding migrations to `20261043/44/45` → **fix false readiness** in
+  `lib/comms/readiness.ts` (env vars alone must not report WhatsApp ready when no
+  outbound sender exists; split configured / credentialsPresent / inboundReady /
+  outboundReady / enabled) → gates → push. **No provider activation.**
+- **CIS M1 — subcontractor domain + verification.** Branch `feat/cis-m1-subcontractors`.
+  Migration `20261046`. Composes on `suppliers` (the only entity with payable FKs);
+  1:1 `cis_subcontractors` keyed `(org_id, supplier_id)`; UTR with regex CHECK;
+  admin-only RLS + masking per the `staff_secrets` precedent; real HMRC statuses
+  (gross / standard_20 / higher_30) with a status↔rate integrity guard; **manual
+  verification workflow + provider seam — no faked HMRC calls**.
+
 ## Open PR ledger (post-Train-2)
 
 | PR | Verdict | Action required |
@@ -142,11 +176,11 @@
 | #148 launch-checklist runtime probe | **RECONCILE-THEN-MERGE** (next, best value/effort) | 1 trivial `next.config.ts` conflict; probe list still matches main's 9 paths 1:1; admin page is red in prod for no reason |
 | #136 address-first search | **RECONCILE-THEN-MERGE** | 3 files conflict (jobs 5 hunks, leads 2, search 1); rename migration `20260706` → forward; check trgm index-name collision vs `20260709000000_scale_indexes.sql` |
 | #137 company-logo upload | **RECONCILE-THEN-MERGE, STRIP MIGRATION** | ⚠️ its storage migration creates client-write policies on `storage.objects` — exactly what `20261032` lockdown removed. App already uploads via service-role, so keep **read policy only**. Also closes a live third-party-fetch surface (`app/q/[token]` renders raw `org.logo_url`) |
-| #362 WhatsApp stack tip (contains #360+#361) | **RECONCILE-THEN-MERGE (stay dark)** | renumber 3 migrations (`20260919/20/21` collide with `snags`/`site_diary`/`toolbox_talks` **by version, invisible to git**) → `20261041+`; rebase onto main; retarget base `directive/018-r6` → `main` (that branch is now an ancestor of main) |
+| #362 WhatsApp stack tip (contains #360+#361) | **IN FLIGHT** → `feat/whatsapp-consolidated` | migrations renumbered to `20261043/44/45`; replaces #360/#361/#362 |
 | #360 / #361 | **fold into #362** | close as merged-via-stack after #362 lands |
-| #113 Vapi telephony | **CLOSE-AS-SUPERSEDED, re-cut** | 624 commits drift, Vercel failing, no integration/security/e2e gates, migration `20260630` collides with `organizations_rls_impersonation_aware`; design (phone_numbers → org → assistant → call) is NOT superseded — preserve it, discard the branch |
+| #113 Vapi telephony | **CLOSED (superseded)** — design preserved, branch discarded | 624 commits drift, Vercel failing, no integration/security/e2e gates, migration `20260630` collides with `organizations_rls_impersonation_aware`; design (phone_numbers → org → assistant → call) is NOT superseded — preserve it, discard the branch |
 | #398 types regen | **CLOSED (obsolete)** | done — its migration was byte-identical to main's; regen was itself stale; loose-cast seams make it optional |
-| #424 roadmap docs | **superseded by this file** | close or fold |
+| #424 roadmap docs | **CLOSED** (superseded by this file, merged as #430) |
 
 ## Known risks / debt
 
