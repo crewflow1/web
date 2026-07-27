@@ -1,3 +1,12 @@
+-- RENUMBERED 2026-07-27 (consolidation onto main): was `20260919000000_inbound_enquiries_
+-- provider_dedup.sql`. Supabase keys migration identity on the NUMERIC VERSION PREFIX, not the
+-- filename, and version `20260919000000` is already applied in production by an unrelated
+-- migration (`20260919000000_snags.sql`). This file was authored on a long-lived branch whose
+-- base predates that, and had NEVER been applied in any environment (the applied prod tip is
+-- `20261042000000`), so it was free to move. Re-slotted to `20261043000000` — after the applied
+-- tip, and preserving its original relative order against the two sibling WhatsApp migrations
+-- (…0919→43, …0920→44, …0921→45). The SQL below is UNCHANGED, byte for byte.
+--
 -- WhatsApp AI Assistant (PR3) — inbound message provider metadata + downstream idempotency.
 --
 -- The whatsapp_webhook_events claim (20260917) stops a re-delivery at the INGRESS. This is

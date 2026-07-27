@@ -167,15 +167,35 @@ export function isSmsConfigured(): boolean {
  * NOTHING.
  *
  * The Meta Cloud API sender (a Graph API `POST /{phone_number_id}/messages` adapter) IS
- * wired (`createMetaWhatsAppProvider`), but it is returned ONLY when BOTH WHATSAPP_ACCESS_TOKEN
- * and WHATSAPP_PHONE_NUMBER_ID are set — the CI/dev default has neither, so `auto`/`meta`
- * still resolve to `null` there and outbound is dark. Outbound is thus CREDENTIAL-gated, not
- * structurally impossible: the draft-first safety posture holds because (a) creds are unset
- * outside production, and (b) even with creds, a substantive reply is only ever sent after a
- * human approves it in the review inbox — nothing auto-sends.
+ * wired (`createMetaWhatsAppProvider`), but it is returned ONLY when ALL THREE of
+ * NEXT_PUBLIC_FEATURE_WHATSAPP="true", WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID
+ * are set — the CI/dev/production default has none of them, so `auto`/`meta` resolve to
+ * `null` and outbound is dark. Outbound is thus FLAG- and CREDENTIAL-gated, not structurally
+ * impossible: the draft-first safety posture holds because (a) the flag defaults to "false"
+ * and creds are unset, (b) the flag is checked here so it kills the human-approval path too,
+ * and (c) even fully enabled, a substantive reply is only ever sent after a human approves it
+ * in the review inbox — nothing auto-sends.
  */
 export function getWhatsAppProvider(): WhatsAppProvider | null {
   const name = (env.COMMS_WHATSAPP_PROVIDER ?? "auto").trim().toLowerCase();
+
+  // KILL SWITCH — checked FIRST, before credentials, so it cannot be bypassed.
+  //
+  // NEXT_PUBLIC_FEATURE_WHATSAPP gates the whole channel, not just its inbound half. Without
+  // this check the flag would only gate CONVERSATION ORIGINATION (the webhook 404s and
+  // canRunReceptionistChannel returns false), while the human-approval path in
+  // `deliverHumanReviewedReply` reaches the transport seam directly — so a WhatsApp draft
+  // created while the flag was on could still be approved and SENT after the flag was turned
+  // off, provided credentials were present. That would make the flag a gate on new
+  // conversations rather than a kill switch, and would contradict `/api/health`, which now
+  // reports `whatsapp: false` whenever the flag is off.
+  //
+  // Placing the check HERE — the single seam every send path resolves through
+  // (`getTransportProvider` → autonomous AND human-approved alike) — makes the flag a genuine
+  // channel-wide kill switch: flip it to anything but "true" and every WhatsApp send stops
+  // immediately and degrades to the recorded `no_provider` disposition. This can only ever
+  // turn sending OFF; it can never enable a send that credentials alone would not have allowed.
+  if (process.env.NEXT_PUBLIC_FEATURE_WHATSAPP !== "true") return null;
 
   // Meta Cloud API is "configured" only when BOTH the access token AND the business
   // phone-number id are present. Absent (the CI/dev default) ⇒ null ⇒ the transport

@@ -409,7 +409,7 @@ export async function produceAndEnforceReply(
 /**
  * The receptionist's outbound transport channels. R5 shipped `sms`; R6 adds `whatsapp`
  * (the DB CHECK on ai_reply_transports / ai_reply_delivery_receipts pins the SAME set,
- * widened in 20260920). Both are REVIEWED transports — the CHECK stays deliberately
+ * widened in 20261044). Both are REVIEWED transports — the CHECK stays deliberately
  * narrow so no unreviewed channel slips through.
  *
  * A reply's transport channel DEFAULTS to `sms`, which preserves the phone/SMS path

@@ -1,3 +1,12 @@
+-- RENUMBERED 2026-07-27 (consolidation onto main): was `20260920000000_widen_transport_
+-- channel_whatsapp.sql`. Supabase keys migration identity on the NUMERIC VERSION PREFIX, not
+-- the filename, and version `20260920000000` is already applied in production by an unrelated
+-- migration (`20260920000000_site_diary.sql`). This file was authored on a long-lived branch
+-- whose base predates that, and had NEVER been applied in any environment (the applied prod tip
+-- is `20261042000000`), so it was free to move. Re-slotted to `20261044000000` — after the
+-- applied tip, and preserving its original relative order against the two sibling WhatsApp
+-- migrations (…0919→43, …0920→44, …0921→45). The SQL below is UNCHANGED, byte for byte.
+--
 -- Widen the receptionist outbound transport + delivery-receipt channel vocabulary:
 -- sms → sms | whatsapp (Directive #018 R6, the WhatsApp AI draft-first milestone).
 --

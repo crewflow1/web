@@ -11,7 +11,7 @@ import {
  *
  * Outbound is dark in CI (no Meta creds), so a `sent` WhatsApp transport is SEEDED directly
  * through the service-role RPC (channel='whatsapp', provider='meta', provider_message_id=wamid)
- * — the widened channel CHECK (20260920) now admits it. Against that, this proves the
+ * — the widened channel CHECK (20261044) now admits it. Against that, this proves the
  * WhatsApp RECEIPT authority: correlation by wamid, channel='whatsapp', org copied from the
  * transport; delivered/read/failed idempotent + append-only (out-of-order cannot regress);
  * unknown wamid fails safe; cross-org is impossible. Plus the INBOUND message metadata:

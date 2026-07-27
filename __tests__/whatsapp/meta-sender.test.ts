@@ -87,8 +87,15 @@ describe("createMetaWhatsAppProvider — identity + the Graph API send contract"
   });
 });
 
-describe("getWhatsAppProvider — configured ⇒ the real Meta provider (creds mocked present)", () => {
-  it("returns a live provider when both creds are set, and getTransportProvider routes to it", () => {
+describe("getWhatsAppProvider — configured AND enabled ⇒ the real Meta provider (creds mocked present)", () => {
+  // Credentials alone are NOT sufficient: getWhatsAppProvider also requires
+  // NEXT_PUBLIC_FEATURE_WHATSAPP="true", so the flag kills the human-approval send path too
+  // (see transport-selection.test.ts for the kill-switch suite). The mocked env above supplies
+  // the creds; the flag is read from process.env, so it is stubbed per-test here.
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("returns a live provider when both creds are set AND the flag is on, and getTransportProvider routes to it", () => {
+    vi.stubEnv("NEXT_PUBLIC_FEATURE_WHATSAPP", "true");
     const provider = getWhatsAppProvider();
     expect(provider).not.toBeNull();
     expect(provider?.info).toEqual({ provider: "meta", channel: "whatsapp" });
@@ -96,5 +103,12 @@ describe("getWhatsAppProvider — configured ⇒ the real Meta provider (creds m
     // The 'whatsapp' transport channel resolves to a Meta provider — never the SMS factory.
     // (Each call constructs a fresh instance, so compare identity, not reference.)
     expect(getTransportProvider("whatsapp")?.info).toEqual({ provider: "meta", channel: "whatsapp" });
+  });
+
+  it("the SAME full credentials with the flag off ⇒ null — creds alone can never send", () => {
+    vi.stubEnv("NEXT_PUBLIC_FEATURE_WHATSAPP", "false");
+    expect(getWhatsAppProvider()).toBeNull();
+    expect(isWhatsAppConfigured()).toBe(false);
+    expect(getTransportProvider("whatsapp")).toBeNull();
   });
 });

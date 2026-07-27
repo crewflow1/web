@@ -42,8 +42,8 @@ Not present on `origin/main`; created in the delta, so **absent from prod**:
 | Order | PR | Commit | What it delivers | State |
 |---|---|---|---|---|
 | 1 | **#359** | `66dad5f` (merged as `dc155f4`) | Inbound webhook: GET verify + POST HMAC, ingress claim ledger, phone_number_id→org routing, hand-off to `processInboundEnquiry`. Adds `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`. | ✅ On directive branch |
-| 2 | **#360** | `abd5230` | Draft-first engine: channel-aware entry (`canRunReceptionistChannel`), no-fallback transport registry (`getTransportProvider`), dark WhatsApp provider, `ChannelBadge` in review inbox. Adds `COMMS_WHATSAPP_PROVIDER`; migration `20260920`. | 🔵 Open PR (pushed) |
-| 3 | **#361** | `36ce1a2` | Outbound half: real Meta Graph sender (`createMetaWhatsAppProvider`), channel-agnostic receipt authority (`recordWhatsAppDeliveryReceipt`), inbound provider metadata. Adds `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_GRAPH_VERSION`; migrations `20260919`, `20260921`. | 🔵 Open PR (pushed) |
+| 2 | **#360** | `abd5230` | Draft-first engine: channel-aware entry (`canRunReceptionistChannel`), no-fallback transport registry (`getTransportProvider`), dark WhatsApp provider, `ChannelBadge` in review inbox. Adds `COMMS_WHATSAPP_PROVIDER`; migration `20261044` (renumbered from `20260920`). | 🟣 Consolidated onto `feat/whatsapp-consolidated` |
+| 3 | **#361** | `36ce1a2` | Outbound half: real Meta Graph sender (`createMetaWhatsAppProvider`), channel-agnostic receipt authority (`recordWhatsAppDeliveryReceipt`), inbound provider metadata. Adds `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_GRAPH_VERSION`; migrations `20261043`, `20261045` (renumbered from `20260919`, `20260921`). | 🟣 Consolidated onto `feat/whatsapp-consolidated` |
 
 **Recommended path to production:**
 1. **Decide the merge unit.** Because the WhatsApp milestone rides inside the full **54-migration / 356-commit** directive→main delta, the cleanest release is: merge the entire `directive/018-r6…` branch to `main` via its integration PR, *after* PR #360 and #361 are pushed and merged **into the directive branch first** (preserving the #359→#360→#361 order). Do **not** cherry-pick just the WhatsApp commits — they depend on the transport/receptionist substrate earlier in the delta.
@@ -63,13 +63,15 @@ Supabase applies migrations in **filename-timestamp order**. The WhatsApp-milest
 | — | `20260817000000_ai_reply_delivery_receipts.sql` | Delivery/read receipt ledger correlated by wamid — prerequisite substrate. | additive | pre-#359 |
 | 1 | `20260917000000_whatsapp_webhook_events.sql` | Inbound webhook replay/claim ledger (idempotent `event_key`, service-role only, RLS no-policy). | additive | #359 |
 | 2 | `20260918000000_whatsapp_number_routes.sql` | `phone_number_id → org` routing map (unrouted events ack-dropped). | additive | #359 |
-| 3 | `20260919000000_inbound_enquiries_provider_dedup.sql` | Adds `provider_message_id`/`provider_timestamp`/`has_media` + partial-unique dedup index. | additive (`add column if not exists`, partial unique) | #361 |
-| 4 | `20260920000000_widen_transport_channel_whatsapp.sql` | Widens transport + receipt `channel` CHECK `('sms')→('sms','whatsapp')`. | additive superset (drop+re-add wider CHECK) | #360 |
-| 5 | `20260921000000_whatsapp_read_receipt_status.sql` | Widens receipt `status` CHECK by one value: adds `read` (non-terminal). | additive superset | #361 |
+| 3 | `20261043000000_inbound_enquiries_provider_dedup.sql` | Adds `provider_message_id`/`provider_timestamp`/`has_media` + partial-unique dedup index. | additive (`add column if not exists`, partial unique) | #361 |
+| 4 | `20261044000000_widen_transport_channel_whatsapp.sql` | Widens transport + receipt `channel` CHECK `('sms')→('sms','whatsapp')`. | additive superset (drop+re-add wider CHECK) | #360 |
+| 5 | `20261045000000_whatsapp_read_receipt_status.sql` | Widens receipt `status` CHECK by one value: adds `read` (non-terminal). | additive superset | #361 |
 
 **All additive & dark.** Every statement is `create table if not exists` / `add column if not exists` / CHECK-constraint **widening** (existing rows always still satisfy the superset). No `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, or `DELETE FROM` in any of the seven. Safe to apply **ahead of** code.
 
-**Ordering nuance to flag:** `20260919` and `20260921` come from PR **#361** but carry *earlier* timestamps than `20260920` from PR **#360**. If #360 is deployed alone first, Supabase records `20260920` as applied; then #361 introduces `20260919` at an *earlier* version than the latest-applied. The three are mutually independent and additive, so there is **no functional hazard**, but some tooling warns on out-of-order versions. **Recommendation:** apply all five in a **single deployment** (i.e., merge the stack to main together) so `917→921` apply in one monotonic pass and the warning never arises.
+**RENUMBER (2026-07-27, consolidation onto `main`) — resolved, was a release blocker.** Rows 3–5 were originally authored as `20260919000000` / `20260920000000` / `20260921000000`. Those three **version prefixes are already applied in production** by unrelated migrations that landed on `main` while this stack sat on its branch — `20260919000000_snags.sql`, `20260920000000_site_diary.sql`, `20260921000000_toolbox_talks.sql`. Supabase keys migration identity on the **numeric version prefix, not the filename**, so git could not surface the clash and the deploy would have silently skipped all three (leaving the `channel`/`status` CHECKs narrow while WhatsApp code expected them wide). Because these files had **never been applied in any environment** — the applied prod tip is `20261042000000`, far ahead of them — they were free to move. Re-slotted to `20261043/44/45000000`: after the applied tip, contiguous, and preserving their original relative order. **SQL bodies are unchanged byte for byte**; only a header comment was added to each. Rows 1–2 (`20260917`/`20260918`) are already applied in prod via #359 and are untouched.
+
+**Ordering nuance (now moot).** Pre-renumber, `20260919`/`20260921` (from #361) carried *earlier* timestamps than `20260920` (from #360), so a split deployment could have applied them out of order. The renumber puts them in dependency order in one contiguous block, and this consolidated branch ships all three in a **single deployment**, so they apply in one monotonic pass.
 
 ---
 
@@ -187,4 +189,4 @@ Run against production immediately after the directive→main deploy, **flag sti
 - `/Users/moetalibi/Code/web-impl/lib/comms/index.ts` — `getWhatsAppProvider` (line 176) / `getTransportProvider` (no-fallback, line 223).
 - `/Users/moetalibi/Code/web-impl/lib/comms/providers/meta-whatsapp-sender.ts` — Graph API sender (PR3).
 - `/Users/moetalibi/Code/web-impl/lib/comms/providers/meta-whatsapp.ts` — signature verify + payload/status parse.
-- `/Users/moetalibi/Code/web-impl/supabase/migrations/2026091700000{0}…20260921000000_*.sql` — the 5 WhatsApp migrations.
+- `supabase/migrations/20260917000000_*.sql`, `20260918000000_*.sql` (applied via #359) and `20261043000000_*.sql`…`20261045000000_*.sql` — the 5 WhatsApp migrations.

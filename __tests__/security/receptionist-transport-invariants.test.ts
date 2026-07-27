@@ -337,7 +337,10 @@ describe("receptionist transport — the ledger is gated, append-only and servic
 // =====================================================================
 
 describe("receptionist transport — the channel vocabulary is exactly {sms, whatsapp}", () => {
-  const WIDEN = "supabase/migrations/20260920000000_widen_transport_channel_whatsapp.sql";
+  // Renumbered from 20260920000000 during the consolidation onto main (that version prefix was
+  // already applied in prod by 20260920000000_site_diary.sql; this migration had never been
+  // applied anywhere). SQL semantics are unchanged — only the version slot moved.
+  const WIDEN = "supabase/migrations/20261044000000_widen_transport_channel_whatsapp.sql";
 
   it("ships the channel-widening migration", () => {
     expect(existsSync(resolve(ROOT, WIDEN)), WIDEN).toBe(true);

@@ -198,9 +198,14 @@ is dark regardless.
 ## 10. Deployment, rollback & monitoring
 
 - **Migration order (additive, dark):** `20260917` (webhook events) → `20260918` (routes) →
-  `20260919` (enquiry provider metadata) → `20260920` (transport/receipt channel widen) → `20260921`
+  `20261043` (enquiry provider metadata) → `20261044` (transport/receipt channel widen) → `20261045`
   (receipt `read` status). All additive supersets — safe to apply ahead of code with zero customer
   impact while the flag is off. See the release inventory for the full directive-to-main plan.
+  The last three were **renumbered** from `20260919`/`20260920`/`20260921` when this stack was
+  consolidated onto `main` — those version prefixes were already applied in production by unrelated
+  migrations (snags / site-diary / toolbox-talks), and Supabase keys identity on the numeric prefix,
+  so the originals would have been silently skipped. `20260917`/`20260918` are already applied
+  (#359) and are unchanged.
 - **Rollback:** `NEXT_PUBLIC_FEATURE_WHATSAPP=false` is an **instant** kill switch (inbound path
   fails closed). Outbound is separately killed by clearing the access token. Migrations are additive,
   so **no schema rollback is required** — the tables simply sit unused.
@@ -242,7 +247,7 @@ The feature is **NOT live** until all of these are provisioned and production is
 - [ ] Webhook subscribed + verified (GET hub.challenge returns the challenge)
 - [ ] `whatsapp_number_routes` row for the org (active)
 - [ ] `ai_receptionist_setups` enabled + `status='live'` for the org
-- [ ] Migrations `20260917`–`20260921` applied in production
+- [ ] Migrations `20260917`, `20260918` (already applied via #359) and `20261043`–`20261045` applied in production
 - [ ] Smoke test (dark): signed synthetic POST → enquiry + review draft created, **no outbound**
 - [ ] Operator trained on the review inbox WhatsApp flow
 - [ ] `NEXT_PUBLIC_FEATURE_WHATSAPP=true` (final step)
