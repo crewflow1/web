@@ -82,6 +82,25 @@ export function formatDateShortUK(input: DateInput): string {
   });
 }
 
+/**
+ * The Europe/London CALENDAR DAY an instant falls on, as `YYYY-MM-DD`.
+ *
+ * For grouping timestamps into day buckets. Using the UK day (not the UTC day)
+ * is what makes a 23:30 UTC event in summer bucket under the same date its
+ * `formatTimeUK` (00:30) reads. `en-CA` is used purely because it yields
+ * ISO field order. Returns "" for absent/unparseable input.
+ */
+export function formatDayKeyUK(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: UK_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 /** Whether a UTC instant currently falls in British Summer Time. */
 export function isBST(input: DateInput): boolean {
   const d = toDate(input);
