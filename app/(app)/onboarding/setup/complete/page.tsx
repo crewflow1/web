@@ -59,9 +59,10 @@ export default async function OnboardingSetupCompletePage() {
           {progress.done} of {progress.total} steps done — 100% complete.
         </p>
         <p className="mt-2 text-xs text-emerald-800">
-          You can come back to <Link href="/onboarding/setup" className="underline">/onboarding/setup</Link>{" "}
-          any time to revisit anything. Settings live at{" "}
-          <Link href="/settings" className="underline">/settings</Link>.
+          You can revisit the{" "}
+          <Link href="/onboarding/setup" className="font-medium underline">setup guide</Link>{" "}
+          any time, or fine-tune anything in{" "}
+          <Link href="/settings" className="font-medium underline">Settings</Link>.
         </p>
       </section>
 
@@ -84,18 +85,19 @@ export default async function OnboardingSetupCompletePage() {
         <h2 className="text-sm font-semibold text-slate-900">What now?</h2>
         <ul className="mt-3 space-y-2 text-xs text-slate-700">
           <li>
-            <strong>Send the first invoice.</strong> Accepted quotes flow
-            into <Link href="/invoices" className="underline">/invoices</Link>{" "}
+            <strong>Send your first invoice.</strong> Accepted quotes flow
+            straight into{" "}
+            <Link href="/invoices" className="font-medium underline">Invoices</Link>{" "}
             — generate, send, and track payment.
           </li>
           <li>
-            <strong>Invite your team.</strong> Manage roles + clock-ins at{" "}
-            <Link href="/staff" className="underline">/staff</Link>.
+            <strong>Invite your team.</strong> Manage roles and clock-ins in{" "}
+            <Link href="/staff" className="font-medium underline">Team</Link>.
           </li>
           <li>
-            <strong>Migrate your history.</strong>{" "}
-            <Link href="/imports" className="underline">/imports</Link>{" "}
-            accepts CSVs, Excel, PDFs, and photos. Roll back any time.
+            <strong>Bring your history across.</strong>{" "}
+            <Link href="/imports" className="font-medium underline">Import</Link>{" "}
+            accepts CSVs, Excel, PDFs, and photos — and you can roll back any time.
           </li>
         </ul>
       </section>

@@ -75,7 +75,7 @@ export const CHECKLIST_STEPS: ReadonlyArray<ChecklistStep> = [
     title: "Upload your logo",
     description:
       "Customers expect to see your brand on the quote PDF — it builds trust before they read the number.",
-    cta: { label: "Add logo URL", href: "/settings" },
+    cta: { label: "Upload logo", href: "/settings" },
     required: false,
   },
   {

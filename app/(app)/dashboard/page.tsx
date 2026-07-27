@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
+import { isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
@@ -9,6 +12,7 @@ import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import { ensureMilestoneNotifications } from "@/server/services/retention-milestones";
 import { RetentionPanel } from "./_retention";
+import { DailyBriefing } from "./_daily-briefing";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -41,11 +45,21 @@ import { computePayrollLine } from "@/lib/payroll/compute";
  * user-context Supabase client). No mock data.
  *
  * Query approach — we fetch the underlying rows once per entity and
- * compute aggregations in TypeScript. With <1000 rows per org per
- * entity (the MVP-target volume) this stays well under 100 ms and
- * keeps the code easy to follow. When any org crosses ~5000 rows on
- * jobs / invoices / finances, swap the per-section fetches for
- * dedicated SQL counts (`{ count: 'exact', head: true }`) or RPC views.
+ * compute aggregations in TypeScript, so the code stays easy to follow.
+ *
+ * F-1 fix: the per-entity reads go through `fetchAllRows`, which pages
+ * under the PostgREST max-rows cap (1000 by default). A bare `.select()`
+ * with no `.range()` is SILENTLY TRUNCATED once an org crosses that many
+ * rows, so every KPI here (counts, money sums, profitability, pipeline)
+ * would have under-reported with no error. Paging the reads keeps the
+ * aggregation arithmetic identical while making the inputs complete and
+ * volume-independent. Each paged read uses a stable `created_at desc + id`
+ * ordering so rows can't shift across page boundaries.
+ *
+ * Later-horizon note: once a single org carries tens of thousands of rows
+ * (well past the 200-company target), move these per-entity reads to
+ * DB-side SQL aggregates / RPC views. Paging is the correct, low-risk fix
+ * for launch; SQL aggregates are the deliberate next step beyond it.
  *
  * Time windows:
  *   - "this week" = last 7 days rolling
@@ -120,22 +134,35 @@ export default async function DashboardPage() {
   const ACTIVITY_PAGE_SIZE = 25;
   const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes] =
     await Promise.all([
-      supabase
-        .from("jobs")
-        .select(
-          "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
-        )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("invoices")
-        .select(
-          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
-        )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("finances")
-        .select("id, amount, vat_total, created_at, category, job_id")
-        .gte("created_at", sixMonthsAgoIso),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("jobs")
+          .select(
+            "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("invoices")
+          .select(
+            "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("finances")
+          .select("id, amount, vat_total, created_at, category, job_id")
+          .gte("created_at", sixMonthsAgoIso)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       supabase
         .from("leads")
         .select(
@@ -146,12 +173,22 @@ export default async function DashboardPage() {
       supabase
         .from("memberships")
         .select("user_id, role, user:users ( id, full_name, email )"),
-      supabase
-        .from("quotes")
-        .select("id, status, total, accepted_at, created_at, approved_at"),
-      supabase
-        .from("leads")
-        .select("id, status, source, estimated_value, created_at"),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("quotes")
+          .select("id, status, total, accepted_at, created_at, approved_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("leads")
+          .select("id, status, source, estimated_value, created_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       supabase
         .from("activity_log")
         .select(
@@ -179,10 +216,15 @@ export default async function DashboardPage() {
   // for "this week" + "this month" tiles).
   const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [{ data: timeEntriesRaw }, { data: payableMembers }] = await Promise.all([
-    supabase
-      .from("time_entries")
-      .select("id, user_id, job_id, started_at, ended_at, breaks")
-      .gte("started_at", thirtyDaysAgoIso),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .gte("started_at", thirtyDaysAgoIso)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     supabase
       .from("memberships")
       .select("user_id, role, user:users ( id, hourly_pay )"),
@@ -217,6 +259,54 @@ export default async function DashboardPage() {
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
   const allLeads = leadsAllRes.data ?? [];
+
+  // Contract retention "due back" (Programme C extension) — the portfolio view
+  // of held retention + what's due for release. Read on the TENANT client (RLS)
+  // and PAGED (never a truncated `.select()`); the rollup reuses the same
+  // per-job derivation as the job page so the numbers agree. The `jobs`
+  // retention columns aren't in the generated types yet — cast the reads.
+  type RetTermsRow = {
+    id: string;
+    retention_percent: number | string | null;
+    practical_completion_date: string | null;
+    defects_liability_months: number | string | null;
+    retention_first_release_pct: number | string | null;
+  };
+  type RetRelRow = { job_id: string | null; amount: number | string | null };
+  type Paged<T> = {
+    order: (k: string, o: { ascending: boolean }) => {
+      range: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
+    };
+  };
+  const [retentionJobsRes, retentionReleasesRes] = await Promise.all([
+    fetchAllRows<RetTermsRow>((from, to) =>
+      (supabase.from("jobs" as never) as unknown as { select: (c: string) => Paged<RetTermsRow> })
+        .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<RetRelRow>((from, to) =>
+      (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
+        .select("job_id, amount")
+        // Order by the UNIQUE primary key, not the non-unique job_id: fetchAllRows
+        // needs a stable total order or rows sharing a sort-key value can be
+        // dropped/duplicated at a 500-row page boundary (the F-1 truncation class).
+        // The rollup groups by job_id in JS, so the order only has to be stable.
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+  const retentionRollup = computeRetentionDueRollup({
+    jobs: (retentionJobsRes.data ?? []).map((j) => ({
+      id: j.id,
+      ratePercent: j.retention_percent,
+      practicalCompletionDate: j.practical_completion_date,
+      defectsLiabilityMonths: j.defects_liability_months,
+      firstReleasePct: j.retention_first_release_pct,
+    })),
+    invoices: invoices.map((i) => ({ job_id: i.job_id, status: i.status, amount: i.amount })),
+    releases: retentionReleasesRes.data ?? [],
+  });
   const activity = (activityRes.data ?? []) as unknown as ActivityRow[];
   const activityTotal = activityRes.count ?? 0;
   const activityHasMore = activity.length < activityTotal;
@@ -310,13 +400,24 @@ export default async function DashboardPage() {
     if (inv.created_at && inv.created_at >= monthStart) {
       invoicedThisMonth += total;
     }
+    // Overdue is DERIVED by the one authority (lib/invoices/overdue.ts) and
+    // counted OUTSIDE the outstanding gate below. That gate admits only
+    // `sent`/`overdue`, but money is equally owed on `awaiting_payment` and
+    // `partially_paid` — so counting overdue inside it would keep this tile
+    // selecting a narrower population than its own drill-through
+    // (/invoices?status=overdue), which is the mismatch this change ends. The
+    // outstanding / due-this-week tiles keep their existing status gate: they
+    // are different metrics and not in scope here.
+    const overdue = isInvoiceOverdue(inv, todayIso);
+    if (overdue) {
+      overdueCount++;
+      overdueTotal += total;
+    }
     if (inv.status === "sent" || inv.status === "overdue") {
       outstandingCount++;
       outstandingTotal += total;
-      if (inv.due_date && inv.due_date < todayIso) {
-        overdueCount++;
-        overdueTotal += total;
-      } else if (
+      if (
+        !overdue &&
         inv.due_date &&
         inv.due_date >= todayIso &&
         inv.due_date <= weekFromNowIso
@@ -590,6 +691,12 @@ export default async function DashboardPage() {
         </div>
       </header>
 
+      {/* Daily Briefing — the first thing an owner sees: "what needs you today".
+          Composes existing live signals (money · safety · operations · sales)
+          into a ranked, deep-linked, per-user-dismissible attention feed.
+          Additive + best-effort: never blocks the rest of the dashboard. */}
+      <DailyBriefing orgId={ctx.org.id} userId={user.id} />
+
       {/* Onboarding checklist — pinned at the top until setup is 100% */}
       <SetupChecklist snapshot={onboardingSnapshot} />
 
@@ -648,10 +755,14 @@ export default async function DashboardPage() {
           sub={`${dueThisWeekCount} ${dueThisWeekCount === 1 ? "invoice" : "invoices"} in next 7 days`}
         />
         <Kpi
-          label="Reminders enabled"
-          value="auto + manual"
-          href="/invoices"
-          sub="day 3 / 7 / 14 / 21 after sent"
+          label="Retention due back"
+          value={GBP.format(retentionRollup.dueNow)}
+          href="/jobs"
+          sub={
+            retentionRollup.totalHeld > 0
+              ? `${GBP.format(retentionRollup.totalHeld)} held · ${retentionRollup.heldJobCount} ${retentionRollup.heldJobCount === 1 ? "job" : "jobs"}`
+              : "no retention held"
+          }
         />
       </section>
 

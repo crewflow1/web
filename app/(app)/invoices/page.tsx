@@ -2,6 +2,11 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import {
+  OVERDUE_COLLECTABLE_STATUSES,
+  invoiceBusinessToday,
+  invoiceDisplayStatus,
+} from "@/lib/invoices/overdue";
 import { EmptyState } from "../_components/empty-state";
 
 /**
@@ -38,6 +43,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
   const status = sp.status;
+  const todayIso = invoiceBusinessToday();
   // Invoices link to customers via their source quote (quotes.customer_id).
   // The filter joins through quote:quotes!inner so the eq() applies to the
   // join's customer_id without exposing it as a column on invoices itself.
@@ -53,6 +59,8 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
   type UntypedQ = {
     select: (cols: string, opts?: unknown) => UntypedQ;
     eq: (k: string, v: unknown) => UntypedQ;
+    in: (k: string, v: readonly unknown[]) => UntypedQ;
+    lt: (k: string, v: unknown) => UntypedQ;
     order: (k: string, opts: { ascending: boolean }) => UntypedQ;
     range: (
       from: number,
@@ -79,7 +87,17 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
     .select(cols, { count: "exact" })
     .order("created_at", { ascending: false });
 
-  if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
+  if (status === "overdue") {
+    // `overdue` is DERIVED, not stored — see lib/invoices/overdue.ts. Filtering
+    // `.eq("status", "overdue")` here returned only rows someone had manually
+    // marked, which is a different population from the one the dashboard tile
+    // counts (`due_date < today`), so the tile's drill-through never matched
+    // its own number. Express the predicate at the DB instead, so this list and
+    // the tile select exactly the same invoices.
+    q = q
+      .in("status", OVERDUE_COLLECTABLE_STATUSES as unknown as string[])
+      .lt("due_date", todayIso);
+  } else if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
     q = q.eq("status", status as InvoiceStatus);
   }
   if (customerFilter) {
@@ -236,9 +254,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
                     <td className="px-4 py-3 font-medium text-slate-900">{inv.number}</td>
                     <td className="px-4 py-3">
                       <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[inv.status]}`}
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoiceDisplayStatus(inv, todayIso)]}`}
                       >
-                        {inv.status}
+                        {invoiceDisplayStatus(inv, todayIso)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
@@ -289,9 +307,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
                         {GBP.format(Number(inv.total ?? 0))}
                       </div>
                       <span
-                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[inv.status]}`}
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[invoiceDisplayStatus(inv, todayIso)]}`}
                       >
-                        {inv.status}
+                        {invoiceDisplayStatus(inv, todayIso)}
                       </span>
                     </div>
                   </div>

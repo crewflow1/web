@@ -23,6 +23,7 @@ type OpRecord = {
   op: DbOp;
   row?: unknown;
   eqs: Array<[string, unknown]>;
+  ins: Array<[string, readonly unknown[]]>;
   single: boolean;
 };
 type StorageCall = {
@@ -90,6 +91,7 @@ const h = vi.hoisted(() => {
   interface Builder extends PromiseLike<DbResult> {
     select(cols: string): Builder;
     eq(col: string, val: unknown): Builder;
+    in(col: string, vals: readonly unknown[]): Builder;
     order(col: string, opts?: { ascending: boolean }): Builder;
     insert(row: unknown): Builder;
     update(row: unknown): Builder;
@@ -98,7 +100,7 @@ const h = vi.hoisted(() => {
   }
 
   function makeBuilder(client: ClientLabel, table: string): Builder {
-    const rec: OpRecord = { client, table, op: "select", eqs: [], single: false };
+    const rec: OpRecord = { client, table, op: "select", eqs: [], ins: [], single: false };
     dbCalls.push(rec);
     const builder: Builder = {
       select() {
@@ -106,6 +108,10 @@ const h = vi.hoisted(() => {
       },
       eq(col, val) {
         rec.eqs.push([col, val]);
+        return builder;
+      },
+      in(col, vals) {
+        rec.ins.push([col, vals]);
         return builder;
       },
       order() {
@@ -220,6 +226,7 @@ const {
   createJobDocument,
   addJobDocumentVersion,
   listJobDocuments,
+  listJobDocumentVersionsForDocuments,
   getJobDocumentDownloadUrl,
   completeJobDocument,
   deleteJobDocument,
@@ -450,6 +457,7 @@ describe("getJobDocumentDownloadUrl", () => {
 
   it("reads the version via the TENANT client (RLS gate) then signs via admin (60s)", async () => {
     h.cfg.version = {
+      org_id: "org-1",
       document_id: "doc-2",
       visibility: "private",
       storage_bucket: "job-docs-private",
@@ -534,5 +542,54 @@ describe("listJobDocuments", () => {
     expect(sel?.client).toBe("tenant");
     expect(sel?.eqs).toContainEqual(["job_id", "job-1"]);
     expect(sel?.eqs).toContainEqual(["visibility", "private"]);
+  });
+});
+
+// =====================================================================
+// listJobDocumentVersionsForDocuments — batched, RLS-gated, grouped
+// =====================================================================
+describe("listJobDocumentVersionsForDocuments (F-6 N+1 fix)", () => {
+  it("does NO query and returns an empty map for an empty id list", async () => {
+    const map = await listJobDocumentVersionsForDocuments([]);
+    expect(map.size).toBe(0);
+    // No round-trip — not even requireOrgContext's downstream read.
+    expect(findDb("job_document_versions", "select")).toBeUndefined();
+  });
+
+  it("reads every document's versions in ONE .in() query on the TENANT client", async () => {
+    h.cfg.versions = [
+      { id: "v3", document_id: "doc-A", version_no: 2 },
+      { id: "v2", document_id: "doc-A", version_no: 1 },
+      { id: "v1", document_id: "doc-B", version_no: 1 },
+    ];
+    await listJobDocumentVersionsForDocuments(["doc-A", "doc-B"]);
+    const sels = h.dbCalls.filter(
+      (c) => c.table === "job_document_versions" && c.op === "select",
+    );
+    // Exactly one version query for the whole batch — the N+1 is gone.
+    expect(sels).toHaveLength(1);
+    expect(sels[0]?.client).toBe("tenant");
+    expect(sels[0]?.ins).toContainEqual(["document_id", ["doc-A", "doc-B"]]);
+  });
+
+  it("groups versions by document_id, newest-first within each group", async () => {
+    h.cfg.versions = [
+      { id: "v3", document_id: "doc-A", version_no: 2, filename: "a-v2.pdf" },
+      { id: "v2", document_id: "doc-A", version_no: 1, filename: "a-v1.pdf" },
+      { id: "v1", document_id: "doc-B", version_no: 1, filename: "b-v1.pdf" },
+    ];
+    const map = await listJobDocumentVersionsForDocuments(["doc-A", "doc-B"]);
+    expect(map.get("doc-A")?.map((v) => v.id)).toEqual(["v3", "v2"]);
+    expect(map.get("doc-B")?.map((v) => v.id)).toEqual(["v1"]);
+    // Public row shape is preserved (document_id stripped from the output).
+    expect(map.get("doc-A")?.[0]).not.toHaveProperty("document_id");
+    expect(map.get("doc-A")?.[0]?.filename).toBe("a-v2.pdf");
+  });
+
+  it("a document with no versions is simply absent from the map", async () => {
+    h.cfg.versions = [{ id: "v1", document_id: "doc-A", version_no: 1 }];
+    const map = await listJobDocumentVersionsForDocuments(["doc-A", "doc-EMPTY"]);
+    expect(map.has("doc-A")).toBe(true);
+    expect(map.has("doc-EMPTY")).toBe(false);
   });
 });

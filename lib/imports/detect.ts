@@ -41,6 +41,10 @@ export type DetectedSheet = {
   confidence: number; // 0–100
   column_map: ColumnMap;
   field_confidence: Record<string, number>; // per-field signal score
+  // Set when the detector picked an entity but isn't confident enough to let
+  // it import unattended (e.g. a soft-only staff vs customer tie). The parse
+  // pipeline forces these rows into `needs_review` regardless of confidence.
+  review_required?: boolean;
 };
 
 export type MappedRow = {
@@ -250,11 +254,34 @@ function mapColumns(
 // Entity-type detection per sheet
 // ---------------------------------------------------------------------------
 
+// Staff vs customer is the most dangerous confusion in the detector: a staff
+// roster and a customer list share the exact same name/email/phone columns, so
+// without a discriminator a plain contact sheet scores HIGHER as staff (fewer
+// catalog fields ⇒ a higher per-field average) and gets silently filed as
+// staff — wrong, and it even surfaces a "send staff invite" CTA for customers.
+//
+// So staff is only ever a candidate when a staff-specific signal is present:
+//   STRONG — unambiguously payroll/HR data; if one of these is present the
+//            staff classification is trusted outright.
+//   SOFT   — words that also appear on customer-ish data (a "role" or "job
+//            title" column can live on a CRM export). A staff win driven only
+//            by a soft signal is treated as ambiguous: we lean to the customer
+//            interpretation and force the sheet into manual review.
+const STAFF_SIGNAL_STRONG = [
+  "hourly rate",
+  "wage",
+  "employment type",
+  "start date",
+  "hire date",
+  "payroll number",
+];
+const STAFF_SIGNAL_SOFT = ["role", "position", "job title"];
+
 export function detectEntityType(sheet: ParsedSheet): DetectedSheet {
   // Discriminator keywords — entities that could otherwise be confused
   // with a sibling (supplier vs customer, job vs customer, quote vs
-  // invoice, payment vs invoice) require an explicit signal in at
-  // least one header.
+  // invoice, payment vs invoice, staff vs customer) require an explicit
+  // signal in at least one header.
   const lowered = sheet.header.map((h) => h.toLowerCase());
   const supplierSignal = lowered.some(
     (h) => h.includes("supplier") || h.includes("vendor"),
@@ -280,13 +307,28 @@ export function detectEntityType(sheet: ParsedSheet): DetectedSheet {
       h.includes("paid") ||
       (h.includes("method") && lowered.some((x) => x.includes("invoice"))),
   );
+  // Staff signals (see the STAFF_SIGNAL_* note above).
+  const hasStrongStaffSignal = lowered.some((h) =>
+    STAFF_SIGNAL_STRONG.some((a) => h.includes(a)),
+  );
+  const hasSoftStaffSignal = lowered.some((h) =>
+    STAFF_SIGNAL_SOFT.some((a) => h.includes(a)),
+  );
+  const staffSignal = hasStrongStaffSignal || hasSoftStaffSignal;
 
-  let best: DetectedSheet | null = null;
+  type Candidate = {
+    entity: EntityType;
+    score: number;
+    column_map: ColumnMap;
+    field_confidence: Record<string, number>;
+  };
+  const candidates: Candidate[] = [];
   for (const entity of Object.keys(ENTITY_FIELDS) as EntityType[]) {
     if (entity === "supplier" && !supplierSignal) continue;
     if (entity === "job" && !jobSignal) continue;
     if (entity === "quote" && !quoteSignal) continue;
     if (entity === "payment" && !paymentSignal) continue;
+    if (entity === "staff" && !staffSignal) continue;
     const fields = ENTITY_FIELDS[entity];
     const { map, perField } = mapColumns(sheet.header, fields);
     const required = REQUIRED_FIELDS[entity];
@@ -299,18 +341,11 @@ export function detectEntityType(sheet: ParsedSheet): DetectedSheet {
     const avg = totalScore / allFields.length;
     const requiredAvg =
       required.reduce((s, f) => s + (perField[f] ?? 0), 0) / required.length;
-    const score = Math.round(avg * 0.6 + requiredAvg * 0.4);
-    if (!best || score > best.confidence) {
-      best = {
-        sheet,
-        entity_type: entity,
-        confidence: Math.min(100, score),
-        column_map: map,
-        field_confidence: perField,
-      };
-    }
+    const score = Math.min(100, Math.round(avg * 0.6 + requiredAvg * 0.4));
+    candidates.push({ entity, score, column_map: map, field_confidence: perField });
   }
-  if (!best) {
+
+  if (candidates.length === 0) {
     return {
       sheet,
       entity_type: "unknown",
@@ -319,7 +354,34 @@ export function detectEntityType(sheet: ParsedSheet): DetectedSheet {
       field_confidence: {},
     };
   }
-  return best;
+
+  // Highest score wins. Array.prototype.sort is stable, so equal scores keep
+  // catalog order (customer is declared before staff) — a name/email/phone
+  // sheet never loses a tie to staff.
+  candidates.sort((a, b) => b.score - a.score);
+  let winner = candidates[0]!;
+  let reviewRequired = false;
+
+  // Ambiguity guard: staff won, but only on a SOFT signal (role/position/job
+  // title) — data that just as plausibly describes a customer. Lean to the
+  // customer interpretation and force manual review rather than silently
+  // filing people as staff (and offering them a staff-invite CTA).
+  if (winner.entity === "staff" && !hasStrongStaffSignal) {
+    const customer = candidates.find((c) => c.entity === "customer");
+    if (customer) {
+      winner = customer;
+      reviewRequired = true;
+    }
+  }
+
+  return {
+    sheet,
+    entity_type: winner.entity,
+    confidence: winner.score,
+    column_map: winner.column_map,
+    field_confidence: winner.field_confidence,
+    review_required: reviewRequired,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +532,13 @@ function normaliseValue(
   if (field === "status" && entity === "invoice") {
     const s = String(raw).toLowerCase().trim();
     if (["paid", "yes", "y", "true"].includes(s)) return "paid";
-    if (["overdue"].includes(s)) return "overdue";
+    // "overdue" is NOT mapped to a stored status: it is derived from due_date
+    // plus the trigger-owned payment status (lib/invoices/overdue.ts), so
+    // storing it would create a value nothing keeps current. No information is
+    // lost — an invoice a CSV calls overdue is unpaid and past its date, which
+    // `sent` + its due_date already says, and the derived authority will show
+    // it as overdue on the same terms as every other invoice.
+    if (["overdue"].includes(s)) return "sent";
     if (["sent", "issued"].includes(s)) return "sent";
     if (["draft"].includes(s)) return "draft";
     return "sent"; // safe default

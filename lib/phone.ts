@@ -77,3 +77,20 @@ export function whatsAppHref(
   const digits = toInternationalDigits(input);
   return digits ? `https://wa.me/${digits}` : null;
 }
+
+/**
+ * Convert a free-form phone number into E.164 (`+<country><subscriber>`), the
+ * shape SMS providers (Twilio) require for a destination. Reuses
+ * `toInternationalDigits` for all UK-first normalisation, then prefixes the "+".
+ * Returns null when there is nothing dial-able — the transport turns that null
+ * into a `failed`/invalid_destination attempt rather than calling a provider.
+ *
+ *   "07700 900000"      -> "+447700900000"
+ *   "+44 7700 900000"   -> "+447700900000"
+ *   "+1 (415) 555-0123" -> "+14155550123"
+ *   ""                  -> null
+ */
+export function toE164(input: string | null | undefined): string | null {
+  const digits = toInternationalDigits(input);
+  return digits ? `+${digits}` : null;
+}

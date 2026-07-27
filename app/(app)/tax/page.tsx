@@ -10,7 +10,7 @@ import {
 } from "@/lib/tax/compute";
 
 /**
- * Tax dashboard — VAT, PAYE (placeholder), Corporation Tax estimates.
+ * Tax dashboard — VAT, PAYE/NI, Corporation Tax estimates.
  *
  * Estimates ONLY. Banner at the top makes that clear; every tile carries
  * a confidence flag and a "confirm with your accountant" footnote. Numbers
@@ -110,6 +110,13 @@ export default async function TaxDashboardPage() {
   );
   const ctPayDate = new Date(
     Date.UTC(yearEnd.getUTCFullYear(), yearEnd.getUTCMonth() + 9, yearEnd.getUTCDate() + 1),
+  );
+  // PAYE/NI for a tax month is due to HMRC by the 22nd of the following
+  // month (electronic). The PAYE tile aggregates this calendar month's
+  // payroll runs, so the liability falls due on the 22nd of next month.
+  const now = new Date();
+  const payeDeadline = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 22),
   );
 
   return (
@@ -235,7 +242,7 @@ export default async function TaxDashboardPage() {
         </p>
       </section>
 
-      {/* PAYE — placeholder */}
+      {/* PAYE / NI — computed from this month's payroll runs */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -254,7 +261,11 @@ export default async function TaxDashboardPage() {
             label="Estimate"
             value={GBP.format(paye.estimate)}
             basis="Estimate"
-            sub="awaiting upstream data"
+            sub={
+              paye.confidence === "computed"
+                ? "from this month's payroll runs"
+                : "awaiting your first payroll run"
+            }
           />
           <div className="sm:col-span-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600">
             {paye.note}
@@ -282,9 +293,19 @@ export default async function TaxDashboardPage() {
           />
           <Liability
             label="PAYE / NI"
-            amount="—"
-            due="monthly (22nd)"
-            note="Available once payroll lands (Wave 4)"
+            amount={
+              paye.confidence === "computed" ? GBP.format(paye.estimate) : "—"
+            }
+            due={
+              paye.confidence === "computed"
+                ? formatDate(payeDeadline.toISOString())
+                : "monthly (22nd)"
+            }
+            note={
+              paye.confidence === "computed"
+                ? "PAYE income tax + employee NI on this month's payroll — pay HMRC by the 22nd of next month"
+                : "Available once you run payroll for this month"
+            }
           />
         </ul>
       </section>

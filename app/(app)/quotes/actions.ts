@@ -239,6 +239,19 @@ export async function updateQuote(
     .select("status")
     .eq("id", id)
     .maybeSingle();
+
+  // Commercial integrity: an accepted quote/variation is a firm agreement — its
+  // amounts and scope are frozen (the DB enforces this too, via triggers
+  // quotes_freeze_accepted / quote_line_items_freeze_accepted). Refuse the edit
+  // up front rather than let the DB reject the line-item re-insert mid-write.
+  // To change agreed scope, the operator raises a variation.
+  if (existing?.status === "accepted") {
+    return formError(
+      "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
+      echoValuesFromForm(formData),
+    );
+  }
+
   const revertToPending =
     existing?.status === "approved" ||
     existing?.status === "sent" ||
@@ -574,8 +587,51 @@ export async function reviewQuote(id: string, formData: FormData) {
 }
 
 export async function deleteQuote(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
+
+  // INTEGRITY GUARD — refuse to delete a quote that invoices still depend on.
+  //
+  // `invoices.quote_id` is `on delete set null` (20260515190000_invoices.sql),
+  // so deleting the quote does NOT fail. It silently orphans the invoice, and
+  // every consequence is invisible from this screen:
+  //   - the invoice disappears from the customer's portal (both the overview
+  //     and the invoices list scope by the customer's quote ids);
+  //   - its portal PDF 404s (ownership resolves through quote -> customer);
+  //   - its PDF and emailed copy render with a correct total and NO line items
+  //     (they read quote_line_items via quote_id);
+  //   - the reminder cron stops chasing it FOREVER, because the recipient also
+  //     resolves through quote -> customer, and a missing email is silently
+  //     counted as skipped.
+  // The money stays owed and nothing pursues it. The FK's stated intent —
+  // "invoices outlive their source quote for audit" — is not delivered.
+  //
+  // Scoped to the ACTIVE org deliberately, not left to RLS: the invoices SELECT
+  // policy is `org_id in (select current_org_ids())`, which spans EVERY org the
+  // caller belongs to, so for a multi-org user another org's invoice could
+  // otherwise decide this org's deletion.
+  //
+  // Fails CLOSED: if the check itself errors we refuse the delete rather than
+  // fall through to it. A dependency check that fails open is worse than none —
+  // it reads as a guarantee while silently permitting the damage.
+  const { data: dependents, error: depErr } = await supabase
+    .from("invoices")
+    .select("id")
+    .eq("quote_id", id)
+    .eq("org_id", ctx.org.id)
+    .limit(1);
+  if (depErr) {
+    console.error("[quotes] invoice dependency check failed", {
+      quoteId: id,
+      code: depErr.code,
+      message: depErr.message,
+    });
+    redirect(`/quotes/${id}?error=delete_check_failed`);
+  }
+  if ((dependents ?? []).length > 0) {
+    redirect(`/quotes/${id}?error=has_invoices`);
+  }
+
   // RLS on quotes inherits from the broader members policy: DELETE allowed
   // for any member (no admin gating on quotes table by default).
   // quote_line_items cascade-delete via FK ON DELETE CASCADE.
@@ -703,6 +759,10 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       .insert({
         org_id: quote.org_id,
         quote_id: quote.id,
+        // Denormalised customer anchor (Issue #349 Phase 1) — stamped from the
+        // quote at creation so the invoice keeps its customer identity if the
+        // quote is later deleted. Composite FK guarantees same-org.
+        customer_id: quote.customer_id,
         number: invNumber as unknown as string,
         amount: quote.subtotal,
         vat_total: quote.vat_total,
@@ -902,6 +962,9 @@ export async function acceptQuoteByToken(
       .insert({
         org_id: quote.org_id,
         quote_id: quote.id,
+        // Denormalised customer anchor (Issue #349 Phase 1) — see the owner
+        // auto-invoice path above. Same composite-FK guarantee.
+        customer_id: quote.customer_id,
         number: invNumber as unknown as string,
         amount: quote.subtotal,
         vat_total: quote.vat_total,

@@ -62,6 +62,10 @@ const ERROR_MAP: Record<string, string> = {
   accept_failed: "Couldn't accept the quote.",
   decline_failed: "Couldn't decline the quote.",
   delete_failed: "Couldn't delete.",
+  has_invoices:
+    "This quote can't be deleted — one or more invoices were created from it and still depend on it for their line items and customer details. The quote needs to stay while those invoices exist.",
+  delete_check_failed:
+    "Couldn't check whether any invoices depend on this quote, so nothing was deleted. Please try again.",
   line_items_failed: "Line items didn't save — please re-enter them and save again.",
   request_failed: "Couldn't request approval. Try again.",
   review_failed: "Couldn't record the review. Try again.",
@@ -221,6 +225,12 @@ export default async function EditQuotePage({
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
+          <Link
+            href="/quotes"
+            className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-slate-900"
+          >
+            ← Quotes
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">{quote.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
             {GBP.format(Number(quote.total ?? 0))} ·{" "}
@@ -552,13 +562,14 @@ export default async function EditQuotePage({
 
       <ConfirmForm
         action={deleteQuote.bind(null, id)}
-        confirm="Delete this quote? Line items go too (cascade). Linked invoices keep their record but lose the quote reference."
+        confirm="Delete this quote? Its line items go too (cascade). This only works if no invoice has been created from it."
         className="rounded-xl border border-red-200 bg-red-50/50 p-4 block"
       >
         <p className="text-sm font-medium text-red-900">Delete this quote</p>
         <p className="mt-1 text-xs text-red-700">
-          Line items will be removed too (cascade). Any linked invoice will
-          have its quote reference cleared but otherwise stays put.
+          Line items will be removed too (cascade). A quote can&apos;t be
+          deleted once an invoice has been created from it — that invoice
+          still depends on it.
         </p>
         <button
           type="submit"

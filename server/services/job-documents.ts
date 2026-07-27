@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 
 /**
  * P4 — Job Documents service layer.
@@ -322,26 +323,63 @@ export async function listJobDocuments(
 }
 
 /**
- * Version history for a document (newest first). RLS-gated: staff get [] for a
- * private document's versions.
+ * Version history for a set of documents, grouped by document_id and ordered
+ * newest-first within each group. RLS-gated: staff get nothing for a private
+ * document's versions.
+ *
+ * This replaces a per-document `listJobDocumentVersions(id)` call. The panel
+ * used to map over the documents and await one query EACH (an N+1) — and
+ * because every call re-ran `requireOrgContext()` (auth + a memberships
+ * lookup), a job with N documents cost ~3N round-trips. Here we read every
+ * version for the job's documents in a SINGLE `.in(document_id, …)` query and
+ * bucket them in memory, so the cost is constant in N.
+ *
+ * Cap note: this is a per-JOB read. A job's (documents × versions) count stays
+ * comfortably below the PostgREST 1000-row response cap in any realistic
+ * scenario, so a single page is correct here — unlike the per-ORG dashboard
+ * reads (F-1), which genuinely cross the cap and page via fetchAllRows. If a
+ * single job ever carried >1000 version rows this should page the same way.
  */
-export async function listJobDocumentVersions(
-  documentId: string,
-): Promise<JobDocumentVersionRow[]> {
+export async function listJobDocumentVersionsForDocuments(
+  documentIds: string[],
+): Promise<Map<string, JobDocumentVersionRow[]>> {
+  const grouped = new Map<string, JobDocumentVersionRow[]>();
+  if (documentIds.length === 0) return grouped;
+
   await requireOrgContext();
   const tenant = await createClient();
   const { data, error } = await tenant
     .from("job_document_versions" as never)
     .select(
-      "id, version_no, filename, mime_type, size_bytes, uploaded_by, created_at",
+      "id, document_id, version_no, filename, mime_type, size_bytes, uploaded_by, created_at",
     )
-    .eq("document_id", documentId)
+    .in("document_id", documentIds)
+    .order("document_id", { ascending: true })
     .order("version_no", { ascending: false });
   if (error) {
-    console.error("[job-documents] versions failed", error);
-    return [];
+    console.error("[job-documents] batched versions failed", error);
+    return grouped;
   }
-  return (data ?? []) as unknown as JobDocumentVersionRow[];
+
+  const rows = (data ?? []) as unknown as Array<
+    JobDocumentVersionRow & { document_id: string }
+  >;
+  for (const raw of rows) {
+    const list = grouped.get(raw.document_id) ?? [];
+    // Strip document_id so the public row shape stays identical to the
+    // per-document fetch the client row component already consumes.
+    list.push({
+      id: raw.id,
+      version_no: raw.version_no,
+      filename: raw.filename,
+      mime_type: raw.mime_type,
+      size_bytes: raw.size_bytes,
+      uploaded_by: raw.uploaded_by,
+      created_at: raw.created_at,
+    });
+    grouped.set(raw.document_id, list);
+  }
+  return grouped;
 }
 
 /**
@@ -357,7 +395,7 @@ export async function getJobDocumentDownloadUrl(
 
   const { data, error } = await tenant
     .from("job_document_versions" as never)
-    .select("document_id, visibility, storage_bucket, storage_path")
+    .select("org_id, document_id, visibility, storage_bucket, storage_path")
     .eq("id", versionId)
     .maybeSingle();
   if (error) {
@@ -365,6 +403,7 @@ export async function getJobDocumentDownloadUrl(
     return { ok: false, error: "lookup_failed" };
   }
   const version = data as {
+    org_id: string;
     document_id: string;
     visibility: JobDocVisibility;
     storage_bucket: string;
@@ -372,6 +411,13 @@ export async function getJobDocumentDownloadUrl(
   } | null;
   if (!version) {
     // Either missing or RLS-denied (a staff user hitting a private version).
+    return { ok: false, error: "not_found" };
+  }
+  // Never sign a path that isn't under the row's own org (poisoned cross-tenant pointer),
+  // and only ever from the two job-doc buckets — the row carries the bucket name, so pin it
+  // to an allowlist rather than trusting a stored value.
+  if (!storagePathBelongsToOrg(version.storage_path, version.org_id)) return { ok: false, error: "not_found" };
+  if (version.storage_bucket !== "job-docs" && version.storage_bucket !== "job-docs-private") {
     return { ok: false, error: "not_found" };
   }
 

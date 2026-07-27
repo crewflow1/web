@@ -164,33 +164,41 @@ export default async function PortalMessagesPage({
         ) : (
           <ul className="space-y-2">
             {tickets.map((t) => {
-              // Last visible (non-internal) message for the preview line.
+              // Last visible message for the preview line: non-internal, and
+              // one of the two parties to this conversation. 'hq' is CrewFlow
+              // talking to the org on its own helpdesk — not addressed to this
+              // customer, and previously previewed as though the org sent it.
               const lastVisible = (t.last_message ?? []).find(
-                (m) => !m.internal,
+                (m) => !m.internal && m.author_kind !== "hq",
               );
               return (
-                <li
-                  key={t.id}
-                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-slate-900">
-                      #{t.ticket_number} · {t.subject}
-                    </p>
-                    <span className="shrink-0 text-[11px] text-slate-500">
-                      {t.status}
-                    </span>
-                  </div>
-                  {lastVisible ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-600">
-                      <span className="font-medium">
-                        {lastVisible.author_kind === "hq"
-                          ? `${org.name}: `
-                          : "You: "}
+                <li key={t.id}>
+                  <a
+                    href={`/customer-portal/${token}/messages/${t.id}`}
+                    className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        #{t.ticket_number} · {t.subject}
+                      </p>
+                      <span className="shrink-0 text-[11px] text-slate-500">
+                        {t.status}
                       </span>
-                      {lastVisible.body}
+                    </div>
+                    {lastVisible ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">
+                        <span className="font-medium">
+                          {lastVisible.author_kind === "customer"
+                            ? "You: "
+                            : `${org.name}: `}
+                        </span>
+                        {lastVisible.body}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-[11px] font-medium text-slate-400">
+                      View conversation →
                     </p>
-                  ) : null}
+                  </a>
                 </li>
               );
             })}

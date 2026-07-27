@@ -25,6 +25,8 @@
  * accountant or HMRC's official calculator.
  */
 
+import { csvEscape } from "@/lib/csv";
+
 const PERSONAL_ALLOWANCE = 12_570;
 const HIGHER_RATE_THRESHOLD = 50_270;
 const ADDITIONAL_RATE_THRESHOLD = 125_140;
@@ -145,7 +147,14 @@ export function defaultPeriod(
   };
 }
 
-/** Renders a payroll-line array as a CSV (HMRC-friendly column order). */
+/**
+ * Renders a payroll-line array as a CSV (HMRC-friendly column order).
+ *
+ * Every field is quoted through the shared `csvEscape` (`@/lib/csv`) — the
+ * one authoritative CSV escaper — so a comma-bearing name (or any other
+ * value) can never break the column layout, and payroll carries no escaper
+ * of its own.
+ */
 export function payrollCsv(
   rows: Array<{
     full_name: string;
@@ -179,23 +188,18 @@ export function payrollCsv(
         period.period_start,
         period.period_end,
         period.cycle,
-        csvCell(r.full_name),
-        csvCell(r.ni_number ?? ""),
+        r.full_name,
+        r.ni_number ?? "",
         r.hours.toFixed(2),
         r.hourly_pay.toFixed(2),
         r.gross_pay.toFixed(2),
         r.paye_estimate.toFixed(2),
         r.ni_estimate.toFixed(2),
         r.net_pay.toFixed(2),
-      ].join(","),
+      ]
+        .map(csvEscape)
+        .join(","),
     );
   }
   return lines.join("\n");
-}
-
-function csvCell(s: string): string {
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
 }

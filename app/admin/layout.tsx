@@ -1,7 +1,6 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { NOINDEX_METADATA } from "@/lib/seo/metadata";
+import { requireHqPage } from "@/server/auth/hq";
 import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snapshot";
 import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
@@ -31,11 +30,23 @@ type NavItem = {
 };
 
 export const HQ_NAV: ReadonlyArray<NavItem> = [
+  { href: "/admin/command-centre", label: "⚡ Command Centre" },
+  { href: "/admin/pulse", label: "📡 The Pulse" },
+  { href: "/admin/ceo", label: "👑 CEO Dashboard" },
   { href: "/admin/overview", label: "Overview" },
+  { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
+  { href: "/admin/tasks", label: "🛰️ AI Task Queue" },
+  { href: "/admin/memory", label: "📚 Shared Memory" },
+  { href: "/admin/sales", label: "💼 Sales AI" },
+  { href: "/admin/research", label: "🔬 Research AI" },
+  { href: "/admin/qualification", label: "🎯 Qualification AI" },
   { href: "/admin/demos", label: "Demos CRM" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/onboarding", label: "Onboarding & migration" },
   { href: "/admin/ai-receptionist", label: "AI Receptionist setups" },
+  { href: "/admin/ai-receptionist/worklist", label: "↳ Conversation worklist" },
+  { href: "/admin/ai-receptionist/review", label: "↳ Reply review inbox" },
+  { href: "/admin/ai-receptionist/deliveries", label: "↳ Reply delivery monitor" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue" },
   { href: "/admin/notifications", label: "Notifications" },
@@ -50,13 +61,15 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/settings", label: "Settings" },
 ];
 
+// Internal HQ — never index.
+export const metadata = NOINDEX_METADATA;
+
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  const user = await requireHqPage();
 
   // Live ticket count drives the Support queue badge. Best-effort —
   // failures degrade to no badge rather than breaking the layout.

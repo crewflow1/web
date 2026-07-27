@@ -3,74 +3,71 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
- * P2 audit M-1 — customer-portal overview invoices scope.
+ * P2 audit M-1 — customer-portal invoices scope (updated for Issue #349 Phase 1).
  *
- * The overview page renders per-customer KPIs (outstanding balance, most
- * recent invoice). Invoices carry no customer_id column — they link to a
- * customer only via their parent quote. Before the fix the invoices read
- * was scoped ONLY by org_id and then narrowed to the customer in JS, which
- *   (a) over-read OTHER customers' invoice rows on the service-role client
- *       (which BYPASSES RLS — the token is the only auth surface), and
- *   (b) applied a top-50 recency `.limit()` org-wide, so a busy org's
- *       customer could see a wrong/empty outstanding total and the wrong
- *       "most recent invoice".
- * The fix scopes the invoices query to THIS customer's quote ids at the DB,
- * exactly like the invoices list page — the JS post-filter is no longer the
- * thing standing between one customer and another's invoices.
+ * The invariant this protects is unchanged: on the portal's service-role client
+ * (which BYPASSES RLS — the token is the only auth surface), a customer must see
+ * ONLY their own invoices, never an org-wide set narrowed in JS.
  *
- * Portal pages are server components rendered against the real DB; per the
- * repo convention (see __tests__/portal/phase3.test.ts) the cross-tenant
- * contract is pinned on source so a refactor can't silently widen the scope
- * again. These assertions fail on the pre-fix shape and pass on the fix.
+ * The MECHANISM changed, and strengthened. Originally invoices had no customer
+ * column, so both portal surfaces scoped by walking quote -> customer
+ * (`.in("quote_id", quoteIds)`). Phase 1 denormalised `invoices.customer_id`,
+ * so both now scope DIRECTLY by `.eq("customer_id", customer.id)` — a stronger
+ * guarantee that also survives quote loss (an orphaned invoice keeps its
+ * customer_id, so it neither leaks to another customer nor vanishes from its
+ * own). These assertions pin the direct-scope shape; the old quote-walk shape
+ * must be gone so a refactor can't reintroduce the org-wide-then-JS crutch.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
+const readCode = (p: string) =>
+  read(p)
+    .split("\n")
+    .filter((l) => {
+      const t = l.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
 
 const OVERVIEW = read("app/customer-portal/[token]/page.tsx");
+const OVERVIEW_CODE = readCode("app/customer-portal/[token]/page.tsx");
 const LIST = read("app/customer-portal/[token]/invoices/page.tsx");
+const LIST_CODE = readCode("app/customer-portal/[token]/invoices/page.tsx");
 
-describe("M-1 — portal overview scopes invoices to the customer's quotes", () => {
+describe("M-1 — portal invoices scope directly to the customer (Phase 1)", () => {
   it("resolves the customer via the portal token and fails closed", () => {
     expect(OVERVIEW).toMatch(/loadCustomerByPortalToken\(token\)/);
     expect(OVERVIEW).toMatch(/InvalidLinkPage/);
   });
 
-  it("keeps the quotes read scoped by org_id AND customer_id", () => {
+  it("overview scopes invoices by org_id AND the customer's OWN customer_id", () => {
     expect(OVERVIEW).toMatch(
-      /\.from\("quotes"\)[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+      /\.from\("invoices"\)[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
     );
   });
 
-  it("scopes the invoices read to the customer's quote ids (.in quote_id)", () => {
-    expect(OVERVIEW).toMatch(
-      /\.from\("invoices"\)[\s\S]*?\.in\("quote_id", quoteIds\)/,
+  it("invoices list scopes by org_id AND the customer's OWN customer_id", () => {
+    expect(LIST).toMatch(
+      /\.from\("invoices"\)[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
     );
   });
 
-  it("fetches the customer's quotes BEFORE the invoices read, to scope it", () => {
-    const quotesIdx = OVERVIEW.indexOf('.from("quotes")');
-    const invoicesIdx = OVERVIEW.indexOf('.from("invoices")');
-    expect(quotesIdx).toBeGreaterThanOrEqual(0);
-    expect(invoicesIdx).toBeGreaterThanOrEqual(0);
-    expect(quotesIdx).toBeLessThan(invoicesIdx);
-    expect(OVERVIEW).toMatch(/const quoteIds = allQuotes\.map\(\(q\) => q\.id\)/);
+  it("neither surface walks quote_id to scope invoices any more", () => {
+    // The quote-walk was the pre-Phase-1 mechanism; the direct customer scope
+    // replaces it. If it returns, the org-wide-then-narrow risk returns with it.
+    expect(OVERVIEW_CODE).not.toMatch(/from\("invoices"\)[\s\S]*?\.in\("quote_id"/);
+    expect(LIST_CODE).not.toMatch(/from\("invoices"\)[\s\S]*?\.in\("quote_id"/);
   });
 
-  it("only reads invoices when the customer actually has quotes", () => {
-    expect(OVERVIEW).toMatch(/if \(quoteIds\.length > 0\)/);
+  it("keeps no org-wide fetch + JS-filter crutch", () => {
+    expect(OVERVIEW_CODE).not.toMatch(/quoteIds\.has\(/);
+    expect(OVERVIEW_CODE).not.toMatch(/invoicesRes/);
   });
 
-  it("drops the org-wide fetch + JS-filter crutch (no post-fetch narrowing)", () => {
-    // Pre-fix narrowed an org-only invoice fetch in JS via `quoteIds.has(...)`
-    // off an `invoicesRes` Promise.all result. Both must be gone — the
-    // scoping now lives in the query, not in a post-fetch filter.
-    expect(OVERVIEW).not.toMatch(/quoteIds\.has\(/);
-    expect(OVERVIEW).not.toMatch(/invoicesRes/);
-  });
-
-  it("matches the invoices list page's per-customer scoping pattern", () => {
-    // The list page is the reference implementation: customer quote ids → .in().
-    expect(LIST).toMatch(/\.in\("quote_id", quoteIds\)/);
+  it("both surfaces share the same direct-scope pattern", () => {
+    for (const src of [OVERVIEW, LIST]) {
+      expect(src).toMatch(/\.eq\("customer_id", customer\.id\)/);
+    }
   });
 });

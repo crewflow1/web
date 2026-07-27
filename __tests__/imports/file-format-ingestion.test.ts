@@ -107,10 +107,14 @@ describe("Migration OS ingests every supported deterministic file format", () =>
       // the right file produced the right data through the right parser.
       expect(flat(sheets)).toContain(stamp);
 
-      // Detection proof: recognised (not 'unknown') with commit-grade
-      // confidence, so the row routes to `pending`, not the review queue.
+      // Detection proof: every fixture is a customer list (name/email/phone),
+      // so it must classify as `customer` — NOT staff. (The launch-blocking bug
+      // filed customer name/email/phone sheets as staff, which then silently
+      // vanished on commit.) And with commit-grade confidence + no review flag,
+      // so the row routes straight to `pending`, not the review queue.
       const detected = detectEntityType(sheet);
-      expect(detected.entity_type).not.toBe("unknown");
+      expect(detected.entity_type).toBe("customer");
+      expect(detected.review_required ?? false).toBe(false);
       const mapped = mapRow(detected, sheet.rows[0]!);
       expect(mapped.confidence).toBeGreaterThanOrEqual(REVIEW_THRESHOLD);
     });
@@ -140,7 +144,16 @@ describe("ZIP archives expand and each inner file parses (expandZips)", () => {
     let blob = "";
     for (const f of inner) {
       const b = new Uint8Array(await f.arrayBuffer());
-      blob += " | " + flat(parseLikeUpload(f.name, b));
+      const sheets = parseLikeUpload(f.name, b);
+      blob += " | " + flat(sheets);
+      // Each inner file is a customer list — it must detect as `customer`
+      // (not staff) and be commit-ready, exactly like a direct upload.
+      for (const sheet of sheets) {
+        if (sheet.rows.length === 0) continue;
+        const detected = detectEntityType(sheet);
+        expect(detected.entity_type).toBe("customer");
+        expect(detected.review_required ?? false).toBe(false);
+      }
     }
     expect(blob).toContain("Acme ZIP-CSV Ltd");
     expect(blob).toContain("Acme ZIP-XLSX Ltd");

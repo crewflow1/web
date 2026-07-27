@@ -1,6 +1,4 @@
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { notFound } from "next/navigation";
+import { requireHqPage } from "@/server/auth/hq";
 import { getSettings } from "@/server/services/hq-settings";
 import {
   SECTION_IDS,
@@ -38,8 +36,7 @@ export default async function HqSettingsPage({
 }: {
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const sp = await searchParams;
   const settings = await getSettings();

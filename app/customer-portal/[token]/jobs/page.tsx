@@ -7,15 +7,28 @@ import { InvalidLinkPage } from "@/app/_components/invalid-link";
  * Customer portal — Job progress.
  *
  * Shows every job currently linked to this customer with status,
- * scheduled date, assigned tech, and notes. Read-only. Service-role
- * read, but every query is filtered on customer_id (the portal
- * loader's session) so no other org's jobs can leak.
+ * scheduled date and assigned tech. Read-only. Service-role read, but
+ * every query is filtered on customer_id (the portal loader's session)
+ * so no other org's jobs can leak.
  *
  * Phase 3 directive Step 4. The directive lists "client can view: job
  * status / key dates / assigned team if allowed / uploaded documents
- * / progress updates / messages" — this v1 covers status + dates +
- * assigned + brief notes. Documents/messages live on the dedicated
- * /messages tab; per-job-thread is a future extension.
+ * / progress updates / messages" — this covers status + dates +
+ * assigned. Documents/messages live on the dedicated /messages tab;
+ * per-job-thread is a future extension.
+ *
+ * DELIBERATELY NOT SHOWN — do not add these back without a customer-
+ * visibility model to gate them:
+ *   - `jobs.notes`: the staff-authored internal field from the job form
+ *     ("Scope, materials, access notes…"), previously rendered here
+ *     verbatim to any token holder.
+ *   - the assigned user's `email`: internal staff PII, previously used
+ *     as a display fallback when `full_name` was null.
+ * The directive's "assigned team IF ALLOWED" conditional was never
+ * built, and `jobs` carries no customer-visibility flag — so the only
+ * safe reading of "if allowed" is to show nothing that isn't plainly
+ * customer-facing. Surfacing customer-readable job notes needs its own
+ * field or flag; it is not a rendering tweak.
  */
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,12 +56,19 @@ export default async function PortalJobsPage({
   const { customer, org } = loaded;
 
   const admin = createAdminClient();
+  // SECURITY: never SELECT internal fields here, don't just avoid rendering
+  // them. `jobs.notes` is the same free-text field staff fill in from the job
+  // form (placeholder: "Scope, materials, access notes…") — access codes, key
+  // locations, margin and internal commentary all plausibly live in it. The
+  // assigned user's `email` is internal staff PII. Leaving either out of the
+  // query means no future render can leak them by accident, and nothing
+  // sensitive crosses the wire to a page served on an unauthenticated token.
   const { data: jobsRaw } = await admin
     .from("jobs")
     .select(
       `
-        id, status, scheduled_date, notes, created_at,
-        assigned:users!jobs_assigned_to_fkey ( full_name, email )
+        id, status, scheduled_date, created_at,
+        assigned:users!jobs_assigned_to_fkey ( full_name )
       `,
     )
     .eq("org_id", customer.org_id)
@@ -60,9 +80,8 @@ export default async function PortalJobsPage({
     id: string;
     status: string;
     scheduled_date: string | null;
-    notes: string | null;
     created_at: string;
-    assigned: { full_name: string | null; email: string | null } | null;
+    assigned: { full_name: string | null } | null;
   };
   const jobs = (jobsRaw ?? []) as unknown as Row[];
 
@@ -110,16 +129,16 @@ export default async function PortalJobsPage({
                       </span>
                     )}
                   </div>
-                  {j.notes ? (
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                      {j.notes}
-                    </p>
-                  ) : null}
                   <p className="mt-2 text-[11px] text-slate-500">
+                    {/* No identifying fallback: an assigned member without a
+                        display name is reported as assigned (which is true and
+                        useful) but never identified by email. "Not yet
+                        assigned" is reserved for genuinely unassigned jobs —
+                        using it here would be a lie, not a redaction. */}
                     {j.assigned?.full_name
                       ? `Assigned: ${j.assigned.full_name}`
-                      : j.assigned?.email
-                        ? `Assigned: ${j.assigned.email}`
+                      : j.assigned
+                        ? "Assigned"
                         : "Not yet assigned"}
                   </p>
                 </div>
