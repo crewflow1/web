@@ -10,6 +10,9 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
+import { JobDiarySection } from "./_job-diary";
+import { JobSnagsSection } from "./_job-snags";
+import { SiteTimelineSection } from "./_site-timeline";
 import { JobDocumentsPanel } from "./_job-documents";
 import { JobBlueprintsPanel } from "./_blueprints";
 import { formatGbp } from "@/lib/jobs/commercial-position";
@@ -27,6 +30,7 @@ import { computeRetentionSchedule } from "@/lib/retentions/schedule";
 import { RetentionScheduleSection } from "./_retention-schedule";
 import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/committed";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
+import { formatDayKeyUK } from "@/lib/time/format";
 import { MapActions } from "@/components/maps/MapActions";
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -58,6 +62,9 @@ export default async function EditJobPage({
   // keeping private rows out of a staff member's RSC payload.
   const canViewPrivate =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // The site's calendar day (Europe/London), computed once so every panel on
+  // this render agrees on what "overdue" means.
+  const todayIso = formatDayKeyUK(new Date());
   const supabase = await createClient();
   const { data: job } = await supabase
     .from("jobs")
@@ -739,6 +746,20 @@ export default async function EditJobPage({
         )}
       </section>
 
+      {/*
+        Job Site Hub — the operational picture for this site, composed from the
+        verticals that already own the data (site diary, snagging, H&S, plant,
+        documents). Each panel is org_id-pinned as well as RLS-scoped and
+        degrades to empty on a read failure, so none of them can break this page.
+      */}
+      <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
+
+      <JobSnagsSection
+        jobId={job.id}
+        orgId={ctx.membership.org_id}
+        todayIso={todayIso}
+      />
+
       <JobAssetsSection jobId={job.id} />
 
       <JobBlueprintsPanel jobId={job.id} />
@@ -748,6 +769,8 @@ export default async function EditJobPage({
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
+
+      <SiteTimelineSection jobId={job.id} orgId={ctx.membership.org_id} />
 
       {job.status === "completed" && job.customer_id ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
