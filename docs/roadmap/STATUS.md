@@ -4,8 +4,8 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Train 4 + CIS M1 shipped)
-**Production `main`:** `3d6f724`
+**Last reconciled:** 2026-07-27 (Continuation 7 — worktree reconciliation)
+**Production `main`:** `7b2308a`
 **Production migration tip:** `20261051`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
@@ -146,38 +146,31 @@
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-Production tip is **`20261042`**. Slots are pre-allocated to parallel workstreams so
-two branches can never collide on a numeric prefix (Supabase keys migration identity
-on that prefix — a collision is **invisible to git** because filenames differ):
+**Production migration tip is `20261051` (CIS M3, applied).** Slots BELOW that are
+closed forever — Supabase keys identity on the numeric prefix, so a lower-numbered
+file added later replays out of order from scratch. We have hit this twice (#128
+`20260711`, #136 `20260706`).
 
 | Slot | Owner | Status |
 |---|---|---|
-| `20261043` | Train 4 — `inbound_enquiries_provider_dedup` | **SHIPPED** |
-| `20261044` | Train 4 — `widen_transport_channel_whatsapp` | **SHIPPED** |
-| `20261045` | Train 4 — `whatsapp_read_receipt_status` | **SHIPPED** |
-| `20261046` | CIS M1 — `cis_subcontractors` | **SHIPPED** |
-| `20261047` | CIS M2 — `supplier_payments` (money-out ledger) | **SHIPPED** |
+| …`20261047` | CIS M2 `supplier_payments` | **APPLIED** |
+| `20261051` | CIS M3 `cis_deduction` | **APPLIED (prod tip)** |
+| ~~`20261050`~~ | ~~org-teardown `activity_cascade_guard`~~ | ⚠️ **MUST BE RENUMBERED → `20261055`** |
+| `20261053` | CIS bill value freeze (`cis_bill_value_freeze`) | built, unmerged |
+| `20261054` | Supplier bill settlement floor | built, unmerged |
+| `20261055` | **org-teardown P1** (renumbered from 20261050) | reserved |
+| `20261056+` | **NEXT FREE** | — |
 
-| ~~`20261048`~~ | ~~CIS M3~~ — **RETIRED, never written** (see slot-order note) | skipped |
-| ~~`20261049`~~ | ~~CIS M4~~ — **RETIRED, never written** (see slot-order note) | skipped |
-| `20261050` | **Org-teardown P1** — `activity_cascade_guard` (in flight, separate session) | in flight |
-| `20261051` | CIS M3 — deduction engine + reverse-charge VAT | **SHIPPED** |
-| `20261052` | CIS M4 — monthly statements + return dataset | reserved |
-| `20261053+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
-
-> **SLOT-ORDER NOTE (2026-07-27).** A migration whose version is BELOW the applied
-> production tip is the hazard already hit twice (PR #128 `20260711`, PR #136
-> `20260706`): Supabase keys migration identity on the numeric prefix, so a
-> lower-numbered file added later replays out of order from scratch. The
-> org-teardown P1 fix was authored as `20261050` and has already been replayed and
-> regression-tested at that number, so **renumbering it downward would invalidate
-> its verification for no benefit**. Instead `20261048`/`20261049` are RETIRED
-> (never written, never applied — gaps are harmless) and CIS M3/M4 move to
-> `20261051`/`20261052`. **Rule: always claim a slot ABOVE the current production
-> tip AND above every in-flight slot in this table.**
-
-Before pushing any migration, prove no duplicate prefixes:
-`ls supabase/migrations | sed 's/_.*//' | sort | uniq -d` must print nothing.
+> ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
+> `20261050_activity_cascade_guard` was allocated when the production tip was
+> `20261047`. **CIS M3 has since shipped, taking the tip to `20261051`**, so
+> `20261050` is now *below the applied tip* and can no longer be introduced. It
+> must be renumbered to **`20261055`** before it is committed/pushed/merged. The
+> earlier "the P1 keeps 20261050" decision was correct when made and is now
+> superseded by reality.
+>
+> **RULE: claim a slot above the production tip AND above every in-flight slot in
+> this table. Re-check the tip immediately before merging — it moves.**
 
 ## Next dependency-safe milestone per lane (evidence-based, 2026-07-27)
 
