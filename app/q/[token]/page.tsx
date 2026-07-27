@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publicAcceptQuote, publicDeclineQuote } from "./actions";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 /**
  * Public customer-facing quote view.
@@ -41,7 +42,7 @@ export default async function PublicQuotePage({
         sent_at, viewed_at, accepted_at, declined_at, accept_signature,
         job_id, variation_number,
         customer:customers ( id, name, email ),
-        org:organizations ( id, name, logo_url, vat_number, address, bank_details, phone, default_terms )
+        org:organizations ( id, name, logo_path, logo_url, vat_number, address, bank_details, phone, default_terms )
       `,
     )
     .eq("public_token", token)
@@ -97,6 +98,9 @@ export default async function PublicQuotePage({
     .order("sort_order", { ascending: true });
 
   const org = quote.org;
+  // Uploaded logos live in a private bucket → resolve a short-lived signed URL.
+  // Legacy external logo_url values pass through unchanged (back-compat).
+  const logoSrc = await resolveOrgLogoSrc(org, admin);
   const orgAddress =
     (org?.address as {
       line1?: string;
@@ -156,11 +160,11 @@ export default async function PublicQuotePage({
               ) : null}
             </div>
             <div className="shrink-0 text-right">
-              {org?.logo_url ? (
+              {logoSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={org.logo_url}
-                  alt={`${org.name} logo`}
+                  src={logoSrc}
+                  alt={`${org?.name ?? "Company"} logo`}
                   className="h-12 w-auto object-contain"
                 />
               ) : null}

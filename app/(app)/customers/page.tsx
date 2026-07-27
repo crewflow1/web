@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { formatAddressOneLine, customerToAddress } from "@/lib/address";
 import {
   PAGE_SIZE,
   parsePage,
@@ -43,7 +44,14 @@ export default async function CustomersPage({
   const supabase = await createClient();
   let query = supabase
     .from("customers")
-    .select("id, name, email, phone, created_at", { count: "exact" })
+    .select(
+      // country is intentionally omitted from the displayed list: it defaults
+      // to "United Kingdom" on every row, so including it would just append
+      // ", United Kingdom" to every one-line address. Search still spans the
+      // street/town/postcode columns (CUSTOMER_SEARCH_COLUMNS) regardless.
+      "id, name, email, phone, address_line1, address_line2, city, county, postcode, created_at",
+      { count: "exact" },
+    )
     // Secondary `id` sort is a STABLE tiebreaker: a bulk import can insert many
     // rows with identical created_at, and without a deterministic tiebreaker
     // PostgREST may order ties differently between page requests — duplicating
@@ -109,7 +117,7 @@ export default async function CustomersPage({
             type="search"
             name="q"
             defaultValue={term}
-            placeholder="Name, email, or phone"
+            placeholder="Name, address, postcode, email, or phone"
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
           />
         </div>
@@ -170,6 +178,11 @@ export default async function CustomersPage({
                       <p className="truncate text-base font-semibold text-slate-900">
                         {c.name}
                       </p>
+                      {formatAddressOneLine(customerToAddress(c)) ? (
+                        <p className="mt-0.5 truncate text-xs text-slate-600">
+                          {formatAddressOneLine(customerToAddress(c))}
+                        </p>
+                      ) : null}
                       {c.email ? (
                         <p className="mt-0.5 truncate text-xs text-slate-600">
                           {c.email}
@@ -199,6 +212,7 @@ export default async function CustomersPage({
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Address</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Phone</th>
                   <th className="px-4 py-3" />
@@ -209,6 +223,9 @@ export default async function CustomersPage({
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900">
                       {c.name}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {formatAddressOneLine(customerToAddress(c)) || "—"}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {c.email ?? "—"}

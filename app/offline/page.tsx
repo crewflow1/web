@@ -27,7 +27,11 @@ export default function OfflinePage() {
   const [items, setItems] = useState<OfflineBlueprintMeta[] | null>(null);
   const [open, setOpen] = useState<Open>(null);
   const openBtn = useRef<HTMLButtonElement>(null);
-  const identity = readOfflineIdentity();
+  // Read ONCE, lazily. Calling readOfflineIdentity() during render returned a fresh
+  // object every render, so `refresh` (useCallback dep [identity]) was new every
+  // render and the useEffect([refresh]) below re-ran after every setItems — an
+  // unbounded render + IndexedDB-read loop whenever an identity existed.
+  const [identity] = useState(readOfflineIdentity);
 
   const refresh = useCallback(async () => {
     if (!identity) { setItems([]); return; }

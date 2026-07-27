@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 export const runtime = "nodejs";
 
@@ -27,7 +28,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
         id, number, status, subtotal, vat_total, total, valid_until,
         notes, terms,
         customer:customers ( name ),
-        org:organizations ( name, phone, vat_number, logo_url, address, bank_details )
+        org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
     .eq("public_token", token)
@@ -56,7 +57,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     org_name: quote.org?.name ?? "",
     org_phone: quote.org?.phone ?? null,
     org_vat_number: quote.org?.vat_number ?? null,
-    org_logo_url: quote.org?.logo_url ?? null,
+    org_logo_url: await resolveOrgLogoSrc(quote.org, admin),
     org_address:
       (quote.org?.address as QuotePdfInput["org_address"]) ?? null,
     org_bank_details:

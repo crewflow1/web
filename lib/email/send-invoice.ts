@@ -8,6 +8,7 @@ import {
   buildInvoiceReminder,
   type ReminderStage,
 } from "@/lib/email/templates/reminders";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { env } from "@/lib/env";
 
 /**
@@ -49,6 +50,7 @@ type InvoiceJoined = {
     name: string | null;
     phone: string | null;
     vat_number: string | null;
+    logo_path: string | null;
     logo_url: string | null;
     address: unknown;
     bank_details: unknown;
@@ -79,7 +81,7 @@ export async function sendInvoiceEmail(
         notes, quote_id,
         customer:customers!invoices_customer_org_fkey ( name, email ),
         quote:quotes ( customer:customers ( name, email ) ),
-        org:organizations ( name, phone, vat_number, logo_url, address, bank_details )
+        org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
     .eq("id", invoiceId)
@@ -127,7 +129,7 @@ export async function sendInvoiceEmail(
     org_name: invoice.org?.name ?? "CrewFlow",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,
-    org_logo_url: invoice.org?.logo_url ?? null,
+    org_logo_url: await resolveOrgLogoSrc(invoice.org),
     org_address: (invoice.org?.address as InvoicePdfInput["org_address"]) ?? null,
     org_bank_details:
       (invoice.org?.bank_details as InvoicePdfInput["org_bank_details"]) ?? null,

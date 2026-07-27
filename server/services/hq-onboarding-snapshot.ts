@@ -66,6 +66,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
         "phone",
         "email",
         "vat_number",
+        "logo_path",
         "logo_url",
         "bank_details",
         "default_terms",
@@ -87,6 +88,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     phone: string | null;
     email: string | null;
     vat_number: string | null;
+    logo_path: string | null;
     logo_url: string | null;
     bank_details: OnboardingSnapshot["org"]["bank_details"];
     default_terms: string | null;
@@ -257,6 +259,7 @@ type HqOrgRow = {
   phone: string | null;
   email: string | null;
   vat_number: string | null;
+  logo_path: string | null;
   logo_url: string | null;
   bank_details: OnboardingSnapshot["org"]["bank_details"];
   default_terms: string | null;
@@ -353,6 +356,7 @@ async function buildHqChecklistProgress(
         phone: o.phone,
         email: (o as unknown as { email?: string | null }).email ?? null,
         vat_number: o.vat_number,
+        logo_path: o.logo_path,
         logo_url: o.logo_url,
         bank_details: o.bank_details,
         default_terms: o.default_terms,
