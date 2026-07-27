@@ -102,6 +102,7 @@ export function LeadForm({
           name="contact_name"
           label="Name"
           required
+          autoFocus
           placeholder="e.g. Sarah Murphy"
           autoComplete="name"
           defaultValue={pick("contact_name")}

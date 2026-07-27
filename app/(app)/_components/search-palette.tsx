@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
  */
 
 type Hit = {
-  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff";
+  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff" | "risk_assessment" | "permit";
   id: string;
   title: string;
   subtitle: string | null;
@@ -25,6 +25,8 @@ const TYPE_LABELS: Record<Hit["type"], string> = {
   invoice: "Invoice",
   lead: "Lead",
   staff: "Staff",
+  risk_assessment: "RAMS",
+  permit: "Permit",
 };
 
 const TYPE_ICONS: Record<Hit["type"], string> = {
@@ -34,6 +36,8 @@ const TYPE_ICONS: Record<Hit["type"], string> = {
   invoice: "💷",
   lead: "🎯",
   staff: "👷",
+  risk_assessment: "🦺",
+  permit: "📋",
 };
 
 export function SearchPalette() {

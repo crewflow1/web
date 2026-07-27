@@ -28,8 +28,16 @@ export type StalledInvoice = {
   id: string;
   number: string;
   total: number;
-  sent_at: string;
+  /**
+   * Nullable: overdue is derived from `due_date`, not from having been sent
+   * through the app (lib/invoices/overdue.ts). An imported or manually-managed
+   * invoice can be genuinely overdue with no `sent_at` stamp, so this can't be
+   * required. It was previously non-null only because the old definition
+   * filtered on `sent_at` itself.
+   */
+  sent_at: string | null;
   due_date: string | null;
+  /** Days past `due_date` — the deadline missed, not time since sending. */
   days_overdue: number;
   href: string;
 };

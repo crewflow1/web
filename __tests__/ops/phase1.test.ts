@@ -152,9 +152,14 @@ describe("Phase 1 — email-conditional crons handle missing RESEND_API_KEY", ()
 describe("Phase 1 — cron idempotency contracts", () => {
   it("invoice-reminders dedups via (invoice_id, stage) on invoice_reminders", () => {
     const route = read("app/api/cron/invoice-reminders/route.ts");
+    // Batched existence check: one query per stage over the candidate ids
+    // (not a per-candidate count query), keyed by stage.
     expect(route).toMatch(
-      /from\("invoice_reminders"\)[\s\S]*\.eq\("invoice_id", inv\.id\)[\s\S]*\.eq\("stage", stage\)/,
+      /from\("invoice_reminders"\)[\s\S]*\.eq\("stage", stage\)[\s\S]*\.in\("invoice_id"/,
     );
+    // Partial-unique-index backstop: a 23505 on insert is treated as
+    // already-recorded, never a hard failure.
+    expect(route).toMatch(/"23505"/);
     expect(route).toMatch(/skipped_already_sent\+\+/);
   });
 
@@ -223,10 +228,9 @@ describe("Phase 1 — buildOpsSnapshot", () => {
 // =====================================================================
 
 describe("Phase 1 — /admin/ops page", () => {
-  it("is HQ-only: requires both layout + page-level isSuperAdminEmail", () => {
-    expect(OPS_PAGE).toMatch(/requireUser/);
-    expect(OPS_PAGE).toMatch(/isSuperAdminEmail/);
-    expect(OPS_PAGE).toMatch(/notFound\(\)/);
+  it("is HQ-only: both the layout and the page itself gate via requireHqPage()", () => {
+    expect(OPS_PAGE).toMatch(/requireHqPage\(\)/);
+    expect(ADMIN_LAYOUT).toMatch(/requireHqPage\(\)/);
   });
 
   it("renders the traffic-light status banner", () => {

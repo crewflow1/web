@@ -62,12 +62,22 @@ export default async function ReportsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Weekly throughput, monthly revenue, quarterly VAT, top customers.
-          All data scoped to your current organisation.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Weekly throughput, monthly revenue, quarterly VAT, top customers.
+            All data scoped to your current organisation.
+          </p>
+        </div>
+        <a
+          href="/api/reports/export"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Export CSV
+        </a>
       </header>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

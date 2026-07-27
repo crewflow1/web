@@ -11,6 +11,7 @@ import {
   JOB_SEARCH_COLUMNS,
 } from "@/lib/search/filters";
 import { MapActions } from "@/components/maps/MapActions";
+import { PAGE_SIZE, parsePage, offsetForPage, pageWindow } from "@/lib/jobs/list";
 
 /**
  * Jobs list.
@@ -34,10 +35,32 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: "bg-red-100 text-red-700",
 };
 
-type SP = Promise<{ customer?: string; q?: string }>;
+type SP = Promise<{ customer?: string; page?: string; q?: string }>;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Shared column list for the paginated list query and the bounded "today"
+// query so the two always return the same row shape.
+const JOB_SELECT = `
+  id,
+  status,
+  scheduled_date,
+  notes,
+  created_at,
+  site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
+  customer:customers ( id, name, phone, address_line1, address_line2, city, county, postcode, country ),
+  assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
+` as const;
+
+// Cap on the address-search customer pre-pass. Every matched id is inlined into
+// a `customer_id.in.(…)` OR-branch on the jobs query, and supabase-js sends
+// selects as GET — so this is bounded by URL length, not by preference (200
+// UUIDs is already ~7.5KB of query string). A term matching more than this many
+// customers is a "search the whole book" query rather than a lookup, and the
+// site-address branch still matches such jobs directly. This is NOT the jobs
+// row cap — the jobs list itself is fully paginated via `.range()` below.
+const CUSTOMER_MATCH_LIMIT = 200;
 
 export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   await requireOrgContext();
@@ -47,14 +70,18 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   const term = (sp.q ?? "").trim();
 
   const supabase = await createClient();
+  const page = parsePage(sp.page);
+  const offset = offsetForPage(page);
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   // Address-first job search. A job matches when its OWN site address matches
   // the term OR when its linked customer matches (customer name OR the
   // customer's structured address). Jobs with no site-address override inherit
   // the customer's address, so the customer match is essential — it is resolved
   // in a first pass (collect matching customer ids) and folded into the jobs
-  // query as a `customer_id.in.(…)` OR-branch. All filtering stays in SQL,
-  // applied BEFORE the row cap — never a capped fetch filtered in JS.
+  // query as a `customer_id.in.(…)` OR-branch. All filtering stays in SQL and
+  // is applied BEFORE `.range()`, so the count is the count of MATCHES and page
+  // 1 of a search spans the whole table — never a capped fetch filtered in JS.
   const siteBranch = ilikeOrFilter(term, JOB_SEARCH_COLUMNS);
   let customerIdBranch: string | null = null;
   if (term) {
@@ -64,7 +91,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         .from("customers")
         .select("id")
         .or(custOr)
-        .limit(200);
+        .limit(CUSTOMER_MATCH_LIMIT);
       customerIdBranch = inIdsBranch(
         "customer_id",
         (matchCustomers ?? []).map((c) => c.id),
@@ -73,39 +100,61 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   }
   const searchOr = combineOr(siteBranch, customerIdBranch);
 
-  let query = supabase
+  // Paginated list. The old fixed 200-row cap limited BOTH the rows and the
+  // headline count, so an org with >200 jobs showed "200 jobs" with the rest
+  // unreachable. We now fetch an EXACT count and a single page via `.range()`.
+  // The `id` sort is a stable tiebreaker so rows sharing a scheduled_date can't
+  // be skipped or duplicated across page boundaries.
+  let listQuery = supabase
     .from("jobs")
-    .select(
-      `
-        id,
-        status,
-        scheduled_date,
-        notes,
-        created_at,
-        site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
-        customer:customers ( id, name, phone, address_line1, address_line2, city, county, postcode, country ),
-        assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
-      `,
-    )
+    .select(JOB_SELECT, { count: "exact" })
     .order("scheduled_date", { ascending: true, nullsFirst: false })
-    .limit(200);
+    .order("id", { ascending: true })
+    .range(offset, offset + PAGE_SIZE - 1);
+
+  // Today's jobs get their OWN bounded query (one org, one day → a few rows).
+  // Deriving them from the list slice was a real bug: under `scheduled_date
+  // ASC` today's work sorts onto the LAST pages, so once an org passed 200
+  // historical jobs the mobile "Today's jobs" panel went empty even when jobs
+  // were booked for today.
+  let todayQuery = supabase
+    .from("jobs")
+    .select(JOB_SELECT)
+    .eq("scheduled_date", todayIso)
+    .order("id", { ascending: true });
 
   if (customerFilter) {
-    query = query.eq("customer_id", customerFilter);
+    listQuery = listQuery.eq("customer_id", customerFilter);
+    todayQuery = todayQuery.eq("customer_id", customerFilter);
   }
-  // Applied BEFORE .limit(200) ⇒ the whole table is searched, then capped.
+  // Applied BEFORE `.range()` ⇒ the whole table is searched, then paginated.
+  // Narrows the "today" panel too, so the mobile view agrees with the search.
   if (searchOr) {
-    query = query.or(searchOr);
+    listQuery = listQuery.or(searchOr);
+    todayQuery = todayQuery.or(searchOr);
   }
 
-  const { data: jobs, error } = await query;
+  const [
+    { data: jobs, count, error },
+    { data: todayJobs, error: todayError },
+  ] = await Promise.all([listQuery, todayQuery]);
 
   if (error) {
     console.error("[jobs] list failed", error);
   }
+  if (todayError) {
+    console.error("[jobs] today list failed", todayError);
+  }
   const rows = jobs ?? [];
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const todayRows = rows.filter((j) => j.scheduled_date === todayIso);
+  const todayRows = todayJobs ?? [];
+  const totalCount = count ?? 0;
+  const { totalPages, from, to } = pageWindow(totalCount, offset, rows.length);
+  // Carried on every pagination link so paging never silently drops the active
+  // customer filter or search term.
+  const baseQuery: Record<string, string> = {
+    ...(customerFilter ? { customer: customerFilter } : {}),
+    ...(term ? { q: term } : {}),
+  };
 
   let filteredCustomerName: string | null = null;
   if (customerFilter) {
@@ -124,8 +173,8 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
           <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
           <p className="mt-1 text-sm text-slate-600">
             {term
-              ? `${rows.length} matching “${term}”`
-              : `${rows.length} ${rows.length === 1 ? "job" : "jobs"}`}
+              ? `${totalCount} matching “${term}”`
+              : `${totalCount} ${totalCount === 1 ? "job" : "jobs"}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -203,7 +252,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             </Link>
           </span>
           <Link
-            href="/jobs"
+            href={term ? { pathname: "/jobs", query: { q: term } } : "/jobs"}
             className="rounded-md border border-indigo-300 bg-white px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-50"
           >
             Clear customer filter
@@ -211,7 +260,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         </div>
       ) : null}
 
-      {rows.length === 0 && term ? (
+      {totalCount === 0 && term ? (
         <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
           <p>No jobs match “{term}”.</p>
           <Link
@@ -225,7 +274,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             Clear search
           </Link>
         </div>
-      ) : rows.length === 0 ? (
+      ) : totalCount === 0 ? (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="🔧"
@@ -234,6 +283,16 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             primary={{ href: "/jobs/new", label: "Create first job" }}
             secondary={{ href: "/customers/new", label: "Add a customer first" }}
           />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
+          <p>No jobs on this page.</p>
+          <Link
+            href={{ pathname: "/jobs", query: baseQuery }}
+            className="mt-2 inline-block font-medium text-slate-700 underline hover:text-slate-900"
+          >
+            Back to start
+          </Link>
         </div>
       ) : (
         <>
@@ -325,6 +384,40 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
           </div>
         </>
       )}
+
+      {totalCount > 0 ? (
+        <nav
+          aria-label="Pagination"
+          className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600"
+        >
+          <span>
+            Showing {from}–{to} of {totalCount}
+          </span>
+          {totalPages > 1 ? (
+            <div className="flex items-center gap-2">
+              {page > 1 ? (
+                <Link
+                  href={{ pathname: "/jobs", query: { ...baseQuery, page: page - 1 } }}
+                  className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+                >
+                  ← Previous
+                </Link>
+              ) : null}
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              {page < totalPages ? (
+                <Link
+                  href={{ pathname: "/jobs", query: { ...baseQuery, page: page + 1 } }}
+                  className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
+                >
+                  Next →
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
+        </nav>
+      ) : null}
     </div>
   );
 }

@@ -131,7 +131,7 @@ export async function updateJob(
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
-  return formSuccess({ successMessage: "Saved." });
+  return formSuccess({ successMessage: "Job updated." });
 }
 
 export async function deleteJob(id: string) {

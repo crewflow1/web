@@ -27,7 +27,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
       {icon ? (
-        <div aria-hidden className="mb-3 text-3xl" role="img">
+        <div aria-hidden className="mb-3 text-3xl">
           {icon}
         </div>
       ) : null}

@@ -1,6 +1,6 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
+import { getTextProvider, textCostUsd } from "@/lib/ai/text";
 import {
   AI_FORBIDDEN_ACTIONS,
   isAiConfigured,
@@ -9,25 +9,41 @@ import {
 } from "@/lib/ai/safety";
 
 /**
- * Phase 5 — AI question handler.
+ * Phase 5 — AI question handler (Vision 2030 AI-2: the ONE model door).
  *
  * Customer types a question on /insights. We:
  *   1. Build a SLIM org snapshot (counts + recent totals only — no
  *      PII, no individual customer names, no contact details).
- *   2. Send the question + snapshot to Claude (or OpenAI fallback).
+ *   2. Hand the question + snapshot to a model SOLELY through the shared
+ *      provider abstraction (`lib/ai/text::getTextProvider`) — no vendor SDK
+ *      is instantiated here, no API key is read here. Provider selection,
+ *      graceful `null` degradation, and cost accounting are therefore the
+ *      SAME seam the rest of the platform uses (Directive 009 Module 1).
  *   3. Return a structured `AiResponse` with confidence + sources.
  *
  * Safety: this handler is READ-ONLY. It cannot mutate any tenant row.
  * The directive's `AI_FORBIDDEN_ACTIONS` list is rendered to the
  * model as part of the system prompt so the LLM also knows the
- * boundaries.
+ * boundaries. Temperature is pinned to 0 — the model DESCRIBES the
+ * snapshot, it never invents a number the snapshot does not contain.
  *
- * When no AI key is configured, returns a deterministic fallback
- * answer built from the retention snapshot. The UI labels the
- * response as "deterministic" so operators know.
+ * Cost: every model-backed answer records the provider's authoritative
+ * token counts + `textCostUsd` price to the structured log. The Q&A has no
+ * per-answer DB row, so — consistent with `[ai/insights]` and the repo's
+ * "cost is observability, never a correctness gate" doctrine — that log line
+ * is the cost sink.
+ *
+ * Org isolation: the slim snapshot is a purpose-built projection that carries
+ * NO `org_id` and no PII, so nothing tenant-identifying ever reaches the
+ * model. `org_id` appears only in the server-side cost log, for attribution.
+ *
+ * When no provider is configured, returns a deterministic fallback answer
+ * built from the retention snapshot. The UI labels the response as
+ * "deterministic" so operators know.
  */
 
 const ANSWER_TIMEOUT_MS = 10_000;
+const ANSWER_MAX_TOKENS = 800;
 
 const SYSTEM_PROMPT = [
   "You are CrewFlow Insights, a read-only analytical assistant for a UK construction firm.",
@@ -50,8 +66,9 @@ export async function askAi(input: {
 }): Promise<AiResponse> {
   const { orgId, question } = input;
 
-  // Always build the snapshot. Even when AI is configured we pass it
-  // as the model's only ground-truth source.
+  // Always build the snapshot. Even when AI is configured we pass it as the
+  // model's ONLY ground-truth source. The slim projection carries no org_id
+  // and no PII — org isolation is structural here, not a strip step.
   const snap = await buildRetentionSnapshot(orgId);
   const slim = slimSnapshot(snap);
 
@@ -59,64 +76,61 @@ export async function askAi(input: {
     return deterministicAnswer(question, slim);
   }
 
-  // Defer model import so client bundles don't pull SDK weight.
-  try {
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    if (anthropicKey) {
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const client = new Anthropic({ apiKey: anthropicKey });
-      const msg = await client.messages.create(
-        {
-          model: "claude-haiku-4-5",
-          max_tokens: 800,
-          system: SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: `ORG SNAPSHOT JSON:\n${JSON.stringify(slim, null, 2)}\n\nQUESTION:\n${question}`,
-            },
-          ],
-        },
-        { signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS) },
-      );
-      const block = msg.content[0];
-      if (block && block.type === "text") {
-        const raw = extractJson(block.text);
-        const parsed = raw ? validateAiResponse({ ...raw, generated_by: "anthropic" }) : null;
-        if (parsed) return parsed;
-      }
-    }
+  // ONE model door — the shared provider abstraction. No vendor SDK, no API
+  // key read: `getTextProvider()` owns selection + graceful null. When it
+  // yields nothing usable, the deterministic answer stands in unchanged.
+  const provider = getTextProvider();
+  if (!provider || !isSupportedProvider(provider.info.provider)) {
+    return deterministicAnswer(question, slim);
+  }
 
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (openaiKey) {
-      const { default: OpenAI } = await import("openai");
-      const client = new OpenAI({ apiKey: openaiKey });
-      const res = await client.chat.completions.create(
-        {
-          model: "gpt-4o-mini",
-          max_tokens: 800,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: `ORG SNAPSHOT JSON:\n${JSON.stringify(slim, null, 2)}\n\nQUESTION:\n${question}`,
-            },
-          ],
-        },
-        { signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS) },
-      );
-      const text = res.choices[0]?.message?.content;
-      if (text) {
-        const raw = extractJson(text);
-        const parsed = raw ? validateAiResponse({ ...raw, generated_by: "openai" }) : null;
-        if (parsed) return parsed;
-      }
+  const userPrompt = `ORG SNAPSHOT JSON:\n${JSON.stringify(slim, null, 2)}\n\nQUESTION:\n${question}`;
+  const startedAt = Date.now();
+
+  try {
+    const result = await provider.generate(userPrompt, {
+      system: SYSTEM_PROMPT,
+      temperature: 0,
+      maxTokens: ANSWER_MAX_TOKENS,
+      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS),
+    });
+
+    const raw = extractJson(result.text);
+    // `generated_by` is OUR truth (the provider that actually ran), not the
+    // model's self-report — the model's value is overwritten before validation.
+    const parsed = raw
+      ? validateAiResponse({ ...raw, generated_by: provider.info.provider })
+      : null;
+
+    if (parsed) {
+      // Cost — provider truth via textCostUsd, structured + greppable. No
+      // per-answer DB row, so this line is the recording sink. org_id is for
+      // attribution only; it never reached the model.
+      console.info("[ai-question] answered", {
+        org_id: orgId,
+        provider: provider.info.provider,
+        model: result.model,
+        input_tokens: result.inputTokens,
+        output_tokens: result.outputTokens,
+        cost_usd: textCostUsd(provider.info, result),
+        latency_ms: Date.now() - startedAt,
+      });
+      return parsed;
     }
   } catch (err) {
     console.error("[ai-question] LLM call failed", err);
   }
 
   return deterministicAnswer(question, slim);
+}
+
+/**
+ * The shared factory only ever yields Anthropic / OpenAI providers; this guard
+ * is defence-in-depth and keeps `generated_by` truthful (an unknown vendor
+ * would be mislabelled by the validator, so we degrade to deterministic).
+ */
+function isSupportedProvider(provider: string): boolean {
+  return provider === "anthropic" || provider === "openai";
 }
 
 // ---------------------------------------------------------------------
@@ -254,6 +268,3 @@ function extractJson(text: string): unknown {
     }
   }
 }
-
-// silence "unused import" if createClient ever stops being used
-void createClient;

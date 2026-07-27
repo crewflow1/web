@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -162,6 +163,51 @@ export async function rejectExpenseDraft(formData: FormData): Promise<void> {
   if (!parsed.success) {
     const id = String(formData.get("draft_id") ?? "");
     redirect(`/expenses/${id}?error=validation`);
+  }
+
+  // SECURITY (P2 audit M-3): reject runs on the service-role admin client,
+  // which BYPASSES RLS — so the `expense_drafts` admin-only UPDATE policy
+  // (`is_org_admin(org_id)`, migration 20260623000000) never executes here.
+  // Re-enforce the owner/admin gate in code, exactly as approveExpenseDraft
+  // does; otherwise any authenticated member could reject (and thereby kill)
+  // a draft the org reserves for admin review.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect(`/expenses/${parsed.data.draft_id}?error=forbidden`);
+  }
+
+  // Confirm the draft exists in the caller's org and is still pending review.
+  // Read on the RLS-scoped tenant client with an explicit org filter: a
+  // foreign/nonexistent draft_id finds no row (no silent false-success), and
+  // an already-approved/finance-stamped draft is refused so we never flip a
+  // posted expense to `rejected` and orphan its `finances` row. Mirrors the
+  // idempotency guard in approveExpenseDraft.
+  const supabase = await createClient();
+  const { data: draft } = await (
+    supabase.from("expense_drafts" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: {
+                id: string;
+                status: string | null;
+                finance_id: string | null;
+              } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, status, finance_id")
+    .eq("id", parsed.data.draft_id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (!draft) {
+    redirect(`/expenses/${parsed.data.draft_id}?error=not_found`);
+  }
+  if (draft.status === "approved" || draft.finance_id) {
+    redirect(`/expenses/${parsed.data.draft_id}?error=already_approved`);
   }
 
   const admin = createAdminClient();

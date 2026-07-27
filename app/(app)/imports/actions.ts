@@ -243,13 +243,16 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
         const mapped = mapRow(detected, row);
         // Uncertain extraction → "needs_review", never silently dropped.
         // commitImport only processes `pending` rows, so anything we're not
-        // confident about — an undetectable entity type, or a per-row
-        // confidence under the threshold — is parked for the operator to
-        // confirm / re-classify / skip in the wizard instead of vanishing
+        // confident about — an undetectable entity type, a detector-flagged
+        // ambiguity (review_required: e.g. a soft-only staff-vs-customer tie,
+        // where filing the row as staff unattended would be wrong), or a
+        // per-row confidence under the threshold — is parked for the operator
+        // to confirm / re-classify / skip in the wizard instead of vanishing
         // from the import. This is the guided-migration contract: uncertain
         // is "needs review", not "failed".
         const uncertain =
           detected.entity_type === "unknown" ||
+          detected.review_required === true ||
           mapped.confidence < REVIEW_THRESHOLD;
         inserts.push({
           org_id: ctx.org.id,
@@ -703,6 +706,100 @@ export async function resolveReviewRow(rowId: string, formData: FormData) {
   redirect(`/imports/${importId}`);
 }
 
+/**
+ * Entity types the operator may pick in the per-sheet override on the
+ * detection screen. Same union as REVIEWABLE_ENTITIES minus `lead` (which has
+ * no override use-case at the sheet level) — note "Expense" in the UI maps to
+ * the `cost` entity. Kept as a runtime list so we can validate the form value.
+ */
+const SHEET_OVERRIDE_ENTITIES: readonly EntityType[] = [
+  "customer",
+  "staff",
+  "job",
+  "quote",
+  "invoice",
+  "supplier",
+  "cost",
+  "payment",
+];
+
+/**
+ * Sheet-level re-classification from the detection screen. The detector picks
+ * one entity type per sheet; when it's wrong for an entire sheet (the
+ * launch-blocking failure mode — a customer list mis-read as staff), the
+ * operator overrides every row of that detected type in one action instead of
+ * resolving rows one by one.
+ *
+ * For each affected row we re-derive the mapped fields against the chosen
+ * entity (remapRawToEntity — the SAME path the needs-review flow uses, so no
+ * mapping logic drifts), flip it to `pending` with verified confidence so the
+ * next commit imports it, then re-run duplicate detection for the new type.
+ * Only valid while the import is still in `detected` (pre-commit).
+ */
+export async function overrideSheetEntity(
+  importId: string,
+  fromEntity: string,
+  formData: FormData,
+) {
+  const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
+  if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
+
+  const toRaw = String(formData.get("entity_type") ?? "").trim();
+  const to = SHEET_OVERRIDE_ENTITIES.find((e) => e === toRaw) ?? null;
+  if (!to) redirect(`/imports/${importId}?error=pick_entity_type`);
+  // No-op if the operator re-picked the type it already is.
+  if (to === fromEntity) redirect(`/imports/${importId}`);
+
+  const supabase = await createClient();
+  const { data: importRow } = await supabase
+    .from("imports")
+    .select("id, status")
+    .eq("id", importId)
+    .maybeSingle();
+  if (!importRow) redirect("/imports?error=not_found");
+  if (importRow.status !== "detected") {
+    redirect(`/imports/${importId}?error=not_reviewable`);
+  }
+
+  // Re-classify every still-open row of the detected `fromEntity`. Rows that
+  // already committed/skipped/duplicated are left alone.
+  const { data: rows } = await supabase
+    .from("import_rows")
+    .select("id, raw")
+    .eq("import_id", importId)
+    .eq("entity_type", fromEntity)
+    .in("status", ["pending", "needs_review"]);
+
+  let changed = 0;
+  for (const r of rows ?? []) {
+    const raw = (r.raw ?? {}) as Record<string, unknown>;
+    const remapped = remapRawToEntity(raw, to);
+    await supabase
+      .from("import_rows")
+      .update({
+        entity_type: to,
+        mapped: remapped.mapped as unknown as Json,
+        // Operator-directed re-classification is human-verified: trust it past
+        // the commit gate. Keep any missing-required warnings so they still
+        // see them; the row is `pending`, so commit attempts it and surfaces a
+        // precise skipReason if a parent can't be resolved.
+        confidence: 100,
+        status: "pending",
+        error_message:
+          remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
+      })
+      .eq("id", r.id);
+    changed++;
+  }
+
+  // Re-evaluate duplicates for the rows we just moved into their new type.
+  await annotateDuplicates(importId, ctx.org.id);
+
+  revalidatePath(`/imports/${importId}`);
+  redirect(`/imports/${importId}?saved=reclassified&count=${changed}`);
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -1086,9 +1183,22 @@ type InvoiceStatusEnum =
   | "sent"
   | "awaiting_payment"
   | "partially_paid"
-  | "paid"
-  | "overdue";
+  | "paid";
 
+/**
+ * Map an imported status cell onto a WRITABLE invoice status.
+ *
+ * `overdue` is deliberately not accepted. It is derived from `due_date` plus
+ * the trigger-owned payment status (lib/invoices/overdue.ts), so importing it
+ * would store a value nothing keeps current — the row would read "overdue"
+ * forever, including after payment.
+ *
+ * A legacy CSV column saying "overdue" is not discarded information: such an
+ * invoice is unpaid and past its date, which is exactly what `sent` + its
+ * `due_date` already expresses. It will be shown as overdue by the derived
+ * authority, on the same terms as every other invoice — so the import lands on
+ * `sent` (the existing fallback) and the truth is recovered from the facts.
+ */
 function normaliseInvoiceStatus(raw: unknown): InvoiceStatusEnum {
   if (typeof raw !== "string") return "sent";
   const allowed: InvoiceStatusEnum[] = [
@@ -1097,7 +1207,6 @@ function normaliseInvoiceStatus(raw: unknown): InvoiceStatusEnum {
     "awaiting_payment",
     "partially_paid",
     "paid",
-    "overdue",
   ];
   const v = raw.toLowerCase().trim() as InvoiceStatusEnum;
   return allowed.includes(v) ? v : "sent";

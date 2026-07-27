@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { notFound } from "next/navigation";
+import { requireHqPage } from "@/server/auth/hq";
 import {
   AI_RECEPTIONIST_STATUSES,
   AI_RECEPTIONIST_STATUS_LABELS,
@@ -60,8 +58,7 @@ export default async function HqAiReceptionistPage({
 }: {
   searchParams: SP;
 }) {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const sp = await searchParams;
   const supabase = createAdminClient();
@@ -102,14 +99,22 @@ export default async function HqAiReceptionistPage({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">
-          AI Receptionist setups
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          White-glove onboarding queue. Customers enable on
-          /settings/ai-receptionist — work them through the lifecycle here.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">
+            AI Receptionist setups
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            White-glove onboarding queue. Customers enable on
+            /settings/ai-receptionist — work them through the lifecycle here.
+          </p>
+        </div>
+        <Link
+          href="/admin/ai-receptionist/deliveries"
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Reply delivery monitor →
+        </Link>
       </header>
 
       <nav aria-label="Status" className="flex flex-wrap gap-2 text-xs">

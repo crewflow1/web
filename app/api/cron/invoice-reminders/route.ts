@@ -5,9 +5,21 @@ import { isCronAuthorised } from "@/lib/cron/auth";
 import { env } from "@/lib/env";
 import type { ReminderStage } from "@/lib/email/templates/reminders";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
+import { mapWithConcurrency } from "@/lib/async/concurrent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Each reminder re-renders a PDF + does a Resend round-trip, so a busy day
+// at scale can mean hundreds of sends in one run. Give the function the
+// full Vercel Pro budget (300s) rather than the short default, which would
+// kill the run mid-list and leave later candidates unprocessed.
+export const maxDuration = 300;
+
+// In-flight sends per stage. Bounded so we overlap network/DB latency
+// without tripping Resend's per-second rate limit or exhausting the
+// Postgres connection pool. A rate-limited send fails soft (counted, then
+// retried on the next daily run), so this never has to be aggressive.
+const SEND_CONCURRENCY = 3;
 
 /**
  * Daily cron — four-stage invoice reminders.
@@ -46,6 +58,8 @@ type CandidateRow = {
   paid_at: string | null;
   notes: string | null;
   quote_id: string | null;
+  // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote path.
+  customer: { email: string | null } | null;
   quote: {
     customer: { email: string | null } | null;
   } | null;
@@ -94,15 +108,14 @@ async function runReminders() {
     const upperIso = new Date(now - days * 86_400_000).toISOString();
     const lowerIso = new Date(now - (days + WINDOW_DAYS) * 86_400_000).toISOString();
 
-    // Candidates: not paid + sent_at within [lower, upper]. The
-    // "already sent" check is a second query per candidate because PG
-    // doesn't easily expose anti-join in PostgREST.
+    // Candidates: not paid + sent_at within [lower, upper].
     const { data: rowsRaw, error } = await admin
       .from("invoices")
       .select(
         `
           id, org_id, number, status, sent_at, amount, vat_total, total,
           due_date, paid_at, notes, quote_id,
+          customer:customers!invoices_customer_org_fkey ( email ),
           quote:quotes ( customer:customers ( email ) )
         `,
       )
@@ -118,26 +131,47 @@ async function runReminders() {
       stats.failed++;
       continue;
     }
+    if (!rows || rows.length === 0) continue;
 
-    for (const inv of rows ?? []) {
+    // "Already sent for this stage?" — ONE batched query over the whole
+    // candidate set instead of a per-candidate count query (the old N+1).
+    // The partial unique index invoice_reminders_unique_auto_stage
+    // (invoice_id, stage) where stage <> 'manual' is the insert-time
+    // backstop; this query just avoids re-sending what we already recorded.
+    const candidateIds = rows.map((inv) => inv.id);
+    const { data: existingRaw, error: exErr } = await admin
+      .from("invoice_reminders")
+      .select("invoice_id")
+      .eq("stage", stage)
+      .in("invoice_id", candidateIds);
+    if (exErr) {
+      console.error("[cron/invoice-reminders] existence check failed", { stage, exErr });
+      stats.failed++;
+      continue;
+    }
+    const alreadySent = new Set(
+      (existingRaw as { invoice_id: string }[] | null ?? []).map((r) => r.invoice_id),
+    );
+
+    // Partition synchronously so the stat counters stay deterministic;
+    // only the email send + row insert run concurrently below.
+    const pending: CandidateRow[] = [];
+    for (const inv of rows) {
       stats.scanned++;
-
-      // Check if this stage already fired for this invoice.
-      const { count: existing } = await admin
-        .from("invoice_reminders")
-        .select("id", { count: "exact", head: true })
-        .eq("invoice_id", inv.id)
-        .eq("stage", stage);
-      if ((existing ?? 0) > 0) {
+      if (alreadySent.has(inv.id)) {
         stats.skipped_already_sent++;
         continue;
       }
-
-      if (!inv.quote?.customer?.email) {
+      // Prefer the invoice's own customer (Issue #349 Phase 1) so an orphaned
+      // invoice (quote deleted) is still chased instead of silently skipped.
+      if (!(inv.customer?.email ?? inv.quote?.customer?.email)) {
         stats.skipped_no_email++;
         continue;
       }
+      pending.push(inv);
+    }
 
+    await mapWithConcurrency(pending, SEND_CONCURRENCY, async (inv) => {
       const result = await sendInvoiceEmail(admin, inv.id, {
         kind: "reminder",
         reminder_stage: stage,
@@ -151,10 +185,12 @@ async function runReminders() {
           reason: result.reason,
           detail: result.detail,
         });
-        continue;
+        return;
       }
 
-      // Insert the reminder row (the trigger writes to activity_log).
+      // Insert the reminder row (the AFTER INSERT trigger writes the
+      // activity_log entry — which is why we insert only AFTER a confirmed
+      // send, never speculatively).
       const { error: insErr } = await admin
         .from("invoice_reminders")
         .insert({
@@ -165,17 +201,25 @@ async function runReminders() {
           email_id: result.emailId,
         });
       if (insErr) {
+        // 23505 = unique violation on invoice_reminders_unique_auto_stage:
+        // another run/path already recorded this (invoice, stage). The
+        // email did go out, but we did NOT newly record a reminder, so
+        // treat it as already-sent rather than a hard failure.
+        if ((insErr as { code?: string }).code === "23505") {
+          stats.skipped_already_sent++;
+          return;
+        }
         stats.failed++;
         console.error("[cron/invoice-reminders] insert reminder row failed", {
           id: inv.id,
           stage,
           insErr,
         });
-        continue;
+        return;
       }
 
       stats.sent++;
-    }
+    });
   }
 
   return { ok: true, ...stats };

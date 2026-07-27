@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   uploadTenantAttachment,
@@ -96,16 +97,20 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
     tenant.from("tenant_attachments" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: { storage_path: string | null } | null }>;
+          maybeSingle: () => Promise<{ data: { org_id: string | null; storage_path: string | null } | null }>;
         };
       };
     }
   )
-    .select("storage_path")
+    .select("org_id, storage_path")
     .eq("id", id.data)
     .maybeSingle();
 
   if (!row?.storage_path) return null;
+  // Never sign a path that doesn't live under the row's own org — a poisoned storage_path
+  // (org-A row → org-B object) would otherwise mint a cross-tenant download URL. Mirrors the
+  // DB trigger (20261031) and covers any row written before it.
+  if (!storagePathBelongsToOrg(row.storage_path, row.org_id)) return null;
 
   const admin = createAdminClient();
   const { data: signed } = await admin.storage

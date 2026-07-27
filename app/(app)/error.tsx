@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Customer-side error boundary (HQ-12.polish).
@@ -21,7 +22,10 @@ export default function CustomerAppError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO when Sentry lands: Sentry.captureException(error)
+    // React error boundaries swallow client-side render errors, so Sentry's
+    // automatic (onRequestError) instrumentation never sees them — capture
+    // explicitly. console.error is kept for local dev visibility.
+    Sentry.captureException(error);
     console.error("[customer-app] error boundary", error);
   }, [error]);
 

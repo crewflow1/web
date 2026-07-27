@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
@@ -12,7 +13,8 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
  * authenticated tenant user.
  *
  * Allowed target_table values (CHECK on the column): customers,
- * jobs, quotes, invoices, suppliers, memberships, leads.
+ * jobs, quotes, invoices, suppliers, memberships, leads, snags,
+ * site_diary_entries, toolbox_talks, site_reports, assets.
  *
  * MIME whitelist: PDF, JPG, PNG, HEIC, HEIF, WebP, Excel, CSV.
  * Size cap: 25 MB.
@@ -39,6 +41,9 @@ export const ALLOWED_ATTACHMENT_MIME = new Set([
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
+// Mirrors the DB CHECK on tenant_attachments.target_table (authority:
+// 20260925 added asset_assignments, 20260927 added asset_inspections). When a
+// migration widens the CHECK, extend this list in the same PR.
 export const ATTACHMENT_TARGET_TABLES = [
   "customers",
   "jobs",
@@ -47,6 +52,13 @@ export const ATTACHMENT_TARGET_TABLES = [
   "suppliers",
   "memberships",
   "leads",
+  "snags",
+  "site_diary_entries",
+  "toolbox_talks",
+  "site_reports",
+  "assets",
+  "asset_assignments",
+  "asset_inspections",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 
@@ -80,6 +92,10 @@ export async function uploadTenantAttachment(input: {
   const { ctx, user } = await requireOrgContext();
   const admin = createAdminClient();
 
+  // Evidence hash — SHA-256 of the EXACT bytes we store, frozen (immutable once set) so a
+  // later byte swap is detectable. Binary-safe on the raw Uint8Array (mirrors blueprints.ts).
+  const contentHash = createHash("sha256").update(input.bytes).digest("hex");
+
   const ext = mimeToExt(input.mimeType);
   const id = crypto.randomUUID();
   const storagePath = `${ctx.org.id}/${input.targetTable}/${input.targetId}/${id}.${ext}`;
@@ -106,6 +122,7 @@ export async function uploadTenantAttachment(input: {
     storage_path: storagePath,
     mime_type: input.mimeType,
     size_bytes: input.bytes.byteLength,
+    content_hash: contentHash,
     uploaded_by: user.id,
   } as never);
   if (insErr) {
@@ -137,10 +154,26 @@ export async function uploadTenantAttachment(input: {
 
 export async function deleteTenantAttachment(id: string): Promise<UploadResult> {
   const { ctx, user } = await requireOrgContext();
+
+  // SECURITY (P2 audit M-5): the RLS delete policy is owner/admin-only
+  // (migration 20260705000000_tenant_attachments_delete_admin_only). Re-check
+  // the caller's role in code so a member gets a deterministic "forbidden"
+  // instead of relying solely on RLS, and as defense-in-depth if that policy
+  // ever regresses. Storage removal below uses the SERVICE-ROLE admin client,
+  // so the row delete on the RLS-scoped tenant client is the only gate that
+  // actually scopes the destructive action — guard it before touching storage.
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
+    return { ok: false, error: "forbidden" };
+  }
+
   const tenant = await createClient();
   const admin = createAdminClient();
 
-  // Tenant client honours the RLS delete policy (owner/admin only).
+  // Delete on the RLS-scoped tenant client (owner/admin-only policy). When RLS
+  // removes zero rows it returns data=null with error=null, so success is gated
+  // on a row actually coming back — never a false success that audits/returns ok
+  // for a no-op (foreign id, already deleted, or an RLS refusal).
   const { data, error } = await tenant
     .from("tenant_attachments" as never)
     .delete()
@@ -148,6 +181,7 @@ export async function deleteTenantAttachment(id: string): Promise<UploadResult> 
     .select("storage_path")
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "not_deleted" };
   const path = (data as { storage_path?: string } | null)?.storage_path;
   if (path) {
     await admin.storage.from("tenant-attachments").remove([path]).catch(() => undefined);

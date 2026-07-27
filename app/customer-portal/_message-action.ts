@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 /**
  * Phase 3 — Portal message → support ticket.
@@ -48,6 +49,14 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
 
   const { token, subject, body } = parsed.data;
 
+  // Throttle portal writes per token to block message spam.
+  const rl = await consume("portal_write", token, DEFAULT_LIMITS.portal_write);
+  if (!rl.allowed) {
+    redirect(
+      `/customer-portal/${token}/messages?error=${encodeURIComponent("Too many messages. Please wait a moment and try again.")}`,
+    );
+  }
+
   const loaded = await loadCustomerByPortalToken(token);
   if (!loaded) {
     redirect(`/customer-portal/${token}/messages?error=invalid_token`);
@@ -72,15 +81,17 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
   )
     .insert({
       org_id: customer.org_id,
+      customer_id: customer.id,
       subject,
       status: "open",
       priority: "normal",
       category: "other",
       created_by: null,
-      // Convention: portal-originated tickets carry the customer_id in
-      // a notes-prefix so HQ ops can correlate. The schema doesn't
-      // have a `source` column on support_tickets yet — adding one is
-      // a future migration. For now we tag in the first message.
+      // customer_id scopes this ticket to the portal customer so the portal
+      // messages page can show them their own threads without exposing other
+      // customers' tickets (see migration 20260706000000_support_tickets_
+      // customer_scope.sql). The first message's author_kind also records
+      // that this originated from the customer.
     })
     .select("id")
     .single();

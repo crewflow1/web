@@ -11,6 +11,7 @@ import {
   type LeadStage,
 } from "@/lib/leads/schema";
 import { LeadCard, type PipelineLead } from "./_card";
+import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 import { ilikeOrFilter, LEAD_SEARCH_COLUMNS } from "@/lib/search/filters";
 
 /**
@@ -66,14 +67,19 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (sp.assigned) {
     query = query.eq("assigned_to", sp.assigned);
   }
-  // q is sanitised then searched across the lead's own columns — service,
-  // source, postcode + the enquirer's contact name/email (LEAD_SEARCH_COLUMNS).
-  // Address-first: a postcode or area matches here; discovery of a lead via a
-  // linked customer's full structured address is handled by the global Cmd/K
-  // search. ilikeOrFilter strips PostgREST structural/wildcard chars, so the
-  // term can no longer inject OR-branches or break the filter grammar — the
-  // previous implementation interpolated the raw term straight into .or().
-  const q = sp.q?.trim();
+  // q is sanitised, then searched across the lead's own columns — service and
+  // postcode (as before) PLUS source and the enquirer's contact name/email, via
+  // the shared LEAD_SEARCH_COLUMNS set. Address-first: a postcode or area
+  // matches here; discovery of a lead through a linked customer's full
+  // structured address is handled by the global Cmd/K search route.
+  //
+  // Sanitising still happens first (inside ilikeOrFilter): raw interpolation
+  // into a PostgREST `.or()` string lets characters like `,` `(` `)` `*` break
+  // out of the ilike pattern and inject extra filter branches.
+  // sanitizeSearchTerm strips those + wildcards and returns "" when nothing
+  // searchable remains — `q` stays the sanitised value so the search box and
+  // the empty-state gate below read the same term that was actually queried.
+  const q = sanitizeSearchTerm(sp.q);
   const leadOr = ilikeOrFilter(q, LEAD_SEARCH_COLUMNS);
   if (leadOr) {
     query = query.or(leadOr);

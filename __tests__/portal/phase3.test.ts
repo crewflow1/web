@@ -26,10 +26,17 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const MIGRATION = read(
   "supabase/migrations/20260620000000_portal_uploads.sql",
 );
+const PORTAL_BUCKET_LIMITS = read(
+  "supabase/migrations/20260711000000_portal_uploads_bucket_limits.sql",
+);
 const JOBS_PAGE = read("app/customer-portal/[token]/jobs/page.tsx");
 const MSG_PAGE = read("app/customer-portal/[token]/messages/page.tsx");
 const INV_PAGE = read("app/customer-portal/[token]/invoices/page.tsx");
 const MSG_ACTION = read("app/customer-portal/_message-action.ts");
+const THREAD_PAGE = read(
+  "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
+);
+const REPLY_ACTION = read("app/customer-portal/_thread-reply-action.ts");
 const UPLOAD_ACTION = read("app/customer-portal/_upload-action.ts");
 const SHELL = read("app/customer-portal/[token]/_shell.tsx");
 const HELPERS = read("app/customer-portal/_helpers.ts");
@@ -86,6 +93,42 @@ describe("Phase 3 — portal_uploads table + bucket", () => {
     expect(MIGRATION).toMatch(/insert into storage\.buckets/);
     expect(MIGRATION).toMatch(/'portal-uploads'/);
     expect(MIGRATION).toMatch(/on conflict \(id\) do nothing/);
+  });
+
+  it("bucket carries storage-layer limits matching the app layer", () => {
+    // Hardening migration must exist and target the same bucket.
+    expect(
+      existsSync(
+        resolve(
+          ROOT,
+          "supabase/migrations/20260711000000_portal_uploads_bucket_limits.sql",
+        ),
+      ),
+    ).toBe(true);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/insert into storage\.buckets/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/'portal-uploads'/);
+    // 10 MB, mirroring MAX_BYTES (10 * 1024 * 1024) in _upload-action.ts.
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/file_size_limit/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/10485760/);
+    // Allowlist must mirror ALLOWED_MIME exactly — including image/webp, which
+    // the runtime Set admits even though the action's prose comment omits it.
+    for (const mime of [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/heic",
+      "image/heif",
+      "image/webp",
+    ]) {
+      expect(PORTAL_BUCKET_LIMITS).toContain(`'${mime}'`);
+    }
+  });
+
+  it("bucket-limits migration is an idempotent upsert", () => {
+    expect(PORTAL_BUCKET_LIMITS).toMatch(/on conflict \(id\) do update set/);
+    expect(PORTAL_BUCKET_LIMITS).toMatch(
+      /allowed_mime_types = excluded\.allowed_mime_types/,
+    );
   });
 });
 
@@ -164,6 +207,104 @@ describe("Phase 3 — /customer-portal/[token]/messages + sendPortalMessage", ()
 });
 
 // =====================================================================
+// 4b. Portal messaging — thread detail (view full conversation + reply)
+//
+// The list page + sendPortalMessage only OPEN threads. This closes the
+// two-way loop: a dedicated thread route reads one ticket's full
+// conversation and replyToPortalThread appends the customer's reply to
+// the EXISTING ticket. The support_messages_after_insert trigger owns
+// last_reply_at / status; the action never writes them.
+// =====================================================================
+
+describe("Phase 3 — message thread detail + reply", () => {
+  it("thread route exists at messages/[ticketId]", () => {
+    expect(
+      existsSync(
+        resolve(
+          ROOT,
+          "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("list page links each thread to its detail route", () => {
+    expect(MSG_PAGE).toMatch(
+      /href=\{`\/customer-portal\/\$\{token\}\/messages\/\$\{t\.id\}`\}/,
+    );
+  });
+
+  it("thread page fails closed: token → session, missing ticket → InvalidLinkPage", () => {
+    expect(THREAD_PAGE).toMatch(/loadCustomerByPortalToken\(token\)/);
+    expect(THREAD_PAGE).toMatch(/if \(!loaded\) return <InvalidLinkPage/);
+    expect(THREAD_PAGE).toMatch(/if \(!ticketRaw\) return <InvalidLinkPage/);
+  });
+
+  it("scopes the ticket read by org_id AND customer_id AND id (no cross-customer thread access)", () => {
+    expect(THREAD_PAGE).toMatch(
+      /from\("support_tickets"[\s\S]*?\.eq\("id", ticketId\)[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+  });
+
+  it("filters internal messages out EXPLICITLY (admin client bypasses the RLS internal filter)", () => {
+    expect(THREAD_PAGE).toMatch(/\.eq\("internal", false\)/);
+    // Assert the invariant (a JS-level `!m.internal` exclusion), not the exact
+    // shape of the predicate: the same filter now also drops 'hq' messages, so
+    // pinning the closing paren made this fail on a change that STRENGTHENED it.
+    expect(THREAD_PAGE).toMatch(/\.filter\(\s*\(m\) =>[^)]*!m\.internal/);
+  });
+
+  it("renders the reply form wired to replyToPortalThread, hidden on terminal tickets", () => {
+    expect(THREAD_PAGE).toMatch(/action=\{replyToPortalThread\}/);
+    expect(THREAD_PAGE).toMatch(/name="ticket_id"/);
+    expect(THREAD_PAGE).toMatch(
+      /ticket\.status === "closed" \|\| ticket\.status === "resolved"/,
+    );
+  });
+
+  it("reply action validates token (uuid) + ticket_id (uuid) + body, and rate-limits", () => {
+    expect(REPLY_ACTION).toMatch(/ticket_id: z\.string\(\)\.uuid\(\)/);
+    expect(REPLY_ACTION).toMatch(/body:[\s\S]*\.min\(1\)\.max\(10_000\)/);
+    expect(REPLY_ACTION).toMatch(
+      /consume\("portal_write", token, DEFAULT_LIMITS\.portal_write\)/,
+    );
+  });
+
+  it("re-verifies ticket ownership before appending (org_id + customer_id)", () => {
+    expect(REPLY_ACTION).toMatch(/loadCustomerByPortalToken\(token\)/);
+    expect(REPLY_ACTION).toMatch(
+      /from\("support_tickets"[\s\S]*?\.eq\("org_id", customer\.org_id\)[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+    expect(REPLY_ACTION).toMatch(/ticket_not_found/);
+  });
+
+  it("appends a customer, non-internal support_messages row", () => {
+    expect(REPLY_ACTION).toMatch(/from\("support_messages" as never\)/);
+    expect(REPLY_ACTION).toMatch(/author_kind: "customer"/);
+    expect(REPLY_ACTION).toMatch(/internal: false/);
+  });
+
+  it("leaves last_reply_at / status to the DB trigger — no duplicated state writes", () => {
+    // The support_messages_after_insert trigger owns these; the action must not
+    // set them itself (that would be a second, divergent source of truth).
+    expect(REPLY_ACTION).not.toMatch(/last_reply_at/);
+    expect(REPLY_ACTION).not.toMatch(/last_reply_kind/);
+    expect(REPLY_ACTION).not.toMatch(/status:/);
+  });
+
+  it("mirrors sendPortalMessage's audience model: audit + revalidate, no HQ notification", () => {
+    expect(REPLY_ACTION).toMatch(/action: "portal\.message\.reply"/);
+    expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/admin\/support`\)/);
+    expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/support`\)/);
+    // notifyOnSupportReplyToHq targets CrewFlow HQ — the wrong audience for a
+    // customer↔org portal reply; sendPortalMessage omits it and so do we.
+    expect(REPLY_ACTION).not.toMatch(
+      /notifyOnSupportReplyToHq|emitNotifications/,
+    );
+  });
+});
+
+// =====================================================================
 // 5. Payment proof upload (invoices portal)
 // =====================================================================
 
@@ -216,6 +357,61 @@ describe("Phase 3 — payment proof upload", () => {
 });
 
 // =====================================================================
+// 5b. Payment proof READ-BACK (invoices portal)
+//
+// The upload above is write-only unless the customer can see what they
+// sent. This closes the loop: the invoices page reads `portal_uploads`
+// back and lists submitted proofs per invoice, so a customer gets a
+// persistent "received" record instead of a one-shot banner (and stops
+// re-sending the same proof). The DB row stays the single source of
+// truth — the page only reads it.
+// =====================================================================
+
+describe("Phase 3 — payment proof read-back", () => {
+  it("reads submitted proofs from portal_uploads (same untyped-table cast as the writer)", () => {
+    expect(INV_PAGE).toMatch(/from\("portal_uploads" as never\)/);
+  });
+
+  it("scopes the read to THIS org AND customer — never org-wide", () => {
+    // Both filters must be present so a refactor can't widen the scope and
+    // leak another customer's proofs on the RLS-bypassing service-role client.
+    expect(INV_PAGE).toMatch(/\.eq\("org_id", customer\.org_id\)/);
+    expect(INV_PAGE).toMatch(
+      /from\("portal_uploads"[\s\S]*?\.eq\("customer_id", customer\.id\)/,
+    );
+  });
+
+  it("narrows to this page's own uploads: invoices target + payment_proof kind", () => {
+    expect(INV_PAGE).toMatch(/\.eq\("target_table", "invoices"\)/);
+    expect(INV_PAGE).toMatch(/\.eq\("kind", "payment_proof"\)/);
+  });
+
+  it("only reads proofs for the invoices actually on the page (.in target_id)", () => {
+    expect(INV_PAGE).toMatch(/\.in\("target_id", ids\)/);
+  });
+
+  it("renders a per-invoice 'proof received' record with filename + date", () => {
+    expect(INV_PAGE).toMatch(/Payment proof/);
+    expect(INV_PAGE).toMatch(/submittedProofs/);
+    expect(INV_PAGE).toMatch(/pf\.filename/);
+    expect(INV_PAGE).toMatch(/pf\.uploaded_at\.slice\(0, 10\)/);
+  });
+
+  it("degrades gracefully — nothing renders when no proof was submitted", () => {
+    // Guarded on a length check off a `?? []` default, so an empty/absent
+    // read collapses to no UI rather than an error.
+    expect(INV_PAGE).toMatch(/proofsByInvoice\.get\(inv\.id\) \?\? \[\]/);
+    expect(INV_PAGE).toMatch(/submittedProofs\.length > 0 \? \(/);
+  });
+
+  it("adds no new business logic — the read is a plain select, no re-derivation", () => {
+    // Reuse over reinvention: this is a read of the authoritative table, not a
+    // second copy of upload/matching logic.
+    expect(INV_PAGE).not.toMatch(/ALLOWED_MIME|MAX_BYTES|10 \* 1024/);
+  });
+});
+
+// =====================================================================
 // 6. Shell + branding + tab nav
 // =====================================================================
 
@@ -247,6 +443,7 @@ describe("Phase 3 — cross-tenant isolation", () => {
     "app/customer-portal/[token]/invoices/page.tsx",
     "app/customer-portal/[token]/jobs/page.tsx",
     "app/customer-portal/[token]/messages/page.tsx",
+    "app/customer-portal/[token]/messages/[ticketId]/page.tsx",
   ];
 
   for (const p of pages) {

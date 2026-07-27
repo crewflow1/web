@@ -135,10 +135,12 @@ describe("/login page surfaces actionable errors", () => {
 });
 
 describe("HQ remains gated on isSuperAdminEmail only", () => {
-  it("admin layout still uses isSuperAdminEmail + notFound (customers can't access)", () => {
-    const src = read("app/admin/layout.tsx");
-    expect(src).toMatch(/isSuperAdminEmail/);
-    expect(src).toMatch(/notFound\(\)/);
+  it("admin layout still gates via requireHqPage → isSuperAdminEmail + notFound (customers can't access)", () => {
+    expect(read("app/admin/layout.tsx")).toMatch(/requireHqPage\(\)/);
+    // The allowlist + 404 live in the single gate now.
+    const hqAuth = read("server/auth/hq.ts");
+    expect(hqAuth).toMatch(/isSuperAdminEmail/);
+    expect(hqAuth).toMatch(/notFound\(\)/);
   });
 });
 

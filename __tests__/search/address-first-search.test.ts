@@ -23,9 +23,25 @@ function sqlOnly(sql: string): string {
     .join("\n");
 }
 
-describe("migration 20260706120000_address_search_trgm.sql", () => {
-  const raw = read("supabase/migrations/20260706120000_address_search_trgm.sql");
+describe("migration 20261042000000_address_search_trgm.sql", () => {
+  const raw = read("supabase/migrations/20261042000000_address_search_trgm.sql");
   const sql = sqlOnly(raw);
+
+  /**
+   * Trigram coverage is asserted across BOTH migrations that create trgm
+   * indexes, because 20260709000000_scale_indexes.sql landed on main while this
+   * branch was open and already covers customers.name, leads.postcode and
+   * leads.service. `create index if not exists` de-duplicates by NAME only and
+   * the two files use different naming conventions, so re-declaring those three
+   * here would build a second, byte-for-byte equivalent index on the same
+   * column — write amplification for no query benefit. The guarantee the
+   * feature needs is "every ILIKE'd column has a trgm index SOMEWHERE", not
+   * "every one is declared in this file".
+   */
+  const scaleSql = sqlOnly(
+    read("supabase/migrations/20260709000000_scale_indexes.sql"),
+  );
+  const coveredSomewhere = `${sql}\n${scaleSql}`;
 
   it("enables pg_trgm idempotently", () => {
     expect(sql).toMatch(/create extension if not exists pg_trgm/i);
@@ -35,9 +51,8 @@ describe("migration 20260706120000_address_search_trgm.sql", () => {
     expect(sql).toMatch(/using gin\s*\(\s*\w+\s+gin_trgm_ops\s*\)/i);
   });
 
-  it("indexes the customer name + structured address columns", () => {
+  it("indexes the customer structured address columns (new here)", () => {
     for (const col of [
-      "name",
       "address_line1",
       "address_line2",
       "city",
@@ -48,7 +63,7 @@ describe("migration 20260706120000_address_search_trgm.sql", () => {
     }
   });
 
-  it("indexes the job site-address columns", () => {
+  it("indexes the job site-address columns (new here)", () => {
     for (const col of [
       "site_address_line1",
       "site_address_line2",
@@ -60,9 +75,33 @@ describe("migration 20260706120000_address_search_trgm.sql", () => {
     }
   });
 
-  it("indexes the lead postcode + contact_name + service", () => {
+  it("indexes the lead contact_name (new here)", () => {
+    expect(sql).toContain("public.leads using gin (contact_name gin_trgm_ops)");
+  });
+
+  it("does NOT re-declare indexes 20260709_scale_indexes already created", () => {
+    expect(sql).not.toContain("public.customers using gin (name gin_trgm_ops)");
+    expect(sql).not.toContain("public.leads using gin (postcode gin_trgm_ops)");
+    expect(sql).not.toContain("public.leads using gin (service gin_trgm_ops)");
+  });
+
+  it("every ILIKE'd search column is trgm-covered by one migration or the other", () => {
+    for (const col of [
+      "name",
+      "address_line1",
+      "address_line2",
+      "city",
+      "county",
+      "postcode",
+    ]) {
+      expect(coveredSomewhere).toContain(
+        `public.customers using gin (${col} gin_trgm_ops)`,
+      );
+    }
     for (const col of ["postcode", "contact_name", "service"]) {
-      expect(sql).toContain(`public.leads using gin (${col} gin_trgm_ops)`);
+      expect(coveredSomewhere).toContain(
+        `public.leads using gin (${col} gin_trgm_ops)`,
+      );
     }
   });
 
@@ -136,11 +175,19 @@ describe("jobs page — address search via site columns + customer-id chaining",
     expect(src).toContain('.from("customers")');
     expect(src).toMatch(/inIdsBranch\(\s*"customer_id"/);
     expect(src).toContain("combineOr(siteBranch, customerIdBranch)");
-    expect(src).toContain("query.or(searchOr)");
+    // The page now has TWO job queries (paginated list + the bounded "today"
+    // panel); the search .or() must be applied to both or the mobile view
+    // disagrees with the list.
+    expect(src).toContain("listQuery.or(searchOr)");
+    expect(src).toContain("todayQuery.or(searchOr)");
   });
 
-  it("filters in SQL before the row cap (no JS filtering of a capped page)", () => {
-    expect(src).toContain(".limit(200)");
+  it("filters in SQL before the page window (no JS filtering of a capped page)", () => {
+    // `.range()` + an EXACT count replaced the old flat `.limit(200)` cap, so
+    // the search .or() must be applied to the builder BEFORE the window —
+    // which also makes the headline count the count of MATCHES.
+    expect(src).toContain(".range(offset, offset + PAGE_SIZE - 1)");
+    expect(src).toContain('.select(JOB_SELECT, { count: "exact" })');
     // the search .or() is applied to the query builder, not Array.prototype
     expect(src).not.toMatch(/rows\.filter\([^)]*includes/);
   });

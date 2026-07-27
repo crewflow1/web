@@ -16,6 +16,7 @@
 
 import type { HqSnapshot } from "@/lib/hq/metrics";
 import { MONTHLY_PRICE_GBP } from "@/lib/hq/metrics";
+import { csvEscape } from "@/lib/csv";
 
 // ---------------------------------------------------------------------
 // Inputs
@@ -657,15 +658,6 @@ export function analyticsToCsv(
     })
     .join("\n");
   return `${header}\n${body}\n`;
-}
-
-function csvEscape(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
 }
 
 // ---------------------------------------------------------------------
