@@ -93,9 +93,27 @@ describe("service-worker lifecycle — first install is silent, only user-accept
     expect(swRegister).toMatch(/userAcceptedUpdate\.current\s*=\s*true[\s\S]*?SKIP_WAITING/);
   });
 
-  it("the download flow explicitly warms the app-shell /_next/static chunks (no reliance on a reload)", () => {
-    // replaces the old first-install reload's accidental shell-caching side-effect
+  it("the download flow warms the OFFLINE SHELL's own /_next/static chunks, claim-first and verified", () => {
+    // This test previously pinned `document.querySelectorAll("script[src], link[href]")`
+    // — scraping THIS document's tags. That was the bug: it can only ever cache the
+    // blueprints route's chunks, never /offline's own page chunk, so the shell was
+    // served offline but could not HYDRATE ("Checking…" forever). The contract is now
+    // the correct mechanism, so the old approach cannot silently return.
     expect(offlineControls).toMatch(/_next\/static/);
-    expect(offlineControls).toMatch(/script\[src\], link\[href\]/);
+    // 1. fetch the shell ROUTE and parse the assets IT references (not this document's)
+    expect(offlineControls).toMatch(/fetch\(\s*["'`]\/offline["'`]/);
+    expect(offlineControls).not.toMatch(/script\[src\], link\[href\]/);
+    // 2. router.prefetch is fire-and-forget (returns nothing awaitable) — it must not
+    //    be how the shell is warmed.
+    expect(offlineControls).not.toMatch(/router\.prefetch\(\s*["'`]\/offline["'`]/);
+    // 3. claim BEFORE warming: clients.claim() only routes FUTURE fetches, so a warm
+    //    started while uncontrolled is never cached.
+    const claimIdx = offlineControls.search(/serviceWorker\.controller/);
+    const warmIdx = offlineControls.search(/fetch\(\s*["'`]\/offline["'`]/);
+    expect(claimIdx).toBeGreaterThan(-1);
+    expect(warmIdx).toBeGreaterThan(claimIdx);
+    // 4. VERIFY the cache actually holds it before claiming offline-readiness.
+    expect(offlineControls).toMatch(/caches\.match\(/);
+    expect(offlineControls).toMatch(/data-offline-shell-ready/);
   });
 });
