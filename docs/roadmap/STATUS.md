@@ -5,7 +5,7 @@
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
 **Last reconciled:** 2026-07-27 (Train 4 + CIS M1 shipped)
-**Production `main`:** `266d9e9`
+**Production `main`:** `3f5ffb1`
 **Production migration tip:** `20261046`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
@@ -64,12 +64,12 @@
 | Toolbox talks | **PRODUCTION** | migrations `20261025`–`20261030` |
 | Operative sign-off gate | **PRODUCTION** | required-operative model + missing-signoff visibility |
 | H&S evidence PDFs + integrity | **PRODUCTION** | SHA-256 `content_hash`, write-once immutability, storage byte lockdown (`20261031`–`20261037`) |
-| Snagging | **PARTIAL** | `20260919000000_snags.sql` exists — needs verification of UI/workflow depth |
-| Daily site diary | **PARTIAL** | `20260920000000_site_diary.sql` exists — needs verification of UI/workflow depth |
+| Snagging | **PRODUCTION** | `20260919000000_snags.sql` + full vertical: `app/(app)/snags/{page,new,[id],actions.ts}` (`createSnag`/`updateSnagStatus`/`reassignSnag`/`setSnagPriority`/`deleteSnag`), lifecycle open→in_progress→fixed→verified/wont_fix, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: no job-page embed, no e2e spec |
+| Daily site diary | **PRODUCTION** | `20260920000000_site_diary.sql` + full CRUD: `app/(app)/diary/{page,[id],[id]/edit,actions.ts,_form}`, `lib/site-diary/schema.ts`, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: not surfaced on the job page; weather is free text (no provider) |
 | Digital inspections + templates | **PRODUCTION** | inspections M4/M4b (immutable snapshots, scheduling) |
-| Progress tracking | **PARTIAL** | job status + photos exist; no dedicated % / S-curve |
+| Progress tracking | **PARTIAL** | `progress_percent` DOES ship inside `site_reports.content` (validated 0–100) and is surfaced to the customer portal. True gap: no job-level progress log / time series / S-curve |
 | Weather intelligence + Extension-of-Time letters | **NOT BUILT** | needs a weather provider (free tiers exist) |
-| Site timeline | **PARTIAL** | `lib/commercial/timeline.ts` is commercial-event only |
+| Site timeline | **NOT BUILT (site)** | `lib/commercial/timeline.ts` is commercial-only; `server/services/spine-timeline.ts` is HQ-internal (service_role); asset timeline is asset-scoped. No unified operational timeline over diary+snags+inspections+toolbox+photos — all source tables exist, so this is a pure read/compose |
 
 ## PHASE 5 — FINANCE
 
@@ -86,8 +86,8 @@
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **NOT BUILT — NEXT** | no money-out ledger exists (`payments`/`invoice_payments` are money-IN, carrying `customer_id`). CIS deducts **at payment**, so this is the load-bearing net-new engine. Slot `20261047` |
 | CIS M3–M5 — deduction calc + reverse-charge VAT · monthly statements · HMRC seam | **NOT BUILT** | M3 must split labour vs qualifying materials (CIS never applies to materials or VAT); M4 clones the completion-certificate immutability/PDF stack; M5 stays DARK/BLOCKED_BY_PROVIDER |
-| OCR / receipt scanning | **NOT BUILT** | needs an OCR provider |
-| Expenses + budget tracking | **PARTIAL** | `finances` table carries costs; no dedicated expense workflow |
+| OCR / receipt scanning | **BUILT-DARK** | `server/services/expense-drafts.ts` calls `maybeExtractReceipt`; `expense_drafts.ai_confidence` exists; with no AI key the draft is created with NULL extraction fields. **Verified 2026-07-27 — was wrongly marked NOT BUILT.** Needs a provider key only |
+| Expenses | **PRODUCTION** | `app/(app)/expenses/{page,new,[id],actions.ts}` with `uploadExpenseReceipt`/`approveExpenseDraftAction`/`rejectExpenseDraft`, `expense_drafts` table, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL.** Budget tracking specifically remains NOT BUILT |
 | Online invoice payment (Stripe) | **FOUNDATION (dark seam)** | `PaymentProvider` seam documented in `docs/billing-plans.md`; needs live creds + product decision |
 
 ## PHASE 6 — OPERATIONS
@@ -96,7 +96,8 @@
 |---|---|---|
 | Assets + QR tags + labels | **PRODUCTION** | asset epic M3b/M4/M5 (scanner, QR, inspections, maintenance scheduler) |
 | Maintenance schedules | **PRODUCTION** | idempotent scheduler |
-| Fleet / vehicles / MOT / insurance / fuel | **NOT BUILT** | should extend the **existing asset model**, not a new one |
+| Plant/equipment → job allocation | **PRODUCTION** | `asset_assignments.assignment_type` already includes `allocated_to_job` + `loaded_on_vehicle`, with `job_id`, `vehicle_asset_id`, issue/return meter readings, condition + transfer lineage; surfaced at `app/(app)/jobs/[id]/_job-assets.tsx` |
+| Fleet compliance (MOT / insurance / road tax / fuel) | **NOT BUILT** | Confirmed an **EXTENSION, not a fork**: `assets` already has `registration`, `ownership`, hire fields, `supplier_id`; `asset_service_schedules` is a generic date-cadence engine. Deltas: widen its `maintenance_type` CHECK to add mot/insurance/road_tax, add odometer to `assets`, add `asset_fuel_logs`. Inherits the existing scheduler/QR/custody engines |
 | Stock / warehouse / material ordering | **NOT BUILT** | — |
 
 ## PHASE 7 — CUSTOMER EXPERIENCE
@@ -151,10 +152,22 @@ on that prefix — a collision is **invisible to git** because filenames differ)
 | `20261044` | Train 4 — `widen_transport_channel_whatsapp` | **SHIPPED** |
 | `20261045` | Train 4 — `whatsapp_read_receipt_status` | **SHIPPED** |
 | `20261046` | CIS M1 — `cis_subcontractors` | **SHIPPED** |
-| `20261047+` | **NEXT FREE — CIS M2 (money-out ledger) claims `20261047`** | — |
+| `20261047` | CIS M2 — `supplier_payments` (money-out ledger) | in flight |
+| `20261048` | CIS M3 — deduction engine + reverse-charge VAT | reserved |
+| `20261049` | CIS M4 — monthly statements | reserved |
+| `20261050+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
 
 Before pushing any migration, prove no duplicate prefixes:
 `ls supabase/migrations | sed 's/_.*//' | sort | uniq -d` must print nothing.
+
+## Next dependency-safe milestone per lane (evidence-based, 2026-07-27)
+
+Each avoids `cis_*`, `supplier_payments`, `finances`, `lib/cis/*` and the receptionist/whatsapp suites:
+- **LANE A — "Job Site Hub"**: ZERO new tables. Embed the existing diary + snags panels on the job page and compose a read-only site timeline over `site_diary_entries` + `snags` + `asset_inspections` + `toolbox_talks` + photos.
+- **LANE B — "Fleet as an asset extension"**: one migration (slot `20261050+`, NOT 20261047 which CIS M2 holds) widening `asset_service_schedules.maintenance_type` to add mot/insurance/road_tax, plus odometer + `asset_fuel_logs`.
+- **LANE C — "Deterministic Schedule Integrity"**: read-only conflict detector over `jobs` × `rota_entries` × `leave_requests` × `asset_assignments` (double-booked staff, unassigned imminent jobs, plant clashes, expiring competence) emitted as `composeBriefing` operations signals. **No migration, no provider.** A deterministic Scheduler is viable; an AI Quote Writer is not (pricing prose is generative — `DRAFT_PROVENANCES` shows the deterministic path is a degraded mode, not a product).
+
+Note: the Observe→Draft→Approve→Execute substrate ALREADY EXISTS but is HQ-internal (`lib/drafts/`, `lib/approvals/state.ts` + its DB-trigger mirror in `20260730000000_hq_approvals.sql`, `app/admin/`). `server/services/expense-drafts.ts` proves the pattern ports tenant-side. Reuse it — do not build a second approvals engine.
 
 ## Completed this continuation (was: in-flight)
 
