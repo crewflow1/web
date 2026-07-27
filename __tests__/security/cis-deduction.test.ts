@@ -298,6 +298,45 @@ describe("a part-paid bill's value is guarded in the database", () => {
     expect(guard).toMatch(/bill it for at least what has been paid/i);
   });
 
+  it("keeps the bill-LOCKING allocation trigger sorting before the CIS one", () => {
+    // A financial-correctness ordering constraint, not a naming preference.
+    // PostgreSQL fires same-timing triggers alphabetically by trigger name.
+    // `supplier_payment_allocation_guard` takes FOR UPDATE on the bill;
+    // `supplier_payment_allocations_cis` reads that same bill UNLOCKED to derive
+    // the deduction. If the CIS one ran first it would snapshot a bill value a
+    // concurrent uncommitted edit was about to change, and the allocation would
+    // commit carrying a cis_bill_net the bill no longer agrees with. Verified by
+    // inverting the order against real Postgres — see 20261053000000 section 3.
+    //
+    // The authoritative check reads pg_trigger against a live database
+    // (__tests__/integration/rls/trigger-firing-order.test.ts). This one is the
+    // backstop: it needs no database, so it runs on every CI job, and it catches
+    // a rename in the migration source even if the integration tier is skipped.
+    //
+    // Both names are EXTRACTED, never hard-coded on both sides — a rename moves
+    // the extracted value, so the comparison re-evaluates and fails rather than
+    // silently continuing to compare two constants.
+    const nameOf = (src: string, fn: string) =>
+      new RegExp(
+        `create trigger (\\w+)\\s+before insert[\\s\\S]{0,120}?execute function public\\.${fn}\\(\\)`,
+        "i",
+      ).exec(src)?.[1];
+
+    const guard = nameOf(sqlOnly(read(M2_MIGRATION)), "tg_supplier_payment_allocation_guard");
+    const cis = nameOf(sql, "tg_supplier_payment_allocation_cis");
+    expect(guard, "could not find the CAP 1/CAP 2 guard trigger in 20261047000000").toBeTruthy();
+    expect(cis, "could not find the CIS engine trigger in 20261051000000").toBeTruthy();
+
+    expect(
+      [guard!, cis!].sort()[0],
+      `TRIGGER FIRING ORDER: "${guard}" takes FOR UPDATE on the bill and MUST fire ` +
+        `before "${cis}", which reads the same bill unlocked to derive the CIS ` +
+        `deduction. PostgreSQL fires same-timing triggers in alphabetical order, so ` +
+        `the names carry the guarantee. If you renamed one, rename it back or pick a ` +
+        `name that still sorts first — see 20261053000000 section 3 for what breaks.`,
+    ).toBe(guard);
+  });
+
   it("treats an unpaid bill as unguarded, so ordinary cost editing is untouched", () => {
     // Required, not an optimisation: allocation amounts are `check (amount > 0)`,
     // so v_settled is 0 exactly when the bill is unpaid. Without this exit a

@@ -253,3 +253,70 @@ drop trigger if exists cis_bill_details_guard on public.cis_bill_details;
 create trigger cis_bill_details_guard
   before insert or update on public.cis_bill_details
   for each row execute function public.tg_cis_bill_details_guard();
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 3. A NAMING DEPENDENCY THAT IS LOAD-BEARING — recorded, and now enforced
+-- ═══════════════════════════════════════════════════════════════════════════
+-- No schema change here. This section exists because the two BEFORE INSERT
+-- triggers on `supplier_payment_allocations` have an ORDERING dependency that
+-- nothing in their own definitions states, and both of those definitions live in
+-- migrations that are already applied in production and so cannot be edited.
+--
+-- PostgreSQL fires triggers of the same timing and event in ALPHABETICAL ORDER
+-- OF TRIGGER NAME. The current order is:
+--
+--   1. supplier_payment_allocation_guard   (20261047000000)  — CAP 1 + CAP 2.
+--      Takes `select … from public.finances where id = new.finance_id FOR UPDATE`.
+--      MUST SORT FIRST. That lock is what makes a concurrent bill edit block, and
+--      what guarantees every later reader in this statement sees the CURRENT
+--      COMMITTED bill rather than a value about to change underneath it.
+--
+--   2. supplier_payment_allocations_cis    (20261051000000)  — the CIS engine.
+--      Reads the same bill WITHOUT a lock to derive the basis and check it
+--      against the cis_bill_net / cis_bill_gross the caller declared.
+--      MUST SORT AFTER the guard, for exactly that reason.
+--
+-- The order holds today only because `supplier_payment_allocation_guard` and
+-- `supplier_payment_allocations_cis` first differ where `_` (0x5F) meets `s`
+-- (0x73), and `_` sorts lower. That is an accident of naming carrying a
+-- correctness guarantee, and renaming either trigger looks like a harmless
+-- tidy-up.
+--
+-- IT IS NOT. Inverting the order was tested directly against Postgres, by
+-- renaming the guard so it sorted second: the CIS trigger then read the bill at
+-- £1,000 while a concurrent uncommitted edit took it to £2,000, the guard blocked
+-- and re-read £2,000, and the allocation COMMITTED carrying cis_bill_net =
+-- £1,000 against a £2,000 bill. Every later CIS payment on that bill was then
+-- refused with "has changed since it was part-paid" — a deduction reported to
+-- HMRC that its own bill no longer explains, reached through a race rather than
+-- an edit, which is precisely what section 1 of this migration exists to prevent.
+--
+-- ENFORCED BY: __tests__/integration/rls/trigger-firing-order.test.ts. It reads
+-- pg_trigger, identifies the two triggers BY WHAT THEIR FUNCTIONS DO (does the
+-- body take `for update` on the bill?) rather than by name, and fails with an
+-- explanation if the locking one stops sorting first. A rename cannot make that
+-- test vacuous — it makes it fail.
+--
+-- The same warning is attached to the triggers themselves below, so it is visible
+-- from `\d+ supplier_payment_allocations` to whoever is doing the renaming. These
+-- are catalog comments only: no table, column, index, function or trigger is
+-- created, altered or dropped by them.
+comment on trigger supplier_payment_allocation_guard on public.supplier_payment_allocations is
+  'CAP 1 + CAP 2 over-allocation guard (20261047000000). MUST SORT ALPHABETICALLY '
+  'BEFORE supplier_payment_allocations_cis: this trigger takes FOR UPDATE on the '
+  'bill, and the CIS trigger reads that bill unlocked, so if the CIS trigger ran '
+  'first it could derive a deduction from a bill value a concurrent uncommitted '
+  'edit was about to change. Renaming either trigger is a financial-correctness '
+  'change, not a tidy-up. Enforced by '
+  '__tests__/integration/rls/trigger-firing-order.test.ts; reasoning in '
+  '20261053000000 section 3.';
+
+comment on trigger supplier_payment_allocations_cis on public.supplier_payment_allocations is
+  'CIS deduction engine (20261051000000). MUST SORT ALPHABETICALLY AFTER '
+  'supplier_payment_allocation_guard: it reads the bill WITHOUT a lock to derive '
+  'the CIS basis, and depends on that guard having already taken FOR UPDATE on '
+  'the bill so the value read is the current committed one. Renaming either '
+  'trigger is a financial-correctness change, not a tidy-up. Enforced by '
+  '__tests__/integration/rls/trigger-firing-order.test.ts; reasoning in '
+  '20261053000000 section 3.';
