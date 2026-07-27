@@ -4,9 +4,10 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Continuation 7 — worktree reconciliation)
-**Production `main`:** `7b2308a`
-**Production migration tip:** `20261051`
+**Last reconciled:** 2026-07-27 (Continuation 9 — slot ledger re-verified against the live DB)
+**Production `main`:** `935f7fe` (merge of #448, org-teardown P1)
+**Production migration tip:** `20261052` — **verified against the live database**, not inferred
+(`select max(version) from supabase_migrations.schema_migrations` → `20261052000000`)
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -89,7 +90,8 @@
 | Payroll (timesheets → PAYE lines) | **PRODUCTION** | `lib/payroll/compute.ts`, `payroll_lines` |
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
-| CIS M3–M5 — deduction calc + reverse-charge VAT · monthly statements · HMRC seam | **NOT BUILT** | M3 must split labour vs qualifying materials (CIS never applies to materials or VAT); M4 clones the completion-certificate immutability/PDF stack; M5 stays DARK/BLOCKED_BY_PROVIDER |
+| CIS M3 — deduction calc + reverse-charge VAT | **PRODUCTION** | `20261051_cis_deduction` (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, 6th–5th tax month), server-derived rate, cumulative partial-payment maths, reverse charge as a real treatment. Splits labour vs qualifying materials (CIS never applies to materials or VAT) |
+| CIS M4–M5 — monthly statements · HMRC seam | **NOT BUILT** | M4 clones the completion-certificate immutability/PDF stack and **must claim migration slot `20261055`+ — NOT `20261052`, which is applied in production** (see slot table); M5 stays DARK/BLOCKED_BY_PROVIDER |
 | OCR / receipt scanning | **BUILT-DARK** | `server/services/expense-drafts.ts` calls `maybeExtractReceipt`; `expense_drafts.ai_confidence` exists; with no AI key the draft is created with NULL extraction fields. **Verified 2026-07-27 — was wrongly marked NOT BUILT.** Needs a provider key only |
 | Expenses | **PRODUCTION** | `app/(app)/expenses/{page,new,[id],actions.ts}` with `uploadExpenseReceipt`/`approveExpenseDraftAction`/`rejectExpenseDraft`, `expense_drafts` table, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL.** Budget tracking specifically remains NOT BUILT |
 | Online invoice payment (Stripe) | **FOUNDATION (dark seam)** | `PaymentProvider` seam documented in `docs/billing-plans.md`; needs live creds + product decision |
@@ -146,41 +148,71 @@
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-**Production migration tip is `20261051` (CIS M3, applied).** Slots BELOW that are
-closed forever — Supabase keys identity on the numeric prefix, so a lower-numbered
-file added later replays out of order from scratch. We have hit this twice (#128
-`20260711`, #136 `20260706`).
+**Production migration tip is `20261052` (org-teardown P1, applied).** Slots BELOW
+that are closed forever — Supabase keys identity on the numeric prefix, so a
+lower-numbered file added later replays out of order from scratch. We have hit this
+twice (#128 `20260711`, #136 `20260706`).
 
 | Slot | Owner | Status |
 |---|---|---|
 | …`20261047` | CIS M2 `supplier_payments` | **APPLIED** |
-| `20261051` | CIS M3 `cis_deduction` | **APPLIED (prod tip)** |
-| ~~`20261050`~~ | ~~org-teardown~~ | **DEAD — below applied tip** |
-| `20261052` | **org-teardown P1** `activity_cascade_guard` (renumbered; ships FIRST) | in flight — `fix/org-teardown-activity-guard` |
-| `20261053` | CIS bill value freeze | in flight — `fix/payables-financial-guards` |
-| `20261054` | Supplier bill settlement floor | in flight — `fix/payables-financial-guards` |
-| `20261055+` | CIS M4 (statements) and beyond | reserved |
+| ~~`20261048`–`20261050`~~ | never written / retired | **DEAD — below applied tip, never claim** |
+| `20261051` | CIS M3 `cis_deduction` | **APPLIED** |
+| `20261052` | **org-teardown P1** `activity_cascade_guard` | **APPLIED (prod tip)** — PR #448, `1987ef3` |
+| `20261053` | CIS bill value freeze | built, unmerged — `fix/payables-financial-guards` |
+| `20261054` | Supplier bill settlement floor | built, unmerged — `fix/payables-financial-guards` |
+| `20261055` | **NEXT FREE** — first unclaimed slot. CIS M4 (monthly statements + return dataset) claims this **or higher** | reserved — **not yet written** |
 
+> ### 🚨 CIS M4 LANE — do NOT author `20261052`
+> An earlier revision of this table reserved **`20261052` for CIS M4 (monthly
+> statements + return dataset)**. That reservation is **VOID**. `20261052` was taken
+> by the org-teardown P1 and **is now applied in production**. CIS M4 has not been
+> written yet, so it must claim **`20261055` or higher**.
+>
+> This matters more than a normal stale row: a duplicate prefix is **invisible to
+> git**. Two files named `20261052000000_activity_cascade_guard.sql` and
+> `20261052000000_cis_statements.sql` do not conflict — different filenames, clean
+> merge, no reviewer signal. The collision only surfaces at replay, against an
+> already-applied prefix. Check this table *and* `ls supabase/migrations/` before
+> naming a file.
 
-> ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
+> ### ✅ RESOLVED (2026-07-27) — org-teardown slot, and why `20261052` not `20261055`
 > `20261050_activity_cascade_guard` was allocated when the production tip was
-> `20261047`. **CIS M3 has since shipped, taking the tip to `20261051`**, so
-> `20261050` is now *below the applied tip* and can no longer be introduced. It
-> was renumbered. **Continuation 8 re-computed the slot from the CURRENT max**
-> (prod tip + main + every worktree + every remote = `20261054`) and assigned the
-> org-teardown P1 to **`20261052`** — free and immediately above the applied tip —
-> because it is a live production defect and must ship FIRST. Had it taken
-> `20261055`, the already-written `20261053`/`20261054` would then have been below
-> the applied tip. Ordering matters as much as uniqueness.
+> `20261047`. CIS M3 then shipped, taking the tip to `20261051`, putting `20261050`
+> *below the applied tip* where it could no longer be introduced. It was renumbered
+> to **`20261052`** — the lowest free slot above the tip — and has since merged
+> (#448) and applied. Prod tip is now `20261052`.
+>
+> **`20261055` was considered and rejected.** The P1 is a live production defect and
+> ships FIRST, ahead of the already-written `20261053` (CIS bill value freeze) and
+> `20261054` (supplier bill settlement floor), which merge later. Had it taken
+> `20261055`, those two would have been left *below* the applied tip — recreating
+> the exact out-of-order replay hazard this table exists to prevent. **The correct
+> claim for the change that lands first is the lowest free slot above the tip.**
+> Ordering matters as much as uniqueness.
 >
 > **RULE: claim a slot above the production tip AND above every in-flight slot in
-> this table. Re-check the tip immediately before merging — it moves.**
+> this table. Order slots by merge order, not by authoring order. Re-check the tip
+> immediately before merging — it moves.**
+
+> ### Slot-guard tests: assert a *range*, never "the highest"
+> `__tests__/security/cis-deduction.test.ts` used to assert that CIS M3 was **"the
+> highest number in the directory"**. That assertion cannot survive any later
+> migration — `20261052` alone would have broken it — so it tested release order
+> rather than the invariant it was protecting. It was restated on the org-teardown
+> branch as: **nothing may be back-dated between `20261047` (CIS M2) and `20261051`
+> (CIS M3)**.
+>
+> Any future migration-slot guard should use that shape: pin the *closed interval*
+> the test actually cares about, so it keeps holding as the tip advances. A
+> "highest forever" assertion is guaranteed to go red on the next migration and
+> will be deleted rather than fixed.
 
 ## Next dependency-safe milestone per lane (evidence-based, 2026-07-27)
 
 Each avoids `cis_*`, `supplier_payments`, `finances`, `lib/cis/*` and the receptionist/whatsapp suites:
 - **LANE A — "Job Site Hub"**: ZERO new tables. Embed the existing diary + snags panels on the job page and compose a read-only site timeline over `site_diary_entries` + `snags` + `asset_inspections` + `toolbox_talks` + photos.
-- **LANE B — "Fleet as an asset extension"**: one migration (slot `20261050+`, NOT 20261047 which CIS M2 holds) widening `asset_service_schedules.maintenance_type` to add mot/insurance/road_tax, plus odometer + `asset_fuel_logs`.
+- **LANE B — "Fleet as an asset extension"**: one migration (slot **`20261055` or higher** — see the slot table; `20261050` as previously written here is now below the applied tip and DEAD) widening `asset_service_schedules.maintenance_type` to add mot/insurance/road_tax, plus odometer + `asset_fuel_logs`.
 - **LANE C — "Deterministic Schedule Integrity"**: read-only conflict detector over `jobs` × `rota_entries` × `leave_requests` × `asset_assignments` (double-booked staff, unassigned imminent jobs, plant clashes, expiring competence) emitted as `composeBriefing` operations signals. **No migration, no provider.** A deterministic Scheduler is viable; an AI Quote Writer is not (pricing prose is generative — `DRAFT_PROVENANCES` shows the deterministic path is a degraded mode, not a product).
 
 Note: the Observe→Draft→Approve→Execute substrate ALREADY EXISTS but is HQ-internal (`lib/drafts/`, `lib/approvals/state.ts` + its DB-trigger mirror in `20260730000000_hq_approvals.sql`, `app/admin/`). `server/services/expense-drafts.ts` proves the pattern ports tenant-side. Reuse it — do not build a second approvals engine.
