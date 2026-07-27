@@ -60,7 +60,7 @@ const floorSql = sqlOnly(read(FLOOR_MIGRATION));
 // ---------------------------------------------------------------------------
 
 describe("CIS M3 migration hygiene", () => {
-  it("uses its reserved slots, and they sit above the production tip", () => {
+  it("uses its reserved slots, with nothing back-dated beneath them", () => {
     const versions = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith(".sql"))
       .map((f) => f.split("_")[0]!)
@@ -71,15 +71,31 @@ describe("CIS M3 migration hygiene", () => {
     // order from scratch while looking fine on an already-migrated database
     // (SLOT-ORDER NOTE in the roadmap status — hit twice already).
     //
-    // An earlier revision pinned the EXHAUSTIVE set of slots above the tip. That
-    // is the wrong shape of assertion for a repo where several lanes claim slots
-    // concurrently: it turns any other lane's correct, well-numbered migration
-    // into a red build on this branch, and the pressure is then to delete the
-    // assertion rather than to fix a real problem. What actually prevents a
-    // collision or an out-of-order replay is checked here and in the duplicate
-    // test below — this lane's slots exist, they are unique, and they are above
-    // everything already in production.
-    const PRODUCTION_TIP = "20261051000000";
+    // Two DIFFERENT invariants matter here and both are asserted. They were
+    // authored by separate lanes and are complementary, not alternatives.
+
+    // (1) CIS M3's dependency window. Production has already applied both CIS M2
+    // (20261047) and CIS M3 (20261051), so a file back-dated BETWEEN them would
+    // replay in the wrong order from a fresh database while looking fine on an
+    // already-migrated one. Note this is deliberately NOT "M3 is the highest
+    // migration in the directory" — that earlier form fails the moment any
+    // later migration is authored, which is normal and correct.
+    expect(versions).toContain("20261051000000");
+    expect(versions.filter((v) => v > "20261047000000" && v < "20261051000000")).toEqual([]);
+
+    // (2) This lane's own slots. An earlier revision pinned the EXHAUSTIVE set
+    // of slots above the tip, which is the wrong shape for a repo where several
+    // lanes claim slots concurrently: it turns another lane's correct,
+    // well-numbered migration into a red build here, and the pressure is then to
+    // delete the assertion rather than fix a real problem. Assert only what this
+    // lane owns — its slots exist, are unique, and sit above everything already
+    // applied in production.
+    //
+    // PRODUCTION_TIP is the applied tip when this lane was authored, used as a
+    // FLOOR, not a live reading of production. It cannot go stale into a false
+    // red: as production advances the comparison stays true, it just states
+    // less. Duplicate-prefix collisions are caught by the test below.
+    const PRODUCTION_TIP = "20261052000000";
     const OURS = ["20261053000000", "20261054000000"];
     for (const slot of OURS) {
       expect(versions.filter((v) => v === slot)).toHaveLength(1);
