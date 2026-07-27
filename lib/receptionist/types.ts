@@ -61,6 +61,19 @@ export type InboundEnquiryInput = {
    * ingestion behaviour is otherwise unchanged.
    */
   dedup_key?: string | null;
+  /**
+   * The channel provider's stable per-MESSAGE id (Meta wamid / Twilio SID), persisted on
+   * the enquiry (Part 11). The downstream idempotency backstop: the partial unique index
+   * `(org_id, provider_message_id)` makes a second ingestion of the same provider message a
+   * no-op (the handler short-circuits on the 23505). Distinct from `dedup_key`, which is the
+   * OUTBOUND-send idempotency key; this is the INBOUND-message identity. Absent for channels
+   * that carry no provider message id (phone), leaving the column NULL and unconstrained.
+   */
+  provider_message_id?: string | null;
+  /** The provider's timestamp for the inbound message (WhatsApp), when supplied. */
+  provider_timestamp?: string | null;
+  /** True when the inbound message carried media (image/document/audio) — metadata only in v1. */
+  has_media?: boolean;
 };
 
 export type InboundExtraction = {

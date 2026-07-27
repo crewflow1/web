@@ -161,8 +161,12 @@ describe("normalizeMetaStatuses + parseMetaWhatsAppStatus", () => {
     expect(failed?.errorCode).toBe("131");
   });
 
-  it("DROPS 'read' — no SMS-ledger analogue (documented limitation)", () => {
-    expect(parseMetaWhatsAppStatus({ id: "wamid.Z", status: "read" })).toBeNull();
+  it("RECORDS 'read' — the cross-channel vocabulary now carries WhatsApp read receipts (PR3)", () => {
+    expect(parseMetaWhatsAppStatus({ id: "wamid.Z", status: "read" })?.status).toBe("read");
+  });
+
+  it("ignores an unrecognised status (never a malformed receipt)", () => {
+    expect(parseMetaWhatsAppStatus({ id: "wamid.Q", status: "banana" })).toBeNull();
   });
 
   it("extracts status transitions carrying their phone_number_id", () => {

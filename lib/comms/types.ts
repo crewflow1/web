@@ -152,6 +152,83 @@ export interface SmsProvider {
 }
 
 // ---------------------------------------------------------------------
+// WhatsApp (Directive #018 R6 — the SECOND outbound transport). The receptionist's
+// WhatsApp reply rides this seam, mirroring the SMS family EXACTLY — a
+// provider+channel identity, one assembled message, an acceptance carrying the
+// provider's correlation id (Meta's `wamid`), and the one `send`-or-throw interface
+// — so the canonical transport depends on the INTERFACE, never on Meta. Kept as a
+// SEPARATE `channel: "whatsapp"`-literal family (not a widening of the SMS family)
+// so the two channels can NEVER be confused at the type level: a `WhatsAppProvider`
+// is not assignable where an `SmsProvider` is expected, which is the type-system half
+// of the "WhatsApp never falls back to SMS" guarantee.
+//
+// DARK in this ring: `getWhatsAppProvider()` (in ./index) returns `null` — no Meta
+// sender is wired yet — so the transport records a terminal `failed`/no_provider
+// attempt on `channel='whatsapp'` and SENDS NOTHING. This is the interface + the
+// mocked-contract the outbound ring (a real Meta Cloud API sender) implements.
+// ---------------------------------------------------------------------
+
+/** The stable identity of a WhatsApp provider. Recorded per attempt for observability. */
+export type WhatsAppProviderInfo = {
+  /** Vendor id, lowercase. e.g. "meta". */
+  provider: string;
+  /** Always "whatsapp" — the literal that keeps this family distinct from SMS. */
+  channel: "whatsapp";
+};
+
+/**
+ * One outbound WhatsApp message, already assembled from an ENFORCED, auto-sendable
+ * (or human-approved) reply. Pure data — the provider turns this into a Graph API
+ * call. `to` is the recipient (E.164 or wa_id form; the adapter normalises); `body`
+ * is the message text; `from` is an optional per-send sender override (the provider
+ * defaults it to the configured business phone number id).
+ */
+export type WhatsAppMessage = {
+  to: string;
+  body: string;
+  from?: string;
+};
+
+/**
+ * The provider ACCEPTED the WhatsApp message for delivery — acceptance, NOT receipt.
+ * The `providerMessageId` is Meta's `wamid`, the correlation key a later delivery/read
+ * receipt carries back. Mirrors {@link SmsAcceptance}, including the synchronous
+ * `status` a provider may report at acceptance.
+ */
+export type WhatsAppAcceptance = {
+  /** The provider's id for this message (Meta `wamid`) — the correlation key for receipts. */
+  providerMessageId: string;
+  /** The provider's synchronous lifecycle status at acceptance, when it reports one. */
+  status?: string | null;
+};
+
+/**
+ * The one interface the WhatsApp transport knows. The implementation lives behind the
+ * config-driven factory (./index `getWhatsAppProvider`); the transport never imports a
+ * vendor SDK directly, so wiring the real Meta Cloud API sender is configuration + a
+ * sibling file, never a change to the transport.
+ */
+export interface WhatsAppProvider {
+  /** Identity of what this provider sends — drives the per-attempt metadata. */
+  readonly info: WhatsAppProviderInfo;
+  /**
+   * Hand one assembled WhatsApp message to the provider. Resolves with the provider's
+   * acceptance (a `wamid`), or THROWS on any provider failure so the transport records
+   * a `failed` attempt and owns retry.
+   */
+  send(message: WhatsAppMessage): Promise<WhatsAppAcceptance>;
+}
+
+/**
+ * The structural union of every outbound messaging provider the receptionist transport
+ * can hold. `transportReply` resolves ONE of these per attempt via
+ * `getTransportProvider(channel)` and calls `.send({to, body})` — both members share
+ * that shape, so the transport is channel-agnostic at the call site while the union
+ * keeps SMS and WhatsApp providers non-interchangeable at the type level.
+ */
+export type MessagingProvider = SmsProvider | WhatsAppProvider;
+
+// ---------------------------------------------------------------------
 // ASYNC DELIVERY RECEIPTS (Directive #018 R7). Acceptance (above) is not delivery:
 // the provider reports the message's TERMINAL fate asynchronously, over a status
 // callback, correlated by the same `providerMessageId` the acceptance returned. This
@@ -213,6 +290,25 @@ export function isTerminalSmsDeliveryStatus(
 }
 
 /**
+ * The FULL delivery lifecycle across channels: the SMS nine PLUS WhatsApp's `read`
+ * (Directive #018 R6, PR3). A strict SUPERSET of {@link SMS_DELIVERY_STATUSES} — the SMS
+ * set is left untouched (Twilio never reports `read`), so the SMS receipt path is byte-for-
+ * byte unchanged; only the WhatsApp adapter emits `read`. The receipt ledger's CHECK is
+ * widened to admit this set. `read` is deliberately NOT terminal: it is an additional fact
+ * appended after `delivered`, never a state a later receipt can regress.
+ */
+export const DELIVERY_STATUSES = [...SMS_DELIVERY_STATUSES, "read"] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** Narrow an arbitrary string to a canonical cross-channel delivery status (SMS nine + read). */
+export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
+  return (
+    typeof value === "string" &&
+    (DELIVERY_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/**
  * One async delivery receipt, parsed from a provider's status callback. Pure data —
  * the provider-specific adapter (e.g. Twilio) translates its raw callback params into
  * this shape, and the canonical service correlates it to the transport it belongs to.
@@ -223,8 +319,8 @@ export function isTerminalSmsDeliveryStatus(
 export type SmsDeliveryReceipt = {
   /** The provider's message id — the correlation key back to the transport. */
   providerMessageId: string;
-  /** The canonical lifecycle status the provider reported. */
-  status: SmsDeliveryStatus;
+  /** The canonical lifecycle status the provider reported (SMS nine + WhatsApp `read`). */
+  status: DeliveryStatus;
   /** The provider's raw status string, when it differs from the canonical form. */
   providerStatus?: string | null;
   /** The provider's error code for a non-delivery, when it reports one. */

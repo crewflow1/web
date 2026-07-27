@@ -21,9 +21,15 @@ import "server-only";
  */
 
 import { env } from "@/lib/env";
-import type { EmailProvider, SmsProvider } from "./types";
+import type {
+  EmailProvider,
+  SmsProvider,
+  WhatsAppProvider,
+  MessagingProvider,
+} from "./types";
 import { createResendEmailProvider } from "./providers/resend";
 import { createTwilioSmsProvider } from "./providers/twilio";
+import { createMetaWhatsAppProvider } from "./providers/meta-whatsapp-sender";
 
 export type {
   EmailProvider,
@@ -38,12 +44,20 @@ export type {
   SmsDeliveryStatus,
   TerminalSmsDeliveryStatus,
   SmsDeliveryReceipt,
+  DeliveryStatus,
+  WhatsAppProvider,
+  WhatsAppMessage,
+  WhatsAppAcceptance,
+  WhatsAppProviderInfo,
+  MessagingProvider,
 } from "./types";
 export {
   SMS_DELIVERY_STATUSES,
   TERMINAL_SMS_DELIVERY_STATUSES,
+  DELIVERY_STATUSES,
   isSmsDeliveryStatus,
   isTerminalSmsDeliveryStatus,
+  isDeliveryStatus,
 } from "./types";
 export { emailCostUsd, smsCostUsd } from "./cost";
 
@@ -141,4 +155,74 @@ export function getSmsProvider(): SmsProvider | null {
 /** Cheap presence check, mirroring `isEmailConfigured()`. True iff an SMS provider is configured. */
 export function isSmsConfigured(): boolean {
   return getSmsProvider() !== null;
+}
+
+/**
+ * Resolve the configured WhatsApp provider, or `null` when none is usable.
+ *
+ * The receptionist's SECOND outbound transport (Directive #018 R6). Same seam
+ * doctrine as `getSmsProvider`: an unknown provider name or missing credentials
+ * degrade to `null` (outbound WhatsApp off) rather than crashing — the transport then
+ * records a terminal `failed`/no_provider attempt on `channel='whatsapp'` and SENDS
+ * NOTHING.
+ *
+ * The Meta Cloud API sender (a Graph API `POST /{phone_number_id}/messages` adapter) IS
+ * wired (`createMetaWhatsAppProvider`), but it is returned ONLY when BOTH WHATSAPP_ACCESS_TOKEN
+ * and WHATSAPP_PHONE_NUMBER_ID are set — the CI/dev default has neither, so `auto`/`meta`
+ * still resolve to `null` there and outbound is dark. Outbound is thus CREDENTIAL-gated, not
+ * structurally impossible: the draft-first safety posture holds because (a) creds are unset
+ * outside production, and (b) even with creds, a substantive reply is only ever sent after a
+ * human approves it in the review inbox — nothing auto-sends.
+ */
+export function getWhatsAppProvider(): WhatsAppProvider | null {
+  const name = (env.COMMS_WHATSAPP_PROVIDER ?? "auto").trim().toLowerCase();
+
+  // Meta Cloud API is "configured" only when BOTH the access token AND the business
+  // phone-number id are present. Absent (the CI/dev default) ⇒ null ⇒ the transport
+  // records no_provider and SENDS NOTHING. Same gate shape as getSmsProvider's twilioConfigured.
+  const metaConfigured = Boolean(
+    env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID,
+  );
+
+  switch (name) {
+    case "auto":
+      return metaConfigured ? createMetaWhatsAppProvider() : null;
+
+    case "meta":
+      return metaConfigured ? createMetaWhatsAppProvider() : null;
+
+    case "":
+    case "none":
+    case "off":
+    case "disabled":
+      return null;
+
+    default:
+      // Unknown name → degrade, don't crash. Outbound WhatsApp stays off.
+      console.warn(
+        `[comms] unknown COMMS_WHATSAPP_PROVIDER="${name}" — outbound WhatsApp disabled`,
+      );
+      return null;
+  }
+}
+
+/** Cheap presence check, mirroring `isSmsConfigured()`. True iff a WhatsApp provider is configured. */
+export function isWhatsAppConfigured(): boolean {
+  return getWhatsAppProvider() !== null;
+}
+
+/**
+ * The SINGLE channel → provider map for the receptionist's outbound transport.
+ *
+ * This is the only place a transport channel is resolved to a provider, and it has NO
+ * fallback branch: `whatsapp` resolves ONLY to `getWhatsAppProvider()` (null today),
+ * `sms` ONLY to `getSmsProvider()`. A WhatsApp transport can therefore NEVER borrow the
+ * SMS provider — the "WhatsApp never falls back to SMS" guarantee is structural, not a
+ * runtime check. A dark channel returns `null`, and the transport records
+ * `failed`/no_provider and sends nothing.
+ */
+export function getTransportProvider(
+  channel: "sms" | "whatsapp",
+): MessagingProvider | null {
+  return channel === "whatsapp" ? getWhatsAppProvider() : getSmsProvider();
 }
