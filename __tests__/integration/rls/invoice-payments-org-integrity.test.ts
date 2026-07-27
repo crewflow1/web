@@ -89,9 +89,15 @@ describeIntegration("invoice_payments · organisation integrity (composite FK)",
 
   afterAll(async () => {
     const svc = db(serviceClient());
-    // Cascades to invoices → invoice_payments.
+    // Cascades to invoices → invoice_payments. ASSERTED, not fire-and-forget:
+    // until 20261052 this delete silently failed (activity_log_org_id_fkey —
+    // invoice_payments carries an AFTER-DELETE activity trigger) and leaked
+    // every fixture row into the shared database. Swallowing the error is what
+    // hid a P1 for so long, so now a failed teardown fails the suite.
     for (const id of [orgA, orgB]) {
-      if (id) await svc.from("organizations").delete().eq("id", id);
+      if (!id) continue;
+      const del = await svc.from("organizations").delete().eq("id", id);
+      expect(del.error, `org teardown failed: ${JSON.stringify(del.error)}`).toBeNull();
     }
   });
 

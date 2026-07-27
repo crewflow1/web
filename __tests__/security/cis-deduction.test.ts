@@ -53,13 +53,21 @@ const sql = sqlOnly(read(MIGRATION));
 // ---------------------------------------------------------------------------
 
 describe("CIS M3 migration hygiene", () => {
-  it("uses the reserved slot and is the highest number in the directory", () => {
+  it("uses the reserved slot, with nothing back-dated beneath it", () => {
     const versions = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith(".sql"))
       .map((f) => f.split("_")[0]!)
       .sort();
     expect(versions).toContain("20261051000000");
-    expect(versions[versions.length - 1]).toBe("20261051000000");
+    // This was originally "is the highest number in the directory". That cannot
+    // hold as a standing invariant: it fails the moment ANY later migration is
+    // authored, which is normal and correct (20261052 is the org-teardown
+    // activity-cascade guard). The invariant that actually protects CIS M3 is
+    // the out-of-order-replay hazard — nothing may be inserted between its
+    // dependency (CIS M2 at 20261047) and CIS M3 itself, because production has
+    // already applied both and a back-dated file would replay in the wrong
+    // order from a fresh database.
+    expect(versions.filter((v) => v > "20261047000000" && v < "20261051000000")).toEqual([]);
   });
 
   it("has no duplicate migration numbers anywhere in the directory", () => {
