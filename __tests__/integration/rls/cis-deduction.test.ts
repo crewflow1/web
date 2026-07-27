@@ -754,23 +754,65 @@ describeIntegration("H2-CIS M3 deduction engine (real Postgres)", () => {
     expect(d.error?.message ?? "").toMatch(/cannot be deleted/i);
   });
 
-  it("a bill edited between two CIS payments is REFUSED, not mis-apportioned", async () => {
+  it("a part-paid bill's VALUE is refused at source, not at the next payment", async () => {
+    // THIS TEST CHANGED IN 20261053000000, and the change is the point.
+    //
+    // M3 as first shipped left `finances.amount` and `vat_rate` mutable, on the
+    // grounds that `finances` is the general cost ledger and a tax migration
+    // should not police writes to it. So the edit SUCCEEDED and the divergence
+    // was detected one step later, at the NEXT posting, by the "has changed
+    // since it was part-paid" check. Conservative and never wrong — it cannot
+    // mis-apportion — but it reported the problem against a different bill line,
+    // possibly to a different person, long after the context was gone, and the
+    // only exit was to void every earlier CIS payment on the bill.
+    //
+    // The freeze now refuses the EDIT, at the moment of the mistake, naming the
+    // recovery path. The numerator of the §9 apportionment was already frozen;
+    // this is its denominator.
     const bill = await mkBill(orgA, sub20, 1_000, 0);
     const a = await post(asAdmin(), orgA, sub20, [{ finance_id: bill, amount: 500 }], {
       ref: `${T}-drift1`,
     });
     expect(a.error, a.error?.message).toBeNull();
 
-    // Someone edits the underlying cost. `finances` belongs to the general cost
-    // ledger and M3 deliberately does not police writes to it — so it must be
-    // DETECTED at the next posting instead.
+    // Refused for service_role too — this is a trigger, not an app-layer check.
     const up = await svc().from("finances").update({ amount: 2_000 }).eq("id", bill);
-    expect(up.error, up.error?.message).toBeNull();
+    expect(up.error?.message ?? "").toMatch(/part-paid under CIS/i);
+    expect(up.error?.message ?? "").toMatch(/void the CIS payments/i);
 
+    // Frozen in BOTH directions, and the VAT rate with it: anything that moves
+    // the basis moves the deduction that was reported from it.
+    expect(
+      (await svc().from("finances").update({ amount: 900 }).eq("id", bill)).error?.message ?? "",
+    ).toMatch(/part-paid under CIS/i);
+    expect(
+      (await svc().from("finances").update({ vat_rate: 20 }).eq("id", bill)).error?.message ?? "",
+    ).toMatch(/part-paid under CIS/i);
+
+    // The bill is untouched, and everything that cannot move a deduction still is.
+    const row = await svc().from("finances").select("amount, vat_rate").eq("id", bill).maybeSingle();
+    expect(num(row.data?.amount)).toBe(1_000);
+    expect(
+      (await svc().from("finances").update({ notes: "re-tagged" }).eq("id", bill)).error,
+    ).toBeNull();
+
+    // And the documented way out actually works: void, correct, re-post. The
+    // "has changed since it was part-paid" check in
+    // tg_supplier_payment_allocation_cis is deliberately KEPT as defence in
+    // depth, but with this freeze in place there is no longer a write path that
+    // can reach it — which is the point of it, not a gap in this test.
+    await svc()
+      .from("supplier_payments")
+      .update({ voided_at: new Date().toISOString(), void_reason: "bill was wrong" })
+      .eq("id", String(a.data));
+    expect(
+      (await svc().from("finances").update({ amount: 2_000 }).eq("id", bill)).error,
+      "voiding releases the bill",
+    ).toBeNull();
     const b = await post(asAdmin(), orgA, sub20, [{ finance_id: bill, amount: 500 }], {
       ref: `${T}-drift2`,
     });
-    expect(b.error?.message ?? "").toMatch(/has changed since it was part-paid/i);
+    expect(b.error, b.error?.message).toBeNull();
   });
 
   // ═════════════════════════════════════════════════════════════════════════

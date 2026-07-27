@@ -137,9 +137,15 @@ export type BillSettlement = {
  * excludes them for the same reason, which is what makes void-then-re-record
  * work). Use `liveAllocations` below rather than filtering by hand.
  *
- * `over_paid` should not persist (the DB refuses it) but is modelled so a
- * rejected attempt, or data predating a guard, renders coherently instead of as
- * a negative outstanding.
+ * `over_paid` should not persist — the DB refuses it from BOTH directions, which
+ * takes two guards because there are two ways in: CAP 2 in
+ * `tg_supplier_payment_allocation_guard` (20261047000000) refuses an allocation
+ * that would exceed the bill, and the settlement floor in
+ * `tg_finances_bill_value_guard` (20261054000000) refuses cutting the bill below
+ * what is already settled. Until the latter existed the second door was open and
+ * this state DID persist. It stays modelled so a rejected attempt, or a row
+ * predating either guard, renders coherently instead of as a negative
+ * outstanding.
  */
 export function computeBillSettlement(input: {
   bill: SupplierBillRow;
