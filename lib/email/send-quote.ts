@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { sendEmail } from "@/lib/email/send";
 import { buildQuoteEmail } from "@/lib/email/templates/quote";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { env } from "@/lib/env";
 
 /**
@@ -35,6 +36,7 @@ type QuoteJoined = {
     name: string | null;
     phone: string | null;
     vat_number: string | null;
+    logo_path: string | null;
     logo_url: string | null;
     address: unknown;
     bank_details: unknown;
@@ -56,7 +58,7 @@ export async function sendQuoteEmail(
       `
         id, number, status, subtotal, vat_total, total, valid_until, notes, terms, public_token,
         customer:customers ( name, email ),
-        org:organizations ( name, phone, vat_number, logo_url, address, bank_details )
+        org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
     .eq("id", quoteId)
@@ -109,7 +111,7 @@ export async function sendQuoteEmail(
     org_name: quote.org?.name ?? "CrewFlow",
     org_phone: quote.org?.phone ?? null,
     org_vat_number: quote.org?.vat_number ?? null,
-    org_logo_url: quote.org?.logo_url ?? null,
+    org_logo_url: await resolveOrgLogoSrc(quote.org),
     org_address: (quote.org?.address as QuotePdfInput["org_address"]) ?? null,
     org_bank_details:
       (quote.org?.bank_details as QuotePdfInput["org_bank_details"]) ?? null,

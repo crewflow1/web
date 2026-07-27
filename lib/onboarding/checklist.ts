@@ -168,6 +168,9 @@ export type OnboardingSnapshot = {
     /** Reply-to email at the org level (citext column on organizations). */
     email: string | null;
     vat_number: string | null;
+    /** Path to an uploaded logo object in the private company-logos bucket. */
+    logo_path?: string | null;
+    /** Legacy external logo URL (read-only back-compat; no longer settable). */
     logo_url: string | null;
     /** jsonb — non-null + has at least name/sort_code/account_number = "done". */
     bank_details: {
@@ -210,7 +213,11 @@ export function isStepComplete(
         snap.org.name && snap.org.phone && snap.org.address?.postcode,
       );
     case "logo":
-      return Boolean(snap.org.logo_url && snap.org.logo_url.length > 0);
+      // An uploaded logo (logo_path) OR a legacy external URL counts as done.
+      return Boolean(
+        (snap.org.logo_path && snap.org.logo_path.length > 0) ||
+          (snap.org.logo_url && snap.org.logo_url.length > 0),
+      );
     case "connect_email":
       return Boolean(snap.org.email && snap.org.email.length > 0);
     case "vat":
