@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Train 3 complete; Train 4 + CIS M1 in flight)
-**Production `main`:** `dffd68a`
-**Production migration tip:** `20261042`
+**Last reconciled:** 2026-07-27 (Train 4 + CIS M1 shipped)
+**Production `main`:** `266d9e9`
+**Production migration tip:** `20261046`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -29,6 +29,8 @@
 |---|---|---|---|---|
 | **1** | 2026-07-26 | `20261038`, `20261039` | H2-CASH M1 billing plans (#426) + M2 cash visibility (#427) + M3 precise cash/forecast (#428 cumulative) + Daily Briefing (#425); dashboard retention pagination (#429) | `ed748b5` → `82cb5b7`, verified |
 | **2** | 2026-07-27 | `20261040` | Customer/staff import correctness (#121, launch blocker) + org_id perf indexes (#128) | `82cb5b7` → `aa8b810`, verified |
+| **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
+| **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **3** | 2026-07-27 | `20261041`, `20261042` | PWA offline-shell hydration **product bug** (#431) · company-logo private bucket with the storage regression stripped (#137) · launch-checklist runtime probe (#148) · address-first search (#136) | `aa8b810` → `636a794`, verified |
 
 ---
@@ -40,7 +42,7 @@
 | Blueprint Centre (viewer, pins, markup, compare, offline, PWA) | **PRODUCTION** | shipped via release train `#421`; `app/(app)/blueprints/**`, migrations `20261014`–`20261017` |
 | Variation management (request → approve → quote/invoice → audit) | **PRODUCTION** | `quotes.variation_number`; `20260520180000_variation_orders.sql`; accepted-quote immutability `20261004` |
 | Offline mode / PWA | **PRODUCTION** | `public/sw.js`, offline shell, logout purge, real-offline E2E |
-| AI WhatsApp Assistant | **PARTIAL — inbound BUILT-DARK, outbound in open PR** | inbound webhook + handler + conversation engine on main (`app/api/webhooks/whatsapp/route.ts`), gated by `NEXT_PUBLIC_FEATURE_WHATSAPP=false`; outbound sender + read receipts only in #360/#361/#362 |
+| AI WhatsApp Assistant | **BUILT-DARK (inbound + outbound + receipts)** | consolidated in #433 (prod `9a633cd`); webhook returns 404 and `/api/health` reports `whatsapp:false` with the flag off — verified post-deploy. Activation needs `NEXT_PUBLIC_FEATURE_WHATSAPP=true` + `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` (+ `WHATSAPP_APP_SECRET`/`WHATSAPP_VERIFY_TOKEN` inbound) + per-org DB state |
 | Native mobile apps (iOS/Android) | **NOT BUILT** | PWA is the current mobile strategy |
 
 ## PHASE 3 — AI OPERATING SYSTEM
@@ -81,7 +83,9 @@
 | Supplier invoices / committed costs | **PRODUCTION** | Programme C slice 3 |
 | Profitability + VAT summary reporting | **PRODUCTION** | `lib/profitability/compute.ts`, dashboard/reports |
 | Payroll (timesheets → PAYE lines) | **PRODUCTION** | `lib/payroll/compute.ts`, `payroll_lines` |
-| **CIS automation + reverse-charge VAT + subcontractor commercial** | **NOT BUILT** | **highest-value remaining UK-construction moat** |
+| **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
+| CIS M2 — money-out ledger | **NOT BUILT — NEXT** | no money-out ledger exists (`payments`/`invoice_payments` are money-IN, carrying `customer_id`). CIS deducts **at payment**, so this is the load-bearing net-new engine. Slot `20261047` |
+| CIS M3–M5 — deduction calc + reverse-charge VAT · monthly statements · HMRC seam | **NOT BUILT** | M3 must split labour vs qualifying materials (CIS never applies to materials or VAT); M4 clones the completion-certificate immutability/PDF stack; M5 stays DARK/BLOCKED_BY_PROVIDER |
 | OCR / receipt scanning | **NOT BUILT** | needs an OCR provider |
 | Expenses + budget tracking | **PARTIAL** | `finances` table carries costs; no dedicated expense workflow |
 | Online invoice payment (Stripe) | **FOUNDATION (dark seam)** | `PaymentProvider` seam documented in `docs/billing-plans.md`; needs live creds + product decision |
@@ -143,16 +147,16 @@ on that prefix — a collision is **invisible to git** because filenames differ)
 
 | Slot | Owner | Status |
 |---|---|---|
-| `20261043` | Train 4 — `inbound_enquiries_provider_dedup` (renumbered from `20260919`) | in flight |
-| `20261044` | Train 4 — `widen_transport_channel_whatsapp` (renumbered from `20260920`) | in flight |
-| `20261045` | Train 4 — `whatsapp_read_receipt_status` (renumbered from `20260921`) | in flight |
-| `20261046` | CIS M1 — `cis_subcontractors` | in flight |
-| `20261047+` | **next free** | — |
+| `20261043` | Train 4 — `inbound_enquiries_provider_dedup` | **SHIPPED** |
+| `20261044` | Train 4 — `widen_transport_channel_whatsapp` | **SHIPPED** |
+| `20261045` | Train 4 — `whatsapp_read_receipt_status` | **SHIPPED** |
+| `20261046` | CIS M1 — `cis_subcontractors` | **SHIPPED** |
+| `20261047+` | **NEXT FREE — CIS M2 (money-out ledger) claims `20261047`** | — |
 
 Before pushing any migration, prove no duplicate prefixes:
 `ls supabase/migrations | sed 's/_.*//' | sort | uniq -d` must print nothing.
 
-## In-flight workstreams (Continuation 4)
+## Completed this continuation (was: in-flight)
 
 - **TRAIN 4 — WhatsApp consolidation (ships DARK).** Branch `feat/whatsapp-consolidated`
   off main. Verified: **#362 is the cumulative tip** containing #360+#361, and
