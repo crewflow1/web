@@ -92,8 +92,14 @@ const INVOICE_FIELDS: Record<string, string[]> = {
     "balance due",
   ],
   due_date: ["due date", "due", "payment due"],
-  paid_at: ["paid date", "paid at", "date paid", "paid"],
-  status: ["status", "paid?", "payment status"],
+  // A bare "Paid" column is deliberately NOT a `paid_at` alias. Now that one
+  // column can only belong to one field, the two have to be told apart, and a
+  // spreadsheet column headed just "Paid" is overwhelmingly a yes/no flag — a
+  // date column says "Paid Date" or "Date Paid". Leaving "paid" here made
+  // `paid_at` claim the flag (warning "bad date in paid_at: yes") and cost the
+  // invoice its status.
+  paid_at: ["paid date", "paid at", "date paid"],
+  status: ["status", "paid?", "paid", "payment status"],
   created_at: ["invoice date", "date", "created"],
 };
 

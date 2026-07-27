@@ -304,6 +304,26 @@ describe("ambiguous headers resolve toward the more specific field", () => {
     expect(map.created_at).toBe("Invoice Date");
   });
 
+  it("reads a bare Paid column as the STATUS, and Paid Date as the date", () => {
+    // Once a column can only belong to one field, these two have to be told
+    // apart. A spreadsheet column headed just "Paid" is a yes/no flag; a date
+    // column says so. Getting this backwards cost the invoice its status and
+    // logged "bad date in paid_at: yes".
+    for (const header of ["Paid", "Paid?", "Payment Status"]) {
+      const { row } = detectFor(
+        `Invoice Number,Customer,Net,VAT,Total,${header}\nINV-1,Acme,100,20,120,yes`,
+      );
+      expect(row.mapped.status, header).toBe("paid");
+      expect(row.mapped.paid_at, header).toBeUndefined();
+      expect(row.warnings, header).toEqual([]);
+    }
+    const dated = detectFor(
+      "Invoice Number,Customer,Net,VAT,Total,Paid Date\nINV-1,Acme,100,20,120,2024-06-01",
+    );
+    expect(dated.row.mapped.paid_at).toBe("2024-06-01");
+    expect(dated.row.warnings).toEqual([]);
+  });
+
   it("keeps the invoice date and the due date apart", () => {
     const { row } = detectFor(
       "Invoice Number,Invoice Date,Due Date,Net,VAT,Total\nINV-1,2024-05-09,2024-06-08,100,20,120",
