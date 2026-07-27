@@ -258,6 +258,9 @@ Where guidance left a judgement to us, we took the option that cannot under-dedu
 These are out of scope for M3. None of them is silently approximated — where the feature is absent,
 the system declines to act rather than guessing.
 
+§8.1 is different in kind: it records a gap that was open, needed a product decision, and has
+since been **resolved**. It is kept here rather than deleted so the reasoning stays auditable.
+
 1. **HMRC verification API.** M1's `cis_status` is set by a human. We do not call HMRC's subcontractor
    verification service, so we cannot obtain a verification number automatically. The snapshot stores
    whatever verification reference M1 holds.
@@ -280,6 +283,137 @@ the system declines to act rather than guessing.
     (§2.2); we do not administer, calculate or collect the levy.
 11. **VAT return box mapping** (§6.3) — not published in the guidance we could verify.
 12. **Northern Ireland / cross-border and reverse charge interaction beyond the above.** Not modelled.
+
+### 8.1 RESOLVED — editing a bill that has been part-paid under CIS
+
+**Status: decided and implemented, `20261053000000_cis_bill_value_freeze.sql`.**
+
+M3 as first shipped froze `cis_bill_details` (the labour/materials split and VAT treatment)
+once a live CIS payment landed, but left `finances.amount` and `finances.vat_rate` mutable,
+on the grounds that `finances` is the general cost ledger and a tax migration should not
+police writes to it. The numerator of the apportionment in §9 was frozen; its denominator
+was not. The consequence:
+
+- the edit **succeeded silently**, so the bill and the tax facts already calculated and
+  reported from it disagreed permanently, with nothing surfacing the divergence;
+- `tg_supplier_payment_allocation_cis` then compared the bill against the earlier
+  allocations' snapshots and refused the **next** CIS payment. Conservative and
+  correct-by-default — it cannot mis-apportion — but the user learned about it one step too
+  late, against a different bill line, possibly as a different person, and the only exit was
+  to void every earlier CIS payment on the bill.
+
+**Decision: refuse the edit at source, in the database.** The guard raises on any UPDATE of
+`finances.amount` or `finances.vat_rate` for a bill carrying at least one non-voided
+allocation with a CIS deduction. It lives in `tg_finances_bill_value_guard`, which since
+`20261054000000` runs a second, non-CIS check after it; the CIS branch and its message are
+unchanged between the two migrations — see §8.2.
+
+Two alternatives were considered and rejected:
+
+| Option | Why not |
+| --- | --- |
+| A guided recovery flow in the payments UI, keeping the late refusal | Treats the symptom. The divergence still happens, and it is invisible to any writer that is not that page — PostgREST, an import, a service-role script, a future background job. |
+| A non-blocking warning in the finances UI | Leaves a filed deduction derived from a bill that no longer says the same thing, and makes the freeze in §5 and §10 untrue. A warning that can be clicked through is not an invariant. |
+
+Why the database and not the app: **§10 already commits to this layer** — posted tax facts are
+protected "by database triggers … not by application code alone". It is also the same rule
+§5 already applies to the split, applied to the number the split is subtracted *from*;
+freezing one and not the other was an inconsistency rather than a policy.
+
+The guard is deliberately narrow on both axes, so ordinary expense editing is unaffected:
+
+- **Columns** — only `amount` and `vat_rate`, the two writable inputs to the basis
+  (`vat_total` is generated from them, so it has no independent write path). `category`,
+  `notes`, `job_id`, `reference`, `bill_date` and `receipt_url` stay editable on a part-paid
+  bill, because none of them can move a deduction.
+- **Rows** — only bills with a live CIS allocation. Every ordinary expense, every non-CIS
+  supplier bill and every legacy pre-M3 allocation is untouched. **Voided payments do not
+  count**: voiding is how a bill is released for correction, and the documented route is
+  void → correct → re-post, proven end to end in the integration suite.
+
+Every writer of `finances` was enumerated before this shipped. The only path in the codebase
+that updates `amount` or `vat_rate` is `PATCH /api/finances/[id]`, which now translates the
+refusal into a 409 naming the recovery path instead of an opaque 500. All other writers are
+INSERTs. DELETE of a part-paid bill, and any change to its `org_id` or `supplier_id`, were
+already refused by `supplier_payment_allocations_bill_fk` (NO ACTION).
+
+**Also closed, same migration, not in the original brief.** §5's freeze was written
+`if tg_op = 'UPDATE' …`, so it did not cover INSERT — and a bill may legitimately be part-paid
+with **no** `cis_bill_details` row (no row means no materials claimed, the conservative
+over-deducting default of §7). The split could therefore be *created* after a deduction had
+been reported at materials = 0, moving the basis by exactly the route the freeze exists to
+prevent. `tg_cis_bill_details_guard` now refuses that INSERT too. Left unfixed, the freeze
+claimed by §5 and §10 would not have been true.
+
+The "has changed since it was part-paid" refusal in `tg_supplier_payment_allocation_cis` is
+**kept** as defence in depth. With both doors shut it is unreachable in a fresh database — that
+is the point of it. It still covers a row edited before these guards existed, and any future
+path that reaches the table with triggers disabled.
+
+### 8.2 RESOLVED — the same defect on the NON-CIS side of the ledger
+
+**Status: decided and implemented, `20261054000000_supplier_bill_settlement_floor.sql`.**
+
+§8.1 deliberately left ordinary supplier bills alone: a bill with no CIS deduction has no tax
+basis derived from it, so a tax migration had no business freezing it. That scope discipline
+was right, and it stands. But it left the *non-tax* half of the same defect open, because M2's
+over-allocation cap has the identical shape of hole:
+
+`tg_supplier_payment_allocation_guard`'s CAP 2 caps Σ live allocations against a bill at that
+bill's gross value — but it is a `before insert` trigger on the allocation, so it only ever runs
+**when money arrives**. Nothing re-checked it when the **bill** moved underneath payments already
+recorded against it. Bill £1,000, part-pay £900, then edit the bill down to £100: the edit
+succeeded silently and the ledger permanently claimed £900 had been settled against a £100 bill.
+Reproduced against real Postgres, through service_role *and* through an org admin under RLS,
+before it was fixed.
+
+It is not only a stale number. `computeSupplierPosition.outstanding` is deliberately Σ of each
+bill's **own** remaining balance, so that over-settling one bill cannot appear to pay down
+another — which means the £800 of real cash that no longer fits anywhere simply stopped being
+counted. `lib/suppliers/payments.ts` models an `over_paid` bill status precisely so a broken row
+still renders coherently, and its comment said the state "should not persist (the DB refuses
+it)". Until this migration, that was the one claim in the module that was not true.
+
+**Decision: a floor, not a freeze — and deliberately weaker than the CIS rule.** Freezing an
+ordinary bill would be a heavy answer to a light problem: "the invoice said £1,200, not £1,000"
+is a frequent, ordinary correction, and requiring void-and-re-post for it would make a payment
+that was never wrong into paperwork. So:
+
+| | CIS bill (§8.1) | Ordinary supplier bill (§8.2) |
+| --- | --- | --- |
+| Increase the value | **refused** — the basis must not move at all | allowed |
+| Reduce, staying at or above what is settled | **refused** | allowed, to the penny |
+| Reduce **below** what is settled | **refused** | **refused** |
+| Way out | void the CIS payments, correct, re-post | bill it for at least what was paid, **or** void |
+
+The two concerns share one trigger, because both are `before update` on `finances`, keyed on the
+same two columns, resolved by the same lookup against the same two tables — two triggers would
+mean two scans on every bill edit and an ordering that exists only by name. The CIS check runs
+first, being the stricter and more specific rule. What they must **never** share is their
+message: a user sent through the CIS void-and-re-post ceremony when they only needed to re-cut
+the bill has been told the wrong thing. Both integration suites assert the distinction in both
+directions, and `financeWriteRefusal` maps each to its own 409.
+
+**One refinement worth knowing about.** The guard refuses a reduction only when it *both* lands
+below the settled total *and* lowers the gross — i.e. only when it makes matters worse. The naive
+rule ("refuse whenever the result is below what is settled") would trap any row that is already
+broken, and this defect has been live since M2 shipped, so a production database may hold such
+rows: correcting a £100 bill carrying £900 of payments *up* to £500 would have been refused for
+still being short, leaving the only rows that need repair as the only rows that cannot be
+repaired. Every move toward the invariant is allowed; every move away from it is refused. That
+branch is unreachable in a fresh database, by construction, and was verified directly against
+Postgres with the trigger disabled to manufacture the legacy state.
+
+**Concurrency.** The guard takes no lock of its own. It does not need one: `record_supplier_payment`
+already locks the bill row `for update` before it sums (20261047000000's CAP 2), so the two writers
+serialise on that one tuple in either order, and when the loser wakes up its `select sum(…)` — a
+fresh query inside a volatile plpgsql function, so a fresh snapshot under READ COMMITTED — sees
+what the winner committed. That is asserted, not assumed: `scripts/verify-bill-value-guard-races.sh`
+drives two real overlapping psql sessions and proves, in **both** orderings, that the second session
+genuinely blocks (confirmed from `pg_stat_activity`, not from elapsed time) and then refuses, that
+twelve simultaneous pairs in both directions deadlock zero times, and that no bill survives the
+run settled beyond its gross. The integration suite cannot test this — PostgREST is one transaction
+per request — which is why the harness exists as a script rather than a spec.
 
 ---
 
@@ -339,3 +473,9 @@ Later changes to verification status, rate, UTR, supplier details or bill compos
 rewrite a posted payment's tax facts. This is enforced by database triggers reusing M2's write-once +
 void semantics — not by application code alone. A posted payment is corrected by **voiding and
 re-posting**, never by editing.
+
+The bill a deduction was derived from is held to the same standard, and in the same place: once a
+live CIS payment exists against it, its **value and VAT rate** are frozen along with its
+labour/materials split (`tg_finances_bill_value_guard` and `tg_cis_bill_details_guard`). So the
+snapshot cannot be rewritten *and* the figures it was derived from cannot drift out from under it.
+Both are released by voiding the payment — see §8.1 for the reasoning and the blast radius.

@@ -7,6 +7,8 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const MIGRATION = "supabase/migrations/20261051000000_cis_deduction.sql";
 const M2_MIGRATION = "supabase/migrations/20261047000000_supplier_payments.sql";
+/** The follow-up that freezes a part-paid bill's VALUE, not just its split. */
+const FREEZE_MIGRATION = "supabase/migrations/20261053000000_cis_bill_value_freeze.sql";
 const MIG_DIR = resolve(ROOT, "supabase/migrations");
 
 /**
@@ -46,20 +48,46 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** The follow-up that extends the same guard with a non-CIS settlement floor. */
+const FLOOR_MIGRATION = "supabase/migrations/20261054000000_supplier_bill_settlement_floor.sql";
+
 const sql = sqlOnly(read(MIGRATION));
+const freezeSql = sqlOnly(read(FREEZE_MIGRATION));
+const floorSql = sqlOnly(read(FLOOR_MIGRATION));
 
 // ---------------------------------------------------------------------------
 // 1. Migration hygiene
 // ---------------------------------------------------------------------------
 
 describe("CIS M3 migration hygiene", () => {
-  it("uses the reserved slot and is the highest number in the directory", () => {
+  it("uses its reserved slots, and they sit above the production tip", () => {
     const versions = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith(".sql"))
       .map((f) => f.split("_")[0]!)
       .sort();
-    expect(versions).toContain("20261051000000");
-    expect(versions[versions.length - 1]).toBe("20261051000000");
+
+    // The hazard is a file added LATER with a LOWER number: Supabase keys
+    // migration identity on the numeric prefix, so such a file replays out of
+    // order from scratch while looking fine on an already-migrated database
+    // (SLOT-ORDER NOTE in the roadmap status — hit twice already).
+    //
+    // An earlier revision pinned the EXHAUSTIVE set of slots above the tip. That
+    // is the wrong shape of assertion for a repo where several lanes claim slots
+    // concurrently: it turns any other lane's correct, well-numbered migration
+    // into a red build on this branch, and the pressure is then to delete the
+    // assertion rather than to fix a real problem. What actually prevents a
+    // collision or an out-of-order replay is checked here and in the duplicate
+    // test below — this lane's slots exist, they are unique, and they are above
+    // everything already in production.
+    const PRODUCTION_TIP = "20261051000000";
+    const OURS = ["20261053000000", "20261054000000"];
+    for (const slot of OURS) {
+      expect(versions.filter((v) => v === slot)).toHaveLength(1);
+      expect(slot > PRODUCTION_TIP).toBe(true);
+    }
+    // And they stay in the order their dependency requires: 20261054000000
+    // `create or replace`s the function 20261053000000 defines.
+    expect([...OURS].sort()).toEqual(OURS);
   });
 
   it("has no duplicate migration numbers anywhere in the directory", () => {
@@ -70,12 +98,25 @@ describe("CIS M3 migration hygiene", () => {
   });
 
   it("is idempotent — every create is guarded", () => {
-    const creates = sql.match(/create\s+table\s+(?!if not exists)/gi) ?? [];
-    expect(creates).toEqual([]);
-    const indexes = sql.match(/create\s+index\s+(?!if not exists)/gi) ?? [];
-    expect(indexes).toEqual([]);
-    const cols = sql.match(/add column\s+(?!if not exists)/gi) ?? [];
-    expect(cols).toEqual([]);
+    for (const src of [sql, freezeSql, floorSql]) {
+      const creates = src.match(/create\s+table\s+(?!if not exists)/gi) ?? [];
+      expect(creates).toEqual([]);
+      const indexes = src.match(/create\s+index\s+(?!if not exists)/gi) ?? [];
+      expect(indexes).toEqual([]);
+      const cols = src.match(/add column\s+(?!if not exists)/gi) ?? [];
+      expect(cols).toEqual([]);
+    }
+    // Both replay cleanly: every function is CREATE OR REPLACE and every trigger
+    // is dropped first.
+    for (const src of [sql, freezeSql, floorSql]) {
+      const fns = src.match(/create\s+(or replace\s+)?function/gi) ?? [];
+      for (const f of fns) expect(f.toLowerCase()).toContain("or replace");
+      const trgs = src.match(/create\s+(constraint\s+)?trigger\s+(\S+)/gi) ?? [];
+      for (const t of trgs) {
+        const name = t.split(/\s+/).pop()!;
+        expect(src).toMatch(new RegExp(`drop trigger if exists ${name}\\b`, "i"));
+      }
+    }
   });
 });
 
@@ -123,6 +164,169 @@ describe("CIS M3 cannot move job cost or existing VAT reporting", () => {
       // Consumers may CALL it; nothing may redefine it.
       expect(codeOf(read(f.slice(ROOT.length + 1)))).not.toMatch(/function\s+computeVatQuarter/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. THE BILL VALUE GUARD (20261053 + 20261054) — a bill's value cannot move
+//     out from under a deduction already reported from it, nor below money
+//     already paid against it.
+// ---------------------------------------------------------------------------
+//
+// ASSERTED AGAINST THE FINAL BODY, deliberately. 20261054000000 is a
+// `create or replace` of the function 20261053000000 defines, so the LIVE policy
+// is whatever 20261054000000 says. Pinning the earlier revision's text would be
+// testing a body that no database ever runs, and would go green while the thing
+// actually installed had drifted.
+//
+// Behaviour under CONCURRENCY is not assertable from source and is not asserted
+// here: it is proven separately, with two real overlapping psql sessions, by
+// scripts/verify-bill-value-guard-races.sh. This file pins shape; that harness
+// pins the race.
+
+describe("a part-paid bill's value is guarded in the database", () => {
+  const guard = floorSql.slice(
+    floorSql.indexOf("function public.tg_finances_bill_value_guard()"),
+    floorSql.indexOf("comment on function public.tg_finances_bill_value_guard()"),
+  );
+
+  it("guards finances with a BEFORE UPDATE trigger, never INSERT or DELETE", () => {
+    for (const src of [freezeSql, floorSql]) {
+      expect(src).toMatch(
+        /create trigger finances_bill_value_guard\s+before update on public\.finances/i,
+      );
+      // An INSERT guard would block recording ordinary expenses; a DELETE guard is
+      // unnecessary — the composite bill FK already refuses that.
+      expect(src).not.toMatch(/before insert[\s\S]{0,40}on public\.finances/i);
+      expect(src).not.toMatch(/before delete[\s\S]{0,40}on public\.finances/i);
+    }
+  });
+
+  it("is ONE policy — a single trigger on finances, not two fighting guards", () => {
+    // Two triggers would mean two scans of the allocation ledger on every bill
+    // edit and a precedence expressed by nothing but alphabetical trigger name.
+    // The floor was therefore added to the SAME function behind the SAME trigger.
+    const created = [...floorSql.matchAll(/create trigger (\w+)\s+[\s\S]{0,60}?on public\.finances/gi)]
+      .map((m) => m[1]);
+    expect(created).toEqual(["finances_bill_value_guard"]);
+    // And the extension must not have forked the function under a new name.
+    expect(floorSql).not.toMatch(/tg_finances_cis_basis_freeze/i);
+    expect(freezeSql).not.toMatch(/tg_finances_cis_basis_freeze/i);
+  });
+
+  it("runs SECURITY DEFINER so it binds service_role and RLS-blind callers alike", () => {
+    // Invoker rights would make `exists(...)` return false for anyone who cannot
+    // read the payment ledger — the guard would silently pass for exactly the
+    // users most likely to be editing an expense.
+    expect(guard).toMatch(/security definer/i);
+    expect(guard).toMatch(/set search_path = public/i);
+  });
+
+  it("PROTECTS finances without ever writing it — the cost invariant still holds", () => {
+    for (const src of [freezeSql, floorSql]) {
+      expect(src).not.toMatch(/insert\s+into\s+public\.finances/i);
+      expect(src).not.toMatch(/update\s+public\.finances/i);
+      expect(src).not.toMatch(/delete\s+from\s+public\.finances/i);
+      expect(src).not.toMatch(/alter table public\.finances/i);
+    }
+    // A BEFORE UPDATE trigger that assigned to NEW would be a tax feature moving
+    // a commercial cost. The only permitted outcomes are raise, or return NEW.
+    expect(guard).not.toMatch(/new\.(amount|vat_rate|vat_total)\s*:?=/i);
+  });
+
+  it("is scoped to the two columns that feed the bill's value, and no others", () => {
+    // Short-circuits when neither moved, so recategorising, annotating, job
+    // re-tagging and receipt stamping on a part-paid bill still work.
+    expect(guard).toMatch(
+      /new\.amount is not distinct from old\.amount\s+and new\.vat_rate is not distinct from old\.vat_rate/i,
+    );
+    for (const col of ["category", "notes", "job_id", "reference", "receipt_url"]) {
+      expect(guard).not.toMatch(new RegExp(`new\\.${col}`, "i"));
+    }
+  });
+
+  it("only fires for LIVE CIS allocations — voids release the bill", () => {
+    expect(guard).toMatch(/a\.cis_deduction is not null/i);
+    expect(guard).toMatch(/p\.voided_at is null/i);
+  });
+
+  it("names the recovery path in the error rather than just refusing", () => {
+    expect(guard).toMatch(/using errcode = 'check_violation'/i);
+    expect(guard).toMatch(/void the cis payments/i);
+  });
+
+  it("refuses a reduction below what is already settled — CAP 2's missing half", () => {
+    // 20261047's CAP 2 is BEFORE INSERT on the allocation, so it only runs when
+    // MONEY ARRIVES. Nothing re-checked it when the BILL moved underneath
+    // payments already recorded against it, and a real repro found five bills
+    // over-settled, the worst at nine times its own value.
+    expect(guard).toMatch(/v_settled/);
+    // Gross must be computed exactly as CAP 2 computes it or the two guards can
+    // disagree by a penny and a bill can pass one while failing the other.
+    // It cannot be read from NEW: vat_total is generated AFTER before-triggers run.
+    expect(guard).toMatch(
+      /v_new_gross\s*:=\s*round\(new\.amount \+ round\(new\.amount \* new\.vat_rate \/ 100, 2\), 2\)/i,
+    );
+    expect(guard).not.toMatch(/new\.vat_total/i);
+  });
+
+  it("lets an already-broken row move TOWARD validity — the guard is not a trap", () => {
+    // THE most important line in the migration to not lose. The naive rule
+    // ("refuse whenever the result is below what is settled") would trap every
+    // row this defect has already broken in production: correcting a £100 bill
+    // carrying £900 of payments UP to £500 would be refused for still being
+    // short, so the only rows needing repair would be the only rows unrepairable.
+    // The second clause is what makes the refusal "you are making it worse"
+    // rather than "you are still wrong".
+    expect(guard).toMatch(
+      /v_new_gross < v_settled - 0\.005\s+and v_new_gross < v_old_gross - 0\.005/i,
+    );
+    expect(guard).toMatch(/v_old_gross\s*:=/);
+  });
+
+  it("keeps the CIS refusal and the floor refusal saying DIFFERENT things", () => {
+    // Same trigger, same errcode — the message is the ONLY thing distinguishing
+    // them, and they have different exits. Sending someone through the CIS
+    // void-and-re-post ceremony when they only had to re-cut the bill is a bug.
+    const cisAt = guard.indexOf("part-paid under CIS");
+    const floorAt = guard.indexOf("already settled against it");
+    expect(cisAt).toBeGreaterThan(-1);
+    expect(floorAt).toBeGreaterThan(-1);
+    // CIS is checked FIRST: it is the stricter rule, and it must claim an
+    // increase that the floor below would happily allow.
+    expect(cisAt).toBeLessThan(floorAt);
+    expect(guard).toMatch(/bill it for at least what has been paid/i);
+  });
+
+  it("treats an unpaid bill as unguarded, so ordinary cost editing is untouched", () => {
+    // Required, not an optimisation: allocation amounts are `check (amount > 0)`,
+    // so v_settled is 0 exactly when the bill is unpaid. Without this exit a
+    // credit note taken negative — legitimate on an unallocated row — would read
+    // as falling below a floor of zero and be refused.
+    expect(guard).toMatch(/if v_settled = 0 then\s+return new;/i);
+  });
+
+  it("closes the INSERT door on the labour/materials split too", () => {
+    // 20261051 froze cis_bill_details on UPDATE only, and a bill may be part-paid
+    // with no details row at all — so the row could be created afterwards and move
+    // the basis. Both branches must now be present.
+    const dGuard = freezeSql.slice(freezeSql.indexOf("function public.tg_cis_bill_details_guard()"));
+    expect(dGuard).toMatch(/if v_paid and tg_op = 'INSERT' then/i);
+    expect(dGuard).toMatch(/if tg_op = 'UPDATE' and v_paid and \(/i);
+  });
+
+  it("surfaces the refusal to the API as an actionable conflict, not a 500", () => {
+    const errors = codeOf(read("lib/finances/errors.ts"));
+    expect(errors).toMatch(/23514|check_violation/);
+    expect(errors).toMatch(/status:\s*409/);
+    const route = codeOf(read("app/api/finances/[id]/route.ts"));
+    // The mapping must be CALLED, and called BEFORE the generic 500, or it is
+    // dead code. Assert both offsets are real so a removed call cannot pass on -1.
+    const call = route.indexOf("financeWriteRefusal(");
+    const generic = route.indexOf('"Failed to update"');
+    expect(call).toBeGreaterThan(-1);
+    expect(generic).toBeGreaterThan(-1);
+    expect(call).toBeLessThan(generic);
   });
 });
 
