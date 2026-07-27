@@ -20,14 +20,16 @@ import {
  */
 
 type Res<T> = { data: T | null; error: { message: string } | null };
+/** A chainable `.eq()` filter, so a read can be scoped by more than one column. */
+interface Filter<T> extends PromiseLike<Res<T>> {
+  eq: (k: string, v: unknown) => Filter<T>;
+}
 type Client = {
   from: (t: string) => {
     insert: (v: unknown) => PromiseLike<Res<null>> & {
       select: (c: string) => { single: () => PromiseLike<Res<Record<string, unknown>>> };
     };
-    select: (c: string) => {
-      eq: (k: string, v: unknown) => PromiseLike<Res<Record<string, unknown>[]>>;
-    };
+    select: (c: string) => Filter<Record<string, unknown>[]>;
     delete: () => { eq: (k: string, v: unknown) => PromiseLike<Res<null>> };
   };
   rpc: <T = unknown>(fn: string, args: Record<string, unknown>) => PromiseLike<Res<T>>;
@@ -186,11 +188,15 @@ describeIntegration("whatsapp outbound receipts + metadata · real Postgres", ()
     expect(second.enquiry_id).toBe(first.enquiry_id);
     expect(second.textback).toEqual({ attempted: false, reason: "duplicate_message" });
 
-    // Exactly one enquiry carries this provider_message_id, and the epoch timestamp was
-    // converted to a valid timestamptz (not dropped, not a parse failure).
+    // Exactly one enquiry IN THIS ORG carries this provider_message_id, and the epoch
+    // timestamp was converted to a valid timestamptz (not dropped, not a parse failure).
+    // The uniqueness under test is the PARTIAL-UNIQUE (org_id, provider_message_id), so the
+    // read is org-scoped: another tenant legitimately holding the same provider id is not a
+    // violation, and an unscoped read would make this assertion depend on rows we don't own.
     const res = await svc()
       .from("inbound_enquiries")
       .select("id, provider_message_id, provider_timestamp")
+      .eq("org_id", orgId)
       .eq("provider_message_id", wamid);
     expect(res.error, res.error?.message).toBeNull();
     const rows = res.data ?? [];

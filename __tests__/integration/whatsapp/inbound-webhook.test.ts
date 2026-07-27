@@ -93,10 +93,14 @@ describeIntegration("whatsapp inbound webhook · claim/route/dedup", () => {
 
   it("a routed message creates one enquiry + one processed ingress row", async () => {
     const wamid = `wamid.${TOKEN}.1`;
+    // orgA is a SHARED fixture (stood up once in beforeAll and written to by several tests
+    // here), so the invariant is the DELTA this delivery caused — exactly one new enquiry —
+    // never orgA's absolute total, which depends on what else has already run.
+    const before = await enquiryCount(orgA);
     const res = await processMetaWhatsAppPayload(textEnvelope(PNID_A, wamid, "Hi, need a boiler quote"));
     expect(res.dispatched).toBe(1);
     expect(res.unrouted).toBe(0);
-    expect(await enquiryCount(orgA)).toBe(1);
+    expect(await enquiryCount(orgA), "exactly ONE enquiry was created").toBe(before + 1);
     const rows = await eventRow(`msg:${wamid}`);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processed_at).toBeTruthy();
