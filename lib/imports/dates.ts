@@ -45,11 +45,17 @@ export type ImportedDate =
  *
  * The mapper normalises dates to a bare `YYYY-MM-DD` (normaliseDate), which is
  * anchored here to midnight UTC EXPLICITLY rather than handed to Postgres as a
- * date-only string. A bare date is resolved against the session TimeZone, so
+ * date-only string. A bare date is resolved against the SESSION TimeZone, so
  * the instant a row lands on would depend on a server setting the import has no
- * control over — and a cost dated the first day of a quarter could fall into
- * the previous one for a session running behind UTC. Pinning the instant makes
- * quarter placement a function of the file alone.
+ * control over. That is not theoretical — on this schema, with the session set
+ * to Asia/Tokyo:
+ *
+ *   '2024-04-01'::timestamptz              → 2024-03-31 15:00:00 UTC   (Q1)
+ *   '2024-04-01T00:00:00.000Z'::timestamptz → 2024-04-01 00:00:00 UTC  (Q2)
+ *
+ * so a cost dated the first day of Q2 files itself in Q1 for any session ahead
+ * of UTC. Pinning the instant makes quarter placement a function of the file
+ * alone.
  *
  * Midnight UTC is also what the quarter bounds compare against — `qStart` is a
  * bare `YYYY-MM-DD` and `qEndExclusive` is `…T23:59:59.999Z` — so a cost dated

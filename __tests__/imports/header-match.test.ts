@@ -62,6 +62,10 @@ describe("normalisation: separators a machine puts in a header", () => {
         total: 120,
         due_date: "2024-06-01",
       });
+      // The old matcher also let `created_at` claim the SAME due-date column,
+      // so an invoice with no date of its own was silently back-dated to when
+      // it fell due. One column, one field.
+      expect(row.mapped.created_at).toBeUndefined();
     }
   });
 });
@@ -157,9 +161,9 @@ describe("a money column is NEVER a date", () => {
 });
 
 describe("whole-token matching: Subtotal is not a Total", () => {
-  // Defect: "total" was substring-matched inside "subtotal", so on the most
-  // common invoice layout of all — net / VAT / gross — the `total` field bound
-  // to the SUBTOTAL and every invoice imported VAT-exclusive.
+  // Defect: "total" was substring-matched inside "subtotal", so whenever a
+  // sheet had no column named exactly "Total", the `total` field bound to the
+  // SUBTOTAL and every invoice imported VAT-exclusive.
   it("binds amount to Subtotal and total to Total", () => {
     const { d, row } = detectFor(
       "Invoice Number,Customer,Subtotal,VAT,Total\nINV-1,Acme,100,20,120",
@@ -168,6 +172,21 @@ describe("whole-token matching: Subtotal is not a Total", () => {
     expect(d.column_map.total).toBe("Total");
     expect(row.mapped.amount).toBe(100);
     expect(row.mapped.total).toBe(120);
+  });
+
+  it("does not bind the total to Subtotal when the gross column is Total Due", () => {
+    // The layout that exhibited BOTH money defects at once. The matcher this
+    // replaced produced, verbatim:
+    //     total    -> "Subtotal"   → 100, understating the invoice by its VAT
+    //     due_date -> "Total Due"  → "0120-01-01", i.e. the year 120 AD
+    const { d, row } = detectFor(
+      "Invoice Number,Customer,Subtotal,VAT,Total Due\nINV-1,Acme,100,20,120",
+    );
+    expect(d.column_map.total).toBe("Total Due");
+    expect(d.column_map.due_date).toBeUndefined();
+    expect(row.mapped.total).toBe(120);
+    expect(row.mapped.amount).toBe(100);
+    expect(row.mapped.due_date).toBeUndefined();
   });
 
   it("does not match an alias that only appears inside a longer word", () => {
