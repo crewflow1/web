@@ -162,10 +162,11 @@ export interface SmsProvider {
 // is not assignable where an `SmsProvider` is expected, which is the type-system half
 // of the "WhatsApp never falls back to SMS" guarantee.
 //
-// DARK in this ring: `getWhatsAppProvider()` (in ./index) returns `null` — no Meta
-// sender is wired yet — so the transport records a terminal `failed`/no_provider
-// attempt on `channel='whatsapp'` and SENDS NOTHING. This is the interface + the
-// mocked-contract the outbound ring (a real Meta Cloud API sender) implements.
+// DARK BY DEFAULT: the Meta Cloud API sender IS implemented now, but
+// `getWhatsAppProvider()` (in ./index) returns `null` unless the feature flag AND both
+// credentials are set — none of which is set in prod, CI or dev — so the transport records
+// a terminal `failed`/no_provider attempt on `channel='whatsapp'` and SENDS NOTHING. That
+// is the path CI exercises. This is the interface the Meta sender implements.
 // ---------------------------------------------------------------------
 
 /** The stable identity of a WhatsApp provider. Recorded per attempt for observability. */

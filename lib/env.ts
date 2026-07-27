@@ -108,13 +108,15 @@ const envSchema = z.object({
 
   // -- Communication Layer: WhatsApp provider (Directive #018 R6) ---------
   // Names the active outbound WhatsApp provider — the receptionist's SECOND outbound
-  // transport. Default "auto". DARK today: no Meta Cloud API sender is wired, so
-  // getWhatsAppProvider() resolves to null for every value and the transport records a
-  // terminal `failed`/no_provider attempt on channel='whatsapp' and SENDS NOTHING —
-  // WhatsApp outbound is impossible by construction (the draft-first safety posture).
-  // The real sender (gated on WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) slots
-  // in as configuration + a sibling file in the outbound ring. Free string (not an
-  // enum) so a new provider needs zero env-schema edits.
+  // transport. Default "auto". The Meta Cloud API sender IS wired now
+  // (lib/comms/providers/meta-whatsapp-sender.ts), so this is CONFIGURATION-gated rather
+  // than structurally absent: getWhatsAppProvider() returns a provider only when ALL of
+  // NEXT_PUBLIC_FEATURE_WHATSAPP="true", WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID
+  // are set AND this names a buildable provider ("auto" | "meta"). Any of those unmet ⇒ null
+  // ⇒ the transport records a terminal `failed`/no_provider attempt on channel='whatsapp'
+  // and SENDS NOTHING (the default posture everywhere: prod, CI and dev set none of them).
+  // Setting this to "none"/"off"/"disabled" is a SECOND kill switch independent of the flag.
+  // Free string (not an enum) so a new provider needs zero env-schema edits.
   COMMS_WHATSAPP_PROVIDER: z.string().optional(),
 
   // -- Stripe -------------------------------------------------------------

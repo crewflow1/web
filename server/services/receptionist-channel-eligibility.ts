@@ -23,9 +23,11 @@ import type { InboundChannel } from "@/lib/receptionist/types";
  *   - everything else (sms, whatsapp_call, instagram_dm, facebook_dm, manual) → closed.
  *
  * NOTE: eligibility only decides whether the AI *drafts* a turn. It does NOT authorise
- * an outbound send — that is a separate, still-dark gate in the transport seam
- * (`getWhatsAppProvider()` is null, so a WhatsApp reply records no_provider and sends
- * nothing, and never falls back to SMS).
+ * an outbound send — that is a SEPARATE gate in the transport seam. `getWhatsAppProvider()`
+ * returns null unless NEXT_PUBLIC_FEATURE_WHATSAPP="true" AND both Meta credentials are set
+ * (none are, in prod/CI/dev), so a WhatsApp reply records no_provider, sends nothing, and can
+ * never fall back to SMS. The flag is checked in BOTH places deliberately: here it stops a
+ * turn being drafted, and at the seam it stops any already-drafted turn being sent.
  */
 export async function canRunReceptionistChannel(input: {
   org_id: string;
