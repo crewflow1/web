@@ -5,8 +5,8 @@
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
 **Last reconciled:** 2026-07-27 (Train 4 + CIS M1 shipped)
-**Production `main`:** `3f5ffb1`
-**Production migration tip:** `20261046`
+**Production `main`:** `28b2d85`
+**Production migration tip:** `20261047`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -31,6 +31,7 @@
 | **2** | 2026-07-27 | `20261040` | Customer/staff import correctness (#121, launch blocker) + org_id perf indexes (#128) | `82cb5b7` → `aa8b810`, verified |
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
+| **6** | 2026-07-27 | `20261047` | **CIS M2 — supplier/subcontractor money-out ledger** (#438): `supplier_payments` + `supplier_payment_allocations`; general payable engine with optional CIS; composite-FK org/supplier/bill binding valid for service_role; deadlock-free allocation guard; write-once + void. Plus test-isolation fixes (#436, #439) and roadmap corrections (#437) | `266d9e9` → `28b2d85`, verified |
 | **3** | 2026-07-27 | `20261041`, `20261042` | PWA offline-shell hydration **product bug** (#431) · company-logo private bucket with the storage regression stripped (#137) · launch-checklist runtime probe (#148) · address-first search (#136) | `aa8b810` → `636a794`, verified |
 
 ---
@@ -84,7 +85,7 @@
 | Profitability + VAT summary reporting | **PRODUCTION** | `lib/profitability/compute.ts`, dashboard/reports |
 | Payroll (timesheets → PAYE lines) | **PRODUCTION** | `lib/payroll/compute.ts`, `payroll_lines` |
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
-| CIS M2 — money-out ledger | **NOT BUILT — NEXT** | no money-out ledger exists (`payments`/`invoice_payments` are money-IN, carrying `customer_id`). CIS deducts **at payment**, so this is the load-bearing net-new engine. Slot `20261047` |
+| CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
 | CIS M3–M5 — deduction calc + reverse-charge VAT · monthly statements · HMRC seam | **NOT BUILT** | M3 must split labour vs qualifying materials (CIS never applies to materials or VAT); M4 clones the completion-certificate immutability/PDF stack; M5 stays DARK/BLOCKED_BY_PROVIDER |
 | OCR / receipt scanning | **BUILT-DARK** | `server/services/expense-drafts.ts` calls `maybeExtractReceipt`; `expense_drafts.ai_confidence` exists; with no AI key the draft is created with NULL extraction fields. **Verified 2026-07-27 — was wrongly marked NOT BUILT.** Needs a provider key only |
 | Expenses | **PRODUCTION** | `app/(app)/expenses/{page,new,[id],actions.ts}` with `uploadExpenseReceipt`/`approveExpenseDraftAction`/`rejectExpenseDraft`, `expense_drafts` table, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL.** Budget tracking specifically remains NOT BUILT |
@@ -152,7 +153,7 @@ on that prefix — a collision is **invisible to git** because filenames differ)
 | `20261044` | Train 4 — `widen_transport_channel_whatsapp` | **SHIPPED** |
 | `20261045` | Train 4 — `whatsapp_read_receipt_status` | **SHIPPED** |
 | `20261046` | CIS M1 — `cis_subcontractors` | **SHIPPED** |
-| `20261047` | CIS M2 — `supplier_payments` (money-out ledger) | in flight |
+| `20261047` | CIS M2 — `supplier_payments` (money-out ledger) | **SHIPPED** |
 | `20261048` | CIS M3 — deduction engine + reverse-charge VAT | reserved |
 | `20261049` | CIS M4 — monthly statements | reserved |
 | `20261050+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
