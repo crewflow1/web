@@ -235,8 +235,9 @@ export function buildNudges(
     });
   }
 
-  // 6. Cosmetic: branding.
-  if (!snap.org.logo_url && !snap.dismissed.has("logo")) {
+  // 6. Cosmetic: branding. An uploaded logo (logo_path) or a legacy external
+  // URL both count — only nudge when neither is set.
+  if (!snap.org.logo_path && !snap.org.logo_url && !snap.dismissed.has("logo")) {
     out.push({
       id: "upload_logo",
       title: "Add your logo",
@@ -782,7 +783,7 @@ function isStepDone(
         snap.org.name && snap.org.phone && snap.org.address?.postcode,
       );
     case "logo":
-      return Boolean(snap.org.logo_url);
+      return Boolean(snap.org.logo_path || snap.org.logo_url);
     case "vat":
       return Boolean(snap.org.vat_number);
     case "bank":

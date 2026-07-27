@@ -36,7 +36,7 @@ export async function buildOnboardingSnapshot(
   const { data: orgRow } = await supabase
     .from("organizations")
     .select(
-      "name, phone, email, vat_number, logo_url, bank_details, default_terms, address, onboarding_state",
+      "name, phone, email, vat_number, logo_path, logo_url, bank_details, default_terms, address, onboarding_state",
     )
     .eq("id", orgId)
     .maybeSingle();
@@ -107,6 +107,7 @@ export async function buildOnboardingSnapshot(
       phone: orgRow?.phone ?? null,
       email: (orgRow?.email as string | null) ?? null,
       vat_number: orgRow?.vat_number ?? null,
+      logo_path: orgRow?.logo_path ?? null,
       logo_url: orgRow?.logo_url ?? null,
       bank_details:
         (orgRow?.bank_details as OnboardingSnapshot["org"]["bank_details"]) ??

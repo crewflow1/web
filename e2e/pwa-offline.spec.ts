@@ -40,6 +40,15 @@ test.describe("pwa — authenticated real-offline journey", () => {
       await page.goto(`/jobs/${JOB}/blueprints`);
       await page.getByRole("button", { name: /Download for offline/ }).first().click();
       await expect(page.locator("[data-offline-available]").first()).toBeVisible();
+      // 1b. "Available offline" means the DRAWING BYTES are stored. It does NOT mean
+      //     the /offline shell can HYDRATE offline — that additionally needs the shell
+      //     document plus its own /_next/static JS in CacheStorage. The app now
+      //     verifies exactly that and marks it, so await the marker: without this the
+      //     test could go offline while the shell's page chunk was still in flight (or
+      //     had been fetched while the SW was not yet controlling, so never cached),
+      //     leaving the shell served-but-unhydrated and step 4's list assertion
+      //     failing intermittently. This is a real condition, not a delay.
+      await expect(page.locator("[data-offline-shell-ready]").first()).toBeVisible();
 
       // 2. Wait for the service worker to be active AND controlling this page.
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
