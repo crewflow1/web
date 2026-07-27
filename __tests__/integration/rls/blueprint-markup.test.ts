@@ -59,8 +59,16 @@ describeIntegration("blueprint_markup · DB invariants", () => {
   });
 
   afterAll(async () => {
-    if (orgA) await svc.from("organizations").delete().eq("id", orgA);
-    if (orgB) await svc.from("organizations").delete().eq("id", orgB);
+    // Teardown is ASSERTED, not fire-and-forget. Until 20261052 this delete
+    // silently failed (activity_log_org_id_fkey — the org-A `jobs` fixture
+    // carries an AFTER-DELETE activity trigger) and leaked every fixture row
+    // into the shared database. Swallowing the error is what hid a P1 for so
+    // long, so now a failed teardown fails the suite.
+    for (const id of [orgA, orgB]) {
+      if (!id) continue;
+      const del = await svc.from("organizations").delete().eq("id", id);
+      expect(del.error, `org teardown failed: ${JSON.stringify(del.error)}`).toBeNull();
+    }
     for (const u of [member.id, admin.id, outsider.id]) if (u) await serviceClient().auth.admin.deleteUser(u);
   });
 

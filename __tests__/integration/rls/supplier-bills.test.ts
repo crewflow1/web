@@ -55,7 +55,18 @@ describeIntegration("finances · supplier bills org-integrity (20261009)", () =>
   });
 
   afterAll(async () => {
-    for (const id of [orgA, orgB]) if (id) await svc().from("organizations").delete().eq("id", id);
+    // Teardown is ASSERTED, not fire-and-forget. Until 20261052 this delete
+    // silently failed (activity_log_org_id_fkey — the finances rows below carry
+    // an AFTER-DELETE activity trigger) and leaked every fixture row into the
+    // shared database. Swallowing the error is what hid a P1 for so long, so
+    // now a failed teardown fails the suite.
+    for (const id of [orgA, orgB]) {
+      if (!id) continue;
+      const del = await svc().from("organizations").delete().eq("id", id);
+      expect(del.error, `org teardown failed: ${JSON.stringify(del.error)}`).toBeNull();
+      const residue = await svc().from("finances").select("id").eq("org_id", id);
+      expect(residue.data ?? [], "finances rows leaked past org teardown").toHaveLength(0);
+    }
   });
 
   it("records a bill against a same-org PO + supplier (posts to finances)", async () => {
