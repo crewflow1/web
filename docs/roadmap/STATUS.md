@@ -155,19 +155,23 @@ file added later replays out of order from scratch. We have hit this twice (#128
 |---|---|---|
 | …`20261047` | CIS M2 `supplier_payments` | **APPLIED** |
 | `20261051` | CIS M3 `cis_deduction` | **APPLIED (prod tip)** |
-| ~~`20261050`~~ | ~~org-teardown `activity_cascade_guard`~~ | ⚠️ **MUST BE RENUMBERED → `20261055`** |
-| `20261053` | CIS bill value freeze (`cis_bill_value_freeze`) | built, unmerged |
-| `20261054` | Supplier bill settlement floor | built, unmerged |
-| `20261055` | **org-teardown P1** (renumbered from 20261050) | reserved |
-| `20261056+` | **NEXT FREE** | — |
+| ~~`20261050`~~ | ~~org-teardown~~ | **DEAD — below applied tip** |
+| `20261052` | **org-teardown P1** `activity_cascade_guard` (renumbered; ships FIRST) | in flight — `fix/org-teardown-activity-guard` |
+| `20261053` | CIS bill value freeze | in flight — `fix/payables-financial-guards` |
+| `20261054` | Supplier bill settlement floor | in flight — `fix/payables-financial-guards` |
+| `20261055+` | CIS M4 (statements) and beyond | reserved |
+
 
 > ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
 > `20261050_activity_cascade_guard` was allocated when the production tip was
 > `20261047`. **CIS M3 has since shipped, taking the tip to `20261051`**, so
 > `20261050` is now *below the applied tip* and can no longer be introduced. It
-> must be renumbered to **`20261055`** before it is committed/pushed/merged. The
-> earlier "the P1 keeps 20261050" decision was correct when made and is now
-> superseded by reality.
+> was renumbered. **Continuation 8 re-computed the slot from the CURRENT max**
+> (prod tip + main + every worktree + every remote = `20261054`) and assigned the
+> org-teardown P1 to **`20261052`** — free and immediately above the applied tip —
+> because it is a live production defect and must ship FIRST. Had it taken
+> `20261055`, the already-written `20261053`/`20261054` would then have been below
+> the applied tip. Ordering matters as much as uniqueness.
 >
 > **RULE: claim a slot above the production tip AND above every in-flight slot in
 > this table. Re-check the tip immediately before merging — it moves.**
