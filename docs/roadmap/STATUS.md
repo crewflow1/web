@@ -154,9 +154,24 @@ on that prefix — a collision is **invisible to git** because filenames differ)
 | `20261045` | Train 4 — `whatsapp_read_receipt_status` | **SHIPPED** |
 | `20261046` | CIS M1 — `cis_subcontractors` | **SHIPPED** |
 | `20261047` | CIS M2 — `supplier_payments` (money-out ledger) | **SHIPPED** |
-| `20261048` | CIS M3 — deduction engine + reverse-charge VAT | reserved |
-| `20261049` | CIS M4 — monthly statements | reserved |
-| `20261050+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
+
+| ~~`20261048`~~ | ~~CIS M3~~ — **RETIRED, never written** (see slot-order note) | skipped |
+| ~~`20261049`~~ | ~~CIS M4~~ — **RETIRED, never written** (see slot-order note) | skipped |
+| `20261050` | **Org-teardown P1** — `activity_cascade_guard` (in flight, separate session) | in flight |
+| `20261051` | CIS M3 — deduction engine + reverse-charge VAT | reserved |
+| `20261052` | CIS M4 — monthly statements + return dataset | reserved |
+| `20261053+` | **NEXT FREE** (e.g. fleet-as-asset-extension) | — |
+
+> **SLOT-ORDER NOTE (2026-07-27).** A migration whose version is BELOW the applied
+> production tip is the hazard already hit twice (PR #128 `20260711`, PR #136
+> `20260706`): Supabase keys migration identity on the numeric prefix, so a
+> lower-numbered file added later replays out of order from scratch. The
+> org-teardown P1 fix was authored as `20261050` and has already been replayed and
+> regression-tested at that number, so **renumbering it downward would invalidate
+> its verification for no benefit**. Instead `20261048`/`20261049` are RETIRED
+> (never written, never applied — gaps are harmless) and CIS M3/M4 move to
+> `20261051`/`20261052`. **Rule: always claim a slot ABOVE the current production
+> tip AND above every in-flight slot in this table.**
 
 Before pushing any migration, prove no duplicate prefixes:
 `ls supabase/migrations | sed 's/_.*//' | sort | uniq -d` must print nothing.
