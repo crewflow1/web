@@ -2,7 +2,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { SmsDeliveryReceipt } from "../types";
-import { isSmsDeliveryStatus } from "../types";
+import { isDeliveryStatus } from "../types";
 
 /**
  * Meta WhatsApp Business (Cloud API) inbound adapter.
@@ -255,19 +255,19 @@ export function normalizeMetaStatuses(
 
 /**
  * Translate one WhatsApp status object into the provider-neutral
- * {@link SmsDeliveryReceipt} the existing receipt ledger correlates by
- * providerMessageId — or null when the status has no delivery-ledger equivalent
- * (WhatsApp 'read' has no SMS analogue; it is dropped, not recorded as unknown).
+ * {@link SmsDeliveryReceipt} the receipt ledger correlates by providerMessageId — or null
+ * when the status is not a recognised delivery lifecycle value.
+ *
+ * WhatsApp reports sent | delivered | read | failed. All four map to the cross-channel
+ * DELIVERY_STATUSES vocabulary (the SMS nine + `read`), so `read` is now RECORDED (PR3),
+ * not dropped. An unrecognised status → null (ignored, never a malformed receipt).
  */
 export function parseMetaWhatsAppStatus(
   st: Record<string, unknown>,
 ): SmsDeliveryReceipt | null {
   const id = typeof st.id === "string" ? st.id : null;
   const raw = typeof st.status === "string" ? st.status.toLowerCase() : null;
-  if (!id || !raw) return null;
-  // WhatsApp: sent | delivered | read | failed → the SMS vocabulary (read → drop).
-  const mapped = raw === "read" ? null : raw;
-  if (!mapped || !isSmsDeliveryStatus(mapped)) return null;
+  if (!id || !raw || !isDeliveryStatus(raw)) return null;
   const errors = st.errors;
   const errorCode =
     Array.isArray(errors) && isRecord(errors[0]) && errors[0].code != null
@@ -275,8 +275,8 @@ export function parseMetaWhatsAppStatus(
       : null;
   return {
     providerMessageId: id,
-    status: mapped,
-    providerStatus: mapped !== raw ? raw : null,
+    status: raw,
+    providerStatus: null,
     errorCode,
   };
 }

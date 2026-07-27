@@ -108,8 +108,9 @@ import {
   recordConversationAuthorisation,
   type RecordedAuthorisation,
 } from "@/server/services/receptionist-authorisation";
-import { getSmsProvider, smsCostUsd } from "@/lib/comms";
-import type { SmsDeliveryReceipt, SmsDeliveryStatus } from "@/lib/comms";
+import { getTransportProvider, smsCostUsd } from "@/lib/comms";
+import type { SmsDeliveryReceipt, DeliveryStatus } from "@/lib/comms";
+import { canRunReceptionistChannel } from "@/server/services/receptionist-channel-eligibility";
 import { toE164 } from "@/lib/phone";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
@@ -405,8 +406,46 @@ export async function produceAndEnforceReply(
 // successful ones.
 // =====================================================================
 
-/** The outbound transport channel R5 ships. The DB CHECK pins the same single value. */
-const RECEPTIONIST_TRANSPORT_CHANNEL = "sms" as const;
+/**
+ * The receptionist's outbound transport channels. R5 shipped `sms`; R6 adds `whatsapp`
+ * (the DB CHECK on ai_reply_transports / ai_reply_delivery_receipts pins the SAME set,
+ * widened in 20261044). Both are REVIEWED transports — the CHECK stays deliberately
+ * narrow so no unreviewed channel slips through.
+ *
+ * A reply's transport channel DEFAULTS to `sms`, which preserves the phone/SMS path
+ * byte-for-byte (the missed-call text-back omits the field). Only a WhatsApp turn opts
+ * into `whatsapp`, which resolves through `getTransportProvider` to the DARK WhatsApp
+ * provider (null → records `no_provider`, sends nothing) and can NEVER fall back to SMS.
+ */
+export type TransportChannel = "sms" | "whatsapp";
+const DEFAULT_TRANSPORT_CHANNEL: TransportChannel = "sms";
+
+/**
+ * Map an INBOUND channel to the OUTBOUND transport that carries its reply, or `null`
+ * when the inbound channel has no wired outbound transport yet. This is the ONE place
+ * the two vocabularies (`InboundChannel` vs `TransportChannel`) are bridged:
+ *   - `phone`/`sms`            → `sms`  (a voice/text reply rides the SMS wire — the R5 path)
+ *   - `whatsapp_msg`/`_call`   → `whatsapp`
+ *   - everything else          → `null` (no transport; a reply is drafted/held, never sent)
+ *
+ * Deriving the transport channel here (not inside `transportReply`) keeps the mapping
+ * explicit and auditable, and guarantees a WhatsApp reply can ONLY resolve to the
+ * WhatsApp transport — never SMS.
+ */
+export function transportChannelForInbound(
+  channel: InboundChannel,
+): TransportChannel | null {
+  switch (channel) {
+    case "phone":
+    case "sms":
+      return "sms";
+    case "whatsapp_msg":
+    case "whatsapp_call":
+      return "whatsapp";
+    default:
+      return null;
+  }
+}
 
 /** The outcome of the outbound TRANSPORT stage for one reply. */
 export type TransportResult = {
@@ -478,7 +517,7 @@ function transportDedupKey(input: ReplyAuditContext): string | null {
 async function recordTransport(args: {
   reply_audit_id: string;
   org_id: string;
-  channel: typeof RECEPTIONIST_TRANSPORT_CHANNEL;
+  channel: TransportChannel;
   to_ref: string;
   status: "sent" | "failed";
   correlation_id: string;
@@ -556,10 +595,15 @@ async function transportReply(args: {
   destination: string | null;
   body: string;
   dedup_key: string | null;
+  /** Which authoritative transport this send uses. Defaults to SMS — preserving the
+   *  R5/R6 phone path byte-for-byte. A WhatsApp turn passes `whatsapp`, which resolves
+   *  ONLY to the WhatsApp provider (dark → no_provider); it can never borrow SMS. */
+  transport_channel?: TransportChannel;
   /** Transport provenance label. Defaults to the R6 missed-call path; the R14 human-reviewed send
    *  passes its own so the transport row names the seam that produced it. */
   producer?: string;
 }): Promise<TransportResult> {
+  const channel = args.transport_channel ?? DEFAULT_TRANSPORT_CHANNEL;
   const baseMeta: Record<string, unknown> = {
     producer: args.producer ?? "missed_call_text_back",
   };
@@ -570,7 +614,7 @@ async function transportReply(args: {
     const transportId = await recordTransport({
       reply_audit_id: args.reply_audit_id,
       org_id: args.org_id,
-      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      channel,
       to_ref: args.destination ?? "",
       status: "failed",
       correlation_id: args.correlation_id,
@@ -589,14 +633,16 @@ async function transportReply(args: {
     };
   }
 
-  // (b) No configured provider — graceful degradation. The seam returns null; we record
-  //     a terminal failed/no_provider attempt and SEND NOTHING. This is the CI path.
-  const provider = getSmsProvider();
+  // (b) No configured provider — graceful degradation. `getTransportProvider(channel)`
+  //     resolves the provider for THIS channel only (no cross-channel fallback): a dark
+  //     WhatsApp resolves to null here and records failed/no_provider on channel='whatsapp',
+  //     never borrowing SMS. Also the CI path for SMS (no Twilio creds). SEND NOTHING.
+  const provider = getTransportProvider(channel);
   if (!provider) {
     const transportId = await recordTransport({
       reply_audit_id: args.reply_audit_id,
       org_id: args.org_id,
-      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      channel,
       to_ref: e164,
       status: "failed",
       correlation_id: args.correlation_id,
@@ -623,7 +669,7 @@ async function transportReply(args: {
     const transportId = await recordTransport({
       reply_audit_id: args.reply_audit_id,
       org_id: args.org_id,
-      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      channel,
       to_ref: e164,
       status: "sent",
       correlation_id: args.correlation_id,
@@ -651,7 +697,7 @@ async function transportReply(args: {
     const transportId = await recordTransport({
       reply_audit_id: args.reply_audit_id,
       org_id: args.org_id,
-      channel: RECEPTIONIST_TRANSPORT_CHANNEL,
+      channel,
       to_ref: e164,
       status: "failed",
       correlation_id: args.correlation_id,
@@ -705,6 +751,27 @@ export async function dispatchReply(
     };
   }
 
+  // Resolve the outbound transport for THIS reply's inbound channel. A channel with no
+  // wired transport (null) is audited but NEVER sent — it can't fall through to SMS. A
+  // WhatsApp reply resolves to the `whatsapp` transport (dark → no_provider), never SMS.
+  const transportChannel = transportChannelForInbound(input.channel);
+  if (!transportChannel) {
+    return {
+      audit_id: outcome.audit_id,
+      correlation_id: outcome.correlation_id,
+      draft: outcome.draft,
+      decision: outcome.decision,
+      transport: {
+        attempted: false,
+        duplicate: false,
+        transport_id: null,
+        status: "skipped",
+        provider_message_id: null,
+        failure_reason: "no_transport_channel",
+      },
+    };
+  }
+
   const transport = await transportReply({
     reply_audit_id: outcome.audit_id,
     org_id: input.org_id,
@@ -712,6 +779,7 @@ export async function dispatchReply(
     destination: input.destination ?? input.customer_ref ?? null,
     body: outcome.decision.safeText ?? outcome.draft,
     dedup_key: transportDedupKey(input),
+    transport_channel: transportChannel,
   });
 
   return {
@@ -1770,15 +1838,31 @@ export async function dispatchHumanReviewedReply(
   //     is the held reply itself, so the partial-unique `(dedup_key) where status='sent'` index is
   //     the database backstop against a double human send of the same held reply (belt to the
   //     resolution ledger's UNIQUE(review_audit_id) braces).
-  const transport = await transportReply({
-    reply_audit_id: auditId,
-    org_id: input.org_id,
-    correlation_id: correlationId,
-    destination: input.destination ?? input.customer_ref ?? null,
-    body: input.draft,
-    dedup_key: input.review_audit_id,
-    producer: HUMAN_REVIEWED_PRODUCER,
-  });
+  // Channel-correct transport for the human-approved send: an operator-approved reply
+  // rides its OWN inbound channel's transport, never SMS. A WhatsApp reply resolves to
+  // the `whatsapp` transport (dark → no_provider → nothing sent) — so approving a
+  // WhatsApp draft today records the send as no_provider, and can NEVER leak over SMS.
+  // A channel with no wired transport is recorded skipped, never sent.
+  const reviewedTransportChannel = transportChannelForInbound(input.channel);
+  const transport: TransportResult = reviewedTransportChannel
+    ? await transportReply({
+        reply_audit_id: auditId,
+        org_id: input.org_id,
+        correlation_id: correlationId,
+        destination: input.destination ?? input.customer_ref ?? null,
+        body: input.draft,
+        dedup_key: input.review_audit_id,
+        transport_channel: reviewedTransportChannel,
+        producer: HUMAN_REVIEWED_PRODUCER,
+      })
+    : {
+        attempted: false,
+        duplicate: false,
+        transport_id: null,
+        status: "skipped",
+        provider_message_id: null,
+        failure_reason: "no_transport_channel",
+      };
 
   return {
     audit_id: auditId,
@@ -1831,19 +1915,31 @@ export function isMissedCallTextbackLive(): boolean {
  * full canonical dispatch outcome or the error that was swallowed to protect ingestion.
  */
 export type MissedCallTextbackResult =
-  | { attempted: false; reason: "flag_off" | "unsupported_channel" | "no_destination" }
+  | {
+      attempted: false;
+      reason:
+        | "flag_off"
+        | "unsupported_channel"
+        | "channel_not_enabled"
+        | "no_destination"
+        | "duplicate_message";
+    }
   | { attempted: true; dispatch: ReceptionistDispatchOutcome }
   | { attempted: true; error: string };
 
 /**
- * The R6 wiring: when armed, text a MISSED CALL back through the ONE canonical pipeline.
+ * The receptionist reply wiring: when a channel is eligible, run the inbound turn through
+ * the ONE canonical pipeline. (Historically the R6 missed-call text-back; generalised for
+ * the WhatsApp draft-first milestone — the name/`textback` field are kept for contract
+ * stability across the inbound result type and its consumers.)
  *
- * Three gates, in order, decide whether a send is even considered — each a plain early
+ * Two gates, in order, decide whether a reply is even considered — each a plain early
  * return, never a throw:
- *   1. the live-execution FLAG (default OFF) — off ⇒ `flag_off`, nothing happens;
- *   2. the CHANNEL — R6 activates ONLY the missed-call (phone) text-back; every other
- *      inbound channel is an explicit non-goal and stays unchanged (`unsupported_channel`);
- *   3. a DESTINATION — a text-back needs a number to answer (`no_destination`).
+ *   1. ELIGIBILITY — the single authority {@link canRunReceptionistChannel}: `phone` via the
+ *      missed-call flag (unchanged); `whatsapp_msg` via the WhatsApp feature AND per-org
+ *      enablement; every other channel closed. Ineligible ⇒ a telemetry reason
+ *      (`flag_off` / `channel_not_enabled` / `unsupported_channel`), nothing happens.
+ *   2. a DESTINATION — a reply needs an address to answer (`no_destination`).
  *
  * Past the gates it delegates to {@link runConversationTurn} — the R15 CONVERSATION RUNTIME,
  * the single orchestration layer, which resolves the conversation, loads its timeline, assembles
@@ -1863,8 +1959,27 @@ async function maybeTextBackMissedCall(input: {
   caller: string | null;
   dedup_key: string | null;
 }): Promise<MissedCallTextbackResult> {
-  if (!isMissedCallTextbackLive()) return { attempted: false, reason: "flag_off" };
-  if (input.channel !== "phone") return { attempted: false, reason: "unsupported_channel" };
+  // ONE eligibility decision — the single authority, never scattered flag checks. May
+  // this channel reach the reasoning engine? phone → the R6 text-back flag (unchanged);
+  // whatsapp_msg → the WhatsApp feature AND the org's per-tenant enablement; every other
+  // channel → closed. Fail-closed by construction.
+  if (
+    !(await canRunReceptionistChannel({
+      org_id: input.org_id,
+      channel: input.channel,
+    }))
+  ) {
+    // Map the ineligibility to a telemetry reason, preserving the historical contract:
+    // phone is only ever gated by its flag; whatsapp by feature/org enablement; every
+    // other channel has no reasoning path at all.
+    const reason =
+      input.channel === "phone"
+        ? "flag_off"
+        : input.channel === "whatsapp_msg"
+          ? "channel_not_enabled"
+          : "unsupported_channel";
+    return { attempted: false, reason };
+  }
   const destination = input.caller?.trim();
   if (!destination) return { attempted: false, reason: "no_destination" };
 
@@ -1876,7 +1991,11 @@ async function maybeTextBackMissedCall(input: {
     // marker. We surface only the underlying dispatch so this result's shape is unchanged.
     const turn = await runConversationTurn({
       org_id: input.org_id,
-      channel: input.channel, // "phone" → the voice-shaped acknowledgement, carried over SMS
+      // The channel is threaded to the generator (phrasing) and, via dispatchReply, to the
+      // channel-correct transport: "phone" → voice-shaped ack over SMS; "whatsapp_msg" →
+      // written ack over the WhatsApp transport (dark → no_provider, sends nothing). It can
+      // NEVER cross to SMS — transportChannelForInbound maps whatsapp_msg → whatsapp only.
+      channel: input.channel,
       // The R13 generator reasons over this conversation's canonical R12 context (which already
       // includes the just-threaded inbound turn); absent, it drafts the deterministic acknowledgement.
       conversation_id: input.conversation_id,
@@ -1954,14 +2073,28 @@ export async function processInboundEnquiry(
     console.error("[receptionist] conversation resolve failed", e);
   }
 
-  // Step 1 — record raw enquiry.
+  // Meta sends provider_timestamp as Unix SECONDS (a numeric string), but the column is
+  // `timestamptz` — inserting the bare epoch would raise a parse error and fail ingestion.
+  // Convert epoch → ISO. A non-numeric value (a future channel sending an ISO string) passes
+  // through; anything unparseable becomes null rather than a failed insert.
+  const providerTimestampIso = ((raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+      const ms = Number(raw) * 1000;
+      return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  })(input.provider_timestamp);
+
+  // Step 1 — record raw enquiry (with the channel provider's message id + metadata, Part 11).
   const { data: enquiryRow, error: insErr } = await (
     admin.from("inbound_enquiries" as never) as unknown as {
       insert: (row: unknown) => {
         select: (cols: string) => {
           single: () => Promise<{
             data: { id: string } | null;
-            error: { message: string } | null;
+            error: { message: string; code?: string } | null;
           }>;
         };
       };
@@ -1974,10 +2107,52 @@ export async function processInboundEnquiry(
       caller: input.caller ?? null,
       status: "received",
       conversation_id: conversationId,
+      provider_message_id: input.provider_message_id ?? null,
+      provider_timestamp: providerTimestampIso,
+      has_media: input.has_media ?? false,
     })
     .select("id")
     .single();
   if (insErr || !enquiryRow?.id) {
+    // Downstream idempotency backstop (Part 11): a duplicate (org, provider_message_id) means
+    // this exact provider message was already ingested — the partial unique index raises 23505.
+    // Short-circuit to the EXISTING enquiry WITHOUT re-processing (extraction/lead/notify/reply
+    // run exactly once). The ingress claim (whatsapp_webhook_events) is the primary dedup; this
+    // is the DB backstop for the rare double-processing the claim didn't stop.
+    const isDup =
+      insErr?.code === "23505" || (insErr?.message?.includes("duplicate") ?? false);
+    if (isDup && input.provider_message_id) {
+      const existing = await (
+        admin.from("inbound_enquiries" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              eq: (k: string, v: unknown) => {
+                maybeSingle: () => Promise<{
+                  data: {
+                    id: string;
+                    lead_id: string | null;
+                    conversation_id: string | null;
+                  } | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
+        }
+      )
+        .select("id, lead_id, conversation_id")
+        .eq("org_id", input.org_id)
+        .eq("provider_message_id", input.provider_message_id)
+        .maybeSingle();
+      if (existing.data?.id) {
+        return {
+          enquiry_id: existing.data.id,
+          lead_id: existing.data.lead_id,
+          conversation_id: existing.data.conversation_id,
+          textback: { attempted: false, reason: "duplicate_message" },
+        };
+      }
+    }
     throw new Error(`inbound_enquiries insert failed: ${insErr?.message ?? "no id"}`);
   }
   const enquiryId = enquiryRow.id;
@@ -2171,7 +2346,7 @@ export type SmsDeliveryReceiptResult =
       transport_id: string;
       reply_audit_id: string;
       org_id: string;
-      status: SmsDeliveryStatus;
+      status: DeliveryStatus;
       terminal: boolean;
     };
 
@@ -2193,7 +2368,7 @@ export type SmsDeliveryReceiptResult =
  * never a swallowed no-op. A "no transport found" is NOT an error — it is a recorded
  * decision the route answers cleanly.
  */
-export async function recordSmsDeliveryReceipt(
+async function recordDeliveryReceipt(
   receipt: SmsDeliveryReceipt,
 ): Promise<SmsDeliveryReceiptResult> {
   const admin = createAdminClient();
@@ -2228,6 +2403,30 @@ export async function recordSmsDeliveryReceipt(
     status: receipt.status,
     terminal: Boolean(row.is_terminal),
   };
+}
+
+/**
+ * Record one SMS delivery receipt — called ONLY by the authenticated Twilio status-callback
+ * route (its captivity is a security invariant). A thin wrapper over the channel-agnostic core;
+ * the correlated transport's `channel='sms'` is what makes it an SMS receipt.
+ */
+export async function recordSmsDeliveryReceipt(
+  receipt: SmsDeliveryReceipt,
+): Promise<SmsDeliveryReceiptResult> {
+  return recordDeliveryReceipt(receipt);
+}
+
+/**
+ * Record one WhatsApp delivery/read receipt — called ONLY by the Meta status webhook handler
+ * (Directive #018 R6, PR3). A DISTINCT writer from the SMS one (its own captivity invariant),
+ * sharing the same channel-agnostic core. The correlated transport's `channel='whatsapp'` is
+ * what makes it a WhatsApp receipt; an outbound wamid matching no SENT transport (every wamid in
+ * CI, where outbound is dark) records nothing and returns `unknown_message` — fail-safe.
+ */
+export async function recordWhatsAppDeliveryReceipt(
+  receipt: SmsDeliveryReceipt,
+): Promise<SmsDeliveryReceiptResult> {
+  return recordDeliveryReceipt(receipt);
 }
 
 // ---------------------------------------------------------------------

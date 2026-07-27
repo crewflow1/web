@@ -91,7 +91,7 @@ Next.js 15 (App Router, RSC) + Supabase Postgres 17, multi-tenant via RLS (`curr
 
 | Item | Why deferred | Path to include |
 |---|---|---|
-| **WhatsApp draft-first + outbound (#360–362)** | **3-way migration timestamp collision**: its migs `20260919/20/21` collide with the stack's snags/diary/toolbox at the same timestamps → would create duplicate-timestamp migrations. Also dark + activation is a product decision. | Re-date the 3 WhatsApp migrations to `>20261007`, re-verify clean apply, then merge. |
+| **WhatsApp draft-first + outbound (#360–362)** | ~~**3-way migration timestamp collision**: its migs `20260919/20/21` collide with the stack's snags/diary/toolbox at the same timestamps → would create duplicate-timestamp migrations.~~ **RESOLVED 2026-07-27** — re-dated to `20261043/44/45` on `feat/whatsapp-consolidated` (SQL unchanged); no duplicate prefixes remain. Still dark + activation is a product decision. | Merge `feat/whatsapp-consolidated`; activation stays a separate, explicit env-var decision. |
 | **Telephony / Vapi spine (#113)** | **Failing CI** on the PR; inbound-phone channel is a product-scope decision. | Fix CI + product decision on phone channel; re-date its migration (`20260630` < prod max). |
 | **Address-first search (#136)**, **Company-logo upload (#137)** | New features during a release freeze; both need migration re-dating (dates predate prod max) + conflict resolution. | Post-launch fast-follows on top of RC3. |
 | **Imports customer-vs-staff (#121)** | Enhancement (imports already works); `detect.ts` 3-way diverged → conflict. | Cherry-pick + resolve post-launch. |

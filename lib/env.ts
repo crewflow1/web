@@ -30,6 +30,13 @@ const envSchema = z.object({
   // Verify token: the shared string echoed back during Meta's GET hub.challenge
   // subscription handshake. Absent ⇒ the handshake fails closed.
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  // Outbound sender (Directive #018 R6 → PR3). The Meta Cloud API access token + business
+  // phone-number id the WhatsApp sender POSTs with. BOTH absent ⇒ getWhatsAppProvider()
+  // returns null (dark) ⇒ a WhatsApp reply records no_provider and SENDS NOTHING — the CI
+  // path (CI sets neither). Optional graph version pins the Graph API version (default v21.0).
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_GRAPH_VERSION: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
@@ -98,6 +105,19 @@ const envSchema = z.object({
   // NOTHING — the path CI exercises. Free string (not an enum) so a new provider
   // needs zero env-schema edits.
   COMMS_SMS_PROVIDER: z.string().optional(),
+
+  // -- Communication Layer: WhatsApp provider (Directive #018 R6) ---------
+  // Names the active outbound WhatsApp provider — the receptionist's SECOND outbound
+  // transport. Default "auto". The Meta Cloud API sender IS wired now
+  // (lib/comms/providers/meta-whatsapp-sender.ts), so this is CONFIGURATION-gated rather
+  // than structurally absent: getWhatsAppProvider() returns a provider only when ALL of
+  // NEXT_PUBLIC_FEATURE_WHATSAPP="true", WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID
+  // are set AND this names a buildable provider ("auto" | "meta"). Any of those unmet ⇒ null
+  // ⇒ the transport records a terminal `failed`/no_provider attempt on channel='whatsapp'
+  // and SENDS NOTHING (the default posture everywhere: prod, CI and dev set none of them).
+  // Setting this to "none"/"off"/"disabled" is a SECOND kill switch independent of the flag.
+  // Free string (not an enum) so a new provider needs zero env-schema edits.
+  COMMS_WHATSAPP_PROVIDER: z.string().optional(),
 
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The

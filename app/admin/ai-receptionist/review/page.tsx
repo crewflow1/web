@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listReviewQueue, type ReviewQueueItem } from "@/server/services/receptionist-review";
+import { ChannelBadge } from "@/app/admin/ai-receptionist/_components/channel-badge";
 import {
   REVIEW_FILTERS,
   REVIEW_STATE_LABELS,
@@ -182,6 +183,7 @@ function ReviewRow({
         <p className="text-xs text-slate-500">
           {row.contact_name ?? row.contact_ref ?? row.customer_ref ?? org?.slug ?? row.org_id.slice(0, 8)}
         </p>
+        <ChannelBadge channel={row.channel} className="mt-1" />
       </td>
       <td className="px-4 py-3">
         <p className="max-w-xs truncate text-xs text-slate-700">{row.draft}</p>

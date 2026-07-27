@@ -105,8 +105,10 @@ const MIGRATION = "supabase/migrations/20260816000000_ai_reply_transports.sql";
 
 /** The transport ledger's write primitive — the function that files a transport row. */
 const TRANSPORT_WRITE_FN = /\brecord_ai_reply_transport\b/;
-/** The provider factory — the only door to a vendor SMS adapter. */
-const PROVIDER_FACTORY = /\bgetSmsProvider\b/;
+/** The service's ONE door to a provider — the no-fallback channel→provider registry (SMS + WhatsApp). */
+const PROVIDER_FACTORY = /\bgetTransportProvider\b/;
+/** The RAW vendor factories — captive BEHIND the registry; no module outside lib/comms may reach them. */
+const RAW_PROVIDER_FACTORY = /\bget(?:Sms|WhatsApp)Provider\b/;
 
 const SOURCE_ROOTS = ["app", "server", "lib"] as const;
 
@@ -165,12 +167,29 @@ describe("receptionist transport — the provider factory is captive", () => {
     .map(rel)
     .sort();
 
-  it("getSmsProvider is reached by EXACTLY ONE consumer — the canonical service", () => {
+  // The RAW vendor factories (getSmsProvider / getWhatsAppProvider) must be reached ONLY inside the
+  // comms registry (getTransportProvider). No server/app/lib module may grab a raw provider and bypass
+  // the registry's no-cross-channel-fallback logic — that bypass is exactly how a WhatsApp reply could
+  // leak onto the SMS wire.
+  const rawReachers = walkSources(SOURCE_ROOTS)
+    .filter((full) => rel(full) !== COMMS_INDEX) // exclude the registry/factory home
+    .filter((full) => RAW_PROVIDER_FACTORY.test(codeOf(read(rel(full)))))
+    .map(rel)
+    .sort();
+
+  it("getTransportProvider is reached by EXACTLY ONE consumer — the canonical service", () => {
     expect(providerReachers).toEqual([SERVICE]);
+  });
+
+  it("the RAW vendor factories are captive to the comms registry — nothing else reaches them", () => {
+    // If this list is ever non-empty, a module has bypassed getTransportProvider (and with it the
+    // no-SMS-fallback guarantee). getSmsProvider/getWhatsAppProvider may be reached ONLY by the registry.
+    expect(rawReachers).toEqual([]);
   });
 
   it("no app/ module reaches a transport adapter directly", () => {
     expect(providerReachers.filter((p) => p.startsWith("app/"))).toEqual([]);
+    expect(rawReachers.filter((p) => p.startsWith("app/"))).toEqual([]);
   });
 });
 
@@ -193,9 +212,9 @@ describe("receptionist transport — the send is gated behind enforce + audit", 
   });
 
   it("reaches a vendor adapter in exactly one place — inside the gated transport helper", () => {
-    // getSmsProvider() and provider.send() are each invoked exactly once, so the only
-    // door to a provider is the single gated path.
-    expect((code.match(/getSmsProvider\s*\(/g) ?? []).length).toBe(1);
+    // getTransportProvider() (the channel→provider registry) and provider.send() are each invoked
+    // exactly once, so the only door to a provider is the single gated path — for SMS AND WhatsApp.
+    expect((code.match(/getTransportProvider\s*\(/g) ?? []).length).toBe(1);
     expect((code.match(/provider\.send\s*\(/g) ?? []).length).toBe(1);
   });
 
@@ -308,5 +327,32 @@ describe("receptionist transport — the ledger is gated, append-only and servic
     expect(sql).toMatch(/insert into public\.ai_reply_transports/i);
     expect(sql).toMatch(/revoke all on function[\s\S]*?from public, anon, authenticated/i);
     expect(sql).toMatch(/grant execute on function[\s\S]*?to service_role/i);
+  });
+});
+
+// =====================================================================
+// N. The channel vocabulary is widened to EXACTLY {sms, whatsapp} — no more.
+//    (Directive #018 R6.) WhatsApp is the SECOND reviewed transport; the CHECK
+//    stays deliberately narrow so no UNREVIEWED channel slips onto the wire.
+// =====================================================================
+
+describe("receptionist transport — the channel vocabulary is exactly {sms, whatsapp}", () => {
+  // Renumbered from 20260920000000 during the consolidation onto main (that version prefix was
+  // already applied in prod by 20260920000000_site_diary.sql; this migration had never been
+  // applied anywhere). SQL semantics are unchanged — only the version slot moved.
+  const WIDEN = "supabase/migrations/20261044000000_widen_transport_channel_whatsapp.sql";
+
+  it("ships the channel-widening migration", () => {
+    expect(existsSync(resolve(ROOT, WIDEN)), WIDEN).toBe(true);
+  });
+
+  it("widens BOTH ledgers' channel CHECK to exactly ('sms','whatsapp') — and nothing else", () => {
+    const sql = sqlCodeOf(read(WIDEN));
+    // Both ai_reply_transports AND ai_reply_delivery_receipts must admit whatsapp (the receipt table
+    // copies the transport's channel on correlation, so both widen together or a receipt fails its CHECK).
+    expect((sql.match(/check\s*\(\s*channel\s+in\s*\(\s*'sms'\s*,\s*'whatsapp'\s*\)\s*\)/gi) ?? []).length).toBe(2);
+    // Deliberately narrow: no unreviewed channel (email/push/voice/social) may enter the transport
+    // vocabulary. If this ever admits a third value, an unreviewed channel could be carried to a provider.
+    expect(sql).not.toMatch(/'email'|'push'|'voice'|'instagram'|'facebook'|'manual'/i);
   });
 });
