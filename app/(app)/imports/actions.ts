@@ -24,6 +24,8 @@ import {
   remapRawToEntity,
   type EntityType,
 } from "@/lib/imports/detect";
+import { buildInvoiceImportPlan } from "@/lib/imports/invoice-row";
+import { buildFinanceImportPlan } from "@/lib/imports/vat";
 import { expandZips, type UploadItem } from "@/lib/imports/zip";
 import {
   findCustomerDuplicate,
@@ -956,24 +958,23 @@ async function insertOne(
       return data?.id ?? null;
     }
     case "invoice": {
-      const number = String(mapped.number ?? "").trim();
-      const total = Number(mapped.total ?? 0);
-      if (!number || total <= 0) return null;
-      const vat = Number(mapped.vat_total ?? 0);
-      const amount = Number(mapped.amount ?? Math.max(0, total - vat));
+      // `invoices.total` is a STORED GENERATED column (amount + vat_total), so
+      // it must NOT be written — Postgres rejects the whole INSERT with
+      // SQLSTATE 428C9. buildInvoiceImportPlan owns the payload shape (and the
+      // back-dating); see lib/imports/invoice-row.ts.
+      const plan = buildInvoiceImportPlan(
+        mapped,
+        orgId,
+        normaliseInvoiceStatus(mapped.status),
+      );
+      if (plan.status === "skip") return null;
+      // A date the file gave but we can't read is the operator's to fix, not
+      // ours to paper over. Throwing marks THIS row `error` with the reason
+      // attached and leaves the rest of the import running.
+      if (plan.status === "reject") throw new Error(plan.reason);
       const { data, error } = await admin
         .from("invoices")
-        .insert({
-          org_id: orgId,
-          number,
-          amount,
-          vat_total: vat,
-          total,
-          status: normaliseInvoiceStatus(mapped.status),
-          due_date: (mapped.due_date as string) ?? null,
-          paid_at: (mapped.paid_at as string) ?? null,
-          notes: (mapped.notes as string) ?? null,
-        })
+        .insert(plan.row)
         .select("id")
         .single();
       if (error) throw new Error(error.message);
@@ -1011,17 +1012,21 @@ async function insertOne(
       return data?.id ?? null;
     }
     case "cost": {
-      const amount = Number(mapped.amount ?? 0);
-      if (amount <= 0) return null;
+      // `finances.vat_total` is a STORED GENERATED column
+      // (round(amount * vat_rate / 100, 2)) — Postgres rejects an INSERT that
+      // supplies it with SQLSTATE 428C9, which failed EVERY cost row. The
+      // writable input is `vat_rate`, so the imported VAT figure is resolved to
+      // one of the three permitted rates and the database computes the total.
+      const plan = buildFinanceImportPlan(mapped, orgId);
+      if (plan.status === "skip") return null;
+      // A VAT figure that can't land on 0/5/20, or a date we can't read, is an
+      // arithmetic problem in the operator's file — not something to round away
+      // or stamp with now(). Throwing marks THIS row `error` with the reason
+      // attached and leaves the rest of the import running.
+      if (plan.status === "reject") throw new Error(plan.reason);
       const { data, error } = await admin
         .from("finances")
-        .insert({
-          org_id: orgId,
-          amount,
-          vat_total: Number(mapped.vat_total ?? 0),
-          category: (mapped.category as string) ?? null,
-          notes: (mapped.notes as string) ?? null,
-        })
+        .insert(plan.row)
         .select("id")
         .single();
       if (error) throw new Error(error.message);
