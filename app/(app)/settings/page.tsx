@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
+import { LogoUpload } from "./_logo-upload";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -31,9 +33,13 @@ export default async function SettingsPage() {
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, phone, email, vat_number, address, logo_url, default_terms, bank_details")
+    .select("id, name, phone, email, vat_number, address, logo_path, logo_url, default_terms, bank_details")
     .eq("id", ctx.org.id)
     .maybeSingle();
+
+  // Resolve a display src for the current logo (signed URL for an uploaded
+  // file, or a legacy external URL for back-compat). Drives the preview.
+  const logoSrc = await resolveOrgLogoSrc(org);
 
   // Phase A — AI receptionist setup status (drives the badge below).
   type AiSetupRow = { enabled: boolean; status: string };
@@ -142,6 +148,14 @@ export default async function SettingsPage() {
           ) : null}
         </div>
 
+        <div className="mt-5 border-b border-slate-200 pb-5">
+          <LogoUpload
+            isAdmin={isAdmin}
+            logoSrc={logoSrc}
+            hasLogo={Boolean(logoSrc)}
+          />
+        </div>
+
         <OrganizationForm
           action={updateOrganization}
           isAdmin={isAdmin}
@@ -153,7 +167,6 @@ export default async function SettingsPage() {
             address_line1: address.line1 ?? "",
             address_city: address.city ?? "",
             address_postcode: address.postcode ?? "",
-            logo_url: org?.logo_url ?? "",
             default_terms: org?.default_terms ?? "",
             bank_name: bank.name ?? "",
             bank_sort_code: bank.sort_code ?? "",
