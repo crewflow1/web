@@ -135,7 +135,9 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
         <EmptyState
           icon="📥"
           title="No enquiries yet"
-          body="When customers call, message or DM you, the AI receptionist will capture them here."
+          body="When customers call, message or DM you, the AI receptionist will capture them here — or add one yourself to get started."
+          primary={{ href: "/leads/new", label: "Add an enquiry" }}
+          secondary={{ href: "/settings/ai-receptionist", label: "Set up AI receptionist" }}
         />
       ) : (
         <ul className="space-y-3">

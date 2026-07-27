@@ -24,10 +24,15 @@ import {
  * upload and only ever READ (never written) elsewhere, for back-compat.
  *
  * Permissions:
- *   - Upload / replace / delete: owner or admin only (enforced here in app
- *     code AND by the bucket's storage RLS insert/update/delete policies).
- *   - Storage writes use the service-role client (bypasses RLS); the role
- *     gate above is the authoritative check, mirroring tenant-attachments.
+ *   - Upload / replace / delete: owner or admin only. This role gate is the
+ *     SOLE and AUTHORITATIVE check — `company-logos` intentionally has NO
+ *     storage.objects policies for `authenticated`/`anon` (see
+ *     20261041000000_company_logo_storage.sql), because the storage-mutation
+ *     lockdown (20261032) makes byte mutation service-role-only app-wide.
+ *   - Every byte read and write below therefore goes through the service-role
+ *     client (createAdminClient), which bypasses storage RLS. Reads are served
+ *     as service-minted signed URLs, authorised by signature rather than RLS.
+ *     Do not introduce a tenant-client (createClient) storage call here.
  *
  * Every change is written to the admin activity log (same audit helper the
  * tenant-attachments feature uses).

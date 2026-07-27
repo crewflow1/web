@@ -94,7 +94,8 @@ export function BookDemoModal() {
         } catch {
           result = {
             ok: false,
-            error: `Server returned ${res.status}. Email hello@crewflow.uk and we'll book you in directly.`,
+            error:
+              "Something went wrong on our end and your request didn't go through. Email hello@crewflow.uk and we'll book you in directly.",
           };
         }
         if (result.ok) {

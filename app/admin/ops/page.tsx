@@ -1,7 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { requireUser } from "@/server/auth/session";
-import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { requireHqPage } from "@/server/auth/hq";
 import {
   buildOpsSnapshot,
   type CronRouteHealth,
@@ -33,8 +31,7 @@ const STATUS_PILL = {
 } as const;
 
 export default async function OpsPage() {
-  const user = await requireUser();
-  if (!isSuperAdminEmail(user.email)) notFound();
+  await requireHqPage();
 
   const snapshot = await buildOpsSnapshot();
 

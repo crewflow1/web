@@ -9,6 +9,7 @@ import {
   ignoreDuplicateRow,
   resolveReviewRow,
   sendStaffInvitesFromImport,
+  overrideSheetEntity,
 } from "../actions";
 
 /**
@@ -110,7 +111,9 @@ export default async function ImportWizardPage({
   const errorMessage = sp.error
     ? sp.error === "pick_entity_type"
       ? "Pick an entity type before confirming this row."
-      : decodeURIComponent(sp.error)
+      : sp.error === "not_reviewable"
+        ? "This import can no longer be re-classified — it's already been committed or rolled back."
+        : decodeURIComponent(sp.error)
     : null;
   // Rows we couldn't classify confidently — surfaced for the operator to
   // confirm / re-classify / skip. Never silently dropped from the import.
@@ -130,7 +133,9 @@ export default async function ImportWizardPage({
                 ? "Row confirmed — it'll be included on the next commit."
                 : sp.saved === "review_skipped"
                   ? "Row skipped — it won't be imported."
-                  : null
+                  : sp.saved === "reclassified"
+                    ? `Re-classified ${sp.count ?? 0} row${sp.count === "1" ? "" : "s"} — review and commit.`
+                    : null
     : null;
 
   return (
@@ -248,11 +253,13 @@ export default async function ImportWizardPage({
             </h2>
             <p className="mt-1 text-xs text-slate-500">
               Per entity type, the average confidence we have in the detected
-              columns. Anything below 70% is worth a manual review.
+              columns. Anything below 70% is worth a manual review. If a whole
+              sheet was read as the wrong type, re-classify every row of it with
+              the dropdown on its card.
             </p>
             <ul className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
               {Array.from(summary.entries()).map(([entity, t]) => (
-                <li key={entity} className="rounded-lg border border-slate-200 p-3">
+                <li key={entity} className="flex flex-col rounded-lg border border-slate-200 p-3">
                   <div className="text-xs uppercase tracking-wide text-slate-500">{entity}</div>
                   <div className="mt-1 text-2xl font-bold text-slate-900">{t.count}</div>
                   <div className="mt-0.5 text-xs text-slate-500">
@@ -271,6 +278,40 @@ export default async function ImportWizardPage({
                       style={{ width: `${t.avgConfidence}%` }}
                     />
                   </div>
+                  {/* Whole-sheet re-classification. The detector picks one type
+                      per sheet; this lets the operator correct it for every row
+                      of `entity` in one go, before commit. */}
+                  <form
+                    action={overrideSheetEntity.bind(null, imp.id, entity)}
+                    className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3"
+                  >
+                    <label className="sr-only" htmlFor={`override-${entity}`}>
+                      Re-classify {entity} rows as
+                    </label>
+                    <select
+                      id={`override-${entity}`}
+                      name="entity_type"
+                      defaultValue={
+                        SHEET_OVERRIDE_OPTIONS.some((o) => o.value === entity)
+                          ? entity
+                          : ""
+                      }
+                      className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                    >
+                      <option value="">— set type —</option>
+                      {SHEET_OVERRIDE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Override
+                    </button>
+                  </form>
                 </li>
               ))}
             </ul>
@@ -544,6 +585,21 @@ const REVIEW_ENTITY_OPTIONS: readonly string[] = [
   "quote",
   "job",
   "payment",
+];
+
+// Entity types the operator can assign to a whole sheet via the per-card
+// override on the detection screen. "Expense" is the human label for the
+// `cost` entity. Mirrors SHEET_OVERRIDE_ENTITIES in actions.ts (kept in sync by
+// hand — a "use server" module can only export async functions, not arrays).
+const SHEET_OVERRIDE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "customer", label: "Customer" },
+  { value: "staff", label: "Staff" },
+  { value: "job", label: "Job" },
+  { value: "quote", label: "Quote" },
+  { value: "invoice", label: "Invoice" },
+  { value: "supplier", label: "Supplier" },
+  { value: "cost", label: "Expense" },
+  { value: "payment", label: "Payment" },
 ];
 
 const STEPS = [

@@ -45,13 +45,13 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: lines } = invoice.quote_id
-    ? await supabase
-        .from("quote_line_items")
-        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-        .eq("quote_id", invoice.quote_id)
-        .order("sort_order", { ascending: true })
-    : { data: [] };
+  // Invoice-owned snapshot (Issue #349 Phase 2), not the live quote — the PDF
+  // reproduces the invoice as billed, immune to later quote edits/deletion.
+  const { data: lines } = await supabase
+    .from("invoice_line_items")
+    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+    .eq("invoice_id", id)
+    .order("sort_order", { ascending: true });
 
   const input: InvoicePdfInput = {
     number: invoice.number,

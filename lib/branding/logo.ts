@@ -7,14 +7,17 @@
  *   - Only PNG / JPEG / WebP, validated on BOTH the declared MIME type AND the
  *     filename extension (a `.png` file claiming image/png, not a `.exe`).
  *   - A hard byte cap (2 MB) so an admin can't upload a 50 MB "logo".
- *   - Tenant-scoped object paths: every key begins with `<org_id>/`, which is
- *     what the storage RLS policies key off.
- *   - Write gating to owner/admin roles (staff can't change branding).
+ *   - Tenant-scoped object paths: every key begins with `<org_id>/`, so an
+ *     object is always attributable to exactly one org.
+ *   - Write gating to owner/admin roles (staff can't change branding). This
+ *     app-code gate is authoritative: the bucket has NO authenticated
+ *     storage.objects policies at all (service-role-only byte access, per the
+ *     20261032 storage-mutation lockdown).
  *   - Source selection that NEVER surfaces a non-http(s) legacy value, so a
  *     malformed/`javascript:` logo_url left in old data can't render.
  */
 
-/** Storage bucket id (created in 20260712000000_company_logo_storage.sql). */
+/** Storage bucket id (created in 20261041000000_company_logo_storage.sql). */
 export const LOGO_BUCKET = "company-logos";
 
 /** Accepted upload formats. WebP included for modern, small logos. */
@@ -115,9 +118,9 @@ export function validateLogoUpload(input: {
 }
 
 /**
- * Tenant-scoped storage object key. The leading `<org_id>/` segment is what
- * the storage.objects RLS policies use to authorise reads/writes, so it must
- * always be the org id and nothing else.
+ * Tenant-scoped storage object key. The leading `<org_id>/` segment is the
+ * tenancy attribution for the object (and the prefix any future policy or
+ * audit would key off), so it must always be the org id and nothing else.
  */
 export function logoObjectPath(orgId: string, ext: string): string {
   return `${orgId}/logo-${crypto.randomUUID()}.${ext}`;

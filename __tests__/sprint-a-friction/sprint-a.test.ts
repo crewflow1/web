@@ -32,20 +32,26 @@ const CHECK_EMAIL = read("app/(auth)/check-email/page.tsx");
 describe("Sprint A item 1 — landing positioning (CEO directive 2026-05-22)", () => {
   // CrewFlow is premium onboarding (£1k setup + £500/mo). The earlier
   // "Start free" CTAs were removed because they conflicted with the
-  // positioning. Book demo / Request onboarding are the only entry CTAs.
+  // positioning. "Book a demo" is the only entry CTA.
+  //
+  // The Blueprint redesign renamed the entry-CTA component
+  // (BookDemoButton -> BookDemoCta) and refined the pricing copy to
+  // "£500/month" + "£1,000 one-time setup & onboarding". The three
+  // guarantees below are unchanged — only the literal pins track the copy.
   it("landing does NOT advertise a free tier", () => {
     expect(LANDING).not.toMatch(/Start free/);
   });
 
-  it("landing leads with 'Book demo' as the primary CTA", () => {
-    // Two BookDemoButton usages: nav + hero.
-    const matches = LANDING.match(/BookDemoButton/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(3); // import + nav + hero
+  it("landing leads with 'Book a demo' as the primary CTA", () => {
+    // BookDemoCta is the single entry-CTA component: import + nav + hero + pricing.
+    const matches = LANDING.match(/BookDemoCta/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(3);
   });
 
   it("landing copy reflects premium £1k/£500-mo positioning", () => {
-    expect(LANDING).toMatch(/£1,000 setup/);
-    expect(LANDING).toMatch(/£500\/mo/);
+    expect(LANDING).toMatch(/£1,000 one-time setup/);
+    expect(LANDING).toMatch(/£500/);
+    expect(LANDING).toMatch(/\/month/);
   });
 });
 
@@ -133,8 +139,11 @@ describe("Sprint A item 6 — invoice PDF download from customer portal", () => 
   it("the new pdf route gates on portal token + ownership checks", () => {
     expect(PORTAL_PDF_ROUTE).toMatch(/loadCustomerByPortalToken/);
     expect(PORTAL_PDF_ROUTE).toMatch(/invoice\.org_id\s*!==\s*customer\.org_id/);
+    // Issue #349 Phase 1: ownership now resolves the customer via the one
+    // authority (invoice's own customer_id, quote fallback) so a quote-less
+    // invoice still authorises correctly instead of 404ing.
     expect(PORTAL_PDF_ROUTE).toMatch(
-      /invoice\.quote\?\.customer_id\s*!==\s*customer\.id/,
+      /invoiceCustomerId\(invoice\)\s*!==\s*customer\.id/,
     );
   });
 

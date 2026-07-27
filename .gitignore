@@ -14,6 +14,11 @@ node_modules/
 # testing
 coverage/
 
+# playwright (E2E) — generated reports/artifacts + browser cache, never commit
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
 # next.js
 .next/
 out/
@@ -59,3 +64,10 @@ yarn-error.log*
 # typescript build info
 *.tsbuildinfo
 .env*.local
+
+# Local DB backups/snapshots (never commit)
+.backups/
+public/pdf.worker.min.mjs
+
+# Authenticated-E2E harness storageState (live JWT — never commit)
+/e2e/.auth/

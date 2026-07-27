@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import { buildSecurityHeaders } from "./lib/security/headers";
 
 const config: NextConfig = {
   reactStrictMode: true,
@@ -8,6 +9,27 @@ const config: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "*.supabase.co" },
     ],
+  },
+  /**
+   * Baseline security response headers on every route. The policy (incl. the
+   * Report-Only CSP) lives in lib/security/headers.ts so it can be unit-tested
+   * without booting this config. See that module for the full rationale.
+   */
+  async headers() {
+    return [{ source: "/:path*", headers: buildSecurityHeaders() }];
+  },
+  /**
+   * pdf.js (the Blueprint interactive viewer, client-only + dynamically imported)
+   * references an OPTIONAL Node `canvas` package it never needs in the browser.
+   * Alias it away so Webpack doesn't try to resolve a native module. This is a
+   * build-resolution alias, NOT a security change. The pdf.js worker itself is
+   * copied to /public/pdf.worker.min.mjs by the `prebuild`/`predev` script and
+   * loaded same-origin (satisfies the existing `worker-src 'self'` CSP).
+   */
+  webpack: (webpackConfig) => {
+    webpackConfig.resolve = webpackConfig.resolve ?? {};
+    webpackConfig.resolve.alias = { ...(webpackConfig.resolve.alias ?? {}), canvas: false };
+    return webpackConfig;
   },
 };
 

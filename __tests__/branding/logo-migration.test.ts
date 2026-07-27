@@ -6,14 +6,19 @@ import { resolve } from "node:path";
  * Schema-assertion suite for the company-logo storage migration. CI has no
  * database, so — like billing-schema-protections.test.ts — we pin the
  * migration SQL itself. These lock in the security-relevant guarantees:
- * a PRIVATE bucket, an image-only + size-capped upload surface, tenant-scoped
- * RLS where only owners/admins can write but any member can read, and that the
- * change is additive + non-destructive (legacy logo_url is preserved).
+ * a PRIVATE bucket, an image-only + size-capped upload surface, that the change
+ * is additive + non-destructive (legacy logo_url is preserved), and that the
+ * bucket ships with ZERO `authenticated` storage.objects policies so byte
+ * access stays service-role-only per the 20261032 storage-mutation lockdown.
+ *
+ * The cross-migration version of that last invariant (no migration anywhere may
+ * re-grant tenant writes) lives in
+ * __tests__/security/storage-company-logos-lockdown.test.ts.
  */
 
 const root = resolve(__dirname, "../..");
 const mig = readFileSync(
-  resolve(root, "supabase/migrations/20260712000000_company_logo_storage.sql"),
+  resolve(root, "supabase/migrations/20261041000000_company_logo_storage.sql"),
   "utf-8",
 );
 
@@ -56,39 +61,53 @@ describe("company-logo migration — bucket is private, image-only, size-capped"
   });
 });
 
-describe("company-logo migration — RLS: tenant-scoped, admin-only writes", () => {
-  it("scopes every policy to bucket_id = 'company-logos'", () => {
-    const policyBlocks = mig.match(/create\s+policy[\s\S]*?;/gi) ?? [];
-    expect(policyBlocks.length).toBeGreaterThanOrEqual(4); // read + insert + update + delete
-    for (const block of policyBlocks) {
-      expect(block).toMatch(/bucket_id\s*=\s*'company-logos'/i);
+describe("company-logo migration — service-role-only byte access (no RLS grants)", () => {
+  // Comments legitimately DISCUSS the removed policies, so every assertion here
+  // runs against SQL with `--` comment lines stripped, never the raw text.
+  const sql = mig
+    .split("\n")
+    .filter((l) => !/^\s*--/.test(l))
+    .join("\n");
+
+  it("creates NO storage.objects policy of any kind", () => {
+    // Guard the stripper itself: if it ever nuked the whole file, the bucket
+    // insert below would vanish and these assertions would pass vacuously.
+    expect(sql).toMatch(/insert\s+into\s+storage\.buckets/i);
+    expect(sql).not.toMatch(/create\s+policy/i);
+  });
+
+  it("grants nothing to the authenticated or anon roles", () => {
+    expect(sql).not.toMatch(/\bto\s+authenticated\b/i);
+    expect(sql).not.toMatch(/\bto\s+anon\b/i);
+    expect(sql).not.toMatch(/\bgrant\b/i);
+  });
+
+  it("never re-introduces a tenant write verb on storage.objects", () => {
+    for (const verb of ["insert", "update", "delete"]) {
+      expect(sql, verb).not.toMatch(new RegExp(`for\\s+${verb}\\b`, "i"));
     }
+    expect(sql).not.toMatch(/for\s+select\b/i);
+    expect(sql).not.toMatch(/for\s+all\b/i);
   });
 
-  it("derives tenancy from the first path segment (org_id)", () => {
-    expect(mig).toMatch(/split_part\(\s*name\s*,\s*'\/'\s*,\s*1\s*\)\)?::uuid/i);
+  it("does not lean on tenant RLS predicates (is_org_admin / current_org_ids)", () => {
+    expect(sql).not.toMatch(/is_org_admin/i);
+    expect(sql).not.toMatch(/current_org_ids/i);
   });
 
-  it("lets any member of the owning org READ", () => {
-    expect(mig).toMatch(/for\s+select[\s\S]*current_org_ids\(\)/i);
-  });
-
-  it("restricts INSERT/UPDATE/DELETE to org admins via is_org_admin", () => {
-    for (const op of ["insert", "update", "delete"]) {
-      const re = new RegExp(`for\\s+${op}[\\s\\S]*?is_org_admin`, "i");
-      expect(mig).toMatch(re);
+  it("defensively drops the four policies an earlier draft created", () => {
+    for (const p of [
+      "company-logos: members can read",
+      "company-logos: admins can insert",
+      "company-logos: admins can update",
+      "company-logos: admins can delete",
+    ]) {
+      expect(sql, p).toMatch(
+        new RegExp(
+          `drop\\s+policy\\s+if\\s+exists\\s+"${p.replace(/[-]/g, "\\-")}"\\s+on\\s+storage\\.objects`,
+          "i",
+        ),
+      );
     }
-  });
-
-  it("does NOT grant write access through current_org_ids (members must not write)", () => {
-    // A member-level predicate (current_org_ids) must only appear on the read
-    // policy — writes are gated by is_org_admin.
-    const insertBlock = (mig.match(/for\s+insert[\s\S]*?;/i) ?? [""])[0];
-    expect(insertBlock).not.toMatch(/current_org_ids/i);
-    expect(insertBlock).toMatch(/is_org_admin/i);
-  });
-
-  it("re-runs cleanly (DROP POLICY IF EXISTS before each CREATE)", () => {
-    expect((mig.match(/drop\s+policy\s+if\s+exists/gi) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 });

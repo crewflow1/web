@@ -19,7 +19,7 @@ export function PortalShell({
   customer: PortalCustomer;
   org: PortalOrg;
   token: string;
-  active: "overview" | "quotes" | "invoices" | "jobs" | "messages";
+  active: "overview" | "quotes" | "invoices" | "jobs" | "reports" | "documents" | "messages";
   children: React.ReactNode;
 }) {
   const tabs = [
@@ -27,6 +27,8 @@ export function PortalShell({
     { id: "quotes" as const, href: `/customer-portal/${token}/quotes`, label: "Quotes" },
     { id: "invoices" as const, href: `/customer-portal/${token}/invoices`, label: "Invoices" },
     { id: "jobs" as const, href: `/customer-portal/${token}/jobs`, label: "Jobs" },
+    { id: "reports" as const, href: `/customer-portal/${token}/reports`, label: "Reports" },
+    { id: "documents" as const, href: `/customer-portal/${token}/documents`, label: "Documents" },
     { id: "messages" as const, href: `/customer-portal/${token}/messages`, label: "Messages" },
   ];
 

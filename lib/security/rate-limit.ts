@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createAdminClient } from "@/lib/supabase/admin";
+
 /**
  * Phase 7 — Lightweight in-memory rate limiter.
  *
@@ -53,6 +55,12 @@ export const DEFAULT_LIMITS = {
   ai_question: { limit: 20, windowSeconds: 3600 } as RateLimitConfig,
   /** Generic API fallback. */
   api: { limit: 60, windowSeconds: 60 } as RateLimitConfig,
+  /** Unauthenticated auth email-send (magic link) — keyed by IP+email.
+   *  Tight: blocks email-bomb / Supabase cost abuse. */
+  auth: { limit: 5, windowSeconds: 600 } as RateLimitConfig,
+  /** Public quote accept/decline — keyed by token+IP. Blocks token-guessing
+   *  and state-change spam while allowing a customer's normal retries. */
+  quote_action: { limit: 20, windowSeconds: 600 } as RateLimitConfig,
 } as const;
 
 /**
@@ -121,20 +129,8 @@ export function identifyRequest(req: Request): string {
   return "anonymous";
 }
 
-/**
- * Convenience wrapper — returns a JSON `429` body and headers when
- * rate-limited; null otherwise. Callers do
- *   const limited = enforce(req, "ai_question", DEFAULT_LIMITS.ai_question);
- *   if (limited) return limited;
- */
-export function enforce(
-  req: Request,
-  route: string,
-  cfg: RateLimitConfig,
-): Response | null {
-  const id = identifyRequest(req);
-  const result = check(route, id, cfg);
-  if (result.allowed) return null;
+/** Build the standard `429` response from a (blocked) result. */
+function rateLimitedResponse(result: RateLimitResult): Response {
   return new Response(
     JSON.stringify({
       ok: false,
@@ -153,6 +149,117 @@ export function enforce(
       },
     },
   );
+}
+
+/**
+ * Convenience wrapper — returns a JSON `429` body and headers when
+ * rate-limited; null otherwise. Callers do
+ *   const limited = enforce(req, "ai_question", DEFAULT_LIMITS.ai_question);
+ *   if (limited) return limited;
+ *
+ * NOTE: this is the *in-memory* path (sync). For unauthenticated abuse
+ * surfaces prefer {@link enforcePersistent}, which uses the shared store.
+ */
+export function enforce(
+  req: Request,
+  route: string,
+  cfg: RateLimitConfig,
+): Response | null {
+  const id = identifyRequest(req);
+  const result = check(route, id, cfg);
+  if (result.allowed) return null;
+  return rateLimitedResponse(result);
+}
+
+/**
+ * Identify a caller from a Headers object — for the server-action context,
+ * where there is no Request. Mirrors {@link identifyRequest}.
+ */
+export function identifyHeaders(headers: Headers): string {
+  const xff = headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0]!.trim();
+  const real = headers.get("x-real-ip");
+  if (real) return real;
+  return "anonymous";
+}
+
+/**
+ * Whether to use the durable, cross-instance Postgres store. Active only in
+ * production (real Supabase + service role). Local `next dev`, the dummy-env
+ * preview, and the test runner fall back to the in-memory {@link check} so they
+ * stay fast, self-contained, and never reach across to a real database.
+ */
+function persistentStoreEnabled(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * Durable check-and-record against the shared Postgres counter via the
+ * `rate_limit_hit` RPC (service-role admin client). ALWAYS fails open: if the
+ * RPC errors (DB blip, misconfig) the request is allowed, so a fault in the
+ * limiter can never take down auth/login. Exported for direct testing.
+ */
+export async function checkPersistent(
+  route: string,
+  identifier: string,
+  cfg: RateLimitConfig,
+): Promise<RateLimitResult> {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc("rate_limit_hit", {
+      p_key: `${route}:${identifier}`,
+      p_limit: cfg.limit,
+      p_window_seconds: cfg.windowSeconds,
+    });
+    const row = data?.[0];
+    if (error || !row) {
+      throw error ?? new Error("rate_limit_hit returned no row");
+    }
+    return {
+      allowed: row.allowed,
+      remaining: row.remaining,
+      reset_at_epoch_sec: Math.floor(new Date(row.reset_at).getTime() / 1000),
+    };
+  } catch (e) {
+    console.error("[rate-limit] persistent check failed — failing open", e);
+    return {
+      allowed: true,
+      remaining: cfg.limit,
+      reset_at_epoch_sec: now + cfg.windowSeconds,
+    };
+  }
+}
+
+/**
+ * Unified entry point. Uses the durable store in production and the in-memory
+ * store everywhere else. Route handlers should prefer {@link enforcePersistent};
+ * server actions call this with an IP from {@link identifyHeaders} and branch on
+ * `allowed` themselves (they redirect/return rather than emit a Response).
+ */
+export async function consume(
+  route: string,
+  identifier: string,
+  cfg: RateLimitConfig,
+): Promise<RateLimitResult> {
+  if (persistentStoreEnabled()) {
+    return checkPersistent(route, identifier, cfg);
+  }
+  return check(route, identifier, cfg);
+}
+
+/**
+ * Async sibling of {@link enforce} for route handlers — uses the durable store
+ * in production. Returns a 429 Response when limited, else null.
+ */
+export async function enforcePersistent(
+  req: Request,
+  route: string,
+  cfg: RateLimitConfig,
+): Promise<Response | null> {
+  const result = await consume(route, identifyRequest(req), cfg);
+  if (result.allowed) return null;
+  return rateLimitedResponse(result);
 }
 
 /** Test-only — clear the store between runs. NOT exported in prod

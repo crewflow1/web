@@ -214,8 +214,10 @@ describe("Phase 6 — HQ_NAV covers every directive section", () => {
 // =====================================================================
 
 describe("Phase 6 — every HQ page is auth-gated", () => {
-  it("admin layout 404s non-super-admins (defence in depth)", () => {
-    expect(LAYOUT).toMatch(/isSuperAdminEmail/);
-    expect(LAYOUT).toMatch(/notFound\(\)/);
+  it("admin layout 404s non-super-admins via requireHqPage (defence in depth)", () => {
+    expect(LAYOUT).toMatch(/requireHqPage\(\)/);
+    const hqAuth = read("server/auth/hq.ts");
+    expect(hqAuth).toMatch(/isSuperAdminEmail/);
+    expect(hqAuth).toMatch(/notFound\(\)/);
   });
 });

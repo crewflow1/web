@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "../_helpers";
 import { PortalShell } from "./_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import { buildPortalActionItems, type PortalActionItem } from "@/lib/customers/portal-actions";
 
 /**
  * Customer portal overview.
@@ -51,32 +52,48 @@ export default async function PortalOverviewPage({
 
   const admin = createAdminClient();
 
-  const [quotesRes, invoicesRes] = await Promise.all([
-    admin
-      .from("quotes")
-      .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
-      .eq("org_id", customer.org_id)
-      .eq("customer_id", customer.id)
-      .order("created_at", { ascending: false })
-      .limit(50),
-    admin
-      .from("invoices")
-      .select(
-        "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, quote_id",
-      )
-      .eq("org_id", customer.org_id)
-      .order("created_at", { ascending: false })
-      .limit(50),
-  ]);
+  // Quotes are customer-scoped at the DB (org_id + customer_id).
+  //
+  // SECURITY (P2 audit M-1): invoices carry no customer_id column — they
+  // link to a customer only via their parent quote. The overview previously
+  // read the org's most-recent invoices scoped ONLY by org_id and then
+  // narrowed to this customer in JS. On the service-role client (which
+  // BYPASSES RLS) that over-reads other customers' invoice rows, and the
+  // org-wide `.limit(50)` can exclude this customer's own invoices entirely
+  // (wrong "outstanding" total / missing recent invoice on a busy org).
+  // Scope the invoices read to THIS customer's quote ids in the query
+  // instead — the same per-customer scoping the invoices list page uses.
+  const { data: quotesData } = await admin
+    .from("quotes")
+    .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
+    .eq("org_id", customer.org_id)
+    .eq("customer_id", customer.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const allQuotes = quotesData ?? [];
 
-  const allQuotes = quotesRes.data ?? [];
-  const quoteIds = new Set(allQuotes.map((q) => q.id));
-  // Invoices for this customer = invoices whose quote_id is one of our
-  // listed quotes. Done this way because the invoices table doesn't
-  // carry customer_id directly; the link is via quote.
-  const invoices = (invoicesRes.data ?? []).filter(
-    (inv) => inv.quote_id && quoteIds.has(inv.quote_id),
-  );
+  // Scope invoices by their own customer anchor (Issue #349 Phase 1), not via
+  // quote_id — authoritative and survives quote loss (see the invoices page).
+  const { data: invoicesData } = await admin
+    .from("invoices")
+    .select(
+      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
+    )
+    .eq("org_id", customer.org_id)
+    .eq("customer_id", customer.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const invoices: Array<{
+    id: string;
+    number: string;
+    status: string;
+    amount: number | string | null;
+    vat_total: number | string | null;
+    total: number | string | null;
+    due_date: string | null;
+    sent_at: string | null;
+    paid_at: string | null;
+  }> = invoicesData ?? [];
 
   const openQuotes = allQuotes.filter(
     (q) => q.status === "draft" || q.status === "sent" || q.status === "viewed",
@@ -92,8 +109,35 @@ export default async function PortalOverviewPage({
   const recentQuote = allQuotes[0];
   const recentInvoice = invoices[0];
 
+  // Action centre — precise, financially-labelled things that need this
+  // customer's attention, deep-linking to the existing single-authority
+  // surfaces (/q/<token> for quote decisions; the invoice tab otherwise).
+  // Report decisions are surfaced in the document-library slice, which already
+  // reads report content — kept out here to avoid an N+1 on the overview.
+  const today = new Date().toISOString().slice(0, 10);
+  const actionItems = buildPortalActionItems({
+    token,
+    todayIso: today,
+    quotes: allQuotes,
+    invoices,
+    reports: [],
+  });
+
   return (
     <PortalShell customer={customer} org={org} token={token} active="overview">
+      {actionItems.length > 0 ? (
+        <section aria-labelledby="action-centre" className="rounded-xl border border-slate-900/10 bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
+          <h2 id="action-centre" className="text-sm font-semibold text-slate-900">
+            Needs your attention
+          </h2>
+          <ul className="mt-3 space-y-2">
+            {actionItems.map((item, i) => (
+              <ActionRow key={`${item.kind}-${i}`} item={item} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {/* Headline KPIs — mobile-stack-then-row */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <SummaryCard label="Open quotes" value={openQuotes.length.toString()} />
@@ -211,6 +255,38 @@ export default async function PortalOverviewPage({
         </section>
       ) : null}
     </PortalShell>
+  );
+}
+
+const ACTION_ACCENT: Record<PortalActionItem["kind"], string> = {
+  invoice_overdue: "border-l-red-500",
+  quote: "border-l-blue-500",
+  invoice_due: "border-l-amber-500",
+  report_decision: "border-l-slate-400",
+};
+
+function ActionRow({ item }: { item: PortalActionItem }) {
+  const external = item.href.startsWith("/q/");
+  return (
+    <li className={`rounded-md border border-slate-200 border-l-4 ${ACTION_ACCENT[item.kind]} bg-white p-3`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{item.sub}</p>
+        </div>
+        <Link
+          href={item.href}
+          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+          className="shrink-0 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+        >
+          {item.kind === "quote"
+            ? "Review"
+            : item.kind === "report_decision"
+              ? "Open report"
+              : "View invoice"}
+        </Link>
+      </div>
+    </li>
   );
 }
 

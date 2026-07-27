@@ -96,18 +96,30 @@ export default async function CustomerSupportTicketPage({
         ) : (
           ticket.messages.map((m) => {
             const isHq = m.author_kind === "hq";
+            // On a portal thread, 'customer' is the END-CUSTOMER, not this org.
+            // The service names them from the ticket's customer; falling back to
+            // "You" here would put the homeowner's words in the org's mouth.
+            const isTheirCustomer =
+              m.author_kind === "customer" && ticket.customer_id != null;
             return (
               <article
                 key={m.id}
                 className={`rounded-xl border p-4 shadow-sm ${
                   isHq
                     ? "border-indigo-200 bg-indigo-50"
-                    : "border-slate-200 bg-white"
+                    : isTheirCustomer
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "border-slate-200 bg-white"
                 }`}
               >
                 <header className="mb-1 flex items-baseline justify-between gap-2 text-[11px]">
                   <span className="font-semibold text-slate-700">
-                    {m.author_name ?? (isHq ? "CrewFlow Support" : "You")}
+                    {m.author_name ??
+                      (isHq
+                        ? "CrewFlow Support"
+                        : isTheirCustomer
+                          ? "Customer"
+                          : "You")}
                   </span>
                   <span className="text-slate-500">
                     {m.created_at.slice(0, 16).replace("T", " ")} UTC

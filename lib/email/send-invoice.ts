@@ -41,6 +41,8 @@ type InvoiceJoined = {
   paid_at: string | null;
   notes: string | null;
   quote_id: string | null;
+  // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote path.
+  customer: { name: string | null; email: string | null } | null;
   quote: {
     customer: { name: string | null; email: string | null } | null;
   } | null;
@@ -77,6 +79,7 @@ export async function sendInvoiceEmail(
       `
         id, number, status, amount, vat_total, total, due_date, paid_at,
         notes, quote_id,
+        customer:customers!invoices_customer_org_fkey ( name, email ),
         quote:quotes ( customer:customers ( name, email ) ),
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
@@ -91,19 +94,26 @@ export async function sendInvoiceEmail(
   }
   if (!invoice) return { sent: false, reason: "not_found" };
 
-  const recipient = options.to ?? invoice.quote?.customer?.email ?? null;
+  // Recipient resolves via the invoice's OWN customer first (Issue #349 Phase
+  // 1), so a sent invoice whose quote was later deleted is still emailable; the
+  // quote's customer is the legacy-orphan fallback.
+  const recipient =
+    options.to ??
+    invoice.customer?.email ??
+    invoice.quote?.customer?.email ??
+    null;
   if (!recipient) return { sent: false, reason: "no_recipient" };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
     return { sent: false, reason: "invalid_recipient" };
   }
 
-  const { data: lines } = invoice.quote_id
-    ? await supabase
-        .from("quote_line_items")
-        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-        .eq("quote_id", invoice.quote_id)
-        .order("sort_order", { ascending: true })
-    : { data: [] };
+  // Invoice-owned snapshot (Issue #349 Phase 2): the emailed PDF reproduces the
+  // invoice as billed, independent of the live quote.
+  const { data: lines } = await supabase
+    .from("invoice_line_items")
+    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+    .eq("invoice_id", invoice.id)
+    .order("sort_order", { ascending: true });
 
   const pdfInput: InvoicePdfInput = {
     number: invoice.number,
@@ -114,7 +124,8 @@ export async function sendInvoiceEmail(
     due_date: invoice.due_date,
     paid_at: invoice.paid_at,
     notes: invoice.notes,
-    customer_name: invoice.quote?.customer?.name ?? null,
+    customer_name:
+      invoice.customer?.name ?? invoice.quote?.customer?.name ?? null,
     org_name: invoice.org?.name ?? "CrewFlow",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,

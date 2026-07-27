@@ -202,9 +202,9 @@ describe("kanban + page wiring", () => {
     }
   });
 
-  it("WhatsApp link uses wa.me with a sanitised phone number", () => {
-    expect(DETAIL).toMatch(/wa\.me\//);
-    expect(DETAIL).toMatch(/PHONE_DIGITS_RE/);
+  it("WhatsApp link is built via the shared whatsAppHref helper", () => {
+    expect(DETAIL).toMatch(/whatsAppHref/);
+    expect(DETAIL).toMatch(/from "@\/lib\/phone"/);
   });
 });
 

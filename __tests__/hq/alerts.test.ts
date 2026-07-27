@@ -760,9 +760,9 @@ describe("/admin/alerts page", () => {
     }
   });
 
-  it("WhatsApp link uses wa.me with a sanitised phone number", () => {
-    expect(PAGE).toMatch(/wa\.me\//);
-    expect(PAGE).toMatch(/replace\(\/\[\^\\d\]\/g, ""\)/);
+  it("WhatsApp link is built via the shared whatsAppHref helper", () => {
+    expect(PAGE).toMatch(/whatsAppHref/);
+    expect(PAGE).toMatch(/from "@\/lib\/phone"/);
   });
 
   it("wires filters for severity, search, sort, and show-resolved", () => {

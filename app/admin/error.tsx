@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * /admin/* error boundary — catches runtime errors thrown inside HQ
@@ -9,10 +10,11 @@ import Link from "next/link";
  * The Reset button calls the framework-provided `reset()` so the
  * boundary can re-render without a full reload.
  *
- * Errors are logged to the console and (in prod) Sentry via the
- * Sentry SDK's automatic instrumentation. The user-facing copy is
- * deliberately calm — the HQ operator is technical, but a noisy
- * stack trace isn't useful here.
+ * Errors are captured to Sentry explicitly (React error boundaries
+ * swallow client-side render errors, so the SDK's automatic
+ * onRequestError instrumentation never sees them) and logged to the
+ * console for local dev. The user-facing copy is deliberately calm —
+ * the HQ operator is technical, but a noisy stack trace isn't useful here.
  */
 export default function HqError({
   error,
@@ -22,6 +24,7 @@ export default function HqError({
   reset: () => void;
 }) {
   useEffect(() => {
+    Sentry.captureException(error);
     console.error("[admin/error] HQ page crashed", {
       message: error.message,
       digest: error.digest,
