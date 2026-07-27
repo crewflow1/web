@@ -8,11 +8,13 @@
  * `rows.length` as the headline total, so an org with 598 imported customers
  * showed "200 customers" and rows 201–598 were unreachable. The page now
  * fetches an EXACT count and paginates with `.range()`, and search runs
- * server-side across the whole table (name/email/phone) rather than filtering
- * only the rows already on screen.
+ * server-side across the whole table — name/email/phone AND the structured
+ * address columns (line1/2, city, county, postcode), so a tradesperson can
+ * find a customer by address/postcode — rather than filtering only the rows
+ * already on screen.
  */
 
-import { sanitizeSearchTerm } from "@/lib/search/sanitize";
+import { ilikeOrFilter, CUSTOMER_SEARCH_COLUMNS } from "@/lib/search/filters";
 
 export const PAGE_SIZE = 200;
 
@@ -45,22 +47,24 @@ export function pageWindow(
 }
 
 /**
- * Build the PostgREST `.or()` filter for a server-side customer search across
- * name/email/phone. Returns null when there's nothing to search (→ full list).
+ * Build the PostgREST `.or()` filter for a server-side customer search.
  *
- * The term is run through the shared {@link sanitizeSearchTerm} first, which
- * strips control characters and PostgREST structural/wildcard characters
- * (`% _ , ( ) *`) so a crafted term can't broaden the match or break the
- * `.or()` grammar; the cleaned term still matches literally via `ilike`.
- * Because the filter is applied to the query BEFORE `.range()`, the search
- * spans every customer — a hit on row 550 of 598 is found from page 1, not
- * just within the first 200.
+ * Address-first: spans name + email + phone AND the structured address columns
+ * (line1/line2/city/county/postcode) so searching "BT9", "Malone Road",
+ * "Lisburn" or "Apartment 4" returns the right customer — see
+ * {@link CUSTOMER_SEARCH_COLUMNS}. Returns null when there's nothing to search
+ * (→ full list).
+ *
+ * Delegates to {@link ilikeOrFilter}, which runs the term through the shared
+ * sanitizer first (strips control chars + PostgREST structural/wildcard chars
+ * `% _ , ( ) *`) so a crafted term can't broaden the match or break the `.or()`
+ * grammar; the cleaned term still matches literally via `ilike`. Because the
+ * filter is applied to the query BEFORE `.range()`, the search spans every
+ * customer — a hit on row 550 of 598 is found from page 1, not just within the
+ * first 200.
  */
 export function customerSearchOr(
   term: string | undefined | null,
 ): string | null {
-  const safe = sanitizeSearchTerm(term);
-  if (safe.length === 0) return null;
-  const like = `%${safe}%`;
-  return `name.ilike.${like},email.ilike.${like},phone.ilike.${like}`;
+  return ilikeOrFilter(term, CUSTOMER_SEARCH_COLUMNS);
 }

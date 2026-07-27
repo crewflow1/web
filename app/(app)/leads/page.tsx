@@ -12,6 +12,7 @@ import {
 } from "@/lib/leads/schema";
 import { LeadCard, type PipelineLead } from "./_card";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
+import { ilikeOrFilter, LEAD_SEARCH_COLUMNS } from "@/lib/search/filters";
 
 /**
  * /leads — kanban pipeline.
@@ -66,14 +67,22 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (sp.assigned) {
     query = query.eq("assigned_to", sp.assigned);
   }
-  // q applies to service or postcode (cheap LIKE). Sanitize first:
-  // raw interpolation into a PostgREST `.or()` string lets characters
-  // like `,` `(` `)` `*` break out of the ilike pattern and inject
-  // extra filter branches. sanitizeSearchTerm strips those + wildcards
-  // and returns "" when nothing searchable remains.
+  // q is sanitised, then searched across the lead's own columns — service and
+  // postcode (as before) PLUS source and the enquirer's contact name/email, via
+  // the shared LEAD_SEARCH_COLUMNS set. Address-first: a postcode or area
+  // matches here; discovery of a lead through a linked customer's full
+  // structured address is handled by the global Cmd/K search route.
+  //
+  // Sanitising still happens first (inside ilikeOrFilter): raw interpolation
+  // into a PostgREST `.or()` string lets characters like `,` `(` `)` `*` break
+  // out of the ilike pattern and inject extra filter branches.
+  // sanitizeSearchTerm strips those + wildcards and returns "" when nothing
+  // searchable remains — `q` stays the sanitised value so the search box and
+  // the empty-state gate below read the same term that was actually queried.
   const q = sanitizeSearchTerm(sp.q);
-  if (q) {
-    query = query.or(`service.ilike.%${q}%,postcode.ilike.%${q}%`);
+  const leadOr = ilikeOrFilter(q, LEAD_SEARCH_COLUMNS);
+  if (leadOr) {
+    query = query.or(leadOr);
   }
 
   const { data: raw } = await query;
@@ -176,7 +185,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           <input
             name="q"
             defaultValue={q ?? ""}
-            placeholder="service or postcode"
+            placeholder="Postcode, name, or service"
             className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
