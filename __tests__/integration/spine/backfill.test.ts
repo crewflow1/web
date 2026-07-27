@@ -25,9 +25,20 @@ import { describeIntegration, serviceClient } from "../_harness";
  *
  * Sources are seeded DIRECTLY (not through the producers) at year-2000 created_at so
  * they sort first, deterministically, and land in hq_events' DEFAULT partition.
- * activity_log is co-tenanted with PR2's suite, so its assertions are scoped by the
- * backfill provenance key; admin_activity_log and hq_memory_events are sole-written
- * here, so their totals are asserted exactly.
+ *
+ * RESIDUE INDEPENDENCE: a drain walks its ENTIRE source table, so hq_backfill_state's
+ * counters are whole-table figures — they cannot be used as proxies for "what this test
+ * seeded" unless the test genuinely owns the table.
+ *   - activity_log — co-tenanted with PR2's suite; assertions scoped by the backfill
+ *     provenance key, and the read-only check scoped by our own org_id.
+ *   - hq_memory_events — no other suite reads it, so beforeAll CLEARS it and this suite
+ *     owns it outright; its batch/total arithmetic is therefore asserted exactly.
+ *   - admin_activity_log — NOT sole-written (other suites, the e2e global-setup, and any
+ *     previous un-reset run leave rows behind) and clearing it is not safe. Its assertions
+ *     are scoped to the four rows this run seeds, plus scale-independent invariants on the
+ *     counters (seen == emitted + skipped; a redrive emits zero and skips everything it
+ *     walked). Asserting literal whole-table totals here made the suite order-dependent —
+ *     it passed only on a freshly reset database.
  *
  * Runs only against a live DB (describeIntegration): skipped locally with no database,
  * FAILED loudly in CI if the database is missing. hq_events is append-only, so emitted
@@ -450,6 +461,7 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
     expect(Object.keys(ccEv?.payload ?? {}).sort()).toEqual(["backfill_source", "backfill_source_id"]);
 
     // admin_activity_log: only the unambiguous Stripe trio; the operator-audit row skipped.
+    let adminEmitted = 0;
     for (const s of admin) {
       const ev = await eventFor(SRC_ADMIN, s.id, s.objectId);
       if (s.exp === null) {
@@ -457,12 +469,28 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
         continue;
       }
       assertCanonical(ev, { source: SRC_ADMIN, sourceId: s.id, objectId: s.objectId, createdAt: s.createdAt }, s.exp);
+      adminEmitted++;
     }
-    // admin is a sole-writer here → exact totals.
+    // The 1:1 mapping arithmetic, measured over the rows THIS RUN seeded. admin_activity_log
+    // is NOT sole-written (an earlier suite, the e2e global-setup, or a previous un-reset run
+    // all leave rows behind) and the drain walks the WHOLE table, so hq_backfill_state's
+    // cumulative counters are whole-table figures — asserting 4/3/1 on them made the suite
+    // order- and residue-dependent. Scope to our own four seeds instead: exactly three mapped
+    // (each already proven canonical above, and eventFor caps at one event per source row) and
+    // exactly one did not. Same invariant, measured over rows we own.
+    expect(adminEmitted, "our three mappable admin rows each emitted exactly one event").toBe(3);
+    expect(admin.filter((s) => s.exp === null).length, "and exactly one seeded row is unmappable").toBe(1);
+
+    // The source's own counters must still be internally consistent and must have walked at
+    // least our four rows — scale-independent, so pre-existing rows can't break it.
     const adSt = await state(SRC_ADMIN);
-    expect(num(adSt.rows_seen)).toBe(4);
-    expect(num(adSt.rows_emitted)).toBe(3);
-    expect(num(adSt.rows_skipped)).toBe(1);
+    expect(adSt.status).toBe("done");
+    expect(
+      num(adSt.rows_seen),
+      "every walked row is either emitted or skipped — no row falls through",
+    ).toBe(num(adSt.rows_emitted) + num(adSt.rows_skipped));
+    expect(num(adSt.rows_seen)).toBeGreaterThanOrEqual(admin.length);
+    expect(num(adSt.rows_emitted)).toBeGreaterThanOrEqual(adminEmitted);
 
     // hq_memory_events: created → asserted, superseded → superseded, other → skipped.
     for (const s of mem) {
@@ -511,10 +539,17 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
       beforeIds[s.id] = (ev as EventRow).id;
     }
 
+    // The drain walks the WHOLE table, so how many rows it saw depends on what else is in
+    // admin_activity_log (other suites, the e2e harness, a previous un-reset run). Capture
+    // the actual pre-reset total and assert the redrive against THAT — the invariant is
+    // "the same rows are re-walked and none re-emits", not any particular table size.
+    const seenBefore = num((await state(SRC_ADMIN)).rows_seen);
+    expect(seenBefore, "the earlier drain walked at least our four seeded rows").toBeGreaterThanOrEqual(admin.length);
+
     // Rewind to the sentinels: idle, counters zeroed, ceiling cleared, cursor reset.
     const r = await reset(SRC_ADMIN);
     expect(r.reset).toBe(true);
-    expect(num(r.previous_rows_seen)).toBe(4);
+    expect(num(r.previous_rows_seen)).toBe(seenBefore);
     const stReset = await state(SRC_ADMIN);
     expect(stReset.status).toBe("idle");
     expect(num(stReset.rows_seen)).toBe(0);
@@ -525,9 +560,11 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
     // ZERO new inserts — the append-only spine is never duplicated.
     await drainToDone(SRC_ADMIN);
     const stDone = await state(SRC_ADMIN);
-    expect(num(stDone.rows_seen)).toBe(4); // walked all four again…
-    expect(num(stDone.rows_emitted)).toBe(0); // …but emitted NOTHING new
-    expect(num(stDone.rows_skipped)).toBe(4); // three already-present + one unmapped
+    expect(num(stDone.rows_seen), "re-walked exactly the same rows").toBe(seenBefore);
+    expect(num(stDone.rows_emitted), "emitted NOTHING new — the append-only spine is never duplicated").toBe(0);
+    // Every single row it walked was skipped (already-present or unmapped) — the same
+    // "nothing re-emits" invariant as the 4-row form, expressed independently of scale.
+    expect(num(stDone.rows_skipped)).toBe(seenBefore);
 
     // The very same event rows still stand — identical ids, no duplicates.
     for (const s of mapped) {
