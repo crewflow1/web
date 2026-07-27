@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { SUPPLIER_PAYMENT_METHODS } from "@/lib/suppliers/payments";
+
+import { VAT_TREATMENTS } from "./deduction";
 import { CIS_OUTCOME_STATUSES, SUBCONTRACTOR_TYPES } from "./types";
 import {
   canonicaliseCompanyNumber,
@@ -104,3 +107,123 @@ export type CisVerificationInput = z.infer<typeof cisVerificationSchema>;
 export const cisReverificationSchema = z.object({
   reason: optionalText(500),
 });
+
+// ---------------------------------------------------------------------------
+// H2-CIS M3 — the deduction basis and the CIS payment
+// ---------------------------------------------------------------------------
+
+const MAX_MONEY = 10_000_000;
+
+/**
+ * The CIS details of one supplier bill: what part of it is materials, what the
+ * CITB levy took off, and how VAT is treated.
+ *
+ * `materials_amount` is ONE figure covering everything CIS340 §3.12 removes from
+ * the gross — materials the subcontractor paid for directly, consumable stores,
+ * fuel EXCEPT for travelling, plant hire, and manufacture/prefabrication. It is
+ * never derived: HMRC requires the ACTUAL amounts the subcontractor paid, which
+ * only the contractor holding their invoice knows.
+ *
+ * `citb_levy_amount` is separate rather than lumped in, because CISR15110 takes
+ * the levy off the reported "gross amount of payment" itself rather than treating
+ * it as a materials cost — and M4's monthly return needs that figure back.
+ */
+export const cisBillDetailsSchema = z
+  .object({
+    materials_amount: z.coerce
+      .number({ invalid_type_error: "Enter the materials figure, or 0." })
+      .min(0, "Materials can't be negative.")
+      .max(MAX_MONEY)
+      .default(0),
+    citb_levy_amount: z.coerce
+      .number({ invalid_type_error: "Enter the CITB levy, or 0." })
+      .min(0, "The CITB levy can't be negative.")
+      .max(MAX_MONEY)
+      .default(0),
+    vat_treatment: z.enum(VAT_TREATMENTS, {
+      errorMap: () => ({ message: "Choose how VAT is treated on this bill." }),
+    }),
+    /**
+     * Only meaningful under the reverse charge, and REQUIRED there: HMRC wants
+     * the invoice to state the VAT the customer must account for, or failing that
+     * the rate. Constrained to the same domain as `finances.vat_rate` so the two
+     * can never disagree about what a legal UK VAT rate is.
+     */
+    reverse_charge_vat_rate: z
+      .preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        z.coerce.number().optional(),
+      )
+      .refine((v) => v === undefined || v === 0 || v === 5 || v === 20, {
+        message: "The reverse-charge VAT rate must be 0, 5 or 20.",
+      }),
+    notes: optionalText(2000),
+  })
+  .refine(
+    (d) => d.vat_treatment !== "reverse_charge" || d.reverse_charge_vat_rate !== undefined,
+    {
+      path: ["reverse_charge_vat_rate"],
+      message: "Say which VAT rate the customer accounts for under the reverse charge.",
+    },
+  )
+  .refine((d) => d.vat_treatment === "reverse_charge" || d.reverse_charge_vat_rate === undefined, {
+    path: ["reverse_charge_vat_rate"],
+    message: "A reverse-charge rate only applies when the treatment is reverse charge.",
+  });
+
+export type CisBillDetailsInput = z.infer<typeof cisBillDetailsSchema>;
+
+/**
+ * Recording a CIS payment.
+ *
+ * NOTE WHAT IS **NOT** AN INPUT: the rate, the basis, the deduction, and the
+ * amount withheld. All four are derived server-side from the subcontractor's
+ * verification state and the bills, and the database independently recomputes
+ * and refuses anything that disagrees. A client cannot post `cis_rate = 20` and
+ * have it honoured.
+ *
+ * `expected_rate` is the one rate-shaped field, and it is an ASSERTION rather
+ * than an instruction: if the form was rendered at 20% and a re-verification has
+ * since moved the subcontractor to 30%, the write is REFUSED instead of quietly
+ * posting at a rate the operator never saw.
+ *
+ * `allocations` is mandatory and non-empty — a CIS deduction has no basis without
+ * a bill. On-account and non-CIS payments keep using `supplierPaymentSchema`.
+ */
+export const cisPaymentSchema = z.object({
+  paid_at: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the date the money left your account."),
+  method: z.enum(SUPPLIER_PAYMENT_METHODS, {
+    errorMap: () => ({ message: "Choose how the payment was made." }),
+  }),
+  reference: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(120).optional(),
+  ),
+  notes: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(2000).optional(),
+  ),
+  expected_rate: z.coerce
+    .number()
+    .min(0)
+    .max(100)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  allocations: z
+    .array(
+      z.object({
+        finance_id: z.string().uuid("Pick a bill to pay."),
+        amount: z.coerce
+          .number()
+          .positive("Each bill line needs an amount above zero.")
+          .max(MAX_MONEY),
+      }),
+    )
+    .min(1, "Choose at least one bill — a CIS deduction needs a bill to work from.")
+    .max(100),
+});
+
+export type CisPaymentInput = z.infer<typeof cisPaymentSchema>;

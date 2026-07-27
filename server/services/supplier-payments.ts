@@ -149,6 +149,59 @@ export async function getSupplierLedger(
 }
 
 // ---------------------------------------------------------------------------
+// H2-CIS M3 — the CIS figures frozen on an allocation
+// ---------------------------------------------------------------------------
+
+/**
+ * An allocation row including the CIS tax snapshot M3 froze onto it
+ * (20261051000000). Every `cis_*` field is NULL for a legacy M2 allocation posted
+ * before the deduction engine existed — which is NOT the same as a zero
+ * deduction, and callers must not conflate the two.
+ */
+export type CisAllocationRow = SupplierAllocationRow & {
+  cis_rate_applied: number | string | null;
+  cis_bill_net: number | string | null;
+  cis_bill_gross: number | string | null;
+  cis_bill_materials: number | string | null;
+  cis_bill_citb: number | string | null;
+  cis_basis: number | string | null;
+  cis_deduction: number | string | null;
+  cis_vat_treatment: "standard" | "reverse_charge" | null;
+  cis_reverse_charge_vat: number | string | null;
+};
+
+const CIS_ALLOCATION_COLUMNS =
+  "payment_id, finance_id, amount, cis_rate_applied, cis_bill_net, cis_bill_gross, " +
+  "cis_bill_materials, cis_bill_citb, cis_basis, cis_deduction, cis_vat_treatment, " +
+  "cis_reverse_charge_vat";
+
+/**
+ * Allocations with their CIS tax snapshot.
+ *
+ * Lives HERE rather than in server/services/cis-deduction.ts because this module
+ * owns `supplier_payment_allocations`: M2's security pin requires that only this
+ * service and its own actions name the ledger tables, so that every access shares
+ * one tenant-client discipline and one error translator.
+ *
+ * Fetched by PAYMENT ID rather than by supplier, so the result can never include
+ * a row belonging to a payment we did not read. Pass only LIVE payment ids when
+ * the caller needs prior settlement for the cumulative deduction maths — a voided
+ * payment settles nothing and deducts nothing.
+ */
+export async function getCisAllocations(
+  orgId: string,
+  paymentIds: string[],
+): Promise<CisAllocationRow[]> {
+  if (paymentIds.length === 0) return [];
+  const c = await client();
+  const res = await table(c, "supplier_payment_allocations")
+    .select<CisAllocationRow>(CIS_ALLOCATION_COLUMNS)
+    .eq("org_id", orgId)
+    .in("payment_id", paymentIds);
+  return res.data ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
 
