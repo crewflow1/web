@@ -8,6 +8,12 @@ import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { getCisProfile } from "@/server/services/cis";
 import { CIS_STATUS_LABELS } from "@/lib/cis/types";
 import { verificationFreshness } from "@/lib/cis/verification";
+import { getSupplierLedger } from "@/server/services/supplier-payments";
+import { formatGbp } from "@/lib/money";
+import {
+  BILL_SETTLEMENT_STATUS_CLASS,
+  BILL_SETTLEMENT_STATUS_LABEL,
+} from "@/lib/suppliers/payments";
 
 type SupplierRow = {
   id: string;
@@ -18,22 +24,14 @@ type SupplierRow = {
   notes: string | null;
 };
 
-type FinanceRow = {
-  id: string;
-  description: string | null;
-  amount: number | null;
-  vat_rate: number | null;
-  created_at: string;
-};
-
-const GBP = new Intl.NumberFormat("en-GB", {
-  style: "currency",
-  currency: "GBP",
-  minimumFractionDigits: 2,
-});
-
 const ERROR_MAP: Record<string, string> = {
-  delete_failed: "Couldn't delete the supplier.",
+  // A supplier you have PAID can no longer be deleted: supplier_payments holds a
+  // NO ACTION FK to it (20261047000000), because a cash/tax record must outlive
+  // the address-book entry it points at.
+  delete_failed:
+    "Couldn't delete the supplier. If you've recorded payments to them, the payment " +
+    "history has to keep pointing somewhere — void the payments' purpose in your notes " +
+    "rather than removing the supplier.",
   bad_id: "Invalid supplier id.",
 };
 
@@ -66,14 +64,15 @@ export default async function SupplierDetailPage({
 
   if (!supplier) notFound();
 
-  const { data: financeData } = await supabase
-    .from("finances")
-    .select("id, description, amount, vat_rate, created_at" as never)
-    .eq("supplier_id" as never, id)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  const finances = ((financeData ?? []) as unknown) as FinanceRow[];
+  // Bills + (for admins) the money-out ledger, in one composed read. This
+  // REPLACES a direct `finances` select that asked for a `description` column
+  // this schema has never had — PostgREST rejected it, so the section silently
+  // rendered "no expenses linked yet" for every supplier that had some.
+  //
+  // The ledger half is admin-only at the RLS layer: a non-admin gets the bills
+  // and an EMPTY payment set, which is why the money tiles below are gated on
+  // the role rather than on whether any payments came back.
+  const ledger = await getSupplierLedger(ctx.org.id, id);
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? null : null;
 
@@ -168,13 +167,51 @@ export default async function SupplierDetailPage({
         </section>
       ) : null}
 
+      {isAdmin ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <h2 className="text-sm font-semibold text-slate-900">Money out</h2>
+            <Link
+              href={`/suppliers/${id}/payments`}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Record payment
+            </Link>
+          </div>
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+            {[
+              { k: "Billed", v: formatGbp(ledger.position.billedGross), h: "inc VAT" },
+              { k: "Paid", v: formatGbp(ledger.position.grossPaid), h: "settled" },
+              { k: "Outstanding", v: formatGbp(ledger.position.outstanding), h: "still owed" },
+              {
+                k: "CIS withheld",
+                v: formatGbp(ledger.position.cisWithheld),
+                h: "held for HMRC",
+              },
+              { k: "Net cash paid", v: formatGbp(ledger.position.netCash), h: "left the bank" },
+              {
+                k: "Cost (ex VAT)",
+                v: formatGbp(ledger.position.billedNet),
+                h: "unchanged by CIS",
+              },
+            ].map((t) => (
+              <div key={t.k}>
+                <dt className="text-xs font-medium text-slate-500">{t.k}</dt>
+                <dd className="text-base font-semibold tabular-nums text-slate-900">{t.v}</dd>
+                <dd className="text-[11px] leading-tight text-slate-400">{t.h}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">
-          Linked expenses ({finances.length})
+          Bills ({ledger.bills.length})
         </h2>
-        {finances.length === 0 ? (
+        {ledger.bills.length === 0 ? (
           <p className="mt-2 text-sm text-slate-500">
-            No expenses linked yet. Approve a draft on{" "}
+            No bills linked yet. Approve a draft on{" "}
             <Link href="/expenses" className="font-medium text-slate-900 underline">
               Expenses
             </Link>{" "}
@@ -182,17 +219,26 @@ export default async function SupplierDetailPage({
           </p>
         ) : (
           <ul className="mt-2 divide-y divide-slate-100">
-            {finances.map((f) => (
-              <li
-                key={f.id}
-                className="flex items-center justify-between py-2 text-sm"
-              >
-                <span className="text-slate-700">{f.description ?? "Expense"}</span>
-                <span className="text-slate-500">
-                  {f.amount != null ? GBP.format(Number(f.amount)) : "—"}
-                </span>
-              </li>
-            ))}
+            {ledger.settlements.slice(0, 20).map((s) => {
+              const bill = ledger.bills.find((b) => b.id === s.billId);
+              return (
+                <li key={s.billId} className="flex items-center gap-2 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-slate-700">
+                    {bill?.reference?.trim() || bill?.category?.trim() || "Bill"}
+                  </span>
+                  {isAdmin ? (
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${BILL_SETTLEMENT_STATUS_CLASS[s.status]}`}
+                    >
+                      {BILL_SETTLEMENT_STATUS_LABEL[s.status]}
+                    </span>
+                  ) : null}
+                  <span className="shrink-0 tabular-nums text-slate-500">
+                    {formatGbp(s.gross)}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -205,7 +251,9 @@ export default async function SupplierDetailPage({
       >
         <p className="text-sm font-medium text-red-900">Delete this supplier</p>
         <p className="mt-1 text-xs text-red-700">
-          Linked expenses lose their supplier reference but otherwise stay put.
+          Linked expenses lose their supplier reference but otherwise stay put. A supplier you
+          have recorded payments to can&apos;t be deleted — the cash and CIS record has to keep
+          pointing at them.
         </p>
         <button
           type="submit"
