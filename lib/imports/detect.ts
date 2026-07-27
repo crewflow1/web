@@ -17,7 +17,9 @@
  *     confidence down (e.g. a VAT column that's mostly null).
  */
 
+import { matchColumns } from "./header-match";
 import type { Cell, ParsedSheet } from "./parsers";
+import { parseVatRate } from "./vat";
 
 export type EntityType =
   | "customer"
@@ -75,7 +77,20 @@ const INVOICE_FIELDS: Record<string, string[]> = {
   customer_name: ["customer name", "client name", "bill to", "customer", "client"],
   amount: ["net", "subtotal", "amount excl vat", "amount net", "amount"],
   vat_total: ["vat amount", "vat total", "tax amount", "tax", "vat"],
-  total: ["total", "amount inc vat", "gross", "grand total"],
+  // "total due" / "amount due" / "balance due" are listed explicitly so the
+  // gross figure is claimed EXACTLY, in the first pass, before `due_date` (or
+  // anything else) can look at the column. The header matcher's class rules
+  // already refuse `Total Due` as a date; naming it here means the money column
+  // is also matched with full confidence rather than as a loose fallback.
+  total: [
+    "total",
+    "amount inc vat",
+    "gross",
+    "grand total",
+    "total due",
+    "amount due",
+    "balance due",
+  ],
   due_date: ["due date", "due", "payment due"],
   paid_at: ["paid date", "paid at", "date paid", "paid"],
   status: ["status", "paid?", "payment status"],
@@ -108,6 +123,14 @@ const STAFF_FIELDS: Record<string, string[]> = {
 
 const COST_FIELDS: Record<string, string[]> = {
   amount: ["amount excl vat", "amount net", "net", "amount", "value"],
+  // A stated rate and a VAT amount are both recognised, and the rate wins on
+  // commit: `finances.vat_rate` is the writable input (`vat_total` is a stored
+  // generated column), so a rate the file already states needs no arithmetic.
+  // Declared before `vat_total` so a "VAT Rate" column is claimed as a rate
+  // before the amount field can look at it — though the header matcher's class
+  // rules refuse it as money regardless. A bare "VAT" header still reads as the
+  // amount, which is the spreadsheet convention.
+  vat_rate: ["vat rate", "vat %", "vat percent", "vat percentage", "tax rate", "tax %"],
   vat_total: ["vat amount", "vat total", "vat", "tax"],
   category: ["category", "type", "expense type"],
   notes: ["description", "notes", "note", "memo", "details"],
@@ -210,44 +233,20 @@ const REQUIRED_FIELDS: Record<EntityType, string[]> = {
 // Column mapping
 // ---------------------------------------------------------------------------
 
-function findColumn(
-  headers: string[],
-  aliases: string[],
-): { idx: number; header: string; score: number } | null {
-  const lowered = headers.map((h) => h.toLowerCase().trim());
-  for (const a of aliases) {
-    const exact = lowered.indexOf(a);
-    if (exact >= 0) return { idx: exact, header: headers[exact]!, score: 100 };
-  }
-  // Substring match — lower confidence.
-  for (const a of aliases) {
-    for (let i = 0; i < lowered.length; i++) {
-      if (lowered[i]!.includes(a)) {
-        return { idx: i, header: headers[i]!, score: 70 };
-      }
-    }
-  }
-  return null;
-}
-
+/**
+ * Map a sheet's headers onto this entity's canonical fields.
+ *
+ * The matching itself lives in lib/imports/header-match.ts — see that module
+ * for why it is whole-token, class-aware and globally deduplicated rather than
+ * the per-field "first header containing this alias" it replaced (which read
+ * `VAT Reg No` as a VAT amount, `Total Due` as a due date, and `Subtotal` as
+ * the invoice total).
+ */
 function mapColumns(
   headers: string[],
   fields: Record<string, string[]>,
 ): { map: ColumnMap; perField: Record<string, number>; idxMap: Record<string, number> } {
-  const map: ColumnMap = {};
-  const perField: Record<string, number> = {};
-  const idxMap: Record<string, number> = {};
-  for (const [canonical, aliases] of Object.entries(fields)) {
-    const found = findColumn(headers, aliases);
-    if (found) {
-      map[canonical] = found.header;
-      perField[canonical] = found.score;
-      idxMap[canonical] = found.idx;
-    } else {
-      perField[canonical] = 0;
-    }
-  }
-  return { map, perField, idxMap };
+  return matchColumns(headers, fields);
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +486,19 @@ function normaliseValue(
 ): unknown {
   if (raw === null) return null;
 
+  // A VAT rate is a percentage, not money — parseMoney would read a
+  // percent-formatted cell (SheetJS hands "20%" over as 0.2) as twenty pence.
+  // parseVatRate owns that conversion so `mapped.vat_rate` is always in percent
+  // units. An unusable rate cell is dropped with a warning rather than guessed
+  // at; the commit path then resolves the rate from the VAT amount instead.
+  if (field === "vat_rate") {
+    const n = parseVatRate(raw);
+    if (n === null) {
+      warnings.push(`bad VAT rate: ${String(raw)}`);
+      return null;
+    }
+    return n;
+  }
   if (
     field === "amount" ||
     field === "total" ||
