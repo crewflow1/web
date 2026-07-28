@@ -2,19 +2,22 @@ import Link from "next/link";
 import { createJob } from "../actions";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { JobForm } from "../_form";
+import { requireOrgContext } from "@/server/auth/session";
 
 /**
  * Create-job page.
  *
- * Both dropdown sources are fetched under user JWT; RLS filters to the
- * caller's org. If there are no customers yet, the form helper text
- * links out to /customers/new. Form-level + per-field errors render
- * inline via useActionState.
+ * Both dropdown sources are scoped to the ACTIVE org. RLS alone is not enough:
+ * `current_org_ids()` spans every org a multi-org user belongs to, so relying
+ * on it blended other orgs' customers and staff into these dropdowns. If there
+ * are no customers yet, the form helper text links out to /customers/new.
+ * Form-level + per-field errors render inline via useActionState.
  */
 export default async function NewJobPage() {
+  const { ctx } = await requireOrgContext();
   const [customers, staff] = await Promise.all([
-    listCustomersForOrg(),
-    listStaffForOrg(),
+    listCustomersForOrg(ctx.org.id),
+    listStaffForOrg(ctx.org.id),
   ]);
 
   return (

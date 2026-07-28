@@ -88,7 +88,7 @@ export async function updateJob(
   _prevState: FormState<JobValues>,
   formData: FormData,
 ): Promise<FormState<JobValues>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const result = validateFormData(formData, jobFormSchema);
   if (!result.ok) return result.state as FormState<JobValues>;
 
@@ -116,7 +116,12 @@ export async function updateJob(
       },
       { count: "exact" },
     )
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope. RLS (`is_org_admin(org_id)`) only proves the caller is
+    // an admin of the job's OWN org — for a user who owns two orgs that passes
+    // for BOTH, so without this predicate a write issued while working in org A
+    // could land on an org B job. See lib/jobs/load.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[jobs] update failed", error);
@@ -135,12 +140,15 @@ export async function updateJob(
 }
 
 export async function deleteJob(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("jobs")
     .delete({ count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see the note in updateJob. A delete is irreversible,
+    // so this is the single most important predicate in this file.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[jobs] delete failed", error);

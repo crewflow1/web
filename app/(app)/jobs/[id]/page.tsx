@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
 import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { PhotoGallery } from "./_photo-gallery";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
@@ -32,6 +33,36 @@ import { computeCommittedCosts, hasCommittedCosts } from "@/lib/purchase-orders/
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 import { formatDayKeyUK } from "@/lib/time/format";
 import { MapActions } from "@/components/maps/MapActions";
+
+type JobCustomer = {
+  id: string;
+  name: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  county: string | null;
+  postcode: string | null;
+  country: string | null;
+};
+
+type JobDetail = {
+  id: string;
+  status: string;
+  scheduled_date: string | null;
+  notes: string | null;
+  customer_id: string | null;
+  assigned_to: string | null;
+  recurring: unknown;
+  site_address_line1: string | null;
+  site_address_line2: string | null;
+  site_city: string | null;
+  site_county: string | null;
+  site_postcode: string | null;
+  site_country: string | null;
+  // PostgREST returns a to-one embed as a single object; the page also guards
+  // defensively with Array.isArray, which this type still permits.
+  customer: JobCustomer | null;
+};
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -66,23 +97,25 @@ export default async function EditJobPage({
   // this render agrees on what "overdue" means.
   const todayIso = formatDayKeyUK(new Date());
   const supabase = await createClient();
-  const { data: job } = await supabase
-    .from("jobs")
-    .select(
-      `
+  // Scoped to the ACTIVE org, not merely to RLS: `current_org_ids()` spans
+  // every org the viewer belongs to, so `.eq("id", id)` alone would render a
+  // multi-org user's OTHER org's job inside this org's shell. See lib/jobs/load.
+  const job = await loadJobForOrg<JobDetail>(
+    supabase,
+    id,
+    ctx.org.id,
+    `
         id, status, scheduled_date, notes, customer_id, assigned_to, recurring,
         site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
         customer:customers ( id, name, address_line1, address_line2, city, county, postcode, country )
       `,
-    )
-    .eq("id", id)
-    .maybeSingle();
+  );
 
   if (!job) notFound();
 
   const [customers, staff, invoicesForJob, financesForJob, variationsForJob, baseQuotesForJob] = await Promise.all([
-    listCustomersForOrg(),
-    listStaffForOrg(),
+    listCustomersForOrg(ctx.org.id),
+    listStaffForOrg(ctx.org.id),
     supabase
       .from("invoices")
       .select(

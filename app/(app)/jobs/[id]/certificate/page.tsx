@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { CertificateForm } from "./_form";
 import { issueCertificate, publishCertificate, withdrawCertificate } from "./actions";
@@ -52,9 +53,12 @@ export default async function JobCertificatePage({
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
 
-  const { data: job } = await supabase.from("jobs").select("id, status, customer_id").eq("id", id).maybeSingle();
-  if (!job) notFound();
-  const jobRow = job as { id: string; status: string; customer_id: string | null };
+  const jobRow = await loadJobForOrg<{
+    id: string;
+    status: string;
+    customer_id: string | null;
+  }>(supabase, id, ctx.org.id, "id, status, customer_id");
+  if (!jobRow) notFound();
 
   const { data: cert } = await (
     supabase.from("completion_certificates" as never) as unknown as {

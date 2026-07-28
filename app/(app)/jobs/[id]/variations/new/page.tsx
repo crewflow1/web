@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { createVariation } from "@/app/(app)/quotes/actions";
 import { VariationForm } from "./_form";
 
@@ -24,14 +25,13 @@ export default async function NewVariationPage({
 }) {
   const { id } = await params;
   const { error } = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, customer:customers ( id, name )")
-    .eq("id", id)
-    .maybeSingle();
+  const job = await loadJobForOrg<{
+    id: string;
+    customer: { id: string; name: string } | null;
+  }>(supabase, id, ctx.org.id, "id, customer:customers ( id, name )");
   if (!job) notFound();
 
   const errorMessage = error

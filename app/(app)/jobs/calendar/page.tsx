@@ -81,7 +81,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
           return { from: weekStart, to: isoFromUtc(addDays(new Date(`${weekStart}T00:00:00Z`), 6)) };
         })();
 
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const supabase = await createClient();
   let q = supabase
     .from("jobs")

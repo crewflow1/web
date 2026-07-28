@@ -33,7 +33,7 @@ const back = (jobId: string, params: string): never => {
 const rateSchema = z.coerce.number().min(0, "Rate can't be negative").max(100, "Rate can't exceed 100%");
 
 export async function setJobRetentionRate(jobId: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const parsed = rateSchema.safeParse(formData.get("retention_percent"));
@@ -49,8 +49,10 @@ export async function setJobRetentionRate(jobId: string, formData: FormData) {
     supabase.from("jobs" as never) as unknown as {
       update: (row: unknown) => {
         eq: (k: string, v: unknown) => {
-          select: (c: string) => {
-            maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
+          eq: (k: string, v: unknown) => {
+            select: (c: string) => {
+              maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
+            };
           };
         };
       };
@@ -58,6 +60,10 @@ export async function setJobRetentionRate(jobId: string, formData: FormData) {
   )
     .update({ retention_percent: rate })
     .eq("id", jobId)
+    // Active-org scope — RLS's is_org_admin() passes for every org the caller
+    // administers, so this predicate is what pins the write to the org the
+    // user is actually working in. See lib/jobs/load.
+    .eq("org_id", ctx.org.id)
     .select("id")
     .maybeSingle();
 
@@ -93,7 +99,7 @@ const releaseSchema = z.object({
 });
 
 export async function recordRetentionRelease(jobId: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const parsed = releaseSchema.safeParse({
@@ -108,23 +114,28 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
 
   const supabase = await createClient();
 
-  // Resolve the job (org check + current retention rate) and the current
+  // Resolve the job (ACTIVE-org check + current retention rate) and the current
   // position, so we can refuse an over-release with a clear message up front.
-  // retention_percent / retention_releases / invoices.job_id are not yet in the
-  // generated types — cast the readers.
+  // The org predicate is load-bearing: this row's org_id was previously used as
+  // the insert target below, so an unscoped read let a release be written into
+  // ANOTHER org's ledger. retention_percent / retention_releases /
+  // invoices.job_id are not yet in the generated types — cast the readers.
   const { data: job } = await (
     supabase.from("jobs" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{
-            data: { id: string; org_id: string; retention_percent: number | string | null } | null;
-          }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { id: string; org_id: string; retention_percent: number | string | null } | null;
+            }>;
+          };
         };
       };
     }
   )
     .select("id, org_id, retention_percent")
     .eq("id", jobId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!job) redirect("/jobs?error=job_not_found");
 
@@ -175,7 +186,9 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
     }
   )
     .insert({
-      org_id: job.org_id,
+      // Identical to job.org_id now that the read above is org-scoped; written
+      // from ctx so the active org is the explicit source of truth.
+      org_id: ctx.org.id,
       job_id: jobId,
       amount: input.amount,
       released_on: input.released_on ?? undefined,
@@ -233,7 +246,7 @@ const scheduleSchema = z.object({
 });
 
 export async function setRetentionSchedule(jobId: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const parsed = scheduleSchema.safeParse({
@@ -255,8 +268,10 @@ export async function setRetentionSchedule(jobId: string, formData: FormData) {
     supabase.from("jobs" as never) as unknown as {
       update: (row: unknown) => {
         eq: (k: string, v: unknown) => {
-          select: (c: string) => {
-            maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
+          eq: (k: string, v: unknown) => {
+            select: (c: string) => {
+              maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
+            };
           };
         };
       };
@@ -268,6 +283,8 @@ export async function setRetentionSchedule(jobId: string, formData: FormData) {
       retention_first_release_pct: values.retention_first_release_pct,
     })
     .eq("id", jobId)
+    // Active-org scope — see setJobRetentionRate.
+    .eq("org_id", ctx.org.id)
     .select("id")
     .maybeSingle();
 

@@ -195,7 +195,7 @@ export default async function AssetDetailPage({
     .eq("status", "open")
     .maybeSingle();
 
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const { data: jobsRaw } = await supabase
     .from("jobs")
     .select("id, scheduled_date, customer:customers ( name )")
