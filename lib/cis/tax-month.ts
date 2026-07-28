@@ -30,6 +30,21 @@ export const CIS_TAX_MONTH_START_DAY = 6;
 export const CIS_RETURN_DUE_DAY = 19;
 
 /**
+ * Deadline for giving a subcontractor their payment and deduction statement.
+ *
+ * CISR12160, verified 28 July 2026: "The PDS must be issued to the subcontractor
+ * within 14 days after the end of the tax month to which it relates." GOV.UK's
+ * contractor guidance says the same: "you must give the subcontractor a payment
+ * and deduction statement within 14 days of the end of each tax month."
+ *
+ * Because a CIS tax month always ends on the 5th, +14 days always lands on the
+ * 19th — the SAME DAY as the monthly return deadline. That coincidence is not
+ * relied on anywhere: the two are derived from their own rules, so if HMRC ever
+ * moves one, the other does not silently move with it.
+ */
+export const CIS_STATEMENT_DUE_DAYS = 14;
+
+/**
  * Deadline for paying deductions over to HMRC: the 22nd electronically, or the
  * 19th by post. GOV.UK, "Pay deductions to HMRC": "Pay HMRC every month by the
  * 22nd (or the 19th if you're paying by post)."
@@ -104,6 +119,22 @@ export function cisReturnDueDate(iso: string): string | null {
   const p = toUtcParts(end);
   if (!p) return null;
   return fmt(new Date(Date.UTC(p.y, p.m - 1, CIS_RETURN_DUE_DAY)));
+}
+
+/**
+ * Deadline for giving the subcontractor their payment and deduction statement
+ * for the tax month containing `iso`: 14 days after the tax month END.
+ *
+ * SQL twin: `public.cis_statement_due_date(date)` (20261055000000), which is
+ * also the generated column `cis_statements.statement_due_on` — so the deadline
+ * printed on a statement is a fact about the period, not something typed in.
+ */
+export function cisStatementDueDate(iso: string): string | null {
+  const end = cisTaxMonthEnd(iso);
+  if (!end) return null;
+  const p = toUtcParts(end);
+  if (!p) return null;
+  return fmt(new Date(Date.UTC(p.y, p.m - 1, p.d + CIS_STATEMENT_DUE_DAYS)));
 }
 
 /** Deadline for paying the deductions over to HMRC. */
