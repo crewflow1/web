@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   let body: { to?: string; message?: string } = {};
@@ -29,9 +29,25 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   const supabase = await createClient();
+
+  // ACTIVE-ORG GATE — refuse BEFORE anything is rendered or sent. See the
+  // equivalent note in app/api/invoices/[id]/send/route.ts. Sending is the
+  // worst case of the active-org defect: it leaves the product. For a quote it
+  // also mints a `public_token` — a live approve/reject credential for another
+  // org's commercial document.
+  const { data: q } = await supabase
+    .from("quotes")
+    .select("id, org_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!q || q.org_id !== ctx.org.id) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
   const result = await sendQuoteEmail(supabase, id, {
     to: body.to,
     message: body.message,
+    orgId: ctx.org.id,
   });
 
   if (!result.sent) {

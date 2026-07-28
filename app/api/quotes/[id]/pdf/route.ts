@@ -20,10 +20,14 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();
 
+  // Pin the quote to the ACTIVE org — see the equivalent note in
+  // app/api/invoices/[id]/pdf/route.ts. This PDF includes the bank-details
+  // block, so an unscoped by-id read hands another org's payment instructions
+  // to whoever opens the URL from the wrong shell.
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
     .select(
@@ -35,6 +39,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       `,
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (qErr) {

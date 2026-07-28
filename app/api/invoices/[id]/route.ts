@@ -21,7 +21,7 @@ type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   let body: unknown;
@@ -58,6 +58,12 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     .from("invoices")
     .update(patch, { count: "exact" })
     .eq("id", id)
+    // Active-org scope. RLS proves membership of the invoice's OWN org, which
+    // for a dual-org user passes for BOTH — so without this predicate a PATCH
+    // issued while working in org A can mark org B's invoice paid, or move it
+    // onto a job it has nothing to do with. Zero rows matched falls through to
+    // the existing 404, so a foreign id looks exactly like a missing one.
+    .eq("org_id", ctx.org.id)
     .select("id");
 
   if (error) {
@@ -71,14 +77,17 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("invoices")
     .delete({ count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see PATCH. A delete is irreversible and this one
+    // destroys a billing record, so it is the most important predicate here.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[invoices] delete failed", error);

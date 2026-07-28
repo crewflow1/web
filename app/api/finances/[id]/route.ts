@@ -22,7 +22,7 @@ type FinanceUpdate = Database["public"]["Tables"]["finances"]["Update"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   let body: unknown;
@@ -55,6 +55,14 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     .from("finances")
     .update(patch, { count: "exact" })
     .eq("id", id)
+    // Active-org scope. RLS admits every org the caller belongs to, so a
+    // dual-org user working in org A could otherwise restate the amount or
+    // VAT rate on org B's bill — corrupting B's books and, under CIS, B's
+    // deduction basis. The predicate matches ZERO rows for a foreign id, so
+    // no DB guard fires and the request falls through to the 404 below; the
+    // 409 refusal paths (financeWriteRefusal) are reached only by a genuine
+    // in-org row, exactly as before.
+    .eq("org_id", ctx.org.id)
     .select("id");
 
   if (error) {
@@ -75,21 +83,28 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   const supabase = await createClient();
   // Look up receipt path BEFORE deletion so we can clean storage too.
+  // Active-org scoped: the count from the DELETE below is the gate for the
+  // storage removal, and this read must agree with it — otherwise a foreign
+  // id could yield another org's receipt path here while the delete no-ops.
   const { data: row } = await supabase
     .from("finances")
     .select("receipt_url")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   const { error, count } = await supabase
     .from("finances")
     .delete({ count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see PATCH. Deleting another org's expense removes a
+    // line from their books and their VAT position.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[finances] delete failed", error);
