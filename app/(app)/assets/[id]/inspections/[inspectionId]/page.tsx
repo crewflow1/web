@@ -60,14 +60,21 @@ export default async function InspectionRunPage({
 }) {
   const { id: assetId, inspectionId } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
+  // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so
+  // id + asset_id alone would render another org's inspection (an immutable
+  // safety record) inside this org's shell.
   const { data: insp } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Row | null }> };
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: Row | null }>;
+            };
+          };
         };
       };
     }
@@ -77,6 +84,7 @@ export default async function InspectionRunPage({
     )
     .eq("id", inspectionId)
     .eq("asset_id", assetId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!insp || !insp.template_snapshot) notFound();
 

@@ -129,10 +129,23 @@ export default async function AssetDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
+  // Pinned to the ACTIVE org, not just to RLS: `current_org_ids()` returns
+  // every membership, so a by-id read alone renders another org's asset inside
+  // this org's shell — and this page is where the custody/QR/maintenance
+  // actions live. A non-active-org asset must be indistinguishable from a
+  // missing one.
   const { data: asset } = await (
     supabase.from("assets" as never) as unknown as {
       select: (cols: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: AssetRow | null }> };
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          eq: (
+            k: string,
+            v: unknown,
+          ) => { maybeSingle: () => Promise<{ data: AssetRow | null }> };
+        };
       };
     }
   )
@@ -140,6 +153,7 @@ export default async function AssetDetailPage({
       "id, name, category, asset_ref, manufacturer, model, serial_number, registration, ownership, status, supplier_id, purchase_date, purchase_price, current_value, warranty_expires_at, hire_start, hire_end, hire_rate, notes, created_at, updated_at",
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!asset) notFound();
@@ -150,17 +164,23 @@ export default async function AssetDetailPage({
 
   let supplierName: string | null = null;
   if (asset.supplier_id) {
+    // Org-pinned like every supplier read (#463): `assets.supplier_id` is a
+    // plain FK with no composite org binding, so without the pin a foreign
+    // org's supplier name could render here for a dual-org member.
     const { data: s } = await (
       supabase.from("suppliers" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { name: string | null } | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: { name: string | null } | null }>;
+            };
           };
         };
       }
     )
       .select("name")
       .eq("id", asset.supplier_id)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     supplierName = s?.name ?? null;
   }

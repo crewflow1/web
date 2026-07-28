@@ -83,32 +83,43 @@ export default async function TemplateEditorPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
+  // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so a
+  // by-id read alone renders another org's template here, and the editor
+  // actions on this page then write against it.
   const { data: t } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Row | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Row | null }> };
+        };
       };
     }
   )
     .select("id, family_id, version, name, description, categories, check_level, status, definition, published_at, created_at")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!t) notFound();
 
+  // The version list walks family_id, which is NOT a primary key — without the
+  // org predicate a shared/colliding family would blend versions across orgs.
   const { data: versionsRaw } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: VersionRow[] | null }>;
+          eq: (k: string, v: unknown) => {
+            order: (c: string, o: { ascending: boolean }) => Promise<{ data: VersionRow[] | null }>;
+          };
         };
       };
     }
   )
     .select("id, version, status, published_at")
     .eq("family_id", t.family_id)
+    .eq("org_id", ctx.org.id)
     .order("version", { ascending: false });
   const versions = versionsRaw ?? [];
 
