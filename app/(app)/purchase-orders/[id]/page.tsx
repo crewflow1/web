@@ -126,7 +126,7 @@ export default async function PurchaseOrderDetailPage({
   );
 
   const { suppliers, jobs: jobOptions } = editable
-    ? await listPoFormOptions(supabase)
+    ? await listPoFormOptions(supabase, ctx.org.id)
     : { suppliers: [] as Array<{ id: string; name: string }>, jobs: [] as Array<{ id: string; name: string }> };
 
   return (
