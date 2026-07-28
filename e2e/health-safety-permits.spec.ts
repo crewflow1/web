@@ -3,6 +3,7 @@
    seed goes through a loose cast. */
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Permit-to-Work (H&S M2) — authenticated journey, no mocks. Uses the seeded
@@ -24,7 +25,7 @@ const SLUG = "e2e-harness-org";
 const REF = `PTW-E2E-${Date.now()}`;
 
 function svc() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(assertLocalE2eTarget("health-safety-permits.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

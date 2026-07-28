@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Authenticated-E2E harness (task #25) — CI-SAFE, zero production-reachable code.
@@ -54,6 +55,14 @@ function authCookiePrefix(url: string): string {
 }
 
 export default async function globalSetup(): Promise<void> {
+  /**
+   * FIRST statement of the E2E tier. Playwright runs globalSetup before it
+   * loads a single spec and aborts the whole run if it throws, so refusing here
+   * stops every destructive spec in the process — and it happens before this
+   * file's own service-role createClient below, not after the first upsert.
+   */
+  assertLocalE2eTarget("global setup (e2e/global-setup.ts)");
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;

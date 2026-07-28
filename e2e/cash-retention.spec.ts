@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- service-role seed cast. */
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * H2-CASH M3 — Journey D: the retention regression (the headline P3 fix).
@@ -16,7 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SLUG = "e2e-harness-org";
 function svc() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(assertLocalE2eTarget("cash-retention.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Health & Safety accessibility + mobile regression (M6c). Runs axe-core (WCAG 2.0/2.1/2.2
@@ -14,7 +15,7 @@ const SLUG = "e2e-harness-org";
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
 function svc() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(assertLocalE2eTarget("health-safety-a11y.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

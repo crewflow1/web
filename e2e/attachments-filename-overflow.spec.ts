@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Attachments panel — long-filename mobile overflow regression.
@@ -30,7 +31,7 @@ const JOB = "00000000-0000-0000-0000-000000000000"; // the sentinel id the harne
 const FILENAME = "a-very-long-unbroken-site-photo-filename-from-a-phone-camera.jpg";
 
 function svc() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(assertLocalE2eTarget("attachments-filename-overflow.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

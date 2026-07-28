@@ -135,7 +135,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
       label: "End-to-end lifecycle test",
       status: fileExists("scripts/e2e-lifecycle.sql") ? "green" : "amber",
       summary: fileExists("scripts/e2e-lifecycle.sql")
-        ? "scripts/e2e-lifecycle.sql ready — run via `supabase db query --linked --file scripts/e2e-lifecycle.sql`"
+        ? "scripts/e2e-lifecycle.sql ready — run against a LOCAL stack: `psql \"$DB_URL\" -f scripts/e2e-lifecycle.sql` (never `--linked`, that is production)"
         : "Lifecycle script MISSING",
     },
     {

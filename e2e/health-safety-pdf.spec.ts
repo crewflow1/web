@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- service-role seed cast. */
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * H&S evidence PDF (M4) — authenticated download, real bytes. Seeds an ISSUED RAMS,
@@ -10,7 +11,7 @@ import { createClient } from "@supabase/supabase-js";
  */
 const SLUG = "e2e-harness-org";
 function svc() {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createClient(assertLocalE2eTarget("health-safety-pdf.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
 test.describe("health & safety PDF — authenticated evidence download", () => {

@@ -93,11 +93,12 @@ export default async function LaunchChecklistPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-700 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Next checks</h2>
         <p className="mt-2 text-xs">
-          Re-run the end-to-end lifecycle script before the next launch
-          window:
+          Re-run the end-to-end lifecycle script before the next launch window,
+          against a LOCAL stack — it creates and deletes real business rows, and{" "}
+          <code className="font-mono">--linked</code> means production:
         </p>
         <pre className="mt-2 overflow-x-auto rounded-md bg-slate-900 p-3 font-mono text-[11px] text-slate-100">
-          {`supabase db query --linked --file scripts/e2e-lifecycle.sql`}
+          {`supabase start\nsupabase status   # copy DB_URL (127.0.0.1:54322)\npsql "<DB_URL>" -v ON_ERROR_STOP=1 -f scripts/e2e-lifecycle.sql`}
         </pre>
         <p className="mt-3 text-xs">
           See{" "}
