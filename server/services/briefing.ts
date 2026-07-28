@@ -6,6 +6,7 @@ import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
 import { loadScheduleConflicts } from "./schedule-integrity";
+import { buildFleetComplianceRollup } from "./fleet-snapshot";
 import { rollupKind } from "@/lib/schedule/conflicts";
 import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
@@ -102,6 +103,7 @@ export async function buildDailyBriefing(
       leadRows,
       hs,
       scheduleConflictRows,
+      fleetRollup,
       dismissRes,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
@@ -120,6 +122,10 @@ export async function buildDailyBriefing(
       // (a fortnight window, org-pinned, best-effort), so it joins the existing
       // parallel batch rather than adding a serial hop.
       loadScheduleConflicts(orgId, now),
+      // TRAIN C — deterministic vehicle compliance (MOT / insurance / road tax /
+      // service). Org-pinned and best-effort like the rest of this batch, so a
+      // fleet-less org contributes nothing and a failed read emits no lines.
+      buildFleetComplianceRollup(orgId, todayIso),
       db.from("briefing_dismissals").select("item_key").eq("user_id", userId).eq("dismissed_on", todayIso),
     ]);
 
@@ -233,6 +239,7 @@ export async function buildDailyBriefing(
         // so the two operations lines are disjoint and never double-count a job.
         unassignedLater: rollupKind(scheduleConflictRows, "job_unassigned", { fromDaysAway: 2 }),
       },
+      fleetCompliance: fleetRollup,
       dismissedKeys,
     };
 

@@ -20,13 +20,41 @@ export const MAINTENANCE_TYPES = [
 ] as const;
 export type MaintenanceType = (typeof MAINTENANCE_TYPES)[number];
 
-export const MAINTENANCE_TYPE_LABELS: Record<MaintenanceType, string> = {
+/**
+ * FLEET (20261057000000): vehicle compliance obligations that a service
+ * schedule can generate a case for. They are a SUPERSET extension, not a
+ * replacement — `MAINTENANCE_TYPES` above stays exactly as it was because it
+ * drives the generic asset UI's "raise a case" dropdown, and offering "MOT" as
+ * a manual case type on a generator or a scaffold tower would be nonsense.
+ * These three are raised by the fleet compliance flow instead.
+ *
+ * Both DB CHECKs accept the union (20261057000000 widened the schedule type AND
+ * the case type together, because asset-maintenance-generator.ts passes one
+ * straight into the other).
+ */
+export const COMPLIANCE_MAINTENANCE_TYPES = ["mot", "insurance", "road_tax"] as const;
+export type ComplianceMaintenanceType = (typeof COMPLIANCE_MAINTENANCE_TYPES)[number];
+
+/** Everything a service schedule may carry, and everything a case may be. */
+export const SCHEDULABLE_MAINTENANCE_TYPES = [
+  ...MAINTENANCE_TYPES,
+  ...COMPLIANCE_MAINTENANCE_TYPES,
+] as const;
+export type SchedulableMaintenanceType = MaintenanceType | ComplianceMaintenanceType;
+
+// Keyed on the SUPERSET so every schedulable type has a label. MaintenanceType
+// is a subset of SchedulableMaintenanceType, so every existing lookup still
+// type-checks unchanged.
+export const MAINTENANCE_TYPE_LABELS: Record<SchedulableMaintenanceType, string> = {
   breakdown: "Breakdown",
   corrective: "Corrective repair",
   preventive: "Preventive maintenance",
   service: "Scheduled service",
   calibration: "Calibration",
   warranty: "Warranty repair",
+  mot: "MOT",
+  insurance: "Insurance renewal",
+  road_tax: "Road tax",
 };
 
 export const MAINTENANCE_PRIORITIES = ["low", "medium", "high"] as const;
