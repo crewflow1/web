@@ -4,8 +4,8 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-27 (Continuation 8 — loose trains all shipped)
-**Production `main`:** `9e8a723`
+**Last reconciled:** 2026-07-28 (Continuation 8 — safety lanes shipped; CIS M4 building)
+**Production `main`:** `9c6fc5d`
 **Production migration tip:** `20261054`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
@@ -32,6 +32,8 @@
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **13** | 2026-07-28 | — | **Active-org integrity, jobs domain** (#456): app code read rows by PK alone, so a dual-org user active in Org A could read AND write Org B rows inside A's shell (`current_org_ids()` correctly returns all memberships — RLS is the outer boundary, not scoping). Fixed jobs-domain writes/reads end-to-end incl. `recordRetentionRelease` writing into **another org's retention ledger** and certificates freezing another org's address under the wrong letterhead; `loadJobForOrg()` seam; form-helpers chokepoint (11 call sites, 5 domains); site-report PDF letterhead. Red→green with a genuine dual-org user; RLS proven untouched. **Remainder is large and enumerated** (~90 unscoped writes, ~60 reads app-wide) — see "Active-org remainder" below | `db6ceb8` → `9c6fc5d`, verified |
+| **12** | 2026-07-28 | — | **Destructive-test production-target guard** (#455): fail-closed allowlist guard (`lib/testing/destructive-db-guard.ts`, pure, no env reads) wired into every destructive entry point — integration harness chokepoint (all 152 files proven to route through it), e2e global-setup + 12 specs' `svc()`, `memory-bench`, and an **in-SQL guard** in `e2e-lifecycle.sql` keyed on the CLI's fixed local-dev JWT secret (`inet_server_addr()` and `rolsuper` proven false friends). **NO override escape hatch** by design. Also fixed a live product footgun: `/admin/launch-checklist` rendered a copy-pasteable `--linked` (production) destructive command. Live negative proof: non-local target → all 154 files refuse, zero credential leakage | `9e8a723` → `db6ceb8`, verified |
 | **11** | 2026-07-27 | `20261053`, `20261054` | **Payables financial guards** (#452): CIS deduction basis frozen once a bill is part-paid — including the non-obvious fourth door, **INSERT of `cis_bill_details` after part-payment** (a bill legitimately part-paid with no details row freezes at materials = 0, so creating the row later moves the basis). Bill reductions floored at the settled total, without trapping legacy over-settled rows. **21/21 real two-session psql race proof**, zero deadlocks. Also enforces the previously-accidental trigger firing order that protects the CIS snapshot from a stale bill — the test identifies triggers by what their functions *do*, so a rename fails it | `db30989` → `9e8a723`, verified |
 | **10** | 2026-07-27 | — | **Import correctness** (#451): the header matcher used substring matching with no token boundaries, so `total` bound to **"Subtotal"** (100, not 120) and `due_date` bound to **"Total Due"** — turning the amount `120` into the date **`"0120-01-01"`**. Replaced with whole-token matching + semantic field classes evaluated on *residual* tokens. Also: generated columns (`vat_total`, `total`) no longer written; malformed source dates become row errors instead of silently becoming "today" (wrong VAT quarter); explicit `vat_rate: 0` instead of inheriting the `20` default | `935f7fe` → `db30989`, verified |
 | **9** | 2026-07-27 | `20261052` | **Org-teardown P1** (#448): deleting an organization failed — cascade DELETE fired `_record_activity`, which INSERTed into `activity_log` referencing the org being deleted (`activity_log_org_id_fkey` violation). Guard skips the write when the org no longer exists. Blast radius **proven** exhaustive (recursive `pg_proc` closure → 14 functions ∩ `pg_trigger` DELETE-firing on cascade-to-org tables = exactly 6 triggers), not assumed; two inherited claims found false and corrected | `397dab3` → `935f7fe`, verified |
@@ -201,6 +203,31 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 >
 > **RULE: claim a slot above the production tip AND above every in-flight slot in
 > this table. Re-check the tip immediately before merging — it moves.**
+
+## Active-org remainder (named defect class — 2026-07-28, from #456's lane)
+
+Train 13 fixed the **jobs domain** slice of a much larger class: application code
+that reads/writes by PK alone and relies on RLS for scoping, which blends orgs for
+any dual-org user (`current_org_ids()` returns ALL memberships by design). The
+lane **proved** the remainder rather than guessing: **~90 unscoped writes and ~60
+unscoped reads** app-wide. Highest-severity first for follow-up slices:
+
+1. **Finance/commercial writes** — `quotes/actions.ts` (223,344,419,654,834),
+   `customers/actions.ts` (80,132,165), `suppliers/actions.ts` (85,120),
+   `expenses/actions.ts` (133), `leads/actions.ts` (87,137,266),
+   `compliance/actions.ts` (228), `notifications/actions.ts` (23,32,39)
+2. **Route handlers** — `app/api/invoices/[id]/{route,pdf,send,remind}`,
+   `app/api/finances/[id]/route.ts`, `app/api/quotes/[id]/{pdf,send}`
+3. **Detail pages** — customers/invoices/expenses/leads/compliance/payments-reconcile/
+   health-safety(+permits)/assets-templates/asset-inspections/diary-edit `[id]` pages
+4. **Blended list pages** — `jobs/page.tsx` (66,109,121) and equivalents per domain
+5. **Blueprint services** — `server/services/blueprints.ts` (163,173,187,201),
+   `blueprint-pins.ts` (182)
+
+Two escalations pending CEO decision: (a) should opening a non-active-org URL
+auto-switch the active org instead of 404ing? (b) the global fix — intersecting
+`current_org_ids()` with an active-org signal — needs DDL and makes RLS trust a
+client-supplied value; recommended for consideration, deliberately not done.
 
 ## Next dependency-safe milestone per lane (evidence-based, 2026-07-27)
 
