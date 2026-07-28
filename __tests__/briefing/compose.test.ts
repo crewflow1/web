@@ -24,6 +24,11 @@ function base(overrides: Partial<BriefingInput> = {}): BriefingInput {
     readyToInvoice: { totalAmount: 0, jobCount: 0 },
     cashDueSoon: 0,
     unscheduled: { totalAmount: 0, jobCount: 0 },
+    scheduleConflicts: {
+      doubleBooked: { count: 0, soonestDays: null },
+      leaveClashes: { count: 0, soonestDays: null },
+      unassignedLater: { count: 0, soonestDays: null },
+    },
     dismissedKeys: new Set(),
     ...overrides,
   };
@@ -178,6 +183,138 @@ describe("composeBriefing", () => {
     const a = composeBriefing(input).map((i) => i.key);
     const b = composeBriefing(input).map((i) => i.key);
     expect(a).toEqual(b);
+  });
+
+  // ── LANE C · schedule integrity ────────────────────────────────────────────
+
+  it("[schedule] turns a double-booking today into a HIGH operations item linking to the detector", () => {
+    const [item, ...rest] = composeBriefing(
+      base({
+        scheduleConflicts: {
+          doubleBooked: { count: 2, soonestDays: 0 },
+          leaveClashes: { count: 0, soonestDays: null },
+          unassignedLater: { count: 0, soonestDays: null },
+        },
+      }),
+    );
+    expect(rest).toHaveLength(0);
+    expect(item?.key).toBe("schedule_double_booked");
+    expect(item?.category).toBe("operations");
+    expect(item?.severity).toBe("high");
+    expect(item?.count).toBe(2);
+    expect(item?.title).toContain("2 scheduling clashes");
+    expect(item?.detail).toContain("the soonest today");
+    expect(item?.href).toBe("/staff/rota/conflicts");
+  });
+
+  it("[schedule] a clash next month is LOW and ranks below one today", () => {
+    const soon = composeBriefing(
+      base({
+        scheduleConflicts: {
+          doubleBooked: { count: 1, soonestDays: 0 },
+          leaveClashes: { count: 0, soonestDays: null },
+          unassignedLater: { count: 0, soonestDays: null },
+        },
+      }),
+    )[0];
+    const later = composeBriefing(
+      base({
+        scheduleConflicts: {
+          doubleBooked: { count: 1, soonestDays: 30 },
+          leaveClashes: { count: 0, soonestDays: null },
+          unassignedLater: { count: 0, soonestDays: null },
+        },
+      }),
+    )[0];
+    expect(soon?.severity).toBe("high");
+    expect(later?.severity).toBe("low");
+    expect(soon!.score).toBeGreaterThan(later!.score);
+    expect(soon?.title).toContain("1 scheduling clash"); // singular
+  });
+
+  it("[schedule] a clash NEVER outranks a live safety breach", () => {
+    const items = composeBriefing(
+      base({
+        activeJobsNoCurrentRams: 1,
+        permitsExpiredLive: 1,
+        scheduleConflicts: {
+          doubleBooked: { count: 9, soonestDays: 0 },
+          leaveClashes: { count: 9, soonestDays: 0 },
+          unassignedLater: { count: 9, soonestDays: 0 },
+        },
+      }),
+    );
+    // Both critical safety breaches occupy the top of the list, ahead of every
+    // schedule line — and no schedule line is ever critical in the first place.
+    expect(items.slice(0, 2).map((i) => i.key).sort()).toEqual([
+      "jobs_without_rams",
+      "permits_expired",
+    ]);
+    const scheduleRanks = items
+      .map((it, i) => (it.key.startsWith("schedule_") ? i : -1))
+      .filter((i) => i >= 0);
+    expect(scheduleRanks).toHaveLength(3);
+    expect(Math.min(...scheduleRanks)).toBeGreaterThan(1);
+    for (const it of items) {
+      if (it.key.startsWith("schedule_")) expect(it.severity).not.toBe("critical");
+    }
+  });
+
+  it("[schedule] leave clashes and unassigned jobs each get their own line, once", () => {
+    const items = composeBriefing(
+      base({
+        scheduleConflicts: {
+          doubleBooked: { count: 1, soonestDays: 3 },
+          leaveClashes: { count: 1, soonestDays: 2 },
+          unassignedLater: { count: 4, soonestDays: 5 },
+        },
+      }),
+    );
+    const keys = items.map((i) => i.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain("schedule_double_booked");
+    expect(keys).toContain("schedule_leave_clash");
+    expect(keys).toContain("schedule_unassigned_soon");
+    for (const k of keys) expect(isBriefingItemKey(k)).toBe(true);
+    const leave = items.find((i) => i.key === "schedule_leave_clash");
+    expect(leave?.detail).toContain("approved");
+    expect(leave?.detail).toContain("the soonest in 2 days");
+  });
+
+  it("[schedule] the unassigned line is disjoint from jobs_unassigned_tomorrow", () => {
+    // The service feeds `unassignedLater` from day 2 onward, so both lines can be
+    // present without any job being counted twice — and the tomorrow line, which
+    // is closer, ranks first.
+    const items = composeBriefing(
+      base({
+        jobsTomorrowUnassigned: 1,
+        scheduleConflicts: {
+          doubleBooked: { count: 0, soonestDays: null },
+          leaveClashes: { count: 0, soonestDays: null },
+          unassignedLater: { count: 2, soonestDays: 4 },
+        },
+      }),
+    );
+    expect(items.map((i) => i.key)).toEqual([
+      "jobs_unassigned_tomorrow",
+      "schedule_unassigned_soon",
+    ]);
+    expect(items[1]?.count).toBe(2);
+  });
+
+  it("[schedule] schedule lines are dismissible for the day (they are not safety breaches)", () => {
+    const input = base({
+      scheduleConflicts: {
+        doubleBooked: { count: 1, soonestDays: 0 },
+        leaveClashes: { count: 0, soonestDays: null },
+        unassignedLater: { count: 0, soonestDays: null },
+      },
+    });
+    expect(composeBriefing(input)).toHaveLength(1);
+    expect(isDismissibleBriefingKey("schedule_double_booked")).toBe(true);
+    expect(
+      composeBriefing({ ...input, dismissedKeys: new Set(["schedule_double_booked"]) }),
+    ).toHaveLength(0);
   });
 
   it("exposes exactly the keys the composer can produce", () => {

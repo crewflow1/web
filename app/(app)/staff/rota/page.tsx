@@ -134,6 +134,12 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/staff/rota/conflicts"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
+          >
+            Schedule check
+          </Link>
           <Link href={prevHref} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs hover:bg-slate-50">
             ← Prev
           </Link>

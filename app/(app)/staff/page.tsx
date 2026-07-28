@@ -127,6 +127,10 @@ export default async function StaffPage({
             ·{" "}
             <Link href="/staff/leave" className="text-slate-700 underline hover:text-slate-900">
               Leave requests
+            </Link>{" "}
+            ·{" "}
+            <Link href="/staff/rota/conflicts" className="text-slate-700 underline hover:text-slate-900">
+              Schedule check
             </Link>
           </p>
         </div>
