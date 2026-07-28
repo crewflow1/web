@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-28 (Continuation 8 — safety lanes shipped; CIS M4 building)
-**Production `main`:** `9c6fc5d`
-**Production migration tip:** `20261054`
+**Last reconciled:** 2026-07-28 (Continuation 8 — CIS M4 + schedule integrity + active-org slices 2–3 shipped)
+**Production `main`:** `87707ae`
+**Production migration tip:** `20261055`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -32,6 +32,10 @@
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **17** | 2026-07-28 | — | **Active-org integrity, rota slice** (#461, CEO-directed): the weekly grid rendered a dual-org member's other-company shifts, the job picker listed the other org's jobs/customers, and `createRotaEntry`'s overlap check refused legitimate shifts because of clashes in the user's OTHER org. Reads moved to `server/services/rota.ts` (client-as-argument seam) so page/action/test share one implementation; **mutation-proven** (pins stripped → 4/4 red) | `97c9f6b` → `87707ae`, verified |
+| **16** | 2026-07-28 | — | **Schedule Integrity detector** (#460): read-only, deterministic conflicts over rota/jobs/leave/assets — double-booked staff, assignee-with-no-shift, approved-leave clashes, unassigned imminent jobs (day 2+, disjoint from the existing briefing signal by construction), asset-custody anomalies. Half-open `[start,end)` matching the write-side rule; severity capped at `high` (a clash must not outrank a safety breach); org pin **mutation-tested**. Flagship find: `jobs_rota_sync_trigger` writes default shifts that bypass the form's overlap guard — silent double-booking, now surfaced. Also flagged: the write-side guard is blind to cross-midnight shifts (detector catches them) | `4f1cdb3` → `97c9f6b`, verified |
+| **15** | 2026-07-28 | — | **Active-org integrity, finance/commercial writes** (#459): 19 sites examined, 15 confirmed+fixed, 2 already safe (pinned), suppliers deliberately deferred. Headline: cross-org \`acceptQuoteAsOwner\` **succeeded in the other org** — created their job, burned their invoice number, posted a draft invoice, **emailed their customer**, advanced their lead. Also \`deleteQuote\` (unscoped delete defeated its own org-scoped integrity guard), \`markAllNotificationsRead\` clearing BOTH orgs' queues, portal-token rotation, compliance signed-URLs. CIS/settlement 409 mapping preserved | `4f1cdb3` → (with #460/#461) `87707ae`, verified |
+| **14** | 2026-07-28 | `20261055` | **CIS M4 — payment & deduction statements + CIS300 return dataset** (#458): HMRC rules re-verified at source (CISR12160/CISR61230/CIS340 §3.15 — statements NOT statutory for gross payment, modelled as `is_statutory`); new `cis_contractor_profiles` (employer's PAYE ref was nowhere in the schema and is mandatory — issue REFUSES without it); statements freeze M3 snapshot sums (zero new arithmetic, asserted); SQL-computed `ledger_fingerprint` makes divergence provable; void→supersede, all-voided→withdrawal with reason; **filing structurally unrepresentable** (`status IN ('prepared','exported')` — verified in prod catalogue). Escalations: CIS300 declarations (legal), export format, statement emailing | `9c6fc5d` → `4f1cdb3`, verified |
 | **13** | 2026-07-28 | — | **Active-org integrity, jobs domain** (#456): app code read rows by PK alone, so a dual-org user active in Org A could read AND write Org B rows inside A's shell (`current_org_ids()` correctly returns all memberships — RLS is the outer boundary, not scoping). Fixed jobs-domain writes/reads end-to-end incl. `recordRetentionRelease` writing into **another org's retention ledger** and certificates freezing another org's address under the wrong letterhead; `loadJobForOrg()` seam; form-helpers chokepoint (11 call sites, 5 domains); site-report PDF letterhead. Red→green with a genuine dual-org user; RLS proven untouched. **Remainder is large and enumerated** (~90 unscoped writes, ~60 reads app-wide) — see "Active-org remainder" below | `db6ceb8` → `9c6fc5d`, verified |
 | **12** | 2026-07-28 | — | **Destructive-test production-target guard** (#455): fail-closed allowlist guard (`lib/testing/destructive-db-guard.ts`, pure, no env reads) wired into every destructive entry point — integration harness chokepoint (all 152 files proven to route through it), e2e global-setup + 12 specs' `svc()`, `memory-bench`, and an **in-SQL guard** in `e2e-lifecycle.sql` keyed on the CLI's fixed local-dev JWT secret (`inet_server_addr()` and `rolsuper` proven false friends). **NO override escape hatch** by design. Also fixed a live product footgun: `/admin/launch-checklist` rendered a copy-pasteable `--linked` (production) destructive command. Live negative proof: non-local target → all 154 files refuse, zero credential leakage | `9e8a723` → `db6ceb8`, verified |
 | **11** | 2026-07-27 | `20261053`, `20261054` | **Payables financial guards** (#452): CIS deduction basis frozen once a bill is part-paid — including the non-obvious fourth door, **INSERT of `cis_bill_details` after part-payment** (a bill legitimately part-paid with no details row freezes at materials = 0, so creating the row later moves the basis). Bill reductions floored at the settled total, without trapping legacy over-settled rows. **21/21 real two-session psql race proof**, zero deadlocks. Also enforces the previously-accidental trigger firing order that protects the CIS snapshot from a stale bill — the test identifies triggers by what their functions *do*, so a rename fails it | `db30989` → `9e8a723`, verified |
@@ -60,7 +64,7 @@
 | AI Business Coach / Daily Briefing | **PRODUCTION** (deterministic) | `lib/briefing/compose.ts`, `server/services/briefing.ts`, `20261038_briefing_dismissals`; ranked money + safety signals, non-dismissible live breaches |
 | AI Voice Receptionist | **BUILT-DARK (inbound engine)** | ~40 `lib/receptionist/conversation-*.ts` + ~30 `server/services/receptionist-*.ts` on main; Vapi telephony **NOT BUILT** (#113 superseded) |
 | AI Quote Writer | **NOT BUILT** | needs an LLM key (provider decision) |
-| AI Scheduler | **NOT BUILT** | deterministic constraint version is viable without a provider |
+| AI Scheduler | **PARTIAL** (deterministic detection) | Train 16 (#460): `lib/schedule-integrity` + `/staff/rota/conflicts` + briefing signals — double-bookings, assignee-without-shift, leave clashes, unassigned imminent jobs, custody anomalies. Observe→explain only; recommendation/auto-move NOT built |
 | AI Cashflow | **PARTIAL** | deterministic forecast shipped in H2-CASH M3 (`lib/commercial/cash-forecast.ts`): overdue / due / planned / unscheduled, honest certainty labels, no fake probability |
 
 ## PHASE 4 — SITE MANAGEMENT
@@ -95,7 +99,7 @@
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
 | CIS M3 — deduction calc + reverse-charge VAT | **PRODUCTION** | `20261051_cis_deduction` (#443, Train 8): HMRC-verified rules (20/30/gross, exclusions, CITB, 6th–5th tax month), server-derived rate, cumulative partial-payment maths, reverse charge as a real treatment; splits labour vs qualifying materials (CIS never applies to materials or VAT). Hardened by `20261053`/`20261054` (#452, Train 11): basis freeze incl. INSERT-after-part-payment door, settlement floor, enforced trigger firing order |
-| CIS M4 — monthly statements + return dataset | **BUILDING** | in flight — `feat/cis-m4-statements`, slots `20261055`+; clones the completion-certificate immutability/PDF stack; return dataset is prepare/export ONLY — CrewFlow does not file |
+| CIS M4 — monthly statements + return dataset | **PRODUCTION** | `20261055_cis_statements` (#458, Train 14): immutable statements frozen from M3 snapshots, `cis_contractor_profiles` (PAYE ref gate), CIS300-shaped return dataset with honest nil returns; **prepare/export only — filing is structurally unrepresentable**. Gaps: no file export yet, no E2E browser run for the new UI |
 | CIS M5 — HMRC filing seam | **NOT BUILT** | stays DARK/BLOCKED_BY_PROVIDER — no real or simulated filing without approved credentials |
 | OCR / receipt scanning | **BUILT-DARK** | `server/services/expense-drafts.ts` calls `maybeExtractReceipt`; `expense_drafts.ai_confidence` exists; with no AI key the draft is created with NULL extraction fields. **Verified 2026-07-27 — was wrongly marked NOT BUILT.** Needs a provider key only |
 | Expenses | **PRODUCTION** | `app/(app)/expenses/{page,new,[id],actions.ts}` with `uploadExpenseReceipt`/`approveExpenseDraftAction`/`rejectExpenseDraft`, `expense_drafts` table, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL.** Budget tracking specifically remains NOT BUILT |
@@ -153,7 +157,7 @@
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-**Production migration tip is `20261054` (settlement floor, applied).** Slots BELOW
+**Production migration tip is `20261055` (CIS M4 statements, applied).** Slots BELOW
 that are closed forever — Supabase keys identity on the numeric prefix, so a
 lower-numbered file added later replays out of order from scratch. We have hit this
 twice (#128 `20260711`, #136 `20260706`).
@@ -186,8 +190,9 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261051` | CIS M3 `cis_deduction` | **APPLIED** |
 | `20261052` | org-teardown P1 `activity_cascade_guard` | **APPLIED** — Train 9, #448 |
 | `20261053` | CIS bill value freeze | **APPLIED** — Train 11, #452 |
-| `20261054` | Supplier bill settlement floor | **APPLIED (prod tip)** — Train 11, #452 |
-| `20261055+` | CIS M4 (statements + return dataset) | in flight — `feat/cis-m4-statements` |
+| `20261054` | Supplier bill settlement floor | **APPLIED** — Train 11, #452 |
+| `20261055` | CIS M4 `cis_statements` | **APPLIED (prod tip)** — Train 14, #458 |
+| `20261056+` | **NEXT FREE** — first unclaimed slot (Fleet lane is the expected claimant) | unallocated |
 
 
 > ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
@@ -212,22 +217,32 @@ any dual-org user (`current_org_ids()` returns ALL memberships by design). The
 lane **proved** the remainder rather than guessing: **~90 unscoped writes and ~60
 unscoped reads** app-wide. Highest-severity first for follow-up slices:
 
-1. **Finance/commercial writes** — `quotes/actions.ts` (223,344,419,654,834),
-   `customers/actions.ts` (80,132,165), `suppliers/actions.ts` (85,120),
-   `expenses/actions.ts` (133), `leads/actions.ts` (87,137,266),
-   `compliance/actions.ts` (228), `notifications/actions.ts` (23,32,39)
-2. **Route handlers** — `app/api/invoices/[id]/{route,pdf,send,remind}`,
-   `app/api/finances/[id]/route.ts`, `app/api/quotes/[id]/{pdf,send}`
+1. ~~**Finance/commercial writes**~~ — **DONE, Train 15 (#459)** — quotes (9 real
+   sites, not the 5 enumerated), customers, expenses (already safe, pinned),
+   leads, compliance, notifications. **EXCEPT `suppliers/actions.ts` (85,120)** —
+   deliberately deferred to avoid colliding with the concurrent CIS M4 lane;
+   the gap is documented in the security test. **← NEXT SLICE, small.**
+2. ~~**Route handlers**~~ — **DONE, Train 15 (#459)** — invoices
+   `{route,pdf,send}` + quotes `{send}` + `finances/[id]` (409 mapping
+   preserved); `remind` was already gated.
 3. **Detail pages** — customers/invoices/expenses/leads/compliance/payments-reconcile/
    health-safety(+permits)/assets-templates/asset-inspections/diary-edit `[id]` pages
 4. **Blended list pages** — `jobs/page.tsx` (66,109,121) and equivalents per domain
 5. **Blueprint services** — `server/services/blueprints.ts` (163,173,187,201),
    `blueprint-pins.ts` (182)
+6. ~~**Staff rota reads**~~ (found later by the schedule lane) — **DONE, Train 17
+   (#461, CEO-directed)** — grid, job picker, overlap check via
+   `server/services/rota.ts`, mutation-proven.
 
 Two escalations pending CEO decision: (a) should opening a non-active-org URL
 auto-switch the active org instead of 404ing? (b) the global fix — intersecting
 `current_org_ids()` with an active-org signal — needs DDL and makes RLS trust a
 client-supplied value; recommended for consideration, deliberately not done.
+**Answered 2026-07-28 (read-only prod aggregate):** production has **1 total
+user and 0 multi-org users** — the class has had ZERO real-world blast radius;
+every fix landed pre-exposure. The remaining slices are pre-launch hardening,
+not incident response: sequence them against feature lanes accordingly, and
+re-run the aggregate when real customers onboard.
 
 ## Next dependency-safe milestone per lane (evidence-based, 2026-07-27)
 
