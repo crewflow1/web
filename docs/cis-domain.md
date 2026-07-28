@@ -8,7 +8,7 @@ authoritative HMRC / GOV.UK source with the URL and the date it was retrieved.
 > so explicitly and states the **conservative** interpretation we chose. We never silently invent tax
 > semantics.
 
-**All sources retrieved: 27 July 2026.**
+**Sources for §§1–10 retrieved: 27 July 2026. Sources for §11 (M4) retrieved: 28 July 2026.**
 
 ---
 
@@ -152,7 +152,7 @@ CIS340 §3.15 — a payment and deduction statement must show:
 M3 **freezes every one of these figures** into the payment's immutable snapshot at posting time, so a
 statement produced months later reproduces the same numbers even if the subcontractor's verification
 status, rate, UTR or supplier record have since changed. Rendering the statement document itself is
-M4 — see §8.
+M4 — see §11.
 
 ---
 
@@ -479,3 +479,162 @@ live CIS payment exists against it, its **value and VAT rate** are frozen along 
 labour/materials split (`tg_finances_bill_value_guard` and `tg_cis_bill_details_guard`). So the
 snapshot cannot be rewritten *and* the figures it was derived from cannot drift out from under it.
 Both are released by voiding the payment — see §8.1 for the reasoning and the blast radius.
+
+---
+
+## 11. M4 — statements and the monthly return dataset
+
+**All sources in this section retrieved 28 July 2026.** Implemented by
+`20261055000000_cis_statements.sql`, `lib/cis/statements.ts` and `lib/cis/contractor.ts`.
+
+### 11.1 What the statement must contain
+
+CISR12160 is the precise source; CIS340 §3.15 agrees. Verbatim, the statement must show:
+
+> "Contractor's name and employer's tax reference" | "The end date of the tax month in which the
+> payment was made" | subcontractor "name", "UTR", and "personal verification number (but only if the
+> subcontractor could not be verified and a deduction at the higher rate has been applied)" | "the
+> gross amount of the payment made to the subcontractor" | "the cost of any materials that has
+> reduced the amount upon which the deduction has been applied" | "the amount of the deduction"
+
+Two things follow that are easy to get wrong:
+
+- **The deduction RATE is not a required field.** A statement covers a whole tax month, and a
+  subcontractor re-verified mid-month can have two rates inside one statement. CrewFlow therefore
+  states the rate only when it is unambiguous (`rate_is_uniform`) and says it varied otherwise. It
+  never picks one or averages two.
+- **The verification number is required only in the unmatched higher-rate case** — not for every
+  30% payment in principle, and never for a standard-rate or gross subcontractor. CrewFlow maps this
+  to M1's `higher_30` and `failed` statuses.
+
+- <https://www.gov.uk/hmrc-internal-manuals/construction-industry-scheme-reform/cisr12160> — retrieved 2026-07-28
+
+### 11.2 The 14-day statement deadline
+
+CISR12160, verbatim:
+
+> "The PDS must be issued to the subcontractor within 14 days after the end of the tax month to which
+> it relates."
+
+GOV.UK contractor guidance says the same: *"you must give the subcontractor a payment and deduction
+statement within 14 days of the end of each tax month."*
+
+Because a CIS tax month always ends on the **5th**, +14 days always lands on the **19th** — the same
+day as the return deadline in §11.4. That is a coincidence of the calendar, not a shared rule, so
+`cisStatementDueDate` and `cisReturnDueDate` are derived independently and a unit test asserts they
+agree without either being defined in terms of the other.
+
+- <https://www.gov.uk/what-you-must-do-as-a-cis-contractor/make-deductions-and-pay-subcontractors> — retrieved 2026-07-28
+
+### 11.3 Gross-paid subcontractors: statement OPTIONAL
+
+CIS340 §3.15, verbatim:
+
+> "It's good practice for a contractor to give a subcontractor a payment statement where the payment
+> has been made gross, but there is no obligation to do so."
+
+This corrects a common assumption that every subcontractor paid needs a statement. CrewFlow models it
+explicitly with `cis_statements.is_statutory`, constrained to equal `deduction_amount > 0`. The
+document prints the distinction rather than implying every statement is compelled. Issuing one for a
+gross-paid subcontractor is **allowed**, because HMRC calls it good practice.
+
+### 11.4 The monthly return: deadline, nil returns, population
+
+GOV.UK *"File your monthly returns"*, verbatim:
+
+> "Send your monthly returns to HMRC by the 19th of every month following the last tax month."
+
+and, for a month with no payments:
+
+> "file a return showing your payments were 0 (known as a 'nil return')"
+
+A payment-free month is therefore an **obligation**, not an absence of one, which is why
+`cis_monthly_returns.is_nil` is a real column and a nil month produces a real row. Modelling it as a
+missing row would make "nothing to do" and "a nil return is due" indistinguishable.
+
+Late filing penalties (same page) are why the filing boundary in §11.5 is enforced structurally:
+*"1 day late: £100"*, rising to *"up to £3,000 or 100% of the CIS deductions on the return"*.
+
+**Population.** The return reports payments to **all** subcontractors, whether paid gross or under
+deduction, with **one entry per subcontractor**: where the tax treatment changed mid-month, *"you
+should only make one entry for that subcontractor showing the total payments and deductions made"*.
+So the return's population is **wider** than the set of subcontractors owed a statement (§11.3), and
+`cis_monthly_return_lines` is uniquely indexed on `(return_id, supplier_id)`.
+
+- <https://www.gov.uk/what-you-must-do-as-a-cis-contractor/file-your-monthly-returns> — retrieved 2026-07-28
+- <https://www.gov.uk/hmrc-internal-manuals/construction-industry-scheme-reform/cisr61230> — retrieved 2026-07-28
+
+### 11.5 CrewFlow does not file, and cannot claim to
+
+There is no HMRC integration in CrewFlow — no endpoint, no Government Gateway credential, no
+transmission of any kind. This is enforced structurally rather than by convention:
+
+- `cis_monthly_returns.status` is `check (status in ('prepared','exported'))`. There is no
+  `submitted`, `filed` or `accepted` value, so a user **cannot** record that a statutory obligation
+  was met when it was not.
+- `exported` means the operator downloaded the figures. It describes an act CrewFlow genuinely
+  performed and asserts nothing about HMRC.
+- `CIS_NO_FILING_NOTICE` is rendered on the return surface, and no control is labelled "file",
+  "submit" or "send".
+- `__tests__/security/cis-statements.test.ts` fails if any of the above is loosened.
+
+### 11.6 Nothing is ever fabricated
+
+- **Verification numbers.** Copied from M3's frozen snapshot or `NULL`. When one is *required* and
+  not held, the statement stores `NULL`, `verification_number_required` stays true, and the document
+  prints *"Not held — obtain the verification number from HMRC and issue a replacement statement."*
+  There is no default, no derivation and no placeholder anywhere in the schema or the renderer.
+- **The contractor's employer PAYE reference.** `organizations` never held one, so M4 adds
+  `cis_contractor_profiles`. It is **collected**, never derived from the org record, and
+  `issue_cis_statement` refuses outright until it is on file. A wrong employer reference sends a
+  subcontractor's reclaim to the wrong place; an absent one at least fails visibly.
+- **No second deduction engine.** M4 performs summation only. Every money figure it stores is a sum
+  of columns M3 froze (`cis_gross_payment`, `materials_total`, `cis_deduction`). There is no rate
+  arithmetic in the migration or in `lib/cis/statements.ts`, and the security tier asserts its
+  absence.
+
+### 11.7 Voided payments: supersede, never mutate
+
+M2 corrects a payment by voiding it and recording a replacement, so a statement issued in good faith
+can end up covering a payment that no longer exists. The subcontractor already holds the paper, so
+silently rewriting our copy is not an option.
+
+| | What happens |
+| --- | --- |
+| Detection | `ledger_fingerprint` — a SHA-256 over the exact payments covered and their frozen figures, taken at issue by `cis_statement_ledger_fingerprint()`. Recomputing it and comparing **proves** the ledger moved. A void changes it. |
+| Correction | **Reissue.** A new statement is issued carrying `supersedes_id`; the old one moves to `superseded`. The old row's content never changes — only its status and the supersede triple. |
+| Nothing left to state | **Withdrawal**, with a mandatory reason. Reissue is impossible by construction (the RPC refuses a month with no live payments), and deleting would erase a document the subcontractor holds. |
+
+The same fingerprint idea applies to a prepared return via
+`cis_monthly_return_ledger_fingerprint()`, so a return prepared before a late void is detectably
+stale rather than quietly wrong. Both fingerprints are computed **only** in SQL — a TypeScript
+reimplementation would turn "the ledger has not moved" into "two implementations still agree".
+
+### 11.8 Open product / legal questions — NOT decided by M4
+
+The real CIS300 carries **declarations** the contractor must make. CIS340 §4 requires
+*"a declaration that the employment status of all subcontractors has been considered"* and *"a
+declaration that all subcontractors that need to be verified have been verified"*, plus the
+inactivity declaration that accompanies a temporary stop.
+
+M4 **neither collects nor omits them silently**: it does not model them at all, and this section
+records why. A declaration is a legal statement by the contractor, and capturing one in a product
+that does not file raises questions only the business can answer — what a tick in CrewFlow would
+mean, who is making the declaration, whether storing it creates a reliance we do not want, and
+whether an unfiled declaration has any status at all. **Escalated, not decided.**
+
+### 11.9 What M4 deliberately did NOT implement
+
+1. **Any filing or submission.** §11.5.
+2. **The CIS300 declarations.** §11.8 — a product and legal decision.
+3. **The inactivity request** ("temporarily stopped using subcontractors"). Same reasoning as §11.8,
+   and it is an instruction to HMRC, which CrewFlow cannot send.
+4. **A machine-readable return export** (CSV/XML for filing software). The dataset and its totals
+   exist and are on screen; the file format is a follow-up and depends on which software the CEO
+   wants to support.
+5. **Emailing statements to subcontractors.** The PDF exists and is downloadable; sending it is a
+   comms decision (and a data-protection one) that M4 does not take.
+6. **Statements for a subcontractor with no `cis_subcontractors` record.** By construction there are
+   no CIS payments for one, so there is nothing to state.
+7. **Correcting an already-filed return.** CrewFlow does not know whether anything was filed (§11.5),
+   so it cannot model an amendment. Re-preparing supersedes; that is all it claims.

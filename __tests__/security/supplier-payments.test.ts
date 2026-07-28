@@ -386,8 +386,17 @@ describe("supplier payments service — tenant client only, never service_role",
       .map((f) => f.replace(`${ROOT}/`, ""))
       .sort();
     // The actions file names it too, but ONLY for the double-submit guard.
+    //
+    // `cis-statements.ts` (H2-CIS M4, 20261055000000) is a READ-ONLY consumer:
+    // it joins `supplier_payments` to find each snapshot's payment date and to
+    // exclude VOIDED payments from statements and returns. It performs no
+    // insert, update or delete against the ledger — that remains the exclusive
+    // job of the RPCs this service pins — and it runs on the tenant client, so
+    // admin-only RLS still applies. Asserted in its own tier,
+    // __tests__/security/cis-statements.test.ts.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
+      "server/services/cis-statements.ts",
       "server/services/supplier-payments.ts",
     ]);
   });
