@@ -282,6 +282,40 @@ describeIntegration("suppliers · active-org pinning (RLS)", () => {
     expect(r.count, "the normal delete path must not be over-scoped").toBe(1);
   });
 
+  // ------------------------------------------ the write side was already safe
+
+  it("a bill CANNOT reference another org's supplier — the database refuses it", async () => {
+    // Why the picker fix is a READ fix and not a write fix. `supplier_id`
+    // reaches approveExpenseDraft from the POST body, so it is client-supplied
+    // — but `finances` carries an org-integrity trigger
+    // (20261009000000_supplier_bills.sql) that re-checks the supplier's org on
+    // every write. It fires even for service_role, so no application path,
+    // replayed form or unscoped picker can plant a cross-org reference.
+    //
+    // Pinned because the picker fix would look load-bearing if this ever
+    // stopped being true.
+    const r = await db(serviceClient())
+      .from("finances")
+      .insert({ org_id: orgA, supplier_id: supplierB, amount: 100, vat_rate: 20 })
+      .select("id")
+      .single();
+    expect(
+      r.error?.message,
+      "the org-integrity trigger on finances must refuse a foreign supplier",
+    ).toMatch(/is not in this org/);
+
+    // Control: the SAME insert with org A's own supplier succeeds, so the
+    // trigger is scoping rather than simply rejecting everything.
+    const ok = await db(serviceClient())
+      .from("finances")
+      .insert({ org_id: orgA, supplier_id: supplierA, amount: 100, vat_rate: 20 })
+      .select("id")
+      .single();
+    expect(ok.error, ok.error?.message).toBeNull();
+    const id = String(ok.data?.id ?? "");
+    if (id) await db(serviceClient()).from("finances").delete().eq("id", id);
+  });
+
   // -------------------------------------------------------------- CIS (M1)
 
   it("CIS: the composite FK refuses a profile pointing at another org's supplier", async () => {

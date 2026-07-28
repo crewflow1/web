@@ -186,6 +186,23 @@ describe("supplier pickers in other domains — scoped to the active org", () =>
     expect(SRC).not.toMatch(/from\("suppliers"/);
   });
 
+  it("the expense picker is a READ fix — the WRITE was already guarded in the database", () => {
+    // `supplier_id` reaches approveExpenseDraft from the POST body, so an
+    // unscoped picker is not the only way to submit a foreign one. The reason
+    // this slice adds no application-layer resolve there is that `finances`
+    // carries an org-integrity TRIGGER re-checking the supplier's org on every
+    // write — it fires even for service_role, which RLS and a composite FK on
+    // the column would not both do. Pinned so the picker fix is not mistaken
+    // for the boundary.
+    const MIG = src("supabase/migrations/20261009000000_supplier_bills.sql");
+    expect(MIG).toMatch(
+      /select 1 from public\.suppliers[\s\S]{0,160}?new\.supplier_id[\s\S]{0,160}?org_id = new\.org_id/,
+    );
+    expect(MIG).toMatch(/raise exception 'supplier % is not in this org'/);
+    // The runtime proof (trigger really fires, and only for the foreign org)
+    // is in __tests__/integration/rls/supplier-active-org.test.ts.
+  });
+
   it("the purchase-order builder takes an explicit orgId and scopes BOTH lists", () => {
     const SRC = src("app/(app)/purchase-orders/_data.ts");
     const F = fn(SRC, "listPoFormOptions");

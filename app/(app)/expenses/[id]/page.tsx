@@ -79,8 +79,11 @@ export default async function ExpenseDraftPage({
   if (!row) notFound();
 
   // Active-org scoped: the picker must not offer a supplier from another org
-  // the viewer belongs to. Approving the draft writes `finances.supplier_id`
-  // with this org's org_id, so such a choice was unusable as well as leaky.
+  // the viewer belongs to — that leaked the other company's supplier names
+  // into this org's shell. The WRITE side was already safe: `finances` carries
+  // an org-integrity trigger (20261009000000_supplier_bills.sql) that refuses a
+  // supplier from a different org, so picking one only ever produced a failed
+  // approval. This makes the list match what can actually be approved.
   const suppliers = await listSuppliersForOrg<SupplierRow>(
     supabase as unknown as SuppliersClient,
     ctx.org.id,
