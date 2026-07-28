@@ -16,23 +16,28 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string }>;
 
 export default async function NewAssetPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
   // `suppliers` is not in the generated Supabase types — cast like the other
-  // post-types tables.
+  // post-types tables. Pinned to the active org: RLS returns every org the
+  // viewer belongs to, which would blend another org's suppliers into this
+  // picker for a dual-org member.
   const { data: suppliersRaw } = await (
     supabase.from("suppliers" as never) as unknown as {
       select: (c: string) => {
-        order: (
-          col: string,
-          o: { ascending: boolean },
-        ) => { limit: (n: number) => Promise<{ data: { id: string; name: string }[] | null }> };
+        eq: (k: string, v: unknown) => {
+          order: (
+            col: string,
+            o: { ascending: boolean },
+          ) => { limit: (n: number) => Promise<{ data: { id: string; name: string }[] | null }> };
+        };
       };
     }
   )
     .select("id, name")
+    .eq("org_id", ctx.org.id)
     .order("name", { ascending: true })
     .limit(500);
   const suppliers = suppliersRaw ?? [];

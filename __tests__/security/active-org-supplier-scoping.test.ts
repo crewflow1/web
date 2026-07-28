@@ -300,22 +300,21 @@ describe("CIS (M1) — the org boundary holds and the admin/masking posture is i
 });
 
 // ---------------------------------------------------------------------------
-// 6. What this slice deliberately does not claim
+// 6. The asset register's supplier reads (closed at integration of #463 + the
+//    asset/QR hardening branch — this replaced the deferral tripwire)
 // ---------------------------------------------------------------------------
 
-describe("scope note — supplier reads still outstanding", () => {
-  it("the ASSET REGISTER's two supplier reads remain unscoped (next slice)", () => {
-    // Deliberate: `app/(app)/assets/**` is the asset-register domain and a
-    // concurrent lane owns the fleet surfaces it is adjacent to, so this slice
-    // leaves it alone rather than risk a collision. Both are READ-only leaks
-    // (a picker and a name lookup) — no write crosses the boundary there.
-    // This test documents the gap so it cannot be mistaken for coverage, and
-    // goes RED the moment either file is fixed, forcing it to be retired.
-    for (const p of ["app/(app)/assets/new/page.tsx", "app/(app)/assets/[id]/page.tsx"]) {
-      expect(
-        src(p),
-        `${p}: if this is now scoped, delete this test — the gap is closed`,
-      ).toMatch(/from\("suppliers"/);
-    }
+describe("asset register supplier reads are org-pinned", () => {
+  it("the supplier picker on assets/new carries the active-org predicate", () => {
+    const s = src("app/(app)/assets/new/page.tsx");
+    expect(s).toMatch(/from\("suppliers"/);
+    expect(s).toMatch(/\.eq\("org_id",\s*ctx\.org\.id\)/);
+  });
+
+  it("the supplier-name lookup on assets/[id] is pinned — a foreign org's supplier renders as absent", () => {
+    // `assets.supplier_id` is a plain FK with no composite org binding, so the
+    // display read must carry the pin itself.
+    const s = src("app/(app)/assets/[id]/page.tsx");
+    expect(s).toMatch(/\.eq\("id",\s*asset\.supplier_id\)\s*[\s\S]{0,40}\.eq\("org_id",\s*ctx\.org\.id\)/);
   });
 });

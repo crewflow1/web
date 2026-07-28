@@ -164,17 +164,23 @@ export default async function AssetDetailPage({
 
   let supplierName: string | null = null;
   if (asset.supplier_id) {
+    // Org-pinned like every supplier read (#463): `assets.supplier_id` is a
+    // plain FK with no composite org binding, so without the pin a foreign
+    // org's supplier name could render here for a dual-org member.
     const { data: s } = await (
       supabase.from("suppliers" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { name: string | null } | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: { name: string | null } | null }>;
+            };
           };
         };
       }
     )
       .select("name")
       .eq("id", asset.supplier_id)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     supplierName = s?.name ?? null;
   }
