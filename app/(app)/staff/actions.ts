@@ -10,6 +10,7 @@ import {
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
 import { requireOrgContext } from "@/server/auth/session";
+import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
 import {
   updateStaffProfileSchema,
   updateStaffRoleSchema,
@@ -451,14 +452,17 @@ export async function createRotaEntry(
 
   // Conflict check: does the assigned user already have an overlapping
   // shift on this day? Pull a window and compare in-process so we don't
-  // require a Postgres range type.
+  // require a Postgres range type. The read is pinned to the active org
+  // (like deleteRotaEntry below): RLS returns every org the VIEWER belongs
+  // to, so without the pin a shift in the user's other org would refuse a
+  // legitimate shift here — and leak that the other org's rota exists.
   const dayStart = result.data.starts_at.slice(0, 10);
-  const { data: sameDay } = await supabase
-    .from("rota_entries")
-    .select("starts_at, ends_at")
-    .eq("user_id", result.data.user_id)
-    .gte("starts_at", `${dayStart}T00:00:00Z`)
-    .lte("starts_at", `${dayStart}T23:59:59Z`);
+  const sameDay = await listUserShiftsOnDay(
+    supabase as unknown as RotaClient,
+    ctx.org.id,
+    result.data.user_id,
+    dayStart,
+  );
   if (sameDay && sameDay.length > 0) {
     const ns = new Date(result.data.starts_at).getTime();
     const ne = new Date(result.data.ends_at).getTime();

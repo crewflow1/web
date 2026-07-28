@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import {
+  listRotaJobOptions,
+  listWeekRotaEntries,
+  type RotaClient,
+} from "@/server/services/rota";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
 import { CreateRotaForm } from "./_create-form";
 
@@ -83,21 +88,17 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
     });
   }
 
-  // Jobs for the form picker.
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, status, scheduled_date, customer:customers ( name )")
-    .order("scheduled_date", { ascending: false, nullsFirst: false })
-    .limit(50);
-
-  // Rota entries for the week.
-  const { data: entriesRaw } = await supabase
-    .from("rota_entries")
-    .select("id, user_id, job_id, starts_at, ends_at, notes")
-    .gte("starts_at", startIso)
-    .lte("starts_at", endIso)
-    .order("starts_at", { ascending: true });
-  const entries = (entriesRaw ?? []) as RotaRow[];
+  // Jobs picker + weekly rota, both pinned to the active org via the shared
+  // reads (server/services/rota.ts) — the same functions the isolation test
+  // drives with a dual-org JWT, so an unpinned read goes red there.
+  const rotaDb = supabase as unknown as RotaClient;
+  const jobs = await listRotaJobOptions(rotaDb, ctx.org.id);
+  const entries = (await listWeekRotaEntries(
+    rotaDb,
+    ctx.org.id,
+    startIso,
+    endIso,
+  )) as RotaRow[];
 
   // Bucket entries by (user_id, day-of-week 0-6).
   const grid = new Map<string, RotaRow[]>();
