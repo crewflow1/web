@@ -5,6 +5,8 @@ import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/li
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
+import { loadScheduleConflicts } from "./schedule-integrity";
+import { rollupKind } from "@/lib/schedule/conflicts";
 import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
 import type { BriefingItem } from "@/lib/briefing/types";
@@ -99,6 +101,7 @@ export async function buildDailyBriefing(
       complianceRes,
       leadRows,
       hs,
+      scheduleConflictRows,
       dismissRes,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
@@ -113,6 +116,10 @@ export async function buildDailyBriefing(
       db.from("compliance_documents").select("id, expires_at").eq("org_id", orgId).not("expires_at", "is", null).lte("expires_at", complianceCutoffIso),
       pagedRows(db, "leads", "id, status, estimated_value, created_at", "id", orgId),
       buildHealthSafetySnapshot(orgId),
+      // LANE C — deterministic schedule conflicts. Read-only and self-limiting
+      // (a fortnight window, org-pinned, best-effort), so it joins the existing
+      // parallel batch rather than adding a serial hop.
+      loadScheduleConflicts(orgId, now),
       db.from("briefing_dismissals").select("item_key").eq("user_id", userId).eq("dismissed_on", todayIso),
     ]);
 
@@ -219,6 +226,13 @@ export async function buildDailyBriefing(
       readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobCount },
       cashDueSoon,
       unscheduled: { totalAmount: unscheduledTotal, jobCount: unscheduledJobCount },
+      scheduleConflicts: {
+        doubleBooked: rollupKind(scheduleConflictRows, "staff_double_booked"),
+        leaveClashes: rollupKind(scheduleConflictRows, "leave_clash"),
+        // From day 2 only — `jobs_unassigned_tomorrow` above owns today+tomorrow,
+        // so the two operations lines are disjoint and never double-count a job.
+        unassignedLater: rollupKind(scheduleConflictRows, "job_unassigned", { fromDaysAway: 2 }),
+      },
       dismissedKeys,
     };
 

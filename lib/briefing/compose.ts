@@ -36,6 +36,28 @@ export interface BriefingInput {
   cashDueSoon: number;
   /** H2-CASH M3: agreed contract value with no billing stage and no invoice. */
   unscheduled: { totalAmount: number; jobCount: number };
+  /**
+   * LANE C: deterministic schedule conflicts found in the next fortnight
+   * (server/services/schedule-integrity.ts). Read-only detection — the briefing
+   * reports and explains them; nothing is ever moved automatically.
+   *
+   * `soonestDays` is whole UK days from today (0 = today) and drives severity,
+   * so a double-booking today outranks one next month. Two of the five detected
+   * classes are deliberately absent here and live only on the detector page:
+   * `assignment_off_rota` is a records mismatch rather than a person in two
+   * places, and `asset_double_booked` is a data-integrity fault the DB's own
+   * unique index makes near-unreachable — neither earns a line in a morning brief.
+   */
+  scheduleConflicts: {
+    doubleBooked: { count: number; soonestDays: number | null };
+    leaveClashes: { count: number; soonestDays: number | null };
+    /**
+     * Imminent jobs with NOBODY on them, counted from the day AFTER tomorrow.
+     * `jobs_unassigned_tomorrow` already owns tomorrow, so the two windows are
+     * disjoint by construction and the same job is never counted twice.
+     */
+    unassignedLater: { count: number; soonestDays: number | null };
+  };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -78,6 +100,26 @@ function rankScore(
 
 function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return Math.abs(n) === 1 ? singular : pluralForm;
+}
+
+/**
+ * Severity for a schedule conflict, from proximity alone. Mirrors
+ * `conflictSeverity` in lib/schedule/conflicts.ts and is capped at "high" for
+ * the same reason: `critical` is reserved for live safety/legal breaches.
+ */
+function scheduleSeverity(soonestDays: number | null): BriefingSeverity {
+  if (soonestDays == null) return "medium";
+  if (soonestDays <= 1) return "high";
+  if (soonestDays <= 7) return "medium";
+  return "low";
+}
+
+/** ", the soonest today" / " — the soonest in 4 days". Empty when unknown. */
+function whenPhrase(soonestDays: number | null): string {
+  if (soonestDays == null) return "";
+  if (soonestDays <= 0) return ", the soonest today";
+  if (soonestDays === 1) return ", the soonest tomorrow";
+  return `, the soonest in ${soonestDays} days`;
 }
 
 function gbp(n: number): string {
@@ -238,6 +280,43 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
     );
   }
 
+  // Schedule integrity (LANE C). Capped at "high" on purpose: a clash costs a
+  // day, a safety breach costs a prosecution — these must never out-shout the
+  // safety block above. Ordering within the band carries the urgency instead.
+  const sched = input.scheduleConflicts;
+  if (sched.doubleBooked.count > 0) {
+    const n = sched.doubleBooked.count;
+    const d = sched.doubleBooked.soonestDays;
+    add(
+      "schedule_double_booked", "operations", scheduleSeverity(d),
+      `${n} scheduling ${plural(n, "clash", "clashes")} in the next fortnight`,
+      `${n} ${plural(n, "case")} where the same person is on two overlapping shifts${whenPhrase(d)}. ` +
+        `Nobody can be in two places — move or shorten one shift.`,
+      "/staff/rota/conflicts", { count: n, urgencyDays: d },
+    );
+  }
+  if (sched.leaveClashes.count > 0) {
+    const n = sched.leaveClashes.count;
+    const d = sched.leaveClashes.soonestDays;
+    add(
+      "schedule_leave_clash", "operations", scheduleSeverity(d),
+      `${n} ${plural(n, "shift")} booked during approved leave`,
+      `${n} rostered ${plural(n, "shift")} ${n === 1 ? "falls" : "fall"} inside leave you have already approved${whenPhrase(d)}. ` +
+        `Arrange cover or revisit the leave.`,
+      "/staff/rota/conflicts", { count: n, urgencyDays: d },
+    );
+  }
+  if (sched.unassignedLater.count > 0) {
+    const n = sched.unassignedLater.count;
+    const d = sched.unassignedLater.soonestDays;
+    add(
+      "schedule_unassigned_soon", "operations", scheduleSeverity(d),
+      `${n} upcoming ${plural(n, "job")} with nobody on ${n === 1 ? "it" : "them"}`,
+      `${n} ${plural(n, "job")} in the next fortnight ${n === 1 ? "has" : "have"} no assignee and nobody on the rota${whenPhrase(d)}.`,
+      "/staff/rota/conflicts", { count: n, urgencyDays: d },
+    );
+  }
+
   // --- SALES ---------------------------------------------------------------
   if (input.followUpQuotes.count > 0) {
     const n = input.followUpQuotes.count;
@@ -287,6 +366,9 @@ export const BRIEFING_ITEM_KEYS = [
   "cash_due_soon",
   "unscheduled_value",
   "jobs_unassigned_tomorrow",
+  "schedule_double_booked",
+  "schedule_leave_clash",
+  "schedule_unassigned_soon",
   "quotes_follow_up",
   "leads_cold",
 ] as const;
