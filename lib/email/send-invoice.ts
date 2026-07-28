@@ -64,6 +64,26 @@ type SendOptions = {
   kind?: "initial" | "reminder";
   /** Required when kind="reminder"; ignored otherwise. */
   reminder_stage?: ReminderStage;
+  /**
+   * ACTIVE-ORG SCOPE — pass `ctx.org.id` from any interactive (user-JWT)
+   * caller.
+   *
+   * Without it this helper resolves the invoice by primary key alone. RLS does
+   * NOT save us: `current_org_ids()` deliberately returns EVERY org the viewer
+   * belongs to (it is the outer boundary — "you cannot see an org you are not a
+   * member of" — not active-org scoping). So for a user who belongs to org A
+   * and org B, working in A, an org-B invoice id resolved here would render
+   * B's letterhead and BANK DETAILS into a PDF and EMAIL it to B's customer,
+   * then stamp B's `sent_at` and flip B's status. This is the outward-facing
+   * end of the active-org defect class fixed for the jobs domain in #456.
+   *
+   * Optional because the two service-role callers legitimately have no active
+   * org: the reminder cron and the public quote-acceptance path already select
+   * the invoice themselves and own their scoping. Omitting it preserves their
+   * behaviour exactly; supplying it makes a foreign invoice indistinguishable
+   * from a missing one (`reason: "not_found"`).
+   */
+  orgId?: string;
 };
 
 export async function sendInvoiceEmail(
@@ -73,7 +93,7 @@ export async function sendInvoiceEmail(
 ): Promise<SendInvoiceEmailResult> {
   if (!env.RESEND_API_KEY) return { sent: false, reason: "no_resend_key" };
 
-  const { data: invoiceRaw, error: iErr } = await supabase
+  const invoiceQuery = supabase
     .from("invoices")
     .select(
       `
@@ -84,8 +104,14 @@ export async function sendInvoiceEmail(
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
-    .eq("id", invoiceId)
-    .maybeSingle();
+    .eq("id", invoiceId);
+  // Active-org scope (see SendOptions.orgId). A foreign invoice yields no row,
+  // so it is indistinguishable from a missing one and nothing is ever rendered
+  // or sent for it.
+  const { data: invoiceRaw, error: iErr } = await (options.orgId
+    ? invoiceQuery.eq("org_id", options.orgId)
+    : invoiceQuery
+  ).maybeSingle();
   const invoice = invoiceRaw as unknown as InvoiceJoined | null;
 
   if (iErr) {
@@ -186,10 +212,13 @@ export async function sendInvoiceEmail(
   if (kind === "initial") {
     const updates: { sent_at: string; status?: "sent" } = { sent_at: sentAt };
     if (invoice.status === "draft") updates.status = "sent";
-    const { error: updErr } = await supabase
-      .from("invoices")
-      .update(updates)
-      .eq("id", invoice.id);
+    // Carry the active-org predicate onto the write too. The row was already
+    // resolved in-org above, so this is belt-and-braces — but a write that
+    // states its own scope cannot be broken by a later refactor of the read.
+    const updQuery = supabase.from("invoices").update(updates).eq("id", invoice.id);
+    const { error: updErr } = await (options.orgId
+      ? updQuery.eq("org_id", options.orgId)
+      : updQuery);
     if (updErr) {
       console.error("[send-invoice] post-send update failed", updErr);
     }

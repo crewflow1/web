@@ -144,9 +144,19 @@ vi.mock("next/navigation", () => ({
 }));
 
 // requireOrgContext is only used by owner-path; stub it too.
+//
+// The active org MUST match SAMPLE_QUOTE.org_id below. It used to be an
+// arbitrary "test-org" because nothing derived from ctx — the owner path
+// stamped its new job and invoice from `quote.org_id` instead. That was the
+// active-org defect: accepting a quote resolved by id alone created the job,
+// the invoice and its number in whatever org the quote turned out to belong
+// to. The accepting UPDATE is now scoped to the active org, so a quote in a
+// different org matches nothing and the flow bails long before job creation —
+// which makes a fixture with mismatched orgs unreachable in practice, not just
+// unrealistic. Keeping the two in sync is what the real flow guarantees.
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: vi.fn(async () => ({
-    ctx: { org: { id: "test-org" }, user: { id: "test-user" } },
+    ctx: { org: { id: "org-uuid-1" }, user: { id: "test-user" } },
   })),
 }));
 
@@ -376,11 +386,15 @@ describe("acceptQuoteAsOwner", () => {
       due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
 
-    // Invoice email send was attempted against the new invoice.
+    // Invoice email send was attempted against the new invoice, carrying the
+    // ACTIVE org so the helper re-applies the scope to its own load — this
+    // send renders the org's letterhead and bank details, so it must not be
+    // able to resolve an invoice outside the org that triggered it.
     expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
     expect(sendInvoiceEmailMock).toHaveBeenCalledWith(
       mockAdmin.client,
       "owner-invoice-1",
+      { orgId: "org-uuid-1" },
     );
   });
 

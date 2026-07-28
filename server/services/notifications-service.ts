@@ -346,14 +346,29 @@ export async function getUnreadCountForHq(): Promise<number> {
 // MUTATE (read / dismiss / mark all read)
 // ---------------------------------------------------------------------
 
+/**
+ * ACTIVE-ORG SCOPE for the tenant-side (customer-audience) mutations.
+ *
+ * These run on the user-JWT client, and the comment below used to reason that
+ * this meant customers "only flip their own rows". RLS does not deliver that:
+ * `current_org_ids()` returns EVERY org the viewer belongs to, so for a user
+ * who belongs to two orgs the tenant client happily updates the other org's
+ * notification rows. Callers in `app/(app)/notifications/actions.ts` pass
+ * `ctx.org.id`, making the predicate visible at the call site.
+ *
+ * Deliberately optional and deliberately NOT applied to the admin-client
+ * branches: `app/admin/notifications/**` is HQ-internal, operates across all
+ * orgs by design, and has no tenant org context to supply.
+ */
+type MutateOptions = { audience?: NotificationAudience; orgId?: string };
+
 export async function markNotificationRead(
   id: string,
-  options: { audience?: NotificationAudience } = {},
+  options: MutateOptions = {},
 ): Promise<void> {
   // For HQ audience the user-JWT client can't update (RLS blocks
   // audience != customer|both). Use admin client when we know
-  // the caller is HQ; default to user client for customers so
-  // they only flip their own rows.
+  // the caller is HQ; default to user client for customers.
   const useAdmin = options.audience === "hq" || options.audience === "both";
   if (useAdmin) {
     const c = createAdminClient();
@@ -364,14 +379,15 @@ export async function markNotificationRead(
     return;
   }
   const supabase = await createClient();
-  await supabase
+  const q = supabase
     .from("notifications" as never)
     .update({ read_at: new Date().toISOString() } as never)
     .eq("id" as never, id);
+  await (options.orgId ? q.eq("org_id" as never, options.orgId) : q);
 }
 
 export async function markAllNotificationsRead(
-  scope: { audience: "customer" | "hq" },
+  scope: { audience: "customer" | "hq"; orgId?: string },
 ): Promise<number> {
   const now = new Date().toISOString();
   if (scope.audience === "hq") {
@@ -388,10 +404,16 @@ export async function markAllNotificationsRead(
     return 1;
   }
   const supabase = await createClient();
-  const { error } = await supabase
+  // The widest write in this file: no id, no org filter — one click marked
+  // EVERY unread notification read across EVERY org the viewer belonged to,
+  // silently clearing another org's unread queue. `orgId` confines it.
+  const q = supabase
     .from("notifications" as never)
     .update({ read_at: now } as never)
     .is("read_at" as never, null);
+  const { error } = await (scope.orgId
+    ? q.eq("org_id" as never, scope.orgId)
+    : q);
   if (error) {
     console.error("[notifications] markAllForCustomer failed", error);
     return 0;
@@ -401,7 +423,7 @@ export async function markAllNotificationsRead(
 
 export async function dismissNotification(
   id: string,
-  options: { audience?: NotificationAudience } = {},
+  options: MutateOptions = {},
 ): Promise<void> {
   const useAdmin = options.audience === "hq" || options.audience === "both";
   const payload = { dismissed_at: new Date().toISOString() };
@@ -414,10 +436,11 @@ export async function dismissNotification(
     return;
   }
   const supabase = await createClient();
-  await supabase
+  const q = supabase
     .from("notifications" as never)
     .update(payload as never)
     .eq("id" as never, id);
+  await (options.orgId ? q.eq("org_id" as never, options.orgId) : q);
 }
 
 // ---------------------------------------------------------------------

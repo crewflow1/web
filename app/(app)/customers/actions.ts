@@ -28,6 +28,14 @@ import {
  * org_id on insert is derived from the user's membership context so the
  * caller can't write to another tenant's data even if they construct a
  * malicious form payload.
+ *
+ * By-id writes additionally carry `.eq("org_id", ctx.org.id)`. RLS is NOT
+ * sufficient for that: its `current_org_ids()` helper deliberately returns
+ * EVERY org the viewer belongs to (it is the outer boundary), so for a user
+ * who belongs to two orgs an update/delete addressed by primary key alone
+ * would reach the other org's customer from inside this org's shell. Zero
+ * rows affected is reported as the existing "not allowed" outcome, so a
+ * foreign id is indistinguishable from a missing one.
  */
 
 export async function createCustomer(
@@ -77,7 +85,7 @@ export async function updateCustomer(
   _prevState: FormState<CustomerFormInput>,
   formData: FormData,
 ): Promise<FormState<CustomerFormInput>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const result = validateFormData(formData, customerFormSchema);
   if (!result.ok) return result.state;
 
@@ -99,7 +107,9 @@ export async function updateCustomer(
       },
       { count: "exact" },
     )
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see the module note.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[customers] update failed", error);
@@ -129,7 +139,7 @@ export async function updateCustomer(
  * there's no user input to preserve.
  */
 export async function rotateCustomerPortalToken(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   // Token shape is owned by lib/customers/portal-token.ts so the
   // rotate action and any future code path stay in lockstep.
@@ -149,7 +159,12 @@ export async function rotateCustomerPortalToken(id: string) {
       },
       { count: "exact" },
     )
-    .eq("id", id);
+    // Active-org scope — see the module note. Rotation IMMEDIATELY invalidates
+    // whatever portal link the customer already holds, so an unscoped rotate
+    // would silently cut off another org's customer from their quotes and
+    // invoices, with no trace on the screen that did it.
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[customers] rotate portal token failed", error);
     redirect(`/customers/${id}?error=portal_token_failed`);
@@ -162,7 +177,7 @@ export async function rotateCustomerPortalToken(id: string) {
 }
 
 export async function deleteCustomer(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   // RLS allows DELETE only for admins/owners. Non-admins get a no-op
   // (zero rows affected); the exact count lets us tell that apart from a
@@ -170,7 +185,11 @@ export async function deleteCustomer(id: string) {
   const { error, count } = await supabase
     .from("customers")
     .delete({ count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see the module note. `is_org_admin()` passes for
+    // EVERY org the caller administers, so admin-of-two-orgs was enough to
+    // delete the other org's customer from this org's screen.
+    .eq("org_id", ctx.org.id);
   if (error) {
     // 23503 = foreign-key violation: the customer still has linked quotes /
     // jobs / invoices (quotes_customer_id_fkey is ON DELETE RESTRICT). Tell

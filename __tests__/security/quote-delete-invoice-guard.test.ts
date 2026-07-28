@@ -59,6 +59,18 @@ const FN_CODE = FN.split("\n")
   })
   .join("\n");
 
+/**
+ * Offset of the quotes DELETE, tolerant of chain formatting.
+ *
+ * These ordering assertions used to key on the literal one-line chain
+ * `.from("quotes").delete()`. That silently became a no-op the moment the
+ * chain was wrapped across lines to take the active-org predicate: `indexOf`
+ * returned -1, and `-1 < deleteIdx` is the kind of comparison that fails loudly
+ * only if you are lucky. Matching the call across whitespace keeps the
+ * ordering guarantees real regardless of how prettier lays the chain out.
+ */
+const DELETE_IDX = FN.search(/\.from\("quotes"\)\s*\.delete\(\)/);
+
 describe("deleteQuote — quotes with dependent invoices cannot be deleted", () => {
   it("checks for dependent invoices before deleting", () => {
     expect(FN).toMatch(/\.from\("invoices"\)[\s\S]*?\.eq\("quote_id", id\)/);
@@ -66,10 +78,9 @@ describe("deleteQuote — quotes with dependent invoices cannot be deleted", () 
 
   it("runs the dependency check BEFORE the delete, not after", () => {
     const checkIdx = FN.indexOf('.from("invoices")');
-    const deleteIdx = FN.indexOf('.from("quotes").delete()');
     expect(checkIdx).toBeGreaterThan(-1);
-    expect(deleteIdx).toBeGreaterThan(-1);
-    expect(checkIdx).toBeLessThan(deleteIdx);
+    expect(DELETE_IDX).toBeGreaterThan(-1);
+    expect(checkIdx).toBeLessThan(DELETE_IDX);
   });
 
   it("rejects the deletion when any dependent invoice exists", () => {
@@ -79,8 +90,9 @@ describe("deleteQuote — quotes with dependent invoices cannot be deleted", () 
 
   it("preserves the quote on rejection — the reject path never reaches the delete", () => {
     const rejectIdx = FN.indexOf("error=has_invoices");
-    const deleteIdx = FN.indexOf('.from("quotes").delete()');
-    expect(rejectIdx).toBeLessThan(deleteIdx);
+    expect(rejectIdx).toBeGreaterThan(-1);
+    expect(DELETE_IDX).toBeGreaterThan(-1);
+    expect(rejectIdx).toBeLessThan(DELETE_IDX);
     // redirect() throws, so the delete is unreachable once we reject.
     expect(FN).toMatch(/redirect\(`\/quotes\/\$\{id\}\?error=has_invoices`\)/);
   });
@@ -96,9 +108,9 @@ describe("deleteQuote — fails closed", () => {
 
   it("the error branch precedes the delete", () => {
     const errIdx = FN.indexOf("error=delete_check_failed");
-    const deleteIdx = FN.indexOf('.from("quotes").delete()');
     expect(errIdx).toBeGreaterThan(-1);
-    expect(errIdx).toBeLessThan(deleteIdx);
+    expect(DELETE_IDX).toBeGreaterThan(-1);
+    expect(errIdx).toBeLessThan(DELETE_IDX);
   });
 
   it("logs the failure rather than swallowing it", () => {
@@ -130,10 +142,20 @@ describe("deleteQuote — organisation isolation", () => {
 
 describe("deleteQuote — quotes without invoices still delete exactly as before", () => {
   it("keeps the original delete, its error branch and redirects", () => {
-    expect(FN).toMatch(/\.from\("quotes"\)\.delete\(\)\.eq\("id", id\)/);
+    expect(FN).toMatch(/\.from\("quotes"\)\s*\.delete\(\)\s*\.eq\("id", id\)/);
     expect(FN).toMatch(/error=delete_failed/);
     expect(FN).toMatch(/revalidatePath\("\/quotes"\)/);
     expect(FN).toMatch(/redirect\("\/quotes"\)/);
+  });
+
+  it("the delete is ALSO scoped to the active org, matching its dependency guard", () => {
+    // The dependency check above is scoped to ctx.org.id. While the delete was
+    // not, the guard was actively misleading for a quote in another of the
+    // caller's orgs: it found no dependents in the ACTIVE org, declared the
+    // quote safe, and deleted it — orphaning the very invoices it protects.
+    expect(FN).toMatch(
+      /\.from\("quotes"\)\s*\.delete\(\)\s*\.eq\("id", id\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+    );
   });
 
   it("adds no soft-delete and no schema DDL", () => {

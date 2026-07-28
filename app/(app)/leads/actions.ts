@@ -25,6 +25,12 @@ import {
  *
  * RLS-scoped via the user-context client — members CRUD, admins DELETE
  * (per the org-wide policy set in 20260515150000).
+ *
+ * RLS is the OUTER boundary only. `current_org_ids()` returns every org the
+ * viewer belongs to, so by-id writes must ALSO carry `.eq("org_id",
+ * ctx.org.id)` or a dual-org user working in org A can edit, re-stage or
+ * delete org B's leads from A's pipeline. Zero rows affected surfaces as the
+ * existing "no permission" / "denied" outcome.
  */
 
 type LeadValues = Record<string, unknown>;
@@ -84,7 +90,7 @@ export async function updateLead(
   _prevState: FormState<LeadValues>,
   formData: FormData,
 ): Promise<FormState<LeadValues>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) return formError("Invalid lead id.");
 
   const result = validateFormData(formData, updateLeadSchema);
@@ -111,7 +117,9 @@ export async function updateLead(
       } as never,
       { count: "exact" },
     )
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see the module note.
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[leads] update failed", error);
     return formError("Couldn't save changes. Try again.", result.data as LeadValues);
@@ -134,7 +142,7 @@ export async function updateLead(
  * Button-only — keeps redirect+querystring pattern.
  */
 export async function moveLeadStage(id: string, formData: FormData) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const parsed = moveStageSchema.safeParse({
@@ -151,7 +159,9 @@ export async function moveLeadStage(id: string, formData: FormData) {
       status: parsed.data.status,
       last_activity_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    // Active-org scope — see the module note.
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[leads] stage move failed", error);
     redirect(`/leads/${id}?error=move_failed`);
@@ -203,6 +213,9 @@ export async function acknowledgeLead(id: string, formData: FormData) {
   });
 
   // Archive also moves the lead status so it drops out of pipeline view.
+  // Both writes restate the org predicate: the resolve-then-redirect above
+  // already gates them, but a write that carries its own scope cannot be
+  // broken by a later edit to the guard.
   if (parsed.success && parsed.data === "archive") {
     await supabase
       .from("leads")
@@ -210,13 +223,15 @@ export async function acknowledgeLead(id: string, formData: FormData) {
         status: "archived",
         last_activity_at: new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("org_id", ctx.org.id);
   } else {
     // Otherwise just bump last_activity_at so recency sorts still work.
     await supabase
       .from("leads")
       .update({ last_activity_at: new Date().toISOString() })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("org_id", ctx.org.id);
   }
 
   revalidatePath("/leads");
@@ -256,21 +271,26 @@ export async function regenerateLeadSummary(id: string) {
       ai_summary: composed,
       last_activity_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    // Restates the scope summariseLead() already enforced above.
+    .eq("org_id", ctx.org.id);
 
   revalidatePath(`/leads/${id}`);
   redirect(`/leads/${id}?saved=summary_regenerated`);
 }
 
 export async function deleteLead(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const supabase = await createClient();
   const { error, count } = await supabase
     .from("leads")
     .delete({ count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — see the module note. Irreversible, so this is the
+    // most important predicate in the file.
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[leads] delete failed", error);
     redirect(`/leads/${id}?error=delete_failed`);

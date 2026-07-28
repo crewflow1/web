@@ -60,6 +60,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     message: body.message,
     kind: "reminder",
     reminder_stage: "manual",
+    // The org check above is the gate; this re-states the scope inside the
+    // helper's own load and writes so the two cannot drift apart.
+    orgId: ctx.org.id,
   });
 
   if (!result.sent) {

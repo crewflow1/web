@@ -14,6 +14,7 @@ import {
 import { computeTotals } from "@/lib/quotes/totals";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import type { Database } from "@/lib/supabase/types";
 import {
@@ -187,11 +188,17 @@ export async function createQuote(
   // Pipeline integration: if a lead was linked AND it's still in an
   // earlier stage, advance it to "quoted" so the kanban reflects reality.
   // Won/lost/job_booked are not overwritten.
+  // `lead_id` arrives from the form, and the lead dropdown is populated by an
+  // RLS-only query — which for a dual-org user blends BOTH orgs (the same
+  // defect class as the jobs form-helpers fixed in #456). Scope both the read
+  // and the write to the active org so a blended pick cannot re-stage another
+  // org's lead.
   if (parsed.data.lead_id) {
     const { data: leadRow } = await supabase
       .from("leads")
       .select("status")
       .eq("id", parsed.data.lead_id)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     const stalled = leadRow?.status === "new" ||
       leadRow?.status === "contacted" ||
@@ -203,7 +210,8 @@ export async function createQuote(
           status: "quoted",
           last_activity_at: new Date().toISOString(),
         })
-        .eq("id", parsed.data.lead_id);
+        .eq("id", parsed.data.lead_id)
+        .eq("org_id", ctx.org.id);
     }
   }
 
@@ -220,7 +228,7 @@ export async function updateQuote(
   _prevState: FormState<QuoteFormInput>,
   formData: FormData,
 ): Promise<FormState<QuoteFormInput>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) {
     return formError("Invalid quote id.");
   }
@@ -238,7 +246,24 @@ export async function updateQuote(
     .from("quotes")
     .select("status")
     .eq("id", id)
+    // ACTIVE-ORG SCOPE. RLS's `current_org_ids()` spans EVERY org the caller
+    // belongs to, so without this a dual-org user working in org A reads org
+    // B's quote here — and then every write below lands on B's row. A foreign
+    // quote reads as absent, and the UPDATE's own predicate makes it a no-op.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+
+  // Not in the active org (or gone). Bail BEFORE the destructive line-item
+  // replacement below — that delete is keyed on quote_id, so proceeding on a
+  // quote we could not resolve in this org would wipe another org's priced
+  // line items and leave the quote a shell. Same wording as the later
+  // load-failure branch: a foreign quote is indistinguishable from a missing one.
+  if (!existing) {
+    return formError(
+      "Couldn't load the quote. Try again.",
+      echoValuesFromForm(formData),
+    );
+  }
 
   // Commercial integrity: an accepted quote/variation is a firm agreement — its
   // amounts and scope are frozen (the DB enforces this too, via triggers
@@ -280,7 +305,8 @@ export async function updateQuote(
           }
         : {}),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (qErr) {
     console.error("[quotes] update failed", qErr);
     return formError(
@@ -293,7 +319,8 @@ export async function updateQuote(
   const { error: delErr } = await supabase
     .from("quote_line_items")
     .delete()
-    .eq("quote_id", id);
+    .eq("quote_id", id)
+    .eq("org_id", ctx.org.id);
   if (delErr) {
     console.error("[quotes] line items delete failed", delErr);
     return formError(
@@ -302,22 +329,14 @@ export async function updateQuote(
     );
   }
 
-  // Need org_id for the inserts; pull from the parent row.
-  const { data: parent } = await supabase
-    .from("quotes")
-    .select("org_id")
-    .eq("id", id)
-    .single();
-  if (!parent) {
-    return formError(
-      "Couldn't load the quote. Try again.",
-      echoValuesFromForm(formData),
-    );
-  }
-
   const rows: LineItemInsert[] = parsed.data.line_items.map((li, idx) => ({
     quote_id: id,
-    org_id: parent.org_id,
+    // Stamp from the ACTIVE org, never from a row re-read by id. Re-reading
+    // the parent's own org_id was the same shape as the retention-ledger bug
+    // fixed in #456: it faithfully copies whichever org the row turned out to
+    // belong to, so an unscoped resolve silently writes into that org instead
+    // of refusing. The quote itself is proven in-org above.
+    org_id: ctx.org.id,
     description: li.description,
     qty: li.qty,
     unit: li.unit,
@@ -341,16 +360,20 @@ export async function updateQuote(
 }
 
 export async function sendQuote(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
 
   // Wave 2: cannot send a quote until it's been approved.
+  // Active-org scoped: a quote in another of the caller's orgs must read as
+  // not_found, so the status gate below can never be evaluated — much less
+  // satisfied — against a row this session has no business sending.
   const { data: current } = await supabase
     .from("quotes")
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "approved") {
@@ -373,7 +396,8 @@ export async function sendQuote(id: string) {
       status: "sent",
       sent_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[quotes] send failed", error);
@@ -416,14 +440,16 @@ async function requireQuoteApprover(orgId: string): Promise<void> {
 }
 
 export async function requestQuoteApproval(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
+  // Active-org scoped — a quote in another of the caller's orgs is not_found.
   const { data: current } = await supabase
     .from("quotes")
     .select("status, org_id")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "draft" && current.status !== "rejected") {
@@ -444,7 +470,8 @@ export async function requestQuoteApproval(id: string) {
       approved_at: null,
       approval_comment: null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[quotes] requestApproval failed", error);
     redirect(`/quotes/${id}?error=request_failed`);
@@ -475,10 +502,18 @@ export async function reviewQuote(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
+  // ACTIVE-ORG SCOPE — load-bearing for the authorisation above, not just for
+  // tidiness. `requireQuoteApprover(ctx.org.id)` proves the caller is an
+  // owner/admin of the ACTIVE org; an unscoped read here let that approval
+  // right be spent on a quote belonging to a DIFFERENT org — one where the
+  // same user may be only an ordinary member. The separation-of-duties count
+  // below is likewise taken over the active org's memberships, so it would
+  // have been answering a question about the wrong org entirely.
   const { data: current } = await supabase
     .from("quotes")
     .select("status, created_by")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "pending_approval") {
@@ -526,7 +561,8 @@ export async function reviewQuote(id: string, formData: FormData) {
     const { error } = await supabase
       .from("quotes")
       .update({ approval_comment: comment })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("org_id", ctx.org.id);
     if (error) {
       console.error("[quotes] request_changes failed", error);
       redirect(`/quotes/${id}?error=review_failed`);
@@ -556,7 +592,8 @@ export async function reviewQuote(id: string, formData: FormData) {
       approved_at: new Date().toISOString(),
       approval_comment: comment,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[quotes] review failed", error);
     redirect(`/quotes/${id}?error=review_failed`);
@@ -635,7 +672,19 @@ export async function deleteQuote(id: string) {
   // RLS on quotes inherits from the broader members policy: DELETE allowed
   // for any member (no admin gating on quotes table by default).
   // quote_line_items cascade-delete via FK ON DELETE CASCADE.
-  const { error } = await supabase.from("quotes").delete().eq("id", id);
+  //
+  // ACTIVE-ORG SCOPE — and note this predicate is what makes the guard above
+  // MEAN anything. That dependency check is scoped to `ctx.org.id` (correctly,
+  // and deliberately, per the note above). An unscoped delete therefore had it
+  // exactly backwards for a foreign quote: the check looked for invoices in
+  // the ACTIVE org referencing another org's quote, found none, declared the
+  // quote safe to delete — and then deleted it, orphaning the very invoices
+  // the guard exists to protect. The two must be scoped alike.
+  const { error } = await supabase
+    .from("quotes")
+    .delete()
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[quotes] delete failed", error);
     redirect(`/quotes/${id}?error=delete_failed`);
@@ -651,7 +700,7 @@ export async function deleteQuote(id: string) {
  * source quote.
  */
 export async function acceptQuoteAsOwner(id: string, formData: FormData) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const signerName = String(formData.get("signer_name") ?? "Owner accepted on customer's behalf");
 
   const supabase = await createClient();
@@ -670,11 +719,25 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     .from("quotes")
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (preExisting?.status === "accepted") {
     redirect(`/quotes/${id}?saved=accepted`);
   }
 
+  // ACTIVE-ORG SCOPE — the single most consequential predicate in this file.
+  //
+  // Everything downstream is stamped from `quote.org_id`, which an unscoped
+  // update faithfully copies from whichever org the row turned out to belong
+  // to. Accepting a quote belonging to another of the caller's orgs therefore
+  // did not fail — it succeeded, in that other org: it created a JOB there,
+  // burned a number from its `next_invoice_number` sequence, posted a draft
+  // INVOICE against its books, EMAILED that invoice to its customer, advanced
+  // its lead to "won", and dispatched automation under its id. All of it from
+  // inside this org's screen, with nothing to show it had happened.
+  //
+  // Matching zero rows makes `quote` null, which falls through to the existing
+  // accept_failed redirect — a foreign id behaves exactly like a missing one.
   const { data: quote, error } = await supabase
     .from("quotes")
     .update({
@@ -683,6 +746,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
       accept_signature: { name: signerName, signed_at: now, source: "owner" },
     })
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .select(
       "id, org_id, subtotal, vat_total, job_id, variation_number, customer_id, number, notes",
     )
@@ -702,7 +766,10 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     const { data: newJob, error: jobErr } = await supabase
       .from("jobs")
       .insert({
-        org_id: quote.org_id,
+        // Stamp from the ACTIVE org, not from the row we just read. The quote
+        // is proven in-org above, so these are now the same value — saying
+        // ctx.org.id keeps it that way if the resolve is ever loosened again.
+        org_id: ctx.org.id,
         customer_id: quote.customer_id,
         status: "new",
         notes: `Auto-created from accepted quote ${quote.number}.${
@@ -716,7 +783,11 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     } else if (newJob?.id) {
       jobId = newJob.id;
       // Backlink so the quote knows which job it spawned.
-      await supabase.from("quotes").update({ job_id: jobId }).eq("id", quote.id);
+      await supabase
+        .from("quotes")
+        .update({ job_id: jobId })
+        .eq("id", quote.id)
+        .eq("org_id", ctx.org.id);
     }
   }
 
@@ -737,15 +808,21 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     .from("invoices")
     .select("id")
     .eq("quote_id", quote.id)
+    // Org-scoped so the idempotency check answers a question about THIS org's
+    // books — an invoice found in another org must not suppress this one.
+    .eq("org_id", ctx.org.id)
     .limit(1)
     .maybeSingle();
 
   let invoiceId: string | null = existingInvoice?.id ?? null;
   let createdInvoice = false;
   if (!invoiceId) {
+    // Number allocation MUTATES a per-org sequence, so the target org must be
+    // the active one — an unscoped accept burned a number out of another org's
+    // invoice series, permanently leaving a gap in their numbering.
     const { data: invNumber, error: numErr } = await supabase.rpc(
       "next_invoice_number",
-      { target_org: quote.org_id },
+      { target_org: ctx.org.id },
     );
     if (numErr || !invNumber) {
       console.error("[quotes] invoice number alloc failed", numErr);
@@ -757,7 +834,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     const { data: newInvoice, error: invErr } = await supabase
       .from("invoices")
       .insert({
-        org_id: quote.org_id,
+        org_id: ctx.org.id,
         quote_id: quote.id,
         // Denormalised customer anchor (Issue #349 Phase 1) — stamped from the
         // quote at creation so the invoice keeps its customer identity if the
@@ -787,7 +864,9 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // created invoice — reusing an existing one means the customer was
   // already sent it on the first accept.
   if (createdInvoice && invoiceId) {
-    const emailRes = await sendInvoiceEmail(supabase, invoiceId);
+    const emailRes = await sendInvoiceEmail(supabase, invoiceId, {
+      orgId: ctx.org.id,
+    });
     if (!emailRes.sent) {
       console.warn("[quotes] auto-email after accept skipped", emailRes);
     }
@@ -799,6 +878,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     .from("quotes")
     .select("lead_id")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (quoteWithLead?.lead_id) {
     await supabase
@@ -807,7 +887,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
         status: "won",
         last_activity_at: new Date().toISOString(),
       })
-      .eq("id", quoteWithLead.lead_id);
+      .eq("id", quoteWithLead.lead_id)
+      .eq("org_id", ctx.org.id);
   }
 
   // Phase 4 — dispatch `quote.accepted` so the automation OS can
@@ -816,7 +897,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // never derails the accept flow.
   await dispatchAutomation({
     type: "quote.accepted",
-    org_id: quote.org_id,
+    org_id: ctx.org.id,
     source_table: "quotes",
     source_id: quote.id,
     payload: { signer: signerName, accepted_at: now },
@@ -831,7 +912,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 }
 
 export async function declineQuoteAsOwner(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const { error } = await supabase
     .from("quotes")
@@ -839,7 +920,10 @@ export async function declineQuoteAsOwner(id: string) {
       status: "declined",
       declined_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope — declining another org's live quote kills a deal they
+    // are still working, and the customer portal reflects it immediately.
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[quotes] decline failed", error);
     redirect(`/quotes/${id}?error=decline_failed`);
@@ -1068,7 +1152,7 @@ export async function declineQuoteByToken(
  * on the profitability dashboard.
  */
 export async function createVariation(jobId: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const { variationFormSchema, computeVariation } = await import(
@@ -1097,11 +1181,19 @@ export async function createVariation(jobId: string, formData: FormData) {
   const supabase = await createClient();
 
   // Resolve job: org check + customer_id for the quote FK.
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, org_id, customer_id")
-    .eq("id", jobId)
-    .maybeSingle();
+  //
+  // The comment said "org check"; the query did not have one. Loading by id
+  // alone let a dual-org user raise a variation against another org's job —
+  // and because every stamp below was copied from `job.org_id`, the variation
+  // quote, its number (drawn from that org's sequence) and its line items were
+  // all created THERE. Routed through the same chokepoint the jobs domain got
+  // in #456, so a job outside the active org is simply not found.
+  const job = await loadJobForOrg<{ id: string; customer_id: string | null }>(
+    supabase,
+    jobId,
+    ctx.org.id,
+    "id, customer_id",
+  );
   if (!job) redirect("/jobs?error=job_not_found");
   if (!job.customer_id) {
     redirect(`/jobs/${jobId}?error=variation_needs_customer`);
@@ -1109,7 +1201,7 @@ export async function createVariation(jobId: string, formData: FormData) {
 
   // Allocate per-org quote number AND per-job variation number.
   const [{ data: quoteNumber }, { data: varNumber }] = await Promise.all([
-    supabase.rpc("next_quote_number", { target_org: job.org_id }),
+    supabase.rpc("next_quote_number", { target_org: ctx.org.id }),
     supabase.rpc("next_variation_number", { target_job: jobId }),
   ]);
   if (!quoteNumber || !varNumber) {
@@ -1123,7 +1215,7 @@ export async function createVariation(jobId: string, formData: FormData) {
   const { data: variation, error: qErr } = await supabase
     .from("quotes")
     .insert({
-      org_id: job.org_id,
+      org_id: ctx.org.id,
       customer_id: job.customer_id,
       lead_id: null,
       job_id: jobId,
@@ -1170,7 +1262,7 @@ export async function createVariation(jobId: string, formData: FormData) {
     lineItems = [
       {
         quote_id: variation.id,
-        org_id: job.org_id,
+        org_id: ctx.org.id,
         description: parsed.data.title,
         qty: 1,
         unit_price: computed.subtotal,
@@ -1185,7 +1277,7 @@ export async function createVariation(jobId: string, formData: FormData) {
       const unit_price = Math.round(computed.subtotal * share * 100) / 100;
       return {
         quote_id: variation.id,
-        org_id: job.org_id,
+        org_id: ctx.org.id,
         description: b.label,
         qty: 1,
         unit_price,

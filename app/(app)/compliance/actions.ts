@@ -225,23 +225,35 @@ export async function deleteComplianceDocument(id: string): Promise<void> {
 }
 
 export async function getComplianceDocSignedUrl(id: string): Promise<string | null> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) return null;
 
   const tenant = await createClient();
   const admin = createAdminClient();
 
+  // ACTIVE-ORG SCOPE. This is the only read in the file that lacked it, and it
+  // is the one that mints a credential: the signed URL below is produced by the
+  // SERVICE-ROLE client, so whatever path this read returns WILL be signed.
+  // `current_org_ids()` admits every org the viewer belongs to, so a dual-org
+  // user working in org A could pass org B's document id and receive a working
+  // download link to B's insurance certificate or contract from inside A's
+  // screen. The storagePathBelongsToOrg() check below is a different control —
+  // it proves the path matches the ROW's org, not the ACTIVE one. Null (the
+  // existing not-found answer) for anything outside the active org.
   const { data: row } = await (
     tenant.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: { org_id: string | null; storage_path: string | null } | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: { org_id: string | null; storage_path: string | null } | null }>;
+          };
         };
       };
     }
   )
     .select("org_id, storage_path")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!row?.storage_path) return null;

@@ -20,10 +20,16 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();
 
+  // Pin the invoice to the ACTIVE org. "RLS-scoped via the user JWT" (the note
+  // above) is not scoping: `current_org_ids()` returns EVERY org the viewer
+  // belongs to, so for a dual-org user this by-id read would happily render
+  // another org's invoice — its letterhead, its VAT number and its BANK
+  // DETAILS — inside the active org's session. A foreign id must 404 exactly
+  // as a missing one does.
   const { data: invoice, error: iErr } = await supabase
     .from("invoices")
     .select(
@@ -35,6 +41,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       `,
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (iErr) {

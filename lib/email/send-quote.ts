@@ -43,7 +43,21 @@ type QuoteJoined = {
   } | null;
 };
 
-type SendOptions = { to?: string; message?: string };
+type SendOptions = {
+  to?: string;
+  message?: string;
+  /**
+   * ACTIVE-ORG SCOPE — pass `ctx.org.id` from any interactive (user-JWT)
+   * caller. See the matching note in lib/email/send-invoice.ts.
+   *
+   * `current_org_ids()` returns EVERY org the viewer belongs to, so without
+   * this predicate a dual-org user working in org A could resolve org B's
+   * quote here and email B's letterhead, bank details and a live
+   * approve/reject PORTAL LINK to B's customer — and mint B's `public_token`
+   * while doing it. A foreign quote must be `not_found`.
+   */
+  orgId?: string;
+};
 
 export async function sendQuoteEmail(
   supabase: SupabaseClient,
@@ -52,7 +66,7 @@ export async function sendQuoteEmail(
 ): Promise<SendQuoteEmailResult> {
   if (!env.RESEND_API_KEY) return { sent: false, reason: "no_resend_key" };
 
-  const { data: quoteRaw, error: qErr } = await supabase
+  const quoteQuery = supabase
     .from("quotes")
     .select(
       `
@@ -61,8 +75,12 @@ export async function sendQuoteEmail(
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
     )
-    .eq("id", quoteId)
-    .maybeSingle();
+    .eq("id", quoteId);
+  // Active-org scope (see SendOptions.orgId) — a foreign quote yields no row.
+  const { data: quoteRaw, error: qErr } = await (options.orgId
+    ? quoteQuery.eq("org_id", options.orgId)
+    : quoteQuery
+  ).maybeSingle();
   const quote = quoteRaw as unknown as QuoteJoined | null;
 
   if (qErr) {
@@ -81,10 +99,14 @@ export async function sendQuoteEmail(
   let token = quote.public_token;
   if (!token) {
     token = crypto.randomUUID();
-    const { error: tErr } = await supabase
+    const tokenQuery = supabase
       .from("quotes")
       .update({ public_token: token })
       .eq("id", quote.id);
+    // Minting a portal credential is a write — state its org scope explicitly.
+    const { error: tErr } = await (options.orgId
+      ? tokenQuery.eq("org_id", options.orgId)
+      : tokenQuery);
     if (tErr) {
       console.error("[send-quote] token allocation failed", tErr);
       return { sent: false, reason: "load_failed", detail: tErr.message };
@@ -156,10 +178,13 @@ export async function sendQuoteEmail(
   if (quote.status !== "accepted" && quote.status !== "declined") {
     updates.status = "sent";
   }
-  const { error: updErr } = await supabase
+  const postSendQuery = supabase
     .from("quotes")
     .update(updates)
     .eq("id", quote.id);
+  const { error: updErr } = await (options.orgId
+    ? postSendQuery.eq("org_id", options.orgId)
+    : postSendQuery);
   if (updErr) console.error("[send-quote] post-send update failed", updErr);
 
   return {

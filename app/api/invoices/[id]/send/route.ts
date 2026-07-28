@@ -20,7 +20,7 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   let body: { to?: string; message?: string } = {};
@@ -31,9 +31,32 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   const supabase = await createClient();
+
+  // ACTIVE-ORG GATE — refuse BEFORE anything is rendered or sent.
+  //
+  // `requireOrgContext()` proves the caller has an active org; it does NOT
+  // prove this invoice belongs to it. RLS won't either: `current_org_ids()`
+  // returns every org the viewer belongs to, so a user working in org A could
+  // POST org B's invoice id here and cause B's invoice — B's letterhead, B's
+  // bank details — to be emailed to B's customer, with B's status flipped to
+  // "sent". Resolve-then-compare, mirroring the sibling /remind route, so the
+  // refusal happens before sendInvoiceEmail is ever called. 404 (not 403)
+  // keeps a foreign id indistinguishable from a missing one.
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("id, org_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!inv || inv.org_id !== ctx.org.id) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
   const result = await sendInvoiceEmail(supabase, id, {
     to: body.to,
     message: body.message,
+    // Defence in depth: the helper re-applies the same predicate to its own
+    // load and writes, so the scope holds even if this gate is refactored.
+    orgId: ctx.org.id,
   });
 
   if (!result.sent) {
