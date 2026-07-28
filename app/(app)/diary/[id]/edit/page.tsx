@@ -31,15 +31,19 @@ export default async function EditDiaryEntryPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
+  // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so a
+  // by-id read alone loads another org's diary entry into this org's edit form.
   const [{ data: entry }, jobs] = await Promise.all([
     (
       supabase.from("site_diary_entries" as never) as unknown as {
         select: (cols: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: DiaryRow | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: DiaryRow | null }>;
+            };
           };
         };
       }
@@ -48,6 +52,7 @@ export default async function EditDiaryEntryPage({
         "id, entry_date, job_id, weather, labour_count, work_summary, delays, notes",
       )
       .eq("id", id)
+      .eq("org_id", ctx.org.id)
       .maybeSingle(),
     listJobOptions(),
   ]);

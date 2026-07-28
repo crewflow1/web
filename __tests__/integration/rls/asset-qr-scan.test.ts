@@ -1,15 +1,24 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { describeIntegration, serviceClient } from "../_harness";
+import { resolveScannedAssetForOrg } from "@/lib/assets/scan";
 
 /**
  * QR scan resolver — real-Postgres proof of the token→asset path (M3b).
  *
- * Replicates resolveScannedAsset (app/(app)/assets/_scan.ts): find the ACTIVE
- * identity by token scoped to the caller's org, then load that asset scoped to
- * the same org. Proves the scan route resolves an asset ONLY for a valid, active,
- * same-org token — and denies revoked / unknown / cross-tenant identically
- * (null). (The tenant scope the route gets from RLS is modelled here with an
- * explicit org filter, since service_role bypasses RLS.)
+ * Drives the REAL resolver (`resolveScannedAssetForOrg`, lib/assets/scan.ts) on
+ * the SERVICE-ROLE client. Because service_role bypasses RLS entirely, this
+ * suite isolates the APPLICATION-LAYER predicate: it proves the resolver's own
+ * org filter denies revoked / unknown / cross-tenant tokens even with the
+ * database's outer boundary switched off. The RLS half — and the dual-org
+ * active-org case, which RLS deliberately permits — is proven with real user
+ * JWTs in `asset-qr-active-org.test.ts`.
+ *
+ * HISTORY — why this file is written this way. It previously REPLICATED the
+ * resolver inline, adding an `.eq("org_id", …)` that the shipped code did not
+ * have. It therefore proved a resolver shape that did not exist and stayed
+ * green while `_scan.ts` resolved tokens by RLS alone (which blends orgs for a
+ * dual-org user). Driving the real export is what stops that drift recurring —
+ * do not reintroduce a local copy of the query.
  */
 
 type Res<T> = { data: T | null; error: { message: string } | null };
@@ -36,24 +45,10 @@ const TOKEN = `it-scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let seq = 0;
 const tok = () => `${TOKEN}-${seq++}`;
 
-// Replicates the resolver's two-step, org-scoped lookup.
+/** The real resolver, driven on the RLS-bypassing service-role client. */
 async function resolve(token: string, orgId: string): Promise<string | null> {
-  const svc = db(serviceClient());
-  const { data: id } = await svc
-    .from("asset_qr_identities")
-    .select("asset_id")
-    .eq("token", token)
-    .eq("active", true)
-    .eq("org_id", orgId)
-    .maybeSingle();
-  if (!id?.asset_id) return null;
-  const { data: asset } = await svc
-    .from("assets")
-    .select("id")
-    .eq("id", id.asset_id as string)
-    .eq("org_id", orgId)
-    .maybeSingle();
-  return (asset?.id as string) ?? null;
+  const scanned = await resolveScannedAssetForOrg(serviceClient(), token, orgId);
+  return scanned?.id ?? null;
 }
 
 describeIntegration("qr scan resolver · token→asset security", () => {
