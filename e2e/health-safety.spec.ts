@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Health & Safety RAMS (Milestone 1) — authenticated journey, no mocks. Uses the
@@ -19,7 +20,7 @@ import { createClient } from "@supabase/supabase-js";
 const SLUG = "e2e-harness-org";
 
 function svc() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const url = assertLocalE2eTarget("health-safety.spec.ts");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }

@@ -23,8 +23,15 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { describe, test } from "vitest";
 import type { Database } from "@/lib/supabase/types";
+import { assertLocalDestructiveTarget } from "@/lib/testing/destructive-db-guard";
 
 type Conn = { url: string; anonKey: string; serviceRoleKey: string };
+
+/**
+ * Names the guard reports, in the exact precedence readConn() resolves them.
+ * Kept beside readConn so the message can never drift from what is actually read.
+ */
+const TARGET_ENV = "SUPABASE_URL (else NEXT_PUBLIC_SUPABASE_URL)";
 
 function readConn(): Partial<Conn> {
   return {
@@ -49,6 +56,18 @@ function conn(): Conn {
         "a disposable database.",
     );
   }
+  /**
+   * STRUCTURAL CHOKEPOINT. Every client this harness hands out — service_role
+   * (RLS-bypassing, used for fixture setup and teardown), anon, and user — is
+   * built from this one function, and all 150+ integration files go through it.
+   * Guarding here means no integration test can obtain a client pointed at a
+   * non-local database, and the check runs BEFORE createClient, never after the
+   * first write. `c.url` is the identical value passed to createClient below.
+   */
+  assertLocalDestructiveTarget(c.url, {
+    entryPoint: "integration test harness (__tests__/integration/_harness.ts)",
+    envVar: TARGET_ENV,
+  });
   return c as Conn;
 }
 

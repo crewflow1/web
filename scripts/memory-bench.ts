@@ -26,6 +26,7 @@ import { recallMemory, rememberMemory } from "@/server/services/hq-memory";
 import { runEmbeddingWorker } from "@/server/services/memory-embedder";
 import { runMemoryLifecycleWorker } from "@/server/services/memory-lifecycle";
 import { getEmbeddingProvider } from "@/lib/ai/embeddings";
+import { assertLocalDestructiveTarget } from "@/lib/testing/destructive-db-guard";
 
 const BENCH_PREFIX = "BENCH·";
 const BENCH_SLUG = "bench-";
@@ -268,6 +269,18 @@ async function cmdReport(admin: Admin): Promise<void> {
 
 async function main(): Promise<void> {
   const [cmd, arg] = process.argv.slice(2);
+  /**
+   * This harness writes AND deletes (`clean` removes every bench-tagged memory
+   * and ai_employee row; `seed`/`write` insert thousands). It is documented as a
+   * local-Docker-Supabase tool, but it resolves its database from the ambient
+   * environment via createAdminClient() — which reads NEXT_PUBLIC_SUPABASE_URL,
+   * the same variable a shell left over from a production session would hold.
+   * Refuse before the client is built. Same variable createAdminClient reads.
+   */
+  assertLocalDestructiveTarget(process.env.NEXT_PUBLIC_SUPABASE_URL, {
+    entryPoint: "shared-memory bench harness (scripts/memory-bench.ts)",
+    envVar: "NEXT_PUBLIC_SUPABASE_URL",
+  });
   const admin = createAdminClient() as unknown as Admin;
   switch (cmd) {
     case "clean":

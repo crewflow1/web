@@ -17,6 +17,68 @@
 
 begin;
 
+-- ============================================================================
+-- DESTRUCTIVE-TARGET GUARD — must be the first statement inside the
+-- transaction, before any INSERT/UPDATE/DELETE below.
+--
+-- A .sql file run by hand through psql cannot call the TypeScript guard in
+-- lib/testing/destructive-db-guard.ts, so it has to confirm the target itself,
+-- from inside the connection, using something the database can tell it.
+--
+-- What we check, and why this one:
+--   The Supabase CLI's local stack sets `app.settings.jwt_secret` as a
+--   DATABASE-level setting for all roles, to a FIXED, PUBLISHED development
+--   constant — the same string in Supabase's own self-hosting docs and in
+--   every `.env.example`. It is a recognition token, not a credential: it
+--   identifies "this is a throwaway local dev stack" and nothing else. A real
+--   project's JWT secret is per-project and random, so it can never collide.
+--
+--   Verified empirically against the local stack rather than assumed. Two
+--   plausible-looking alternatives were tested and REJECTED:
+--     * inet_server_addr() — returns the Docker bridge address (172.18.0.2)
+--       on a local stack, not a loopback address, so "is it loopback" is wrong.
+--     * pg_roles.rolsuper   — false for `postgres` on the LOCAL stack too, so
+--       "is the connecting role a superuser" does not discriminate at all.
+--
+-- Allowlist, fail closed: the guard passes ONLY on an exact match with the
+-- known local constant. Unset, NULL, or any other value is refused — including
+-- databases nobody has thought of. If a future CLI stops setting this, the
+-- script refuses rather than runs, which is the correct direction to fail.
+--
+-- The secret's VALUE is compared, never raised in a message.
+--
+-- This lives inside the transaction on purpose. Raising here poisons the
+-- transaction, so every statement after it errors and the trailing `commit;`
+-- degrades to a rollback — nothing is written even when psql is invoked
+-- WITHOUT `ON_ERROR_STOP=1`. Placing it before `begin;` would be strictly
+-- worse: without ON_ERROR_STOP psql would carry on into the transaction.
+--
+-- There is deliberately no override GUC. A `set crewflow.allow_destructive`
+-- escape hatch is precisely the line that gets pasted into a production shell.
+-- ============================================================================
+do $$
+begin
+  if current_setting('app.settings.jwt_secret', true) is distinct from
+     'super-secret-jwt-token-with-at-least-32-characters-long'
+  then
+    raise exception using message = E'REFUSED: scripts/e2e-lifecycle.sql may only run against a LOCAL Supabase stack.\n'
+      '\n'
+      'This script INSERTs, UPDATEs and DELETEs real business rows: demo_requests,\n'
+      'organizations, users, auth.users, customers, quotes, invoices and payments.\n'
+      'The connected database did not identify itself as a local `supabase start`\n'
+      'stack, so it was refused. CrewFlow has exactly ONE production Supabase\n'
+      'project and no staging environment.\n'
+      '\n'
+      'Run it against the local stack instead:\n'
+      '  supabase start\n'
+      '  supabase status            # copy the DB_URL it prints (127.0.0.1:54322)\n'
+      '  psql "<that DB_URL>" -v ON_ERROR_STOP=1 -f scripts/e2e-lifecycle.sql\n'
+      '\n'
+      'Do NOT reach for `supabase db query --linked` — `--linked` is PRODUCTION.\n'
+      'There is no override flag, by design.';
+  end if;
+end $$;
+
 do $$
 declare
   sentinel text := 'e2e-' || extract(epoch from now())::bigint;
