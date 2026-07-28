@@ -303,7 +303,40 @@ describe("wiring · scripts/e2e-lifecycle.sql refuses a non-local database", () 
 });
 
 // =====================================================================
-// 7. POLICY — no override escape hatch, anywhere
+// 7. STRUCTURAL — the one destructive path that needs no guard
+// =====================================================================
+
+describe("wiring · verify-bill-value-guard-races.sh is local BY CONSTRUCTION", () => {
+  const sh = read("scripts/verify-bill-value-guard-races.sh");
+
+  /**
+   * This harness is highly destructive — it creates orgs, posts payments, and
+   * even DISABLES the finances_bill_value_guard trigger to manufacture a legacy
+   * row. It is deliberately NOT wired to the TypeScript guard, because it never
+   * resolves a database URL: it reaches Postgres only by `docker exec` into a
+   * named LOCAL container. There is no host, connection string or environment
+   * variable through which it could address the hosted production project, so a
+   * guard on a URL it does not read would be theatre.
+   *
+   * That safety is a property of HOW it connects, so pin it: if this script ever
+   * grows a real connection string, this test fails and it must be guarded.
+   */
+  it("reaches Postgres only through `docker exec` into a local container", () => {
+    expect(sh).toMatch(/docker exec -i "\$CT"/);
+  });
+
+  it("never reads a Supabase URL or a Postgres connection string", () => {
+    expect(sh).not.toMatch(/SUPABASE_URL/);
+    expect(sh).not.toMatch(/postgres(ql)?:\/\//);
+  });
+
+  it("never reaches for --linked, which is production", () => {
+    expect(sh).not.toMatch(/--linked/);
+  });
+});
+
+// =====================================================================
+// 8. POLICY — no override escape hatch, anywhere
 // =====================================================================
 
 describe("wiring · there is no override escape hatch", () => {
