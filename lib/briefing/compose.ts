@@ -58,6 +58,24 @@ export interface BriefingInput {
      */
     unassignedLater: { count: number; soonestDays: number | null };
   };
+  /**
+   * FLEET: deterministic vehicle-compliance detection (lib/fleet/compliance.ts).
+   * Detection only — nothing is sent, booked or renewed automatically.
+   *
+   * `legalBreach` is the one fleet signal that reaches `critical`, and it is
+   * narrow on purpose: an expired MOT or insurance on a vehicle the company
+   * still has IN SERVICE. Driving on either is a Road Traffic Act offence
+   * (s.47 / s.143), which is the same class of live legal exposure the
+   * expired-permit and no-RAMS lines already spend `critical` on. Expired road
+   * tax, and any lapse on a vehicle that is off road or in the workshop, land in
+   * `otherOverdue` at `high` — real, but not a vehicle being driven illegally
+   * today. That split is what stops `critical` inflating into wallpaper.
+   */
+  fleetCompliance: {
+    legalBreach: { count: number; vehicleCount: number; maxDaysOverdue: number };
+    otherOverdue: { count: number; vehicleCount: number; maxDaysOverdue: number };
+    dueSoon: { count: number; vehicleCount: number; soonestDays: number | null };
+  };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -217,6 +235,45 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
     );
   }
 
+  // Fleet compliance (TRAIN C). Categorised as `safety` rather than
+  // `operations`: an untaxed, untested or uninsured vehicle on the road is a
+  // legal exposure for the company and its driver, not a scheduling nuisance.
+  const fleet = input.fleetCompliance;
+  if (fleet.legalBreach.count > 0) {
+    const v = fleet.legalBreach.vehicleCount;
+    add(
+      "fleet_legal_breach", "safety", "critical",
+      `${v} in-service ${plural(v, "vehicle")} without valid MOT or insurance`,
+      `${v} ${plural(v, "vehicle")} marked in service ${v === 1 ? "has" : "have"} an expired MOT or insurance — ` +
+        `the oldest by ${fleet.legalBreach.maxDaysOverdue} ${plural(fleet.legalBreach.maxDaysOverdue, "day")}. ` +
+        `Driving on either is an offence. Take ${v === 1 ? "it" : "them"} off road or renew today.`,
+      "/fleet/compliance", { count: v, urgencyDays: -fleet.legalBreach.maxDaysOverdue },
+    );
+  }
+  if (fleet.otherOverdue.count > 0) {
+    const n = fleet.otherOverdue.count;
+    add(
+      "fleet_compliance_overdue", "safety", "high",
+      `${n} vehicle compliance ${plural(n, "date")} passed`,
+      `${n} MOT / insurance / road tax / service ${plural(n, "date")} across ${fleet.otherOverdue.vehicleCount} ` +
+        `${plural(fleet.otherOverdue.vehicleCount, "vehicle")} ${n === 1 ? "is" : "are"} past due — ` +
+        `the oldest by ${fleet.otherOverdue.maxDaysOverdue} ${plural(fleet.otherOverdue.maxDaysOverdue, "day")}.`,
+      "/fleet/compliance", { count: n, urgencyDays: -fleet.otherOverdue.maxDaysOverdue },
+    );
+  }
+  if (fleet.dueSoon.count > 0) {
+    const n = fleet.dueSoon.count;
+    const d = fleet.dueSoon.soonestDays;
+    add(
+      "fleet_compliance_due_soon", "safety", d != null && d <= 7 ? "high" : "medium",
+      `${n} vehicle ${plural(n, "renewal")} coming up`,
+      `${n} MOT / insurance / road tax / service ${plural(n, "renewal")} due across ` +
+        `${fleet.dueSoon.vehicleCount} ${plural(fleet.dueSoon.vehicleCount, "vehicle")}` +
+        `${d != null ? `, the soonest in ${d} ${plural(d, "day")}` : ""}. Book ${n === 1 ? "it" : "them"} in.`,
+      "/fleet/compliance", { count: n, urgencyDays: d },
+    );
+  }
+
   // --- MONEY ---------------------------------------------------------------
   if (input.overdue.count > 0 && input.overdue.totalAmount > 0) {
     const n = input.overdue.count;
@@ -345,8 +402,18 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
     .sort((a, b) => b.score - a.score || a.key.localeCompare(b.key));
 }
 
-/** Always-critical safety breaches that a user cannot snooze off their briefing. */
-const NON_DISMISSIBLE_KEYS: readonly string[] = ["jobs_without_rams", "permits_expired"];
+/**
+ * Always-critical safety breaches that a user cannot snooze off their briefing.
+ * `fleet_legal_breach` joins them for the same reason the other two are here:
+ * it only ever fires on a vehicle the company has in service with no valid MOT
+ * or insurance, and hiding a live Road Traffic Act exposure for a day would
+ * bury exactly the thing a director is personally on the hook for.
+ */
+const NON_DISMISSIBLE_KEYS: readonly string[] = [
+  "jobs_without_rams",
+  "permits_expired",
+  "fleet_legal_breach",
+];
 
 export function isDismissibleBriefingKey(key: string): boolean {
   return !NON_DISMISSIBLE_KEYS.includes(key);
@@ -360,6 +427,9 @@ export const BRIEFING_ITEM_KEYS = [
   "rams_review_overdue",
   "compliance_expiring",
   "toolbox_awaiting_ack",
+  "fleet_legal_breach",
+  "fleet_compliance_overdue",
+  "fleet_compliance_due_soon",
   "overdue_invoices",
   "retention_due",
   "billing_ready",

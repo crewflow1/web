@@ -29,6 +29,11 @@ function base(overrides: Partial<BriefingInput> = {}): BriefingInput {
       leaveClashes: { count: 0, soonestDays: null },
       unassignedLater: { count: 0, soonestDays: null },
     },
+    fleetCompliance: {
+      legalBreach: { count: 0, vehicleCount: 0, maxDaysOverdue: 0 },
+      otherOverdue: { count: 0, vehicleCount: 0, maxDaysOverdue: 0 },
+      dueSoon: { count: 0, vehicleCount: 0, soonestDays: null },
+    },
     dismissedKeys: new Set(),
     ...overrides,
   };

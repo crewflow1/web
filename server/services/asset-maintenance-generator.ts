@@ -6,7 +6,11 @@ import {
   isOneOff,
   nextDueAfter,
 } from "@/lib/assets/inspection-schedule";
-import { MAINTENANCE_TYPE_LABELS, type MaintenanceType } from "@/lib/assets/maintenance";
+import {
+  COMPLIANCE_MAINTENANCE_TYPES,
+  MAINTENANCE_TYPE_LABELS,
+  type SchedulableMaintenanceType,
+} from "@/lib/assets/maintenance";
 
 /**
  * Service-case generator (M5b) — a direct clone of the PROVEN due-inspection
@@ -22,7 +26,11 @@ type ScheduleRow = {
   id: string;
   org_id: string;
   asset_id: string;
-  maintenance_type: MaintenanceType;
+  // The SUPERSET (20261057000000): a schedule may now carry a fleet compliance
+  // type (mot / insurance / road_tax) as well as the original three cadences.
+  // `case_type` below is a straight passthrough of this value, which is exactly
+  // why that migration had to widen BOTH CHECKs.
+  maintenance_type: SchedulableMaintenanceType;
   title: string | null;
   interval_days: number | null;
   interval_months: number | null;
@@ -112,6 +120,12 @@ export async function runMaintenanceGenerator(
     if ((won ?? []).length > 0) {
       summary.generated += 1;
       const wonId = won?.[0]?.id;
+      // A compliance cadence is a legal deadline, not a workshop booking — it
+      // gets the fleet wording and the fleet deep link. Everything else keeps
+      // the original asset-maintenance copy verbatim.
+      const isCompliance = (COMPLIANCE_MAINTENANCE_TYPES as readonly string[]).includes(
+        schedule.maintenance_type,
+      );
       await emitNotifications([
         {
           org_id: schedule.org_id,
@@ -119,10 +133,14 @@ export async function runMaintenanceGenerator(
           audience: "customer",
           type: "maintenance.due",
           category: "system",
-          priority: "medium",
-          title: `Service due — ${title}`,
-          body: `Scheduled for ${schedule.next_due}. Book it in from the asset's maintenance section.`,
-          action_url: `/assets/${schedule.asset_id}`,
+          priority: isCompliance ? "high" : "medium",
+          title: isCompliance
+            ? `${MAINTENANCE_TYPE_LABELS[schedule.maintenance_type]} due — ${title}`
+            : `Service due — ${title}`,
+          body: isCompliance
+            ? `Due ${schedule.next_due}. Renew it before the date — driving without valid MOT, insurance or tax is an offence.`
+            : `Scheduled for ${schedule.next_due}. Book it in from the asset's maintenance section.`,
+          action_url: isCompliance ? `/fleet/vehicles/${schedule.asset_id}` : `/assets/${schedule.asset_id}`,
           source_module: "assets",
           source_id: wonId ?? schedule.id,
           metadata: { asset_id: schedule.asset_id, schedule_id: schedule.id, cycle_key: key },
