@@ -92,7 +92,9 @@
 | Payroll (timesheets → PAYE lines) | **PRODUCTION** | `lib/payroll/compute.ts`, `payroll_lines` |
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
-| CIS M3–M5 — deduction calc + reverse-charge VAT · monthly statements · HMRC seam | **NOT BUILT** | M3 must split labour vs qualifying materials (CIS never applies to materials or VAT); M4 clones the completion-certificate immutability/PDF stack; M5 stays DARK/BLOCKED_BY_PROVIDER |
+| CIS M3 — deduction calc + reverse-charge VAT | **PRODUCTION** | `20261051_cis_deduction` (#443, Train 8): HMRC-verified rules (20/30/gross, exclusions, CITB, 6th–5th tax month), server-derived rate, cumulative partial-payment maths, reverse charge as a real treatment; splits labour vs qualifying materials (CIS never applies to materials or VAT). Hardened by `20261053`/`20261054` (#452, Train 11): basis freeze incl. INSERT-after-part-payment door, settlement floor, enforced trigger firing order |
+| CIS M4 — monthly statements + return dataset | **BUILDING** | in flight — `feat/cis-m4-statements`, slots `20261055`+; clones the completion-certificate immutability/PDF stack; return dataset is prepare/export ONLY — CrewFlow does not file |
+| CIS M5 — HMRC filing seam | **NOT BUILT** | stays DARK/BLOCKED_BY_PROVIDER — no real or simulated filing without approved credentials |
 | OCR / receipt scanning | **BUILT-DARK** | `server/services/expense-drafts.ts` calls `maybeExtractReceipt`; `expense_drafts.ai_confidence` exists; with no AI key the draft is created with NULL extraction fields. **Verified 2026-07-27 — was wrongly marked NOT BUILT.** Needs a provider key only |
 | Expenses | **PRODUCTION** | `app/(app)/expenses/{page,new,[id],actions.ts}` with `uploadExpenseReceipt`/`approveExpenseDraftAction`/`rejectExpenseDraft`, `expense_drafts` table, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL.** Budget tracking specifically remains NOT BUILT |
 | Online invoice payment (Stripe) | **FOUNDATION (dark seam)** | `PaymentProvider` seam documented in `docs/billing-plans.md`; needs live creds + product decision |
@@ -163,13 +165,23 @@ supabase migration list --linked | awk -F'|' 'NF>=3 {gsub(/ /,"",$2); if($2 ~ /^
 
 That `awk` reads the **remote** column deliberately. A positional parse (`tail -2 | head -1`)
 reads the LOCAL column and will report your own unapplied migration as the production
-tip — a mistake that silently authorises a colliding slot.
+tip — a mistake that silently authorises a colliding slot. The other authoritative read
+is the database itself:
+
+```sql
+select max(version) from supabase_migrations.schema_migrations;
+```
+
+Remember why the duplicate-prefix check exists at all: a colliding prefix is
+**invisible to git**. `20261055000000_a.sql` and `20261055000000_b.sql` are different
+filenames — clean merge, no conflict, no reviewer signal. The collision only surfaces
+at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 
 | Slot | Owner | Status |
 |---|---|---|
 | …`20261047` | CIS M2 `supplier_payments` | **APPLIED** |
+| ~~`20261048`–`20261050`~~ | never written / retired (incl. the original org-teardown slot) | **DEAD — below applied tip, never claim** |
 | `20261051` | CIS M3 `cis_deduction` | **APPLIED** |
-| ~~`20261050`~~ | ~~org-teardown~~ | **DEAD — below applied tip** |
 | `20261052` | org-teardown P1 `activity_cascade_guard` | **APPLIED** — Train 9, #448 |
 | `20261053` | CIS bill value freeze | **APPLIED** — Train 11, #452 |
 | `20261054` | Supplier bill settlement floor | **APPLIED (prod tip)** — Train 11, #452 |
