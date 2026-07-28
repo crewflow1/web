@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateFinanceSchema } from "@/lib/finances/schema";
+import { financeWriteRefusal } from "@/lib/finances/errors";
 import type { Database } from "@/lib/supabase/types";
 
 type FinanceUpdate = Database["public"]["Tables"]["finances"]["Update"];
@@ -57,6 +58,13 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     .select("id");
 
   if (error) {
+    // A DB guard refusing the edit is a legitimate answer, not a server fault —
+    // surface it with the recovery path instead of an opaque 500. Chief case: the
+    // bill has been part-paid under CIS, so its value is frozen (20261053000000).
+    const refusal = financeWriteRefusal(error.code, error.message);
+    if (refusal) {
+      return NextResponse.json({ error: refusal.error }, { status: refusal.status });
+    }
     console.error("[finances] update failed", error);
     return NextResponse.json({ error: "Failed to update" }, { status: 500 });
   }

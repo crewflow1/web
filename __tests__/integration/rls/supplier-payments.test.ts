@@ -862,7 +862,210 @@ describeIntegration("H2-CIS M2 supplier payments (real Postgres)", () => {
   });
 
   // =========================================================================
-  // 6. THE LOAD-BEARING INVARIANT — cost is unchanged by CIS withholding
+  // 6. THE BILL MUST NOT SHRINK BELOW WHAT IS ALREADY SETTLED
+  // =========================================================================
+  // CAP 2 above caps Σ live allocations at the bill's gross — but it is a
+  // BEFORE INSERT trigger on the ALLOCATION, so it only ever runs when money
+  // arrives. Nothing re-checked it when the BILL moved underneath payments
+  // already recorded against it: reducing a part-paid bill's `amount` or
+  // `vat_rate` left Σ allocations > gross with no error at all.
+  //
+  // This is NOT the CIS case, and the rule is deliberately weaker.
+  // 20261053000000 freezes a bill OUTRIGHT once it carries a live CIS
+  // deduction, because a tax basis already reported to HMRC must not move by a
+  // penny in either direction. An ordinary supplier bill has no such basis — it
+  // may still be corrected up or down, it simply may not be cut below the money
+  // the ledger already says was paid against it. No void-and-repost ceremony,
+  // and the two refusals must never be mistaken for one another.
+  //
+  // TWO PROPERTIES ARE NOT PROVEN HERE, AND CANNOT BE, because PostgREST is one
+  // transaction per request — it cannot hold two overlapping transactions open,
+  // and it cannot issue DDL. Both live in scripts/verify-bill-value-guard-races.sh:
+  //
+  //   * CONCURRENCY. A bill reduction racing an allocation, in both orderings,
+  //     with the block confirmed from pg_stat_activity rather than inferred.
+  //   * LEGACY REPAIR. That a row already over-settled — which only pre-guard
+  //     data can be, so the harness manufactures it by disabling the trigger —
+  //     can still be corrected TOWARD validity rather than being trapped.
+  //
+  // Run that harness when you touch the guard. These tests will not catch a
+  // regression in either property.
+
+  it("a part-paid bill cannot be CUT below what has already been settled", async () => {
+    const bill = await mkBill(orgA, merchA, 1_000, 0); // 1,000 gross, no CIS
+    const payment = await mkPayment(orgA, merchA, 900);
+    const alloc = await svc()
+      .from("supplier_payment_allocations")
+      .insert({ org_id: orgA, payment_id: payment, supplier_id: merchA, finance_id: bill, amount: 900 });
+    expect(alloc.error, alloc.error?.message).toBeNull();
+
+    // Cutting the bill to 100 would leave the ledger claiming nine times the
+    // bill's whole value had been settled against it.
+    const upd = await svc().from("finances").update({ amount: 100 }).eq("id", bill);
+    expect(upd.error?.message ?? "", "service_role must be refused too").toMatch(
+      /already settled against it/i,
+    );
+
+    // An admin through RLS gets the same answer, not a silent no-op.
+    const asUser = await asAdmin().from("finances").update({ amount: 100 }).eq("id", bill);
+    expect(asUser.error?.message ?? "").toMatch(/already settled against it/i);
+
+    const row = await svc().from("finances").select("amount").eq("id", bill).maybeSingle();
+    expect(num(row.data?.amount), "the bill must be untouched").toBe(1_000);
+  });
+
+  it("dropping the VAT RATE below the settled total is refused for the same reason", async () => {
+    // Gross is amount + vat_total, so the VAT rate moves the payable just as the
+    // net does. A guard that watched only `amount` would be trivially walked past.
+    const bill = await mkBill(orgA, merchA, 1_000, 20); // 1,200 gross
+    const payment = await mkPayment(orgA, merchA, 1_150);
+    const alloc = await svc()
+      .from("supplier_payment_allocations")
+      .insert({ org_id: orgA, payment_id: payment, supplier_id: merchA, finance_id: bill, amount: 1_150 });
+    expect(alloc.error, alloc.error?.message).toBeNull();
+
+    // Zero-rating it takes gross to 1,000 — below the 1,150 already settled.
+    const upd = await svc().from("finances").update({ vat_rate: 0 }).eq("id", bill);
+    expect(upd.error?.message ?? "").toMatch(/already settled against it/i);
+
+    const row = await svc().from("finances").select("vat_rate, vat_total").eq("id", bill).maybeSingle();
+    expect(num(row.data?.vat_rate)).toBe(20);
+    expect(num(row.data?.vat_total), "the generated VAT must be untouched").toBe(200);
+  });
+
+  it("it is a FLOOR, not a freeze — a part-paid bill can still be corrected", async () => {
+    // The whole point of not reusing the CIS rule: an ordinary bill stays
+    // editable, in BOTH directions, right down to the settled total.
+    const bill = await mkBill(orgA, merchA, 1_000, 0);
+    const payment = await mkPayment(orgA, merchA, 400);
+    await svc()
+      .from("supplier_payment_allocations")
+      .insert({ org_id: orgA, payment_id: payment, supplier_id: merchA, finance_id: bill, amount: 400 });
+
+    const up = await svc().from("finances").update({ amount: 2_000 }).eq("id", bill);
+    expect(up.error, "billing MORE can never over-settle anything").toBeNull();
+
+    const down = await svc().from("finances").update({ amount: 500 }).eq("id", bill);
+    expect(down.error, "a reduction that still covers the settled total is fine").toBeNull();
+
+    const exact = await svc().from("finances").update({ amount: 400 }).eq("id", bill);
+    expect(exact.error, "cutting it to EXACTLY the settled total is fine").toBeNull();
+
+    const below = await svc().from("finances").update({ amount: 399.99 }).eq("id", bill);
+    expect(below.error?.message ?? "", "one penny under is not").toMatch(
+      /already settled against it/i,
+    );
+
+    // And everything that cannot move the payable stays freely editable.
+    const other = await svc()
+      .from("finances")
+      .update({ notes: "re-tagged", category: "materials", reference: `${T}-renamed` })
+      .eq("id", bill);
+    expect(other.error, other.error?.message).toBeNull();
+  });
+
+  it("VOIDING the payment drops the floor — the bill is free again", async () => {
+    const bill = await mkBill(orgA, merchA, 1_000, 0);
+    const payment = await mkPayment(orgA, merchA, 900);
+    await svc()
+      .from("supplier_payment_allocations")
+      .insert({ org_id: orgA, payment_id: payment, supplier_id: merchA, finance_id: bill, amount: 900 });
+
+    expect(
+      (await svc().from("finances").update({ amount: 100 }).eq("id", bill)).error?.message ?? "",
+    ).toMatch(/already settled against it/i);
+
+    await svc()
+      .from("supplier_payments")
+      .update({ voided_at: new Date().toISOString(), void_reason: "billed in error" })
+      .eq("id", payment);
+
+    const after = await svc().from("finances").update({ amount: 100 }).eq("id", bill);
+    expect(after.error, "a voided payment settles nothing, so nothing is blocked").toBeNull();
+  });
+
+  it("an UNPAID bill is untouched — and so is a bill with no supplier at all", async () => {
+    const unpaid = await mkBill(orgA, merchA, 1_000, 0);
+    expect((await svc().from("finances").update({ amount: 1 }).eq("id", unpaid)).error).toBeNull();
+
+    // A plain cost with no payee can never be allocated against (see the
+    // composite FK above), so it can never be caught by this guard either.
+    expect(
+      (await svc().from("finances").update({ amount: 1 }).eq("id", billNoSupplier)).error,
+      "ordinary expense editing must stay completely unaffected",
+    ).toBeNull();
+  });
+
+  it("the CIS freeze and the settlement floor stay DISTINCT", async () => {
+    // Same shaped mistake, two different rules, two different ways out. A user
+    // told to void-and-repost when they only needed to re-cut the bill (or the
+    // reverse) has been told the wrong thing.
+    const cisBill = await mkBill(orgA, subA, 1_000, 0);
+    const cis = await asAdmin().rpc("record_cis_supplier_payment", {
+      p_org_id: orgA,
+      p_supplier_id: subA,
+      p_paid_at: "2026-07-01",
+      p_method: "bank_transfer",
+      p_reference: `${T}-CISFRZ`,
+      p_notes: null,
+      p_allocations: [{ finance_id: cisBill, amount: 500 }],
+      p_expected_rate: null,
+    });
+    expect(cis.error, cis.error?.message).toBeNull();
+
+    // A CIS bill is frozen outright — even an INCREASE, which the floor allows.
+    const cisUp = await svc().from("finances").update({ amount: 5_000 }).eq("id", cisBill);
+    expect(cisUp.error?.message ?? "").toMatch(/part-paid under CIS/i);
+    expect(cisUp.error?.message ?? "", "the CIS refusal must not cite settlement").not.toMatch(
+      /already settled against it/i,
+    );
+
+    // The plain bill's refusal must not mention CIS or send anyone to void a
+    // payment they do not need to void.
+    const plain = await mkBill(orgA, merchA, 1_000, 0);
+    const payment = await mkPayment(orgA, merchA, 900);
+    await svc()
+      .from("supplier_payment_allocations")
+      .insert({ org_id: orgA, payment_id: payment, supplier_id: merchA, finance_id: plain, amount: 900 });
+    const plainDown = await svc().from("finances").update({ amount: 100 }).eq("id", plain);
+    expect(plainDown.error?.message ?? "").toMatch(/already settled against it/i);
+    expect(plainDown.error?.message ?? "", "a non-CIS bill must never be called a CIS one").not.toMatch(
+      /CIS/i,
+    );
+  });
+
+  it("no bill in the fixture ends up settled beyond its own value", async () => {
+    // The property all of the above exists to protect, checked over the whole
+    // org rather than one row: after every edit this suite has made, the ledger
+    // still never claims more was paid against a bill than the bill is worth.
+    const bills = await svc().from("finances").select("id, amount, vat_total").eq("org_id", orgA);
+    const payments = await svc().from("supplier_payments").select("id, voided_at").eq("org_id", orgA);
+    const allocs = await svc()
+      .from("supplier_payment_allocations")
+      .select("finance_id, payment_id, amount")
+      .eq("org_id", orgA);
+
+    const live = new Set((payments.data ?? []).filter((p) => !p.voided_at).map((p) => String(p.id)));
+    const settled = new Map<string, number>();
+    for (const a of allocs.data ?? []) {
+      if (!live.has(String(a.payment_id))) continue;
+      const k = String(a.finance_id);
+      settled.set(k, (settled.get(k) ?? 0) + num(a.amount));
+    }
+
+    const overpaid = (bills.data ?? [])
+      .map((b) => ({
+        id: String(b.id),
+        gross: Math.round((num(b.amount) + num(b.vat_total)) * 100) / 100,
+        settled: Math.round((settled.get(String(b.id)) ?? 0) * 100) / 100,
+      }))
+      .filter((b) => b.settled > b.gross + 0.005);
+
+    expect(overpaid, "no bill may be settled beyond its gross value").toEqual([]);
+  });
+
+  // =========================================================================
+  // 7. THE LOAD-BEARING INVARIANT — cost is unchanged by CIS withholding
   // =========================================================================
 
   it("recording a CIS payment does not change the job's cost or margin", async () => {
