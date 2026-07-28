@@ -22,26 +22,38 @@ type AssetRow = {
 /**
  * GET /api/assets/[id]/label/pdf?copies=N — a printable QR label sheet.
  *
- * RLS-scoped via the user JWT. Encodes the asset's ACTIVE QR token as an
- * absolute scan URL (so a phone camera opens the authenticated /a/[token]
- * route). Only safe/public fields reach the label — never price/value/supplier
- * pricing/notes. 404 (no leak) if the asset isn't the caller's or has no active
- * identity yet.
+ * Scoped to the caller's ACTIVE org, not merely to RLS. `current_org_ids()`
+ * returns every org the viewer belongs to, so a by-id read alone lets a
+ * dual-org user print another org's asset label — and the letterhead came from
+ * an UNSCOPED `organizations` read, which for a multi-org user is ambiguous
+ * (maybeSingle over 2+ rows) and could stamp the wrong org on the label. That
+ * is the same defect #456 fixed for completion certificates. The org name now
+ * comes from the request's own context, so no second query can disagree with it.
+ *
+ * Encodes the asset's ACTIVE QR token as an absolute scan URL (so a phone
+ * camera opens the authenticated /a/[token] route). Only safe/public fields
+ * reach the label — never price/value/supplier pricing/notes. 404 (no leak) if
+ * the asset isn't in the caller's active org or has no active identity yet.
  */
 export async function GET(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();
 
   const { data: asset } = await (
     supabase.from("assets" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: AssetRow | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: AssetRow | null }>;
+          };
+        };
       };
     }
   )
     .select("id, name, asset_ref, category, serial_number, registration")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -50,7 +62,9 @@ export async function GET(request: NextRequest, { params }: Ctx) {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { token: string } | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: { token: string } | null }>;
+            };
           };
         };
       };
@@ -59,16 +73,15 @@ export async function GET(request: NextRequest, { params }: Ctx) {
     .select("token")
     .eq("asset_id", id)
     .eq("active", true)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!identity?.token) {
     return NextResponse.json({ error: "No active QR identity" }, { status: 404 });
   }
 
-  const { data: org } = await supabase.from("organizations").select("name").maybeSingle();
-
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "https://crewflow.uk").replace(/\/+$/, "");
   const label: AssetLabelInput = {
-    org_name: org?.name ?? "CrewFlow",
+    org_name: ctx.org.name,
     asset_name: asset.name,
     asset_ref: asset.asset_ref,
     category: asset.category,

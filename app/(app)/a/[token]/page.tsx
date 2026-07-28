@@ -14,20 +14,21 @@ import {
  *
  * Under the (app) auth group, so an unauthenticated scan follows the app's
  * normal sign-in flow and returns here (an internal route — no open-redirect
- * surface). resolveScannedAsset is tenant-scoped, so a token that isn't the
- * scanner's org — or is unknown / revoked / malformed — renders the SAME
- * notFound(). The landing is deliberately thin: it confirms the asset and hands
- * off to the full detail page, which already carries the M2 custody actions
- * (check out / return / transfer) — no QR-specific custody logic.
+ * surface). resolveScannedAsset is scoped to the scanner's ACTIVE org (not
+ * merely to their memberships — `current_org_ids()` returns all of them), so a
+ * token that isn't the active org's — or is unknown / revoked / malformed —
+ * renders the SAME notFound(). The landing is deliberately thin: it confirms
+ * the asset and hands off to the full detail page, which already carries the M2
+ * custody actions (check out / return / transfer) — no QR-specific custody logic.
  */
 export default async function ScanPage({
   params,
 }: {
   params: Promise<{ token: string }>;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { token } = await params;
-  const asset = await resolveScannedAsset(token);
+  const asset = await resolveScannedAsset(token, ctx.org.id);
   if (!asset) notFound();
 
   const status = asset.status as AssetStatus;
