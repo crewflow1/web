@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { getCisProfile } from "@/server/services/cis";
+import { loadSupplierForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import {
   CIS_STATUS_DESCRIPTIONS,
   CIS_STATUS_LABELS,
@@ -84,18 +85,16 @@ export default async function SupplierCisPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: supplier } = await (
-    supabase.from("suppliers" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SupplierRow | null }>;
-        };
-      };
-    }
-  )
-    .select("id, name")
-    .eq("id", id)
-    .maybeSingle();
+  // Active-org scoped. `cis_subcontractors` is keyed (org_id, supplier_id) and
+  // the profile below is read with ctx.org.id, so an unscoped supplier read
+  // would render ANOTHER org's supplier name above an empty CIS panel — and
+  // invite an admin to file this org's tax identity against it.
+  const supplier = await loadSupplierForOrg<SupplierRow>(
+    supabase as unknown as SuppliersClient,
+    ctx.org.id,
+    id,
+    "id, name",
+  );
 
   if (!supplier) notFound();
 

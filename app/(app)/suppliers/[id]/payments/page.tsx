@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { getSupplierLedger } from "@/server/services/supplier-payments";
 import { getCisProfile } from "@/server/services/cis";
+import { loadSupplierForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { formatGbp } from "@/lib/money";
 import {
   BILL_SETTLEMENT_STATUS_CLASS,
@@ -94,18 +95,16 @@ export default async function SupplierPaymentsPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: supplier } = await (
-    supabase.from("suppliers" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SupplierRow | null }>;
-        };
-      };
-    }
-  )
-    .select("id, name")
-    .eq("id", id)
-    .maybeSingle();
+  // Active-org scoped. Everything below (the ledger, the CIS profile, the
+  // record-payment forms) is already read and written with ctx.org.id; an
+  // unscoped supplier read was the one seam that let another org's supplier
+  // name head this org's money-out page.
+  const supplier = await loadSupplierForOrg<SupplierRow>(
+    supabase as unknown as SuppliersClient,
+    ctx.org.id,
+    id,
+    "id, name",
+  );
 
   if (!supplier) notFound();
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { approveExpenseDraftAction, rejectExpenseDraft } from "../actions";
 import { AmountInput } from "./_amount-input";
 
@@ -57,7 +58,7 @@ export default async function ExpenseDraftPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data: row } = await (
@@ -77,19 +78,13 @@ export default async function ExpenseDraftPage({
 
   if (!row) notFound();
 
-  const { data: supplierData } = await (
-    supabase.from("suppliers" as never) as unknown as {
-      select: (cols: string) => {
-        order: (col: string, opts: { ascending: boolean }) => {
-          limit: (n: number) => Promise<{ data: SupplierRow[] | null }>;
-        };
-      };
-    }
-  )
-    .select("id, name")
-    .order("name", { ascending: true })
-    .limit(500);
-  const suppliers = supplierData ?? [];
+  // Active-org scoped: the picker must not offer a supplier from another org
+  // the viewer belongs to. Approving the draft writes `finances.supplier_id`
+  // with this org's org_id, so such a choice was unusable as well as leaky.
+  const suppliers = await listSuppliersForOrg<SupplierRow>(
+    supabase as unknown as SuppliersClient,
+    ctx.org.id,
+  );
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;
   const editable = row.status === "extracted";

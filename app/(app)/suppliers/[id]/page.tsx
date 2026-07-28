@@ -9,6 +9,7 @@ import { getCisProfile } from "@/server/services/cis";
 import { CIS_STATUS_LABELS } from "@/lib/cis/types";
 import { verificationFreshness } from "@/lib/cis/verification";
 import { getSupplierLedger } from "@/server/services/supplier-payments";
+import { loadSupplierForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { formatGbp } from "@/lib/money";
 import {
   BILL_SETTLEMENT_STATUS_CLASS,
@@ -33,6 +34,11 @@ const ERROR_MAP: Record<string, string> = {
     "history has to keep pointing somewhere — void the payments' purpose in your notes " +
     "rather than removing the supplier.",
   bad_id: "Invalid supplier id.",
+  // The DELETE matched no row. In practice that means the caller is not an
+  // owner/admin of this org — `suppliers_delete` is `is_org_admin(org_id)`.
+  // (A supplier belonging to another org never reaches this page at all: the
+  // load above is active-org scoped and notFound()s first.)
+  delete_denied: "Only an owner or admin can delete a supplier.",
 };
 
 type SP = Promise<{ error?: string }>;
@@ -49,18 +55,16 @@ export default async function SupplierDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: supplier } = await (
-    supabase.from("suppliers" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SupplierRow | null }>;
-        };
-      };
-    }
-  )
-    .select("id, name, email, phone, category, notes")
-    .eq("id", id)
-    .maybeSingle();
+  // Active-org scoped. A supplier belonging to another org the viewer also
+  // belongs to must be indistinguishable from one that does not exist — RLS
+  // would happily return it, and the edit/delete forms below would then be
+  // bound to a row this org has no business writing.
+  const supplier = await loadSupplierForOrg<SupplierRow>(
+    supabase as unknown as SuppliersClient,
+    ctx.org.id,
+    id,
+    "id, name, email, phone, category, notes",
+  );
 
   if (!supplier) notFound();
 

@@ -6,10 +6,10 @@ import { createPurchaseOrder } from "../actions";
 import { listPoFormOptions } from "../_data";
 
 export default async function NewPurchaseOrderPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { suppliers, jobs } = await listPoFormOptions(supabase);
+  const { suppliers, jobs } = await listPoFormOptions(supabase, ctx.org.id);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
