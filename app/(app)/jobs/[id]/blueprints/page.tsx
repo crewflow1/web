@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import {
   listBlueprints, listBlueprintVersionsForBlueprints,
@@ -36,7 +37,7 @@ export default async function JobBlueprintsPage({
   const identity = { userId: user.id, orgId: ctx.org.id };
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
-  const { data: job } = await supabase.from("jobs").select("id").eq("id", id).maybeSingle();
+  const job = await loadJobForOrg(supabase, id, ctx.org.id, "id");
   if (!job) notFound();
 
   const blueprints = await listBlueprints(id);

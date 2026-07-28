@@ -81,7 +81,7 @@ type SP = Promise<{
 }>;
 
 export default async function SnagsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -118,7 +118,7 @@ export default async function SnagsPage({ searchParams }: { searchParams: SP }) 
   const jobIds = [
     ...new Set(rows.map((r) => r.job_id).filter((x): x is string => !!x)),
   ];
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const staffMap = new Map(
     staff.map((s) => [s.id, s.full_name || s.email] as const),
   );

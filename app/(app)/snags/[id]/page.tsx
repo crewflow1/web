@@ -102,7 +102,7 @@ export default async function SnagDetailPage({
 
   // Resolve names. Staff list is one query (reused for assignee, reporter, and
   // the reassign picker); the job is at most one more.
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const staffMap = new Map(
     staff.map((s) => [s.id, s.full_name || s.email] as const),
   );

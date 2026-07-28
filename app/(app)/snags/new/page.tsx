@@ -24,7 +24,7 @@ export default async function NewSnagPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -34,7 +34,7 @@ export default async function NewSnagPage({
       .select("id, status, scheduled_date, customer:customers ( name )")
       .order("created_at", { ascending: false })
       .limit(200),
-    listStaffForOrg(),
+    listStaffForOrg(ctx.org.id),
   ]);
   const jobs = (jobsRaw ?? []) as unknown as JobOption[];
 

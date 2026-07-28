@@ -53,7 +53,7 @@ type ReportRow = {
  * freshly-gathered sources.
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();
 
@@ -76,12 +76,16 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Pin the letterhead to the ACTIVE org. Without the predicate this read is
+  // unfiltered, so for a multi-org user PostgREST returns whichever org row
+  // comes back first — the PDF could carry the wrong company's identity.
   const { data: org } = await supabase
     .from("organizations")
     .select("name, phone, vat_number, logo_url, address")
+    .eq("id", ctx.org.id)
     .maybeSingle();
 
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const nameFor = (uid: string | null) =>
     uid ? (staff.find((s) => s.id === uid)?.full_name || staff.find((s) => s.id === uid)?.email || null) : null;
 

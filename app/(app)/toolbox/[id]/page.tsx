@@ -121,7 +121,7 @@ export default async function ToolboxTalkPage({
       ? priorRevisionSignoff(talk.root_toolbox_talk_id, talk.revision_number ?? 1, user.id, TOOLBOX_REVISABLE)
       : Promise.resolve(null),
     loadRevisionSeries(supabase, talk.root_toolbox_talk_id ?? talk.id),
-    listStaffForOrg(),
+    listStaffForOrg(ctx.org.id),
     talk.job_id
       ? supabase.from("jobs").select("id, customer:customers ( name )").eq("id", talk.job_id).maybeSingle()
       : Promise.resolve({ data: null as { customer?: { name?: string | null } | null } | null }),

@@ -58,7 +58,7 @@ export default async function DiaryEntryPage({
   const canDelete =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const staff = await listStaffForOrg();
+  const staff = await listStaffForOrg(ctx.org.id);
   const authorName = entry.created_by
     ? (staff.find((s) => s.id === entry.created_by)?.full_name ??
       staff.find((s) => s.id === entry.created_by)?.email ??

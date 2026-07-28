@@ -40,7 +40,7 @@ const bodySchema = z
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PUT(request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   // Reject virtual recurring-occurrence ids — those carry ":<date>" and
@@ -78,7 +78,11 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   const { error, count } = await supabase
     .from("jobs")
     .update(patch, { count: "exact" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org scope: `is_org_admin(org_id)` passes for EVERY org the caller
+    // administers, so without this a reschedule issued while working in org A
+    // could move an org B job. See lib/jobs/load.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[schedule] update failed", error);

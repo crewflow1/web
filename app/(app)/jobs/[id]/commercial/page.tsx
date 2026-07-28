@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { formatGbp } from "@/lib/money";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
@@ -28,14 +29,13 @@ import { CommercialTimeline } from "./_commercial-timeline";
  */
 export default async function JobCommercialPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, customer:customers ( name )")
-    .eq("id", id)
-    .maybeSingle();
+  const job = await loadJobForOrg<{
+    id: string;
+    customer: { name: string } | { name: string }[] | null;
+  }>(supabase, id, ctx.org.id, "id, customer:customers ( name )");
   if (!job) notFound();
 
   const [quotesRes, invoicesRes, financesRes] = await Promise.all([

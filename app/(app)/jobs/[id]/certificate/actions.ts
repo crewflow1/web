@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { certContentSchema, certIdSchema } from "@/lib/completion-certificates/schema";
 import { buildCertificateSnapshot } from "@/lib/completion-certificates/snapshot";
@@ -76,12 +77,16 @@ export async function createCertificate(jobId: string, formData: FormData): Prom
   }
 
   const supabase = await createClient();
-  // Load the job (RLS-scoped) for the customer link; a cert needs a completed job.
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, status, customer_id")
-    .eq("id", jobId)
-    .maybeSingle();
+  // Load the job scoped to the ACTIVE org for the customer link; a cert needs a
+  // completed job. RLS alone is not enough — it spans every org the caller
+  // belongs to, and the certificate below is stamped with ctx.org.id while
+  // copying this row's customer_id, so an unscoped read would bind another
+  // org's job and customer into this org's certificate.
+  const job = await loadJobForOrg<{
+    id: string;
+    status: string;
+    customer_id: string | null;
+  }>(supabase, jobId, ctx.org.id, "id, status, customer_id");
   if (!job) redirect(`/jobs/${jobId}/certificate?error=not_found`);
   if ((job as { status: string }).status !== "completed") {
     redirect(`/jobs/${jobId}/certificate?error=not_completed`);
@@ -135,11 +140,15 @@ export async function issueCertificate(jobId: string, certId: string): Promise<v
   if (!content.success) redirect(`/jobs/${jobId}/certificate?error=incomplete`);
 
   // Resolve customer-safe context for the frozen snapshot (no internal fields).
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country, customer:customers ( name, address_line1, address_line2, city, county, postcode, country )")
-    .eq("id", jobId)
-    .maybeSingle();
+  // Active-org scoped: the snapshot is stamped with ctx.org.name as the
+  // contractor, so an unscoped read would freeze another org's site address and
+  // customer under this org's letterhead.
+  const job = await loadJobForOrg<Record<string, unknown>>(
+    supabase,
+    jobId,
+    ctx.org.id,
+    "id, site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country, customer:customers ( name, address_line1, address_line2, city, county, postcode, country )",
+  );
   const jobCustomer = (job as { customer?: Record<string, unknown> } | null)?.customer ?? null;
   const customerName = (jobCustomer as { name?: string } | null)?.name ?? null;
   const addr = job ? resolveJobAddress(job as never, jobCustomer as never) : null;
