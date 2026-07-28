@@ -82,33 +82,57 @@ export async function updateSupplier(
   _prev: FormState<SupplierValues>,
   formData: FormData,
 ): Promise<FormState<SupplierValues>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) return formError("Invalid supplier id.");
 
   const result = validateFormData(formData, supplierFormSchema);
   if (!result.ok) return result.state as FormState<SupplierValues>;
 
   const supabase = await createClient();
-  const { error } = await (
+  const { error, count } = await (
     supabase.from("suppliers" as never) as unknown as {
-      update: (row: unknown) => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      update: (
+        row: unknown,
+        opts: { count: "exact" },
+      ) => {
+        eq: (k: string, v: unknown) => {
+          eq: (
+            k: string,
+            v: unknown,
+          ) => Promise<{ error: { message: string } | null; count: number | null }>;
+        };
       };
     }
   )
-    .update({
-      name: result.data.name,
-      phone: result.data.phone ?? null,
-      email: result.data.email ?? null,
-      category: result.data.category ?? null,
-      notes: result.data.notes ?? null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
+    .update(
+      {
+        name: result.data.name,
+        phone: result.data.phone ?? null,
+        email: result.data.email ?? null,
+        category: result.data.category ?? null,
+        notes: result.data.notes ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { count: "exact" },
+    )
+    .eq("id", id)
+    // Active-org scope. `suppliers_update` only proves the caller is a member
+    // of the supplier's OWN org — for a user who belongs to two orgs that
+    // passes for BOTH, so without this predicate a write issued while working
+    // in org A could land on an org B supplier. See server/services/suppliers.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[suppliers] update failed", error);
     return formError("Couldn't save changes.", result.data as SupplierValues);
+  }
+  if (count === 0) {
+    // Not in the ACTIVE org (or gone). Identical wording either way — a
+    // non-active org's supplier must be indistinguishable from a missing one.
+    return formError(
+      "That supplier isn't in this organisation any more.",
+      result.data as SupplierValues,
+    );
   }
 
   revalidatePath("/suppliers");
@@ -117,23 +141,43 @@ export async function updateSupplier(
 }
 
 export async function deleteSupplier(id: string) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/suppliers?error=bad_id");
 
   const supabase = await createClient();
-  const { error } = await (
+  const { error, count } = await (
     supabase.from("suppliers" as never) as unknown as {
-      delete: () => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      delete: (opts: { count: "exact" }) => {
+        eq: (k: string, v: unknown) => {
+          eq: (
+            k: string,
+            v: unknown,
+          ) => Promise<{ error: { message: string } | null; count: number | null }>;
+        };
       };
     }
   )
-    .delete()
-    .eq("id", id);
+    .delete({ count: "exact" })
+    .eq("id", id)
+    // Active-org scope — see the note in updateSupplier. A delete is
+    // irreversible, so this is the single most important predicate in this
+    // file: `suppliers_delete` is `is_org_admin(org_id)`, which an owner of
+    // two orgs satisfies for both.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
+    // Kept: a supplier you have PAID cannot be deleted (supplier_payments
+    // holds a NO ACTION FK). That 409-shaped refusal must keep its message.
     console.error("[suppliers] delete failed", error);
     redirect(`/suppliers/${id}?error=delete_failed`);
+  }
+  if (count === 0) {
+    // Nothing matched. Two causes, deliberately treated alike: the caller is
+    // not an admin of this org (`suppliers_delete` refused), or the supplier
+    // belongs to a DIFFERENT org the caller happens to belong to. The detail
+    // page explains the first and 404s on the second, because after the read
+    // fix above it cannot load another org's supplier either.
+    redirect(`/suppliers/${id}?error=delete_denied`);
   }
 
   revalidatePath("/suppliers");

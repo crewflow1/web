@@ -1,13 +1,23 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import {
+  listSuppliersForOrg,
+  SUPPLIER_LIST_LIMIT,
+  type SuppliersClient,
+} from "@/server/services/suppliers";
 import { EmptyState } from "../_components/empty-state";
 
 /**
- * /suppliers — list suppliers for the org.
+ * /suppliers — list suppliers for the ACTIVE org.
  *
  * Each row links to /suppliers/[id] for editing. Suppliers feed into
  * the expense draft + finances workflow (Phase D).
+ *
+ * The read goes through listSuppliersForOrg because RLS alone does not scope
+ * it: `current_org_ids()` admits every org the viewer belongs to, so a
+ * dual-org member's address book would otherwise show both companies'
+ * suppliers side by side with nothing to tell them apart.
  */
 
 type SupplierRow = {
@@ -20,23 +30,19 @@ type SupplierRow = {
 };
 
 export default async function SuppliersPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data } = await (
-    supabase.from("suppliers" as never) as unknown as {
-      select: (cols: string) => {
-        order: (col: string, opts: { ascending: boolean }) => {
-          limit: (n: number) => Promise<{ data: SupplierRow[] | null }>;
-        };
-      };
-    }
-  )
-    .select("id, name, email, phone, category, created_at")
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  const rows = data ?? [];
+  const rows = await listSuppliersForOrg<SupplierRow>(
+    supabase as unknown as SuppliersClient,
+    ctx.org.id,
+    {
+      columns: "id, name, email, phone, category, created_at",
+      orderBy: "created_at",
+      ascending: false,
+      limit: SUPPLIER_LIST_LIMIT,
+    },
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">

@@ -405,11 +405,21 @@ describe("scope note — what this slice deliberately does not claim", () => {
     expect(scope, "the org resolve must precede the finances INSERT").toBeLessThan(insert);
   });
 
-  it("suppliers/actions.ts is EXCLUDED from this slice (concurrent CIS lane)", () => {
-    // Deliberate: a concurrent CIS M4 lane may touch supplier surfaces, so this
-    // slice leaves them alone rather than risk a collision. They ship next.
-    // This test documents the gap so it cannot be mistaken for coverage.
+  it("suppliers/actions.ts is NO LONGER excluded — the deferred slice has shipped", () => {
+    // WAS: "EXCLUDED from this slice (concurrent CIS lane)" — a placeholder that
+    // only asserted the file existed, documenting a gap rather than covering it.
+    // The CIS M4 lane it was waiting on has landed, so the gap is closed. Full
+    // coverage of the supplier surface now lives in
+    //   __tests__/security/active-org-supplier-scoping.test.ts   (source pins)
+    //   __tests__/integration/rls/supplier-active-org.test.ts    (real Postgres)
+    // The two write predicates are restated HERE as well, so deleting the
+    // dedicated file cannot quietly reopen the hole this slice deferred.
     const SRC = src("app/(app)/suppliers/actions.ts");
-    expect(SRC.length, "file still exists; its scoping is the NEXT slice").toBeGreaterThan(0);
+    expect(fn(SRC, "updateSupplier")).toMatch(
+      /\.eq\("id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    expect(fn(SRC, "deleteSupplier")).toMatch(
+      /\.eq\("id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/,
+    );
   });
 });
