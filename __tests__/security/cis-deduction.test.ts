@@ -609,9 +609,17 @@ describe("CIS M3 RLS is admin-only", () => {
       .sort();
     // The actions file names cis_bill_details too, but ONLY as the audit
     // `targetTable` — asserted below to be a label, never a query.
+    //
+    // `cis-statements.ts` (M4, 20261055000000) is the second legitimate reader:
+    // it READS `cis_payment_snapshots` to build statements and the monthly
+    // return dataset, and never writes to either table. It keeps the same
+    // discipline this pin exists to protect — tenant client only, never
+    // service_role — which its own tier asserts in
+    // __tests__/security/cis-statements.test.ts.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/cis-deduction.ts",
+      "server/services/cis-statements.ts",
     ]);
   });
 

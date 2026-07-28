@@ -33,6 +33,7 @@ const ADMIN_LINKS = [
   { href: "/invoices", label: "Invoices" },
   { href: "/payments", label: "Payments" },
   { href: "/payroll", label: "Payroll" },
+  { href: "/cis", label: "CIS" },
   { href: "/tax", label: "Tax" },
   { href: "/staff", label: "Staff" },
   { href: "/assets", label: "Assets" },
