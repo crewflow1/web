@@ -70,8 +70,8 @@ const STATUS_STYLES: Record<SiteReportStatus, string> = {
   ready_for_review: "bg-amber-100 text-amber-800",
   approved: "bg-indigo-100 text-indigo-800",
   issued: "bg-emerald-100 text-emerald-800",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 export default async function SiteReportDetailPage({
@@ -217,7 +217,7 @@ export default async function SiteReportDetailPage({
         {canDelete ? (
           <ActionButton action={deleteSiteReport.bind(null, report.id)} label="Delete draft" danger />
         ) : null}
-        <span className="ml-auto text-xs text-slate-400">
+        <span className="ml-auto text-xs text-slate-500">
           {status === "issued"
             ? `Issued ${report.issued_at?.slice(0, 10) ?? ""} — frozen`
             : editable
@@ -259,11 +259,13 @@ export default async function SiteReportDetailPage({
         <p className="mt-0.5 text-xs text-slate-500">
           What CrewFlow pulled from this job for the reporting period.
         </p>
-        <dl className="mt-3 grid grid-cols-3 gap-3 text-center">
+        {/* Plain divs, not <dl>: the cells are number+caption stats, and a dl
+            whose children aren't dt/dd groups fails axe's definition-list rule. */}
+        <div className="mt-3 grid grid-cols-3 gap-3 text-center">
           <Stat n={counts.diary} label="Diary entries" />
           <Stat n={counts.snags} label="Snags" />
           <Stat n={counts.toolbox} label="Toolbox talks" />
-        </dl>
+        </div>
       </section>
 
       {editable ? (

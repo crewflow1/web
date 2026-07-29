@@ -75,7 +75,7 @@ export async function JobAssetsSection({ jobId }: { jobId: string }) {
             </Link>
             <span className="text-xs text-slate-500">since {r.assigned_at.slice(0, 10)}</span>
             {r.expected_return_at ? (
-              <span className="ml-auto text-xs text-slate-400">due back {r.expected_return_at}</span>
+              <span className="ml-auto text-xs text-slate-500">due back {r.expected_return_at}</span>
             ) : null}
           </li>
         ))}

@@ -34,7 +34,7 @@ export default function HqLoading() {
         </div>
       </section>
 
-      <p className="text-center text-[11px] text-slate-400">
+      <p className="text-center text-[11px] text-slate-600">
         Loading HQ…
       </p>
     </div>

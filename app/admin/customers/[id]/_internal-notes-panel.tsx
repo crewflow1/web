@@ -197,7 +197,7 @@ export async function InternalNotesPanel({ orgId }: { orgId: string }) {
               <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
                 {n.body}
               </p>
-              <p className="mt-1 text-[10px] text-slate-400">
+              <p className="mt-1 text-[10px] text-slate-600">
                 {n.author_email} ·{" "}
                 {n.created_at.slice(0, 16).replace("T", " ")} UTC
               </p>

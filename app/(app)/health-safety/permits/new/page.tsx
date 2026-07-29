@@ -5,12 +5,15 @@ import { createPermit } from "../actions";
 import { listRamsOptions } from "../_data";
 import { PermitFormFields } from "../_fields";
 import { errorMessage, primaryBtn } from "../_meta";
+import { StateForm } from "@/components/forms/StateForm";
 
 /**
  * /health-safety/permits/new — draft a new permit.
  *
- * Posts to createPermit, which redirects to the new draft's detail page, where
- * the control conditions are added and the permit is later issued. The validity
+ * Posts to createPermit, which returns FormState; on success <StateForm>
+ * document-navigates to the new draft's detail page, where the control
+ * conditions are added and the permit is later issued (see actions.ts for the
+ * router race that forbids Server-Action redirect() here). The validity
  * window uses datetime-local pickers that submit offset-qualified ISO instants
  * (see _datetime-field); both are optional here and enforced by the issue gate.
  */
@@ -61,7 +64,7 @@ export default async function NewPermitPage({
         </div>
       ) : null}
 
-      <form
+      <StateForm
         action={createPermit}
         className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
@@ -88,7 +91,7 @@ export default async function NewPermitPage({
             Cancel
           </Link>
         </div>
-      </form>
+      </StateForm>
     </div>
   );
 }

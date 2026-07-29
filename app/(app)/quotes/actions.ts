@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import {
   quoteFormSchema,
   type LineItem,
@@ -429,19 +429,15 @@ export async function sendQuote(id: string) {
  * enforced at the action layer (clearer error messages than RLS denial).
  */
 
-async function requireQuoteApprover(orgId: string): Promise<void> {
-  const supabase = await createClient();
-  const { data: me, error: meError } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", orgId)
-    .single();
-  if (meError && meError.code !== "PGRST116") {
-    // PGRST116 (no row) falls through to forbidden; anything else is a broken
-    // read, not a missing membership.
-    throw readFailure("quote review: approver role", meError);
-  }
-  if (!me || (me.role !== "owner" && me.role !== "admin")) {
+function requireQuoteApprover(ctx: OrgContext): void {
+  // ctx.membership is the caller's OWN row in the ACTIVE org, resolved by
+  // requireOrgContext with a user_id filter. Don't re-query memberships
+  // unfiltered here: org members can read each other's rows, so
+  // `.eq("org_id", …).single()` returns every member and errors in any org
+  // with ≥2 members — which read as "forbidden" for legitimate approvers.
+  // No read here means no read to fail loud (#480's guard is obsolete, not lost).
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
     redirect("/dashboard?error=forbidden");
   }
 }
@@ -494,7 +490,7 @@ export async function requestQuoteApproval(id: string) {
 export async function reviewQuote(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/quotes");
-  await requireQuoteApprover(ctx.org.id);
+  requireQuoteApprover(ctx);
 
   const action = String(formData.get("action") ?? "");
   if (action !== "approve" && action !== "reject" && action !== "request_changes") {
@@ -511,7 +507,7 @@ export async function reviewQuote(id: string, formData: FormData) {
 
   const supabase = await createClient();
   // ACTIVE-ORG SCOPE — load-bearing for the authorisation above, not just for
-  // tidiness. `requireQuoteApprover(ctx.org.id)` proves the caller is an
+  // tidiness. `requireQuoteApprover(ctx)` proves the caller is an
   // owner/admin of the ACTIVE org; an unscoped read here let that approval
   // right be spent on a quote belonging to a DIFFERENT org — one where the
   // same user may be only an ordinary member. The separation-of-duties count

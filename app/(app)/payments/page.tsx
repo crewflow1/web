@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -24,16 +25,12 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: me, error: meError } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  // requireOrgContext guarantees the membership row exists — any failure here
-  // is a broken read, and letting it default isAdmin to false hides the upload
-  // form for a real admin.
-  if (meError) throw readFailure("payments: role", meError);
-  const isAdmin = me?.role === "owner" || me?.role === "admin";
+  // Caller's role from ctx — their own membership in the ACTIVE org. An
+  // unfiltered memberships read returns every member's row (org-member
+  // visibility policy) and `.single()` errors in any org with ≥2 members.
+  // No read here means no read to fail loud (#480's guard is obsolete, not lost).
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const [
     { data: statements, error: statementsError },
@@ -130,9 +127,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             name. Anything 70%+ confidence is suggested; you confirm or pick
             a different invoice.
           </p>
-          <form
+          <StateForm
             action={uploadBankCsv}
-            encType="multipart/form-data"
             className="mt-4 flex flex-wrap items-end gap-2"
           >
             <input
@@ -148,7 +144,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             >
               Upload + match
             </button>
-          </form>
+          </StateForm>
         </section>
       ) : null}
 

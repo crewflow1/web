@@ -1,11 +1,15 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import type { ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { vehicleFormSchema, vehicleIdSchema } from "@/lib/fleet/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
+import { FLEET_ERRORS } from "./_components/messages";
+
+/** Sentence for a known code; unknown codes fall through readable, like errorMessage(). */
+const fleetMsg = (code: string): string => FLEET_ERRORS[code] ?? code;
 
 /**
  * Fleet vehicle actions.
@@ -20,6 +24,17 @@ import { vehicleFormSchema, vehicleIdSchema } from "@/lib/fleet/schema";
  * `__tests__/security/fleet-active-org-scoping.test.ts` pins that on source and
  * fails if any of it is removed; the integration tier proves it against a real
  * dual-org user.
+ *
+ * WHY THESE ACTIONS RETURN `FormState` INSTEAD OF CALLING `redirect()`: a
+ * Server Action `redirect()` between two routes under /fleet/vehicles/* loses
+ * a race in the Next 15.5 client router — the rejected redirect error can
+ * strand React's still-suspended commit of the navigated state, so the write
+ * lands but the browser silently stays on the form. Deeper route swaps and
+ * more `revalidatePath` calls widen the losing window, and every fleet flow
+ * sits on the losing side (proven empirically; see e2e/fleet.spec.ts). The
+ * client form performs `router.push(state.redirectTo)` instead — a plain
+ * navigation, which never enters the racy path. This is the same
+ * `useActionState` pattern the customers and suppliers forms use.
  *
  * `fleet_vehicles` and the RPC are newer than the generated Supabase types, so
  * calls are cast through minimal precise shapes (the assets/snags idiom). All
@@ -43,9 +58,36 @@ type DeleteChain = {
   };
 };
 
+export type VehicleFormState = FormState<Record<string, string>>;
+
 function formString(fd: FormData, key: string): string {
   const v = fd.get(key);
   return typeof v === "string" ? v : "";
+}
+
+/** Echo the user's raw strings back so the form repopulates after a failure. */
+function echoValues(fd: FormData): Record<string, string> {
+  const values: Record<string, string> = {};
+  fd.forEach((v, k) => {
+    if (typeof v === "string" && !k.startsWith("$")) values[k] = v;
+  });
+  return values;
+}
+
+/** Zod failure → per-field messages + echoed input, ready to return. */
+function vehicleFailure(error: ZodError, fd: FormData): VehicleFormState {
+  const fieldErrors: Record<string, string> = {};
+  for (const issue of error.issues) {
+    const key = issue.path[0];
+    if (typeof key === "string" && !fieldErrors[key]) fieldErrors[key] = issue.message;
+  }
+  return {
+    ok: false,
+    error: "Fix the highlighted fields and try again.",
+    fieldErrors,
+    values: echoValues(fd),
+    submittedAt: Date.now(),
+  };
 }
 
 /** Map the form once — create and edit post the identical field set. */
@@ -132,27 +174,28 @@ function mapVehicleError(message: string): string {
   return "record_failed";
 }
 
-export async function createVehicle(formData: FormData): Promise<void> {
+function dbError(message: string, fd: FormData): VehicleFormState {
+  const code = mapVehicleError(message);
+  return formError(fleetMsg(code), echoValues(fd));
+}
+
+export async function createVehicle(
+  _prev: VehicleFormState,
+  formData: FormData,
+): Promise<VehicleFormState> {
   const { ctx, user } = await requireOrgContext();
   const parsed = readVehicleForm(formData);
-  if (!parsed.success) {
-    const issues = parsed.error.flatten().fieldErrors;
-    const first =
-      Object.values(issues).flat()[0] ??
-      parsed.error.flatten().formErrors[0] ??
-      "Check the form and try again.";
-    redirect(`/fleet/vehicles/new?error=${encodeURIComponent(first)}`);
-  }
+  if (!parsed.success) return vehicleFailure(parsed.error, formData);
 
   const ownership = formString(formData, "ownership") === "hired" ? "hired" : "owned";
   const tenant = await createClient();
   const { data, error } = await (tenant as unknown as RpcChain).rpc(
     "save_fleet_vehicle",
-    rpcArgs(parsed.data!, ctx.org.id, null, user.id, ownership),
+    rpcArgs(parsed.data, ctx.org.id, null, user.id, ownership),
   );
   if (error) {
     console.error("[fleet] createVehicle failed", error);
-    redirect(`/fleet/vehicles/new?error=${mapVehicleError(error.message)}`);
+    return dbError(error.message, formData);
   }
 
   const assetId = typeof data === "string" ? data : "";
@@ -163,31 +206,32 @@ export async function createVehicle(formData: FormData): Promise<void> {
     targetTable: "fleet_vehicles",
     targetId: assetId,
     metadata: {
-      name: parsed.data!.name,
-      registration: parsed.data!.registration ?? null,
-      vehicle_class: parsed.data!.vehicle_class ?? null,
+      name: parsed.data.name,
+      registration: parsed.data.registration ?? null,
+      vehicle_class: parsed.data.vehicle_class ?? null,
     },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/vehicles");
-  redirect(`/fleet/vehicles/${assetId}?saved=created`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({ redirectTo: `/fleet/vehicles/${assetId}?saved=created` });
 }
 
-export async function updateVehicle(formData: FormData): Promise<void> {
+export async function updateVehicle(
+  _prev: VehicleFormState,
+  formData: FormData,
+): Promise<VehicleFormState> {
   const { ctx, user } = await requireOrgContext();
   const id = formString(formData, "asset_id");
-  if (!vehicleIdSchema.safeParse(id).success) redirect(`/fleet/vehicles?error=bad_id`);
+  if (!vehicleIdSchema.safeParse(id).success) {
+    return formError(fleetMsg("bad_id"), echoValues(formData));
+  }
 
   const parsed = readVehicleForm(formData);
-  if (!parsed.success) {
-    const issues = parsed.error.flatten().fieldErrors;
-    const first =
-      Object.values(issues).flat()[0] ??
-      parsed.error.flatten().formErrors[0] ??
-      "Check the form and try again.";
-    redirect(`/fleet/vehicles/${id}/edit?error=${encodeURIComponent(first)}`);
-  }
+  if (!parsed.success) return vehicleFailure(parsed.error, formData);
 
   const ownership = formString(formData, "ownership") === "hired" ? "hired" : "owned";
   const tenant = await createClient();
@@ -195,11 +239,11 @@ export async function updateVehicle(formData: FormData): Promise<void> {
     "save_fleet_vehicle",
     // p_org_id IS the active-org pin — the RPC's UPDATEs are scoped by it, so a
     // vehicle id belonging to another org updates zero rows and raises.
-    rpcArgs(parsed.data!, ctx.org.id, id, user.id, ownership),
+    rpcArgs(parsed.data, ctx.org.id, id, user.id, ownership),
   );
   if (error) {
     console.error("[fleet] updateVehicle failed", error);
-    redirect(`/fleet/vehicles/${id}/edit?error=${mapVehicleError(error.message)}`);
+    return dbError(error.message, formData);
   }
 
   await recordAdminActivity({
@@ -209,15 +253,17 @@ export async function updateVehicle(formData: FormData): Promise<void> {
     targetTable: "fleet_vehicles",
     targetId: id,
     metadata: {
-      name: parsed.data!.name,
-      operational_status: parsed.data!.operational_status,
+      name: parsed.data.name,
+      operational_status: parsed.data.operational_status,
     },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/vehicles");
-  revalidatePath(`/fleet/vehicles/${id}`);
-  redirect(`/fleet/vehicles/${id}?saved=updated`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({ redirectTo: `/fleet/vehicles/${id}?saved=updated` });
 }
 
 /**
@@ -229,10 +275,13 @@ export async function updateVehicle(formData: FormData): Promise<void> {
  * a fleet delete must never quietly destroy an asset's whole audit trail.
  * Disposal (sold / written off) is `assets.status`, on the asset's own page.
  */
-export async function removeVehicleProfile(formData: FormData): Promise<void> {
+export async function removeVehicleProfile(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const id = formString(formData, "asset_id");
-  if (!vehicleIdSchema.safeParse(id).success) redirect(`/fleet/vehicles?error=bad_id`);
+  if (!vehicleIdSchema.safeParse(id).success) return formError(fleetMsg("bad_id"));
 
   const tenant = await createClient();
   const { error, count } = await (
@@ -244,11 +293,11 @@ export async function removeVehicleProfile(formData: FormData): Promise<void> {
 
   if (error) {
     console.error("[fleet] removeVehicleProfile failed", error);
-    redirect(`/fleet/vehicles/${id}?error=delete_failed`);
+    return formError(fleetMsg("delete_failed"));
   }
   // Count-gated: RLS/role refusal returns no error and zero rows, so a silent
   // no-op must be reported as a refusal rather than a success.
-  if (!count) redirect(`/fleet/vehicles/${id}?error=forbidden`);
+  if (!count) return formError(fleetMsg("forbidden"));
 
   await recordAdminActivity({
     actorId: user.id,
@@ -259,7 +308,10 @@ export async function removeVehicleProfile(formData: FormData): Promise<void> {
     metadata: { asset_retained: true },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/vehicles");
-  redirect(`/fleet/vehicles?saved=removed`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({ redirectTo: `/fleet/vehicles?saved=removed` });
 }

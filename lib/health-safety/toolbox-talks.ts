@@ -15,7 +15,7 @@ export const TOOLBOX_TALK_STATUS_META: Record<ToolboxTalkStatus, { label: string
   draft: { label: "Draft", tone: "bg-slate-100 text-slate-700" },
   issued: { label: "Delivered", tone: "bg-emerald-100 text-emerald-800" },
   superseded: { label: "Superseded", tone: "bg-amber-100 text-amber-900" },
-  withdrawn: { label: "Withdrawn", tone: "bg-slate-100 text-slate-500" },
+  withdrawn: { label: "Withdrawn", tone: "bg-slate-100 text-slate-600" }, // slate-600, not 500: AA contrast on slate-100
 };
 
 export function toolboxStatusLabel(status: ToolboxTalkStatus): string {

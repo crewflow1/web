@@ -283,7 +283,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
                 </header>
                 <ul className="flex-1 space-y-2 p-2">
                   {cards.length === 0 ? (
-                    <li className="rounded-md border border-dashed border-slate-200 bg-white py-6 text-center text-xs text-slate-400">
+                    <li className="rounded-md border border-dashed border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
                       Nothing here yet
                     </li>
                   ) : (

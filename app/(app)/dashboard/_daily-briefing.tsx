@@ -74,7 +74,7 @@ export async function DailyBriefing({ orgId, userId }: { orgId: string; userId: 
                     >
                       {sev.label}
                     </span>
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                       {CATEGORY_LABEL[it.category]}
                     </span>
                   </div>
@@ -93,7 +93,7 @@ export async function DailyBriefing({ orgId, userId }: { orgId: string; userId: 
                       <input type="hidden" name="item_key" value={it.key} />
                       <button
                         type="submit"
-                        className="inline-flex min-h-[36px] items-center rounded-md px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-600"
+                        className="inline-flex min-h-[36px] items-center rounded-md px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-600"
                         aria-label={`Dismiss "${it.title}" for today`}
                       >
                         Done for today

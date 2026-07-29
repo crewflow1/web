@@ -10,6 +10,7 @@ import {
   deleteServiceSchedule,
   toggleServiceSchedule,
 } from "../service-schedule-actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 export type ServiceScheduleRow = {
   id: string;
@@ -70,25 +71,25 @@ export function ServiceSchedulesSection({
                 next due {s.next_due}
               </span>
               {!s.active ? (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">Paused</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">Paused</span>
               ) : null}
               {isAdmin ? (
                 <span className="ml-auto flex items-center gap-1">
-                  <form action={toggleServiceSchedule}>
+                  <StateForm action={toggleServiceSchedule}>
                     <input type="hidden" name="asset_id" value={assetId} />
                     <input type="hidden" name="schedule_id" value={s.id} />
                     <input type="hidden" name="next_active" value={s.active ? "false" : "true"} />
                     <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50">
                       {s.active ? "Pause" : "Resume"}
                     </button>
-                  </form>
-                  <form action={deleteServiceSchedule}>
+                  </StateForm>
+                  <StateForm action={deleteServiceSchedule}>
                     <input type="hidden" name="asset_id" value={assetId} />
                     <input type="hidden" name="schedule_id" value={s.id} />
                     <button type="submit" className="rounded-md border border-red-300 px-2 py-1 text-[11px] text-red-700 hover:bg-red-50">
                       Remove
                     </button>
-                  </form>
+                  </StateForm>
                 </span>
               ) : null}
             </li>
@@ -101,7 +102,7 @@ export function ServiceSchedulesSection({
       {isAdmin ? (
         <details className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
           <summary className="cursor-pointer text-xs font-semibold text-slate-700">+ Add service schedule</summary>
-          <form action={createServiceSchedule} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <StateForm action={createServiceSchedule} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <input type="hidden" name="asset_id" value={assetId} />
             <label className="text-xs font-medium text-slate-600">
               Type
@@ -144,7 +145,7 @@ export function ServiceSchedulesSection({
                 Add schedule
               </button>
             </div>
-          </form>
+          </StateForm>
         </details>
       ) : null}
     </section>

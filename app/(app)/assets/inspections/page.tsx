@@ -208,7 +208,7 @@ function DueList({
               </Link>
               <span className="text-xs text-slate-500">{r.assets?.name ?? "Asset"}</span>
               {r.template_version ? (
-                <span className="text-[11px] text-slate-400">template v{r.template_version}</span>
+                <span className="text-[11px] text-slate-500">template v{r.template_version}</span>
               ) : null}
               <span
                 className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${

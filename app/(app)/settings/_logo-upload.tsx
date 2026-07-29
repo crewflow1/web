@@ -85,7 +85,7 @@ export function LogoUpload({
               className="h-full w-full object-contain"
             />
           ) : (
-            <span className="px-2 text-center text-[11px] text-slate-400">
+            <span className="px-2 text-center text-[11px] text-slate-600">
               No logo yet
             </span>
           )}

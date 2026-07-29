@@ -172,7 +172,7 @@ export function NewFinanceForm({ jobId, jobLabel }: { jobId?: string; jobLabel?:
 
       <div>
         <label htmlFor="notes" className="block text-sm font-medium text-slate-800">
-          Notes <span className="text-xs text-slate-400">Optional</span>
+          Notes <span className="text-xs text-slate-500">Optional</span>
         </label>
         <textarea
           id="notes"
@@ -184,7 +184,7 @@ export function NewFinanceForm({ jobId, jobLabel }: { jobId?: string; jobLabel?:
 
       <div>
         <label htmlFor="receipt" className="block text-sm font-medium text-slate-800">
-          Receipt <span className="text-xs text-slate-400">Optional</span>
+          Receipt <span className="text-xs text-slate-500">Optional</span>
         </label>
         <input
           id="receipt"

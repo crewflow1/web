@@ -255,7 +255,7 @@ function Timeline({ steps }: { steps: readonly TimelineStep[] }) {
               <p className="text-xs text-slate-600">
                 {step.type} · {step.outcome} · {step.status}
               </p>
-              <p className="truncate font-mono text-[11px] text-slate-400">{step.reference}</p>
+              <p className="truncate font-mono text-[11px] text-slate-500">{step.reference}</p>
             </div>
           </li>
         ))}

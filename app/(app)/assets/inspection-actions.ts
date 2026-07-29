@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -28,6 +26,7 @@ import {
   type TemplateSnapshot,
   type TemplateStatus,
 } from "@/lib/assets/inspection-template";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Asset inspection actions (M4a). Create writes a DRAFT; issue MATERIALISES the
@@ -35,6 +34,16 @@ import {
  * then makes it write-once, and rejects an issued row with no outcome/snapshot);
  * archive is a count-gated terminal transition. All go through the tenant
  * (user-JWT) client so RLS scopes every read and write.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm> / the run-form shell, a full document load) instead of
+ * calling `redirect()`: a Server-Action redirect at these route depths —
+ * including the app's deepest swap, /assets/[id]/inspections/[inspectionId] —
+ * loses the Next 15.5 stranded-commit race (upstream vercel/next.js#83386):
+ * the row is written but the URL never changes and no error surfaces. See
+ * components/forms/StateForm.tsx. No revalidatePath, deliberately: these
+ * surfaces render per-request (cookie-authed reads, no Next data cache), so
+ * revalidating only added weight to the racy action response.
  */
 
 type InsertChain = {
@@ -86,7 +95,7 @@ type InspectionRow = {
   assets: { id: string; name: string; asset_ref: string | null } | null;
 };
 
-export async function createInspection(formData: FormData): Promise<void> {
+export async function createInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
 
   const parsed = createInspectionSchema.safeParse({
@@ -98,10 +107,7 @@ export async function createInspection(formData: FormData): Promise<void> {
     due_at: formData.get("due_at"),
     reinspection_of: formData.get("reinspection_of"),
   });
-  if (!parsed.success) {
-    const assetId = String(formData.get("asset_id") ?? "");
-    redirect(`/assets/${assetId}?error=inspection_invalid`);
-  }
+  if (!parsed.success) return formError("Please check the inspection details.");
   const input = parsed.data;
 
   const tenant = await createClient();
@@ -122,7 +128,7 @@ export async function createInspection(formData: FormData): Promise<void> {
     .single();
   if (error || !data) {
     console.error("[asset-inspection] create failed", error);
-    redirect(`/assets/${input.asset_id}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
 
   await recordAdminActivity({
@@ -134,11 +140,10 @@ export async function createInspection(formData: FormData): Promise<void> {
     metadata: { asset_id: input.asset_id, safety_critical: input.safety_critical },
   });
 
-  revalidatePath(`/assets/${input.asset_id}`);
-  redirect(`/assets/${input.asset_id}?saved=inspection`);
+  return formSuccess({ redirectTo: `/assets/${input.asset_id}?saved=inspection` });
 }
 
-export async function issueInspection(formData: FormData): Promise<void> {
+export async function issueInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const inspectionId = String(formData.get("inspection_id") ?? "");
 
@@ -150,21 +155,21 @@ export async function issueInspection(formData: FormData): Promise<void> {
 
   const tenant = await createClient();
 
-  // Load the draft + its asset (RLS-scoped). notFound-equivalent → back to assets.
+  // Load the draft + its asset (RLS-scoped). notFound-equivalent → inline error.
   const { data: insp, error: inspError } = await (tenant.from("asset_inspections" as never) as unknown as LoadChain)
     .select("id, asset_id, status, title, kind, safety_critical, content, reinspection_of, assets(id, name, asset_ref)")
     .eq("id", inspectionId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (inspError) throw readFailure("inspections: issue load", inspError);
-  if (!insp) redirect(`/assets?error=inspection_missing`);
-  if (!parsed.success) redirect(`/assets/${insp.asset_id}?error=inspection_outcome`);
+  if (!insp) return formError("Inspection not found.");
+  if (!parsed.success) return formError("Pick an outcome.");
 
   // App-layer state machine (the DB immutability trigger is the hard gate).
   try {
     assertTransition(insp.status, "issued");
   } catch {
-    redirect(`/assets/${insp.asset_id}?error=inspection_not_draft`);
+    return formError("This inspection is already recorded and locked.");
   }
 
   const issuedAt = new Date().toISOString();
@@ -203,9 +208,9 @@ export async function issueInspection(formData: FormData): Promise<void> {
     .eq("status", "draft");
   if (error) {
     console.error("[asset-inspection] issue failed", error);
-    redirect(`/assets/${insp.asset_id}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
-  if (!count) redirect(`/assets/${insp.asset_id}?error=inspection_not_draft`);
+  if (!count) return formError("This inspection is already recorded and locked.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -216,11 +221,10 @@ export async function issueInspection(formData: FormData): Promise<void> {
     metadata: { asset_id: insp.asset_id, outcome: parsed.data.outcome, safety_critical: insp.safety_critical },
   });
 
-  revalidatePath(`/assets/${insp.asset_id}`);
-  redirect(`/assets/${insp.asset_id}?saved=inspection_issued`);
+  return formSuccess({ redirectTo: `/assets/${insp.asset_id}?saved=inspection_issued` });
 }
 
-export async function archiveInspection(formData: FormData): Promise<void> {
+export async function archiveInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const assetId = String(formData.get("asset_id") ?? "");
@@ -236,9 +240,9 @@ export async function archiveInspection(formData: FormData): Promise<void> {
     .eq("status", "draft");
   if (error) {
     console.error("[asset-inspection] archive failed", error);
-    redirect(`/assets/${assetId}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
-  if (!count) redirect(`/assets/${assetId}?error=inspection_locked`);
+  if (!count) return formError("Issued inspections can't be deleted.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -249,8 +253,7 @@ export async function archiveInspection(formData: FormData): Promise<void> {
     metadata: { asset_id: assetId },
   });
 
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=inspection_archived`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=inspection_archived` });
 }
 
 // ── Templated inspections (M4b) ───────────────────────────────────────────────
@@ -296,11 +299,11 @@ function parseRunForm(formData: FormData): {
   return { answers, comments, signatures };
 }
 
-export async function startInspectionFromTemplate(formData: FormData): Promise<void> {
+export async function startInspectionFromTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
   const templateId = String(formData.get("template_id") ?? "");
-  if (!assetId || !templateId) redirect(`/assets/${assetId}?error=inspection_invalid`);
+  if (!assetId || !templateId) return formError("Please check the inspection details.");
 
   const tenant = await createClient();
   const { data: template, error: templateError } = await (
@@ -322,11 +325,11 @@ export async function startInspectionFromTemplate(formData: FormData): Promise<v
     .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (templateError) throw readFailure("inspections: template pick", templateError);
-  if (!template) redirect(`/assets/${assetId}?error=template_missing`);
+  if (!template) return formError("Template not found.");
   // Only the LIVE version may seed new inspections (archived/superseded never).
-  if (!canStartInspection(template.status)) redirect(`/assets/${assetId}?error=template_not_published`);
+  if (!canStartInspection(template.status)) return formError("Only published templates can start an inspection.");
   const def = templateDefinitionSchema.safeParse(template.definition);
-  if (!def.success) redirect(`/assets/${assetId}?error=template_failed`);
+  if (!def.success) return formError("Something went wrong — try again.");
 
   const snapshot = materializeTemplateSnapshot({
     id: template.id,
@@ -355,7 +358,7 @@ export async function startInspectionFromTemplate(formData: FormData): Promise<v
     .single();
   if (error || !data) {
     console.error("[asset-inspection] start from template failed", error);
-    redirect(`/assets/${assetId}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
 
   await recordAdminActivity({
@@ -367,8 +370,7 @@ export async function startInspectionFromTemplate(formData: FormData): Promise<v
     metadata: { asset_id: assetId, template_id: template.id, template_version: template.version },
   });
 
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}/inspections/${data.id}`);
+  return formSuccess({ redirectTo: `/assets/${assetId}/inspections/${data.id}` });
 }
 
 async function loadTemplatedInspection(orgId: string, inspectionId: string) {
@@ -398,11 +400,11 @@ async function loadTemplatedInspection(orgId: string, inspectionId: string) {
 }
 
 /** Save partial progress on a draft templated inspection (field-interruption recovery). */
-export async function saveInspectionAnswers(formData: FormData): Promise<void> {
+export async function saveInspectionAnswers(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
-  if (!insp) redirect(`/assets?error=inspection_missing`);
+  if (!insp) return formError("Inspection not found.");
 
   const { answers, comments, signatures } = parseRunForm(formData);
   const tenant = await createClient();
@@ -413,12 +415,11 @@ export async function saveInspectionAnswers(formData: FormData): Promise<void> {
     .eq("status", "draft");
   if (error) {
     console.error("[asset-inspection] save answers failed", error);
-    redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
-  if (!count) redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?error=inspection_not_draft`);
+  if (!count) return formError("This inspection is already recorded and locked.");
 
-  revalidatePath(`/assets/${insp.asset_id}/inspections/${inspectionId}`);
-  redirect(`/assets/${insp.asset_id}/inspections/${inspectionId}?saved=progress`);
+  return formSuccess({ redirectTo: `/assets/${insp.asset_id}/inspections/${inspectionId}?saved=progress` });
 }
 
 /**
@@ -426,30 +427,30 @@ export async function saveInspectionAnswers(formData: FormData): Promise<void> {
  * snapshot, DERIVE the outcome (a failed safety-critical item → fail +
  * safety_critical, engaging the M4c custody block), then issue atomically.
  */
-export async function completeTemplatedInspection(formData: FormData): Promise<void> {
+export async function completeTemplatedInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
-  if (!insp) redirect(`/assets?error=inspection_missing`);
+  if (!insp) return formError("Inspection not found.");
   const runUrl = `/assets/${insp.asset_id}/inspections/${inspectionId}`;
-  if (!insp.template_snapshot) redirect(`${runUrl}?error=inspection_invalid`);
+  if (!insp.template_snapshot) return formError("This inspection has no checklist attached.");
 
   try {
     assertTransition(insp.status, "issued");
   } catch {
-    redirect(`${runUrl}?error=inspection_not_draft`);
+    return formError("This inspection is already recorded and locked.");
   }
 
   const { answers, comments, signatures } = parseRunForm(formData);
   const sections = insp.template_snapshot.sections;
   if (missingRequired(sections, answers).length > 0) {
-    redirect(`${runUrl}?error=answers_missing`);
+    return formError("Answer every required item (use N/A only where allowed).");
   }
   if (missingFailComments(sections, answers, comments).length > 0) {
-    redirect(`${runUrl}?error=fail_comment_missing`);
+    return formError("Add a comment for each failed item.");
   }
   if (missingSignatures(sections, signatures).length > 0) {
-    redirect(`${runUrl}?error=signature_missing`);
+    return formError("Type your full name to sign each item that requires a signature.");
   }
 
   const derived = deriveOutcome(sections, answers);
@@ -496,9 +497,9 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     .eq("status", "draft");
   if (error) {
     console.error("[asset-inspection] templated issue failed", error);
-    redirect(`${runUrl}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
-  if (!count) redirect(`${runUrl}?error=inspection_not_draft`);
+  if (!count) return formError("This inspection is already recorded and locked.");
 
   // Exactly-once (the issue transition is count-gated): raise org attention
   // when a safety-critical failure was just recorded.
@@ -554,8 +555,7 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
     },
   });
 
-  revalidatePath(`/assets/${insp.asset_id}`);
-  redirect(`${runUrl}?saved=issued`);
+  return formSuccess({ redirectTo: `${runUrl}?saved=issued` });
 }
 
 /**
@@ -565,13 +565,13 @@ export async function completeTemplatedInspection(formData: FormData): Promise<v
  * version (falling back to the fail's frozen snapshot if none is published);
  * ad-hoc fails get an ad-hoc safety-critical draft.
  */
-export async function startReinspection(formData: FormData): Promise<void> {
+export async function startReinspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const failId = String(formData.get("inspection_id") ?? "");
   const fail = await loadTemplatedInspection(ctx.org.id, failId);
-  if (!fail) redirect(`/assets?error=inspection_missing`);
+  if (!fail) return formError("Inspection not found.");
   const assetUrl = `/assets/${fail.asset_id}`;
-  if (fail.status !== "issued") redirect(`${assetUrl}?error=inspection_not_issued`);
+  if (fail.status !== "issued") return formError("Only an issued inspection can be re-inspected.");
 
   const tenant = await createClient();
   let templateFields: Record<string, unknown> = {};
@@ -636,7 +636,7 @@ export async function startReinspection(formData: FormData): Promise<void> {
     .single();
   if (error || !data) {
     console.error("[asset-inspection] start reinspection failed", error);
-    redirect(`${assetUrl}?error=inspection_failed`);
+    return formError("Couldn't save. Try again.");
   }
 
   await recordAdminActivity({
@@ -648,7 +648,6 @@ export async function startReinspection(formData: FormData): Promise<void> {
     metadata: { asset_id: fail.asset_id, reinspection_of: failId },
   });
 
-  revalidatePath(assetUrl);
-  if (fail.template_snapshot) redirect(`${assetUrl}/inspections/${data.id}`);
-  redirect(`${assetUrl}?saved=reinspection`);
+  if (fail.template_snapshot) return formSuccess({ redirectTo: `${assetUrl}/inspections/${data.id}` });
+  return formSuccess({ redirectTo: `${assetUrl}?saved=reinspection` });
 }

@@ -98,7 +98,7 @@ function SummaryLine({ view }: { view: MyClaimsView }) {
     <p className="text-sm text-slate-600">
       You own <span className="font-semibold text-slate-900">{view.claimCount}</span> conversation {noun}.
       {view.latestClaimAt ? (
-        <span className="ml-1 text-slate-400">Most recent claim {view.latestClaimAt.slice(0, 10)}.</span>
+        <span className="ml-1 text-slate-600">Most recent claim {view.latestClaimAt.slice(0, 10)}.</span>
       ) : null}
     </p>
   );
@@ -157,12 +157,12 @@ function MyClaimsTableRow({ row }: { row: MyClaimRow }) {
         {row.conversationId ? (
           <span className="font-mono text-xs text-slate-600">{row.conversationId.slice(0, 8)}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-500">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-xs text-slate-500">
         {row.claimedAt.slice(0, 10)}
-        <span className="ml-1 text-slate-400">{row.claimedAt.slice(11, 16)}</span>
+        <span className="ml-1 text-slate-500">{row.claimedAt.slice(11, 16)}</span>
       </td>
       <td className="px-4 py-3">
         <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">

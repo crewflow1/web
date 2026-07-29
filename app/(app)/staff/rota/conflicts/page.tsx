@@ -144,7 +144,7 @@ export default async function ScheduleConflictsPage() {
                           >
                             {meta.label}
                           </span>
-                          <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                             {whenLabel(c)}
                           </span>
                         </div>

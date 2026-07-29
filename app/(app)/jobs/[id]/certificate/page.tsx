@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
-import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { StateForm } from "@/components/forms/StateForm";
 import { CertificateForm } from "./_form";
 import { issueCertificate, publishCertificate, withdrawCertificate } from "./actions";
 import {
@@ -162,29 +162,29 @@ export default async function JobCertificatePage({
             </a>
 
             {isAdmin && status === "draft" ? (
-              <ConfirmForm
+              <StateForm
                 action={issueCertificate.bind(null, id, cert.id)}
                 confirm="Issue this certificate? Once issued its content is frozen."
               >
                 <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
                   Issue certificate
                 </button>
-              </ConfirmForm>
+              </StateForm>
             ) : null}
 
             {isAdmin && status === "issued" ? (
               published ? (
-                <form action={withdrawCertificate.bind(null, id, cert.id)}>
+                <StateForm action={withdrawCertificate.bind(null, id, cert.id)}>
                   <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
                     Withdraw from portal
                   </button>
-                </form>
+                </StateForm>
               ) : (
-                <form action={publishCertificate.bind(null, id, cert.id)}>
+                <StateForm action={publishCertificate.bind(null, id, cert.id)}>
                   <button type="submit" className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
                     Publish to customer portal
                   </button>
-                </form>
+                </StateForm>
               )
             ) : null}
 

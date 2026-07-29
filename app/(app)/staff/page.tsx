@@ -45,18 +45,12 @@ export default async function StaffPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  // Current user's role — gates the invite form.
-  const { data: myRow, error: myRowError } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  // PGRST116 = genuinely not a member (isAdmin false is correct); any other
-  // error must not silently strip the admin controls from the page.
-  if (myRowError && myRowError.code !== "PGRST116") {
-    throw readFailure("staff: viewer role", myRowError);
-  }
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
+  // Current user's role — gates the invite form. From ctx (own membership in
+  // the ACTIVE org): an unfiltered memberships read returns every member's
+  // row and `.single()` errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const { data: membersRaw, error: membersError } = await supabase
     .from("memberships")

@@ -334,20 +334,20 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-900">
-                      {j.customer?.name ?? <span className="text-slate-400">—</span>}
+                      {j.customer?.name ?? <span className="text-slate-500">—</span>}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {formatAddressOneLine(resolveJobAddress(j, j.customer)) || (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-slate-500">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {j.assigned?.full_name ?? j.assigned?.email ?? (
-                        <span className="text-slate-400">Unassigned</span>
+                        <span className="text-slate-500">Unassigned</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      {j.scheduled_date ?? <span className="text-slate-400">—</span>}
+                      {j.scheduled_date ?? <span className="text-slate-500">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link

@@ -35,7 +35,7 @@ export default function GlobalError({
         Try again
       </button>
       {error.digest ? (
-        <p className="mt-8 text-xs text-slate-400">Reference: {error.digest}</p>
+        <p className="mt-8 text-xs text-slate-500">Reference: {error.digest}</p>
       ) : null}
     </main>
   );

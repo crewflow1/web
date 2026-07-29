@@ -96,7 +96,7 @@ export function NewInvoiceForm({ quotes }: { quotes: QuoteOption[] }) {
 
       <div>
         <label htmlFor="due_date" className="block text-sm font-medium text-slate-800">
-          Due date <span className="text-xs text-slate-400">Optional</span>
+          Due date <span className="text-xs text-slate-500">Optional</span>
         </label>
         <input
           id="due_date"
@@ -108,7 +108,7 @@ export function NewInvoiceForm({ quotes }: { quotes: QuoteOption[] }) {
 
       <div>
         <label htmlFor="notes" className="block text-sm font-medium text-slate-800">
-          Notes <span className="text-xs text-slate-400">Optional</span>
+          Notes <span className="text-xs text-slate-500">Optional</span>
         </label>
         <textarea
           id="notes"

@@ -28,25 +28,32 @@ export async function markEnquiryStatus(
   id: string,
   formData: FormData,
 ): Promise<void> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/inbox?error=bad_id");
 
   const parsed = statusSchema.safeParse(formData.get("status"));
   if (!parsed.success) redirect("/inbox?error=bad_status");
 
   const supabase = await createClient();
+  type EnqUpd = PromiseLike<{ error: { message: string } | null }> & {
+    eq: (k: string, v: unknown) => EnqUpd;
+  };
   const { error } = await (
     supabase.from("inbound_enquiries" as never) as unknown as {
-      update: (row: unknown) => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
-      };
+      update: (row: unknown) => EnqUpd;
     }
   )
     .update({
       status: parsed.success ? parsed.data : "received",
       processed_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    // ACTIVE-org pin. The file header claims "RLS ... gates writes" — it gates
+    // the tenant boundary, not the active org: the policy admits every org the
+    // caller belongs to. Without this, a dual-org member working in org A
+    // could mark org B's inbound enquiry `ignored`, burying a real lead in a
+    // company whose inbox they were not even looking at.
+    .eq("org_id", ctx.org.id);
 
   if (error) {
     console.error("[inbox] status update failed", error);

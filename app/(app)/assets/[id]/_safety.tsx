@@ -1,4 +1,5 @@
 import type { SafetyBlock } from "@/lib/assets/inspection-override";
+import { StateForm } from "@/components/forms/StateForm";
 import { startReinspection } from "../inspection-actions";
 import { reportMaintenanceCase } from "../maintenance-actions";
 import { createInspectionOverride, revokeInspectionOverride } from "../override-actions";
@@ -57,7 +58,7 @@ export function SafetyBlocksSection({
             ) : null}
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <form action={startReinspection}>
+              <StateForm action={startReinspection}>
                 <input type="hidden" name="inspection_id" value={inspection.id} />
                 <button
                   type="submit"
@@ -65,9 +66,9 @@ export function SafetyBlocksSection({
                 >
                   Record re-inspection
                 </button>
-              </form>
+              </StateForm>
 
-              <form action={reportMaintenanceCase}>
+              <StateForm action={reportMaintenanceCase}>
                 <input type="hidden" name="asset_id" value={assetId} />
                 <input type="hidden" name="source_inspection_id" value={inspection.id} />
                 <input type="hidden" name="case_type" value="corrective" />
@@ -80,10 +81,10 @@ export function SafetyBlocksSection({
                 >
                   Create repair case
                 </button>
-              </form>
+              </StateForm>
 
               {isAdmin && activeOverride ? (
-                <form action={revokeInspectionOverride} className="flex items-center gap-2">
+                <StateForm action={revokeInspectionOverride} className="flex items-center gap-2">
                   <input type="hidden" name="asset_id" value={assetId} />
                   <input type="hidden" name="override_id" value={activeOverride.id} />
                   <button
@@ -92,7 +93,7 @@ export function SafetyBlocksSection({
                   >
                     Revoke override
                   </button>
-                </form>
+                </StateForm>
               ) : null}
             </div>
 
@@ -101,7 +102,7 @@ export function SafetyBlocksSection({
                 <summary className="cursor-pointer text-xs font-semibold text-amber-900">
                   Record operational override (admin)
                 </summary>
-                <form action={createInspectionOverride} className="mt-2 space-y-2">
+                <StateForm action={createInspectionOverride} className="mt-2 space-y-2">
                   <input type="hidden" name="asset_id" value={assetId} />
                   <input type="hidden" name="inspection_id" value={inspection.id} />
                   <label className="block text-xs font-medium text-slate-700">
@@ -129,7 +130,7 @@ export function SafetyBlocksSection({
                   >
                     Record authorised override
                   </button>
-                </form>
+                </StateForm>
               </details>
             ) : null}
           </li>

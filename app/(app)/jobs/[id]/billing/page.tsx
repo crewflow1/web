@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 function Stat({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: string }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       <p className={`mt-1 text-xl font-bold ${accent ?? "text-slate-900"}`}>{value}</p>
       {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
     </div>
@@ -139,7 +139,7 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[st.status]}`}>{STATUS_LABEL[st.status]}</span>
                       <span className="text-sm font-semibold text-slate-900">{st.name}</span>
-                      {st.kind === "deposit" ? <span className="text-xs text-slate-400">deposit</span> : null}
+                      {st.kind === "deposit" ? <span className="text-xs text-slate-500">deposit</span> : null}
                     </div>
                     <p className="mt-0.5 text-sm text-slate-600">
                       {formatGbp(st.amount)} + {formatGbp(st.vatAmount)} VAT = <span className="font-medium">{formatGbp(st.gross)}</span>
@@ -163,7 +163,7 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
                         <form action={deleteBillingStage}>
                           <input type="hidden" name="job_id" value={jobId} />
                           <input type="hidden" name="stage_id" value={st.id} />
-                          <button type="submit" aria-label={`Remove ${st.name}`} className="inline-flex min-h-[36px] items-center rounded-md px-2 text-xs font-medium text-slate-400 hover:text-red-600">Remove</button>
+                          <button type="submit" aria-label={`Remove ${st.name}`} className="inline-flex min-h-[36px] items-center rounded-md px-2 text-xs font-medium text-slate-500 hover:text-red-600">Remove</button>
                         </form>
                       </>
                     ) : null}
@@ -219,7 +219,7 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
               <form action={cancelBillingPlan} className="mt-3">
                 <input type="hidden" name="job_id" value={jobId} />
                 <input type="hidden" name="plan_id" value={b.plan.id} />
-                <button type="submit" className="text-xs font-medium text-slate-400 hover:text-red-600">Cancel this plan</button>
+                <button type="submit" className="text-xs font-medium text-slate-500 hover:text-red-600">Cancel this plan</button>
               </form>
             </div>
           ) : null}

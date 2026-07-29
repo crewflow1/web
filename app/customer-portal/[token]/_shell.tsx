@@ -86,7 +86,7 @@ export function PortalShell({
 
       <main className="mx-auto max-w-3xl space-y-4 px-4 py-6">{children}</main>
 
-      <footer className="pb-8 pt-4 text-center text-xs text-slate-400">
+      <footer className="pb-8 pt-4 text-center text-xs text-slate-600">
         Powered by CrewFlow
       </footer>
     </div>

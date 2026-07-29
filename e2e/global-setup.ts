@@ -171,6 +171,21 @@ export default async function globalSetup(): Promise<void> {
   await db.from("memberships").upsert({ org_id: orgId, user_id: bId, role: "staff" }, { onConflict: "org_id,user_id" });
   await mintState(bEmail, PASSWORD, STATE_PATH.replace("owner.json", "second.json"));
 
+  // --- 6. an HQ (superadmin) session for the /admin a11y specs. Deliberately NO
+  // membership row: requireOrgContext (server/auth/session.ts) redirects any
+  // superadmin email off every (app) route, so this account must stay out of
+  // app-tier journeys — and conversely the OWNER must never be allowlisted.
+  // The address only gains superadmin power when the e2e shell exports
+  // CREWFLOW_SUPERADMIN_EMAILS=e2e-hq@crewflow.test (ci.yml does; the admin
+  // spec skips itself when the export is absent).
+  const hqEmail = "e2e-hq@crewflow.test";
+  const hqCreated = await svc.auth.admin.createUser({ email: hqEmail, password: PASSWORD, email_confirm: true });
+  let hqId = hqCreated.data.user?.id;
+  if (!hqId) { const list = await svc.auth.admin.listUsers(); hqId = list.data.users.find((u) => u.email === hqEmail)?.id; if (hqId) await svc.auth.admin.updateUserById(hqId, { password: PASSWORD, email_confirm: true }); }
+  if (!hqId) throw new Error(`[e2e harness] could not seed hq user: ${hqCreated.error?.message}`);
+  await db.from("users").upsert({ id: hqId, email: hqEmail, full_name: "E2E HQ" });
+  await mintState(hqEmail, PASSWORD, STATE_PATH.replace("owner.json", "hq.json"));
+
   // eslint-disable-next-line no-console
-  console.log(`[e2e harness] seeded org ${orgId} + owner + second member → ${dirname(STATE_PATH)}`);
+  console.log(`[e2e harness] seeded org ${orgId} + owner + second member + hq → ${dirname(STATE_PATH)}`);
 }

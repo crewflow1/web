@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -14,6 +12,7 @@ import {
   reportCaseSchema,
   type MaintenanceStatus,
 } from "@/lib/assets/maintenance";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Maintenance-case actions (M5a). One shared flow for every entry point
@@ -21,6 +20,16 @@ import {
  * transition legality; the DB guard (20261002) owns the invariants; costs are
  * admin-only at RLS AND here (dual gate). Every change is audited; transitions
  * are count-gated on the from-status so stale forms no-op.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a same-route ?saved= redirect back to /assets/[id] swaps the page segment
+ * itself and loses the Next 15.5 stranded-commit race (upstream
+ * vercel/next.js#83386) — the row is written but the URL never changes and no
+ * error surfaces. See components/forms/StateForm.tsx. No revalidatePath,
+ * deliberately: these surfaces render per-request (cookie-authed reads, no
+ * Next data cache), so revalidating only added weight to the racy action
+ * response.
  */
 
 type InsertOne = {
@@ -92,7 +101,7 @@ async function loadCase(orgId: string, id: string): Promise<CaseRow | null> {
   return data;
 }
 
-export async function reportMaintenanceCase(formData: FormData): Promise<void> {
+export async function reportMaintenanceCase(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const parsed = reportCaseSchema.safeParse({
     asset_id: formData.get("asset_id"),
@@ -105,9 +114,7 @@ export async function reportMaintenanceCase(formData: FormData): Promise<void> {
     out_of_service: formData.get("out_of_service") === "on",
     reinspection_required: formData.get("reinspection_required") === "on",
   });
-  if (!parsed.success) {
-    redirect(`/assets/${String(formData.get("asset_id") ?? "")}?error=case_invalid`);
-  }
+  if (!parsed.success) return formError("Please check the maintenance details.");
   const input = parsed.data;
 
   const tenant = await createClient();
@@ -134,9 +141,7 @@ export async function reportMaintenanceCase(formData: FormData): Promise<void> {
     .single();
   if (error || !data) {
     console.error("[asset-maintenance] report failed", error);
-    redirect(
-      `/assets/${input.asset_id}?error=${encodeURIComponent(friendlyMaintenanceError(error?.code, error?.message))}`,
-    );
+    return formError(friendlyMaintenanceError(error?.code, error?.message));
   }
 
   await recordAdminActivity({
@@ -165,11 +170,10 @@ export async function reportMaintenanceCase(formData: FormData): Promise<void> {
     },
   ]).catch((e) => console.error("[asset-maintenance] notify failed", e));
 
-  revalidatePath(`/assets/${input.asset_id}`);
-  redirect(`/assets/${input.asset_id}?saved=case_reported`);
+  return formSuccess({ redirectTo: `/assets/${input.asset_id}?saved=case_reported` });
 }
 
-export async function transitionMaintenanceCase(formData: FormData): Promise<void> {
+export async function transitionMaintenanceCase(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const caseId = String(formData.get("case_id") ?? "");
   const to = String(formData.get("to") ?? "") as MaintenanceStatus;
@@ -177,7 +181,7 @@ export async function transitionMaintenanceCase(formData: FormData): Promise<voi
   const cancellationReason = String(formData.get("cancellation_reason") ?? "").trim();
 
   const row = await loadCase(ctx.org.id, caseId);
-  if (!row) redirect(`/assets?error=case_missing`);
+  if (!row) return formError("That maintenance case could not be found.");
   const assetUrl = `/assets/${row.asset_id}`;
 
   const evidence = workPerformed || row.work_performed || "";
@@ -187,7 +191,7 @@ export async function transitionMaintenanceCase(formData: FormData): Promise<voi
       workEvidencePresent: evidence.trim().length > 0,
     });
   } catch {
-    redirect(`${assetUrl}?error=case_transition`);
+    return formError("That step isn't allowed from the case's current state.");
   }
 
   const patch: Record<string, unknown> = { status: to };
@@ -221,11 +225,9 @@ export async function transitionMaintenanceCase(formData: FormData): Promise<voi
     .eq("status", row.status);
   if (error) {
     console.error("[asset-maintenance] transition failed", error);
-    redirect(
-      `${assetUrl}?error=${encodeURIComponent(friendlyMaintenanceError(error.code, error.message))}`,
-    );
+    return formError(friendlyMaintenanceError(error.code, error.message));
   }
-  if (!count) redirect(`${assetUrl}?error=case_stale`);
+  if (!count) return formError("The case changed while you were looking — try again.");
 
   // M5c: completing a schedule-generated case writes the service history back
   // (informational — cycle advancement happened at generation).
@@ -282,15 +284,14 @@ export async function transitionMaintenanceCase(formData: FormData): Promise<voi
     metadata: { asset_id: row.asset_id, from: row.status, to },
   });
 
-  revalidatePath(assetUrl);
-  redirect(`${assetUrl}?saved=case_updated`);
+  return formSuccess({ redirectTo: `${assetUrl}?saved=case_updated` });
 }
 
-export async function upsertCaseCosts(formData: FormData): Promise<void> {
+export async function upsertCaseCosts(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
   // Costs are commercially sensitive: admin-only in the ACTION and at RLS.
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const parsed = caseCostsSchema.safeParse({
     case_id: formData.get("case_id"),
@@ -299,7 +300,7 @@ export async function upsertCaseCosts(formData: FormData): Promise<void> {
     cost_external: formData.get("cost_external") || 0,
     cost_notes: formData.get("cost_notes"),
   });
-  if (!parsed.success) redirect(`/assets/${assetId}?error=case_invalid`);
+  if (!parsed.success) return formError("Please check the maintenance details.");
 
   const tenant = await createClient();
   const { error } = await (
@@ -318,7 +319,7 @@ export async function upsertCaseCosts(formData: FormData): Promise<void> {
   );
   if (error) {
     console.error("[asset-maintenance] costs failed", error);
-    redirect(`/assets/${assetId}?error=case_failed`);
+    return formError("Couldn't save the maintenance case. Try again.");
   }
 
   await recordAdminActivity({
@@ -329,6 +330,5 @@ export async function upsertCaseCosts(formData: FormData): Promise<void> {
     targetId: parsed.data.case_id,
     metadata: { asset_id: assetId },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=case_costs`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=case_costs` });
 }

@@ -128,7 +128,7 @@ export default async function PortalJobsPage({
                         Scheduled {j.scheduled_date}
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-slate-500">
                         No date set yet
                       </span>
                     )}

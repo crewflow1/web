@@ -1,11 +1,15 @@
 "use client";
 
 import { createCertificate } from "./actions";
+import { StateForm } from "@/components/forms/StateForm";
 import type { CertContent } from "@/lib/completion-certificates/schema";
 
 /**
  * Draft completion-certificate form. Every field is customer-facing by design
  * (no cost/margin/internal inputs), so the frozen snapshot cannot leak internals.
+ *
+ * Posts through <StateForm> (FormState + full-document navigation) — see
+ * components/forms/StateForm.tsx for why `redirect()` is unsafe at this depth.
  */
 export function CertificateForm({
   jobId,
@@ -15,7 +19,7 @@ export function CertificateForm({
   defaults: Partial<CertContent>;
 }) {
   return (
-    <form action={createCertificate.bind(null, jobId)} className="space-y-4">
+    <StateForm action={createCertificate.bind(null, jobId)} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-slate-700">Practical completion date</span>
@@ -51,22 +55,22 @@ export function CertificateForm({
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-slate-700">Handover notes <span className="font-normal text-slate-400">(optional)</span></span>
+        <span className="mb-1 block font-medium text-slate-700">Handover notes <span className="font-normal text-slate-500">(optional)</span></span>
         <textarea name="handover_notes" rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
       </label>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Retention note <span className="font-normal text-slate-400">(optional)</span></span>
+          <span className="mb-1 block font-medium text-slate-700">Retention note <span className="font-normal text-slate-500">(optional)</span></span>
           <input name="retention_note" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Signatory name <span className="font-normal text-slate-400">(optional)</span></span>
+          <span className="mb-1 block font-medium text-slate-700">Signatory name <span className="font-normal text-slate-500">(optional)</span></span>
           <input name="signatory_name" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
         </label>
       </div>
       <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
         Create draft certificate
       </button>
-    </form>
+    </StateForm>
   );
 }

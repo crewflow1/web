@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
@@ -11,6 +9,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { certContentSchema, certIdSchema } from "@/lib/completion-certificates/schema";
 import { buildCertificateSnapshot } from "@/lib/completion-certificates/snapshot";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Completion certificate lifecycle actions (Phase 7).
@@ -20,6 +19,14 @@ import { resolveJobAddress, formatAddressLines } from "@/lib/address";
  * DB additionally freezes an issued cert's snapshot + anchors. `completion_certificates`
  * is newer than the generated Supabase types, so queries cast through minimal
  * precise chain shapes — the established house idiom.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`.
+ * A Server-Action redirect at this route depth (/jobs/[id]/certificate) loses
+ * a race in the Next 15.5 client router: the row is written but the URL never
+ * changes and no error surfaces. See components/forms/StateForm.tsx.
+ * No revalidatePath, deliberately: this page renders per-request
+ * (cookie-authed reads), so the post-success document load is always fresh.
  */
 
 const jobIdSchema = z.string().uuid();
@@ -61,10 +68,10 @@ async function requireAdmin() {
 }
 
 /** Create a DRAFT certificate for a completed job (owner/admin). */
-export async function createCertificate(jobId: string, formData: FormData): Promise<void> {
+export async function createCertificate(jobId: string, _prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user, isAdmin } = await requireAdmin();
-  if (!jobIdSchema.safeParse(jobId).success) redirect("/jobs");
-  if (!isAdmin) redirect(`/jobs/${jobId}/certificate?error=denied`);
+  if (!jobIdSchema.safeParse(jobId).success) return formError("That job link looks wrong — reload and try again.");
+  if (!isAdmin) return formError("Only an admin can do this.");
 
   const parsed = certContentSchema.safeParse({
     completion_date: formData.get("completion_date"),
@@ -76,7 +83,7 @@ export async function createCertificate(jobId: string, formData: FormData): Prom
     signatory_name: formData.get("signatory_name"),
   });
   if (!parsed.success) {
-    redirect(`/jobs/${jobId}/certificate?error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Check the form")}`);
+    return formError(parsed.error.issues[0]?.message ?? "Check the form");
   }
 
   const supabase = await createClient();
@@ -90,13 +97,13 @@ export async function createCertificate(jobId: string, formData: FormData): Prom
     status: string;
     customer_id: string | null;
   }>(supabase, jobId, ctx.org.id, "id, status, customer_id");
-  if (!job) redirect(`/jobs/${jobId}/certificate?error=not_found`);
+  if (!job) return formError("Job not found.");
   if ((job as { status: string }).status !== "completed") {
-    redirect(`/jobs/${jobId}/certificate?error=not_completed`);
+    return formError("The job must be completed first.");
   }
 
   const { data: number } = await supabase.rpc("next_certificate_number" as never, { target_org: ctx.org.id } as never);
-  if (!number) redirect(`/jobs/${jobId}/certificate?error=number`);
+  if (!number) return formError("Could not allocate a certificate number — try again.");
 
   const { data: created, error } = await certs(supabase)
     .insert({
@@ -113,7 +120,7 @@ export async function createCertificate(jobId: string, formData: FormData): Prom
     .single();
   if (error || !created) {
     console.error("[completion-cert] create failed", error);
-    redirect(`/jobs/${jobId}/certificate?error=create_failed`);
+    return formError("Something went wrong — try again.");
   }
 
   await recordAdminActivity({
@@ -124,24 +131,27 @@ export async function createCertificate(jobId: string, formData: FormData): Prom
     targetId: created.id,
     metadata: { number, job_id: jobId },
   });
-  revalidatePath(`/jobs/${jobId}/certificate`);
-  redirect(`/jobs/${jobId}/certificate?saved=created`);
+  return formSuccess({ redirectTo: `/jobs/${jobId}/certificate?saved=created` });
 }
 
 /** Issue a draft — freeze the customer-safe snapshot (owner/admin). */
-export async function issueCertificate(jobId: string, certId: string): Promise<void> {
+export async function issueCertificate(
+  jobId: string,
+  certId: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
   const { ctx, user, isAdmin } = await requireAdmin();
-  if (!certIdSchema.safeParse(certId).success) redirect(`/jobs/${jobId}/certificate`);
-  if (!isAdmin) redirect(`/jobs/${jobId}/certificate?error=denied`);
+  if (!certIdSchema.safeParse(certId).success) return formError("That certificate link looks wrong — reload and try again.");
+  if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
   const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
   if (certError) throw readFailure("certificate issue: certificate", certError);
-  if (!cert) redirect(`/jobs/${jobId}/certificate?error=not_found`);
-  if (cert.status !== "draft") redirect(`/jobs/${jobId}/certificate?error=already_issued`);
+  if (!cert) return formError("Certificate not found.");
+  if (cert.status !== "draft") return formError("This certificate has already been issued.");
 
   const content = certContentSchema.safeParse(cert.content);
-  if (!content.success) redirect(`/jobs/${jobId}/certificate?error=incomplete`);
+  if (!content.success) return formError("Fill in the certificate details first.");
 
   // Resolve customer-safe context for the frozen snapshot (no internal fields).
   // Active-org scoped: the snapshot is stamped with ctx.org.name as the
@@ -175,7 +185,7 @@ export async function issueCertificate(jobId: string, certId: string): Promise<v
     .eq("status", "draft");
   if (error || !count) {
     console.error("[completion-cert] issue failed", error);
-    redirect(`/jobs/${jobId}/certificate?error=issue_failed`);
+    return formError("Something went wrong — try again.");
   }
 
   await recordAdminActivity({
@@ -186,20 +196,19 @@ export async function issueCertificate(jobId: string, certId: string): Promise<v
     targetId: certId,
     metadata: { number: cert.certificate_number },
   });
-  revalidatePath(`/jobs/${jobId}/certificate`);
-  redirect(`/jobs/${jobId}/certificate?saved=issued`);
+  return formSuccess({ redirectTo: `/jobs/${jobId}/certificate?saved=issued` });
 }
 
-async function setPortal(jobId: string, certId: string, publish: boolean): Promise<void> {
+async function setPortal(jobId: string, certId: string, publish: boolean): Promise<FormState> {
   const { user, isAdmin } = await requireAdmin();
-  if (!certIdSchema.safeParse(certId).success) redirect(`/jobs/${jobId}/certificate`);
-  if (!isAdmin) redirect(`/jobs/${jobId}/certificate?error=denied`);
+  if (!certIdSchema.safeParse(certId).success) return formError("That certificate link looks wrong — reload and try again.");
+  if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
   const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
   if (certError) throw readFailure("certificate portal: certificate", certError);
-  if (!cert) redirect(`/jobs/${jobId}/certificate?error=not_found`);
-  if (cert.status !== "issued") redirect(`/jobs/${jobId}/certificate?error=not_issued`);
+  if (!cert) return formError("Certificate not found.");
+  if (cert.status !== "issued") return formError("The certificate isn't issued.");
 
   const patch = publish
     ? { portal_published_at: new Date().toISOString(), portal_published_by: user.id, portal_withdrawn_at: null }
@@ -207,7 +216,7 @@ async function setPortal(jobId: string, certId: string, publish: boolean): Promi
   const { error } = await certs(supabase).update(patch, { count: "exact" }).eq("id", certId).eq("status", "issued");
   if (error) {
     console.error("[completion-cert] portal toggle failed", error);
-    redirect(`/jobs/${jobId}/certificate?error=portal_failed`);
+    return formError("Something went wrong — try again.");
   }
   await recordAdminActivity({
     actorId: user.id,
@@ -217,13 +226,20 @@ async function setPortal(jobId: string, certId: string, publish: boolean): Promi
     targetId: certId,
     metadata: { number: cert.certificate_number },
   });
-  revalidatePath(`/jobs/${jobId}/certificate`);
-  redirect(`/jobs/${jobId}/certificate?saved=${publish ? "published" : "withdrawn"}`);
+  return formSuccess({ redirectTo: `/jobs/${jobId}/certificate?saved=${publish ? "published" : "withdrawn"}` });
 }
 
-export async function publishCertificate(jobId: string, certId: string): Promise<void> {
-  await setPortal(jobId, certId, true);
+export async function publishCertificate(
+  jobId: string,
+  certId: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
+  return setPortal(jobId, certId, true);
 }
-export async function withdrawCertificate(jobId: string, certId: string): Promise<void> {
-  await setPortal(jobId, certId, false);
+export async function withdrawCertificate(
+  jobId: string,
+  certId: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
+  return setPortal(jobId, certId, false);
 }

@@ -32,7 +32,7 @@ export const PERMIT_STATUS_STYLES: Record<EffectiveStatus, string> = {
   active: "bg-emerald-100 text-emerald-800",
   suspended: "bg-amber-100 text-amber-800",
   closed: "bg-slate-100 text-slate-600",
-  cancelled: "bg-slate-100 text-slate-500",
+  cancelled: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
   expired: "bg-red-100 text-red-800",
   not_yet_valid: "bg-amber-100 text-amber-900",
 };
@@ -122,8 +122,11 @@ export const warnBtn =
   "inline-flex min-h-[44px] items-center justify-center rounded-md border border-amber-300 bg-white px-4 py-2.5 text-sm font-medium text-amber-800 hover:bg-amber-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2";
 export const dangerBtn =
   "inline-flex min-h-[44px] items-center justify-center rounded-md border border-red-300 bg-white px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2";
+/** Only for controls that are ALSO really disabled (disabled/aria-disabled) — WCAG
+ * exempts those, but the gate CTA's label still has to be readable while blocked,
+ * so keep slate-600 (6.1:1 on slate-200), not 500 (3.7:1). */
 export const disabledBtn =
-  "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-500";
+  "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600";
 
 // ---- Banner copy for ?saved= / ?error= ----
 

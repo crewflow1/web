@@ -178,7 +178,7 @@ function Field({
       {children ? (
         <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{children}</p>
       ) : (
-        <p className="mt-1 text-sm italic text-slate-400">—</p>
+        <p className="mt-1 text-sm italic text-slate-500">—</p>
       )}
     </div>
   );

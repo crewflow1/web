@@ -39,7 +39,7 @@ export function Field({
           {label}
           {required ? <span className="ml-0.5 text-red-500">*</span> : null}
         </span>
-        {optional ? <span className="text-[10px] font-normal text-slate-400">Optional</span> : null}
+        {optional ? <span className="text-[10px] font-normal text-slate-500">Optional</span> : null}
       </span>
       {children}
       {help && !error ? (

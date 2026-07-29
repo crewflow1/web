@@ -107,7 +107,7 @@ export default async function FleetFuelPage({ searchParams }: { searchParams: SP
             <div className="p-4">
               {consumption.mpg == null ? (
                 <>
-                  <p className="text-3xl font-bold tabular-nums text-slate-400">—</p>
+                  <p className="text-3xl font-bold tabular-nums text-slate-500">—</p>
                   <p className="mt-2 max-w-2xl text-sm text-slate-600">
                     Not calculable from the entries recorded. Consumption is only knowable
                     tank-to-tank: two consecutive brim-full fills, both with an odometer reading.
@@ -182,7 +182,7 @@ export default async function FleetFuelPage({ searchParams }: { searchParams: SP
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {s.mpg == null ? (
-                            <span className="text-slate-400" title="Needs two consecutive full fills with mileage">
+                            <span className="text-slate-500" title="Needs two consecutive full fills with mileage">
                               —
                             </span>
                           ) : (

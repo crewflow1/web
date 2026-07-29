@@ -363,7 +363,7 @@ export default async function ImportWizardPage({
                             {r.error_message}
                           </div>
                         ) : (
-                          <div className="mt-1 text-[11px] text-slate-400">
+                          <div className="mt-1 text-[11px] text-slate-500">
                             detected: {r.entity_type ?? "unknown"} · confidence{" "}
                             {r.confidence ?? 0}%
                           </div>
@@ -510,7 +510,7 @@ export default async function ImportWizardPage({
               <li key={entity} className="rounded-lg border border-slate-200 p-3">
                 <div className="flex items-baseline justify-between">
                   <div className="text-xs uppercase tracking-wide text-slate-500">{entity}</div>
-                  <div className="text-[10px] text-slate-400">
+                  <div className="text-[10px] text-slate-500">
                     of {t.count}
                   </div>
                 </div>

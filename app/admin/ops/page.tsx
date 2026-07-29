@@ -239,7 +239,7 @@ function CronRow({ cron }: { cron: CronRouteHealth }) {
       <td className="px-3 py-2 text-xs text-slate-700">
         {cron.last_run_at ? cron.last_run_at.slice(0, 16).replace("T", " ") : "—"}
         {cron.last_duration_ms != null ? (
-          <span className="ml-1 text-slate-400">
+          <span className="ml-1 text-slate-500">
             · {cron.last_duration_ms}ms
           </span>
         ) : null}
