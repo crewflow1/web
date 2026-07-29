@@ -23,12 +23,11 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = me?.role === "owner" || me?.role === "admin";
+  // Caller's role from ctx — their own membership in the ACTIVE org. An
+  // unfiltered memberships read returns every member's row (org-member
+  // visibility policy) and `.single()` errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const [{ data: statements }, { data: outstandingRows }] = await Promise.all([
     supabase

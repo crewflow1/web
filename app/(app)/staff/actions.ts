@@ -9,7 +9,7 @@ import {
   sendStaffInvite,
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
 import {
   updateStaffProfileSchema,
@@ -43,14 +43,14 @@ import {
 
 const uuid = z.string().uuid();
 
-async function requireAdmin(orgId: string) {
-  const supabase = await createClient();
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", orgId)
-    .single();
-  if (!me || (me.role !== "owner" && me.role !== "admin")) {
+function requireAdmin(ctx: OrgContext): void {
+  // ctx.membership is the caller's OWN row in the ACTIVE org, resolved by
+  // requireOrgContext with a user_id filter. Don't re-query memberships
+  // unfiltered here: org members can read each other's rows, so
+  // `.eq("org_id", …).single()` returns every member and errors in any org
+  // with ≥2 members — locking every admin out of staff management.
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
     redirect("/dashboard?error=forbidden");
   }
 }
@@ -77,7 +77,7 @@ export type InviteStaffResult =
  */
 export async function inviteStaff(formData: FormData): Promise<InviteStaffResult> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const parsed = inviteStaffSchema.safeParse({
     full_name: formData.get("full_name") ?? "",
@@ -220,7 +220,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
  */
 export async function resendStaffInvite(email: string): Promise<InviteStaffResult> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const parsedEmail = z.string().email().safeParse(email);
   if (!parsedEmail.success) return { ok: false, error: "Invalid email address." };
@@ -291,7 +291,7 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
 
 export async function updateStaffRole(userId: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const role = String(formData.get("role") ?? "");
@@ -342,7 +342,7 @@ export async function updateStaffProfile(
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) {
     return formError("Invalid staff id.");
   }
@@ -398,7 +398,7 @@ export async function updateStaffProfile(
 
 export async function removeStaff(userId: string) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const supabase = await createClient();
@@ -436,7 +436,7 @@ export async function createRotaEntry(
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const result = validateFormData(formData, rotaEntryFormSchema);
   if (!result.ok) return result.state as FormState<Record<string, unknown>>;
@@ -504,7 +504,7 @@ export async function createRotaEntry(
 
 export async function deleteRotaEntry(entryId: string) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(entryId).success) redirect("/staff/rota");
 
   const supabase = await createClient();
@@ -577,7 +577,7 @@ export async function reviewLeaveRequest(
   formData: FormData,
 ) {
   const { ctx, user } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(requestId).success) redirect("/staff/leave");
 
   const decision = String(formData.get("decision") ?? "");
