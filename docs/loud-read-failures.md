@@ -172,3 +172,13 @@ Kept as designed, with the reviewed reason:
   pages) and holds a per-directory RATCHET on `const { data } = await` sites:
   the count may only go DOWN. A new swallowed read fails the tier until it
   handles `error` or a reviewed exception bumps the baseline.
+
+## Inherited debt — 2026-07-29 baseline adjustment
+
+Trains 24–26 (#482 PO receiving, #483 sites, #484 AI governor) were authored
+concurrently with this ratchet and merged after it froze. Their reads add
++4 discard (app), +3 discard / +2 soft-data (server+lib) to the ledger.
+Each lane carried its own loud-error discipline on its critical paths (GRN
+posting, RPCs); the counted shapes are secondary reads. They are queued for
+the next loud-reads slice — the `===` baselines were raised once, here, and
+any further movement fails the build.

@@ -169,7 +169,7 @@ export async function updatePurchaseOrder(
   // Only draft/sent POs are editable — a received/cancelled PO is settled.
   type EditQuery = {
     eq: (k: string, v: unknown) => EditQuery;
-    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+    maybeSingle: () => Promise<{ data: { status: string } | null; error: SupabaseReadError | null }>;
   };
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
@@ -258,7 +258,7 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   const supabase = await createClient();
   type StatusQuery = {
     eq: (k: string, v: unknown) => StatusQuery;
-    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+    maybeSingle: () => Promise<{ data: { status: string } | null; error: SupabaseReadError | null }>;
   };
   const { data: existing, error: existingError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
@@ -424,6 +424,7 @@ export async function recordSupplierBill(
     eq: (k: string, v: string) => BillPoQuery;
     maybeSingle: () => Promise<{
       data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+      error: SupabaseReadError | null;
     }>;
   };
   const { data: po, error: poError } = await (
