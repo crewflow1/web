@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
@@ -40,14 +41,12 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  // Permission: admins-only — bank statements are sensitive.
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  if (!me || (me.role !== "owner" && me.role !== "admin")) {
-    return formError("Only an owner or admin can upload bank statements.");
+  // Permission: admins-only — bank statements are sensitive. Role comes from
+  // ctx (the caller's own membership in the ACTIVE org); an unfiltered
+  // memberships read would return every member's row and `.single()` would
+  // error in any org with ≥2 members, locking everyone out.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    redirect("/payments?error=forbidden");
   }
 
   const file = formData.get("file") as File | null;

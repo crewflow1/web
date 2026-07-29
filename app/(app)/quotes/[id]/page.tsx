@@ -99,27 +99,28 @@ export default async function EditQuotePage({
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  // Role + quote in parallel.
-  const [{ data: myRow }, { data: quote }] = await Promise.all([
-    supabase.from("memberships").select("role").eq("org_id", ctx.org.id).single(),
-    supabase
-      .from("quotes")
-      .select(
-        `
-          id, number, status, currency, subtotal, vat_total, total,
-          customer_id, property_id, lead_id, valid_until, notes, terms,
-          public_token, sent_at, viewed_at, accepted_at, declined_at,
-          accept_signature, created_at, created_by, job_id,
-          approved_by, approved_at, approval_comment,
-          approver:users!quotes_approved_by_fkey ( id, full_name, email ),
-          customer:customers ( name, email )
-        `,
-      )
-      .eq("id", id)
-      .maybeSingle(),
-  ]);
+  const { data: quote } = await supabase
+    .from("quotes")
+    .select(
+      `
+        id, number, status, currency, subtotal, vat_total, total,
+        customer_id, property_id, lead_id, valid_until, notes, terms,
+        public_token, sent_at, viewed_at, accepted_at, declined_at,
+        accept_signature, created_at, created_by, job_id,
+        approved_by, approved_at, approval_comment,
+        approver:users!quotes_approved_by_fkey ( id, full_name, email ),
+        customer:customers ( name, email )
+      `,
+    )
+    .eq("id", id)
+    .maybeSingle();
   if (!quote) notFound();
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // The caller's role comes from ctx (their own membership row in the ACTIVE
+  // org). Never derive it from an unfiltered memberships query: org members
+  // can see each other's rows, so `.eq("org_id", …).single()` returns every
+  // member and errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const { data: rawItems } = await supabase
     .from("quote_line_items")
