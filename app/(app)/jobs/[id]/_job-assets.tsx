@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Assets on the job (integration slice) — every asset currently allocated to
@@ -17,7 +18,7 @@ type Row = {
 
 export async function JobAssetsSection({ jobId }: { jobId: string }) {
   const supabase = await createClient();
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("asset_assignments" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
@@ -25,17 +26,38 @@ export async function JobAssetsSection({ jobId }: { jobId: string }) {
             order: (
               c: string,
               o: { ascending: boolean },
-            ) => { limit: (n: number) => Promise<{ data: Row[] | null }> };
+            ) => {
+              limit: (
+                n: number,
+              ) => Promise<{ data: Row[] | null; error: SupabaseReadError | null }>;
+            };
           };
         };
       };
     }
   )
-    .select("id, asset_id, assigned_at, expected_return_at, assets(id, name, status)")
+    // FK hint required: asset_assignments has two FKs to assets since the
+    // fleet migration; a bare assets(...) embed fails the whole query.
+    .select("id, asset_id, assigned_at, expected_return_at, assets!asset_assignments_asset_id_fkey(id, name, status)")
     .eq("job_id", jobId)
     .eq("status", "open")
     .order("assigned_at", { ascending: false })
     .limit(50);
+  if (error) {
+    // Panel-scoped failure: keep the job hub alive, but never render the
+    // "no assets" absence (this section normally hides when empty) — show an
+    // explicit error block and report it, so a rejected query can't pass as
+    // "nothing allocated".
+    reportReadFailure("job hub: assets on job", error);
+    return (
+      <section className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-red-800">Assets on this job</h2>
+        <p className="mt-1 text-sm text-red-700">
+          Couldn&apos;t load the assets allocated to this job. Refresh to try again.
+        </p>
+      </section>
+    );
+  }
   const rows = data ?? [];
   if (rows.length === 0) return null;
 
