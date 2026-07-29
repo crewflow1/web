@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-user-lookup";
 import {
   sendStaffInvite,
   type StaffInviteMetadata,
@@ -227,19 +228,15 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
   const target = parsedEmail.data;
 
   const admin = createAdminClient();
-  let users;
-  try {
-    const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (error || !data) throw error ?? new Error("no data");
-    users = data.users;
-  } catch (e) {
-    console.error("[staff] resend invite — listUsers failed", e);
+  // Paginated lookup — a single listUsers({ perPage: 1000 }) page stopped
+  // seeing pending invites once the auth base passed 1000 users.
+  const lookup = await findAuthUserByEmail(admin, target);
+  if (!lookup.ok) {
+    console.error("[staff] resend invite — auth user lookup failed", lookup.reason);
     return { ok: false, error: "Couldn't reach the invite service. Try again." };
   }
 
-  const existing = users.find(
-    (u) => (u.email ?? "").trim().toLowerCase() === target.toLowerCase(),
-  );
+  const existing = lookup.user;
   const meta = (existing?.user_metadata ?? {}) as Record<string, unknown>;
   if (!existing || meta.invited_org_id !== ctx.org.id || meta.source !== "staff_invite") {
     return { ok: false, error: "No pending invite found for that email." };

@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -10,12 +8,22 @@ import {
   friendlyOverrideError,
   revokeOverrideSchema,
 } from "@/lib/assets/inspection-override";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Safety-override actions (M4d). ADMIN-ONLY at the action AND at RLS (the
  * dual-gate pattern) — ordinary staff fail server-side. An override never
  * touches the inspection it bypasses; expiry re-blocks purely by the guard's
  * time predicate (no cron, no state flip); revocation is write-once.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a Server-Action redirect back to /assets/[id] swaps the page segment itself
+ * and loses the Next 15.5 stranded-commit race (upstream vercel/next.js#83386):
+ * the row is written but the URL never changes and no error surfaces. See
+ * components/forms/StateForm.tsx. No revalidatePath, deliberately: these
+ * surfaces render per-request (cookie-authed reads, no Next data cache), so
+ * revalidating only added weight to the racy action response.
  */
 
 function isAdmin(role: string): boolean {
@@ -48,10 +56,10 @@ type RevokeChain = {
   };
 };
 
-export async function createInspectionOverride(formData: FormData): Promise<void> {
+export async function createInspectionOverride(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const parsed = createOverrideSchema.safeParse({
     asset_id: assetId,
@@ -61,7 +69,7 @@ export async function createInspectionOverride(formData: FormData): Promise<void
       ? new Date(String(formData.get("expires_at"))).toISOString()
       : undefined,
   });
-  if (!parsed.success) redirect(`/assets/${assetId}?error=override_invalid`);
+  if (!parsed.success) return formError("Give a real reason (at least 10 characters).");
 
   const tenant = await createClient();
   const { data, error } = await (
@@ -79,9 +87,7 @@ export async function createInspectionOverride(formData: FormData): Promise<void
     .single();
   if (error || !data) {
     console.error("[asset-override] create failed", error);
-    redirect(
-      `/assets/${assetId}?error=${encodeURIComponent(friendlyOverrideError(error?.code, error?.message))}`,
-    );
+    return formError(friendlyOverrideError(error?.code, error?.message));
   }
 
   await recordAdminActivity({
@@ -96,20 +102,19 @@ export async function createInspectionOverride(formData: FormData): Promise<void
       expires_at: parsed.data.expires_at ?? null,
     },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=override`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=override` });
 }
 
-export async function revokeInspectionOverride(formData: FormData): Promise<void> {
+export async function revokeInspectionOverride(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const parsed = revokeOverrideSchema.safeParse({
     override_id: formData.get("override_id"),
     revoke_reason: formData.get("revoke_reason"),
   });
-  if (!parsed.success) redirect(`/assets/${assetId}?error=override_invalid`);
+  if (!parsed.success) return formError("Give a real reason (at least 10 characters).");
 
   const tenant = await createClient();
   // Write-once: only an un-revoked row matches; a repeat is a friendly no-op.
@@ -129,9 +134,9 @@ export async function revokeInspectionOverride(formData: FormData): Promise<void
     .is("revoked_at", null);
   if (error) {
     console.error("[asset-override] revoke failed", error);
-    redirect(`/assets/${assetId}?error=override_failed`);
+    return formError("Couldn't save the override. Try again.");
   }
-  if (!count) redirect(`/assets/${assetId}?error=override_already_revoked`);
+  if (!count) return formError("That override was already revoked.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -141,6 +146,5 @@ export async function revokeInspectionOverride(formData: FormData): Promise<void
     targetId: parsed.data.override_id,
     metadata: { asset_id: assetId },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=override_revoked`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=override_revoked` });
 }

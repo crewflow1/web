@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -118,9 +119,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             name. Anything 70%+ confidence is suggested; you confirm or pick
             a different invoice.
           </p>
-          <form
+          <StateForm
             action={uploadBankCsv}
-            encType="multipart/form-data"
             className="mt-4 flex flex-wrap items-end gap-2"
           >
             <input
@@ -136,7 +136,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             >
               Upload + match
             </button>
-          </form>
+          </StateForm>
         </section>
       ) : null}
 

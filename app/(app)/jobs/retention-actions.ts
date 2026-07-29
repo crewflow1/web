@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
@@ -10,6 +8,7 @@ import {
   computeRetentionPosition,
   maxReleasable,
 } from "@/lib/retentions/compute";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Retention server actions (Programme C).
@@ -23,24 +22,35 @@ import {
  * The DB is the authority; here we pre-check with the SAME derivation the guard
  * uses so the operator gets a friendly message instead of a raw constraint
  * error, then let the guard be the backstop.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a Server-Action redirect back onto /jobs/[id] is the same-route swap shape
+ * measured losing 60-100% of navigations on the app's heavy detail pages to
+ * the Next 15.5 stranded-commit race (rows written, URL frozen, no error —
+ * vercel/next.js#83386). No revalidatePath, deliberately: the job page renders
+ * per-request from cookie-authed reads, so revalidation only added weight to
+ * the racy response. See components/forms/StateForm.tsx.
  */
 
 const idSchema = z.string().uuid();
-const back = (jobId: string, params: string): never => {
-  redirect(`/jobs/${jobId}?${params}`);
-};
+const jobUrl = (jobId: string, params: string): string => `/jobs/${jobId}?${params}`;
 
 const rateSchema = z.coerce.number().min(0, "Rate can't be negative").max(100, "Rate can't exceed 100%");
 
-export async function setJobRetentionRate(jobId: string, formData: FormData) {
+export async function setJobRetentionRate(
+  jobId: string,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
-  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
+  if (!idSchema.safeParse(jobId).success) return formError("That job link looks wrong — reload and try again.");
 
   const parsed = rateSchema.safeParse(formData.get("retention_percent"));
   if (!parsed.success) {
-    back(jobId, `error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Invalid rate")}`);
+    return formError(parsed.error.issues[0]?.message ?? "Invalid rate");
   }
-  const rate = Math.round((parsed.success ? parsed.data : 0) * 100) / 100;
+  const rate = Math.round(parsed.data * 100) / 100;
 
   const supabase = await createClient();
   // jobs.retention_percent is added by 20261005000000 but not yet in the
@@ -70,7 +80,7 @@ export async function setJobRetentionRate(jobId: string, formData: FormData) {
   if (error || !data) {
     // RLS filters the row out for non-admins → zero rows, no error.
     console.error("[retention] set rate failed", error);
-    back(jobId, "error=retention_rate_failed");
+    return formError("Couldn't set the retention rate — only admins can, and the job must be in this workspace.");
   }
 
   await recordAdminActivity({
@@ -82,8 +92,7 @@ export async function setJobRetentionRate(jobId: string, formData: FormData) {
     metadata: { retention_percent: rate },
   });
 
-  revalidatePath(`/jobs/${jobId}`);
-  back(jobId, "saved=retention_rate");
+  return formSuccess({ redirectTo: jobUrl(jobId, "saved=retention_rate") });
 }
 
 const releaseSchema = z.object({
@@ -98,9 +107,13 @@ const releaseSchema = z.object({
   ),
 });
 
-export async function recordRetentionRelease(jobId: string, formData: FormData) {
+export async function recordRetentionRelease(
+  jobId: string,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
-  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
+  if (!idSchema.safeParse(jobId).success) return formError("That job link looks wrong — reload and try again.");
 
   const parsed = releaseSchema.safeParse({
     amount: formData.get("amount"),
@@ -108,9 +121,9 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
     note: formData.get("note") ?? "",
   });
   if (!parsed.success) {
-    back(jobId, `error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Invalid release")}`);
+    return formError(parsed.error.issues[0]?.message ?? "Invalid release");
   }
-  const input = parsed.success ? parsed.data : { amount: 0, released_on: undefined, note: undefined };
+  const input = parsed.data;
 
   const supabase = await createClient();
 
@@ -137,7 +150,7 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
     .eq("id", jobId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
-  if (!job) redirect("/jobs?error=job_not_found");
+  if (!job) return formError("Job not found in this workspace.");
 
   const [{ data: invoices }, { data: releases }] = await Promise.all([
     (
@@ -167,13 +180,10 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
   });
 
   if (!position.isActive) {
-    back(jobId, "error=retention_not_set");
+    return formError("Set a retention rate on this job before recording a release.");
   }
   if (input.amount > maxReleasable(position) + 0.005) {
-    back(
-      jobId,
-      `error=${encodeURIComponent(`Release exceeds retention held (${maxReleasable(position).toFixed(2)} available)`)}`,
-    );
+    return formError(`Release exceeds retention held (${maxReleasable(position).toFixed(2)} available)`);
   }
 
   const { data, error } = await (
@@ -202,7 +212,11 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
     // The DB guard is the backstop (over-release / org mismatch → check_violation).
     console.error("[retention] release insert failed", error);
     const overRelease = (error?.message ?? "").includes("exceeds held retention");
-    back(jobId, overRelease ? "error=retention_over_release" : "error=retention_release_failed");
+    return formError(
+      overRelease
+        ? "That release exceeds the retention currently held."
+        : "Couldn't record the release — try again.",
+    );
   }
 
   await recordAdminActivity({
@@ -210,12 +224,11 @@ export async function recordRetentionRelease(jobId: string, formData: FormData) 
     actorEmail: user.email ?? null,
     action: "retention.released",
     targetTable: "retention_releases",
-    targetId: data!.id,
+    targetId: data.id,
     metadata: { job_id: jobId, amount: input.amount, released_on: input.released_on ?? null },
   });
 
-  revalidatePath(`/jobs/${jobId}`);
-  back(jobId, "saved=retention_release");
+  return formSuccess({ redirectTo: jobUrl(jobId, "saved=retention_release") });
 }
 
 /**
@@ -245,9 +258,13 @@ const scheduleSchema = z.object({
     .max(100, "Can't exceed 100%"),
 });
 
-export async function setRetentionSchedule(jobId: string, formData: FormData) {
+export async function setRetentionSchedule(
+  jobId: string,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
-  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
+  if (!idSchema.safeParse(jobId).success) return formError("That job link looks wrong — reload and try again.");
 
   const parsed = scheduleSchema.safeParse({
     practical_completion_date: formData.get("practical_completion_date"),
@@ -255,11 +272,9 @@ export async function setRetentionSchedule(jobId: string, formData: FormData) {
     retention_first_release_pct: formData.get("retention_first_release_pct"),
   });
   if (!parsed.success) {
-    back(jobId, `error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Check the retention schedule")}`);
+    return formError(parsed.error.issues[0]?.message ?? "Check the retention schedule");
   }
-  const values = parsed.success
-    ? parsed.data
-    : { practical_completion_date: null, defects_liability_months: 12, retention_first_release_pct: 50 };
+  const values = parsed.data;
 
   const supabase = await createClient();
   // These jobs columns (20261013) aren't in the generated Supabase types — cast
@@ -291,7 +306,7 @@ export async function setRetentionSchedule(jobId: string, formData: FormData) {
   if (error || !data) {
     // RLS filters the row out for non-admins → zero rows, no error.
     console.error("[retention] set schedule failed", error);
-    back(jobId, "error=retention_schedule_failed");
+    return formError("Couldn't save the retention schedule — only admins can, and the job must be in this workspace.");
   }
 
   await recordAdminActivity({
@@ -303,6 +318,5 @@ export async function setRetentionSchedule(jobId: string, formData: FormData) {
     metadata: { ...values },
   });
 
-  revalidatePath(`/jobs/${jobId}`);
-  back(jobId, "saved=retention_schedule");
+  return formSuccess({ redirectTo: jobUrl(jobId, "saved=retention_schedule") });
 }

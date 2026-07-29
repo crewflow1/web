@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
  * Blueprint Pins (Programme B) — E2E boundary + journey.
@@ -28,6 +30,20 @@ test.describe("blueprint pins — stay behind the auth wall", () => {
 test.describe("blueprint pins — authenticated place-a-snag journey", () => {
   // Real authenticated E2E via the harness (e2e/global-setup.ts).
   test.use({ storageState: "e2e/.auth/owner.json" });
+
+  // Self-clean: a pin from a PRIOR local run sits exactly where this journey
+  // clicks, so the click opens that snag instead of the Add-a-pin sheet. CI
+  // never sees this (fresh DB per run); a persistent local DB does.
+  test.beforeAll(async () => {
+    const svc = createClient(
+      assertLocalE2eTarget("blueprint-pins.spec.ts"),
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    ) as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const stale = (await svc.from("snags").select("id").like("title", "Cracked render at RC junction%")).data ?? [];
+    for (const s of stale) await svc.from("blueprint_pins").delete().eq("snag_id", s.id);
+    if (stale.length) await svc.from("snags").delete().like("title", "Cracked render at RC junction%");
+  });
   test(
     "Add pin → tap drawing → create snag → marker appears → open snag deep-links",
     async ({ page }) => {

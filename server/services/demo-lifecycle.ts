@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-user-lookup";
 import { sendEmail, type SendEmailResult } from "@/lib/email/send";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -554,12 +555,17 @@ export async function promoteDemoToCustomer(args: {
         /already (registered|exists|signed|been)/i.test(msg) ||
         createErr.status === 422
       ) {
-        const { data: list } = await admin.auth.admin.listUsers();
-        const existing = list?.users.find(
-          (u) => u.email?.toLowerCase() === args.demo.email.toLowerCase(),
-        );
-        if (existing) {
-          authUserId = existing.id;
+        // Paginated lookup — a bare listUsers() only returns the first
+        // page (~50 users), so recovery used to fail for real accounts
+        // once the auth base outgrew one page.
+        const lookup = await findAuthUserByEmail(admin, args.demo.email);
+        if (!lookup.ok) {
+          // The account exists (createUser said so) but we couldn't
+          // recover its id — surface the lookup failure distinctly
+          // instead of misreporting it as a create failure.
+          failed.push({ step: "auth_user_lookup", reason: lookup.reason });
+        } else if (lookup.user) {
+          authUserId = lookup.user.id;
           done.push("auth_user_already_existed");
           await recordAdminActivity({
             actorId: args.actor.id,
@@ -569,7 +575,7 @@ export async function promoteDemoToCustomer(args: {
             targetId: args.demo.id,
             metadata: {
               reason: "auth user already exists",
-              auth_user_id: existing.id,
+              auth_user_id: lookup.user.id,
             },
           });
         }
