@@ -76,6 +76,20 @@ export interface BriefingInput {
     otherOverdue: { count: number; vehicleCount: number; maxDaysOverdue: number };
     dueSoon: { count: number; vehicleCount: number; soonestDays: number | null };
   };
+  /**
+   * O3 OPERATIONAL STOCK: items at or below their own reorder level, and items
+   * with nothing left at all (server/services/stock.ts → loadLowStockSignal).
+   *
+   * OPTIONAL, and absent means "no signal" rather than "zero". A tenant that
+   * tracks no stock, and a build where the read failed, both produce the same
+   * quiet output — the briefing can miss a line, never invent one.
+   *
+   * DETECTION ONLY. Nothing is ordered, no purchase order is drafted and no
+   * supplier is contacted; the item links to /stock and a human decides. And
+   * nothing here carries money: stock in this milestone is quantities, because
+   * materials are already expensed when the supplier's bill is recorded.
+   */
+  lowStock?: { low: number; out: number; worstName: string | null };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -274,6 +288,37 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
     );
   }
 
+  // --- OPERATIONS: stock ---------------------------------------------------
+  // CAPPED AT "high", and only when something is actually at zero. Running out
+  // of blocks stops a gang working today, which is a real operational cost —
+  // but it is not a safety breach or a legal exposure, and `critical` is
+  // reserved for those (the same cap `scheduleSeverity` applies, for the same
+  // reason). Merely LOW is "medium": it is a nudge with days of warning in it,
+  // and a nudge that shouts is a nudge people learn to ignore.
+  //
+  // ONE line, never two: out-of-stock and low are the same conversation ("order
+  // this"), and splitting them would put two stock rows in a five-row brief.
+  const stock = input.lowStock;
+  if (stock && (stock.out > 0 || stock.low > 0)) {
+    const n = stock.out + stock.low;
+    const named = stock.worstName ? ` — ${stock.worstName}` : "";
+    add(
+      "stock_low",
+      "operations",
+      stock.out > 0 ? "high" : "medium",
+      stock.out > 0
+        ? `${stock.out} stock ${plural(stock.out, "item")} at zero`
+        : `${stock.low} stock ${plural(stock.low, "item")} running low`,
+      stock.out > 0
+        ? `${stock.out} ${plural(stock.out, "item")} you track ${stock.out === 1 ? "has" : "have"} nothing left` +
+          `${stock.low > 0 ? `, and ${stock.low} more ${stock.low === 1 ? "is" : "are"} at or below the reorder level` : ""}` +
+          `${named}. Order before someone drives to the merchant.`
+        : `${stock.low} ${plural(stock.low, "item")} ${stock.low === 1 ? "is" : "are"} at or below the reorder level you set${named}.`,
+      "/stock",
+      { count: n, urgencyDays: stock.out > 0 ? 0 : null },
+    );
+  }
+
   // --- MONEY ---------------------------------------------------------------
   if (input.overdue.count > 0 && input.overdue.totalAmount > 0) {
     const n = input.overdue.count;
@@ -436,6 +481,7 @@ export const BRIEFING_ITEM_KEYS = [
   "cash_due_soon",
   "unscheduled_value",
   "jobs_unassigned_tomorrow",
+  "stock_low",
   "schedule_double_booked",
   "schedule_leave_clash",
   "schedule_unassigned_soon",

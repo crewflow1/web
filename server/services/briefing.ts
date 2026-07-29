@@ -7,6 +7,7 @@ import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
 import { loadScheduleConflicts } from "./schedule-integrity";
 import { buildFleetComplianceRollup } from "./fleet-snapshot";
+import { loadLowStockSignal, type StockClient } from "./stock";
 import { rollupKind } from "@/lib/schedule/conflicts";
 import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
@@ -104,6 +105,7 @@ export async function buildDailyBriefing(
       hs,
       scheduleConflictRows,
       fleetRollup,
+      lowStock,
       dismissRes,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
@@ -126,6 +128,11 @@ export async function buildDailyBriefing(
       // service). Org-pinned and best-effort like the rest of this batch, so a
       // fleet-less org contributes nothing and a failed read emits no lines.
       buildFleetComplianceRollup(orgId, todayIso),
+      // O3 OPERATIONAL STOCK — items at or below their own reorder level.
+      // Org-pinned and best-effort like the rest of this batch: an org that
+      // tracks no stock contributes nothing, and a failed read emits no line
+      // rather than a false all-clear. Detection only — nothing is ordered.
+      loadLowStockSignal(supabase as unknown as StockClient, orgId),
       // ACTIVE-org pin: the write side stamps `org_id: ctx.org.id`, and
       // `item_key` is a generic string ("overdue_invoices", …), so an unpinned
       // read let a dismissal made in one org silently hide the SAME briefing
@@ -245,6 +252,7 @@ export async function buildDailyBriefing(
         unassignedLater: rollupKind(scheduleConflictRows, "job_unassigned", { fromDaysAway: 2 }),
       },
       fleetCompliance: fleetRollup,
+      lowStock,
       dismissedKeys,
     };
 

@@ -30,8 +30,15 @@ import {
   PO_RECEIPT_STATUS_CLASS,
   PO_RECEIPT_STATUS_LABEL,
 } from "@/lib/purchase-orders/receiving";
+import {
+  listStockItemOptions,
+  loadStockedGrnLines,
+  type StockClient,
+} from "@/server/services/stock";
+import { listSiteOptionsForOrg, type SitesClient } from "@/server/services/sites";
 import { RecordBillForm } from "./_bill-form";
 import { ReceiveDeliveryForm } from "./_receive-form";
+import { ReceiveIntoStockForm } from "./_receive-into-stock";
 import { VoidDeliveryForm } from "./_void-form";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
@@ -86,10 +93,17 @@ export default async function PurchaseOrderDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ saved?: string; error?: string; received?: string; grn?: string }>;
+  searchParams: Promise<{
+    saved?: string;
+    error?: string;
+    received?: string;
+    grn?: string;
+    /** O3 stock: set after a delivery line is taken into stock. */
+    stocked?: string;
+  }>;
 }) {
   const { id } = await params;
-  const { saved, error, received, grn } = await searchParams;
+  const { saved, error, received, grn, stocked } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
@@ -178,6 +192,37 @@ export default async function PurchaseOrderDetailPage({
     ? await listPoFormOptions(supabase, ctx.org.id)
     : { suppliers: [] as Array<{ id: string; name: string }>, jobs: [] as Array<{ id: string; name: string }> };
 
+  // ── O3 OPERATIONAL STOCK: the receive-into-stock bridge ────────────────────
+  // Only loaded when there is a POSTED delivery to offer it against, so an
+  // order with no receipts pays nothing for a feature it cannot use.
+  //
+  // The affordance asks a HUMAN which catalogue item an ordered line is,
+  // because PO lines are free text and nothing here infers a stock identity
+  // from a description (see _receive-into-stock.tsx). All three reads are
+  // ACTIVE-ORG pinned; `loadStockedGrnLines` is what turns the button into
+  // "already in stock at Wakefield yard" once the line has been taken in.
+  //
+  // ACCOUNTING BOUNDARY: taking a delivery into stock records a QUANTITY. The
+  // cost of these goods still lands exactly once, when recordSupplierBill posts
+  // the supplier's invoice — nothing on this path writes to `finances`.
+  const postedGrnLineIds = grns
+    .filter((n) => n.status === "posted")
+    .flatMap((n) => (n.lines ?? []).map((l) => l.id));
+  const [stockItemOptions, stockSiteOptions, stockedLines] =
+    postedGrnLineIds.length > 0
+      ? await Promise.all([
+          listStockItemOptions(supabase as unknown as StockClient, ctx.org.id),
+          listSiteOptionsForOrg(supabase as unknown as SitesClient, ctx.org.id),
+          loadStockedGrnLines(supabase as unknown as StockClient, ctx.org.id, postedGrnLineIds),
+        ])
+      : [
+          [] as Array<{ id: string; name: string; unit: string }>,
+          [] as Array<{ id: string; name: string }>,
+          new Map<string, { movementId: string; siteId: string; itemId: string }>(),
+        ];
+  const stockItemName = new Map(stockItemOptions.map((i) => [i.id, i.name]));
+  const stockSiteName = new Map(stockSiteOptions.map((s) => [s.id, s.name]));
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -201,6 +246,15 @@ export default async function PurchaseOrderDetailPage({
       {received ? (
         <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           Delivery recorded. Add the delivery-note photo below so the paperwork lives with the order.
+        </div>
+      ) : null}
+      {stocked ? (
+        <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          Added to stock. It&rsquo;s a quantity only — the cost still lands once, when you record
+          the supplier&rsquo;s bill.{" "}
+          <Link href="/stock" className="font-medium underline">
+            See stock
+          </Link>
         </div>
       ) : null}
 
@@ -330,15 +384,37 @@ export default async function PurchaseOrderDetailPage({
                       {voided ? " · VOIDED" : ""}
                     </p>
 
-                    <ul className="mt-2 space-y-0.5">
+                    <ul className="mt-2 space-y-1.5">
                       {(note.lines ?? []).map((l) => {
                         const ordered = receiving.lines.find((x) => x.lineId === l.purchase_order_line_item_id);
+                        const stocked = stockedLines.get(l.id);
                         return (
-                          <li key={l.id} className="flex justify-between gap-3 text-xs text-slate-600">
-                            <span className="truncate">{ordered?.description ?? "Line"}</span>
-                            <span className="shrink-0 tabular-nums">
-                              {formatQty(l.qty_received)} {ordered?.unit ?? ""}
-                            </span>
+                          <li key={l.id} className="text-xs text-slate-600">
+                            <div className="flex justify-between gap-3">
+                              <span className="truncate">{ordered?.description ?? "Line"}</span>
+                              <span className="shrink-0 tabular-nums">
+                                {formatQty(l.qty_received)} {ordered?.unit ?? ""}
+                              </span>
+                            </div>
+                            {note.status === "posted" ? (
+                              <ReceiveIntoStockForm
+                                purchaseOrderId={po.id}
+                                grnLineId={l.id}
+                                description={ordered?.description ?? "this line"}
+                                qty={formatQty(l.qty_received)}
+                                unit={ordered?.unit ?? ""}
+                                items={stockItemOptions}
+                                sites={stockSiteOptions}
+                                stocked={
+                                  stocked
+                                    ? {
+                                        itemName: stockItemName.get(stocked.itemId) ?? "a stock item",
+                                        siteName: stockSiteName.get(stocked.siteId) ?? "a site",
+                                      }
+                                    : null
+                                }
+                              />
+                            ) : null}
                           </li>
                         );
                       })}
