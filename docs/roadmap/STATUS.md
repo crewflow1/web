@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-28 (Continuation 8 — CIS M4 + schedule integrity + active-org slices 2–3 shipped)
-**Production `main`:** `87707ae`
-**Production migration tip:** `20261055`
+**Last reconciled:** 2026-07-29 (Continuation 9 — Operations wave: suppliers closure, QR hardening, FLEET)
+**Production `main`:** `425ed7e`
+**Production migration tip:** `20261058`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
 ## Status vocabulary
@@ -32,6 +32,9 @@
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **20** | 2026-07-29 | `20261056`–`20261058` | **FLEET** (#465): vehicles as 1:1 asset extensions — register/detail/compliance-board/fuel at `/fleet`; MOT/insurance/road-tax/service via the widened service-schedule + maintenance engines; `asset_fuel_logs`; transactional two-row create + complete-and-roll RPCs; dual-org proof incl. service_role composite-FK block; E2E 5/5 ×3. First apply attempt hit a transient Supabase 503 — catalogue verify proved zero partial state, retry applied cleanly | `b15cc26` → `425ed7e`, verified |
+| **19** | 2026-07-29 | — | **Asset/QR isolation hardening** (#464): scan resolver leaked foreign-org asset names (existence oracle confirmed; write-path on-ramp) — the shipped test was a FALSE PROOF testing an inline resolver copy with a pin the code lacked. Fixed + now drives the real export; label-PDF wrong-org letterhead fixed; asset detail page pinned; asset-register supplier reads closed at integration (tripwire retired). Mutation-proven | `4ab60d0` → `b15cc26`, verified |
+| **18** | 2026-07-29 | — | **Active-org suppliers closure** (#463): 6 defect sites found (brief said 2) — address book had NO org predicate; detail/CIS/payments pages; update/delete actions; PO supplier+jobs pickers (comment claimed "org-scoped by RLS"); expenses supplier read. Lane self-corrected: reverted its own redundant guard after proving the finances org-integrity trigger IS the boundary, and pinned the trigger instead | `09465ca` → `4ab60d0`, verified |
 | **17** | 2026-07-28 | — | **Active-org integrity, rota slice** (#461, CEO-directed): the weekly grid rendered a dual-org member's other-company shifts, the job picker listed the other org's jobs/customers, and `createRotaEntry`'s overlap check refused legitimate shifts because of clashes in the user's OTHER org. Reads moved to `server/services/rota.ts` (client-as-argument seam) so page/action/test share one implementation; **mutation-proven** (pins stripped → 4/4 red) | `97c9f6b` → `87707ae`, verified |
 | **16** | 2026-07-28 | — | **Schedule Integrity detector** (#460): read-only, deterministic conflicts over rota/jobs/leave/assets — double-booked staff, assignee-with-no-shift, approved-leave clashes, unassigned imminent jobs (day 2+, disjoint from the existing briefing signal by construction), asset-custody anomalies. Half-open `[start,end)` matching the write-side rule; severity capped at `high` (a clash must not outrank a safety breach); org pin **mutation-tested**. Flagship find: `jobs_rota_sync_trigger` writes default shifts that bypass the form's overlap guard — silent double-booking, now surfaced. Also flagged: the write-side guard is blind to cross-midnight shifts (detector catches them) | `4f1cdb3` → `97c9f6b`, verified |
 | **15** | 2026-07-28 | — | **Active-org integrity, finance/commercial writes** (#459): 19 sites examined, 15 confirmed+fixed, 2 already safe (pinned), suppliers deliberately deferred. Headline: cross-org \`acceptQuoteAsOwner\` **succeeded in the other org** — created their job, burned their invoice number, posted a draft invoice, **emailed their customer**, advanced their lead. Also \`deleteQuote\` (unscoped delete defeated its own org-scoped integrity guard), \`markAllNotificationsRead\` clearing BOTH orgs' queues, portal-token rotation, compliance signed-URLs. CIS/settlement 409 mapping preserved | `4f1cdb3` → (with #460/#461) `87707ae`, verified |
@@ -112,8 +115,9 @@
 | Assets + QR tags + labels | **PRODUCTION** | asset epic M3b/M4/M5 (scanner, QR, inspections, maintenance scheduler) |
 | Maintenance schedules | **PRODUCTION** | idempotent scheduler |
 | Plant/equipment → job allocation | **PRODUCTION** | `asset_assignments.assignment_type` already includes `allocated_to_job` + `loaded_on_vehicle`, with `job_id`, `vehicle_asset_id`, issue/return meter readings, condition + transfer lineage; surfaced at `app/(app)/jobs/[id]/_job-assets.tsx` |
-| Fleet compliance (MOT / insurance / road tax / fuel) | **NOT BUILT** | Confirmed an **EXTENSION, not a fork**: `assets` already has `registration`, `ownership`, hire fields, `supplier_id`; `asset_service_schedules` is a generic date-cadence engine. Deltas: widen its `maintenance_type` CHECK to add mot/insurance/road_tax, add odometer to `assets`, add `asset_fuel_logs`. Inherits the existing scheduler/QR/custody engines |
-| Stock / warehouse / material ordering | **NOT BUILT** | — |
+| **Fleet (vehicles / MOT / insurance / road tax / service / fuel)** | **PRODUCTION** | Train 20 (#465), migrations `20261056`–`58`: `fleet_vehicles` 1:1 on assets (composite-FK, CIS-M1 precedent) — VIN/variant/year/fuel/class/weight/MOT-exemption/finance/depot/odometer; `operational_status` in_service\|off_road\|in_workshop split from `assets.status` disposal (transition-only guard); BOTH maintenance CHECKs widened together (generator passes type straight through); `asset_fuel_logs` keyed on asset (plant burns diesel too), forward-only odometer sync; transactional RPCs `save_fleet_vehicle` + `record_fleet_compliance_completion`; `/fleet` overview+register+detail+compliance board+fuel, plate-normalised search; 3 briefing signals; `critical` ONLY for expired MOT/insurance on an in-service vehicle (RTA s.47/s.143). Honest MPG (consecutive readings only). Deferred: fuel→finances seam (noted, not wired), depots entity (free text), custody stays on the asset page |
+| QR cross-org isolation | **PRODUCTION (hardened)** | Train 19 (#464): scan resolver leaked foreign-org asset names to dual-org users with an existence oracle — fixed red→green; prior test was a false proof (tested an inline copy WITH a pin the code lacked; now drives the real export + pin against local copies); label-PDF wrong-org letterhead fixed; anon/non-member/token-entropy proven safe. Gap matrix: attachments UI missing on maintenance+custody; depot/location free-text; QR events absent from timeline; no damaged/under_repair status (needs DDL, slot later) |
+| Stock / warehouse / material ordering | **NOT BUILT** | next Operations block — read-only gap assessment pending |
 
 ## PHASE 7 — CUSTOMER EXPERIENCE
 
@@ -157,7 +161,7 @@
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-**Production migration tip is `20261055` (CIS M4 statements, applied).** Slots BELOW
+**Production migration tip is `20261058` (fleet fuel logs, applied).** Slots BELOW
 that are closed forever — Supabase keys identity on the numeric prefix, so a
 lower-numbered file added later replays out of order from scratch. We have hit this
 twice (#128 `20260711`, #136 `20260706`).
@@ -191,8 +195,9 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261052` | org-teardown P1 `activity_cascade_guard` | **APPLIED** — Train 9, #448 |
 | `20261053` | CIS bill value freeze | **APPLIED** — Train 11, #452 |
 | `20261054` | Supplier bill settlement floor | **APPLIED** — Train 11, #452 |
-| `20261055` | CIS M4 `cis_statements` | **APPLIED (prod tip)** — Train 14, #458 |
-| `20261056+` | **NEXT FREE** — first unclaimed slot (Fleet lane is the expected claimant) | unallocated |
+| `20261055` | CIS M4 `cis_statements` | **APPLIED** — Train 14, #458 |
+| `20261056`–`20261058` | FLEET (`fleet_vehicles`, compliance widening, `asset_fuel_logs`) | **APPLIED (prod tip `20261058`)** — Train 20, #465 |
+| `20261059+` | **NEXT FREE** — first unclaimed slot (candidates: asset status additions, sites/depots table, warehouse block) | unallocated |
 
 
 > ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
@@ -220,16 +225,21 @@ unscoped reads** app-wide. Highest-severity first for follow-up slices:
 1. ~~**Finance/commercial writes**~~ — **DONE, Train 15 (#459)** — quotes (9 real
    sites, not the 5 enumerated), customers, expenses (already safe, pinned),
    leads, compliance, notifications. **EXCEPT `suppliers/actions.ts` (85,120)** —
-   deliberately deferred to avoid colliding with the concurrent CIS M4 lane;
-   the gap is documented in the security test. **← NEXT SLICE, small.**
+   deliberately deferred to avoid colliding with the concurrent CIS M4 lane —
+   **now DONE, Train 18 (#463)**: 6 sites in the suppliers domain plus PO/expenses
+   pickers; the deferral pin became live coverage.
 2. ~~**Route handlers**~~ — **DONE, Train 15 (#459)** — invoices
    `{route,pdf,send}` + quotes `{send}` + `finances/[id]` (409 mapping
    preserved); `remind` was already gated.
 3. **Detail pages** — customers/invoices/expenses/leads/compliance/payments-reconcile/
    health-safety(+permits)/assets-templates/asset-inspections/diary-edit `[id]` pages
-4. **Blended list pages** — `jobs/page.tsx` (66,109,121) and equivalents per domain
-5. **Blueprint services** — `server/services/blueprints.ts` (163,173,187,201),
-   `blueprint-pins.ts` (182)
+   — asset detail + scan resolver + label PDF **DONE, Train 19 (#464)**; the rest
+   were closed across slices 1–3 where enumerated (verify per file if in doubt)
+4. **Blended list pages** — `jobs/page.tsx`, `assets/page.tsx` (re-confirmed live
+   2026-07-29), holdings, inspections lists + equivalents per domain — **IN FLIGHT**
+   (`fix/active-org-list-pages`, the final enumerated slice)
+5. **Blueprint services** — `server/services/blueprints.ts`, `blueprint-pins.ts` —
+   assigned to the same in-flight lane
 6. ~~**Staff rota reads**~~ (found later by the schedule lane) — **DONE, Train 17
    (#461, CEO-directed)** — grid, job picker, overlap check via
    `server/services/rota.ts`, mutation-proven.
@@ -248,7 +258,7 @@ re-run the aggregate when real customers onboard.
 
 Each avoids `cis_*`, `supplier_payments`, `finances`, `lib/cis/*` and the receptionist/whatsapp suites:
 - **LANE A — "Job Site Hub"**: ZERO new tables. Embed the existing diary + snags panels on the job page and compose a read-only site timeline over `site_diary_entries` + `snags` + `asset_inspections` + `toolbox_talks` + photos.
-- **LANE B — "Fleet as an asset extension"**: one migration (slot `20261050+`, NOT 20261047 which CIS M2 holds) widening `asset_service_schedules.maintenance_type` to add mot/insurance/road_tax, plus odometer + `asset_fuel_logs`.
+- ~~**LANE B — "Fleet as an asset extension"**~~ — **SHIPPED as Train 20 (#465)**, exactly this shape (slots landed as `20261056`–`58`).
 - **LANE C — "Deterministic Schedule Integrity"**: read-only conflict detector over `jobs` × `rota_entries` × `leave_requests` × `asset_assignments` (double-booked staff, unassigned imminent jobs, plant clashes, expiring competence) emitted as `composeBriefing` operations signals. **No migration, no provider.** A deterministic Scheduler is viable; an AI Quote Writer is not (pricing prose is generative — `DRAFT_PROVENANCES` shows the deterministic path is a degraded mode, not a product).
 
 Note: the Observe→Draft→Approve→Execute substrate ALREADY EXISTS but is HQ-internal (`lib/drafts/`, `lib/approvals/state.ts` + its DB-trigger mirror in `20260730000000_hq_approvals.sql`, `app/admin/`). `server/services/expense-drafts.ts` proves the pattern ports tenant-side. Reuse it — do not build a second approvals engine.
