@@ -240,6 +240,11 @@ jobs:
             --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY)"
           export NEXT_PUBLIC_APP_URL="http://localhost:3000"
+          # HQ session for the /admin a11y specs. Must be the DEDICATED hq user,
+          # never e2e-owner: requireOrgContext (server/auth/session.ts) bounces
+          # superadmin emails off every (app) route, so allowlisting the owner
+          # would break the whole authenticated app tier.
+          export CREWFLOW_SUPERADMIN_EMAILS="e2e-hq@crewflow.test"
           set +a
           for v in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
             [ -n "${!v}" ] && echo "$v: set" || echo "$v: MISSING"
