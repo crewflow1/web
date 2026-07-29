@@ -88,7 +88,8 @@ export async function computeActivitySummary(
     .from("quotes")
     .select(
       "id, number, total, sent_at, viewed_at, accepted_at, declined_at, customer:customers ( name )",
-    );
+    )
+    .eq("org_id", orgId);
   if (quotesError) throw readFailure("ai aggregates: quotes", quotesError);
   let sent = 0;
   let viewed = 0;
@@ -193,8 +194,8 @@ export async function computeActivitySummary(
   // is the assignment, not whoever clicked the status button.
   const { data: jobs, error: jobsError } = await supabase
     .from("jobs")
-    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
-    .eq("org_id", orgId)");
+    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )")
+    .eq("org_id", orgId);
   if (jobsError) throw readFailure("ai aggregates: jobs", jobsError);
   const leaderMap = new Map<
     string,

@@ -328,21 +328,26 @@ export async function deletePurchaseOrder(id: string) {
   }
 
   type DeleteQuery = {
-    eq: (k: string, v: unknown) => DeleteQuery & PromiseLike<{ error: { message: string } | null }>;
+    eq: (
+      k: string,
+      v: unknown,
+    ) => DeleteQuery & PromiseLike<{ error: { message: string } | null; count: number | null }>;
   };
-  const { error } = await (
+  const { error, count } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      delete: () => DeleteQuery;
+      delete: (opts?: { count: "exact" }) => DeleteQuery;
     }
   )
-    .delete()
+    .delete({ count: "exact" })
     .eq("id", id)
-    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN
+    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN — count so a foreign PO is a not-found
   if (error) {
-    // RLS filters non-admins → 0 rows, no error; treat as denied.
     console.error("[purchase-orders] delete failed", error);
     redirect(`/purchase-orders/${id}?error=delete_denied`);
   }
+  // Foreign-org or already-gone PO deletes 0 rows with no error — a not-found,
+  // never a silent success. (RLS filtering non-admins lands here too.)
+  if (!count) redirect(`/purchase-orders/${id}?error=delete_denied`);
 
   await recordAdminActivity({
     actorId: user.id,

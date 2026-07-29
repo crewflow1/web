@@ -91,7 +91,12 @@ export default async function ToolboxTalkPage({
           k: string,
           v: unknown,
         ) => {
-          maybeSingle: () => Promise<{ data: TalkRow | null; error: SupabaseReadError | null }>;
+          eq: (
+            k: string,
+            v: unknown,
+          ) => {
+            maybeSingle: () => Promise<{ data: TalkRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -100,6 +105,8 @@ export default async function ToolboxTalkPage({
       "id, status, reference, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, presenter, ppe, attendees, attendee_count, notes, job_id, risk_assessment_id, permit_to_work_id, created_by, issued_by, issued_at, created_at",
     )
     .eq("id", id)
+    // ACTIVE-ORG PIN — RLS admits every org the viewer belongs to.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (talkError) throw readFailure("toolbox talk: detail", talkError);
 

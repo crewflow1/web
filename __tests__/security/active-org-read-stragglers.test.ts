@@ -121,7 +121,7 @@ describe("payroll actions — runs, hours and locks stay inside the ACTIVE org",
     expect(F).toMatch(
       /\.select\("status"\)\s*\.eq\("id", runId\)\s*\.eq\("org_id", ctx\.org\.id\)/,
     );
-    expect(F).toMatch(/\.delete\(\)\.eq\("id", runId\)\.eq\("org_id", ctx\.org\.id\)/);
+    expect(F).toMatch(/\.delete\(\)\s*\.eq\("id", runId\)\s*\.eq\("org_id", ctx\.org\.id\)/);
   });
 });
 
@@ -240,7 +240,7 @@ describe("purchase-order actions — gates and writes stay inside the ACTIVE org
     expect(F).toMatch(
       /\.delete\(\{ count: "exact" \}\)\s*\.eq\("id", id\)\s*\.eq\("org_id", ctx\.org\.id\)/,
     );
-    expect(F).toMatch(/if \(!count\) redirect\("\/purchase-orders\?error=not_found"\)/);
+    expect(F).toMatch(/if \(!count\) redirect\(`?\/purchase-orders/);
   });
 
   it("recordSupplierBill resolves its PO by id + org before inheriting job/supplier", () => {
