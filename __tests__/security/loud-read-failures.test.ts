@@ -19,14 +19,18 @@ import { resolve, join } from "node:path";
  *     read must never clobber state or stamp false success), tax/statutory
  *     reads, and the highest-blast-radius loaders.
  *
- *  2. THE RATCHET — the count of `const { data } = await` destructures that
- *     omit `error` may only go DOWN per scope. The remaining baseline is the
- *     REVIEWED best-effort residue (enrichment joins, storage-cleanup
- *     pre-reads, documented fetchAllRows posture, DB-backstopped dedupe
- *     guards — the C ledger in docs/loud-read-failures.md). A new swallowed
- *     read fails this tier until it handles `error` — or, if it is genuinely
- *     best-effort, gets a reviewed entry in the C ledger and a baseline bump
- *     in the same PR.
+ *  2. ERROR-USED — in the files this sweep and the active-org write slice BOTH
+ *     touched, a destructured `error` must actually be USED. Merging two
+ *     branches that edit the same read is exactly how `const { data, error }`
+ *     survives while the `if (error) throw` below it is dropped: the code
+ *     still compiles, still runs, still returns the empty state — and no
+ *     behavioural test can see it, because the read only fails in production.
+ *
+ *  3. THE SHAPE LEDGER — counts of the three error-discarding shapes, FROZEN
+ *     with `===` per scope. Not `<=`: a count that drifts down silently is a
+ *     lost opportunity to retire a baseline, and a count that drifts down
+ *     because a whole file moved is indistinguishable from progress. Any
+ *     movement, either direction, must be a conscious line in the diff.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
@@ -105,7 +109,20 @@ describe("tax/statutory reads are loud", () => {
   });
 
   it("invoice/quote emails refuse to send a PDF with zero line items", () => {
-    expect(src("lib/email/send-invoice.ts")).toMatch(/reason: "load_failed", detail: linesError\.message/);
+    // The invariant is the REFUSAL — `sent: false, reason: "load_failed"` when
+    // the line-items read fails — not the text of `detail`. send-invoice no
+    // longer echoes `linesError.message`: raw Postgres text can carry column
+    // names, constraint bodies and row values, and `detail` is returned to the
+    // API caller. Sentry carries the real error instead.
+    const inv = src("lib/email/send-invoice.ts");
+    expect(inv).toMatch(/if \(linesError\) \{/);
+    expect(inv).toMatch(/reason: "load_failed"/);
+    expect(inv, "the real error must still reach Sentry").toMatch(
+      /Sentry\.captureException\(readFailure\("send-invoice: line items", linesError\)\)/,
+    );
+    expect(inv, "never echo raw Postgres text to a caller").not.toMatch(
+      /detail: linesError\.message/,
+    );
     expect(src("lib/email/send-quote.ts")).toMatch(/reason: "load_failed", detail: linesError\.message/);
   });
 
@@ -157,25 +174,116 @@ describe("highest-blast-radius loaders", () => {
   });
 });
 
-// ── 2. the ratchet ───────────────────────────────────────────────────────────
+// ── 2. a destructured `error` must be USED ───────────────────────────────────
 
 /**
- * Baselines = the REVIEWED best-effort residue at the time of the sweep
- * (docs/loud-read-failures.md, "The C ledger"). Lower is always fine — update
- * downward freely. Raising one requires a reviewed C-ledger entry in the same
- * PR explaining why the new read is deliberately soft.
+ * The merge hazard, stated concretely. PR #480 (this sweep) and PR #479 (the
+ * active-org write slice) edited the SAME reads in these files: #480 added
+ * `error` + a throw, #479 added `.eq("org_id", ctx.org.id)` and, in places,
+ * rewrote the surrounding lines. A resolution that keeps `const { data, error }`
+ * but drops the `if (error) throw` type-checks, lints (the binding is "used" by
+ * the destructure), and passes every behavioural test — while restoring the
+ * exact defect this branch exists to remove. So assert it structurally.
  */
-const RATCHET: Array<{ scope: string; dirs: string[]; max: number }> = [
-  { scope: "app/(app)", dirs: ["app/(app)"], max: 59 },
+const MERGE_OVERLAP_FILES = [
+  "app/(app)/payments/actions.ts",
+  "app/(app)/purchase-orders/page.tsx",
+  "app/(app)/purchase-orders/[id]/page.tsx",
+  "app/(app)/purchase-orders/actions.ts",
+  "app/(app)/site-reports/actions.ts",
+  "app/(app)/snags/page.tsx",
+  "app/(app)/snags/[id]/page.tsx",
+  "app/(app)/toolbox/page.tsx",
+  "app/(app)/toolbox/[id]/page.tsx",
+  "lib/ai/aggregates.ts",
+];
+
+/** `const { data, error: NAME } = await …` → the bound error names. */
+const ERROR_BIND_RE =
+  /const \{[^}]*\berror(?::\s*([A-Za-z_$][A-Za-z0-9_$]*))?\s*[,}][^=]*=\s*await/g;
+
+/** Is `name` inspected anywhere — thrown, branched on, reported, captured? */
+function errorIsUsed(src: string, name: string): boolean {
+  return new RegExp(
+    `(?:if\\s*\\(\\s*!?${name}\\b` +
+      `|throw readFailure\\([^)]*\\b${name}\\b` +
+      `|reportReadFailure\\([^)]*\\b${name}\\b` +
+      `|captureException\\([^)]*\\b${name}\\b` +
+      `|\\b${name}\\s*(?:\\|\\||&&|\\?))`,
+  ).test(src);
+}
+
+describe("merge guard — every destructured `error` is inspected", () => {
+  for (const file of MERGE_OVERLAP_FILES) {
+    it(`${file}: no bound error is left unused`, () => {
+      const s = src(file);
+      const names = new Set<string>();
+      for (const m of s.matchAll(ERROR_BIND_RE)) names.add(m[1] ?? "error");
+      const unused = [...names].filter((n) => !errorIsUsed(s, n));
+      expect(
+        unused,
+        `${file} destructures ${unused.join(", ")} but never inspects ` +
+          `${unused.length === 1 ? "it" : "them"}. This is the shape a bad merge ` +
+          `resolution leaves behind: the binding survives, the ` +
+          `\`if (error) throw readFailure(...)\` under it does not, and the read ` +
+          `silently renders its empty state again. Restore the guard (or drop the ` +
+          `binding if the read genuinely went away).`,
+      ).toEqual([]);
+    });
+  }
+});
+
+// ── 3. the shape ledger ──────────────────────────────────────────────────────
+
+/**
+ * The FROZEN debt ledger — the REVIEWED best-effort residue at the time of the
+ * sweep (docs/loud-read-failures.md, "The C ledger"), counted per scope across
+ * the three shapes that carry this defect class:
+ *
+ *   discard   `const { data } = await …`        — error never bound
+ *   softData  `res.data ?? []`, `(await …).data ?? []`
+ *                                               — error bound nowhere, result
+ *                                                 coalesced straight to empty
+ *   countOnly `const { count } = await …`       — head:true count reads, where
+ *                                                 `?? 0` is the reassuring answer
+ *
+ * `softData` skips a site when `<var>.error` appears in the same file, so a
+ * result that IS inspected before its `?? []` is not counted as debt.
+ *
+ * These are `===`, not `<=`. A `<=` ratchet quietly absorbs movement: a file
+ * deleted or a directory moved shows up as "progress" and buys headroom for a
+ * real regression to slip in underneath. Any change to these numbers — up OR
+ * down — must be a deliberate line in the diff, next to the reason. Going down
+ * is good news: take the win and lower the baseline in the same commit.
+ */
+const RATCHET: Array<{
+  scope: string;
+  dirs: string[];
+  discard: number;
+  softData: number;
+  countOnly: number;
+}> = [
+  { scope: "app/(app)", dirs: ["app/(app)"], discard: 56, softData: 52, countOnly: 5 },
   {
     scope: "app outside (app) — admin/api/portal/q/onboarding",
     dirs: ["app/admin", "app/api", "app/customer-portal", "app/q", "app/onboarding"],
-    max: 15,
+    discard: 15,
+    softData: 10,
+    countOnly: 0,
   },
-  { scope: "server + lib + components", dirs: ["server", "lib", "components"], max: 33 },
+  {
+    scope: "server + lib + components",
+    dirs: ["server", "lib", "components"],
+    discard: 32,
+    softData: 59,
+    countOnly: 4,
+  },
 ];
 
 const DISCARD_RE = /const \{ data(?:: [A-Za-z_$][A-Za-z0-9_$]*)? \} = await/g;
+const COUNT_ONLY_RE = /const \{ count(?:: [A-Za-z_$][A-Za-z0-9_$]*)? \} = await/g;
+/** `res.data ??` or `(await …).data ??` — capture the result identifier if there is one. */
+const SOFT_DATA_RE = /(?:\)|\b([A-Za-z_$][A-Za-z0-9_$]*))\.data\s*\?\?/g;
 
 function* walk(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
@@ -186,34 +294,58 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-function countDiscards(dirs: string[]): { total: number; byFile: Map<string, number> } {
-  const byFile = new Map<string, number>();
-  let total = 0;
+type ShapeCounts = { discard: number; softData: number; countOnly: number };
+
+function countShapes(dirs: string[]): {
+  totals: ShapeCounts;
+  byFile: Map<string, ShapeCounts>;
+} {
+  const byFile = new Map<string, ShapeCounts>();
+  const totals: ShapeCounts = { discard: 0, softData: 0, countOnly: 0 };
   for (const dir of dirs) {
     for (const file of walk(resolve(ROOT, dir))) {
-      const matches = readFileSync(file, "utf8").match(DISCARD_RE);
-      if (matches?.length) {
-        byFile.set(file.slice(ROOT.length + 1), matches.length);
-        total += matches.length;
+      const s = readFileSync(file, "utf8");
+      const discard = (s.match(DISCARD_RE) ?? []).length;
+      const countOnly = (s.match(COUNT_ONLY_RE) ?? []).length;
+      let softData = 0;
+      for (const m of s.matchAll(SOFT_DATA_RE)) {
+        const v = m[1];
+        // `<var>.error` inspected somewhere in the file ⇒ this `?? []` sits
+        // behind a real check; not debt.
+        if (v && new RegExp(`\\b${v}\\.error\\b`).test(s)) continue;
+        softData++;
       }
+      if (discard || softData || countOnly) {
+        byFile.set(file.slice(ROOT.length + 1), { discard, softData, countOnly });
+      }
+      totals.discard += discard;
+      totals.softData += softData;
+      totals.countOnly += countOnly;
     }
   }
-  return { total, byFile };
+  return { totals, byFile };
 }
 
-describe("ratchet — error-discarding reads may only decrease", () => {
-  for (const { scope, dirs, max } of RATCHET) {
-    it(`${scope}: ≤ ${max} \`const { data } = await\` destructures`, () => {
-      const { total, byFile } = countDiscards(dirs);
-      const detail = [...byFile.entries()].map(([f, n]) => `  ${f}: ${n}`).join("\n");
+describe("shape ledger — the frozen error-discarding debt", () => {
+  for (const { scope, dirs, ...baseline } of RATCHET) {
+    it(`${scope}: exactly ${baseline.discard} discard / ${baseline.softData} soft-data / ${baseline.countOnly} count-only`, () => {
+      const { totals, byFile } = countShapes(dirs);
+      const detail = [...byFile.entries()]
+        .map(([f, c]) => `  ${f}: discard=${c.discard} softData=${c.softData} countOnly=${c.countOnly}`)
+        .join("\n");
       expect(
-        total,
-        `${scope} has ${total} error-discarding destructures (baseline ${max}).\n` +
-          `A failed query must not render as an empty/healthy state: destructure ` +
-          `\`error\` and throw readFailure(...) / render an explicit error state — or, if ` +
-          `the read is genuinely best-effort, add it to the C ledger in ` +
-          `docs/loud-read-failures.md and bump the baseline in the same PR.\nPer file:\n${detail}`,
-      ).toBeLessThanOrEqual(max);
+        totals,
+        `${scope} shape counts moved.\n` +
+          `expected ${JSON.stringify(baseline)}\n` +
+          `actual   ${JSON.stringify(totals)}\n\n` +
+          `UP: a failed query must not render as an empty/healthy state. Bind ` +
+          `\`error\` and throw readFailure(...) / render an explicit error state — or, ` +
+          `if the read is genuinely best-effort, add it to the C ledger in ` +
+          `docs/loud-read-failures.md and raise the baseline in the same commit, ` +
+          `with the reason.\n` +
+          `DOWN: good — you retired some debt. Lower the baseline here in the same ` +
+          `commit so the next regression has nowhere to hide.\nPer file:\n${detail}`,
+      ).toEqual(baseline);
     });
   }
 });
