@@ -136,7 +136,7 @@ export function InspectionsSection({
                 <span className="font-medium text-slate-900">{i.title}</span>
               )}
               {i.template_version ? (
-                <span className="text-[11px] text-slate-400">template v{i.template_version}</span>
+                <span className="text-[11px] text-slate-500">template v{i.template_version}</span>
               ) : null}
               {i.kind ? <span className="text-xs text-slate-500">{INSPECTION_KIND_LABELS[i.kind]}</span> : null}
               {i.safety_critical ? (
@@ -161,7 +161,7 @@ export function InspectionsSection({
                   {INSPECTION_OUTCOME_LABELS[i.outcome]}
                 </span>
               ) : null}
-              <span className="ml-auto text-xs text-slate-400">
+              <span className="ml-auto text-xs text-slate-500">
                 {(i.inspected_at ?? i.created_at).slice(0, 10)}
               </span>
 

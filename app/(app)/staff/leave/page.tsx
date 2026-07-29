@@ -168,7 +168,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
                 </div>
                 <div className="text-right text-slate-600">
                   {formatDateUK(r.starts_at)} – {formatDateUK(r.ends_at)}
-                  <span className="ml-2 text-[11px] text-slate-400">{r.status}</span>
+                  <span className="ml-2 text-[11px] text-slate-500">{r.status}</span>
                 </div>
               </li>
             ))}

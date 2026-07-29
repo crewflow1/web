@@ -290,7 +290,7 @@ export default async function VehiclePage({
                           critical={c.severity === "critical"}
                         />
                       ) : (
-                        <span className="text-xs text-slate-400">Not tracked</span>
+                        <span className="text-xs text-slate-500">Not tracked</span>
                       )}
                     </div>
 
@@ -766,7 +766,7 @@ function Detail({
     <div className="flex justify-between gap-3 border-b border-slate-50 py-1 last:border-0">
       <dt className="text-slate-500">{label}</dt>
       <dd className={`text-right text-slate-900 ${mono ? "font-mono text-xs" : ""}`}>
-        {value || <span className="text-slate-400">—</span>}
+        {value || <span className="text-slate-500">—</span>}
       </dd>
     </div>
   );

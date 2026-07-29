@@ -215,7 +215,7 @@ export default async function SiteReportDetailPage({
         {canDelete ? (
           <ActionButton action={deleteSiteReport.bind(null, report.id)} label="Delete draft" danger />
         ) : null}
-        <span className="ml-auto text-xs text-slate-400">
+        <span className="ml-auto text-xs text-slate-500">
           {status === "issued"
             ? `Issued ${report.issued_at?.slice(0, 10) ?? ""} — frozen`
             : editable

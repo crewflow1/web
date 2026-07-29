@@ -129,7 +129,7 @@ export function InvalidLinkPage({
           </div>
         </div>
 
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-600">
           Powered by CrewFlow · For contractors who&apos;d rather be on the
           tools than at a desk.
         </p>

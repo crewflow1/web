@@ -169,7 +169,7 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
                         {SITE_REPORT_STATUS_LABELS[status] ?? row.status}
                       </span>
                       {row.revision > 1 ? (
-                        <span className="text-slate-400">rev {row.revision}</span>
+                        <span className="text-slate-500">rev {row.revision}</span>
                       ) : null}
                     </div>
                     <p className="mt-1.5 text-sm font-medium text-slate-900">{row.title}</p>

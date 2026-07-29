@@ -153,8 +153,8 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
         {c.reinspection_required ? (
           <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">Re-inspection required</span>
         ) : null}
-        {hours != null ? <span className="text-[11px] text-slate-400">{hours}h down</span> : null}
-        <span className="ml-auto text-xs text-slate-400">{c.created_at.slice(0, 10)}</span>
+        {hours != null ? <span className="text-[11px] text-slate-500">{hours}h down</span> : null}
+        <span className="ml-auto text-xs text-slate-500">{c.created_at.slice(0, 10)}</span>
       </div>
 
       {c.status === "ready_for_reinspection" && c.source_inspection_id ? (

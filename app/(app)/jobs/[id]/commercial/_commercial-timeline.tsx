@@ -42,7 +42,7 @@ export function CommercialTimeline({ events }: { events: CommercialEvent[] }) {
       <ul className="mt-4 space-y-2.5">
         {shown.map((e, i) => (
           <li key={`${e.occurredAt}-${e.kind}-${i}`} className="flex items-baseline gap-3 text-sm">
-            <span className="w-[68px] shrink-0 font-mono text-[11px] text-slate-400">{e.date}</span>
+            <span className="w-[68px] shrink-0 font-mono text-[11px] text-slate-500">{e.date}</span>
             <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[e.flow]}`} aria-hidden />
             <span className="min-w-0 flex-1 text-slate-700">
               {e.href ? (

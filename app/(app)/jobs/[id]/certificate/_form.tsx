@@ -51,16 +51,16 @@ export function CertificateForm({
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-slate-700">Handover notes <span className="font-normal text-slate-400">(optional)</span></span>
+        <span className="mb-1 block font-medium text-slate-700">Handover notes <span className="font-normal text-slate-500">(optional)</span></span>
         <textarea name="handover_notes" rows={2} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
       </label>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Retention note <span className="font-normal text-slate-400">(optional)</span></span>
+          <span className="mb-1 block font-medium text-slate-700">Retention note <span className="font-normal text-slate-500">(optional)</span></span>
           <input name="retention_note" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Signatory name <span className="font-normal text-slate-400">(optional)</span></span>
+          <span className="mb-1 block font-medium text-slate-700">Signatory name <span className="font-normal text-slate-500">(optional)</span></span>
           <input name="signatory_name" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none" />
         </label>
       </div>

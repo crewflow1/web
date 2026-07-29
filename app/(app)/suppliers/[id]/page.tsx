@@ -202,7 +202,7 @@ export default async function SupplierDetailPage({
               <div key={t.k}>
                 <dt className="text-xs font-medium text-slate-500">{t.k}</dt>
                 <dd className="text-base font-semibold tabular-nums text-slate-900">{t.v}</dd>
-                <dd className="text-[11px] leading-tight text-slate-400">{t.h}</dd>
+                <dd className="text-[11px] leading-tight text-slate-500">{t.h}</dd>
               </div>
             ))}
           </dl>

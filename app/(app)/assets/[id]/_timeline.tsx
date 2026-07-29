@@ -34,7 +34,7 @@ export function AssetTimelineSection({ events }: { events: TimelineEvent[] }) {
       <ul className="mt-3 space-y-1.5 text-sm">
         {sorted.map((e, i) => (
           <li key={`${e.at}-${i}`} className="flex flex-wrap items-baseline gap-2">
-            <span className="w-20 shrink-0 font-mono text-[11px] text-slate-400">{e.at.slice(0, 10)}</span>
+            <span className="w-20 shrink-0 font-mono text-[11px] text-slate-500">{e.at.slice(0, 10)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_STYLES[e.kind]}`}>
               {e.kind}
             </span>

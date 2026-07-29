@@ -108,7 +108,7 @@ export default async function HoldingsPage() {
                           view job
                         </Link>
                       ) : null}
-                      <span className="text-xs text-slate-400">since {r.assigned_at.slice(0, 10)}</span>
+                      <span className="text-xs text-slate-500">since {r.assigned_at.slice(0, 10)}</span>
                       {r.expected_return_at ? (
                         <span
                           className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${

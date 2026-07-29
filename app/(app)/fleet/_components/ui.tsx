@@ -152,7 +152,7 @@ export function VehicleClassLabel({ value }: { value: string | null }) {
 /** UK registration plate treatment — monospaced, uppercase, unmistakable. */
 export function Plate({ registration }: { registration: string | null }) {
   if (!registration) {
-    return <span className="text-xs italic text-slate-400">No registration</span>;
+    return <span className="text-xs italic text-slate-500">No registration</span>;
   }
   return (
     <span className="inline-block rounded border border-slate-300 bg-yellow-50 px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wider text-slate-900">

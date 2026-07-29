@@ -276,7 +276,7 @@ export default async function TemplateEditorPage({
               </li>
             ))}
             {s.items.length === 0 ? (
-              <li className="py-2 text-sm text-slate-400">No items yet.</li>
+              <li className="py-2 text-sm text-slate-500">No items yet.</li>
             ) : null}
           </ul>
 
@@ -309,7 +309,7 @@ export default async function TemplateEditorPage({
         <ul className="mt-2 divide-y divide-slate-100 text-sm">
           {versions.map((v) => (
             <li key={v.id} className="flex items-center gap-2 py-2">
-              <Link href={`/assets/templates/${v.id}`} className={`font-medium ${v.id === t.id ? "text-slate-400" : "text-slate-900 hover:underline"}`}>
+              <Link href={`/assets/templates/${v.id}`} className={`font-medium ${v.id === t.id ? "text-slate-500" : "text-slate-900 hover:underline"}`}>
                 v{v.version}
                 {v.id === t.id ? " (this page)" : ""}
               </Link>
@@ -317,7 +317,7 @@ export default async function TemplateEditorPage({
                 {TEMPLATE_STATUS_LABELS[v.status]}
               </span>
               {v.published_at ? (
-                <span className="text-xs text-slate-400">published {v.published_at.slice(0, 10)}</span>
+                <span className="text-xs text-slate-500">published {v.published_at.slice(0, 10)}</span>
               ) : null}
             </li>
           ))}
@@ -369,7 +369,7 @@ function FailRule({ item }: { item: TemplateItem }) {
   )
     rule = `Range ${item.min ?? "−∞"}–${item.max ?? "∞"}`;
   if (!rule) return null;
-  return <span className="text-[11px] text-slate-400">{rule}</span>;
+  return <span className="text-[11px] text-slate-500">{rule}</span>;
 }
 
 function AddItemForm({ templateId, sectionKey }: { templateId: string; sectionKey: string }) {

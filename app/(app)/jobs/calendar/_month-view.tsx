@@ -168,7 +168,7 @@ export function MonthView({
                         ? "text-slate-900"
                         : inMonth
                           ? "text-slate-700"
-                          : "text-slate-400"
+                          : "text-slate-600"
                     }`}
                   >
                     {/* Show "Mon 5" on mobile (no weekday header), just "5" on desktop. */}

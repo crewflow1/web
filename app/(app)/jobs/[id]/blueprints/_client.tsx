@@ -57,11 +57,11 @@ export function AddDrawingForm({ jobId }: { jobId: string }) {
         </label>
       </div>
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-slate-700">Notes <span className="font-normal text-slate-400">(optional)</span></span>
+        <span className="mb-1 block font-medium text-slate-700">Notes <span className="font-normal text-slate-500">(optional)</span></span>
         <input name="notes" className={inputCls} />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-slate-700">Drawing file <span className="font-normal text-slate-400">(PDF or image, up to 50 MB)</span></span>
+        <span className="mb-1 block font-medium text-slate-700">Drawing file <span className="font-normal text-slate-500">(PDF or image, up to 50 MB)</span></span>
         <input name="file" type="file" accept={fileAccept} required className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium" />
       </label>
       <div className="flex gap-2">

@@ -63,7 +63,7 @@ export default async function PortalReportsPage({
                         </span>
                       )}
                       {r.revision > 1 ? (
-                        <span className="text-slate-400">rev {r.revision}</span>
+                        <span className="text-slate-500">rev {r.revision}</span>
                       ) : null}
                     </div>
                     <p className="mt-1 text-sm font-medium text-slate-900">{r.title}</p>

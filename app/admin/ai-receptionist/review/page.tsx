@@ -200,14 +200,14 @@ function ReviewRow({
             </p>
           </>
         ) : (
-          <span className="text-slate-400">no thread</span>
+          <span className="text-slate-500">no thread</span>
         )}
       </td>
       <td className="px-4 py-3 text-xs text-slate-600">
         {row.assignee_id ? (
           <span className="text-slate-800">{owner?.email ?? owner?.full_name ?? "assigned"}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-500">—</span>
         )}
       </td>
       <td className="px-4 py-3">

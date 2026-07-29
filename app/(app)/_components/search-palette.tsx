@@ -165,7 +165,7 @@ export function SearchPalette() {
                 placeholder="Search by address, postcode, customer, job, invoice…"
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
               />
-              {loading ? <span className="text-xs text-slate-400">…</span> : null}
+              {loading ? <span className="text-xs text-slate-500">…</span> : null}
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -210,7 +210,7 @@ export function SearchPalette() {
                             </span>
                           ) : null}
                         </span>
-                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                           {TYPE_LABELS[h.type]}
                         </span>
                       </Link>
@@ -219,7 +219,7 @@ export function SearchPalette() {
                 </ul>
               )}
             </div>
-            <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-400">
+            <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-500">
               ↑↓ to navigate · ⏎ to open · Esc to close
             </div>
           </div>

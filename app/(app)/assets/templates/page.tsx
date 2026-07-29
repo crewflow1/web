@@ -187,7 +187,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-600">
                     v{face.version}
-                    {versions > 1 ? <span className="text-slate-400"> · {versions} versions</span> : null}
+                    {versions > 1 ? <span className="text-slate-500"> · {versions} versions</span> : null}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[face.status]}`}>
