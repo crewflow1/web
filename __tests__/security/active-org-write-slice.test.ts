@@ -325,8 +325,12 @@ describe("payments — the bank matcher must score one company's ledger", () => 
     // payment against another org's invoice) — restated here so the write slice
     // cannot regress it while adding predicates around it.
     const F = fn(SRC(), "confirmBankMatch");
-    expect(F).toMatch(/if \(line\.org_id !== ctx\.org\.id\) redirect\("\/payments\?error=forbidden"\)/);
-    expect(F).toMatch(/if \(inv\.org_id !== ctx\.org\.id\) redirect\("\/payments\?error=forbidden"\)/);
+    // The REFUSAL style changed in #472 (redirect → FormState formError); the
+    // security property is the compare-and-refuse itself, so the pin anchors on
+    // the comparison plus an immediate return/redirect — either style passes,
+    // a dropped gate does not.
+    expect(F).toMatch(/if \(line\.org_id !== ctx\.org\.id\) (return formError\(|redirect\()/);
+    expect(F).toMatch(/if \(inv\.org_id !== ctx\.org\.id\) (return formError\(|redirect\()/);
   });
 
   it("confirmBankMatch's later writes are derived from the org-checked line", () => {
