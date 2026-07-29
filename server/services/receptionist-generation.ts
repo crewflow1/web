@@ -128,7 +128,7 @@ export async function generateConversationResponse(
         userId: null,
         // Identical instruction for the same conversation within the dedupe
         // window ⇒ the same draft; re-asking is pure waste.
-        dedupeContent: `${request.conversation_id} ${instruction.system} ${instruction.user}`,
+        dedupeContent: `${request.conversation_id}\u0000${instruction.system}\u0000${instruction.user}`,
       },
     );
     if (outcome.status === "blocked") {

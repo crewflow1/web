@@ -215,7 +215,7 @@ export const DEDUPE_WINDOW_MS = 15 * 60_000;
  */
 export function invocationHash(feature: string, taskClass: string, content: string): string {
   return createHash("sha256")
-    .update(`${feature} ${taskClass} ${content}`, "utf8")
+    .update(`${feature}\u0000${taskClass}\u0000${content}`, "utf8")
     .digest("hex");
 }
 
