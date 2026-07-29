@@ -4,8 +4,8 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-29 (Continuation 9 — Operations wave: suppliers closure, QR hardening, FLEET)
-**Production `main`:** `425ed7e`
+**Last reconciled:** 2026-07-29 (Continuation 9 complete — Operations wave: 5 trains; active-org READ programme closed)
+**Production `main`:** `ca8cba6`
 **Production migration tip:** `20261058`
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
 
@@ -32,6 +32,8 @@
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
 | **5** | 2026-07-27 | `20261046` | **CIS M1 — subcontractor domain + HMRC verification** (#434) | `9a633cd` → `266d9e9`, verified |
 | **8** | 2026-07-27 | `20261051` | **CIS M3 — deduction engine + reverse-charge VAT** (#443): HMRC-verified rules (20/30/gross, exclusions, CITB, **6th–5th tax month**), server-derived rate (forgery-proof on the service_role path), cumulative partial-payment maths, reverse charge as a real treatment with `computeVatQuarter` proven unchanged | `656f5b8` → `3d6f724`, verified |
+| **22** | 2026-07-29 | — | **Active-org list/dashboard/search closure** (#468): 86 files — the FINAL enumerated slice, and the worst finds were never enumerated: `/dashboard` had **14 blended reads** (every money tile summed two businesses), `/tax` + its **HMRC VAT PDF merged two companies under one letterhead**, `/api/search` all 8 palette branches, 8 uncovered detail pages (customers exposed the other org's `portal_token`), 30+ list pages, 9 shared helpers, 11 routes. Plus 7 F-1 silent-truncation fixes (`ORDER BY …, id`). +212 security (pin-COUNT per file — partial strips caught) +139 integration; mutation non-vacuity proven (101/139 red) | `86126a7` → `ca8cba6`, verified |
+| **21** | 2026-07-29 | — | **Operations command centre** (#467): `/operations` — compose-don't-re-detect enforced by test (no severity/due-ness maths exists in its code); live-exposure banners, 5 counters, worst-first lists, all clickable through; dropped tiles honestly (no high-value flag exists to threshold; `activity_log` has zero asset/fleet trigger coverage so a feed would show sales events). 15-test dual-org suite; mutation 12/15 red | `425ed7e` → `86126a7`, verified |
 | **20** | 2026-07-29 | `20261056`–`20261058` | **FLEET** (#465): vehicles as 1:1 asset extensions — register/detail/compliance-board/fuel at `/fleet`; MOT/insurance/road-tax/service via the widened service-schedule + maintenance engines; `asset_fuel_logs`; transactional two-row create + complete-and-roll RPCs; dual-org proof incl. service_role composite-FK block; E2E 5/5 ×3. First apply attempt hit a transient Supabase 503 — catalogue verify proved zero partial state, retry applied cleanly | `b15cc26` → `425ed7e`, verified |
 | **19** | 2026-07-29 | — | **Asset/QR isolation hardening** (#464): scan resolver leaked foreign-org asset names (existence oracle confirmed; write-path on-ramp) — the shipped test was a FALSE PROOF testing an inline resolver copy with a pin the code lacked. Fixed + now drives the real export; label-PDF wrong-org letterhead fixed; asset detail page pinned; asset-register supplier reads closed at integration (tripwire retired). Mutation-proven | `4ab60d0` → `b15cc26`, verified |
 | **18** | 2026-07-29 | — | **Active-org suppliers closure** (#463): 6 defect sites found (brief said 2) — address book had NO org predicate; detail/CIS/payments pages; update/delete actions; PO supplier+jobs pickers (comment claimed "org-scoped by RLS"); expenses supplier read. Lane self-corrected: reverted its own redundant guard after proving the finances org-integrity trigger IS the boundary, and pinned the trigger instead | `09465ca` → `4ab60d0`, verified |
@@ -117,7 +119,7 @@
 | Plant/equipment → job allocation | **PRODUCTION** | `asset_assignments.assignment_type` already includes `allocated_to_job` + `loaded_on_vehicle`, with `job_id`, `vehicle_asset_id`, issue/return meter readings, condition + transfer lineage; surfaced at `app/(app)/jobs/[id]/_job-assets.tsx` |
 | **Fleet (vehicles / MOT / insurance / road tax / service / fuel)** | **PRODUCTION** | Train 20 (#465), migrations `20261056`–`58`: `fleet_vehicles` 1:1 on assets (composite-FK, CIS-M1 precedent) — VIN/variant/year/fuel/class/weight/MOT-exemption/finance/depot/odometer; `operational_status` in_service\|off_road\|in_workshop split from `assets.status` disposal (transition-only guard); BOTH maintenance CHECKs widened together (generator passes type straight through); `asset_fuel_logs` keyed on asset (plant burns diesel too), forward-only odometer sync; transactional RPCs `save_fleet_vehicle` + `record_fleet_compliance_completion`; `/fleet` overview+register+detail+compliance board+fuel, plate-normalised search; 3 briefing signals; `critical` ONLY for expired MOT/insurance on an in-service vehicle (RTA s.47/s.143). Honest MPG (consecutive readings only). Deferred: fuel→finances seam (noted, not wired), depots entity (free text), custody stays on the asset page |
 | QR cross-org isolation | **PRODUCTION (hardened)** | Train 19 (#464): scan resolver leaked foreign-org asset names to dual-org users with an existence oracle — fixed red→green; prior test was a false proof (tested an inline copy WITH a pin the code lacked; now drives the real export + pin against local copies); label-PDF wrong-org letterhead fixed; anon/non-member/token-entropy proven safe. Gap matrix: attachments UI missing on maintenance+custody; depot/location free-text; QR events absent from timeline; no damaged/under_repair status (needs DDL, slot later) |
-| Stock / warehouse / material ordering | **NOT BUILT** | next Operations block — read-only gap assessment pending |
+| Stock / warehouse / material ordering | **NOT BUILT — assessed** | Read-only integration map complete (2026-07-29): NOTHING exists (no stock/GRN/sites/requisition tables — verified by full table enumeration). Milestone cut: **M1 PO receiving** (GRN + `partially_received`, slot `20261059`, dependency-FREE, standalone value) → **M2 `sites` entity** (three domains already carry free-text location debt: fleet `home_depot`, custody `location`, stock) → **M3 stock ledger + issue-to-job** (BLOCKED on decision D1) → M4 material requests. **D1 (CEO/product): stock is already expensed on purchase** (`recordSupplierBill` posts whole bill; yard POs have `job_id=NULL` so they hit org P&L but no job) — if issue-to-job ALSO posts to `finances` the £ double-counts org-wide. Options: operational-only ledger / reclassify-split the existing row / real inventory accounting (first balance-sheet position in CrewFlow). Also D3 (serialised-vs-fungible boundary vs `assets`), D4 (negative stock — odometer precedent says no hard CHECK), D5 (void vs adjust). PO gap confirmed: `received` is a bare status write recording nothing about what arrived; POs have NO tenant activity trigger (HQ audit only) |
 
 ## PHASE 7 — CUSTOMER EXPERIENCE
 
@@ -235,11 +237,18 @@ unscoped reads** app-wide. Highest-severity first for follow-up slices:
    health-safety(+permits)/assets-templates/asset-inspections/diary-edit `[id]` pages
    — asset detail + scan resolver + label PDF **DONE, Train 19 (#464)**; the rest
    were closed across slices 1–3 where enumerated (verify per file if in doubt)
-4. **Blended list pages** — `jobs/page.tsx`, `assets/page.tsx` (re-confirmed live
-   2026-07-29), holdings, inspections lists + equivalents per domain — **IN FLIGHT**
-   (`fix/active-org-list-pages`, the final enumerated slice)
-5. **Blueprint services** — `server/services/blueprints.ts`, `blueprint-pins.ts` —
-   assigned to the same in-flight lane
+4. ~~**Blended list pages**~~ — **DONE, Train 22 (#468)** — plus /dashboard,
+   /tax+VAT-PDF, /api/search and 8 uncovered detail pages the enumeration missed.
+5. ~~**Blueprint services**~~ — **DONE, Train 22 (#468)** (the enumerated lines were
+   right for blueprints.ts; blueprint-pins.ts's real list defects were unnamed).
+
+**THE ORIGINAL 5-ITEM READ-SIDE REMAINDER IS NOW CLOSED.** Train 22's sweep surfaced
+a NEW, separate **write-slice** enumeration (unpinned by-id reads/writes inside
+actions): `deleteBlueprint` (read+DELETE must move as a pair or storage bytes
+orphan — a dual-org owner can currently delete the other org's drawing),
+`markNotificationsRead` (user-scoped, needs a ctx change, low harm), and 8 action
+files: imports, payroll, payments, purchase-orders, reviews, support, me, inbox.
+This is the next active-org slice — write-side, zero-migration.
 6. ~~**Staff rota reads**~~ (found later by the schedule lane) — **DONE, Train 17
    (#461, CEO-directed)** — grid, job picker, overlap check via
    `server/services/rota.ts`, mutation-proven.
