@@ -5,6 +5,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { isAiConfigured } from "@/lib/ai/safety";
+import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
 import { expenseDraftApproveSchema } from "@/lib/suppliers/schema";
 import { z } from "zod";
 
@@ -49,11 +50,15 @@ export async function createExpenseDraftFromUpload(input: {
   mimeType: string;
   rawBytes: Uint8Array | null;
 }): Promise<{ id: string } | null> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
   // AI extraction. When no key, fields stay null; operator fills.
-  const extraction = await maybeExtractReceipt(input.rawBytes, input.mimeType);
+  // Runs under the AI Cost Governor — see maybeExtractReceipt.
+  const extraction = await maybeExtractReceipt(input.rawBytes, input.mimeType, {
+    orgId: ctx.org.id,
+    userId: user.id,
+  });
 
   const { data, error } = await (
     supabase.from("expense_drafts" as never) as unknown as {
@@ -212,76 +217,126 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
 // ---------------------------------------------------------------------
 // AI extraction — Claude vision on a receipt image/PDF.
 // Reuses the existing imports/ocr.ts pattern.
+//
+// GOVERNED. The provider call is wrapped in `invokeWithGovernor`
+// (lib/ai/governor.ts), which is the seam every AI call in CrewFlow passes
+// through: it refuses when the org is at its £100 monthly ceiling, refuses a
+// re-upload of a receipt it already read minutes ago, and records tokens /
+// latency / estimated cost for the ones it lets through.
+//
+// DARK TODAY, AND UNCHANGED BY THE WRAPPING. No tier is bound to a model and no
+// provider credential is set in production, so `isAiConfigured()` below is false
+// and this function returns the same empty extraction it always did, without the
+// governor performing a single database read. The degraded path — the operator
+// types the values — is the live behaviour and remains byte-for-byte identical.
+//
+// EVENT-DRIVEN. This is an upload handler: it runs when a receipt ARRIVES, once
+// per receipt. It is never on a render path.
 // ---------------------------------------------------------------------
 
 async function maybeExtractReceipt(
   bytes: Uint8Array | null,
   mimeType: string,
+  actor: { orgId: string; userId: string | null },
 ): Promise<DraftExtraction> {
   if (!isAiConfigured() || !bytes || bytes.length === 0) {
-    return {
-      amount: null,
-      vat_rate: null,
-      vat_total: null,
-      total: null,
-      supplier_name: null,
-      category: null,
-      invoice_date: null,
-      reference: null,
-      confidence: 0,
-    };
+    return zeroExtraction();
   }
+  const isImage = mimeType.startsWith("image/");
+  const isPdf = mimeType === "application/pdf";
+  if (!isImage && !isPdf) {
+    return zeroExtraction();
+  }
+  const base64 = Buffer.from(bytes).toString("base64");
+
   try {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-    const base64 = Buffer.from(bytes).toString("base64");
-    const isImage = mimeType.startsWith("image/");
-    const isPdf = mimeType === "application/pdf";
-    if (!isImage && !isPdf) {
-      return zeroExtraction();
-    }
-    const docBlock: Record<string, unknown> = isPdf
-      ? {
-          type: "document",
-          source: { type: "base64", media_type: "application/pdf", data: base64 },
-        }
-      : {
-          type: "image",
-          source: { type: "base64", media_type: mimeType, data: base64 },
-        };
-    const msg = await client.messages.create(
+    const outcome = await invokeWithGovernor(
+      "expense.receipt_extraction",
+      "classification",
+      () => readReceiptWithProvider(base64, mimeType, isPdf),
       {
-        model: "claude-haiku-4-5",
-        max_tokens: 600,
-        system: [
-          "You read a UK supplier receipt or invoice and return ONE JSON object:",
-          '{ "amount": number|null, "vat_rate": 0|5|20|null, "vat_total": number|null, "total": number|null, "supplier_name": string|null, "category": string|null, "invoice_date": "YYYY-MM-DD"|null, "reference": string|null, "confidence": 0-100 }',
-          "amount is the NET (ex-VAT) figure. total is gross (inc VAT).",
-          "If unclear, return null + lower confidence. NEVER hallucinate.",
-        ].join("\n"),
-        messages: [
-          {
-            role: "user",
-            content: [
-              docBlock as never,
-              { type: "text", text: "Extract the values per the schema." },
-            ],
-          },
-        ],
+        orgId: actor.orgId,
+        userId: actor.userId,
+        // The receipt's own bytes are the dedupe identity: the same file
+        // re-uploaded (a double-submit, a retried form) must not be read twice.
+        // Only the SHA-256 of this reaches the ledger — never the bytes.
+        dedupeContent: base64,
       },
-      { signal: AbortSignal.timeout(15_000) },
     );
-    const block = msg.content[0];
-    if (block?.type === "text") {
-      const raw = extractJson(block.text);
-      if (raw && typeof raw === "object") {
-        return normaliseExtraction(raw as Record<string, unknown>);
-      }
-    }
+    // `blocked` (over ceiling) and `duplicate` degrade exactly as "no key" does:
+    // an empty draft the operator completes. A cost control that broke the
+    // upload instead of the enrichment would be a worse outcome than the spend.
+    if (outcome.status === "ran") return outcome.value;
   } catch (e) {
+    // Unchanged: the governor RECORDS the failure and rethrows, so this catch
+    // still owns the degraded path exactly as it did before.
     console.error("[expense-drafts] OCR failed", e);
   }
   return zeroExtraction();
+}
+
+/**
+ * The provider leg, isolated so the governor can time it and account for it.
+ * Returns `usage` describing what was actually billed; the governor records
+ * that. Throws on any provider failure — the caller owns the degraded path.
+ */
+async function readReceiptWithProvider(
+  base64: string,
+  mimeType: string,
+  isPdf: boolean,
+): Promise<GovernedCall<DraftExtraction>> {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const docBlock: Record<string, unknown> = isPdf
+    ? {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: base64 },
+      }
+    : {
+        type: "image",
+        source: { type: "base64", media_type: mimeType, data: base64 },
+      };
+  const model = "claude-haiku-4-5";
+  const msg = await client.messages.create(
+    {
+      model,
+      max_tokens: 600,
+      system: [
+        "You read a UK supplier receipt or invoice and return ONE JSON object:",
+        '{ "amount": number|null, "vat_rate": 0|5|20|null, "vat_total": number|null, "total": number|null, "supplier_name": string|null, "category": string|null, "invoice_date": "YYYY-MM-DD"|null, "reference": string|null, "confidence": 0-100 }',
+        "amount is the NET (ex-VAT) figure. total is gross (inc VAT).",
+        "If unclear, return null + lower confidence. NEVER hallucinate.",
+      ].join("\n"),
+      messages: [
+        {
+          role: "user",
+          content: [
+            docBlock as never,
+            { type: "text", text: "Extract the values per the schema." },
+          ],
+        },
+      ],
+    },
+    { signal: AbortSignal.timeout(15_000) },
+  );
+  // The vendor's own billed counts — the ledger records provider truth, never
+  // an estimate of the token count.
+  const usage = {
+    provider: "anthropic",
+    model: msg.model ?? model,
+    inputTokens: msg.usage?.input_tokens ?? 0,
+    outputTokens: msg.usage?.output_tokens ?? 0,
+  };
+  const block = msg.content[0];
+  if (block?.type === "text") {
+    const raw = extractJson(block.text);
+    if (raw && typeof raw === "object") {
+      return { value: normaliseExtraction(raw as Record<string, unknown>), usage };
+    }
+  }
+  // A response we could not parse still COST what it cost — report the usage so
+  // the ledger reflects the spend, and return the same empty draft as before.
+  return { value: zeroExtraction(), usage };
 }
 
 function zeroExtraction(): DraftExtraction {

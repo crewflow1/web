@@ -7,19 +7,67 @@
 
 import { z } from "zod";
 
-export const PO_STATUSES = ["draft", "sent", "received", "cancelled"] as const;
+/**
+ * Mirrors the CHECK on purchase_orders.status. `partially_received` was added
+ * by migration 20261060000000 together with this list — the two must move as a
+ * pair (the fleet 20261057 precedent), or the UI offers a value the database
+ * refuses, or the database accepts one the UI cannot label.
+ */
+export const PO_STATUSES = [
+  "draft",
+  "sent",
+  "partially_received",
+  "received",
+  "cancelled",
+] as const;
 export type PurchaseOrderStatus = (typeof PO_STATUSES)[number];
 
-/** Legal forward status transitions (cancel is allowed from any live state). */
+/**
+ * Legal MANUAL status transitions — what a human may click (cancel is allowed
+ * from any live state).
+ *
+ * This is deliberately NARROWER than the graph the database enforces
+ * (tg_purchase_order_transition, 20261060000000): the receiving engine ALSO
+ * moves this column, and voiding a goods received note legitimately walks it
+ * BACKWARDS (received → partially_received → sent). Those edges are legal but
+ * are not buttons, so they do not belong here.
+ */
 export const PO_TRANSITIONS: Record<PurchaseOrderStatus, ReadonlyArray<PurchaseOrderStatus>> = {
   draft: ["sent", "cancelled"],
   sent: ["received", "cancelled"],
+  partially_received: ["cancelled"],
   received: ["cancelled"],
   cancelled: [],
 };
 
 export function canTransitionPo(from: PurchaseOrderStatus, to: PurchaseOrderStatus): boolean {
   return PO_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/**
+ * THE RULE for the manual `received` tick now that goods received notes exist:
+ * receipt state is DERIVED from posted GRNs and may not contradict them.
+ *
+ *   - No posted GRN on the order → the legacy tick still works exactly as it
+ *     does in production today (sent → received). Nothing that works now
+ *     stops working, and the POs already sitting at 'received' need no backfill.
+ *   - Any posted GRN → the status belongs to the receiving engine. The only
+ *     manual move left is 'cancelled'.
+ *
+ * The database is the enforcer; this function exists so the UI never renders a
+ * button the database will refuse.
+ */
+export function poManualTransitions(
+  from: PurchaseOrderStatus,
+  hasPostedReceipts: boolean,
+): ReadonlyArray<PurchaseOrderStatus> {
+  if (!hasPostedReceipts) return PO_TRANSITIONS[from] ?? [];
+  return from === "cancelled" ? [] : ["cancelled"];
+}
+
+/** A delivery can only be booked against an order the supplier actually has. */
+export function canReceiveAgainstPo(status: PurchaseOrderStatus): boolean {
+  return status === "sent" || status === "partially_received";
 }
 
 export const PO_VAT_RATES = [0, 5, 20] as const;
@@ -73,6 +121,8 @@ export function poStatusLabel(status: string): string {
       return "Draft";
     case "sent":
       return "Sent";
+    case "partially_received":
+      return "Part received";
     case "received":
       return "Received";
     case "cancelled":

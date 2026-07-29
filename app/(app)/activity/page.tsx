@@ -35,6 +35,8 @@ const TYPE_OPTIONS = [
   { value: "payroll.", label: "Payroll" },
   { value: "import.", label: "Imports" },
   { value: "leave.", label: "Leave" },
+  { value: "purchase_order.", label: "Purchase orders" },
+  { value: "grn.", label: "Deliveries" },
 ];
 
 const TARGET_OPTIONS = [
@@ -47,6 +49,8 @@ const TARGET_OPTIONS = [
   { value: "customers", label: "Customers" },
   { value: "imports", label: "Imports" },
   { value: "time_entries", label: "Time entries" },
+  { value: "purchase_orders", label: "Purchase orders" },
+  { value: "goods_received_notes", label: "Deliveries" },
 ];
 
 export default async function ActivityPage({ searchParams }: { searchParams: SP }) {

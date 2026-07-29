@@ -189,7 +189,23 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
           <span className="text-[11px] uppercase tracking-wide text-slate-500">internal · excl. VAT</span>
         </div>
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Tile label="Committed (POs)" value={formatGbp(committed.committed)} sub={committed.onOrder > 0 ? `${formatGbp(committed.onOrder)} on order` : undefined} />
+          <Tile
+            label="Committed (POs)"
+            value={formatGbp(committed.committed)}
+            // Warehouse M1 split part-deliveries out of "on order": an order
+            // half of which is already on site is neither purely awaited nor
+            // received, and telling the owner it is either would be a lie.
+            sub={
+              [
+                committed.onOrder > 0 ? `${formatGbp(committed.onOrder)} on order` : null,
+                committed.partiallyReceived > 0
+                  ? `${formatGbp(committed.partiallyReceived)} part-received`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || undefined
+            }
+          />
           <Tile label="Actual cost" value={formatGbp(costsTotal)} />
           <Tile label="Gross profit" value={formatGbp(grossProfit)} />
           <Tile label="Margin" value={marginPct == null ? "—" : `${marginPct.toFixed(1)}%`} pill={marginPillClass(marginBandValue)} />
