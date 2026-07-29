@@ -10,6 +10,7 @@ import {
 import type { CisBillDetailsInput, CisPaymentInput } from "@/lib/cis/schema";
 import { round2, toPounds } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 import type { CisAllocationRow } from "./supplier-payments";
 
@@ -29,6 +30,13 @@ import type { CisAllocationRow } from "./supplier-payments";
  * These tables post-date the generated types in lib/supabase/types.ts, so `.from`
  * / `.rpc` are reached through precise structural casts — the same seam
  * `server/services/cis.ts` and `server/services/supplier-payments.ts` use.
+ *
+ * READS THROW ON FAILURE. These maps are consumed together by
+ * /suppliers/[id]/payments, where an empty-on-error result is not a blank
+ * screen but a WRONG one: an empty details map renders materials = 0 and
+ * CITB = 0 into the bill-details form, and a re-save then CLOBBERS the real
+ * figures with those zeroes — changing the CIS basis actually filed. Tax
+ * authority must fail closed.
  */
 
 export type CisDeductionResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -95,6 +103,9 @@ export async function getBillCisDetails(
     .eq("org_id", orgId)
     .eq("supplier_id", supplierId)
     .limit(500);
+  // Empty-on-error here writes zeroed materials/CITB back over real figures the
+  // next time the bill-details form is saved. Fail closed.
+  if (res.error) throw readFailure("cis: bill details", res.error);
   return new Map((res.data ?? []).map((r) => [r.finance_id, r]));
 }
 
@@ -144,6 +155,9 @@ export async function getCisPaymentSnapshots(
     .eq("org_id", orgId)
     .eq("supplier_id", supplierId)
     .limit(500);
+  // These are the FROZEN tax facts of payments already made. An empty map on
+  // error would present recorded CIS payments as having no deduction history.
+  if (res.error) throw readFailure("cis: payment snapshots", res.error);
   return new Map((res.data ?? []).map((r) => [r.payment_id, r]));
 }
 

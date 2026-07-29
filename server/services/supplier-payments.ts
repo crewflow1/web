@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   computeBillSettlements,
   computeSupplierPosition,
@@ -198,6 +199,12 @@ export async function getCisAllocations(
     .select<CisAllocationRow>(CIS_ALLOCATION_COLUMNS)
     .eq("org_id", orgId)
     .in("payment_id", paymentIds);
+  // Two consumers make an empty-on-error result actively wrong, not merely
+  // blank: `lockedBills` derives from these rows, so an empty list REOPENS
+  // edits on bills the database has already frozen (the save then fails); and
+  // `priorSettlementByBill` feeds the cumulative partial-payment method, so
+  // missing priors DOUBLE-COUNT the deduction in the next payment's preview.
+  if (res.error) throw readFailure("cis: payment allocations", res.error);
   return res.data ?? [];
 }
 

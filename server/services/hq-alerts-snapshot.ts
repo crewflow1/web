@@ -4,6 +4,7 @@ import {
   computeHealthScore,
   type SetupFeeStatus,
 } from "@/lib/hq/customer-financials";
+import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type {
   AlertOrg,
   AlertInvoice,
@@ -34,6 +35,16 @@ import type {
  *
  * Service-role only. Callers must already have confirmed
  * isSuperAdminEmail.
+ *
+ * EVERY read here throws on failure (readFailure). This snapshot feeds BOTH
+ * the admin alerts board AND the nightly cron (hq-alerts-scheduler via
+ * /api/cron/alerts-poll). It used to `?? []` every result: a failed
+ * `organizations` read returned ZERO alerts, so the board rendered "all
+ * clear" and the scheduler notified nobody — the alerting system went
+ * silent at exactly the moment the database was unhealthy. The cron route
+ * wraps this in withCronTelemetry, which turns a throw into a logged
+ * {ok:false} 500; the page throw hits the admin error boundary and Sentry
+ * via instrumentation's onRequestError. Loud beats empty, always.
  */
 
 // Mirrors the helper shape we use in hq-billing-snapshot — keeps the
@@ -44,11 +55,11 @@ type AnyQuery = {
   in: (k: string, v: unknown[]) => AnyQuery;
   order: (k: string, opts: { ascending: boolean }) => Promise<{
     data: unknown[] | null;
-    error: { message: string } | null;
+    error: SupabaseReadError | null;
   }> & AnyQuery;
   limit: (n: number) => Promise<{
     data: unknown[] | null;
-    error: { message: string } | null;
+    error: SupabaseReadError | null;
   }> & AnyQuery;
 };
 
@@ -159,6 +170,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
     )
     .order("created_at", { ascending: false });
 
+  if (orgsRes.error) throw readFailure("hq alerts: organizations", orgsRes.error);
   const orgsRaw = (orgsRes.data ?? []) as unknown as OrgRow[];
   if (orgsRaw.length === 0) {
     return {
@@ -176,6 +188,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
     )
     .in("org_id", orgIds)
     .order("created_at", { ascending: false });
+  if (invRes.error) throw readFailure("hq alerts: billing invoices", invRes.error);
   const invoicesRaw = (invRes.data ?? []) as unknown as InvoiceRow[];
 
   // 3. Imports — most-recent per-org slice. We pull every row for
@@ -184,6 +197,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
     .select("id, org_id, status, created_at, committed_at")
     .in("org_id", orgIds)
     .order("created_at", { ascending: false });
+  if (impRes.error) throw readFailure("hq alerts: imports", impRes.error);
   const importsRaw = (impRes.data ?? []) as unknown as ImportRow[];
 
   // 4. Last row activity per org — single aggregate query.
@@ -197,6 +211,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
       .in("import_id", importIds)
       .order("updated_at", { ascending: false })
       .limit(10000);
+    if (rowsRes.error) throw readFailure("hq alerts: import rows", rowsRes.error);
     const rows = (rowsRes.data ?? []) as unknown as Array<{
       import_id: string;
       updated_at: string | null;
@@ -219,6 +234,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
     .select("id, org_id, email, company, status, created_at, updated_at")
     .in("org_id", orgIds)
     .order("updated_at", { ascending: false });
+  if (demoRes.error) throw readFailure("hq alerts: demo requests", demoRes.error);
   const demosRaw = (demoRes.data ?? []) as unknown as DemoRow[];
 
   // 6. Alert state overlay.
@@ -228,6 +244,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
     )
     .in("org_id", orgIds)
     .order("updated_at", { ascending: false });
+  if (stateRes.error) throw readFailure("hq alerts: alert state", stateRes.error);
   const statesRaw = (stateRes.data ?? []) as unknown as AlertStateRow[];
 
   // -------------------------------------------------------------------
@@ -301,7 +318,14 @@ export async function getOwnerContactsForOrgs(
     .select("org_id, user_id, user:users ( full_name, email, phone )")
     .in("org_id", orgIds as string[])
     .eq("role", "owner");
-  if (error || !data) return out;
+  // Enrichment only (the Call/Email/WhatsApp buttons). The alert rows are
+  // already built at this point, so a failure here degrades the action row
+  // rather than blanking the board — but it must still reach Sentry.
+  if (error) {
+    reportReadFailure("hq alerts: owner contacts", error);
+    return out;
+  }
+  if (!data) return out;
   type Row = {
     org_id: string;
     user_id: string | null;
