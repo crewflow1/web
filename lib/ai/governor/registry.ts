@@ -149,9 +149,16 @@ export type AiFeatureDefinition = {
  * rejects an unregistered key, so a new AI surface cannot reach a provider
  * without an entry here — which is the review point.
  *
- * All three entries below are BUILT AND DARK today: the code paths exist, they
- * have always had a deterministic fallback, and with no bound tier they behave
- * exactly as they did before this file existed.
+ * Every entry below is BUILT AND DARK today: the code paths exist and, with no
+ * bound tier, they behave exactly as they did before this file existed.
+ *
+ * NOTE THE ONE ASYMMETRY, because it is the honest part. The first three
+ * capabilities degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a
+ * fixed acknowledgement — so a user cannot tell whether AI ran. `quote.writer_draft`
+ * cannot: a scope of works is not computable from a customer's description, so
+ * there is no fallback to degrade to. Dark means it produces NOTHING and says
+ * so. A registry entry claiming otherwise would be the false-green this
+ * codebase has already been bitten by once (#433).
  */
 export const AI_FEATURES = {
   "expense.receipt_extraction": {
@@ -171,6 +178,23 @@ export const AI_FEATURES = {
     label: "Conversation reply draft",
     taskClass: "drafting",
     degradesTo: "The deterministic acknowledgement (fallbackResponse).",
+  },
+  /**
+   * Quote drafting — a scope of works a human reviews, edits, prices and only
+   * then turns into a quote through the existing builder.
+   *
+   * `drafting`, not `complex`: it is customer-facing prose behind a mandatory
+   * human review, which is that class's definition. The registry is the
+   * authority, so a call site declaring `complex` to get a better model is
+   * refused by `invokeWithGovernor` rather than silently routed to the
+   * expensive tier.
+   */
+  "quote.writer_draft": {
+    key: "quote.writer_draft",
+    label: "Quote writer draft",
+    taskClass: "drafting",
+    degradesTo:
+      "NOTHING — a scope of works cannot be computed, so there is no deterministic leg. The surface reports honestly that AI drafting is off and the operator writes the quote in the existing builder, exactly as today.",
   },
 } as const satisfies Record<string, AiFeatureDefinition>;
 

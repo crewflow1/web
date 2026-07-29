@@ -166,6 +166,15 @@ function buildFkGraph(): Map<string, FkEdge[]> {
  */
 const REVIEWED_AMBIGUOUS_PAIRS = [
   "admin_alert_state → users",
+  // AI quote drafts (20261068): created_by + applied_by + discarded_by all → users.
+  // Reviewed 2026-07-29: server/services/ai-quote-writer.ts is the only reader and
+  // it selects scalar columns only ("id, status", "id, content, degraded,
+  // created_at", "id") — there is no users(...) embed anywhere on this table, so
+  // no bare embed can hit PGRST201 today. Three FKs is inherent to the row's
+  // purpose: it records who ASKED for a draft, who APPLIED it and who DISCARDED
+  // it, and collapsing them would destroy the audit trail. Any future embed must
+  // name its FK constraint.
+  "ai_quote_drafts → users",
   "asset_assignments → assets",
   "asset_assignments → users",
   "asset_fuel_logs → users",

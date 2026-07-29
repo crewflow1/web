@@ -19,6 +19,8 @@ import {
 } from "@/components/forms/Field";
 import { SubmitButton } from "@/components/forms/FormShell";
 import { NumericInput } from "@/components/forms/NumericInput";
+import { QuoteWriterPanel } from "./_quote-writer-panel";
+import type { QuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 
 /**
  * Quote builder — used by both /quotes/new and /quotes/[id].
@@ -75,6 +77,7 @@ export function QuoteBuilder({
   defaultTerms = "",
   defaultLineItems,
   cancelHref = "/quotes",
+  quoteWriter,
 }: {
   action: QuoteAction;
   submitLabel: string;
@@ -89,6 +92,20 @@ export function QuoteBuilder({
   defaultTerms?: string;
   defaultLineItems?: LineItem[];
   cancelHref?: string;
+  /**
+   * The AI quote writer's mount point. OPTIONAL, and absent means the panel is
+   * not rendered at all — a caller that knows nothing about AI keeps working
+   * unchanged, which is what makes wiring this in a genuine no-op.
+   *
+   * The panel is a CHILD of the builder rather than a sibling on purpose: Apply
+   * hands line items straight into `setItems` below, so there is no state
+   * bridge, no event bus and no second source of truth for what is on the quote.
+   */
+  quoteWriter?: {
+    readiness: QuoteWriterReadiness;
+    canSeeBlockers?: boolean;
+    anchor?: { quoteId?: string | null; leadId?: string | null };
+  };
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -288,6 +305,18 @@ export function QuoteBuilder({
           </div>
         </div>
       </section>
+
+      {quoteWriter ? (
+        <QuoteWriterPanel
+          readiness={quoteWriter.readiness}
+          canSeeBlockers={quoteWriter.canSeeBlockers}
+          anchor={quoteWriter.anchor}
+          // Apply REPLACES the working line items. The operator is applying a
+          // scope of works, not appending to one — merging two scopes would
+          // silently double-quote whatever appears in both.
+          onApplyLineItems={(applied) => setItems(applied)}
+        />
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">

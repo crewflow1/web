@@ -26,6 +26,7 @@ import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { SendQuote } from "./_send-quote";
 import { env } from "@/lib/env";
+import { getQuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 
 /**
  * Quote edit + lifecycle actions page.
@@ -513,6 +514,14 @@ export default async function EditQuotePage({
           defaultTerms={quote.terms ?? ""}
           defaultLineItems={lineItems}
           cancelHref="/quotes"
+          // See the note on the /quotes/new mount: readiness is a computed,
+          // build-time-anchored fact, and rendering the panel performs no
+          // database read and reaches no model.
+          quoteWriter={{
+            readiness: getQuoteWriterReadiness(),
+            canSeeBlockers: ctx.membership.role === "owner" || ctx.membership.role === "admin",
+            anchor: { quoteId: quote.id },
+          }}
         />
       )}
 
