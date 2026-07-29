@@ -9,10 +9,13 @@ import { assertLocalE2eTarget } from "./_guard";
  * operator-internal and never leaks to a logged-out visitor — it lives inside
  * the auth-walled register + the ssr:false viewer.
  *
- * The authenticated place → marker → open-snag journey is test.fixme pending the
- * authenticated-E2E harness (a seeded job + blueprint version + logged-in
- * storageState). It is NOT stubbed green: the DB invariants are proven against
- * real Postgres (__tests__/integration/rls/blueprint-pins.test.ts) and the pure
+ * The authenticated place → marker → open-snag journey runs for real via the
+ * harness (e2e/global-setup.ts). Its beforeAll clears the sentinel job's pins
+ * first — the journey pins the exact centre of the overlay, so against a
+ * persistent local database a leftover centre marker from the previous run
+ * would swallow this run's centre click (opening its popover instead of the
+ * "Add a pin" sheet). The DB invariants stay proven against real Postgres
+ * (__tests__/integration/rls/blueprint-pins.test.ts) and the pure
  * coordinate/derivation logic in unit tests (__tests__/blueprints/pins.test.ts).
  */
 
@@ -31,19 +34,42 @@ test.describe("blueprint pins — authenticated place-a-snag journey", () => {
   // Real authenticated E2E via the harness (e2e/global-setup.ts).
   test.use({ storageState: "e2e/.auth/owner.json" });
 
-  // Self-clean: a pin from a PRIOR local run sits exactly where this journey
-  // clicks, so the click opens that snag instead of the Add-a-pin sheet. CI
-  // never sees this (fresh DB per run); a persistent local DB does.
+  /**
+   * Determinism against a PERSISTENT local database (Ch.18: a flaky E2E is a
+   * defect to fix). globalSetup seeds the job/blueprint idempotently but never
+   * clears pins, and every pass of this journey inserts a pin at u=0.5, v=0.5 —
+   * so without cleanup the next local run's centre click lands on the existing
+   * marker and the "Add a pin" sheet never opens. CI never sees this (fresh
+   * `supabase start` volume every run); this makes local re-runs behave the same.
+   * Snags are deleted first — snag→pin is ON DELETE CASCADE, while deleting a
+   * pin alone would strand its snag — then any remaining (note-kind) pins.
+   */
   test.beforeAll(async () => {
-    const svc = createClient(
+    const db = createClient(
       assertLocalE2eTarget("blueprint-pins.spec.ts"),
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { persistSession: false, autoRefreshToken: false } },
-    ) as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
-    const stale = (await svc.from("snags").select("id").like("title", "Cracked render at RC junction%")).data ?? [];
-    for (const s of stale) await svc.from("blueprint_pins").delete().eq("snag_id", s.id);
-    if (stale.length) await svc.from("snags").delete().like("title", "Cracked render at RC junction%");
+    );
+    const { data: pins, error: readErr } = await db
+      .from("blueprint_pins")
+      .select("snag_id")
+      .eq("job_id", JOB);
+    if (readErr) throw new Error(`[blueprint-pins cleanup] read failed: ${readErr.message}`);
+    const snagIds = [
+      ...new Set(
+        (pins ?? [])
+          .map((p: { snag_id: string | null }) => p.snag_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    if (snagIds.length) {
+      const { error } = await db.from("snags").delete().in("id", snagIds);
+      if (error) throw new Error(`[blueprint-pins cleanup] snag delete failed: ${error.message}`);
+    }
+    const { error: pinErr } = await db.from("blueprint_pins").delete().eq("job_id", JOB);
+    if (pinErr) throw new Error(`[blueprint-pins cleanup] pin delete failed: ${pinErr.message}`);
   });
+
   test(
     "Add pin → tap drawing → create snag → marker appears → open snag deep-links",
     async ({ page }) => {
