@@ -30,6 +30,8 @@ export function actionIcon(action: string): string {
   if (action.startsWith("job.")) return "🔧";
   if (action.startsWith("lead.")) return "🎯";
   if (action.startsWith("customer.")) return "👤";
+  if (action.startsWith("grn.")) return "📦";
+  if (action.startsWith("purchase_order.")) return "🚚";
   return "•";
 }
 
@@ -134,6 +136,25 @@ export function describeActivity(row: ActivityRow): string {
       return `updated a customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
     case "customer.deleted":
       return `deleted a customer ${m["name"] ? `(${m["name"]})` : ""}`.trim();
+    // Warehouse M1 — receiving. These rows are written by DB triggers
+    // (20261060000000); triggers are the only legal writers of activity_log.
+    case "grn.posted": {
+      const lines = Number(m["lines"] ?? 0);
+      const ref = m["delivery_note_reference"];
+      return `recorded delivery ${m["number"] ?? ""}${
+        lines > 0 ? ` · ${lines} line${lines === 1 ? "" : "s"}` : ""
+      }${ref ? ` · note ${ref}` : ""}`.trim();
+    }
+    case "grn.voided":
+      return `voided delivery ${m["number"] ?? ""}${m["reason"] ? ` — ${m["reason"]}` : ""}`.trim();
+    case "purchase_order.sent":
+      return `sent purchase order ${m["number"] ?? ""} to the supplier`.trim();
+    case "purchase_order.partially_received":
+      return `part-received purchase order ${m["number"] ?? ""}`.trim();
+    case "purchase_order.received":
+      return `received purchase order ${m["number"] ?? ""} in full`.trim();
+    case "purchase_order.cancelled":
+      return `cancelled purchase order ${m["number"] ?? ""}`.trim();
     default:
       return row.action;
   }
@@ -154,6 +175,16 @@ export function activityHref(row: ActivityRow): string | null {
       return `/leads/${row.target_id}`;
     case "customers":
       return `/customers/${row.target_id}`;
+    case "purchase_orders":
+      return `/purchase-orders/${row.target_id}`;
+    case "goods_received_notes": {
+      // A GRN has no page of its own — it lives on the order it received, and
+      // the trigger puts that order's id in the metadata for exactly this.
+      const poId = row.metadata?.["purchase_order_id"];
+      return typeof poId === "string" && poId
+        ? `/purchase-orders/${poId}?grn=${row.target_id}`
+        : null;
+    }
     default:
       return null;
   }
@@ -189,4 +220,5 @@ export const ACTIVITY_TYPES = [
   { value: "finance.", label: "Finances" },
   { value: "customer.", label: "Customers" },
   { value: "variation.", label: "Variations" },
+  { value: "grn.", label: "Deliveries" },
 ] as const;

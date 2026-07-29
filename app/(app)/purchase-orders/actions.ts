@@ -8,11 +8,13 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { computeTotals } from "@/lib/quotes/totals";
 import {
   canTransitionPo,
+  poStatusLabel,
   purchaseOrderFormSchema,
   PO_STATUSES,
   type PurchaseOrderFormInput,
   type PurchaseOrderStatus,
 } from "@/lib/purchase-orders/schema";
+import { purchaseOrderHasReceipts } from "./_receiving-data";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
 import { z } from "zod";
 
@@ -164,25 +166,42 @@ export async function updatePurchaseOrder(
   const supabase = await createClient();
 
   // Only draft/sent POs are editable — a received/cancelled PO is settled.
+  type EditQuery = {
+    eq: (k: string, v: unknown) => EditQuery;
+    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+  };
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
-      };
+      select: (c: string) => EditQuery;
     }
   )
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id) // ACTIVE-ORG PIN
     .maybeSingle();
   if (!existing) return formError("Couldn't load the purchase order.");
   if (existing.status === "received" || existing.status === "cancelled") {
-    return formError(`A ${existing.status} purchase order can't be edited.`);
+    return formError(`A ${poStatusLabel(existing.status).toLowerCase()} purchase order can't be edited.`);
   }
 
+  // Warehouse M1: the edit path DELETES and re-inserts the line items, and
+  // goods_received_lines reference them (composite FK, deferred NO ACTION). The
+  // database refuses that once any delivery exists, so refuse it here with an
+  // explanation instead of letting the user hit a raw constraint error after
+  // filling in the whole builder.
+  if (await purchaseOrderHasReceipts(supabase, ctx.org.id, id)) {
+    return formError(
+      "This order has deliveries recorded against it — its lines are locked. Void the deliveries first, or cancel it and raise a new order.",
+    );
+  }
+
+  type MutateQuery<T> = {
+    eq: (k: string, v: unknown) => MutateQuery<T> & PromiseLike<{ error: T }>;
+  };
   const totals = computeTotals(parsed.data.line_items);
   const { error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      update: (v: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      update: (v: unknown) => MutateQuery<{ message: string } | null>;
     }
   )
     .update({
@@ -194,7 +213,8 @@ export async function updatePurchaseOrder(
       notes: parsed.data.notes ?? null,
       expected_date: parsed.data.expected_date ?? null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN
   if (error) {
     console.error("[purchase-orders] update failed", error);
     return formError("Couldn't save changes. Try again.");
@@ -203,11 +223,12 @@ export async function updatePurchaseOrder(
   // Replace line items (delete + insert, as quotes do).
   await (
     supabase.from("purchase_order_line_items" as never) as unknown as {
-      delete: () => { eq: (k: string, v: unknown) => Promise<{ error: unknown }> };
+      delete: () => MutateQuery<unknown>;
     }
   )
     .delete()
-    .eq("purchase_order_id", id);
+    .eq("purchase_order_id", id)
+    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN
   const { error: liErr } = await insertLines(supabase, ctx.org.id, id, parsed.data);
   if (liErr) return formError("Couldn't save the line items. Try again.");
 
@@ -225,7 +246,7 @@ export async function updatePurchaseOrder(
 }
 
 export async function setPurchaseOrderStatus(id: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const to = String(formData.get("status") ?? "") as PurchaseOrderStatus;
@@ -234,15 +255,18 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
+  type StatusQuery = {
+    eq: (k: string, v: unknown) => StatusQuery;
+    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+  };
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
-      };
+      select: (c: string) => StatusQuery;
     }
   )
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id) // ACTIVE-ORG PIN
     .maybeSingle();
   if (!existing) redirect("/purchase-orders?error=not_found");
 
@@ -250,13 +274,25 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
     redirect(`/purchase-orders/${id}?error=bad_transition`);
   }
 
+  // Warehouse M1: once a delivery has been posted, the receipt status belongs
+  // to the receiving engine and the database refuses a hand-set 'received' that
+  // contradicts it (tg_purchase_order_transition). Only 'cancelled' is still a
+  // manual move — check it here so the user gets a sentence, not a 500.
+  if (to !== "cancelled" && (await purchaseOrderHasReceipts(supabase, ctx.org.id, id))) {
+    redirect(`/purchase-orders/${id}?error=derived_status`);
+  }
+
+  type UpdateQuery = {
+    eq: (k: string, v: unknown) => UpdateQuery & PromiseLike<{ error: { message: string } | null }>;
+  };
   const { error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      update: (v: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      update: (v: unknown) => UpdateQuery;
     }
   )
     .update({ status: to })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN
   if (error) {
     console.error("[purchase-orders] status change failed", error);
     redirect(`/purchase-orders/${id}?error=status_failed`);
@@ -276,17 +312,31 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
 }
 
 export async function deletePurchaseOrder(id: string) {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const supabase = await createClient();
+
+  // A delivery is evidence that this order existed and that goods arrived
+  // against it — deleting the order would orphan it. The database refuses
+  // (deferred NO ACTION on goods_received_notes.purchase_order_id, which
+  // surfaces at commit); catch it first so the user gets a sentence instead of
+  // a constraint name.
+  if (await purchaseOrderHasReceipts(supabase, ctx.org.id, id)) {
+    redirect(`/purchase-orders/${id}?error=delete_has_receipts`);
+  }
+
+  type DeleteQuery = {
+    eq: (k: string, v: unknown) => DeleteQuery & PromiseLike<{ error: { message: string } | null }>;
+  };
   const { error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      delete: () => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      delete: () => DeleteQuery;
     }
   )
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id); // ACTIVE-ORG PIN
   if (error) {
     // RLS filters non-admins → 0 rows, no error; treat as denied.
     console.error("[purchase-orders] delete failed", error);
@@ -359,23 +409,53 @@ export async function recordSupplierBill(
 
   const supabase = await createClient();
 
-  // Load the PO (RLS-scoped) — inherit its job + supplier.
+  // Load the PO and inherit its job + supplier.
+  //
+  // ACTIVE-ORG PIN. RLS alone admits every org the caller belongs to, so for a
+  // dual-org member this read would happily return the OTHER company's order —
+  // and the bill below is then written with THIS org's org_id while inheriting
+  // that order's job_id and supplier_id. The finances org-integrity trigger
+  // (20261009) already refuses a foreign supplier_id, but the job_id path has
+  // no such backstop: the result would be a cost stamped to company A carrying
+  // company B's job, quietly corrupting one job's profitability with another
+  // company's spend. A wrong-org order is simply not found.
+  type BillPoQuery = {
+    eq: (k: string, v: string) => BillPoQuery;
+    maybeSingle: () => Promise<{
+      data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+    }>;
+  };
   const { data: po } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: string) => {
-          maybeSingle: () => Promise<{
-            data: { id: string; job_id: string | null; supplier_id: string | null } | null;
-          }>;
-        };
-      };
+      select: (c: string) => BillPoQuery;
     }
   )
     .select("id, job_id, supplier_id")
     .eq("id", purchaseOrderId)
+    .eq("org_id", ctx.org.id) // ACTIVE-ORG PIN
     .maybeSingle();
 
   if (!po) return formError("Purchase order not found.");
+
+  // Belt to the pin's braces: the job the cost will be attributed to must be in
+  // the active org too. The pin above already guarantees it (a PO's job_id is
+  // held same-org by tg_purchase_order_org_integrity, 20261011), so this is a
+  // cheap independent re-check of the single field that has no database
+  // backstop on the finances side.
+  if (po.job_id) {
+    type JobQuery = {
+      eq: (k: string, v: string) => JobQuery;
+      maybeSingle: () => Promise<{ data: { id: string } | null }>;
+    };
+    const { data: job } = await (
+      supabase.from("jobs" as never) as unknown as { select: (c: string) => JobQuery }
+    )
+      .select("id")
+      .eq("id", po.job_id)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (!job) return formError("Purchase order not found.");
+  }
 
   // Idempotency / double-submit guard — a retried POST or a double-click racing the
   // client-side disable would otherwise insert the SAME supplier bill twice, doubling

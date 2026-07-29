@@ -3,15 +3,18 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { PurchaseOrderBuilder } from "../_builder";
 import { listPoFormOptions } from "../_data";
+import { listPurchaseOrderReceipts } from "../_receiving-data";
 import {
   setPurchaseOrderStatus,
   deletePurchaseOrder,
   updatePurchaseOrder,
 } from "../actions";
 import {
-  PO_TRANSITIONS,
+  canReceiveAgainstPo,
+  poManualTransitions,
   poStatusLabel,
   type PurchaseOrderStatus,
 } from "@/lib/purchase-orders/schema";
@@ -20,13 +23,22 @@ import {
   PO_BILL_STATUS_LABEL,
   PO_BILL_STATUS_CLASS,
 } from "@/lib/purchase-orders/billing";
+import {
+  computeReceiving,
+  formatQty,
+  PO_RECEIPT_STATUS_CLASS,
+  PO_RECEIPT_STATUS_LABEL,
+} from "@/lib/purchase-orders/receiving";
 import { RecordBillForm } from "./_bill-form";
+import { ReceiveDeliveryForm } from "./_receive-form";
+import { VoidDeliveryForm } from "./_void-form";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 
 const STATUS_STYLE: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
   sent: "bg-blue-100 text-blue-700",
+  partially_received: "bg-amber-100 text-amber-800",
   received: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-slate-100 text-slate-400",
 };
@@ -36,10 +48,15 @@ const ERROR_COPY: Record<string, string> = {
   bad_status: "Unknown status.",
   status_failed: "Couldn't update the status. Try again.",
   delete_denied: "Only admins/owners can delete a purchase order.",
+  delete_has_receipts:
+    "This order has deliveries recorded against it — it can't be deleted. Cancel it instead.",
+  derived_status:
+    "Deliveries drive this order's status now. Record or void a delivery to change it — the only manual move left is cancelling.",
   not_found: "Purchase order not found.",
 };
 
 type LineRow = {
+  id: string;
   description: string;
   qty: number;
   unit: string | null;
@@ -68,26 +85,35 @@ export default async function PurchaseOrderDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  searchParams: Promise<{ saved?: string; error?: string; received?: string; grn?: string }>;
 }) {
   const { id } = await params;
-  const { saved, error } = await searchParams;
+  const { saved, error, received, grn } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
 
+  type PoQuery = {
+    eq: (k: string, v: unknown) => PoQuery;
+    maybeSingle: () => Promise<{ data: Po | null }>;
+  };
   const { data: po } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Po | null }> };
-      };
+      select: (c: string) => PoQuery;
     }
   )
     .select(
-      "id, number, status, supplier_id, job_id, supplier_reference, expected_date, notes, subtotal, vat_total, total, supplier:suppliers ( name ), line_items:purchase_order_line_items ( description, qty, unit, unit_price, vat_rate, line_total, sort_order )",
+      "id, number, status, supplier_id, job_id, supplier_reference, expected_date, notes, subtotal, vat_total, total, supplier:suppliers ( name ), line_items:purchase_order_line_items ( id, description, qty, unit, unit_price, vat_rate, line_total, sort_order )",
     )
     .eq("id", id)
+    // ACTIVE-org pin. RLS admits every org the viewer belongs to, so without
+    // this a dual-org member opening a link to the OTHER company's order got a
+    // fully rendered page — and, now that this page can WRITE (receive a
+    // delivery), would have been able to book goods against it. Same class as
+    // #456 / #459 / #461 / #463 / #464 / #468; the register was pinned there,
+    // this by-id read was not.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!po) notFound();
@@ -119,11 +145,26 @@ export default async function PurchaseOrderDetailPage({
   const billing = computePoBilling({ poTotal: po.total, bills });
 
   const status = po.status as PurchaseOrderStatus;
-  const nextStates = PO_TRANSITIONS[status] ?? [];
-  const editable = status === "draft" || status === "sent";
   const lines = [...(po.line_items ?? [])].sort(
     (a, b) => (a as unknown as { sort_order: number }).sort_order - (b as unknown as { sort_order: number }).sort_order,
   );
+
+  // Goods received notes on this order (active-org pinned). The receipt
+  // position is computed from POSTED notes only — the same filter
+  // po_receipt_state() applies in the database, so the page and the stored
+  // status can never tell the user two different stories.
+  const { notes: grns, postedLines } = await listPurchaseOrderReceipts(supabase, ctx.org.id, id);
+  const receiving = computeReceiving({ lines, receipts: postedLines });
+  const hasAnyReceipt = grns.length > 0;
+  const hasPostedReceipt = grns.some((n) => n.status === "posted");
+
+  // Once ANY delivery exists the ordered lines are frozen: goods_received_lines
+  // reference them, so the database refuses the delete-and-reinsert that
+  // updatePurchaseOrder performs. Hiding the builder keeps the affordance
+  // honest instead of letting the user fill in a form that cannot save.
+  const editable = (status === "draft" || status === "sent") && !hasAnyReceipt;
+  const nextStates = poManualTransitions(status, hasPostedReceipt);
+  const canReceive = canReceiveAgainstPo(status);
 
   const { suppliers, jobs: jobOptions } = editable
     ? await listPoFormOptions(supabase, ctx.org.id)
@@ -147,6 +188,11 @@ export default async function PurchaseOrderDetailPage({
       {saved ? (
         <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {saved === "status" ? "Status updated." : "Purchase order saved."}
+        </div>
+      ) : null}
+      {received ? (
+        <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          Delivery recorded. Add the delivery-note photo below so the paperwork lives with the order.
         </div>
       ) : null}
 
@@ -183,6 +229,138 @@ export default async function PurchaseOrderDetailPage({
           ))}
         </div>
       ) : null}
+
+      {/* ── Deliveries (Warehouse M1) ─────────────────────────────────────
+          Placed ABOVE the order summary on purpose: on the PO page the live
+          question is "has it turned up?", and the person asking it is usually
+          standing next to the lorry on a phone. */}
+      {status === "draft" || status === "cancelled" ? null : (
+        <section
+          aria-labelledby="deliveries-heading"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 id="deliveries-heading" className="text-base font-semibold text-slate-900">
+              Deliveries
+            </h2>
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-medium ${PO_RECEIPT_STATUS_CLASS[receiving.status]}`}
+            >
+              {PO_RECEIPT_STATUS_LABEL[receiving.status]}
+            </span>
+          </div>
+
+          <dl className="mt-4 grid grid-cols-3 gap-3">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Ordered</dt>
+              <dd className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                {formatQty(receiving.totalOrdered)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Received</dt>
+              <dd className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                {formatQty(receiving.totalPreviouslyReceived)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-slate-500">Outstanding</dt>
+              <dd className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                {formatQty(receiving.totalRemaining)}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-1 text-xs text-slate-500">
+            Units across {receiving.lines.length} line{receiving.lines.length === 1 ? "" : "s"} —
+            receiving records what arrived, never what it cost. The cost lands when you record the
+            supplier&apos;s bill.
+          </p>
+
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            {canReceive ? (
+              <ReceiveDeliveryForm poId={po.id} lines={receiving.lines} />
+            ) : (
+              <p className="text-sm text-slate-500">
+                {status === "received"
+                  ? "Everything on this order has been received."
+                  : "This order can't take a delivery in its current state."}
+              </p>
+            )}
+          </div>
+
+          {grns.length > 0 ? (
+            <ul className="mt-5 space-y-4 border-t border-slate-100 pt-4">
+              {grns.map((note) => {
+                const voided = note.status === "void";
+                const highlighted = received === note.id || grn === note.id;
+                const receiver =
+                  note.received_by_user?.full_name ?? note.received_by_user?.email ?? null;
+                return (
+                  <li
+                    key={note.id}
+                    id={`grn-${note.id}`}
+                    className={`rounded-lg border p-3 ${
+                      highlighted
+                        ? "border-emerald-300 bg-emerald-50"
+                        : voided
+                          ? "border-slate-200 bg-slate-50"
+                          : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className={`text-sm font-semibold ${voided ? "text-slate-400 line-through" : "text-slate-900"}`}>
+                        {note.number}
+                      </p>
+                      <span className="text-xs text-slate-500">
+                        {note.delivery_date}
+                        {note.delivery_note_reference ? ` · note ${note.delivery_note_reference}` : ""}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {receiver ? `Received by ${receiver}` : "Received"}
+                      {note.delivery_location ? ` · ${note.delivery_location}` : ""}
+                      {voided ? " · VOIDED" : ""}
+                    </p>
+
+                    <ul className="mt-2 space-y-0.5">
+                      {(note.lines ?? []).map((l) => {
+                        const ordered = receiving.lines.find((x) => x.lineId === l.purchase_order_line_item_id);
+                        return (
+                          <li key={l.id} className="flex justify-between gap-3 text-xs text-slate-600">
+                            <span className="truncate">{ordered?.description ?? "Line"}</span>
+                            <span className="shrink-0 tabular-nums">
+                              {formatQty(l.qty_received)} {ordered?.unit ?? ""}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+
+                    {note.notes ? (
+                      <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{note.notes}</p>
+                    ) : null}
+                    {voided && note.void_reason ? (
+                      <p className="mt-2 text-xs font-medium text-red-700">Voided — {note.void_reason}</p>
+                    ) : null}
+
+                    {note.status === "posted" ? (
+                      <>
+                        <div className="mt-3">
+                          {/* Delivery-note photos ride the universal attachments
+                              pipeline; `frozen` because a posted note is evidence —
+                              files can be added but never removed. */}
+                          <AttachmentsPanel targetTable="goods_received_notes" targetId={note.id} frozen />
+                        </div>
+                        <VoidDeliveryForm grnId={note.id} poId={po.id} />
+                      </>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </section>
+      )}
 
       {/* Read-only summary */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -309,9 +487,14 @@ export default async function PurchaseOrderDetailPage({
             submitLabel="Save changes"
           />
         </section>
+      ) : hasAnyReceipt && (status === "draft" || status === "sent" || status === "partially_received") ? (
+        <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          This order has deliveries recorded against it, so its lines are locked. Void the
+          deliveries first, or cancel the order and raise a new one.
+        </p>
       ) : null}
 
-      {isAdmin ? (
+      {isAdmin && !hasAnyReceipt ? (
         <ConfirmForm action={deletePurchaseOrder.bind(null, po.id)} confirm="Delete this purchase order? This can't be undone.">
           <button
             type="submit"
