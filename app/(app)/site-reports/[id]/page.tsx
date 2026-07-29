@@ -257,11 +257,13 @@ export default async function SiteReportDetailPage({
         <p className="mt-0.5 text-xs text-slate-500">
           What CrewFlow pulled from this job for the reporting period.
         </p>
-        <dl className="mt-3 grid grid-cols-3 gap-3 text-center">
+        {/* Plain divs, not <dl>: the cells are number+caption stats, and a dl
+            whose children aren't dt/dd groups fails axe's definition-list rule. */}
+        <div className="mt-3 grid grid-cols-3 gap-3 text-center">
           <Stat n={counts.diary} label="Diary entries" />
           <Stat n={counts.snags} label="Snags" />
           <Stat n={counts.toolbox} label="Toolbox talks" />
-        </dl>
+        </div>
       </section>
 
       {editable ? (

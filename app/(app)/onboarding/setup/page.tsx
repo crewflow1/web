@@ -165,7 +165,7 @@ export default async function OnboardingSetupPage({
                   : complete
                     ? "border-emerald-200"
                     : dismissed
-                      ? "border-slate-200 opacity-70"
+                      ? "border-slate-200" // no opacity-*: blending drags the card's AA text below 4.5:1; the Skipped badge carries the state
                       : "border-slate-200"
               }`}
             >

@@ -154,7 +154,10 @@ function AssignForm({
       <p className="text-sm font-medium text-slate-800">{title}</p>
       <div>
         <label className={labelCls}>Where to</label>
-        <select name="assignment_type" defaultValue="allocated_to_job" className={fieldCls}>
+        {/* aria-label like every other control here: the visual label above is
+            unassociated, and this form renders multiple times per page so a
+            fixed htmlFor/id pair would collide. */}
+        <select name="assignment_type" defaultValue="allocated_to_job" className={fieldCls} aria-label="Where to">
           {ASSIGNMENT_TYPES.map((t) => (
             <option key={t} value={t}>{ASSIGNMENT_TYPE_LABELS[t]}</option>
           ))}
