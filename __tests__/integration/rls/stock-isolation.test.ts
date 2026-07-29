@@ -726,6 +726,119 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
     expect(cross.error?.message ?? "").toMatch(/not found/i);
   });
 
+  // ── transfer-leg correction manufactures stock (P1-A, 20261069) ────────────
+  it("REFUSES to correct a single transfer leg — correcting one leg invents stock", async () => {
+    // THE PROVEN REPRO: seed +10 @ source, transfer it, then reverse ONE leg.
+    // Before 20261069 the compensating +10 landed at source while dest kept its
+    // transfer_in — the company total went 10 → 20, stock from nothing, and by a
+    // non-admin under a low-scrutiny "correction". This must now be REFUSED.
+    const src = await makeSite(orgA, "TG source");
+    const dst = await makeSite(orgA, "TG dest");
+    const item = await makeItem(orgA, "TG blocks");
+    const seed = await rpc(userClient(dualToken)).rpc("record_stock_adjustment", {
+      p_org_id: orgA,
+      p_item_id: item,
+      p_site_id: src,
+      p_delta: 10,
+      p_reason: "seed 10 @ source",
+    });
+    expect(seed.error, seed.error?.message).toBeNull();
+
+    const before = await companyTotal(orgA);
+    const moved = await rpc(userClient(dualToken)).rpc("record_stock_transfer", {
+      p_org_id: orgA,
+      p_item_id: item,
+      p_from_site_id: src,
+      p_to_site_id: dst,
+      p_qty: 10,
+      p_notes: "source -> dest",
+    });
+    expect(moved.error, moved.error?.message).toBeNull();
+    const groupId = String(moved.data);
+
+    const legOut = await svc()
+      .from("stock_movements")
+      .select("id")
+      .eq("transfer_group_id", groupId)
+      .eq("movement_type", "transfer_out")
+      .maybeSingle();
+    const legIn = await svc()
+      .from("stock_movements")
+      .select("id")
+      .eq("transfer_group_id", groupId)
+      .eq("movement_type", "transfer_in")
+      .maybeSingle();
+
+    // BOTH legs are uncorrectable through the RPC — refused with the message
+    // that names the honest instrument (a compensating transfer).
+    for (const legId of [String(legOut.data?.id ?? ""), String(legIn.data?.id ?? "")]) {
+      const r = await rpc(userClient(dualToken)).rpc("record_stock_correction", {
+        p_org_id: orgA,
+        p_movement_id: legId,
+        p_reason: "reverse this leg",
+      });
+      expect(r.error, "a transfer leg was correctable").not.toBeNull();
+      expect(r.error?.message ?? "").toMatch(/leg of a transfer/i);
+    }
+
+    // ...and a DIRECT PostgREST correction insert is refused too — the structural
+    // backstop in tg_stock_movements_derive covers the member insert policy.
+    const direct = await db(userClient(dualToken))
+      .from("stock_movements")
+      .insert({
+        org_id: orgA,
+        stock_item_id: item,
+        site_id: src,
+        movement_type: "correction",
+        qty: 10,
+        corrects_movement_id: String(legOut.data?.id ?? ""),
+        notes: "direct leg correction",
+      });
+    expect(direct.error, "a direct-insert leg correction slipped through").not.toBeNull();
+
+    // CONSERVATION HELD: total unchanged, and the pair is intact (0 @ src, 10 @ dst).
+    expect(await companyTotal(orgA), "stock was manufactured").toBe(before);
+    expect(await balance(orgA, item, src)).toBe(0);
+    expect(await balance(orgA, item, dst)).toBe(10);
+  });
+
+  it("a wrong transfer is undone by a COMPENSATING transfer, which conserves", async () => {
+    // The honest instrument the refusal points at: a transfer the other way is
+    // itself a conserving pair, so the goods can always be moved back and nothing
+    // else can. This is what the operator does instead of correcting a leg.
+    const s1 = await makeSite(orgA, "Comp source");
+    const s2 = await makeSite(orgA, "Comp dest");
+    const item = await makeItem(orgA, "Comp blocks");
+    await rpc(userClient(dualToken)).rpc("record_stock_adjustment", {
+      p_org_id: orgA,
+      p_item_id: item,
+      p_site_id: s1,
+      p_delta: 10,
+      p_reason: "seed",
+    });
+    const total = await companyTotal(orgA);
+    await rpc(userClient(dualToken)).rpc("record_stock_transfer", {
+      p_org_id: orgA,
+      p_item_id: item,
+      p_from_site_id: s1,
+      p_to_site_id: s2,
+      p_qty: 10,
+      p_notes: "wrong way",
+    });
+    const back = await rpc(userClient(dualToken)).rpc("record_stock_transfer", {
+      p_org_id: orgA,
+      p_item_id: item,
+      p_from_site_id: s2,
+      p_to_site_id: s1,
+      p_qty: 10,
+      p_notes: "put it back",
+    });
+    expect(back.error, back.error?.message).toBeNull();
+    expect(await balance(orgA, item, s1)).toBe(10);
+    expect(await balance(orgA, item, s2)).toBe(0);
+    expect(await companyTotal(orgA), "the compensating transfer conserves").toBe(total);
+  });
+
   // ── the GRN void rule ─────────────────────────────────────────────────────
   it("REFUSES to void a delivery whose stock receipt still stands", async () => {
     const grn = await svc()

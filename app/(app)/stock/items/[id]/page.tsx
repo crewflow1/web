@@ -296,7 +296,16 @@ export default async function StockItemPage({
                     </div>
                     <div className="shrink-0 text-right">
                       <Effect row={m} unit={unit} />
-                      {!reversed && m.movement_type !== "correction" ? (
+                      {/*
+                        A TRANSFER LEG IS NOT REVERSIBLE ON ITS OWN. Correcting a
+                        single leg of a conserving pair invents stock at one site
+                        (20261069000000) — the database refuses it. The honest
+                        undo is a compensating transfer the other way, so we point
+                        at that instead of offering a button that would 500.
+                      */}
+                      {m.transfer_group_id ? (
+                        <p className="mt-1 text-xs text-slate-400">Move it back with a transfer</p>
+                      ) : !reversed && m.movement_type !== "correction" ? (
                         <div className="mt-1">
                           <CorrectMovementForm
                             itemId={item.id}

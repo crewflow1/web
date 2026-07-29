@@ -223,6 +223,9 @@ export function friendlyStockError(
   if (/already been used/.test(m)) {
     return "Some of that has already been used, so it can’t be reversed in full. Record an adjustment with a reason instead.";
   }
+  if (/leg of a transfer/.test(m)) {
+    return "That’s one leg of a transfer. Move it back with a transfer the other way — reversing a single leg would create stock at one site.";
+  }
   if (/is immutable/.test(m) || /append-only/.test(m)) {
     return "Stock movements can’t be edited or deleted — record a correction instead.";
   }

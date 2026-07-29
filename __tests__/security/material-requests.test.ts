@@ -332,6 +332,29 @@ describe("database-level enforcement", () => {
   });
 });
 
+// ── 4b. Navigation: no revalidatePath (the deep-swap commit race) ───────────
+
+describe("navigation — redirectTo, never revalidatePath (the deep-swap race)", () => {
+  it("the actions file performs NO revalidatePath / revalidateTag", () => {
+    // The [id] route is force-dynamic and every button posts through StateForm
+    // (useActionState). Next 15.5 re-renders a revalidated route INSIDE the
+    // action response and strands the state commit — the write lands, the form
+    // hangs, and "an operator would issue the same stock twice". The stock lane
+    // bisected exactly this and the fleet lane documents the ban; these actions
+    // drive every flow through redirectTo (a full document navigation) instead.
+    expect(ACTIONS).not.toMatch(/revalidatePath\(/);
+    expect(ACTIONS).not.toMatch(/revalidateTag\(/);
+    // The reason must survive next to the absence, so it cannot creep back.
+    expect(ACTIONS).toMatch(/deep-swap commit race/);
+  });
+
+  it("every exported action returns via formSuccess (redirectTo or a message), never redirect()", () => {
+    // redirect() from a deep server action is the other half of the same race
+    // (StateForm.tsx). The actions here must not call it.
+    expect(tsCode(ACTIONS)).not.toMatch(/\bredirect\(/);
+  });
+});
+
 // ── 5. SQL / TypeScript graph agreement ─────────────────────────────────────
 
 describe("the TypeScript mirror agrees with the SQL enforcer", () => {
