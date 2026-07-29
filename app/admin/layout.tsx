@@ -56,6 +56,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/notes", label: "Internal notes" },
   { href: "/admin/health", label: "Customer health" },
   { href: "/admin/ops", label: "Ops" },
+  { href: "/admin/ai-costs", label: "AI costs" },
   { href: "/admin/automations", label: "Automations" },
   { href: "/admin/launch-checklist", label: "Launch checklist" },
   { href: "/admin/settings", label: "Settings" },
