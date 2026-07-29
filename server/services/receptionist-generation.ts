@@ -1,5 +1,6 @@
 import "server-only";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
+import { invokeWithGovernor } from "@/lib/ai/governor";
 import { getConversationContext } from "@/server/services/receptionist-conversation-context";
 import {
   prepareGenerationInstruction,
@@ -89,13 +90,59 @@ export async function generateConversationResponse(
   const startedAt = Date.now();
   let result: TextResult;
   try {
-    result = await provider.generate(instruction.user, {
-      system: instruction.system,
-      temperature: instruction.temperature,
-      maxTokens: instruction.max_tokens,
-    });
+    // GOVERNED. The one door to a model is now also the one door to the AI Cost
+    // Governor (lib/ai/governor.ts): the ceiling, the recent-duplicate refusal
+    // and the ledger wrap this call, so activation day inherits governance for
+    // free rather than acquiring it later. This is the seam BOTH the phone
+    // receptionist and the WhatsApp draft-first path reach a model through —
+    // governing it here governs both, with no per-channel duplication.
+    //
+    // DARK TODAY: no tier is bound and no credential is set, so `getTextProvider()`
+    // above already returned null and this line is unreachable in production; the
+    // deterministic acknowledgement is the live behaviour, unchanged.
+    //
+    // EVENT-DRIVEN: this runs on an INBOUND MESSAGE — a real conversational
+    // turn that just happened — never on a page render or a poll.
+    const outcome = await invokeWithGovernor(
+      "receptionist.reply_draft",
+      "drafting",
+      async () => {
+        const generated = await provider.generate(instruction.user, {
+          system: instruction.system,
+          temperature: instruction.temperature,
+          maxTokens: instruction.max_tokens,
+        });
+        return {
+          value: generated,
+          usage: {
+            provider: provider.info.provider,
+            model: generated.model,
+            inputTokens: generated.inputTokens,
+            outputTokens: generated.outputTokens,
+          },
+        };
+      },
+      {
+        orgId: request.org_id,
+        // A system-initiated turn: the inbound webhook has no signed-in user.
+        userId: null,
+        // Identical instruction for the same conversation within the dedupe
+        // window ⇒ the same draft; re-asking is pure waste.
+        dedupeContent: `${request.conversation_id} ${instruction.system} ${instruction.user}`,
+      },
+    );
+    if (outcome.status === "blocked") {
+      // The org is at its monthly ceiling. Generation stays TOTAL — the
+      // deterministic acknowledgement runs, exactly as it does with no provider.
+      return fallbackResponse(request.channel, "budget_blocked");
+    }
+    if (outcome.status === "duplicate") {
+      return fallbackResponse(request.channel, "duplicate_request");
+    }
+    result = outcome.value;
   } catch (err) {
     // A transient provider failure degrades to the deterministic draft — generation never fails.
+    // The governor has already RECORDED the failure and rethrown; this catch is unchanged.
     return fallbackResponse(request.channel, `provider_error: ${errMessage(err)}`);
   }
   const latencyMs = Date.now() - startedAt;

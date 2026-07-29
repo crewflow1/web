@@ -4,6 +4,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { isAiConfigured } from "@/lib/ai/safety";
+import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
 import {
   evaluateReply,
   isAutoSendable,
@@ -2174,8 +2175,8 @@ export async function processInboundEnquiry(
     }
   }
 
-  // Step 2 — AI extraction (or deterministic fallback).
-  const extraction = await extractFields(input.raw_text ?? "");
+  // Step 2 — AI extraction (or deterministic fallback), under the cost governor.
+  const extraction = await extractFields(input.raw_text ?? "", input.org_id);
 
   // Step 3 — create the lead. We do NOT create a customer row yet
   // (the directive's "AI NEVER commits work" rule). The owner can
@@ -2433,46 +2434,97 @@ export async function recordWhatsAppDeliveryReceipt(
 // Extraction — AI or deterministic
 // ---------------------------------------------------------------------
 
-async function extractFields(rawText: string): Promise<InboundExtraction> {
+/**
+ * GOVERNED. The inbound-enquiry extraction — the first LLM call on the phone AND
+ * WhatsApp ingestion paths (the WhatsApp webhook hands every message to
+ * `processInboundEnquiry`, which calls this). Wrapped in `invokeWithGovernor`
+ * (lib/ai/governor.ts) so the £100/month/org ceiling, the recent-duplicate
+ * refusal and the invocation ledger are already in the path on activation day.
+ *
+ * DARK TODAY: no tier is bound and no credential is set, so `isAiConfigured()`
+ * is false and the deterministic extraction (keyword urgency + postcode regex)
+ * is the live behaviour — unchanged, and reached without the governor touching
+ * the database.
+ *
+ * SYSTEM JOB: an inbound webhook has no signed-in user, so the ledger records
+ * `user_id: null`. That is exactly the case the column is nullable for.
+ *
+ * EVENT-DRIVEN: this runs when a message ARRIVES. It is never on a render path.
+ */
+async function extractFields(rawText: string, orgId: string): Promise<InboundExtraction> {
   // No AI key → deterministic fallback (keyword urgency + postcode
   // regex). Always returns SOMETHING so the lead still creates.
   if (!isAiConfigured() || !rawText.trim()) {
     return deterministicExtract(rawText);
   }
   try {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-    const msg = await client.messages.create(
+    const outcome = await invokeWithGovernor(
+      "receptionist.inbound_extraction",
+      "classification",
+      () => extractFieldsWithProvider(rawText),
       {
-        model: "claude-haiku-4-5",
-        max_tokens: 500,
-        system: [
-          "You are CrewFlow Receptionist, processing an inbound enquiry for a UK construction firm.",
-          "Read the transcript / message and return ONE JSON object only:",
-          '{ "summary": "...", "confidence": 0-100, "job_type": "...", "urgency": "low"|"medium"|"high"|"urgent"|null, "postcode": "..."|null, "budget_gbp": number|null }',
-          "Rules:",
-          "- summary: 1-2 sentences, plain prose, no markdown",
-          "- confidence: how reliable the extraction is (high if explicit, low if guessed)",
-          "- urgency: 'urgent' if customer mentioned emergency/leak/flood/no-heat, else infer",
-          "- DO NOT invent budget. If unstated, return null.",
-          "- DO NOT promise prices or book appointments.",
-          "- postcode: UK format only (e.g. SW1A 1AA), null if not present",
-        ].join("\n"),
-        messages: [{ role: "user", content: rawText }],
+        orgId,
+        userId: null,
+        // A webhook redelivery of the same message must not be extracted twice.
+        dedupeContent: rawText,
       },
-      { signal: AbortSignal.timeout(10_000) },
     );
-    const block = msg.content[0];
-    if (block?.type === "text") {
-      const raw = extractJson(block.text);
-      if (raw && typeof raw === "object") {
-        return normaliseExtraction(raw as Record<string, unknown>);
-      }
-    }
+    // `blocked` and `duplicate` degrade to the deterministic extraction — the
+    // same path a missing key takes. Ingestion never fails for a cost reason.
+    if (outcome.status === "ran") return outcome.value;
   } catch (e) {
+    // The governor recorded the failure and rethrew; this catch is unchanged.
     console.error("[receptionist] LLM extraction failed", e);
   }
   return deterministicExtract(rawText);
+}
+
+/**
+ * The provider leg, isolated so the governor can time it and account for it.
+ * Reports the vendor's own billed token counts; throws on any provider failure.
+ */
+async function extractFieldsWithProvider(
+  rawText: string,
+): Promise<GovernedCall<InboundExtraction>> {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const model = "claude-haiku-4-5";
+  const msg = await client.messages.create(
+    {
+      model,
+      max_tokens: 500,
+      system: [
+        "You are CrewFlow Receptionist, processing an inbound enquiry for a UK construction firm.",
+        "Read the transcript / message and return ONE JSON object only:",
+        '{ "summary": "...", "confidence": 0-100, "job_type": "...", "urgency": "low"|"medium"|"high"|"urgent"|null, "postcode": "..."|null, "budget_gbp": number|null }',
+        "Rules:",
+        "- summary: 1-2 sentences, plain prose, no markdown",
+        "- confidence: how reliable the extraction is (high if explicit, low if guessed)",
+        "- urgency: 'urgent' if customer mentioned emergency/leak/flood/no-heat, else infer",
+        "- DO NOT invent budget. If unstated, return null.",
+        "- DO NOT promise prices or book appointments.",
+        "- postcode: UK format only (e.g. SW1A 1AA), null if not present",
+      ].join("\n"),
+      messages: [{ role: "user", content: rawText }],
+    },
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  const usage = {
+    provider: "anthropic",
+    model: msg.model ?? model,
+    inputTokens: msg.usage?.input_tokens ?? 0,
+    outputTokens: msg.usage?.output_tokens ?? 0,
+  };
+  const block = msg.content[0];
+  if (block?.type === "text") {
+    const raw = extractJson(block.text);
+    if (raw && typeof raw === "object") {
+      return { value: normaliseExtraction(raw as Record<string, unknown>), usage };
+    }
+  }
+  // An unparseable response still cost what it cost — report the usage and let
+  // the caller fall back, exactly as before.
+  return { value: deterministicExtract(rawText), usage };
 }
 
 function deterministicExtract(raw: string): InboundExtraction {
