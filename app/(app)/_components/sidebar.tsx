@@ -41,6 +41,12 @@ const ADMIN_LINKS = [
   { href: "/operations", label: "Operations" },
   { href: "/assets", label: "Assets" },
   { href: "/fleet", label: "Fleet" },
+  // Stock sits with the estate, between the registers of THINGS (assets, fleet)
+  // and the register of PLACES (sites) — it is the one that joins them: a
+  // quantity of a thing, at a place. Not under Purchase orders: buying and
+  // holding are different questions, and the stock you hold outlives the order
+  // it arrived on.
+  { href: "/stock", label: "Stock" },
   // The company's own places (depots, yards, lock-ups) — reference data both
   // registers above point at. NOT customer job sites, which live on the job.
   { href: "/sites", label: "Sites" },
