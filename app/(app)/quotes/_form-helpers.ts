@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Shared server-only fetchers for the quote builder dropdowns.
@@ -20,12 +21,13 @@ export type LeadOption = { id: string; label: string; customer_id: string | null
 
 export async function listCustomersForQuote(orgId: string): Promise<CustomerOption[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("customers")
     .select("id, name")
     .eq("org_id", orgId)
     .order("name", { ascending: true })
     .limit(1000);
+  if (error) throw readFailure("quote form: customers", error);
   return data ?? [];
 }
 
@@ -33,11 +35,12 @@ export async function listPropertiesForQuote(orgId: string): Promise<PropertyOpt
   const supabase = await createClient();
   // Properties = sites/addresses. Best-effort human label from the
   // jsonb address ({ line1, postcode } shape).
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .select("id, customer_id, address")
     .eq("org_id", orgId)
     .limit(1000);
+  if (error) throw readFailure("quote form: properties", error);
   return (data ?? []).map((p) => {
     const addr =
       (p.address as { line1?: string; postcode?: string } | null) ?? {};
@@ -48,12 +51,13 @@ export async function listPropertiesForQuote(orgId: string): Promise<PropertyOpt
 
 export async function listLeadsForQuote(orgId: string): Promise<LeadOption[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("leads")
     .select("id, customer_id, service, postcode, urgency, created_at")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(500);
+  if (error) throw readFailure("quote form: leads", error);
   return (data ?? []).map((l) => ({
     id: l.id,
     customer_id: l.customer_id ?? null,

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import {
@@ -87,7 +88,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     query = query.or(leadOr);
   }
 
-  const { data: raw } = await query;
+  const { data: raw, error } = await query;
+  if (error) throw readFailure("leads pipeline: leads", error);
   const leads = raw ?? [];
 
   // Bucket by stage. Anything unknown defaults to "new" for display.
@@ -281,7 +283,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
                 </header>
                 <ul className="flex-1 space-y-2 p-2">
                   {cards.length === 0 ? (
-                    <li className="rounded-md border border-dashed border-slate-200 bg-white py-6 text-center text-xs text-slate-400">
+                    <li className="rounded-md border border-dashed border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
                       Nothing here yet
                     </li>
                   ) : (

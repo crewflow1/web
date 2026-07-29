@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   type FormState,
   formError,
@@ -138,11 +139,12 @@ export async function removeInvoicePayment(paymentId: string) {
 
   const supabase = await createClient();
   // Lookup so we can revalidate the right invoice path.
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("invoice_payments")
     .select("invoice_id, org_id")
     .eq("id", paymentId)
     .maybeSingle();
+  if (rowError) throw readFailure("invoice payments: remove lookup", rowError);
   if (!row) redirect("/invoices?error=not_found");
   if (row.org_id !== ctx.org.id) redirect("/invoices?error=forbidden");
 

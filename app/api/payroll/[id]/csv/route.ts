@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { payrollCsv } from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 export const runtime = "nodejs";
 
@@ -21,7 +23,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: run }, { data: lines }, niByUser] = await Promise.all([
+  const [{ data: run, error: runError }, { data: lines, error: linesError }, niByUser] = await Promise.all([
     supabase
       .from("payroll_runs")
       .select("cycle, period_start, period_end, org_id")
@@ -40,6 +42,19 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     fetchNiNumbersForOrg(ctx.org.id),
   ]);
 
+  // A Promise.all array destructure quietly discards `error`. It did here: a
+  // failed `payroll_lines` read exported a HEADER-ONLY payroll CSV — a file an
+  // accountant or bureau would reasonably read as "nobody was paid this
+  // period" and file on. 500 instead; a missing download is recoverable, a
+  // wrong one that reaches a payroll bureau is not.
+  if (runError) {
+    Sentry.captureException(readFailure("payroll csv: run", runError));
+    return NextResponse.json({ error: "read_failed" }, { status: 500 });
+  }
+  if (linesError) {
+    Sentry.captureException(readFailure("payroll csv: lines", linesError));
+    return NextResponse.json({ error: "read_failed" }, { status: 500 });
+  }
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const csv = payrollCsv(

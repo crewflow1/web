@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { SNAG_PRIORITIES, SNAG_PRIORITY_LABELS } from "@/lib/snags/schema";
 import { createSnag } from "../actions";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the snag. Try again.",
@@ -28,7 +29,7 @@ export default async function NewSnagPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: jobsRaw }, staff] = await Promise.all([
+  const [{ data: jobsRaw, error: jobsError }, staff] = await Promise.all([
     supabase
       .from("jobs")
       .select("id, status, scheduled_date, customer:customers ( name )")
@@ -39,6 +40,7 @@ export default async function NewSnagPage({
       .limit(200),
     listStaffForOrg(ctx.org.id),
   ]);
+  if (jobsError) throw readFailure("snags: job picker", jobsError);
   const jobs = (jobsRaw ?? []) as unknown as JobOption[];
 
   const errorMessage = sp.error

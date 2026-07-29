@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
@@ -67,7 +68,10 @@ export default async function PortalQuotesPage({
     q = q.eq("status", sp.status);
   }
 
-  const { data: quotes } = await q;
+  const { data: quotes, error: quotesError } = await q;
+  if (quotesError) {
+    throw readFailure("portal quotes: quotes", quotesError);
+  }
   const rows = quotes ?? [];
 
   // Render-friendly visible statuses — same list as the internal app.

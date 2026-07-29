@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   createLeadSchema,
@@ -196,12 +197,15 @@ export async function acknowledgeLead(id: string, formData: FormData) {
   // org's 72h/7d follow-up reminders and corrupting its state row. Confirm the
   // lead is in this org on the RLS-scoped tenant client BEFORE any admin write.
   const supabase = await createClient();
-  const { data: lead } = await supabase
+  const { data: lead, error: leadError } = await supabase
     .from("leads")
     .select("id")
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // Fail loud on a rejected read — falling through to not_found here would let
+  // a transient failure masquerade as a missing lead.
+  if (leadError) throw readFailure("lead acknowledge: lead", leadError);
   if (!lead) redirect(`/leads/${id}?error=not_found`);
 
   const { markLeadActed } = await import("@/server/services/lead-followups");

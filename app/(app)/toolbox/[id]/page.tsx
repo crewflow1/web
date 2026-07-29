@@ -14,6 +14,7 @@ import {
 import { SignoffPanel } from "../../health-safety/_signoff-panel";
 import { listAcknowledgements, requiredOperatives, priorRevisionSignoff } from "../../health-safety/_signoff-data";
 import { summariseSignoff, TOOLBOX_REVISABLE } from "@/lib/health-safety/acknowledgements";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   createToolboxTalkRevision,
   deleteToolboxTalk,
@@ -83,11 +84,14 @@ export default async function ToolboxTalkPage({
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: talk } = await (
+  const { data: talk, error: talkError } = await (
     supabase.from("toolbox_talks" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TalkRow | null }> };
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          maybeSingle: () => Promise<{ data: TalkRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -96,8 +100,8 @@ export default async function ToolboxTalkPage({
       "id, status, reference, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, presenter, ppe, attendees, attendee_count, notes, job_id, risk_assessment_id, permit_to_work_id, created_by, issued_by, issued_at, created_at",
     )
     .eq("id", id)
-    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (talkError) throw readFailure("toolbox talk: detail", talkError);
 
   if (!talk) notFound();
 
@@ -396,13 +400,15 @@ export default async function ToolboxTalkPage({
 
 type SiblingRow = { id: string; status: ToolboxTalkStatus; revision_number: number; reference: string | null };
 async function loadRevisionSeries(supabase: unknown, rootId: string): Promise<SiblingRow[]> {
-  const { data } = await (
+  const { data, error } = await (
     supabase as { from: (t: string) => any } // eslint-disable-line @typescript-eslint/no-explicit-any
   )
     .from("toolbox_talks")
     .select("id, status, revision_number, reference")
     .eq("root_toolbox_talk_id", rootId)
     .order("revision_number", { ascending: false });
+  // Loud fail: an empty series skews the revise CTA and hides history.
+  if (error) throw readFailure("toolbox talk: revision series", error);
   return (data ?? []) as SiblingRow[];
 }
 

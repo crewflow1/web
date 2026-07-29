@@ -45,7 +45,7 @@ export function RecordBillForm({ poId }: { poId: string }) {
         </label>
         <label className="text-sm">
           <span className="text-slate-600">
-            Supplier invoice no. <span className="text-slate-400">optional</span>
+            Supplier invoice no. <span className="text-slate-500">optional</span>
           </span>
           <input
             name="reference"
@@ -56,7 +56,7 @@ export function RecordBillForm({ poId }: { poId: string }) {
         </label>
         <label className="text-sm">
           <span className="text-slate-600">
-            Bill date <span className="text-slate-400">optional</span>
+            Bill date <span className="text-slate-500">optional</span>
           </span>
           <input
             name="bill_date"

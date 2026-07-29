@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
@@ -13,12 +11,22 @@ import {
   createAssetSchema,
   type AssetStatus,
 } from "@/lib/assets/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Asset register actions. `assets` is newer than the generated Supabase types,
  * so queries are cast through minimal precise shapes (the snags/toolbox idiom).
  * All writes go through the tenant (user-JWT) client so RLS scopes them; every
  * mutation is count-gated.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a Server-Action redirect back to /assets/[id] swaps the page segment itself
+ * and loses the Next 15.5 stranded-commit race (upstream vercel/next.js#83386):
+ * the row is written but the URL never changes and no error surfaces. See
+ * components/forms/StateForm.tsx. No revalidatePath, deliberately: these
+ * surfaces render per-request (cookie-authed reads, no Next data cache), so
+ * revalidating only added weight to the racy action response.
  */
 
 type InsertChain = {
@@ -57,7 +65,7 @@ type AttachmentIdsChain = {
   };
 };
 
-export async function createAsset(formData: FormData): Promise<void> {
+export async function createAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
 
   const parsed = createAssetSchema.safeParse({
@@ -82,10 +90,11 @@ export async function createAsset(formData: FormData): Promise<void> {
   });
   if (!parsed.success) {
     const issues = parsed.error.flatten().fieldErrors;
-    const firstError = Object.values(issues).flat()[0] ?? "validation";
-    redirect(`/assets/new?error=${encodeURIComponent(firstError)}`);
+    return formError(
+      Object.values(issues).flat()[0] ?? "Please check the form and try again.",
+    );
   }
-  const d = parsed.success ? parsed.data : null;
+  const d = parsed.data;
 
   const id = randomUUID();
   const tenant = await createClient();
@@ -94,29 +103,29 @@ export async function createAsset(formData: FormData): Promise<void> {
   ).insert({
     id,
     org_id: ctx.org.id,
-    name: d?.name,
-    category: d?.category ?? null,
-    asset_ref: d?.asset_ref ?? null,
-    manufacturer: d?.manufacturer ?? null,
-    model: d?.model ?? null,
-    serial_number: d?.serial_number ?? null,
-    registration: d?.registration ?? null,
-    ownership: d?.ownership ?? "owned",
-    status: d?.status ?? "active",
-    supplier_id: d?.supplier_id ?? null,
-    purchase_date: d?.purchase_date ?? null,
-    purchase_price: d?.purchase_price ?? null,
-    current_value: d?.current_value ?? null,
-    warranty_expires_at: d?.warranty_expires_at ?? null,
-    hire_start: d?.hire_start ?? null,
-    hire_end: d?.hire_end ?? null,
-    hire_rate: d?.hire_rate ?? null,
-    notes: d?.notes ?? null,
+    name: d.name,
+    category: d.category ?? null,
+    asset_ref: d.asset_ref ?? null,
+    manufacturer: d.manufacturer ?? null,
+    model: d.model ?? null,
+    serial_number: d.serial_number ?? null,
+    registration: d.registration ?? null,
+    ownership: d.ownership,
+    status: d.status,
+    supplier_id: d.supplier_id ?? null,
+    purchase_date: d.purchase_date ?? null,
+    purchase_price: d.purchase_price ?? null,
+    current_value: d.current_value ?? null,
+    warranty_expires_at: d.warranty_expires_at ?? null,
+    hire_start: d.hire_start ?? null,
+    hire_end: d.hire_end ?? null,
+    hire_rate: d.hire_rate ?? null,
+    notes: d.notes ?? null,
     created_by: user.id,
   });
   if (error) {
     console.error("[assets] insert failed", error);
-    redirect(`/assets/new?error=record_failed`);
+    return formError("Couldn't save the asset. Try again.");
   }
 
   await recordAdminActivity({
@@ -125,20 +134,19 @@ export async function createAsset(formData: FormData): Promise<void> {
     action: "asset.created",
     targetTable: "assets",
     targetId: id,
-    metadata: { name: d?.name, ownership: d?.ownership ?? "owned" },
+    metadata: { name: d.name, ownership: d.ownership },
   });
 
-  revalidatePath("/assets");
-  redirect(`/assets/${id}?saved=created`);
+  return formSuccess({ redirectTo: `/assets/${id}?saved=created` });
 }
 
-export async function updateAssetStatus(formData: FormData): Promise<void> {
+export async function updateAssetStatus(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const id = String(formData.get("id") ?? "");
   const status = String(formData.get("status") ?? "");
-  if (!assetIdSchema.safeParse(id).success) redirect(`/assets?error=bad_id`);
+  if (!assetIdSchema.safeParse(id).success) return formError("Invalid asset.");
   if (!(ASSET_STATUSES as readonly string[]).includes(status)) {
-    redirect(`/assets/${id}?error=bad_status`);
+    return formError("Invalid status.");
   }
 
   const tenant = await createClient();
@@ -150,9 +158,9 @@ export async function updateAssetStatus(formData: FormData): Promise<void> {
     .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[assets] status update failed", error);
-    redirect(`/assets/${id}?error=update_failed`);
+    return formError("Couldn't update the asset.");
   }
-  if (!count) redirect(`/assets?error=not_found`);
+  if (!count) return formError("That asset no longer exists.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -163,16 +171,17 @@ export async function updateAssetStatus(formData: FormData): Promise<void> {
     metadata: { to: status },
   });
 
-  revalidatePath(`/assets/${id}`);
-  revalidatePath("/assets");
-  redirect(`/assets/${id}?saved=status`);
+  return formSuccess({ redirectTo: `/assets/${id}?saved=status` });
 }
 
-export async function deleteAsset(id: string): Promise<void> {
+export async function deleteAsset(
+  id: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  if (!assetIdSchema.safeParse(id).success) redirect(`/assets?error=bad_id`);
+  if (!assetIdSchema.safeParse(id).success) return formError("Invalid asset.");
   if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
-    redirect(`/assets?error=forbidden`);
+    return formError("Only an owner or admin can delete an asset.");
   }
 
   const tenant = await createClient();
@@ -196,9 +205,9 @@ export async function deleteAsset(id: string): Promise<void> {
     .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[assets] delete failed", error);
-    redirect(`/assets?error=delete_failed`);
+    return formError("Couldn't delete that asset.");
   }
-  if (!count) redirect(`/assets?error=not_found`);
+  if (!count) return formError("That asset no longer exists.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -209,6 +218,5 @@ export async function deleteAsset(id: string): Promise<void> {
     metadata: { org_id: ctx.org.id },
   });
 
-  revalidatePath("/assets");
-  redirect(`/assets?saved=deleted`);
+  return formSuccess({ redirectTo: "/assets?saved=deleted" });
 }

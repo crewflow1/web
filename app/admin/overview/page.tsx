@@ -144,7 +144,7 @@ export default async function HqOverviewPage() {
         />
       </section>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-slate-600">
         <Link href="/admin/organizations" className="hover:text-slate-700">
           Open the legacy organisations view →
         </Link>

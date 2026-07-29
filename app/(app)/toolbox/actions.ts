@@ -10,6 +10,7 @@ import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
 import { canIssue, canTransition, revisionReference } from "@/lib/health-safety/toolbox-talks";
 import { effectiveStatus, type PermitStatus } from "@/lib/health-safety/permits";
 import { buildToolboxTalkSnapshot, type ToolboxTalkSnapshot } from "@/lib/toolbox-talks/snapshot";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   createToolboxTalkSchema,
   updateToolboxTalkSchema,
@@ -190,13 +191,14 @@ export async function issueToolboxTalk(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   // Load current state (RLS-scoped) + linked docs for the frozen snapshot.
-  const { data: talk } = await tbl(supabase)("toolbox_talks")
+  const { data: talk, error: talkError } = await tbl(supabase)("toolbox_talks")
     .select(
       "id, status, reference, revision_number, talk_date, topic, key_points, location, ppe, presenter, attendees, attendee_count, job_id, risk_assessment_id, permit_to_work_id",
     )
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (talkError) throw readFailure("toolbox: issue load", talkError);
   if (!talk) redirect(`/toolbox?error=not_found`);
   // Only the first issue of a series runs here (revisions use the atomic RPC path);
   // a crafted rev>=2 POST to this action is refused (defence-in-depth, mirrors the RPC).
@@ -303,9 +305,10 @@ export async function createToolboxTalkRevision(formData: FormData): Promise<voi
   if (!isManager(ctx.membership.role)) redirect(`/toolbox/${sourceId}?error=forbidden`);
   const supabase = await createClient();
 
-  const { data: src } = await tbl(supabase)("toolbox_talks")
+  const { data: src, error: srcError } = await tbl(supabase)("toolbox_talks")
     .select("id, status, topic, key_points, location, ppe, presenter, job_id, risk_assessment_id, permit_to_work_id, root_toolbox_talk_id, revision_number")
     .eq("id", sourceId).eq("org_id", ctx.org.id).maybeSingle();
+  if (srcError) throw readFailure("toolbox: revision source", srcError);
   if (!src) redirect(`/toolbox?error=not_found`);
   if (src.status !== "issued") redirect(`/toolbox/${sourceId}?error=only_issued_can_be_revised`);
 
@@ -350,9 +353,10 @@ export async function issueToolboxTalkRevision(formData: FormData): Promise<void
   if (!isManager(ctx.membership.role)) redirect(`/toolbox/${id}?error=forbidden`);
   const supabase = await createClient();
 
-  const { data: talk } = await tbl(supabase)("toolbox_talks")
+  const { data: talk, error: talkError } = await tbl(supabase)("toolbox_talks")
     .select("id, status, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, ppe, presenter, attendees, attendee_count, job_id, risk_assessment_id, permit_to_work_id")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  if (talkError) throw readFailure("toolbox: issue-revision load", talkError);
   if (!talk) redirect(`/toolbox?error=not_found`);
 
   const gate = canIssue({ status: talk.status, topic: talk.topic, key_points: talk.key_points });
@@ -361,8 +365,9 @@ export async function issueToolboxTalkRevision(formData: FormData): Promise<void
   // Compute the revision reference deterministically from the series origin (rev 1);
   // the RPC recomputes the same value authoritatively, so the frozen snapshot carries
   // the correct TBT-NNNN-R0n even though the DB is the source of truth for numbering.
-  const { data: origin } = await tbl(supabase)("toolbox_talks")
+  const { data: origin, error: originError } = await tbl(supabase)("toolbox_talks")
     .select("reference").eq("root_toolbox_talk_id", talk.root_toolbox_talk_id).eq("revision_number", 1).maybeSingle();
+  if (originError) throw readFailure("toolbox: origin reference", originError);
   const originRef = (origin?.reference as string | null) ?? null;
   if (!originRef) redirect(`/toolbox/${id}?error=no_origin_revision`);
   const reference = revisionReference(originRef, talk.revision_number ?? 2);

@@ -37,6 +37,7 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { intelligenceCompleteness } from "@/lib/sales/intelligence";
 import type { ScoreBand } from "@/lib/sales/model";
 import {
@@ -532,10 +533,11 @@ export async function runQualificationTask(taskId?: string): Promise<RunOutcome>
 /** Read back a completed task's verdict decision from its persisted result jsonb. */
 async function decisionOfTask(taskId: string): Promise<QualificationDecision | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{ result: QualificationResult | null }>(admin)
+  const { data, error } = await taskReads<{ result: QualificationResult | null }>(admin)
     .select("result")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-qualification: task decision", error);
   return data?.result?.summary?.decision ?? null;
 }
 
@@ -557,15 +559,21 @@ function hasDirectChannel(c: ContactSignal): boolean {
 
 async function loadContacts(companyId: string): Promise<ContactSignal[]> {
   const admin = createAdminClient();
-  const { data } = await (
+  const { data, error } = await (
     admin.from("hq_sales_contacts" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => PromiseLike<{ data: ContactSignal[] | null }>;
+        eq: (k: string, v: unknown) => PromiseLike<{
+          data: ContactSignal[] | null;
+          error: SupabaseReadError | null;
+        }>;
       };
     }
   )
     .select("is_decision_maker, email, phone, linkedin_url")
     .eq("company_id", companyId);
+  // A failed contacts read must not feed the rubric an empty signal — that
+  // would persist a WRONG verdict, not merely render an empty list.
+  if (error) throw readFailure("hq-qualification: contact signals", error);
   return Array.isArray(data) ? data : [];
 }
 
@@ -577,7 +585,7 @@ export async function getQualificationRunState(
   taskId: string,
 ): Promise<QualificationRunState | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{
+  const { data, error } = await taskReads<{
     id: string;
     subject_id: string | null;
     status: string;
@@ -589,6 +597,7 @@ export async function getQualificationRunState(
     .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-qualification: run state", error);
   if (!data) return null;
 
   const company = data.subject_id ? await getCompany(data.subject_id) : null;
@@ -611,12 +620,13 @@ export async function getQualificationRunState(
  *  link straight to a live or finished run. */
 export async function latestQualificationTaskId(companyId: string): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{ id: string }>(admin)
+  const { data, error } = await taskReads<{ id: string }>(admin)
     .select("id")
     .eq("subject_id", companyId)
     .eq("task_type", QUALIFY_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(1);
+  if (error) throw readFailure("hq-qualification: latest qualification task", error);
   return Array.isArray(data) && data[0] ? data[0].id : null;
 }
 
@@ -688,11 +698,12 @@ type RecentTaskRow = {
 export async function listRecentQualificationRuns(limit = 12): Promise<QualificationRunRow[]> {
   const admin = createAdminClient();
   const capped = Math.min(Math.max(limit, 1), 50);
-  const { data } = await taskReads<RecentTaskRow>(admin)
+  const { data, error } = await taskReads<RecentTaskRow>(admin)
     .select("id, subject_id, status, result, created_at, finished_at")
     .eq("task_type", QUALIFY_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(capped);
+  if (error) throw readFailure("hq-qualification: recent qualification runs", error);
 
   const rows = Array.isArray(data) ? data : [];
   const names = await loadCompanyNames(
@@ -743,12 +754,13 @@ export async function getQualificationMetrics(): Promise<QualificationMetrics> {
   ]);
 
   // Aggregate the most-recent completed runs' summaries (capped window).
-  const { data } = await taskReads<{ result: QualificationResult | null; finished_at: string | null }>(admin)
+  const { data, error } = await taskReads<{ result: QualificationResult | null; finished_at: string | null }>(admin)
     .select("result, finished_at")
     .eq("task_type", QUALIFY_TASK_TYPE)
     .eq("status", "completed")
     .order("finished_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("hq-qualification: metrics aggregate", error);
 
   let qualified = 0;
   let disqualified = 0;
@@ -853,7 +865,7 @@ export async function getQualificationReport(
   taskId: string,
 ): Promise<QualificationReportView | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{
+  const { data, error } = await taskReads<{
     id: string;
     subject_id: string | null;
     status: string;
@@ -865,6 +877,7 @@ export async function getQualificationReport(
     .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-qualification: qualification report", error);
   if (!data) return null;
 
   const company = data.subject_id ? await getCompany(data.subject_id) : null;

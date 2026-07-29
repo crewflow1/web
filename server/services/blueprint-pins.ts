@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -26,7 +27,7 @@ export type PinResult<T = { id: string }> = { ok: true; data: T } | { ok: false;
 
 // Minimal structural view of the tenant client for the stale generated types
 // (blueprint_pins is not yet in lib/supabase/types). Mirrors blueprints.ts.
-type PinRows = { data: Record<string, unknown>[] | null; error: unknown };
+type PinRows = { data: Record<string, unknown>[] | null; error: SupabaseReadError | null };
 type PinChain = PromiseLike<PinRows> & {
   eq: (k: string, v: unknown) => PinChain;
   in: (k: string, v: unknown[]) => PinChain;
@@ -64,12 +65,13 @@ type RawPin = {
 export async function listPinsForVersion(versionId: string): Promise<BlueprintPin[]> {
   const { ctx } = await requireOrgContext();
   const supabase = pc(await createClient());
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("blueprint_pins")
     .select("id, blueprint_version_id, page_number, u, v, kind, title, note, snag_id, created_at")
     .eq("blueprint_version_id", versionId)
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: true });
+  if (error) throw readFailure("blueprint-pins: pins for version", error);
   const pins = (rows ?? []) as unknown as RawPin[];
   if (pins.length === 0) return [];
 
@@ -102,12 +104,13 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
 export async function listLinkableSnags(jobId: string): Promise<{ id: string; title: string; status: SnagStatus }[]> {
   const { ctx } = await requireOrgContext();
   const supabase = pc(await createClient());
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("snags")
     .select("id, title, status")
     .eq("job_id", jobId)
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false });
+  if (error) throw readFailure("blueprint-pins: linkable snags", error);
   return ((data ?? []) as unknown as { id: string; title: string; status: SnagStatus }[]).filter(
     (s) => s.status !== "verified" && s.status !== "wont_fix",
   );

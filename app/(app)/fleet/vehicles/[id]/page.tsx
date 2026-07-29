@@ -18,9 +18,10 @@ import {
   type FuelType,
   type OperationalStatus,
 } from "@/lib/fleet/schema";
-import { loadSupplierOptions, loadVehicleForOrg } from "../../_components/load";
+import { loadSiteOptions, loadSupplierOptions, loadVehicleForOrg } from "../../_components/load";
 import { recordComplianceCompletion, saveComplianceSchedule, deactivateComplianceSchedule } from "../../compliance-actions";
 import { createFuelLog } from "../../fuel-actions";
+import { StateForm } from "../../_components/state-form";
 import {
   Banner,
   CompliancePill,
@@ -67,10 +68,16 @@ export default async function VehiclePage({
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
 
-  const [detail, suppliers] = await Promise.all([
+  const [detail, suppliers, sites] = await Promise.all([
     loadVehicleDetail(ctx.org.id, id),
     loadSupplierOptions(ctx.org.id),
+    // Org-pinned; includes a retired site when this vehicle still points at one,
+    // so the detail page never shows a blank where a real home site exists.
+    loadSiteOptions(ctx.org.id, vehicle.homeSiteId),
   ]);
+  const homeSite = vehicle.homeSiteId
+    ? (sites.find((s) => s.id === vehicle.homeSiteId) ?? null)
+    : null;
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const inService = isInService(vehicle);
@@ -290,7 +297,7 @@ export default async function VehiclePage({
                           critical={c.severity === "critical"}
                         />
                       ) : (
-                        <span className="text-xs text-slate-400">Not tracked</span>
+                        <span className="text-xs text-slate-500">Not tracked</span>
                       )}
                     </div>
 
@@ -299,7 +306,7 @@ export default async function VehiclePage({
                         <summary className="cursor-pointer text-xs font-medium text-slate-600 hover:text-slate-900">
                           Record it as done
                         </summary>
-                        <form
+                        <StateForm
                           action={recordComplianceCompletion}
                           className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3"
                         >
@@ -380,12 +387,12 @@ export default async function VehiclePage({
                               Record
                             </button>
                           </div>
-                        </form>
+                        </StateForm>
                       </details>
                     ) : null}
 
                     {s.active ? (
-                      <form action={deactivateComplianceSchedule} className="mt-1">
+                      <StateForm action={deactivateComplianceSchedule} className="mt-1">
                         <input type="hidden" name="asset_id" value={id} />
                         <input type="hidden" name="schedule_id" value={s.id} />
                         <button
@@ -394,7 +401,7 @@ export default async function VehiclePage({
                         >
                           Stop tracking
                         </button>
-                      </form>
+                      </StateForm>
                     ) : null}
                   </li>
                 );
@@ -407,7 +414,7 @@ export default async function VehiclePage({
             <summary className="cursor-pointer text-xs font-semibold text-slate-700 hover:text-slate-900">
               Add a renewal date
             </summary>
-            <form action={saveComplianceSchedule} className="mt-2 grid gap-2 sm:grid-cols-4">
+            <StateForm action={saveComplianceSchedule} className="mt-2 grid gap-2 sm:grid-cols-4">
               <input type="hidden" name="asset_id" value={id} />
               <div>
                 <label htmlFor="new-type" className={labelClass}>
@@ -469,7 +476,7 @@ export default async function VehiclePage({
                   Standing renewal dates are an owner/admin setting.
                 </p>
               </div>
-            </form>
+            </StateForm>
           </details>
         </div>
       </SectionCard>
@@ -532,7 +539,7 @@ export default async function VehiclePage({
       {/* ── Fuel ──────────────────────────────────────────────────────────── */}
       <SectionCard title="Fuel" id="fuel">
         <div className="border-b border-slate-100 p-3">
-          <form action={createFuelLog} className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <StateForm action={createFuelLog} className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
             <input type="hidden" name="asset_id" value={id} />
             <div>
               <label htmlFor="filled_on" className={labelClass}>
@@ -614,7 +621,7 @@ export default async function VehiclePage({
                 </span>
               </span>
             </label>
-          </form>
+          </StateForm>
         </div>
 
         {detail.fuel.length === 0 ? (
@@ -715,7 +722,13 @@ export default async function VehiclePage({
             value={vehicle.grossWeightKg ? `${vehicle.grossWeightKg.toLocaleString("en-GB")} kg` : null}
           />
           <Detail label="MOT exempt" value={vehicle.motExempt ? "Yes" : "No"} />
-          <Detail label="Home depot" value={vehicle.homeDepot} />
+          {/* The named site is the authority; the free text is shown only when
+              there is no site to show, so the two can never contradict each
+              other on screen. */}
+          <Detail
+            label="Home site"
+            value={homeSite ? `${homeSite.name}${homeSite.active ? "" : " (retired)"}` : vehicle.homeDepot}
+          />
           <Detail
             label="Availability"
             value={OPERATIONAL_STATUS_LABELS[vehicle.operationalStatus as OperationalStatus] ?? null}
@@ -766,7 +779,7 @@ function Detail({
     <div className="flex justify-between gap-3 border-b border-slate-50 py-1 last:border-0">
       <dt className="text-slate-500">{label}</dt>
       <dd className={`text-right text-slate-900 ${mono ? "font-mono text-xs" : ""}`}>
-        {value || <span className="text-slate-400">—</span>}
+        {value || <span className="text-slate-500">—</span>}
       </dd>
     </div>
   );

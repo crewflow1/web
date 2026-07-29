@@ -8,6 +8,7 @@ import {
 } from "../actions";
 import { CreateLeaveForm } from "./_create-form";
 import { formatDateUK } from "@/lib/time/format";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Leave requests — submit, review (approve/reject), cancel.
@@ -55,12 +56,12 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: myRow } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
+  // Current user's role — from ctx (own membership in the ACTIVE org); an
+  // unfiltered memberships read returns every member's row and `.single()`
+  // errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const filter = sp.filter ?? (isAdmin ? "pending" : "mine");
 
@@ -75,7 +76,8 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   if (filter === "mine") q = q.eq("user_id", user.id);
   if (filter === "pending") q = q.eq("status", "pending");
 
-  const { data: rowsRaw } = await q;
+  const { data: rowsRaw, error: rowsError } = await q;
+  if (rowsError) throw readFailure("leave: requests", rowsError);
   const rows = (rowsRaw ?? []) as LeaveRow[];
 
   // Member name lookup.
@@ -90,13 +92,14 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
 
   // Leave calendar: org-wide upcoming approved + pending leave.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const { data: upcomingRaw } = await supabase
+  const { data: upcomingRaw, error: upcomingError } = await supabase
     .from("leave_requests")
     .select("id, user_id, type, starts_at, ends_at, status")
     .eq("org_id", ctx.org.id)
     .in("status", ["approved", "pending"])
     .gte("ends_at", todayIso)
     .order("starts_at", { ascending: true });
+  if (upcomingError) throw readFailure("leave: upcoming calendar", upcomingError);
   const upcoming = (upcomingRaw ?? []) as Pick<
     LeaveRow,
     "id" | "user_id" | "type" | "starts_at" | "ends_at" | "status"
@@ -168,7 +171,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
                 </div>
                 <div className="text-right text-slate-600">
                   {formatDateUK(r.starts_at)} – {formatDateUK(r.ends_at)}
-                  <span className="ml-2 text-[11px] text-slate-400">{r.status}</span>
+                  <span className="ml-2 text-[11px] text-slate-500">{r.status}</span>
                 </div>
               </li>
             ))}

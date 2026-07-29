@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import {
@@ -27,8 +28,8 @@ type SP = Promise<{ status?: string; q?: string; saved?: string; error?: string 
 const STATUS_STYLES: Record<TemplateStatus, string> = {
   draft: "bg-amber-100 text-amber-800",
   published: "bg-emerald-100 text-emerald-800",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 const ERROR_MAP: Record<string, string> = {
@@ -47,7 +48,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (
@@ -57,7 +58,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
           order: (
             c: string,
             o: { ascending: boolean },
-          ) => Promise<{ data: Row[] | null }>;
+          ) => Promise<{ data: Row[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -66,6 +67,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
     // ACTIVE-org pin — the template library is per-org; RLS alone blends both.
     .eq("org_id", ctx.org.id)
     .order("updated_at", { ascending: false });
+  if (error) throw readFailure("inspection templates: list", error);
 
   // Group to one row per family: prefer the PUBLISHED version as the face of the
   // family (that's what can start inspections); otherwise the newest version.
@@ -187,7 +189,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-600">
                     v{face.version}
-                    {versions > 1 ? <span className="text-slate-400"> · {versions} versions</span> : null}
+                    {versions > 1 ? <span className="text-slate-500"> · {versions} versions</span> : null}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[face.status]}`}>

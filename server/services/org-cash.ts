@@ -106,8 +106,14 @@ const EMPTY: OrgCashView = {
  * returns EVERY org the viewer belongs to (memberships are many-to-many), so a
  * user in two orgs would otherwise see both orgs' cash blended on one org's page.
  */
-async function paged(db: LooseClient, table: string, cols: string, orderKey: string, orgId: string): Promise<Row[]> {
-  const { data } = await fetchAllRows<Row>((from, to) => {
+async function paged(
+  db: LooseClient,
+  table: string,
+  cols: string,
+  orderKey: string,
+  orgId: string,
+): Promise<{ rows: Row[]; failed: boolean }> {
+  const { data, error } = await fetchAllRows<Row>((from, to) => {
     // fetchAllRows requires a UNIQUE total order or rows sharing the sort key can
     // be dropped/duplicated at a page boundary (the F-1 silent-truncation class).
     // Several reads order by a NON-unique FK (invoice_id / job_id), so always
@@ -115,7 +121,9 @@ async function paged(db: LooseClient, table: string, cols: string, orderKey: str
     const base = db.from(table).select(cols).eq("org_id", orgId).order(orderKey, { ascending: true });
     return (orderKey === "id" ? base : base.order("id", { ascending: true })).range(from, to);
   });
-  return data;
+  // Best-effort posture stands (partial rows are used), but a partial read must
+  // set the page's existing loadError banner — never silently understate money.
+  return { rows: data, failed: error != null };
 }
 
 /** Group a row list by a (possibly-null) key, using "" for null. */
@@ -133,7 +141,7 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
     const supabase = await createClient();
     const db = supabase as unknown as LooseClient;
 
-    const [invoiceRows, paymentRows, jobRows, customerRows, releaseRows, planRows, quoteRows] = await Promise.all([
+    const pagedResults = await Promise.all([
       paged(db, "invoices", "id, number, status, total, amount, due_date, job_id, paid_at", "id", orgId),
       paged(db, "invoice_payments", "invoice_id, amount, paid_at", "invoice_id", orgId),
       paged(db, "jobs", "id, customer_id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct", "id", orgId),
@@ -142,6 +150,16 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
       paged(db, "job_billing_plans", "id, status", "id", orgId),
       paged(db, "quotes", "job_id, variation_number, status, total", "job_id", orgId),
     ]);
+    let partialLoad = pagedResults.some((r) => r.failed);
+    const [
+      invoiceRows = [],
+      paymentRows = [],
+      jobRows = [],
+      customerRows = [],
+      releaseRows = [],
+      planRows = [],
+      quoteRows = [],
+    ] = pagedResults.map((r) => r.rows);
 
     // Per-invoice paid (ledger).
     const paidByInvoice = new Map<string, number>();
@@ -184,7 +202,7 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
     const activePlanIds = planRows.filter((p) => String(p.status) === "active").map((p) => String(p.id));
     let stageRows: Row[] = [];
     if (activePlanIds.length > 0) {
-      const { data } = await fetchAllRows<Row>((from, to) =>
+      const { data, error } = await fetchAllRows<Row>((from, to) =>
         db.from("job_billing_stages")
           .select("id, job_id, name, amount, vat_rate, due_date, plan_id, invoice_id")
           .eq("org_id", orgId)
@@ -193,6 +211,7 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
           .order("id", { ascending: true })
           .range(from, to),
       );
+      if (error != null) partialLoad = true;
       stageRows = data;
     }
     const readyStages: ReadyStage[] = stageRows
@@ -315,7 +334,7 @@ export async function buildOrgCash(orgId: string, now: Date = new Date()): Promi
       readyStages,
       unscheduledJobs,
       retentionOutsideOutstanding: orgNetting.heldOutsideOutstanding,
-      loadError: false,
+      loadError: partialLoad,
     };
   } catch (err) {
     console.warn("[org-cash] buildOrgCash failed", err);

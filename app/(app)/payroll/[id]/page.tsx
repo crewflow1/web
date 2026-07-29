@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
@@ -36,7 +37,10 @@ export default async function PayrollRunPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const [{ data: run }, { data: linesRaw }] = await Promise.all([
+  const [
+    { data: run, error: runError },
+    { data: linesRaw, error: linesError },
+  ] = await Promise.all([
     supabase
       .from("payroll_runs")
       .select("id, cycle, period_start, period_end, status, finalised_at, created_at")
@@ -59,7 +63,11 @@ export default async function PayrollRunPage({
       .order("gross_pay", { ascending: false }),
   ]);
 
+  // A rejected read must not masquerade as a missing run, and a failed lines
+  // read must not render a £0.00 payroll over real pay.
+  if (runError) throw readFailure("payroll run: run", runError);
   if (!run) notFound();
+  if (linesError) throw readFailure("payroll run: lines", linesError);
   // Per-user NI numbers, sourced from the admin-gated staff_secrets table.
   const niByUser = await fetchNiNumbersForOrg(ctx.org.id);
   const lines = linesRaw ?? [];

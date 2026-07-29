@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "@/app/(app)/jobs/_form-helpers";
 import { gatherReportSources } from "@/server/services/site-report-sources";
@@ -57,11 +58,14 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: report } = await (
+  const { data: report, error: reportError } = await (
     supabase.from("site_reports" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: ReportRow | null }>;
+          maybeSingle: () => Promise<{
+            data: ReportRow | null;
+            error: SupabaseReadError | null;
+          }>;
         };
       };
     }
@@ -72,6 +76,9 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .maybeSingle();
 
+  if (reportError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!report) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

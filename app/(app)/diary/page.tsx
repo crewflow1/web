@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -40,7 +41,7 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("site_diary_entries" as never) as unknown as {
       select: (cols: string) => {
         eq: (
@@ -54,7 +55,9 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
             order: (
               col: string,
               opts: { ascending: boolean },
-            ) => { limit: (n: number) => Promise<{ data: DiaryRow[] | null }> };
+            ) => {
+              limit: (n: number) => Promise<{ data: DiaryRow[] | null; error: SupabaseReadError | null }>;
+            };
           };
         };
       };
@@ -68,6 +71,7 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
     .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(500);
+  if (error) throw readFailure("site diary: register", error);
   const rows = data ?? [];
 
   const jobIds = [
@@ -150,7 +154,7 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
                         {row.work_summary}
                       </p>
                     ) : (
-                      <p className="mt-1.5 text-sm italic text-slate-400">
+                      <p className="mt-1.5 text-sm italic text-slate-500">
                         No work summary.
                       </p>
                     )}

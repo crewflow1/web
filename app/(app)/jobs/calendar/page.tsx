@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../_form-helpers";
 import { CalendarClient } from "./_calendar";
@@ -98,7 +99,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
     .limit(1000);
   if (sp.status) q = q.eq("status", sp.status);
   if (sp.staff) q = q.eq("assigned_to", sp.staff);
-  const { data: rawJobs } = await q;
+  const { data: rawJobs, error } = await q;
+  if (error) throw readFailure("jobs calendar: jobs", error);
   const rows = rawJobs ?? [];
 
   // Build a switch-view header that preserves the active filters + anchor.

@@ -5,12 +5,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-user-lookup";
 import {
   sendStaffInvite,
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   updateStaffProfileSchema,
   updateStaffRoleSchema,
@@ -43,14 +45,14 @@ import {
 
 const uuid = z.string().uuid();
 
-async function requireAdmin(orgId: string) {
-  const supabase = await createClient();
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", orgId)
-    .single();
-  if (!me || (me.role !== "owner" && me.role !== "admin")) {
+function requireAdmin(ctx: OrgContext): void {
+  // ctx.membership is the caller's OWN row in the ACTIVE org, resolved by
+  // requireOrgContext with a user_id filter. Don't re-query memberships
+  // unfiltered here: org members can read each other's rows, so
+  // `.eq("org_id", …).single()` returns every member and errors in any org
+  // with ≥2 members — locking every admin out of staff management.
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
     redirect("/dashboard?error=forbidden");
   }
 }
@@ -77,7 +79,7 @@ export type InviteStaffResult =
  */
 export async function inviteStaff(formData: FormData): Promise<InviteStaffResult> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const parsed = inviteStaffSchema.safeParse({
     full_name: formData.get("full_name") ?? "",
@@ -220,26 +222,22 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
  */
 export async function resendStaffInvite(email: string): Promise<InviteStaffResult> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const parsedEmail = z.string().email().safeParse(email);
   if (!parsedEmail.success) return { ok: false, error: "Invalid email address." };
   const target = parsedEmail.data;
 
   const admin = createAdminClient();
-  let users;
-  try {
-    const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (error || !data) throw error ?? new Error("no data");
-    users = data.users;
-  } catch (e) {
-    console.error("[staff] resend invite — listUsers failed", e);
+  // Paginated lookup — a single listUsers({ perPage: 1000 }) page stopped
+  // seeing pending invites once the auth base passed 1000 users.
+  const lookup = await findAuthUserByEmail(admin, target);
+  if (!lookup.ok) {
+    console.error("[staff] resend invite — auth user lookup failed", lookup.reason);
     return { ok: false, error: "Couldn't reach the invite service. Try again." };
   }
 
-  const existing = users.find(
-    (u) => (u.email ?? "").trim().toLowerCase() === target.toLowerCase(),
-  );
+  const existing = lookup.user;
   const meta = (existing?.user_metadata ?? {}) as Record<string, unknown>;
   if (!existing || meta.invited_org_id !== ctx.org.id || meta.source !== "staff_invite") {
     return { ok: false, error: "No pending invite found for that email." };
@@ -291,7 +289,7 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
 
 export async function updateStaffRole(userId: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const role = String(formData.get("role") ?? "");
@@ -304,18 +302,21 @@ export async function updateStaffRole(userId: string, formData: FormData) {
   }
 
   const supabase = await createClient();
-  // Prevent demoting the last owner.
-  const { count: ownerCount } = await supabase
+  // Prevent demoting the last owner. Loud fail on either read: a failed target
+  // read silently SKIPS this guard and could demote the last owner (org lockout).
+  const { count: ownerCount, error: ownerCountError } = await supabase
     .from("memberships")
     .select("id", { count: "exact", head: true })
     .eq("org_id", ctx.org.id)
     .eq("role", "owner");
-  const { data: target } = await supabase
+  if (ownerCountError) throw readFailure("staff: owner count guard", ownerCountError);
+  const { data: target, error: targetError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
+  if (targetError) throw readFailure("staff: role-change target", targetError);
   if (target?.role === "owner" && (ownerCount ?? 0) <= 1) {
     redirect(`/staff/${userId}?error=last_owner_lock`);
   }
@@ -342,7 +343,7 @@ export async function updateStaffProfile(
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) {
     return formError("Invalid staff id.");
   }
@@ -398,16 +399,19 @@ export async function updateStaffProfile(
 
 export async function removeStaff(userId: string) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const supabase = await createClient();
-  const { data: target } = await supabase
+  const { data: target, error: targetError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
+  // Loud fail: on a failed read this guard silently passes and the OWNER
+  // membership becomes deletable (org lockout).
+  if (targetError) throw readFailure("staff: remove-target role", targetError);
   if (target?.role === "owner") {
     redirect(`/staff/${userId}?error=cannot_remove_owner`);
   }
@@ -436,7 +440,7 @@ export async function createRotaEntry(
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
   const { ctx, user } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
 
   const result = validateFormData(formData, rotaEntryFormSchema);
   if (!result.ok) return result.state as FormState<Record<string, unknown>>;
@@ -504,7 +508,7 @@ export async function createRotaEntry(
 
 export async function deleteRotaEntry(entryId: string) {
   const { ctx } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(entryId).success) redirect("/staff/rota");
 
   const supabase = await createClient();
@@ -577,7 +581,7 @@ export async function reviewLeaveRequest(
   formData: FormData,
 ) {
   const { ctx, user } = await requireOrgContext();
-  await requireAdmin(ctx.org.id);
+  requireAdmin(ctx);
   if (!uuid.safeParse(requestId).success) redirect("/staff/leave");
 
   const decision = String(formData.get("decision") ?? "");

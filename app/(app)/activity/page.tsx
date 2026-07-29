@@ -35,6 +35,8 @@ const TYPE_OPTIONS = [
   { value: "payroll.", label: "Payroll" },
   { value: "import.", label: "Imports" },
   { value: "leave.", label: "Leave" },
+  { value: "purchase_order.", label: "Purchase orders" },
+  { value: "grn.", label: "Deliveries" },
 ];
 
 const TARGET_OPTIONS = [
@@ -47,6 +49,8 @@ const TARGET_OPTIONS = [
   { value: "customers", label: "Customers" },
   { value: "imports", label: "Imports" },
   { value: "time_entries", label: "Time entries" },
+  { value: "purchase_orders", label: "Purchase orders" },
+  { value: "goods_received_notes", label: "Deliveries" },
 ];
 
 export default async function ActivityPage({ searchParams }: { searchParams: SP }) {
@@ -204,7 +208,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
             aria-disabled={page <= 1}
             className={
               page <= 1
-                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-400"
+                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
                 : "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             }
           >
@@ -218,7 +222,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
             aria-disabled={page >= totalPages}
             className={
               page >= totalPages
-                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-400"
+                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
                 : "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             }
           >

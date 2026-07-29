@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   SNAG_PRIORITIES,
   SNAG_PRIORITY_LABELS,
@@ -78,13 +79,11 @@ export default async function SnagDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: snag } = await (
+  const { data: snag, error: snagError } = await (
     supabase.from("snags" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: SnagRow | null }>;
-          };
+          maybeSingle: () => Promise<{ data: SnagRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -93,8 +92,8 @@ export default async function SnagDetailPage({
       "id, title, description, location, trade, priority, status, job_id, assigned_to, reported_by, due_date, resolved_at, created_at, updated_at",
     )
     .eq("id", id)
-    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (snagError) throw readFailure("snag: detail", snagError);
 
   if (!snag) notFound();
 
@@ -192,7 +191,7 @@ export default async function SnagDetailPage({
             {snag.description}
           </p>
         ) : (
-          <p className="text-sm italic text-slate-400">No details added.</p>
+          <p className="text-sm italic text-slate-500">No details added.</p>
         )}
         <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           <Detail label="Job / site">

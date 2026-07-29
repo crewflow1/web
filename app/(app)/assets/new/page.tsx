@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   ASSET_CATEGORY_SUGGESTIONS,
@@ -7,6 +8,7 @@ import {
   ASSET_OWNERSHIP_LABELS,
 } from "@/lib/assets/schema";
 import { createAsset } from "../actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the asset. Try again.",
@@ -24,14 +26,18 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
   // post-types tables. Pinned to the active org: RLS returns every org the
   // viewer belongs to, which would blend another org's suppliers into this
   // picker for a dual-org member.
-  const { data: suppliersRaw } = await (
+  const { data: suppliersRaw, error: suppliersError } = await (
     supabase.from("suppliers" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           order: (
             col: string,
             o: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: { id: string; name: string }[] | null }> };
+          ) => {
+            limit: (
+              n: number,
+            ) => Promise<{ data: { id: string; name: string }[] | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -40,6 +46,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
     .eq("org_id", ctx.org.id)
     .order("name", { ascending: true })
     .limit(500);
+  if (suppliersError) throw readFailure("new asset: supplier picker", suppliersError);
   const suppliers = suppliersRaw ?? [];
 
   const errorMessage = sp.error
@@ -66,7 +73,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
         </div>
       ) : null}
 
-      <form action={createAsset} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <StateForm action={createAsset} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div>
           <label htmlFor="name" className={label}>
             Name<span className="ml-0.5 text-red-500">*</span>
@@ -173,7 +180,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
           </button>
           <Link href="/assets" className="text-sm font-medium text-slate-600 hover:text-slate-900">Cancel</Link>
         </div>
-      </form>
+      </StateForm>
     </div>
   );
 }

@@ -457,7 +457,7 @@ function DayColumn({
       </header>
       <ul className="flex-1 space-y-2 p-2">
         {jobs.length === 0 ? (
-          <li className="rounded-md border border-dashed border-slate-200 bg-white py-4 text-center text-[11px] text-slate-400">
+          <li className="rounded-md border border-dashed border-slate-200 bg-white py-4 text-center text-[11px] text-slate-500">
             Drop a job here
           </li>
         ) : (

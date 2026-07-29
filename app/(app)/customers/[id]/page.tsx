@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
@@ -30,7 +31,7 @@ export default async function EditCustomerPage({
 
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: customer } = await supabase
+  const { data: customer, error: customerError } = await supabase
     .from("customers")
     .select(
       "id, name, email, phone, notes, portal_token, created_at, address_line1, address_line2, city, county, postcode, country",
@@ -44,6 +45,7 @@ export default async function EditCustomerPage({
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
+  if (customerError) throw readFailure("customer detail: customer", customerError);
   if (!customer) notFound();
 
   // Wave 6 — rollups
@@ -64,6 +66,9 @@ export default async function EditCustomerPage({
       .eq("customer_id", id)
       .order("created_at", { ascending: false }),
   ]);
+  if (quotesRes.error) throw readFailure("customer detail: quotes", quotesRes.error);
+  if (jobsRes.error) throw readFailure("customer detail: jobs", jobsRes.error);
+  if (leadsRes.error) throw readFailure("customer detail: leads", leadsRes.error);
 
   const quoteIds = (quotesRes.data ?? []).map((q) => q.id);
   let invoiceRows: Array<{
@@ -83,20 +88,22 @@ export default async function EditCustomerPage({
     reference: string | null;
   }> = [];
   if (quoteIds.length > 0) {
-    const { data: invs } = await supabase
+    const { data: invs, error: invsError } = await supabase
       .from("invoices")
       .select("id, number, status, total, due_date, paid_at, created_at")
       .in("quote_id", quoteIds)
       .order("created_at", { ascending: false });
+    if (invsError) throw readFailure("customer detail: invoices", invsError);
     invoiceRows = invs ?? [];
     if (invoiceRows.length > 0) {
-      const { data: pays } = await supabase
+      const { data: pays, error: paysError } = await supabase
         .from("invoice_payments")
         .select("id, invoice_id, amount, paid_at, reference")
         .in(
           "invoice_id",
           invoiceRows.map((i) => i.id),
         );
+      if (paysError) throw readFailure("customer detail: payments", paysError);
       paymentRows = pays ?? [];
     }
   }
@@ -293,12 +300,12 @@ export default async function EditCustomerPage({
               <li key={`${t.kind}-${i}`} className="flex items-center justify-between px-6 py-2 text-sm">
                 {t.href ? (
                   <Link href={t.href} className="min-w-0 flex-1 truncate text-slate-700 hover:text-slate-900">
-                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-400">{t.kind}</span>
+                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-500">{t.kind}</span>
                     {t.label}
                   </Link>
                 ) : (
                   <span className="min-w-0 flex-1 truncate text-slate-700">
-                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-400">{t.kind}</span>
+                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-500">{t.kind}</span>
                     {t.label}
                   </span>
                 )}

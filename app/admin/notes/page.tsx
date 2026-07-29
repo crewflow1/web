@@ -22,6 +22,7 @@ import {
   unarchiveNoteAction,
 } from "./actions";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * HQ Internal Notes — /admin/notes (HQ-9).
@@ -102,10 +103,13 @@ export default async function HqNotesPage({
   // narrower than what's actually in the DB (HQ-3 added it via
   // migration), so cast through unknown.
   const admin = createAdminClient();
-  const { data: orgs } = await admin
+  const { data: orgs, error: orgsError } = await admin
     .from("organizations")
     .select("id, name, status" as never)
     .order("name", { ascending: true });
+  if (orgsError) {
+    throw readFailure("admin notes: organizations for form", orgsError);
+  }
   const orgsForForm = ((orgs ?? []) as unknown) as Array<{
     id: string;
     name: string;
@@ -417,7 +421,7 @@ export default async function HqNotesPage({
                   <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
                     {n.body}
                   </p>
-                  <p className="mt-2 text-[10px] text-slate-400">
+                  <p className="mt-2 text-[10px] text-slate-500">
                     {n.author_email} · {n.created_at.slice(0, 16).replace("T", " ")} UTC
                     {n.updated_at !== n.created_at
                       ? ` · edited ${n.updated_at.slice(0, 10)}`

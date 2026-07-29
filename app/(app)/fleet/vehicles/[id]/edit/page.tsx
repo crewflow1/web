@@ -2,8 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateVehicle, removeVehicleProfile } from "../../../actions";
-import { loadSupplierOptions, loadVehicleForOrg } from "../../../_components/load";
+import {
+  loadSiteOptions,
+  loadSupplierOptions,
+  loadVehicleForOrg,
+} from "../../../_components/load";
 import { VehicleForm } from "../../../_components/vehicle-form";
+import { StateForm } from "../../../_components/state-form";
 import { Banner, secondaryButtonClass } from "../../../_components/ui";
 import { errorMessage } from "../../../_components/messages";
 
@@ -28,7 +33,12 @@ export default async function EditVehiclePage({
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
 
-  const suppliers = await loadSupplierOptions(ctx.org.id);
+  const [suppliers, sites] = await Promise.all([
+    loadSupplierOptions(ctx.org.id),
+    // Pass the vehicle's CURRENT site so a since-retired one still renders as
+    // selected rather than being silently dropped by the next save.
+    loadSiteOptions(ctx.org.id, vehicle.homeSiteId),
+  ]);
   const err = errorMessage(sp.error);
 
   return (
@@ -52,6 +62,7 @@ export default async function EditVehiclePage({
         action={updateVehicle}
         vehicle={vehicle}
         suppliers={suppliers}
+        sites={sites}
         submitLabel="Save changes"
         cancelHref={`/fleet/vehicles/${id}`}
       />
@@ -67,12 +78,12 @@ export default async function EditVehiclePage({
           </Link>{" "}
           instead.
         </p>
-        <form action={removeVehicleProfile} className="mt-3">
+        <StateForm action={removeVehicleProfile} className="mt-3">
           <input type="hidden" name="asset_id" value={id} />
           <button type="submit" className={secondaryButtonClass}>
             Remove vehicle profile
           </button>
-        </form>
+        </StateForm>
       </section>
     </div>
   );

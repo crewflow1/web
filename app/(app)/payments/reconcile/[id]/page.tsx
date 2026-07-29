@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -24,7 +26,11 @@ export default async function ReconcilePage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const [{ data: statement }, { data: lines }, { data: invoices }] = await Promise.all([
+  const [
+    { data: statement, error: statementError },
+    { data: lines, error: linesError },
+    { data: invoices, error: invoicesError },
+  ] = await Promise.all([
     supabase
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
@@ -49,7 +55,12 @@ export default async function ReconcilePage({
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
 
+  // A rejected statement read must not masquerade as a missing statement, and
+  // failed lines/invoices reads must not render "all reconciled" over money.
+  if (statementError) throw readFailure("payments reconcile: statement", statementError);
   if (!statement) notFound();
+  if (linesError) throw readFailure("payments reconcile: lines", linesError);
+  if (invoicesError) throw readFailure("payments reconcile: invoices", invoicesError);
 
   const invoicesById = new Map<string, { number: string; total: number; status: string }>();
   for (const i of invoices ?? []) {
@@ -156,7 +167,7 @@ export default async function ReconcilePage({
                           <div className="mt-0.5 text-slate-500">{GBP.format(matched.total)}</div>
                         </div>
                       ) : (
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-slate-500">
                           {isIncoming ? "no match found" : "outgoing — skip"}
                         </span>
                       )}
@@ -164,7 +175,7 @@ export default async function ReconcilePage({
                     <td className="px-4 py-2 text-right">
                       {isIncoming && l.match_status !== "confirmed" && l.match_status !== "ignored" ? (
                         <div className="flex flex-col items-end gap-1">
-                          <form action={confirmBankMatch.bind(null, l.id)} className="flex items-center gap-1">
+                          <StateForm action={confirmBankMatch.bind(null, l.id)} className="flex items-center gap-1">
                             <select
                               name="invoice_id"
                               defaultValue={l.matched_invoice_id ?? ""}
@@ -184,15 +195,15 @@ export default async function ReconcilePage({
                             >
                               Confirm
                             </button>
-                          </form>
-                          <form action={ignoreBankLine.bind(null, l.id)}>
+                          </StateForm>
+                          <StateForm action={ignoreBankLine.bind(null, l.id)}>
                             <button
                               type="submit"
                               className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                             >
                               Ignore
                             </button>
-                          </form>
+                          </StateForm>
                         </div>
                       ) : null}
                     </td>

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -97,11 +98,19 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  // ACTIVE-org pin. Every RLS policy in this domain is `is_org_admin(org_id)`,
+  // which an owner/admin of two orgs satisfies for BOTH — so this read used to
+  // resolve another org's import session. It even SELECTed `org_id` and never
+  // compared it. Everything downstream then stamped `ctx.org.id`: the storage
+  // key, the `import_files` row. See the header note on loadImportForOrg.
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, org_id, status")
     .eq("id", importId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: upload guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status === "committed") {
     redirect(`/imports/${importId}?error=already_committed`);
@@ -322,26 +331,57 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
   }
 
   // Run duplicate detection (admin client so we can see all org rows).
-  await annotateDuplicates(importId, ctx.org.id);
+  const dupesChecked = await annotateDuplicates(importId, ctx.org.id);
 
   await supabase
     .from("imports")
     .update({ status: "detected" })
-    .eq("id", importId);
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id);
 
   revalidatePath(`/imports/${importId}`);
   revalidatePath("/imports");
-  redirect(`/imports/${importId}?saved=uploaded`);
+  redirect(
+    `/imports/${importId}?saved=uploaded${dupesChecked ? "" : "&warn=duplicates_unchecked"}`,
+  );
 }
 
-async function annotateDuplicates(importId: string, orgId: string) {
+/**
+ * Duplicate flagging is ENRICHMENT layered over rows that are already staged.
+ *
+ * It must not throw. It runs at the very END of uploadImportFiles, after every
+ * `import_rows` insert has committed, and `import_rows` carries no unique key
+ * on (import_id, source_row_number) — so a throw here strands the session in
+ * `parsing` and the operator's only recourse, re-uploading, inserts EVERY row a
+ * second time. Silently duplicating the staging table is a worse failure than
+ * an unflagged duplicate, which the operator can still see and skip in the
+ * preview.
+ *
+ * Returns false when the pending-rows read was rejected, so the caller can tell
+ * the operator that duplicate detection did not run — the point is that
+ * "no duplicates found" and "we couldn't look" stay distinguishable.
+ */
+async function annotateDuplicates(importId: string, orgId: string): Promise<boolean> {
   const admin = createAdminClient();
-  const { data: rows } = await admin
+  // SERVICE-ROLE read: RLS is bypassed entirely here, so this predicate is the
+  // ONLY thing scoping it. `orgId` is the caller's ACTIVE org and the reference
+  // sets below are already pinned to it — without the same pin on the rows,
+  // another org's staged rows would be compared against THIS org's customers
+  // and invoices, and marked `duplicate` against ids they have no relation to.
+  const { data: rows, error: rowsError } = await admin
     .from("import_rows")
     .select("id, entity_type, mapped")
     .eq("import_id", importId)
+    .eq("org_id", orgId)
     .eq("status", "pending");
-  if (!rows || rows.length === 0) return;
+  // A failed read must not pass as "no pending rows" — duplicates would then
+  // silently never be flagged for this import. Report and signal; see the
+  // function header for why this is the one read here that must not throw.
+  if (rowsError) {
+    reportReadFailure("imports: duplicate annotation rows", rowsError);
+    return false;
+  }
+  if (!rows || rows.length === 0) return true;
 
   // Load existing rows once per entity type that's actually present.
   const types = new Set(rows.map((r) => r.entity_type ?? "unknown"));
@@ -397,9 +437,12 @@ async function annotateDuplicates(importId: string, orgId: string) {
           duplicate_of_id: match.target_id,
           error_message: match.reason,
         })
-        .eq("id", r.id);
+        .eq("id", r.id)
+        // Service-role write — pinned for the same reason as the read above.
+        .eq("org_id", orgId);
     }
   }
+  return true;
 }
 
 /**
@@ -414,11 +457,24 @@ export async function commitImport(importId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  // ACTIVE-org pin — the single highest-consequence predicate in this file.
+  //
+  // commitImport reads staged rows and INSERTs them into their target tables
+  // stamped `ctx.org.id`, via the SERVICE-ROLE client (see `insertOne` below),
+  // so RLS protects nothing past this point. Unpinned, a dual-org admin
+  // working in org A who reached org B's import id would copy B's entire
+  // staged migration — customers, invoices, finances, jobs, quotes, payments —
+  // into org A as A's own records. That is a bulk transfer of another
+  // company's customer names, emails, phone numbers and invoice values, and it
+  // is irreversible from A's side (rollback keys off the same import).
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, org_id, status")
     .eq("id", importId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: commit guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "detected") {
     redirect(`/imports/${importId}?error=not_ready`);
@@ -429,12 +485,20 @@ export async function commitImport(importId: string) {
   // `pending` with verified confidence). The confidence floor is a
   // belt-and-suspenders guard — uncertain rows never reach `pending` —
   // but it also documents the contract in one place.
-  const { data: rows } = await admin
+  // SERVICE-ROLE read — RLS bypassed, so this org pin is the only scope. It is
+  // defence in depth behind the pinned `imports` read above (the rows belong
+  // to that import), and it is what stops a row from another org ever reaching
+  // `insertOne`, which would re-stamp it as this org's data.
+  const { data: rows, error: rowsError } = await admin
     .from("import_rows")
     .select("id, entity_type, mapped, confidence, status")
     .eq("import_id", importId)
+    .eq("org_id", ctx.org.id)
     .in("status", ["pending"])
     .gte("confidence", REVIEW_THRESHOLD);
+  // Throw BEFORE the status flip below: a failed read would otherwise commit
+  // "0 imported" and mark the whole session committed — a false success.
+  if (rowsError) throw readFailure("imports: commit rows", rowsError);
 
   let imported = 0;
   let skipped = 0;
@@ -473,7 +537,8 @@ export async function commitImport(importId: string) {
           await admin
             .from("import_rows")
             .update({ status: "skipped", error_message: skipReason(entity) })
-            .eq("id", r.id);
+            .eq("id", r.id)
+            .eq("org_id", ctx.org.id);
           continue;
         }
         await admin.from("import_audit").insert({
@@ -486,14 +551,16 @@ export async function commitImport(importId: string) {
         await admin
           .from("import_rows")
           .update({ status: "imported", target_table: tableFor(entity), target_id: targetId })
-          .eq("id", r.id);
+          .eq("id", r.id)
+          .eq("org_id", ctx.org.id);
         imported++;
       } catch (e) {
         skipped++;
         await admin
           .from("import_rows")
           .update({ status: "error", error_message: (e as Error).message ?? "unknown" })
-          .eq("id", r.id);
+          .eq("id", r.id)
+          .eq("org_id", ctx.org.id);
       }
     }
   }
@@ -501,7 +568,8 @@ export async function commitImport(importId: string) {
   await supabase
     .from("imports")
     .update({ status: "committed", committed_at: new Date().toISOString() })
-    .eq("id", importId);
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id);
 
   revalidatePath(`/imports/${importId}`);
   revalidatePath("/imports");
@@ -521,20 +589,35 @@ export async function rollbackImport(importId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  // ACTIVE-org pin — this action performs SERVICE-ROLE DELETEs against live
+  // business tables (customers, invoices, jobs, quotes, finances, leads,
+  // memberships, invoice_payments). RLS is bypassed for all of them, so this
+  // read is the gate: unpinned, a dual-org admin working in org A who reached
+  // org B's import id would mass-delete every record B's migration created.
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, status")
     .eq("id", importId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: rollback guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "committed") {
     redirect(`/imports/${importId}?error=not_committed`);
   }
 
-  const { data: audit } = await admin
+  // Service-role read — pinned, so the id list fed to the DELETEs below can
+  // only ever contain rows this org's own import created.
+  const { data: audit, error: auditError } = await admin
     .from("import_audit")
     .select("target_table, target_id")
-    .eq("import_id", importId);
+    .eq("import_id", importId)
+    .eq("org_id", ctx.org.id);
+  // Throw BEFORE any delete/status flip: a failed audit read would otherwise
+  // delete nothing yet mark the session rolled_back — orphaning every
+  // imported row with no way back.
+  if (auditError) throw readFailure("imports: rollback audit", auditError);
   // Reverse insertion order so children get removed before parents.
   const grouped = new Map<string, string[]>();
   for (const a of audit ?? []) {
@@ -558,18 +641,32 @@ export async function rollbackImport(importId: string) {
   for (const table of REVERSE_ORDER) {
     const ids = grouped.get(table);
     if (!ids || ids.length === 0) continue;
-    await admin.from(table as never).delete().in("id", ids);
+    // The org predicate is NOT redundant with the pinned audit read above: it
+    // is the last line of defence on a service-role DELETE across eight live
+    // business tables. Every table in REVERSE_ORDER carries `org_id`, so a
+    // target id that somehow named another org's row cannot be removed here.
+    await admin
+      .from(table as never)
+      .delete()
+      .in("id", ids)
+      .eq("org_id" as never, ctx.org.id as never);
   }
-  await admin.from("import_audit").delete().eq("import_id", importId);
+  await admin
+    .from("import_audit")
+    .delete()
+    .eq("import_id", importId)
+    .eq("org_id", ctx.org.id);
   await admin
     .from("import_rows")
     .update({ status: "skipped", target_id: null, target_table: null })
     .eq("import_id", importId)
+    .eq("org_id", ctx.org.id)
     .eq("status", "imported");
   await supabase
     .from("imports")
     .update({ status: "rolled_back", rolled_back_at: new Date().toISOString() })
-    .eq("id", importId);
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id);
 
   revalidatePath(`/imports/${importId}`);
   revalidatePath("/imports");
@@ -586,17 +683,22 @@ export async function ignoreDuplicateRow(rowId: string) {
   if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
   const supabase = await createClient();
-  const { data: row } = await supabase
+  // ACTIVE-org pin on the read AND the write. `ctx` was captured and thrown
+  // away here (`void ctx`), which is exactly the shape of this defect class.
+  const { data: row, error: rowError } = await supabase
     .from("import_rows")
     .select("import_id")
     .eq("id", rowId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (rowError) throw readFailure("imports: ignore-duplicate guard", rowError);
   if (!row) redirect("/imports?error=not_found");
   await supabase
     .from("import_rows")
     .update({ status: "skipped", error_message: "duplicate — kept existing" })
-    .eq("id", rowId);
-  void ctx;
+    .eq("id", rowId)
+    .eq("org_id", ctx.org.id);
   revalidatePath(`/imports/${row.import_id}`);
   redirect(`/imports/${row.import_id}?saved=duplicate_skipped`);
 }
@@ -637,11 +739,18 @@ export async function resolveReviewRow(rowId: string, formData: FormData) {
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
 
   const supabase = await createClient();
-  const { data: row } = await supabase
+  // ACTIVE-org pin — a `needs_review` row in another org must be not-found
+  // rather than reclassifiable from this org's wizard. Confirming a row flips
+  // it to `pending` with confidence 100, which is what makes commitImport
+  // import it, so this is upstream of a write into real business tables.
+  const { data: row, error: rowError } = await supabase
     .from("import_rows")
     .select("id, import_id, status, entity_type, mapped, raw")
     .eq("id", rowId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (rowError) throw readFailure("imports: review-row guard", rowError);
   if (!row) redirect("/imports?error=not_found");
 
   const importId = row.import_id as string;
@@ -656,7 +765,8 @@ export async function resolveReviewRow(rowId: string, formData: FormData) {
     await supabase
       .from("import_rows")
       .update({ status: "skipped", error_message: "skipped in review" })
-      .eq("id", rowId);
+      .eq("id", rowId)
+      .eq("org_id", ctx.org.id);
     revalidatePath(`/imports/${importId}`);
     redirect(`/imports/${importId}?saved=review_skipped`);
   }
@@ -692,13 +802,15 @@ export async function resolveReviewRow(rowId: string, formData: FormData) {
           error_message:
             remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
         })
-        .eq("id", rowId);
+        .eq("id", rowId)
+        .eq("org_id", ctx.org.id);
     } else {
       // Confirm as-detected — keep the mapping, just trust it.
       await supabase
         .from("import_rows")
         .update({ status: "pending", confidence: 100, error_message: null })
-        .eq("id", rowId);
+        .eq("id", rowId)
+        .eq("org_id", ctx.org.id);
     }
     revalidatePath(`/imports/${importId}`);
     redirect(`/imports/${importId}?saved=review_confirmed`);
@@ -754,11 +866,17 @@ export async function overrideSheetEntity(
   if (to === fromEntity) redirect(`/imports/${importId}`);
 
   const supabase = await createClient();
-  const { data: importRow } = await supabase
+  // ACTIVE-org pin — bulk reclassification is the widest-blast-radius edit in
+  // the wizard (it rewrites `mapped` and forces confidence 100 on every
+  // matching row), so it must not reach another org's import session.
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, status")
     .eq("id", importId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: override guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "detected") {
     redirect(`/imports/${importId}?error=not_reviewable`);
@@ -766,12 +884,16 @@ export async function overrideSheetEntity(
 
   // Re-classify every still-open row of the detected `fromEntity`. Rows that
   // already committed/skipped/duplicated are left alone.
-  const { data: rows } = await supabase
+  const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
     .select("id, raw")
     .eq("import_id", importId)
+    .eq("org_id", ctx.org.id)
     .eq("entity_type", fromEntity)
     .in("status", ["pending", "needs_review"]);
+  // Throw before redirecting: a failed read would report "reclassified 0 rows"
+  // as a success while changing nothing.
+  if (rowsError) throw readFailure("imports: override rows", rowsError);
 
   let changed = 0;
   for (const r of rows ?? []) {
@@ -791,15 +913,18 @@ export async function overrideSheetEntity(
         error_message:
           remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
       })
-      .eq("id", r.id);
+      .eq("id", r.id)
+      .eq("org_id", ctx.org.id);
     changed++;
   }
 
   // Re-evaluate duplicates for the rows we just moved into their new type.
-  await annotateDuplicates(importId, ctx.org.id);
+  const recheck = await annotateDuplicates(importId, ctx.org.id);
 
   revalidatePath(`/imports/${importId}`);
-  redirect(`/imports/${importId}?saved=reclassified&count=${changed}`);
+  redirect(
+    `/imports/${importId}?saved=reclassified&count=${changed}${recheck ? "" : "&warn=duplicates_unchecked"}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -819,10 +944,16 @@ export async function sendStaffInvitesFromImport(importId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
+  // ACTIVE-org pin. This action SENDS REAL INVITE EMAILS carrying
+  // `invited_org_id: ctx.org.id`, so unpinned it read ANOTHER company's staff
+  // list off their import and invited every one of those people into THIS org
+  // — an outbound message to third parties plus a standing membership grant to
+  // the wrong company. Pin first, then read the addresses.
   const { data: rows } = await supabase
     .from("import_rows")
     .select("id, mapped, status")
     .eq("import_id", importId)
+    .eq("org_id", ctx.org.id)
     .eq("entity_type", "staff")
     .in("status", ["pending", "skipped"]);
   if (!rows || rows.length === 0) {
@@ -837,14 +968,16 @@ export async function sendStaffInvitesFromImport(importId: string) {
       await supabase
         .from("import_rows")
         .update({ status: "skipped", error_message: "no email" })
-        .eq("id", r.id);
+        .eq("id", r.id)
+        .eq("org_id", ctx.org.id);
       continue;
     }
     if (sent.includes(email)) {
       await supabase
         .from("import_rows")
         .update({ status: "merged", error_message: "duplicate email — invite already sent" })
-        .eq("id", r.id);
+        .eq("id", r.id)
+        .eq("org_id", ctx.org.id);
       continue;
     }
     try {
@@ -871,13 +1004,15 @@ export async function sendStaffInvitesFromImport(importId: string) {
       await supabase
         .from("import_rows")
         .update({ status: "merged", error_message: "invite sent" })
-        .eq("id", r.id);
+        .eq("id", r.id)
+        .eq("org_id", ctx.org.id);
     } catch (e) {
       console.error("[imports] invite failed", e);
       await supabase
         .from("import_rows")
         .update({ status: "error", error_message: (e as Error).message ?? "invite failed" })
-        .eq("id", r.id);
+        .eq("id", r.id)
+        .eq("org_id", ctx.org.id);
     }
   }
 

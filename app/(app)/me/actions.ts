@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { isWithinLeave } from "@/lib/time/compute";
 
@@ -42,11 +43,14 @@ export async function clockIn(formData: FormData) {
   }
 
   // Block if the caller is on approved leave right now.
-  const { data: leaves } = await supabase
+  const { data: leaves, error: leavesError } = await supabase
     .from("leave_requests")
     .select("starts_at, ends_at, status")
     .eq("user_id", user.id)
     .eq("status", "approved");
+  // Fail loud — a failed read here would FAIL OPEN and let someone on
+  // approved leave clock in.
+  if (leavesError) throw readFailure("clock in: leave check", leavesError);
   const now = new Date();
   for (const l of leaves ?? []) {
     if (isWithinLeave(now, l)) {
@@ -75,12 +79,13 @@ export async function clockOut() {
   const { user } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: open } = await supabase
+  const { data: open, error: openError } = await supabase
     .from("time_entries")
     .select("id, breaks")
     .eq("user_id", user.id)
     .is("ended_at", null)
     .maybeSingle();
+  if (openError) throw readFailure("clock out: open entry", openError);
   if (!open) redirect("/me?error=not_clocked_in");
 
   // Auto-close any still-open break.
@@ -107,12 +112,13 @@ export async function clockOut() {
 export async function startBreak() {
   const { user } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: open } = await supabase
+  const { data: open, error: openError } = await supabase
     .from("time_entries")
     .select("id, breaks")
     .eq("user_id", user.id)
     .is("ended_at", null)
     .maybeSingle();
+  if (openError) throw readFailure("start break: open entry", openError);
   if (!open) redirect("/me?error=not_clocked_in");
   type Break = { started_at: string; ended_at: string | null };
   const breaks = (open.breaks as Break[] | null) ?? [];
@@ -135,12 +141,13 @@ export async function startBreak() {
 export async function endBreak() {
   const { user } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: open } = await supabase
+  const { data: open, error: openError } = await supabase
     .from("time_entries")
     .select("id, breaks")
     .eq("user_id", user.id)
     .is("ended_at", null)
     .maybeSingle();
+  if (openError) throw readFailure("end break: open entry", openError);
   if (!open) redirect("/me?error=not_clocked_in");
   type Break = { started_at: string; ended_at: string | null };
   const breaks = (open.breaks as Break[] | null) ?? [];

@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-user-lookup";
 import { sendEmail } from "@/lib/email/send";
 import { staffInviteEmail } from "@/lib/email/demo-templates";
 import { env } from "@/lib/env";
@@ -92,14 +93,11 @@ export async function sendStaffInvite(args: {
     // this email. Refresh the metadata so the join flow hydrates the
     // latest org/role/profile, then re-send a fresh link.
     if (/already (registered|exists|signed|been)/i.test(msg) || createErr.status === 422) {
-      const { data: list, error: listErr } = await admin.auth.admin.listUsers({
-        page: 1,
-        perPage: 1000,
-      });
-      if (listErr) return { ok: false, reason: listErr.message };
-      const existing = list?.users.find(
-        (u) => (u.email ?? "").trim().toLowerCase() === email.toLowerCase(),
-      );
+      // Paginated lookup — a single listUsers({ perPage: 1000 }) page
+      // stopped seeing accounts once the auth base passed 1000 users.
+      const lookup = await findAuthUserByEmail(admin, email);
+      if (!lookup.ok) return { ok: false, reason: lookup.reason };
+      const existing = lookup.user;
       if (!existing) return { ok: false, reason: msg || "user_lookup_failed" };
       alreadyExisted = true;
       const { error: updErr } = await admin.auth.admin.updateUserById(existing.id, {

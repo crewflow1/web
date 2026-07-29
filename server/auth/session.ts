@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 
 export type OrgStatus =
@@ -251,13 +252,14 @@ async function loadOrgContextForImpersonation(
   orgId: string,
 ): Promise<OrgContext | null> {
   const supabase = await createClient();
-  const { data: org } = await supabase
+  const { data: org, error } = await supabase
     .from("organizations")
     .select(
       "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at" as never,
     )
     .eq("id", orgId)
     .maybeSingle();
+  if (error) throw readFailure("session: impersonation org context", error);
   if (!org) return null;
   const row = org as unknown as {
     id: string;

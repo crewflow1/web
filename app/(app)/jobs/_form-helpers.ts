@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Server-only helpers shared by the new/edit job pages (and, by now, by the
@@ -28,23 +29,25 @@ export async function listCustomersForOrg(
   orgId: string,
 ): Promise<CustomerOption[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("customers")
     .select("id, name")
     .eq("org_id", orgId)
     .order("name", { ascending: true })
     .limit(500);
+  if (error) throw readFailure("job form: customers", error);
   return data ?? [];
 }
 
 export async function listStaffForOrg(orgId: string): Promise<StaffOption[]> {
   const supabase = await createClient();
   // Read memberships in the ACTIVE org; PostgREST joins to users via the FK.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("user:users ( id, full_name, email )")
     .eq("org_id", orgId)
     .limit(500);
+  if (error) throw readFailure("job form: staff", error);
   return (data ?? [])
     .map((row) => row.user)
     .filter((u): u is StaffOption => !!u && !!u.id);

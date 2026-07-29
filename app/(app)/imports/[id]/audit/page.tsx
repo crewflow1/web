@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { rollbackImport } from "../../actions";
 
@@ -21,16 +22,17 @@ export default async function ImportAuditPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: imp } = await supabase
+  const { data: imp, error: impError } = await supabase
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     .eq("id", id)
     // ACTIVE-org pin — same reasoning as the wizard: this page offers rollback.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (impError) throw readFailure("import audit: session", impError);
   if (!imp) notFound();
 
-  const [{ data: files }, { data: audit }] = await Promise.all([
+  const [{ data: files, error: filesError }, { data: audit, error: auditError }] = await Promise.all([
     supabase
       .from("import_files")
       .select("id, filename")
@@ -41,6 +43,8 @@ export default async function ImportAuditPage({
       .eq("import_id", id)
       .order("created_at", { ascending: false }),
   ]);
+  if (filesError) throw readFailure("import audit: files", filesError);
+  if (auditError) throw readFailure("import audit: audit rows", auditError);
 
   // Row metadata for the "what was imported" column.
   const rowIds = (audit ?? []).map((a) => a.import_row_id).filter((x): x is string => !!x);

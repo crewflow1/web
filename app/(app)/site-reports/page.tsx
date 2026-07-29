@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -32,8 +33,8 @@ const STATUS_STYLES: Record<SiteReportStatus, string> = {
   ready_for_review: "bg-amber-100 text-amber-800",
   approved: "bg-indigo-100 text-indigo-800",
   issued: "bg-emerald-100 text-emerald-800",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 const ERROR_MAP: Record<string, string> = {
@@ -51,7 +52,7 @@ const SAVED_MAP: Record<string, string> = {
   deleted: "Report deleted.",
 };
 
-type ReportQuery = Promise<{ data: ReportRow[] | null }> & {
+type ReportQuery = Promise<{ data: ReportRow[] | null; error: SupabaseReadError | null }> & {
   eq: (k: string, v: unknown) => ReportQuery;
 };
 
@@ -85,7 +86,8 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
     // ACTIVE-org pin — client-facing reports must not interleave companies.
     .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) throw readFailure("site reports: register", error);
   const rows = data ?? [];
 
   const jobIds = [
@@ -169,7 +171,7 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
                         {SITE_REPORT_STATUS_LABELS[status] ?? row.status}
                       </span>
                       {row.revision > 1 ? (
-                        <span className="text-slate-400">rev {row.revision}</span>
+                        <span className="text-slate-500">rev {row.revision}</span>
                       ) : null}
                     </div>
                     <p className="mt-1.5 text-sm font-medium text-slate-900">{row.title}</p>

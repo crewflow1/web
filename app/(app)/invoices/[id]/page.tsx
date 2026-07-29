@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
@@ -62,7 +63,7 @@ export default async function InvoiceDetailPage({
     job_id: string | null;
     quote: { customer: { email: string | null } | null } | null;
   };
-  const { data: invoiceRaw } = await supabase
+  const { data: invoiceRaw, error: invoiceError } = await supabase
     .from("invoices")
     .select(
       `
@@ -78,6 +79,7 @@ export default async function InvoiceDetailPage({
     // SUBJECT also makes the line-item and payment reads below derived-safe.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (invoiceError) throw readFailure("invoice detail: invoice", invoiceError);
   const invoice = invoiceRaw as unknown as LoadedInvoice | null;
 
   if (!invoice) notFound();
@@ -86,18 +88,20 @@ export default async function InvoiceDetailPage({
 
   // Fetch the org's jobs for the link-to-job picker (customer surfaced
   // for recognisability). Limit + RLS-scoped under the user JWT.
-  const { data: jobsForPicker } = await supabase
+  const { data: jobsForPicker, error: jobsError } = await supabase
     .from("jobs")
     .select("id, status, scheduled_date, customer:customers ( name )")
     .order("created_at", { ascending: false })
     .limit(50);
+  if (jobsError) throw readFailure("invoice detail: job picker", jobsError);
 
   // Payments against this invoice.
-  const { data: paymentsRaw } = await supabase
+  const { data: paymentsRaw, error: paymentsError } = await supabase
     .from("invoice_payments")
     .select("id, amount, paid_at, reference, notes, source, created_at")
     .eq("invoice_id", id)
     .order("paid_at", { ascending: false });
+  if (paymentsError) throw readFailure("invoice detail: payments", paymentsError);
   const payments = paymentsRaw ?? [];
   const paidTotal = payments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
   const invTotal = Number(invoice.total ?? 0);
@@ -107,14 +111,13 @@ export default async function InvoiceDetailPage({
   // not the live quote — so a later quote edit or deletion can't rewrite this
   // historical invoice. The snapshot is created atomically by the
   // invoices_snapshot_line_items trigger, so every invoice has one.
-  const lineItems =
-    (
-      await supabase
-        .from("invoice_line_items")
-        .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
-        .eq("invoice_id", id)
-        .order("sort_order", { ascending: true })
-    ).data ?? [];
+  const lineItemsRes = await supabase
+    .from("invoice_line_items")
+    .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
+    .eq("invoice_id", id)
+    .order("sort_order", { ascending: true });
+  if (lineItemsRes.error) throw readFailure("invoice detail: line items", lineItemsRes.error);
+  const lineItems = lineItemsRes.data ?? [];
 
   // Two different questions, deliberately kept apart:
   //   status        — what is STORED. The controls need this to know which

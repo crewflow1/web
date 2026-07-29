@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -63,7 +64,7 @@ export default async function PortalJobsPage({
   // assigned user's `email` is internal staff PII. Leaving either out of the
   // query means no future render can leak them by accident, and nothing
   // sensitive crosses the wire to a page served on an unauthenticated token.
-  const { data: jobsRaw } = await admin
+  const { data: jobsRaw, error: jobsError } = await admin
     .from("jobs")
     .select(
       `
@@ -75,6 +76,9 @@ export default async function PortalJobsPage({
     .eq("customer_id", customer.id)
     .order("scheduled_date", { ascending: true, nullsFirst: false })
     .limit(100);
+  if (jobsError) {
+    throw readFailure("portal jobs: jobs", jobsError);
+  }
 
   type Row = {
     id: string;
@@ -124,7 +128,7 @@ export default async function PortalJobsPage({
                         Scheduled {j.scheduled_date}
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-slate-500">
                         No date set yet
                       </span>
                     )}

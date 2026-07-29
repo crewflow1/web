@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
@@ -38,11 +39,11 @@ export default async function DiaryEntryPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: entry } = await (
+  const { data: entry, error: entryError } = await (
     supabase.from("site_diary_entries" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: DiaryRow | null }>;
+          maybeSingle: () => Promise<{ data: DiaryRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -53,6 +54,7 @@ export default async function DiaryEntryPage({
     .eq("id", id)
     .maybeSingle();
 
+  if (entryError) throw readFailure("site diary: entry", entryError);
   if (!entry) notFound();
 
   const canDelete =
@@ -176,7 +178,7 @@ function Field({
       {children ? (
         <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{children}</p>
       ) : (
-        <p className="mt-1 text-sm italic text-slate-400">—</p>
+        <p className="mt-1 text-sm italic text-slate-500">—</p>
       )}
     </div>
   );

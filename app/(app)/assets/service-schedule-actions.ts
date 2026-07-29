@@ -1,13 +1,12 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { z } from "zod";
 import { SCHEDULE_CADENCES, cadenceToInterval } from "@/lib/assets/inspection-schedule";
 import { MAINTENANCE_TYPES } from "@/lib/assets/maintenance";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 const createServiceScheduleSchema = z
   .object({
@@ -31,6 +30,16 @@ void MAINTENANCE_TYPES;
  * SERVICE schedule actions (M5b) — the maintenance twin of the proven M4b-2
  * inspection-schedule actions. Standing rules ⇒ admin-only writes at RLS AND
  * here (dual gate); the cron generator owns generation.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a same-route ?saved= redirect back to /assets/[id] swaps the page segment
+ * itself and loses the Next 15.5 stranded-commit race (upstream
+ * vercel/next.js#83386) — the row is written but the URL never changes and no
+ * error surfaces. See components/forms/StateForm.tsx. No revalidatePath,
+ * deliberately: these surfaces render per-request (cookie-authed reads, no
+ * Next data cache), so revalidating only added weight to the racy action
+ * response.
  */
 
 type UpdateChain = {
@@ -62,10 +71,10 @@ function isAdmin(role: string): boolean {
   return role === "owner" || role === "admin";
 }
 
-export async function createServiceSchedule(formData: FormData): Promise<void> {
+export async function createServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const parsed = createServiceScheduleSchema.safeParse({
     asset_id: assetId,
@@ -77,7 +86,7 @@ export async function createServiceSchedule(formData: FormData): Promise<void> {
     lead_time_days: formData.get("lead_time_days"),
     supplier_id: formData.get("supplier_id"),
   });
-  if (!parsed.success) redirect(`/assets/${assetId}?error=schedule_invalid`);
+  if (!parsed.success) return formError("Please check the schedule details.");
 
   const interval = cadenceToInterval(parsed.data.cadence, parsed.data.custom_days);
   const tenant = await createClient();
@@ -101,7 +110,7 @@ export async function createServiceSchedule(formData: FormData): Promise<void> {
     .single();
   if (error || !data) {
     console.error("[asset-schedule] create failed", error);
-    redirect(`/assets/${assetId}?error=schedule_failed`);
+    return formError("Couldn't save the schedule. Try again.");
   }
 
   await recordAdminActivity({
@@ -112,16 +121,15 @@ export async function createServiceSchedule(formData: FormData): Promise<void> {
     targetId: data.id,
     metadata: { asset_id: assetId, maintenance_type: parsed.data.maintenance_type, next_due: parsed.data.next_due },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=schedule`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=schedule` });
 }
 
-export async function toggleServiceSchedule(formData: FormData): Promise<void> {
+export async function toggleServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
   const nextActive = String(formData.get("next_active") ?? "") === "true";
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const tenant = await createClient();
   const { error, count } = await (
@@ -132,7 +140,7 @@ export async function toggleServiceSchedule(formData: FormData): Promise<void> {
     .eq("org_id", ctx.org.id);
   if (error || !count) {
     console.error("[asset-schedule] toggle failed", error);
-    redirect(`/assets/${assetId}?error=schedule_failed`);
+    return formError("Couldn't save the schedule. Try again.");
   }
 
   await recordAdminActivity({
@@ -143,15 +151,14 @@ export async function toggleServiceSchedule(formData: FormData): Promise<void> {
     targetId: scheduleId,
     metadata: { asset_id: assetId },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=${nextActive ? "schedule_resumed" : "schedule_paused"}`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=${nextActive ? "schedule_resumed" : "schedule_paused"}` });
 }
 
-export async function deleteServiceSchedule(formData: FormData): Promise<void> {
+export async function deleteServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
-  if (!isAdmin(ctx.membership.role)) redirect(`/assets/${assetId}?error=forbidden`);
+  if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
   const tenant = await createClient();
   // Generated inspections keep their history (schedule_id → null via FK).
@@ -163,7 +170,7 @@ export async function deleteServiceSchedule(formData: FormData): Promise<void> {
     .eq("org_id", ctx.org.id);
   if (error || !count) {
     console.error("[asset-schedule] delete failed", error);
-    redirect(`/assets/${assetId}?error=schedule_failed`);
+    return formError("Couldn't save the schedule. Try again.");
   }
 
   await recordAdminActivity({
@@ -174,6 +181,5 @@ export async function deleteServiceSchedule(formData: FormData): Promise<void> {
     targetId: scheduleId,
     metadata: { asset_id: assetId },
   });
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=schedule_deleted`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=schedule_deleted` });
 }

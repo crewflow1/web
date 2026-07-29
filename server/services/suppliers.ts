@@ -35,16 +35,18 @@ import "server-only";
  * used for this table.
  */
 
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+
 type Row = Record<string, unknown>;
 
 export type SuppliersClient = { from: (t: string) => SuppliersBuilder };
 
-type SuppliersBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
+type SuppliersBuilder = PromiseLike<{ data: Row[] | null; error: SupabaseReadError | null }> & {
   select: (c: string) => SuppliersBuilder;
   eq: (k: string, v: unknown) => SuppliersBuilder;
   order: (k: string, o: { ascending: boolean }) => SuppliersBuilder;
   limit: (n: number) => SuppliersBuilder;
-  maybeSingle: () => Promise<{ data: Row | null; error: unknown }>;
+  maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
 };
 
 /** How many suppliers the address book and the pickers read at most. */
@@ -62,12 +64,13 @@ export async function loadSupplierForOrg<T = { id: string }>(
   supplierId: string,
   columns: string = "id",
 ): Promise<T | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("suppliers")
     .select(columns)
     .eq("id", supplierId)
     .eq("org_id", orgId)
     .maybeSingle();
+  if (error) throw readFailure("suppliers: supplier by id", error);
   return (data as T | null) ?? null;
 }
 
@@ -87,11 +90,12 @@ export async function listSuppliersForOrg<T = { id: string; name: string }>(
     limit?: number;
   } = {},
 ): Promise<T[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from("suppliers")
     .select(opts.columns ?? "id, name")
     .eq("org_id", orgId)
     .order(opts.orderBy ?? "name", { ascending: opts.ascending ?? true })
     .limit(opts.limit ?? SUPPLIER_LIST_LIMIT);
+  if (error) throw readFailure("suppliers: supplier list", error);
   return (data ?? []) as unknown as T[];
 }

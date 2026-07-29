@@ -41,6 +41,9 @@ const ADMIN_LINKS = [
   { href: "/operations", label: "Operations" },
   { href: "/assets", label: "Assets" },
   { href: "/fleet", label: "Fleet" },
+  // The company's own places (depots, yards, lock-ups) — reference data both
+  // registers above point at. NOT customer job sites, which live on the job.
+  { href: "/sites", label: "Sites" },
   { href: "/compliance", label: "Compliance" },
   { href: "/reviews", label: "Reviews" },
   { href: "/imports", label: "Migrate data" },

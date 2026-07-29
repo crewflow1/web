@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import {
@@ -49,7 +50,7 @@ const SAVED_MAP: Record<string, string> = {
   deleted: "Asset deleted.",
 };
 
-type AssetQuery = Promise<{ data: AssetRow[] | null }> & {
+type AssetQuery = Promise<{ data: AssetRow[] | null; error: SupabaseReadError | null }> & {
   eq: (k: string, v: unknown) => AssetQuery;
 };
 
@@ -85,7 +86,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: SP })
     // interleaved in one register. Same class as #456/#459/#461/#463/#464.
     .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) throw readFailure("assets register: list", error);
   const rows = data ?? [];
 
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? null) : null;

@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import type { NotificationCreate } from "@/lib/notifications/types";
@@ -492,7 +493,7 @@ export async function readAutomationHealth(): Promise<
     created_at: string;
   };
 
-  const { data } = await (admin.from("automation_runs" as never) as unknown as {
+  const { data, error } = await (admin.from("automation_runs" as never) as unknown as {
     select: (cols: string) => {
       gte: (k: string, v: string) => {
         order: (k: string, opts: { ascending: boolean }) => Promise<{
@@ -505,6 +506,7 @@ export async function readAutomationHealth(): Promise<
     .select("rule_id, status, created_at")
     .gte("created_at", sevenDaysAgo)
     .order("created_at", { ascending: false });
+  if (error) throw readFailure("automation-dispatcher: automation runs", error);
 
   const rows = data ?? [];
 

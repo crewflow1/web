@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Phase 3 — Portal reply to an existing support thread.
@@ -88,7 +89,7 @@ export async function replyToPortalThread(formData: FormData): Promise<void> {
       error: { message: string } | null;
     }>;
   };
-  const { data: ticket } = await (
+  const { data: ticket, error: ticketError } = await (
     admin.from("support_tickets" as never) as unknown as {
       select: (cols: string) => TicketLookup;
     }
@@ -98,6 +99,9 @@ export async function replyToPortalThread(formData: FormData): Promise<void> {
     .eq("org_id", customer.org_id)
     .eq("customer_id", customer.id)
     .maybeSingle();
+  // Loud fail (stays fail-closed): a query failure must not tell the customer
+  // their ticket doesn't exist.
+  if (ticketError) throw readFailure("portal: thread ownership", ticketError);
 
   if (!ticket) {
     redirect(

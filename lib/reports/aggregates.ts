@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Reports module — pure SQL aggregates for the /reports page.
@@ -71,11 +72,14 @@ export async function jobsPerWeek(orgId: string, weeks = 8): Promise<JobsPerWeek
   const supabase = await createClient();
   const since = new Date(Date.now() - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("jobs")
     .select("status, scheduled_date")
     .eq("org_id", orgId)
     .gte("scheduled_date", since);
+  // Loud fail: pre-filled buckets make an errored read indistinguishable from
+  // a genuinely quiet period — an all-zero chart must mean zero, not "failed".
+  if (error) throw readFailure("reports: jobs per week", error);
 
   // Pre-fill empty buckets so flat-line weeks show as 0 rather than gaps.
   const buckets = new Map<string, JobsPerWeek>();
@@ -108,12 +112,13 @@ export async function revenuePerMonth(
   since.setUTCDate(1);
   since.setUTCHours(0, 0, 0, 0);
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("invoices")
     .select("paid_at, total, status")
     .eq("org_id", orgId)
     .eq("status", "paid")
     .gte("paid_at", since.toISOString());
+  if (error) throw readFailure("reports: revenue per month", error);
 
   const buckets = new Map<string, RevenuePerMonth>();
   for (let i = months - 1; i >= 0; i--) {
@@ -171,6 +176,8 @@ export async function vatPerQuarter(
     });
   }
 
+  if (invRes.error) throw readFailure("reports: VAT invoices", invRes.error);
+  if (finRes.error) throw readFailure("reports: VAT finances", finRes.error);
   for (const inv of invRes.data ?? []) {
     if (!inv.paid_at) continue;
     const key = isoDate(startOfQuarter(new Date(inv.paid_at)));
@@ -195,7 +202,7 @@ export async function topCustomersByRevenue(
   limit = 10,
 ): Promise<TopCustomer[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("invoices")
     .select(
       `
@@ -207,6 +214,7 @@ export async function topCustomersByRevenue(
     )
     .eq("org_id", orgId)
     .eq("status", "paid");
+  if (error) throw readFailure("reports: top customers", error);
 
   const byCustomer = new Map<string, TopCustomer>();
   for (const inv of data ?? []) {

@@ -6,6 +6,10 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  readFailure,
+  reportReadFailure,
+} from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   DEMO_LIFECYCLE_STATUSES,
@@ -63,11 +67,14 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
   const now = new Date().toISOString();
 
   // Pull the full row so the lifecycle service has every field it needs.
-  const { data: rowRaw } = await supabase
+  const { data: rowRaw, error: rowError } = await supabase
     .from("demo_requests")
     .select("id, status, email, company, name, phone, linked_org_id" as never)
     .eq("id", parsed.data.demo_id)
     .maybeSingle();
+  if (rowError) {
+    throw readFailure("admin moveDemoToStatus: demo request", rowError);
+  }
   const row = rowRaw as unknown as DemoRow | null;
   if (!row) redirect("/admin/demos?error=not_found");
 
@@ -243,11 +250,17 @@ export async function moveDemoToStatusJson(
   }
 
   const supabase = createAdminClient();
-  const { data: rowRaw } = await supabase
+  const { data: rowRaw, error: rowError } = await supabase
     .from("demo_requests")
     .select("id, status, email, company, name, phone, linked_org_id" as never)
     .eq("id", demoId)
     .maybeSingle();
+  if (rowError) {
+    // Distinct from "Demo not found": the kanban must roll back and say
+    // the read failed, not pretend the card vanished.
+    reportReadFailure("admin moveDemoToStatusJson: demo request", rowError);
+    return { ok: false, error: "Couldn't load the demo — try again." };
+  }
   const row = rowRaw as unknown as DemoRow | null;
   if (!row) return { ok: false, error: "Demo not found" };
 
@@ -374,11 +387,16 @@ export async function addDemoNote(formData: FormData): Promise<void> {
   if (!parsed.success) redirect("/admin/demos?error=invalid_note");
 
   const supabase = createAdminClient();
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("demo_requests")
     .select("id, notes, company")
     .eq("id", parsed.data.demo_id)
     .maybeSingle();
+  if (rowError) {
+    // Throw BEFORE the write: a failed read here would also clobber the
+    // existing notes with just the new entry.
+    throw readFailure("admin addDemoNote: demo request", rowError);
+  }
   if (!row) redirect("/admin/demos?error=not_found");
 
   // Prepend the new note with the actor + ISO timestamp so the field

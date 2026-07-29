@@ -2,19 +2,29 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import type { HsSnapshot } from "@/lib/health-safety/signals";
 import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Gather the H&S dashboard signals in a small, fixed set of bounded, RLS-scoped
  * queries (user JWT → the caller's org only). Mirrors server/services/
  * retention-snapshot.ts. Deterministic; no cron, no N+1 — the two cross-reference
  * signals (active-job-without-RAMS, high-residual) diff bounded id lists in JS.
+ *
+ * EVERY read throws on failure. This snapshot makes SAFETY CLAIMS: `?? 0` /
+ * `?? []` on a failed read renders "0 permits expired", "every active job has
+ * current RAMS" and "every operative has signed today's talk" — three
+ * statements about legal compliance that are false precisely when the database
+ * is unhealthy. An H&S dashboard that cannot read must say so, not reassure.
+ * The page-level throw hits the route-group error boundary + Sentry
+ * (instrumentation onRequestError); buildDailyBriefing already catches and
+ * degrades to an empty briefing, so the dashboard is unaffected.
  */
 
 const DAY_MS = 86_400_000;
 
 type Row = Record<string, unknown>;
-type CountRes = { count: number | null };
-type DataRes = { data: Row[] | null };
+type CountRes = { count: number | null; error: SupabaseReadError | null };
+type DataRes = { data: Row[] | null; error: SupabaseReadError | null };
 type Q = {
   from: (t: string) => {
     select: (c: string, o?: { count: "exact"; head: true }) => {
@@ -47,6 +57,20 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
     s.from("risk_assessment_hazards").select("risk_assessment_id").eq("org_id", orgId).gte("residual_rating", 16),
     s.from("risk_assessments").select("id").eq("org_id", orgId).eq("status", "issued"),
   ])) as [CountRes, CountRes, CountRes, CountRes, DataRes, DataRes, DataRes, DataRes];
+
+  // Fail loud before any signal is derived — see the header note.
+  for (const [context, res] of [
+    ["h&s snapshot: RAMS drafts", draftRes],
+    ["h&s snapshot: RAMS review overdue", reviewRes],
+    ["h&s snapshot: permits expiring", expiringRes],
+    ["h&s snapshot: permits expired", expiredRes],
+    ["h&s snapshot: active jobs", activeJobsRes],
+    ["h&s snapshot: issued RAMS jobs", issuedRamsJobsRes],
+    ["h&s snapshot: high-residual hazards", highResidualRes],
+    ["h&s snapshot: issued RAMS", issuedRamsRes],
+  ] as ReadonlyArray<[string, { error: SupabaseReadError | null }]>) {
+    if (res.error) throw readFailure(context, res.error);
+  }
 
   const activeJobIds = (activeJobsRes.data ?? []).map((r) => r.id as string);
   const ramsJobIds = new Set((issuedRamsJobsRes.data ?? []).map((r) => r.job_id as string));
@@ -92,6 +116,7 @@ async function toolboxAwaitingAckCount(supabase: unknown, orgId: string): Promis
     .gte("issued_at", sinceIso)
     .order("issued_at", { ascending: false })
     .limit(500);
+  if (talksRes.error) throw readFailure("h&s snapshot: toolbox talks", talksRes.error);
   const talks = (talksRes.data ?? []) as { id: string; job_id: string }[];
   if (talks.length === 0) return 0;
 
@@ -101,6 +126,11 @@ async function toolboxAwaitingAckCount(supabase: unknown, orgId: string): Promis
     q.from("rota_entries").select("job_id, user_id").in("job_id", jobIds),
     q.from("safety_acknowledgements").select("subject_id, user_id").eq("subject_type", "toolbox_talk").in("subject_id", talkIds),
   ]);
+
+  // "0 awaiting" is the reassuring answer here ("every operative has signed"),
+  // so a failed crew or acknowledgement read must never produce it.
+  if (rotaRes.error) throw readFailure("h&s snapshot: toolbox crew", rotaRes.error);
+  if (acksRes.error) throw readFailure("h&s snapshot: toolbox acknowledgements", acksRes.error);
 
   const crewByJob = new Map<string, Set<string>>();
   for (const r of (rotaRes.data ?? []) as { job_id: string; user_id: string }[]) {

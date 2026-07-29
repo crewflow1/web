@@ -8,6 +8,7 @@ import {
   invoiceDisplayStatus,
 } from "@/lib/invoices/overdue";
 import { EmptyState } from "../_components/empty-state";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Invoices list.
@@ -114,7 +115,8 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
 
   const finalQuery = q.range(offset, offset + PAGE_SIZE - 1);
 
-  const { data: rows, count } = await finalQuery;
+  const { data: rows, count, error: rowsError } = await finalQuery;
+  if (rowsError) throw readFailure("invoices: ledger", rowsError);
   const totalCount = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 

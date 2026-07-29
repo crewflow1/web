@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Server-only data helpers for the diary pages.
@@ -16,12 +17,13 @@ export type JobOption = { id: string; label: string };
 
 export async function listJobOptions(orgId: string): Promise<JobOption[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("jobs")
     .select("id, status, scheduled_date, customer:customers ( name )")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("diary: job options", error);
   return (data ?? []).map((j) => ({
     id: j.id,
     label:

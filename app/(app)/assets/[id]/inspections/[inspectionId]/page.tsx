@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import {
@@ -15,6 +16,7 @@ import {
   type TemplateSnapshot,
 } from "@/lib/assets/inspection-template";
 import { completeTemplatedInspection, saveInspectionAnswers } from "../../../inspection-actions";
+import { InspectionRunForm } from "./_run-form";
 
 export const metadata = { title: "Inspection · CrewFlow" };
 
@@ -66,13 +68,13 @@ export default async function InspectionRunPage({
   // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so
   // id + asset_id alone would render another org's inspection (an immutable
   // safety record) inside this org's shell.
-  const { data: insp } = await (
+  const { data: insp, error: inspError } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             eq: (k: string, v: unknown) => {
-              maybeSingle: () => Promise<{ data: Row | null }>;
+              maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
             };
           };
         };
@@ -86,6 +88,7 @@ export default async function InspectionRunPage({
     .eq("asset_id", assetId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (inspError) throw readFailure("inspection run: inspection", inspError);
   if (!insp || !insp.template_snapshot) notFound();
 
   const snapshot = insp.template_snapshot;
@@ -144,7 +147,12 @@ export default async function InspectionRunPage({
         </div>
       ) : null}
 
-      <form action={completeTemplatedInspection} className="space-y-5">
+      <InspectionRunForm
+        completeAction={completeTemplatedInspection}
+        saveAction={saveInspectionAnswers}
+        running={running}
+        className="space-y-5"
+      >
         <input type="hidden" name="inspection_id" value={insp.id} />
 
         {snapshot.sections.map((s, sIdx) => (
@@ -170,27 +178,7 @@ export default async function InspectionRunPage({
           </section>
         ))}
 
-        {running ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Complete inspection
-            </button>
-            <button
-              type="submit"
-              formAction={saveInspectionAnswers}
-              className="rounded-md border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Save progress
-            </button>
-            <span className="text-xs text-slate-500">
-              Completing derives the outcome from your answers and locks the record.
-            </span>
-          </div>
-        ) : null}
-      </form>
+      </InspectionRunForm>
 
       {/* Photos / evidence ride the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="asset_inspections" targetId={insp.id} />
@@ -234,7 +222,7 @@ function ItemField({
         {item.requires_photo_on_fail ? (
           <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">Photo on fail</span>
         ) : null}
-        {!item.required ? <span className="text-[11px] text-slate-400">Optional</span> : null}
+        {!item.required ? <span className="text-[11px] text-slate-500">Optional</span> : null}
       </div>
       {item.guidance ? <p className="mt-0.5 text-xs text-slate-500">{item.guidance}</p> : null}
 

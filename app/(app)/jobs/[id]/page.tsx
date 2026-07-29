@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
+import { StateForm } from "@/components/forms/StateForm";
 import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { loadJobForOrg } from "@/lib/jobs/load";
@@ -487,7 +488,7 @@ export default async function EditJobPage({
                   <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                     <span className="text-slate-600">
                       {r.released_on}
-                      {r.note ? <span className="text-slate-400"> · {r.note}</span> : null}
+                      {r.note ? <span className="text-slate-500"> · {r.note}</span> : null}
                     </span>
                     <span className="font-medium text-slate-900">{formatGbp(r.amount)}</span>
                   </li>
@@ -498,7 +499,7 @@ export default async function EditJobPage({
 
           {isAdmin ? (
             <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
-              <form action={setJobRetentionRate.bind(null, job.id)} className="flex items-end gap-2">
+              <StateForm action={setJobRetentionRate.bind(null, job.id)} className="flex items-end gap-2">
                 <label className="flex-1 text-xs font-medium text-slate-600">
                   Retention rate (%)
                   <input
@@ -517,10 +518,10 @@ export default async function EditJobPage({
                 >
                   Save rate
                 </button>
-              </form>
+              </StateForm>
 
               {retention.isActive && maxReleasable(retention) > 0 ? (
-                <form action={recordRetentionRelease.bind(null, job.id)} className="flex items-end gap-2">
+                <StateForm action={recordRetentionRelease.bind(null, job.id)} className="flex items-end gap-2">
                   <label className="flex-1 text-xs font-medium text-slate-600">
                     Record release (£)
                     <input
@@ -539,7 +540,7 @@ export default async function EditJobPage({
                   >
                     Release
                   </button>
-                </form>
+                </StateForm>
               ) : null}
             </div>
           ) : null}
@@ -608,9 +609,12 @@ export default async function EditJobPage({
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
                   {GBP.format(committed.committed)}
                 </dd>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   {committed.count} order{committed.count === 1 ? "" : "s"}
                   {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                  {committed.partiallyReceived > 0
+                    ? ` · ${GBP.format(committed.partiallyReceived)} part-received`
+                    : ""}
                 </p>
               </div>
             ) : null}
@@ -620,7 +624,7 @@ export default async function EditJobPage({
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
                   {GBP.format(billedActual)}
                 </dd>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   {poBilledRows.length} bill{poBilledRows.length === 1 ? "" : "s"}
                   {committed.committed > 0
                     ? ` · ${Math.round((billedActual / committed.committed) * 100)}% of committed`

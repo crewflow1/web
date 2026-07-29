@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createSiteReport } from "../actions";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't create the report. Try again.",
@@ -27,13 +28,14 @@ export default async function NewSiteReportPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: jobsRaw } = await supabase
+  const { data: jobsRaw, error: jobsError } = await supabase
     .from("jobs")
     .select("id, status, scheduled_date, customer:customers ( name )")
     // ACTIVE-org pin — the job picker must not offer the other org's jobs.
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (jobsError) throw readFailure("site reports: job picker", jobsError);
   const jobs = (jobsRaw ?? []) as unknown as JobOption[];
 
   const errorMessage = sp.error

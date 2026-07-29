@@ -12,6 +12,7 @@ import {
   type SubscriptionStatus,
 } from "@/lib/hq/customer-financials";
 import type { OrgStatus } from "@/server/auth/session";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * CrewFlow HQ — Billing OS aggregator (HQ-4).
@@ -99,7 +100,7 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
   const admin = createAdminClient();
 
   // ---------- Orgs ----------
-  const { data: orgsRaw } = await admin
+  const { data: orgsRaw, error: orgsError } = await admin
     .from("organizations")
     .select(
       [
@@ -118,6 +119,7 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
       ].join(", ") as never,
     )
     .order("created_at", { ascending: false });
+  if (orgsError) throw readFailure("hq billing: organizations", orgsError);
 
   type OrgRow = {
     id: string;
@@ -160,7 +162,7 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
 
   // ---------- Billing invoices ----------
   type InvoiceWithOrg = BillingInvoiceRow & { org_id: string };
-  const { data: invoiceData } = await untypedAdminTable("billing_invoices")
+  const { data: invoiceData, error: invoiceError } = await untypedAdminTable("billing_invoices")
     .select(
       [
         "id",
@@ -181,6 +183,7 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
       ].join(", "),
     )
     .order("created_at", { ascending: false });
+  if (invoiceError) throw readFailure("hq billing: invoices", invoiceError);
   const invoices = ((invoiceData as unknown as InvoiceWithOrg[]) ?? []);
 
   const invByOrg = new Map<string, BillingInvoiceRow[]>();
@@ -231,7 +234,7 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
 export async function listBillingInvoicesForOrg(
   orgId: string,
 ): Promise<BillingInvoiceRow[]> {
-  const { data } = await untypedAdminTable("billing_invoices")
+  const { data, error } = await untypedAdminTable("billing_invoices")
     .select(
       [
         "id",
@@ -252,5 +255,6 @@ export async function listBillingInvoicesForOrg(
     )
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
+  if (error) throw readFailure("hq billing: org invoices", error);
   return (data as unknown as BillingInvoiceRow[]) ?? [];
 }

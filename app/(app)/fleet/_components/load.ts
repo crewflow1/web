@@ -1,6 +1,11 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { loadFleetVehicles, type FleetVehicle } from "@/server/services/fleet-snapshot";
+import {
+  listSiteOptionsForOrg,
+  type SiteOption,
+  type SitesClient,
+} from "@/server/services/sites";
 import type { SupplierOption } from "./vehicle-form";
 
 /**
@@ -50,4 +55,21 @@ export async function loadSupplierOptions(orgId: string): Promise<SupplierOption
     // optional, so degrade to "no options" rather than failing the page.
     return [];
   }
+}
+
+/**
+ * Org-pinned site options for the "home site" picker.
+ *
+ * Active sites only, plus whatever the vehicle is CURRENTLY set to even if that
+ * site has since been retired — otherwise opening the edit form on such a
+ * vehicle would silently drop its home site the next time anyone pressed Save.
+ */
+export async function loadSiteOptions(
+  orgId: string,
+  currentSiteId?: string | null,
+): Promise<SiteOption[]> {
+  const supabase = await createClient();
+  return listSiteOptionsForOrg(supabase as unknown as SitesClient, orgId, {
+    keepId: currentSiteId ?? null,
+  });
 }

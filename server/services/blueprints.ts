@@ -9,6 +9,7 @@ import {
   validateBlueprintFile, sniffBlueprintType, blueprintStorageKey, extForMime,
   type CreateBlueprintInput, type Discipline, type BlueprintMime,
 } from "@/lib/blueprints/schema";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Blueprint Centre service — the drawing register (Phase 2 WOW).
@@ -45,13 +46,24 @@ function checkBytes(file: UploadFile): { ok: true; mime: BlueprintMime; hash: st
 type BpFilter = {
   eq: (k: string, v: unknown) => BpFilter;
   in: (k: string, v: unknown[]) => BpFilter;
-  order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null }>;
-  maybeSingle: () => Promise<{ data: Record<string, unknown> | null }>;
+  order: (
+    k: string,
+    o: { ascending: boolean },
+  ) => Promise<{ data: Record<string, unknown>[] | null; error: SupabaseReadError | null }>;
+  maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: SupabaseReadError | null }>;
+};
+/**
+ * A DELETE filter. `.eq()` is chainable AND awaitable so a call site can scope
+ * by id alone (the create/rollback cleanup paths, which already hold a row they
+ * just inserted) or by id AND org (deleteBlueprint's active-org pin).
+ */
+type BpDelete = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
+  eq: (k: string, v: unknown) => BpDelete;
 };
 type BpClient = {
   from: (t: string) => {
     insert: (r: unknown) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> } };
-    delete: (opts?: { count?: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+    delete: (opts?: { count?: string }) => BpDelete;
     select: (c: string) => BpFilter;
   };
 };
@@ -71,12 +83,13 @@ export async function createBlueprint(input: {
   // Confirm the job is in the ACTIVE org. RLS is not enough: `current_org_ids()`
   // admits every org the viewer belongs to, so an RLS-only check let a dual-org
   // member hang a drawing stamped `org_id: ctx.org.id` off the OTHER org's job.
-  const { data: job } = await tenant
+  const { data: job, error: jobError } = await tenant
     .from("jobs")
     .select("id")
     .eq("id", input.jobId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (jobError) throw readFailure("blueprints: job gate", jobError);
   if (!job) return { ok: false, error: "Job not found." };
 
   // 1. Shell (tenant → RLS).
@@ -128,7 +141,8 @@ export async function addBlueprintRevision(input: {
   if (!checked.ok) return { ok: false, error: checked.error };
 
   const tenant = await createClient();
-  const { data: shell } = await bp(tenant).from("blueprints").select("id, org_id, job_id, drawing_number").eq("id", input.blueprintId).maybeSingle();
+  const { data: shell, error: shellError } = await bp(tenant).from("blueprints").select("id, org_id, job_id, drawing_number").eq("id", input.blueprintId).maybeSingle();
+  if (shellError) throw readFailure("blueprints: drawing gate", shellError);
   if (!shell) return { ok: false, error: "Drawing not found." };
   if (shell.org_id !== ctx.org.id) return { ok: false, error: "Drawing not found." }; // service-role re-check invariant
 
@@ -179,9 +193,10 @@ export type BlueprintVersionRow = {
 export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprints")
+  const { data, error } = await bp(tenant).from("blueprints")
     .select("id, drawing_number, title, discipline, status, current_version, updated_at")
     .eq("job_id", jobId).eq("org_id", ctx.org.id).order("drawing_number", { ascending: true });
+  if (error) throw readFailure("blueprints: register", error);
   return (data ?? []) as unknown as BlueprintRow[];
 }
 
@@ -189,9 +204,10 @@ export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
 export async function listBlueprintVersions(blueprintId: string): Promise<BlueprintVersionRow[]> {
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprint_versions")
+  const { data, error } = await bp(tenant).from("blueprint_versions")
     .select("id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
     .eq("blueprint_id", blueprintId).eq("org_id", ctx.org.id).order("version", { ascending: false });
+  if (error) throw readFailure("blueprints: versions", error);
   return (data ?? []) as unknown as BlueprintVersionRow[];
 }
 
@@ -203,11 +219,12 @@ export async function listBlueprintVersionsForBlueprints(
   if (blueprintIds.length === 0) return out;
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprint_versions")
+  const { data, error } = await bp(tenant).from("blueprint_versions")
     .select("id, blueprint_id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
     .eq("org_id", ctx.org.id)
     .in("blueprint_id", blueprintIds)
     .order("version", { ascending: false });
+  if (error) throw readFailure("blueprints: versions batch", error);
   for (const row of (data ?? []) as unknown as (BlueprintVersionRow & { blueprint_id: string; mime_type: string })[]) {
     (out[row.blueprint_id] ??= []).push(row);
   }
@@ -221,8 +238,9 @@ export async function getBlueprintVersionUrl(versionId: string): Promise<Bluepri
   // ACTIVE-org pin. `storagePathBelongsToOrg` below proves the path is under the
   // ROW's own org (an anti-poisoning check from the storage-evidence wave); it
   // does NOT prove the row is in the org the viewer is currently working in.
-  const { data: version } = await bp(tenant).from("blueprint_versions")
+  const { data: version, error: versionError } = await bp(tenant).from("blueprint_versions")
     .select("id, org_id, storage_path, mime_type, file_name").eq("id", versionId).eq("org_id", ctx.org.id).maybeSingle();
+  if (versionError) throw readFailure("blueprints: version url", versionError);
   if (!version) return { ok: false, error: "not_found" };
   // Refuse to sign a path not under the row's own org (poisoned cross-tenant pointer).
   if (!storagePathBelongsToOrg(String(version.storage_path), String(version.org_id))) return { ok: false, error: "not_found" };
@@ -235,18 +253,34 @@ export async function getBlueprintVersionUrl(versionId: string): Promise<Bluepri
 
 /** Delete a drawing + all revisions + storage bytes. Admin-only (RLS), audited. */
 export async function deleteBlueprint(blueprintId: string): Promise<BlueprintResult> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const tenant = await createClient();
   const admin = createAdminClient();
 
-  // Gather paths (RLS read) BEFORE the delete so we can clean storage.
-  const { data: versions } = await bp(tenant).from("blueprint_versions").select("storage_path").eq("blueprint_id", blueprintId).order("version", { ascending: true });
+  // ACTIVE-org pin, on BOTH halves of the pair. `blueprints_delete` is
+  // `is_org_admin(org_id)`, which an owner/admin of two orgs satisfies for
+  // BOTH — so without these predicates a dual-org owner working in org A could
+  // delete org B's drawing and wipe its storage bytes.
+  //
+  // The two predicates MUST move together. Pinning only the DELETE would leave
+  // the path-gathering read reaching across orgs; pinning only the read is
+  // worse — the wrong-org read returns no paths while the unpinned DELETE
+  // still removes the row, ORPHANING every stored byte of that drawing with
+  // nothing left in the database pointing at it. Both, or neither.
+  //
+  // Gather paths (RLS + org pin) BEFORE the delete so we can clean storage.
+  const { data: versions } = await bp(tenant).from("blueprint_versions").select("storage_path").eq("blueprint_id", blueprintId).eq("org_id", ctx.org.id).order("version", { ascending: true });
   const paths = (versions ?? []).map((v) => String(v.storage_path)).filter(Boolean);
 
   // Tenant delete — RLS refuses non-admins (0 rows). Only clean storage when a
   // row was ACTUALLY deleted, so a non-admin's denied delete never removes bytes.
-  const { error, count } = await bp(tenant).from("blueprints").delete({ count: "exact" }).eq("id", blueprintId);
+  const { error, count } = await bp(tenant).from("blueprints").delete({ count: "exact" }).eq("id", blueprintId).eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: "Couldn't delete the drawing." };
+  // Zero rows has three causes, deliberately treated alike: not an admin, the
+  // drawing is gone, or it belongs to a DIFFERENT org the caller happens to
+  // belong to. A non-active org's drawing must be indistinguishable from one
+  // the caller may not delete — and in all three cases NOTHING was deleted, so
+  // the storage cleanup below is correctly skipped and the bytes stay intact.
   if (!count) return { ok: false, error: "Only owners/admins can delete a drawing." };
   if (paths.length > 0) await admin.storage.from(BUCKET).remove(paths);
 

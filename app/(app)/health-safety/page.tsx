@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { listRiskAssessments } from "./_data";
@@ -41,7 +42,7 @@ const RA_STATUS_STYLES: Record<RaStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
   issued: "bg-emerald-100 text-emerald-800",
   superseded: "bg-amber-100 text-amber-800",
-  withdrawn: "bg-slate-100 text-slate-500",
+  withdrawn: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
 };
 
 /** Band → pill classes. Colour reinforces the label text; it never stands alone. */
@@ -108,13 +109,13 @@ export default async function HealthSafetyPage({
   const bandByRa = new Map<string, RiskBand>();
   if (scoredIds.length > 0) {
     const supabase = await createClient();
-    const { data: hazardRows } = await (
+    const { data: hazardRows, error: hazardRowsError } = await (
       supabase.from("risk_assessment_hazards" as never) as unknown as {
         select: (c: string) => {
           in: (
             k: string,
             v: string[],
-          ) => Promise<{ data: HazardBandRow[] | null }>;
+          ) => Promise<{ data: HazardBandRow[] | null; error: SupabaseReadError | null }>;
         };
       }
     )
@@ -122,6 +123,9 @@ export default async function HealthSafetyPage({
         "risk_assessment_id, likelihood, severity, residual_likelihood, residual_severity",
       )
       .in("risk_assessment_id", scoredIds);
+    // A failed read here would render "No hazards yet" against assessments that
+    // HAVE hazards — a false claim about safety data, so fail the page instead.
+    if (hazardRowsError) throw readFailure("health-safety register: hazard bands", hazardRowsError);
 
     const grouped = new Map<string, HazardBandRow[]>();
     for (const h of hazardRows ?? []) {
@@ -226,7 +230,11 @@ export default async function HealthSafetyPage({
                   active ? "bg-slate-900 text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                {f.label} <span className="ml-1 opacity-70">{count}</span>
+                {/* Solid tones, never opacity-*: the blended count fell below WCAG AA 4.5:1. */}
+                {f.label}{" "}
+                <span className={`ml-1 ${active ? "text-slate-300" : "text-slate-600"}`}>
+                  {count}
+                </span>
               </Link>
             );
           })}
@@ -278,7 +286,7 @@ export default async function HealthSafetyPage({
                           {bandMeta.label} risk
                         </span>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
                           No hazards yet
                         </span>
                       )}

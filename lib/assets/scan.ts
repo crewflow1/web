@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { isValidTokenFormat } from "@/lib/assets/qr";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Active-org-scoped resolution of a scanned QR token → asset.
@@ -73,8 +74,8 @@ type LooseClient = {
           eq(
             column: string,
             value: unknown,
-          ): { maybeSingle(): Promise<{ data: unknown }> };
-          maybeSingle(): Promise<{ data: unknown }>;
+          ): { maybeSingle(): Promise<{ data: unknown; error: SupabaseReadError | null }> };
+          maybeSingle(): Promise<{ data: unknown; error: SupabaseReadError | null }>;
         };
       };
     };
@@ -97,23 +98,27 @@ export async function resolveScannedAssetForOrg(
 
   const client = supabase as unknown as LooseClient;
 
-  const { data: identity } = await client
+  const { data: identity, error: identityError } = await client
     .from("asset_qr_identities")
     .select("asset_id")
     .eq("token", token)
     .eq("active", true)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: null deliberately blends malformed/unknown/revoked/foreign —
+  // a query failure must not join that set as "unknown tag".
+  if (identityError) throw readFailure("asset scan: identity", identityError);
 
   const assetId = (identity as { asset_id?: string } | null)?.asset_id;
   if (!assetId) return null;
 
-  const { data: asset } = await client
+  const { data: asset, error: assetError } = await client
     .from("assets")
     .select(ASSET_COLUMNS)
     .eq("id", assetId)
     .eq("org_id", orgId)
     .maybeSingle();
+  if (assetError) throw readFailure("asset scan: asset", assetError);
 
   return (asset as ScannedAsset | null) ?? null;
 }

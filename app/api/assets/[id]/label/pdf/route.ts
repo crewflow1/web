@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AssetLabelPdf, type AssetLabelInput } from "@/lib/pdf/asset-label-pdf";
 import { safeLabelFilename, scanPath } from "@/lib/assets/qr";
@@ -40,12 +41,15 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: asset } = await (
+  const { data: asset, error: assetError } = await (
     supabase.from("assets" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: AssetRow | null }>;
+            maybeSingle: () => Promise<{
+              data: AssetRow | null;
+              error: SupabaseReadError | null;
+            }>;
           };
         };
       };
@@ -55,15 +59,21 @@ export async function GET(request: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (assetError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const { data: identity } = await (
+  const { data: identity, error: identityError } = await (
     supabase.from("asset_qr_identities" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             eq: (k: string, v: unknown) => {
-              maybeSingle: () => Promise<{ data: { token: string } | null }>;
+              maybeSingle: () => Promise<{
+                data: { token: string } | null;
+                error: SupabaseReadError | null;
+              }>;
             };
           };
         };
@@ -75,6 +85,9 @@ export async function GET(request: NextRequest, { params }: Ctx) {
     .eq("active", true)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (identityError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!identity?.token) {
     return NextResponse.json({ error: "No active QR identity" }, { status: 404 });
   }

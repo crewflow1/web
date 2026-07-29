@@ -11,6 +11,7 @@ import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -30,16 +31,15 @@ export default async function StaffDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  // Current user's role.
-  const { data: myRow } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
+  // Current user's role — from ctx (own membership in the ACTIVE org); an
+  // unfiltered memberships read returns every member's row and `.single()`
+  // errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   // Target row + extended profile.
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("memberships")
     .select(
       `
@@ -50,6 +50,7 @@ export default async function StaffDetailPage({
     .eq("org_id", ctx.org.id)
     .eq("user_id", id)
     .maybeSingle();
+  if (rowError) throw readFailure("staff detail: member", rowError);
 
   if (!row) notFound();
 

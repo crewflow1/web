@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   ASSET_OWNERSHIP_LABELS,
   ASSET_STATUS_LABELS,
@@ -11,6 +13,7 @@ import {
   type AssetStatus,
 } from "@/lib/assets/schema";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { listSiteOptionsForOrg, type SitesClient } from "@/server/services/sites";
 import { deleteAsset, updateAssetStatus } from "../actions";
 import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
@@ -134,7 +137,7 @@ export default async function AssetDetailPage({
   // this org's shell — and this page is where the custody/QR/maintenance
   // actions live. A non-active-org asset must be indistinguishable from a
   // missing one.
-  const { data: asset } = await (
+  const { data: asset, error: assetError } = await (
     supabase.from("assets" as never) as unknown as {
       select: (cols: string) => {
         eq: (
@@ -144,7 +147,7 @@ export default async function AssetDetailPage({
           eq: (
             k: string,
             v: unknown,
-          ) => { maybeSingle: () => Promise<{ data: AssetRow | null }> };
+          ) => { maybeSingle: () => Promise<{ data: AssetRow | null; error: SupabaseReadError | null }> };
         };
       };
     }
@@ -156,6 +159,7 @@ export default async function AssetDetailPage({
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
+  if (assetError) throw readFailure("asset detail: asset", assetError);
   if (!asset) notFound();
 
   const status = asset.status as AssetStatus;
@@ -186,7 +190,7 @@ export default async function AssetDetailPage({
   }
 
   // Current open custody assignment (if any) + the pickers for check-out/transfer.
-  const { data: currentRaw } = await (
+  const { data: currentRaw, error: currentError } = await (
     supabase.from("asset_assignments" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
@@ -197,11 +201,13 @@ export default async function AssetDetailPage({
                 assignment_type: string;
                 job_id: string | null;
                 assignee_id: string | null;
+                site_id: string | null;
                 location: string | null;
                 assigned_at: string;
                 expected_return_at: string | null;
                 issue_condition: string | null;
               } | null;
+              error: SupabaseReadError | null;
             }>;
           };
         };
@@ -209,18 +215,31 @@ export default async function AssetDetailPage({
     }
   )
     .select(
-      "id, assignment_type, job_id, assignee_id, location, assigned_at, expected_return_at, issue_condition",
+      "id, assignment_type, job_id, assignee_id, site_id, location, assigned_at, expected_return_at, issue_condition",
     )
     .eq("asset_id", id)
     .eq("status", "open")
     .maybeSingle();
+  if (currentError) throw readFailure("asset detail: current custody", currentError);
 
   const staff = await listStaffForOrg(ctx.org.id);
-  const { data: jobsRaw } = await supabase
+  const { data: jobsRaw, error: jobsError } = await supabase
     .from("jobs")
     .select("id, scheduled_date, customer:customers ( name )")
+    // ACTIVE-org pin. `jobs_select` is `org_id in current_org_ids()`, so for a
+    // dual-org member this picker listed the OTHER company's jobs alongside
+    // this one's — and picking one would assign this org's asset to a job it
+    // has no relation to. Every sibling read on this page is org-scoped; this
+    // one was the straggler.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  // PANEL-scoped, not page-scoped: this is the custody picker. A dead picker
+  // must not 500 the whole asset page (status, inspections, safety blocks and
+  // maintenance are all still useful and all read fine). Report it and render
+  // an explicit notice above the custody section — never an empty <select>
+  // that reads as "this org has no jobs".
+  if (jobsError) reportReadFailure("asset detail: job picker", jobsError);
   const jobs = (jobsRaw ?? []).map((j) => ({
     id: j.id,
     label: (j.customer?.name ?? "Job") + (j.scheduled_date ? ` · ${j.scheduled_date}` : ""),
@@ -229,6 +248,18 @@ export default async function AssetDetailPage({
   const jobName = (jid: string | null) =>
     jid ? (jobs.find((j) => j.id === jid)?.label ?? "Job") : null;
 
+  // Company locations for the store-at-depot destination. ORG-PINNED inside the
+  // service: `sites_select` admits every org the viewer belongs to, so an
+  // unpinned read would offer another company's depot — a choice the
+  // site-org guard (20261061000000) would then refuse at write time.
+  // The currently-assigned site is kept even if retired, so the open assignment
+  // above never renders a blank where a real destination exists.
+  const sites = await listSiteOptionsForOrg(
+    supabase as unknown as SitesClient,
+    ctx.org.id,
+    { keepId: currentRaw?.site_id ?? null },
+  );
+
   const current: CurrentAssignment | null = currentRaw
     ? {
         id: currentRaw.id,
@@ -236,6 +267,9 @@ export default async function AssetDetailPage({
         job_name: jobName(currentRaw.job_id),
         assignee_name: currentRaw.assignee_id
           ? (staffOpts.find((s) => s.id === currentRaw.assignee_id)?.name ?? "Someone")
+          : null,
+        site_name: currentRaw.site_id
+          ? (sites.find((s) => s.id === currentRaw.site_id)?.name ?? null)
           : null,
         location: currentRaw.location,
         assigned_at: currentRaw.assigned_at,
@@ -246,12 +280,15 @@ export default async function AssetDetailPage({
   const today = new Date().toISOString().slice(0, 10);
 
   // Current active QR identity (if any).
-  const { data: qr } = await (
+  const { data: qr, error: qrError } = await (
     supabase.from("asset_qr_identities" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: { id: string; generated_at: string } | null }>;
+            maybeSingle: () => Promise<{
+              data: { id: string; generated_at: string } | null;
+              error: SupabaseReadError | null;
+            }>;
           };
         };
       };
@@ -261,14 +298,18 @@ export default async function AssetDetailPage({
     .eq("asset_id", id)
     .eq("active", true)
     .maybeSingle();
+  if (qrError) throw readFailure("asset detail: qr identity", qrError);
 
   // Inspections for this asset (newest first), excluding archived drafts.
-  const { data: inspectionsRaw } = await (
+  const { data: inspectionsRaw, error: inspectionsError } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           neq: (k: string, v: unknown) => {
-            order: (c: string, o: { ascending: boolean }) => Promise<{ data: InspectionRow[] | null }>;
+            order: (
+              c: string,
+              o: { ascending: boolean },
+            ) => Promise<{ data: InspectionRow[] | null; error: SupabaseReadError | null }>;
           };
         };
       };
@@ -278,17 +319,21 @@ export default async function AssetDetailPage({
     .eq("asset_id", id)
     .neq("status", "archived")
     .order("created_at", { ascending: false });
+  if (inspectionsError) throw readFailure("asset detail: inspections", inspectionsError);
   const inspections: InspectionRow[] = inspectionsRaw ?? [];
 
   // Published templates (the live versions) for the start-from-template picker.
-  const { data: templatesRaw } = await (
+  const { data: templatesRaw, error: templatesError } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (
           k: string,
           v: unknown,
         ) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: PublishedTemplate[] | null }>;
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: PublishedTemplate[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -296,17 +341,24 @@ export default async function AssetDetailPage({
     .select("id, name, version, categories")
     .eq("status", "published")
     .order("name", { ascending: true });
+  // PANEL-scoped for the same reason as the job picker: the template pickers
+  // feed the inspections + schedules sections, and an empty list there reads as
+  // "your org has published no templates". Notice instead of a 500.
+  if (templatesError) reportReadFailure("asset detail: published templates", templatesError);
   const publishedTemplates: PublishedTemplate[] = templatesRaw ?? [];
 
   // Standing inspection schedules for this asset (with their template names).
-  const { data: schedulesRaw } = await (
+  const { data: schedulesRaw, error: schedulesError } = await (
     supabase.from("asset_inspection_schedules" as never) as unknown as {
       select: (c: string) => {
         eq: (
           k: string,
           v: unknown,
         ) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: ScheduleRow[] | null }>;
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: ScheduleRow[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -316,17 +368,21 @@ export default async function AssetDetailPage({
     )
     .eq("asset_id", id)
     .order("next_due", { ascending: true });
+  if (schedulesError) throw readFailure("asset detail: inspection schedules", schedulesError);
   const schedules: ScheduleRow[] = schedulesRaw ?? [];
 
   // Overrides for this asset + the current safety blocks (the guard's mirror).
-  const { data: overridesRaw } = await (
+  const { data: overridesRaw, error: overridesError } = await (
     supabase.from("asset_inspection_overrides" as never) as unknown as {
       select: (c: string) => {
         eq: (
           k: string,
           v: unknown,
         ) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: OverrideRow[] | null }>;
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: OverrideRow[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -334,6 +390,7 @@ export default async function AssetDetailPage({
     .select("id, inspection_id, reason, expires_at, created_at, created_by, revoked_at")
     .eq("asset_id", id)
     .order("created_at", { ascending: false });
+  if (overridesError) throw readFailure("asset detail: overrides", overridesError);
   const nowIso = new Date().toISOString();
   const safetyBlocks = currentSafetyBlocks(
     inspections as unknown as BlockableInspection[],
@@ -343,14 +400,17 @@ export default async function AssetDetailPage({
   const blockedFromIssue = hasUnbypassedBlock(safetyBlocks);
 
   // Maintenance cases for this asset (open first, newest first).
-  const { data: casesRaw } = await (
+  const { data: casesRaw, error: casesError } = await (
     supabase.from("asset_maintenance_cases" as never) as unknown as {
       select: (c: string) => {
         eq: (
           k: string,
           v: unknown,
         ) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: MaintenanceCaseRow[] | null }>;
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: MaintenanceCaseRow[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -360,17 +420,21 @@ export default async function AssetDetailPage({
     )
     .eq("asset_id", id)
     .order("created_at", { ascending: false });
+  if (casesError) throw readFailure("asset detail: maintenance cases", casesError);
   const maintenanceCases: MaintenanceCaseRow[] = casesRaw ?? [];
 
   // Standing service schedules for this asset.
-  const { data: svcSchedulesRaw } = await (
+  const { data: svcSchedulesRaw, error: svcSchedulesError } = await (
     supabase.from("asset_service_schedules" as never) as unknown as {
       select: (c: string) => {
         eq: (
           k: string,
           v: unknown,
         ) => {
-          order: (c: string, o: { ascending: boolean }) => Promise<{ data: ServiceScheduleRow[] | null }>;
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: ServiceScheduleRow[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -378,11 +442,12 @@ export default async function AssetDetailPage({
     .select("id, maintenance_type, title, interval_days, interval_months, next_due, lead_time_days, active")
     .eq("asset_id", id)
     .order("next_due", { ascending: true });
+  if (svcSchedulesError) throw readFailure("asset detail: service schedules", svcSchedulesError);
   const serviceSchedules: ServiceScheduleRow[] = svcSchedulesRaw ?? [];
 
   // Unified history: one bounded custody read + events composed from data
   // already loaded above (inspections, overrides, maintenance cases).
-  const { data: historyRaw } = await (
+  const { data: historyRaw, error: historyError } = await (
     supabase.from("asset_assignments" as never) as unknown as {
       select: (c: string) => {
         eq: (
@@ -392,7 +457,12 @@ export default async function AssetDetailPage({
           order: (
             c: string,
             o: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: { assignment_type: string; assigned_at: string; actual_return_at: string | null; location: string | null }[] | null }> };
+          ) => {
+            limit: (n: number) => Promise<{
+              data: { assignment_type: string; assigned_at: string; actual_return_at: string | null; location: string | null }[] | null;
+              error: SupabaseReadError | null;
+            }>;
+          };
         };
       };
     }
@@ -401,6 +471,7 @@ export default async function AssetDetailPage({
     .eq("asset_id", id)
     .order("assigned_at", { ascending: false })
     .limit(15);
+  if (historyError) throw readFailure("asset detail: custody history", historyError);
   const timeline: TimelineEvent[] = [];
   for (const a of historyRaw ?? []) {
     timeline.push({ at: a.assigned_at, kind: "custody", label: `Checked out (${a.assignment_type.replaceAll("_", " ")}${a.location ? ` — ${a.location}` : ""})` });
@@ -490,7 +561,7 @@ export default async function AssetDetailPage({
           {ASSET_STATUSES.map((s) => {
             const isCurrent = s === status;
             return (
-              <form key={s} action={updateAssetStatus}>
+              <StateForm key={s} action={updateAssetStatus}>
                 <input type="hidden" name="id" value={asset.id} />
                 <input type="hidden" name="status" value={s} />
                 <button
@@ -504,7 +575,7 @@ export default async function AssetDetailPage({
                 >
                   {ASSET_STATUS_LABELS[s]}
                 </button>
-              </form>
+              </StateForm>
             );
           })}
         </div>
@@ -512,12 +583,14 @@ export default async function AssetDetailPage({
 
       <SafetyBlocksSection assetId={asset.id} blocks={safetyBlocks} isAdmin={canDelete} />
 
+      {jobsError ? <PickerNotice what="job list" /> : null}
       <CustodySection
         assetId={asset.id}
         assetActive={status === "active"}
         current={current}
         jobs={jobs}
         staff={staffOpts}
+        sites={sites}
         today={today}
       />
 
@@ -529,11 +602,11 @@ export default async function AssetDetailPage({
             : "No QR identity yet. Generate one to print a label; the label carries only an opaque token."}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <form action={generateOrRegenerateQr.bind(null, asset.id)}>
+          <StateForm action={generateOrRegenerateQr.bind(null, asset.id)}>
             <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
               {qr ? "Regenerate (invalidates old label)" : "Generate QR identity"}
             </button>
-          </form>
+          </StateForm>
           {qr ? (
             <>
               <a
@@ -552,16 +625,17 @@ export default async function AssetDetailPage({
               >
                 Print sheet
               </a>
-              <form action={revokeQr.bind(null, asset.id)}>
+              <StateForm action={revokeQr.bind(null, asset.id)}>
                 <button type="submit" className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50">
                   Revoke
                 </button>
-              </form>
+              </StateForm>
             </>
           ) : null}
         </div>
       </section>
 
+      {templatesError ? <PickerNotice what="inspection templates" /> : null}
       <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} blocked={blockedFromIssue} />
 
       <MaintenanceSection assetId={asset.id} cases={maintenanceCases} isAdmin={canDelete} />
@@ -573,6 +647,7 @@ export default async function AssetDetailPage({
         today={today}
       />
 
+      {templatesError ? <PickerNotice what="inspection templates" /> : null}
       <SchedulesSection
         assetId={asset.id}
         schedules={schedules}
@@ -587,13 +662,30 @@ export default async function AssetDetailPage({
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />
 
       {canDelete ? (
-        <form action={deleteAsset.bind(null, asset.id)}>
+        <StateForm action={deleteAsset.bind(null, asset.id)}>
           <button type="submit" className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50">
             Delete asset
           </button>
           <span className="ml-3 text-xs text-slate-500">Prefer a status change (retired/sold) to keep the history.</span>
-        </form>
+        </StateForm>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Explicit failure state for a picker whose read was rejected. The point of the
+ * whole loud-reads sweep: an empty <select> is indistinguishable from "you have
+ * none", so say which one it is. Panel-scoped — the rest of the page renders.
+ */
+function PickerNotice({ what }: { what: string }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    >
+      Couldn&rsquo;t load the {what} just now, so the picker below is empty — that
+      isn&rsquo;t a sign you have none. Refresh to try again.
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
 import { ConfirmForm } from "../_confirm-form";
@@ -153,6 +154,12 @@ export default async function AdminOrganizationsPage({
       .order("created_at", { ascending: false }),
   ]);
 
+  if (orgsRes.error) {
+    throw readFailure("admin organizations: organizations", orgsRes.error);
+  }
+  if (demosRes.error) {
+    throw readFailure("admin organizations: demo_requests", demosRes.error);
+  }
   const orgs = ((orgsRes.data ?? []) as unknown as OrgRow[]);
   const demos = ((demosRes.data ?? []) as unknown as DemoRow[]);
 
@@ -163,11 +170,14 @@ export default async function AdminOrganizationsPage({
   type Ownership = { org_id: string; user: { full_name: string | null; email: string } | null };
   let ownerships: Ownership[] = [];
   if (orgIds.length > 0) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("memberships")
       .select("org_id, user:users ( full_name, email )")
       .in("org_id", orgIds)
       .eq("role", "owner");
+    if (error) {
+      throw readFailure("admin organizations: owner memberships", error);
+    }
     ownerships = (data ?? []) as unknown as Ownership[];
   }
   const ownerByOrg = new Map(
@@ -340,7 +350,7 @@ export default async function AdminOrganizationsPage({
         )}
       </section>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-slate-600">
         <Link href="/dashboard" className="hover:text-slate-700">
           ← Back to CrewFlow
         </Link>

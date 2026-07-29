@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 import {
@@ -130,7 +131,10 @@ export async function GET(req: NextRequest) {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           or: (f: string) => {
-            limit: (n: number) => Promise<{ data: Array<Record<string, string | null>> | null }>;
+            limit: (n: number) => Promise<{
+              data: Array<Record<string, string | null>> | null;
+              error: SupabaseReadError | null;
+            }>;
           };
         };
       };
@@ -163,6 +167,16 @@ export async function GET(req: NextRequest) {
     // Permit number (reference) + title.
     loose.from("permits_to_work").select("id, reference, title, status").eq("org_id", ctx.org.id).or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
   ]);
+
+  // A failed wave must 500, never degrade to "no results for that domain" —
+  // silently dropping customers/staff/RAMS/permits from the palette is the
+  // silent-empty-state lie this route exists to avoid.
+  const wave1Error =
+    customersRes.error ?? membershipsRes.error ?? ramsRes.error ?? permitsRes.error;
+  if (wave1Error) {
+    console.error("[search] wave 1 read failed", wave1Error);
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
 
   const customers = customersRes.data ?? [];
   const customerIds = customers.map((c) => c.id);
@@ -212,6 +226,12 @@ export async function GET(req: NextRequest) {
       .or(leadOr)
       .limit(PER_TYPE),
   ]);
+
+  const wave2Error = jobsRes.error ?? quotesRes.error ?? leadsRes.error;
+  if (wave2Error) {
+    console.error("[search] wave 2 read failed", wave2Error);
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
 
   const jobs = jobsRes.data ?? [];
   const quotes = quotesRes.data ?? [];
@@ -268,12 +288,16 @@ export async function GET(req: NextRequest) {
     ),
   );
   if (invoiceOr) {
-    const { data: invoiceRows } = await supabase
+    const { data: invoiceRows, error: invoiceError } = await supabase
       .from("invoices")
       .select("id, number, status, total")
       .eq("org_id", ctx.org.id)
       .or(invoiceOr)
       .limit(PER_TYPE);
+    if (invoiceError) {
+      console.error("[search] invoices read failed", invoiceError);
+      return NextResponse.json({ error: "query_failed" }, { status: 500 });
+    }
     for (const inv of invoiceRows ?? []) {
       hits.push({
         type: "invoice",

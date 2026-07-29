@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
@@ -66,12 +67,15 @@ export async function createPayrollRun(
   // -----------------------------------------------------------------
   const windowEndIso = `${period_end}T23:59:59.999Z`;
   const windowStartIso = `${period_start}T00:00:00Z`;
-  const { data: openEntries } = await supabase
+  const { data: openEntries, error: openError } = await supabase
     .from("time_entries")
     .select("id, user_id, started_at, user:users ( full_name, email )")
     .eq("org_id", ctx.org.id)
     .is("ended_at", null)
     .lte("started_at", windowEndIso);
+  // Fail loud — a failed read here would FAIL OPEN, skipping the open-entry
+  // guard and silently dropping still-clocked-in hours from the run.
+  if (openError) throw readFailure("payroll create: open entries", openError);
   if (openEntries && openEntries.length > 0) {
     type OpenRow = {
       user: { full_name: string | null; email: string | null } | null;
@@ -113,17 +117,31 @@ export async function createPayrollRun(
   }
 
   // Pull every member + their hourly_pay.
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("memberships")
     .select("user_id, user:users ( id, full_name, hourly_pay )")
     .eq("org_id", ctx.org.id);
-  const { data: entriesRaw } = await supabase
+  // A failed read here would write a £0 run and report success — payroll
+  // mismatches are RED, so fail loud instead.
+  if (membersError) throw readFailure("payroll create: members", membersError);
+  // ACTIVE-org pin — this is the hours source for every line in the run, and
+  // the single most expensive omission in this file. `time_entries_select` is
+  // `org_id in current_org_ids()`, which admits EVERY org the caller belongs
+  // to. Without this predicate a worker who is a member of BOTH companies had
+  // their OTHER employer's shifts summed into this run by `hoursByUser` (it
+  // groups on user_id alone), inflating gross_pay, paye_estimate, ni_estimate
+  // and net_pay — one company paying for hours worked at another, with the
+  // PAYE/NI figures filed on the inflated gross. Note the open-entry guard
+  // above was ALREADY pinned to ctx.org.id, so the guard and the hour sum
+  // disagreed about which company's timesheets it was reading.
+  const { data: entriesRaw, error: entriesError } = await supabase
     .from("time_entries")
     .select("id, user_id, job_id, started_at, ended_at, breaks")
     .eq("org_id", ctx.org.id)
     .gte("started_at", windowStartIso)
     .lte("started_at", windowEndIso)
     .not("ended_at", "is", null);
+  if (entriesError) throw readFailure("payroll create: hours", entriesError);
   const entries = (entriesRaw ?? []) as TimeEntry[];
   const hoursByU = hoursByUser(
     entries,
@@ -182,7 +200,12 @@ export async function createPayrollRun(
       const { error: rollbackErr } = await supabase
         .from("payroll_runs")
         .delete()
-        .eq("id", run.id);
+        .eq("id", run.id)
+        // Pinned like every other write here. `run.id` came from this action's
+        // own INSERT stamped `org_id: ctx.org.id`, so this cannot change the
+        // outcome today — it exists so the rollback can never become the one
+        // unpinned DELETE in the file.
+        .eq("org_id", ctx.org.id);
       if (rollbackErr) {
         console.error(
           "[payroll] rollback of orphaned run failed — manual cleanup may be needed",
@@ -210,22 +233,36 @@ export async function finalisePayrollRun(runId: string) {
   if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
   const supabase = await createClient();
 
-  const { data: run } = await supabase
+  // ACTIVE-org pin. Finalising is IRREVERSIBLE (deletePayrollRun refuses a
+  // finalised run), so an unpinned read here let a dual-org admin working in
+  // org A permanently lock org B's draft payroll from A's shell.
+  const { data: run, error: runError } = await supabase
     .from("payroll_runs")
     .select("id, period_start, period_end, status")
     .eq("id", runId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (runError) throw readFailure("payroll finalise: run", runError);
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}`);
 
   // Lock the time entries whose user appears in this run.
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("payroll_lines")
     .select("id, user_id")
-    .eq("payroll_run_id", runId);
+    .eq("payroll_run_id", runId)
+    .eq("org_id", ctx.org.id);
+  // Fail loud BEFORE finalising — a failed read here would finalise the run
+  // with every time entry left unlocked.
+  if (linesError) throw readFailure("payroll finalise: lines", linesError);
 
   for (const l of lines ?? []) {
+    // ACTIVE-org pin. This UPDATE is scoped by user_id + a DATE WINDOW, so
+    // without it finalising org A's run reached into every OTHER org that
+    // worker clocks time for and stamped their shifts in that window with an
+    // org A `payroll_line_id` — freezing another company's timesheets
+    // (payroll-linked entries are read-only) and attributing them to a payroll
+    // line that company cannot see.
     await supabase
       .from("time_entries")
       .update({ payroll_line_id: l.id })
@@ -253,15 +290,28 @@ export async function deletePayrollRun(runId: string) {
   const { ctx } = await requireOrgContext();
   if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
   const supabase = await createClient();
-  const { data: run } = await supabase
+  // ACTIVE-org pin on BOTH the read and the DELETE. `payroll_runs` cascades to
+  // `payroll_lines`, so an unpinned DELETE let a dual-org admin working in org
+  // A destroy org B's draft payroll run and every computed line under it —
+  // irrecoverable financial data, and org B sees only that its run vanished.
+  // The read is pinned too so a foreign run is `not_found` rather than being
+  // status-checked and then silently missed by the DELETE.
+  const { data: run, error: runError } = await supabase
     .from("payroll_runs")
     .select("status")
     .eq("id", runId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // Throw BEFORE the delete — a failed status read must never let a finalised
+  // run slip past the immutability check.
+  if (runError) throw readFailure("payroll delete: run", runError);
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}?error=cannot_delete_finalised`);
-  await supabase.from("payroll_runs").delete().eq("id", runId).eq("org_id", ctx.org.id);
+  await supabase
+    .from("payroll_runs")
+    .delete()
+    .eq("id", runId)
+    .eq("org_id", ctx.org.id);
   revalidatePath("/payroll");
   redirect("/payroll?saved=deleted");
 }

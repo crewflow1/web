@@ -54,11 +54,15 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   // Invoice-owned snapshot (Issue #349 Phase 2), not the live quote — the PDF
   // reproduces the invoice as billed, immune to later quote edits/deletion.
-  const { data: lines } = await supabase
+  const { data: lines, error: lErr } = await supabase
     .from("invoice_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("invoice_id", id)
     .order("sort_order", { ascending: true });
+  if (lErr) {
+    console.error("[invoice-pdf] line items load failed", lErr);
+    return NextResponse.json({ error: "Failed to load invoice" }, { status: 500 });
+  }
 
   const input: InvoicePdfInput = {
     number: invoice.number,

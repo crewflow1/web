@@ -8,6 +8,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnPaymentProofUploaded } from "@/lib/notifications/events";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Phase 3 — Portal payment-proof upload.
@@ -84,12 +85,15 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
 
   // Re-verify the invoice is for this customer. Invoices don't have a
   // direct customer_id column; we join via quote.
-  const { data: invoiceRow } = await admin
+  const { data: invoiceRow, error: invoiceError } = await admin
     .from("invoices")
     .select("id, number, quote:quotes ( customer_id )")
     .eq("id", invoiceId)
     .eq("org_id", customer.org_id)
     .maybeSingle();
+  // Loud fail: a query failure must not refuse the upload as "not yours" —
+  // that blames the customer for a DB blip.
+  if (invoiceError) throw readFailure("portal uploads: invoice ownership", invoiceError);
   // `number` rides along on the ownership lookup that already runs — staff need
   // a human-readable invoice reference in the notification below, and a UUID
   // identifies nothing. No extra round trip, no behaviour change.

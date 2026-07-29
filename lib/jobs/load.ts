@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Active-org-scoped loads for a single job addressed by URL id.
@@ -50,7 +51,7 @@ type LooseClient = {
         eq(
           column: string,
           value: string,
-        ): { maybeSingle(): Promise<{ data: unknown }> };
+        ): { maybeSingle(): Promise<{ data: unknown; error: SupabaseReadError | null }> };
       };
     };
   };
@@ -73,11 +74,14 @@ export async function loadJobForOrg<T = { id: string }>(
   orgId: string,
   columns: string = "id",
 ): Promise<T | null> {
-  const { data } = await (supabase as unknown as LooseClient)
+  const { data, error } = await (supabase as unknown as LooseClient)
     .from("jobs")
     .select(columns)
     .eq("id", jobId)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: every job page funnels through this loader — a transient query
+  // failure must throw, never alias the deliberate not-found/other-org null.
+  if (error) throw readFailure("jobs: load by id", error);
   return (data as T | null) ?? null;
 }

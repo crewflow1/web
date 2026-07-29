@@ -114,11 +114,16 @@ export async function sendQuoteEmail(
   }
   const portalUrl = `${env.NEXT_PUBLIC_APP_URL}/q/${token}`;
 
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("quote_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("quote_id", quote.id)
     .order("sort_order", { ascending: true });
+  if (linesError) {
+    // Never email a PDF with totals but zero line items on a failed read.
+    console.error("[send-quote] line items load failed", linesError);
+    return { sent: false, reason: "load_failed", detail: linesError.message };
+  }
 
   const pdfInput: QuotePdfInput = {
     number: quote.number,

@@ -213,6 +213,11 @@ export const vehicleFormSchema = z
     finance_monthly_payment: optionalMoney,
     finance_end_date: optionalDate,
     home_depot: optionalText(160),
+    // The TYPED home location (public.sites, 20261061000000). Sits BESIDE
+    // home_depot rather than replacing it: existing free text keeps working and
+    // nothing is backfilled. Optional — a company with no sites named yet must
+    // still be able to add a van.
+    home_site_id: optionalUuid,
     odometer_miles: optionalOdometer,
   })
   /**

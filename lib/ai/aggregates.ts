@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   invoiceBusinessToday,
   invoiceDaysOverdue,
@@ -49,11 +50,12 @@ export async function computeActivitySummary(
 
   // --- 1) action counts within the window, bucketed by prefix --------------
   //     + daily volume time series with per-prefix breakdown.
-  const { data: actions } = await supabase
+  const { data: actions, error: actionsError } = await supabase
     .from("activity_log")
     .select("action, created_at")
     .eq("org_id", orgId)
     .gte("created_at", since);
+  if (actionsError) throw readFailure("ai aggregates: activity log", actionsError);
 
   const prefixCounts = new Map<string, number>();
   const dailyMap = new Map<string, { count: number; by_prefix: Record<string, number> }>();
@@ -82,13 +84,12 @@ export async function computeActivitySummary(
   }));
 
   // --- 2) quote funnel + latencies -----------------------------------------
-  const { data: quotes } = await supabase
+  const { data: quotes, error: quotesError } = await supabase
     .from("quotes")
     .select(
       "id, number, total, sent_at, viewed_at, accepted_at, declined_at, customer:customers ( name )",
-    )
-    .eq("org_id", orgId);
-
+    );
+  if (quotesError) throw readFailure("ai aggregates: quotes", quotesError);
   let sent = 0;
   let viewed = 0;
   let accepted = 0;
@@ -166,11 +167,11 @@ export async function computeActivitySummary(
   // entirely. The dashboard meanwhile used due_date, so the two surfaces
   // disagreed about which invoices were overdue and by how long.
   const todayIso = invoiceBusinessToday();
-  const { data: invoices } = await supabase
+  const { data: invoices, error: invoicesError } = await supabase
     .from("invoices")
     .select("id, number, status, total, sent_at, due_date, paid_at")
     .eq("org_id", orgId);
-
+  if (invoicesError) throw readFailure("ai aggregates: invoices", invoicesError);
   const invoices_overdue_30d: StalledInvoice[] = [];
   for (const inv of invoices ?? []) {
     if (!isInvoiceOverdue(inv, todayIso)) continue;
@@ -190,11 +191,11 @@ export async function computeActivitySummary(
   // --- 5) staff leaderboard — most completed jobs --------------------------
   // Use jobs.assigned_to since "who is credited with closing the job"
   // is the assignment, not whoever clicked the status button.
-  const { data: jobs } = await supabase
+  const { data: jobs, error: jobsError } = await supabase
     .from("jobs")
-    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )")
-    .eq("org_id", orgId);
-
+    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
+    .eq("org_id", orgId)");
+  if (jobsError) throw readFailure("ai aggregates: jobs", jobsError);
   const leaderMap = new Map<
     string,
     { user_id: string | null; name: string; completed_jobs: number }
@@ -239,11 +240,12 @@ export async function computeLeadInsights(
   const supabase = await createClient();
   const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
 
-  const { data: leads } = await supabase
+  const { data: leads, error: leadsError } = await supabase
     .from("leads")
     .select("id, status, source, estimated_value, created_at")
     .eq("org_id", orgId)
     .gte("created_at", since);
+  if (leadsError) throw readFailure("ai aggregates: leads", leadsError);
 
   const funnel = {
     new: 0,

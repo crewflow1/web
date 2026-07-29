@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { seedSampleData } from "@/server/services/sample-data";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Ensure a `public.users` row exists that mirrors `auth.users`.
@@ -84,7 +85,7 @@ export async function createOrgWithOwner(input: {
     // their 14-day trial on first signup. Without this, anyone
     // approved through the kanban hits /access-pending instead of
     // their workspace.
-    const { data: approvedRaw } = await supabase
+    const { data: approvedRaw, error: approvedError } = await supabase
       .from("demo_requests")
       .select("id, approved_at" as never)
       .eq("email", normalisedEmail)
@@ -92,6 +93,9 @@ export async function createOrgWithOwner(input: {
       .order("approved_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    // Loud fail: an approved customer must never be silently created `pending`
+    // (dumped at /access-pending) because this lookup errored.
+    if (approvedError) throw readFailure("bootstrap: approved-demo lookup", approvedError);
     const approved = approvedRaw as unknown as
       | { id: string; approved_at: string | null }
       | null;

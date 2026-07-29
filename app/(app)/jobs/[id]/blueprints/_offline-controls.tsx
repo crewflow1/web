@@ -130,7 +130,7 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
   const btn = "min-h-[44px] rounded-md border border-slate-300 px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50";
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5" aria-live="polite" data-offline-controls>
-      {state === "checking" ? <span className="text-xs text-slate-400">…</span> : null}
+      {state === "checking" ? <span className="text-xs text-slate-500">…</span> : null}
 
       {state === "not-cached" ? (
         <button type="button" onClick={download} className={btn}>⤓ Download for offline</button>

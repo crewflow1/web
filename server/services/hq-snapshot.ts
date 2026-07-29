@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { monthBuckets, type HqSnapshot } from "@/lib/hq/metrics";
 import { MONTHLY_PRICE_GBP, SETUP_FEE_GBP } from "@/lib/hq/metrics";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Build the HQ snapshot — read-only, super-admin only.
@@ -21,9 +22,10 @@ export async function buildHqSnapshot(): Promise<HqSnapshot> {
   const oldestBucketStart = new Date(`${buckets[0]}-01T00:00:00Z`);
 
   // ---------- Demo lifecycle counts ----------
-  const { data: demoRows } = await admin
+  const { data: demoRows, error: demoError } = await admin
     .from("demo_requests")
     .select("status" as never);
+  if (demoError) throw readFailure("hq snapshot: demo requests", demoError);
   const demos = {
     pending_demo: 0,
     demo_booked: 0,
@@ -60,11 +62,12 @@ export async function buildHqSnapshot(): Promise<HqSnapshot> {
   }
 
   // ---------- Organisations ----------
-  const { data: orgRows } = await admin
+  const { data: orgRows, error: orgError } = await admin
     .from("organizations")
     .select(
       "id, status, created_at, cancelled_at, trial_ends_at" as never,
     );
+  if (orgError) throw readFailure("hq snapshot: organizations", orgError);
   const orgs = {
     pending: 0,
     trial: 0,

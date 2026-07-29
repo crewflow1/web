@@ -50,11 +50,15 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: lines } = await supabase
+  const { data: lines, error: lErr } = await supabase
     .from("quote_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("quote_id", quote.id)
     .order("sort_order", { ascending: true });
+  if (lErr) {
+    console.error("[quote-pdf] line items load failed", lErr);
+    return NextResponse.json({ error: "Failed to load quote" }, { status: 500 });
+  }
 
   const input: QuotePdfInput = {
     number: quote.number,

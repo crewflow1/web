@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -52,7 +53,7 @@ export default async function PortalMessagesPage({
       }>;
     };
   };
-  const { data: ticketsRaw } = await (
+  const { data: ticketsRaw, error: ticketsError } = await (
     admin.from("support_tickets" as never) as unknown as {
       select: (cols: string) => TicketQuery;
     }
@@ -68,6 +69,9 @@ export default async function PortalMessagesPage({
     .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(20);
+  if (ticketsError) {
+    throw readFailure("portal messages: tickets", ticketsError);
+  }
   type TicketRow = {
     id: string;
     ticket_number: number;
@@ -195,7 +199,7 @@ export default async function PortalMessagesPage({
                         {lastVisible.body}
                       </p>
                     ) : null}
-                    <p className="mt-2 text-[11px] font-medium text-slate-400">
+                    <p className="mt-2 text-[11px] font-medium text-slate-500">
                       View conversation →
                     </p>
                   </a>

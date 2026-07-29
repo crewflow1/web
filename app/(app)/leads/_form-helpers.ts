@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Customer + staff dropdown sources for the lead forms.
@@ -19,12 +20,13 @@ export async function listCustomersForLead(
   orgId: string,
 ): Promise<{ id: string; name: string }[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("customers")
     .select("id, name")
     .eq("org_id", orgId)
     .order("name", { ascending: true })
     .limit(1000);
+  if (error) throw readFailure("lead form: customers", error);
   return data ?? [];
 }
 
@@ -32,11 +34,12 @@ export async function listStaffForLead(
   orgId: string,
 ): Promise<{ id: string; full_name: string | null; email: string }[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("user:users ( id, full_name, email )")
     .eq("org_id", orgId)
     .limit(500);
+  if (error) throw readFailure("lead form: staff", error);
   return (data ?? [])
     .map((row) => row.user)
     .filter((u): u is { id: string; full_name: string | null; email: string } => !!u?.id);

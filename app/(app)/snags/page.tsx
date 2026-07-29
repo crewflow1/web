@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../jobs/_form-helpers";
 import { EmptyState } from "../_components/empty-state";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   SNAG_PRIORITIES,
   SNAG_PRIORITY_LABELS,
@@ -69,7 +70,7 @@ const SAVED_MAP: Record<string, string> = {
   deleted: "Snag deleted.",
 };
 
-type SnagQuery = Promise<{ data: SnagRow[] | null }> & {
+type SnagQuery = Promise<{ data: SnagRow[] | null; error: SupabaseReadError | null }> & {
   eq: (k: string, v: unknown) => SnagQuery;
 };
 
@@ -115,7 +116,8 @@ export default async function SnagsPage({ searchParams }: { searchParams: SP }) 
     .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
   if (priorityFilter) query = query.eq("priority", priorityFilter);
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) throw readFailure("snags: register", error);
   const rows = data ?? [];
 
   // Resolve names in two batched lookups — never per row.

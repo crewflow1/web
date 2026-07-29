@@ -106,7 +106,7 @@ export function OrgSwitcher({
                         </div>
                       </div>
                       {active ? (
-                        <span aria-hidden className="text-slate-400">
+                        <span aria-hidden className="text-slate-500">
                           ✓
                         </span>
                       ) : null}

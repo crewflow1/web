@@ -70,7 +70,7 @@ export function LeadCard({ lead }: { lead: PipelineLead }) {
           </span>
         </div>
 
-        <div className="mt-1 text-[11px] text-slate-400">
+        <div className="mt-1 text-[11px] text-slate-500">
           {lead.source} · {lead.postcode ?? "—"} · {lead.last_activity_at.slice(0, 10)}
         </div>
       </Link>
