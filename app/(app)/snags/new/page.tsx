@@ -32,6 +32,9 @@ export default async function NewSnagPage({
     supabase
       .from("jobs")
       .select("id, status, scheduled_date, customer:customers ( name )")
+      // ACTIVE-org pin — the staff picker beside it was pinned in #456; the
+      // job picker was left on RLS alone.
+      .eq("org_id", ctx.org.id)
       .order("created_at", { ascending: false })
       .limit(200),
     listStaffForOrg(ctx.org.id),

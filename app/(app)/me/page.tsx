@@ -73,23 +73,30 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .select("full_name, hourly_pay, employment_type")
         .eq("id", user.id)
         .maybeSingle(),
+      // ACTIVE-org pins throughout. `user_id` alone is NOT a scope for a person
+      // who works for two companies through CrewFlow: their org-B shifts, leave
+      // and hours would be summed into org A's "this week"/"this month" pay
+      // figures. RLS admits both orgs, so each read carries the org too.
       supabase
         .from("time_entries")
         .select(
           "id, user_id, job_id, started_at, ended_at, breaks, gps_lat, gps_lng, note",
         )
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .is("ended_at", null)
         .maybeSingle(),
       supabase
         .from("time_entries")
         .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .gte("started_at", `${weekStartIso}T00:00:00Z`)
         .order("started_at", { ascending: false }),
       supabase
         .from("rota_entries")
         .select("id, starts_at, ends_at, job_id, notes")
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .gte("starts_at", `${todayIso}T00:00:00Z`)
         .lt("starts_at", `${addDaysIso(todayIso, 1)}T00:00:00Z`)
@@ -97,6 +104,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
       supabase
         .from("leave_requests")
         .select("id, type, starts_at, ends_at, status")
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .in("status", ["pending", "approved"])
         .gte("ends_at", `${todayIso}T00:00:00Z`)
@@ -104,6 +112,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
       supabase
         .from("jobs")
         .select("id, status, scheduled_date, customer:customers ( name )")
+        .eq("org_id", ctx.org.id)
         .or(`assigned_to.eq.${user.id},assigned_to.is.null`)
         .neq("status", "completed")
         .order("scheduled_date", { ascending: true })
@@ -111,6 +120,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
       supabase
         .from("time_entries")
         .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .gte("started_at", `${monthStartIso}T00:00:00Z`)
         .order("started_at", { ascending: false }),

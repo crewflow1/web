@@ -50,7 +50,7 @@ const TARGET_OPTIONS = [
 ];
 
 export default async function ActivityPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -63,7 +63,14 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
       "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
       { count: "exact" },
     )
+    // ACTIVE-org pin — the audit trail must be one company's; RLS admits every
+    // org the viewer belongs to, so both audit logs were interleaved and the
+    // exact count paginated over the blend.
+    .eq("org_id", ctx.org.id)
+    // Unique `id` tiebreaker: `created_at` alone is not a total order, so events
+    // sharing a timestamp could be skipped or repeated at a page boundary.
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
   if (sp.from) q = q.gte("created_at", `${sp.from}T00:00:00Z`);

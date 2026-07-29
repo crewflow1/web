@@ -16,11 +16,14 @@ import { NewInvoiceForm } from "./_form";
  * — when no quote is accepted yet — leave the user on a dead, disabled form.
  */
 export default async function NewInvoicePage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const { data: quotes } = await supabase
     .from("quotes")
     .select("id, number, subtotal, total, status")
+    // ACTIVE-org pin — offering the other org's accepted quote here produces an
+    // invoice the org-scoped write side cannot honour.
+    .eq("org_id", ctx.org.id)
     .eq("status", "accepted")
     .order("created_at", { ascending: false })
     .limit(500);

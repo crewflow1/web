@@ -41,7 +41,7 @@ type SP = Promise<{
 }>;
 
 export default async function LeadsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -55,6 +55,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
         assigned:users!leads_assigned_to_fkey ( id, full_name, email )
       `,
     )
+    // ACTIVE-org pin — the pipeline must show one company's leads, not both.
+    .eq("org_id", ctx.org.id)
     .order("last_activity_at", { ascending: false })
     .limit(500);
 

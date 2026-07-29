@@ -32,8 +32,23 @@ type FailRow = BlockableInspection & {
   assets: { id: string; name: string } | null;
 };
 
+/**
+ * Chainable `.eq()`/`.not()` so the ACTIVE-org pin can sit alongside the
+ * existing filters. RLS (`current_org_ids()`) admits EVERY org the viewer
+ * belongs to, so an unpinned read blends both companies' inspection backlog
+ * — including the safety-critical picture. Same class as #456/#463/#464.
+ */
+type InspQuery<T> = {
+  eq: (k: string, v: unknown) => InspQuery<T>;
+  not: (k: string, op: string, v: unknown) => InspQuery<T>;
+  order: (
+    c: string,
+    o: { ascending: boolean },
+  ) => { limit: (n: number) => Promise<{ data: T[] | null }> };
+};
+
 export default async function InspectionsOverviewPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);
   const nowIso = new Date().toISOString();
@@ -41,19 +56,11 @@ export default async function InspectionsOverviewPage() {
   // Open due work (draft + due_at), oldest first — served by the partial index.
   const { data: dueRaw } = await (
     supabase.from("asset_inspections" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          not: (k: string, op: string, v: unknown) => {
-            order: (
-              c: string,
-              o: { ascending: boolean },
-            ) => { limit: (n: number) => Promise<{ data: DueRow[] | null }> };
-          };
-        };
-      };
+      select: (c: string) => InspQuery<DueRow>;
     }
   )
     .select("id, asset_id, title, due_at, template_version, assets(id, name)")
+    .eq("org_id", ctx.org.id)
     .eq("status", "draft")
     .not("due_at", "is", null)
     .order("due_at", { ascending: true })
@@ -66,36 +73,24 @@ export default async function InspectionsOverviewPage() {
   // per asset, run through the unit-tested mirror of the DB clearing predicate.
   const { data: safetyRaw } = await (
     supabase.from("asset_inspections" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => {
-            order: (
-              c: string,
-              o: { ascending: boolean },
-            ) => { limit: (n: number) => Promise<{ data: FailRow[] | null }> };
-          };
-        };
-      };
+      select: (c: string) => InspQuery<FailRow>;
     }
   )
     .select(
       "id, asset_id, title, status, outcome, safety_critical, inspected_at, created_at, reinspection_of, assets(id, name)",
     )
+    .eq("org_id", ctx.org.id)
     .eq("safety_critical", true)
     .eq("status", "issued")
     .order("created_at", { ascending: false })
     .limit(400);
   const { data: overridesRaw } = await (
     supabase.from("asset_inspection_overrides" as never) as unknown as {
-      select: (c: string) => {
-        order: (
-          c: string,
-          o: { ascending: boolean },
-        ) => { limit: (n: number) => Promise<{ data: (OverrideRow & { asset_id: string })[] | null }> };
-      };
+      select: (c: string) => InspQuery<OverrideRow & { asset_id: string }>;
     }
   )
     .select("id, asset_id, inspection_id, reason, expires_at, created_at, created_by, revoked_at")
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
 

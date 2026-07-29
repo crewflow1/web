@@ -35,7 +35,7 @@ export default async function CustomersPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);
@@ -52,6 +52,10 @@ export default async function CustomersPage({
       "id, name, email, phone, address_line1, address_line2, city, county, postcode, created_at",
       { count: "exact" },
     )
+    // ACTIVE-org pin. RLS's `current_org_ids()` admits EVERY org the viewer
+    // belongs to, so a dual-org member's address book listed BOTH companies'
+    // customers and the exact count paginated over the blend.
+    .eq("org_id", ctx.org.id)
     // Secondary `id` sort is a STABLE tiebreaker: a bulk import can insert many
     // rows with identical created_at, and without a deterministic tiebreaker
     // PostgREST may order ties differently between page requests — duplicating

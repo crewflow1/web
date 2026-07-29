@@ -32,11 +32,15 @@ type PinChain = PromiseLike<PinRows> & {
   in: (k: string, v: unknown[]) => PinChain;
   order: (k: string, o: { ascending: boolean }) => Promise<PinRows>;
 };
+/** Chainable `.eq()` so an update can carry BOTH the id and the org pin. */
+type PinMutation = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
+  eq: (k: string, v: unknown) => PinMutation;
+};
 type PinClient = {
   from: (t: string) => {
     select: (c: string) => PinChain;
     insert: (r: unknown) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> } };
-    update: (r: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+    update: (r: unknown, o?: { count: string }) => PinMutation;
     delete: (o: { count: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
   };
   rpc: (fn: string, args: Record<string, unknown>) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> };
@@ -50,14 +54,21 @@ type RawPin = {
 
 /**
  * Every pin on a drawing revision, with each snag pin's live status/title joined
- * in ONE batched query (no N+1). RLS scopes the read to the caller's orgs.
+ * in ONE batched query (no N+1).
+ *
+ * Pinned to the ACTIVE org, not merely RLS-scoped: `current_org_ids()` returns
+ * EVERY org the viewer belongs to, so an RLS-only read would surface the other
+ * company's pins (and, through the snag join, their defect titles) on this org's
+ * drawing. Same class as #456/#463.
  */
 export async function listPinsForVersion(versionId: string): Promise<BlueprintPin[]> {
+  const { ctx } = await requireOrgContext();
   const supabase = pc(await createClient());
   const { data: rows } = await supabase
     .from("blueprint_pins")
     .select("id, blueprint_version_id, page_number, u, v, kind, title, note, snag_id, created_at")
     .eq("blueprint_version_id", versionId)
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: true });
   const pins = (rows ?? []) as unknown as RawPin[];
   if (pins.length === 0) return [];
@@ -65,7 +76,11 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
   const snagIds = [...new Set(pins.filter((p) => p.snag_id).map((p) => p.snag_id as string))];
   const snagById = new Map<string, { status: SnagStatus; title: string }>();
   if (snagIds.length > 0) {
-    const { data: snagRows } = await supabase.from("snags").select("id, status, title").in("id", snagIds);
+    const { data: snagRows } = await supabase
+      .from("snags")
+      .select("id, status, title")
+      .eq("org_id", ctx.org.id)
+      .in("id", snagIds);
     for (const s of (snagRows ?? []) as unknown as { id: string; status: SnagStatus; title: string }[]) {
       snagById.set(s.id, { status: s.status, title: s.title });
     }
@@ -85,11 +100,13 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
 
 /** Open snags on a job that a pin could link to (for the "link existing" flow). */
 export async function listLinkableSnags(jobId: string): Promise<{ id: string; title: string; status: SnagStatus }[]> {
+  const { ctx } = await requireOrgContext();
   const supabase = pc(await createClient());
   const { data } = await supabase
     .from("snags")
     .select("id, title, status")
     .eq("job_id", jobId)
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false });
   return ((data ?? []) as unknown as { id: string; title: string; status: SnagStatus }[]).filter(
     (s) => s.status !== "verified" && s.status !== "wont_fix",
@@ -179,14 +196,19 @@ export async function linkSnagPin(raw: LinkSnagPinInput): Promise<PinResult> {
 export async function movePin(raw: MovePinInput): Promise<PinResult> {
   const parsed = movePinSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: "Invalid position." };
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = pc(await createClient());
+  // ACTIVE-org pin + an EXACT count. Without the pin, a dual-org member could
+  // reposition the other org's pin (RLS's `current_org_ids()` admits it), and
+  // without `{ count: "exact" }` PostgREST returns a null count so the
+  // "Pin not found." branch below could never fire.
   const { error, count } = await supabase
     .from("blueprint_pins")
-    .update({ u: parsed.data.u, v: parsed.data.v })
-    .eq("id", parsed.data.id);
+    .update({ u: parsed.data.u, v: parsed.data.v }, { count: "exact" })
+    .eq("id", parsed.data.id)
+    .eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: friendly(error.message) };
-  if (count === 0) return { ok: false, error: "Pin not found." };
+  if (!count) return { ok: false, error: "Pin not found." };
   return { ok: true, data: { id: parsed.data.id } };
 }
 

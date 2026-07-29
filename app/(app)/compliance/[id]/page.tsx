@@ -36,14 +36,16 @@ export default async function ComplianceDocPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data: row } = await (
     supabase.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: DocRow | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: DocRow | null }>;
+          };
         };
       };
     }
@@ -52,6 +54,9 @@ export default async function ComplianceDocPage({
       "id, kind, title, filename, mime_type, size_bytes, expires_at, reminded_30d_at, reminded_7d_at, reminded_today_at, notes, created_at",
     )
     .eq("id", id)
+    // ACTIVE-org pin — a certificate in a non-active org must be
+    // indistinguishable from a missing one (the page notFound()s on null).
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!row) notFound();

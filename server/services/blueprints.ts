@@ -68,8 +68,15 @@ export async function createBlueprint(input: {
   if (!checked.ok) return { ok: false, error: checked.error };
 
   const tenant = await createClient();
-  // Confirm the job is in the caller's org (RLS-gated read) before anything.
-  const { data: job } = await tenant.from("jobs").select("id").eq("id", input.jobId).maybeSingle();
+  // Confirm the job is in the ACTIVE org. RLS is not enough: `current_org_ids()`
+  // admits every org the viewer belongs to, so an RLS-only check let a dual-org
+  // member hang a drawing stamped `org_id: ctx.org.id` off the OTHER org's job.
+  const { data: job } = await tenant
+    .from("jobs")
+    .select("id")
+    .eq("id", input.jobId)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
   if (!job) return { ok: false, error: "Job not found." };
 
   // 1. Shell (tenant → RLS).
@@ -158,23 +165,33 @@ export type BlueprintVersionRow = {
   file_name: string; mime_type: string; size_bytes: number; notes: string | null; uploaded_at: string;
 };
 
-/** The register for a job (bounded — one row per drawing; current version resolved separately). */
+/**
+ * The register for a job (bounded — one row per drawing; current version
+ * resolved separately).
+ *
+ * Every read below is pinned to the ACTIVE org as well as running under RLS.
+ * These functions used to call `requireOrgContext()` purely as an auth gate and
+ * throw the context away, leaving `current_org_ids()` (which admits EVERY org
+ * the viewer belongs to) as the only scope — so a dual-org member's drawing
+ * register, revision history and signed-download path all reached across orgs.
+ * Same class as the job domain (#456) and suppliers (#463).
+ */
 export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const tenant = await createClient();
   const { data } = await bp(tenant).from("blueprints")
     .select("id, drawing_number, title, discipline, status, current_version, updated_at")
-    .eq("job_id", jobId).order("drawing_number", { ascending: true });
+    .eq("job_id", jobId).eq("org_id", ctx.org.id).order("drawing_number", { ascending: true });
   return (data ?? []) as unknown as BlueprintRow[];
 }
 
 /** Full immutable revision history for one drawing (lazy, per-blueprint). */
 export async function listBlueprintVersions(blueprintId: string): Promise<BlueprintVersionRow[]> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const tenant = await createClient();
   const { data } = await bp(tenant).from("blueprint_versions")
     .select("id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
-    .eq("blueprint_id", blueprintId).order("version", { ascending: false });
+    .eq("blueprint_id", blueprintId).eq("org_id", ctx.org.id).order("version", { ascending: false });
   return (data ?? []) as unknown as BlueprintVersionRow[];
 }
 
@@ -184,10 +201,11 @@ export async function listBlueprintVersionsForBlueprints(
 ): Promise<Record<string, (BlueprintVersionRow & { mime_type: string })[]>> {
   const out: Record<string, (BlueprintVersionRow & { mime_type: string })[]> = {};
   if (blueprintIds.length === 0) return out;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const tenant = await createClient();
   const { data } = await bp(tenant).from("blueprint_versions")
     .select("id, blueprint_id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
+    .eq("org_id", ctx.org.id)
     .in("blueprint_id", blueprintIds)
     .order("version", { ascending: false });
   for (const row of (data ?? []) as unknown as (BlueprintVersionRow & { blueprint_id: string; mime_type: string })[]) {
@@ -198,10 +216,13 @@ export async function listBlueprintVersionsForBlueprints(
 
 /** 60s signed URL — RLS-gated tenant read first, then admin-signs the row's own path. */
 export async function getBlueprintVersionUrl(versionId: string): Promise<BlueprintResult<{ url: string; mime: string; fileName: string }>> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const tenant = await createClient();
+  // ACTIVE-org pin. `storagePathBelongsToOrg` below proves the path is under the
+  // ROW's own org (an anti-poisoning check from the storage-evidence wave); it
+  // does NOT prove the row is in the org the viewer is currently working in.
   const { data: version } = await bp(tenant).from("blueprint_versions")
-    .select("id, org_id, storage_path, mime_type, file_name").eq("id", versionId).maybeSingle();
+    .select("id, org_id, storage_path, mime_type, file_name").eq("id", versionId).eq("org_id", ctx.org.id).maybeSingle();
   if (!version) return { ok: false, error: "not_found" };
   // Refuse to sign a path not under the row's own org (poisoned cross-tenant pointer).
   if (!storagePathBelongsToOrg(String(version.storage_path), String(version.org_id))) return { ok: false, error: "not_found" };

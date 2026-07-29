@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireOrgContext } from "@/server/auth/session";
 import { listMySupportTickets } from "@/server/services/customer-support-service";
 import {
   SUPPORT_STATUS_LABEL,
@@ -38,6 +39,7 @@ export default async function CustomerSupportPage({
 }: {
   searchParams: SP;
 }) {
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const status =
@@ -46,7 +48,7 @@ export default async function CustomerSupportPage({
     ? sp.sort
     : "needs_attention") as SupportSort;
 
-  const rows = await listMySupportTickets();
+  const rows = await listMySupportTickets(ctx.org.id);
   const filtered = filterTickets(rows, { q, status });
   const sorted = sortTickets(filtered, sort);
 

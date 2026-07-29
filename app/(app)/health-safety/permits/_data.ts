@@ -2,10 +2,15 @@ import { createClient } from "@/lib/supabase/server";
 import type { PermitRow, PermitConditionRow } from "@/lib/health-safety/permits-schema";
 
 /**
- * Permit-to-Work read layer. Tenant (user-JWT) client only → RLS scopes every
- * read to the caller's org; the service-role client is never used here. These
- * tables post-date the generated Supabase types, so queries cast through the
- * precise row shapes in lib/health-safety/permits-schema.ts.
+ * Permit-to-Work read layer. Tenant (user-JWT) client only → the service-role
+ * client is never used here. These tables post-date the generated Supabase
+ * types, so queries cast through the precise row shapes in
+ * lib/health-safety/permits-schema.ts.
+ *
+ * RLS is the OUTER boundary, not the scope: `current_org_ids()` returns EVERY
+ * org the viewer belongs to, so an RLS-only read put both companies' live
+ * permits on one board — a safety-critical blend. Every read carries an ACTIVE
+ * org predicate supplied by the caller (`ctx.org.id`).
  */
 
 const P_COLS =
@@ -13,13 +18,14 @@ const P_COLS =
 
 type PermitListItem = PermitRow & { required_count: number; confirmed_required_count: number };
 
-export async function listPermits(): Promise<PermitListItem[]> {
+export async function listPermits(orgId: string): Promise<PermitListItem[]> {
   const supabase = await createClient();
   const { data, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: unknown }> } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: unknown }> } } };
   })
     .from("permits_to_work")
     .select(`${P_COLS}, permit_conditions(required, confirmed)`)
+    .eq("org_id", orgId)
     .order("created_at", { ascending: false });
   if (error || !data) return [];
   return (data as Array<PermitRow & { permit_conditions: Array<{ required: boolean; confirmed: boolean }> }>).map((p) => {
@@ -29,31 +35,38 @@ export async function listPermits(): Promise<PermitListItem[]> {
   });
 }
 
-export async function getPermit(id: string): Promise<{ permit: PermitRow; conditions: PermitConditionRow[] } | null> {
+export async function getPermit(
+  orgId: string,
+  id: string,
+): Promise<{ permit: PermitRow; conditions: PermitConditionRow[] } | null> {
   const supabase = await createClient();
   const { data: permit, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: PermitRow | null; error: unknown }> } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: PermitRow | null; error: unknown }> } } } };
   })
-    .from("permits_to_work").select(P_COLS).eq("id", id).maybeSingle();
+    .from("permits_to_work").select(P_COLS).eq("id", id).eq("org_id", orgId).maybeSingle();
   if (error || !permit) return null;
   const { data: conditions } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: PermitConditionRow[] | null }> } } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: PermitConditionRow[] | null }> } } } } };
   })
     .from("permit_conditions")
     .select("id, org_id, permit_id, label, required, confirmed, confirmed_by, confirmed_at, notes, sort_order")
     .eq("permit_id", id)
+    .eq("org_id", orgId)
     .order("sort_order", { ascending: true }).order("created_at", { ascending: true });
   return { permit, conditions: conditions ?? [] };
 }
 
-/** Issued/superseded RAMS in the org, to link a permit to its risk assessment. */
-export async function listRamsOptions(): Promise<Array<{ id: string; label: string; job_id: string | null }>> {
+/** Issued/superseded RAMS in the ACTIVE org, to link a permit to its assessment. */
+export async function listRamsOptions(
+  orgId: string,
+): Promise<Array<{ id: string; label: string; job_id: string | null }>> {
   const supabase = await createClient();
   const { data } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { in: (k: string, v: string[]) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; reference: string | null; title: string; job_id: string | null }> | null }> } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { in: (k: string, v: string[]) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; reference: string | null; title: string; job_id: string | null }> | null }> } } } };
   })
     .from("risk_assessments")
     .select("id, reference, title, job_id")
+    .eq("org_id", orgId)
     .in("status", ["issued", "superseded"])
     .order("created_at", { ascending: false });
   return (data ?? []).map((r) => ({ id: r.id, label: `${r.reference ?? "RAMS"} — ${r.title}`, job_id: r.job_id }));

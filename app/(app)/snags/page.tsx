@@ -108,7 +108,11 @@ export default async function SnagsPage({ searchParams }: { searchParams: SP }) 
       "id, title, description, location, trade, priority, status, job_id, assigned_to, due_date, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(500);
+    .limit(500)
+    // ACTIVE-org pin — the defects list must be one company's. `SnagQuery`
+    // already carries `.eq()` for the status/priority filters, so the pin
+    // composes with them.
+    .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
   if (priorityFilter) query = query.eq("priority", priorityFilter);
   const { data } = await query;
@@ -127,6 +131,7 @@ export default async function SnagsPage({ searchParams }: { searchParams: SP }) 
     const { data: jobs } = await supabase
       .from("jobs")
       .select("id, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .in("id", jobIds);
     for (const j of jobs ?? []) {
       jobsMap.set(j.id, j.customer?.name ?? "Job");

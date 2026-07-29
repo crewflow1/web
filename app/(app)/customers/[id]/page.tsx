@@ -28,7 +28,7 @@ export default async function EditCustomerPage({
   const { id } = await params;
   const { error, saved } = await searchParams;
 
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const { data: customer } = await supabase
     .from("customers")
@@ -36,6 +36,12 @@ export default async function EditCustomerPage({
       "id, name, email, phone, notes, portal_token, created_at, address_line1, address_line2, city, county, postcode, country",
     )
     .eq("id", id)
+    // ACTIVE-org pin. RLS admits every org the viewer belongs to, so org B's
+    // customer opened inside org A's shell — complete with their portal token.
+    // Pinning the SUBJECT also makes every rollup below derived-safe: the
+    // quote/job/lead lists key off this customer_id, and the invoice/payment
+    // lists off those quote ids.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!customer) notFound();

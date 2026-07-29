@@ -87,7 +87,7 @@ export default async function HealthSafetyPage({
   const sp = await searchParams;
 
   const [rows, snapshot] = await Promise.all([
-    listRiskAssessments(),
+    listRiskAssessments(ctx.org.id),
     buildHealthSafetySnapshot(ctx.org.id),
   ]);
   const signals = buildHealthSafetySignals(snapshot);

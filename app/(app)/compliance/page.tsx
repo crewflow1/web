@@ -51,8 +51,13 @@ const SAVED_MAP: Record<string, string> = {
 
 type SP = Promise<{ kind?: string; saved?: string; error?: string }>;
 
+/** Chainable `.eq()` so the ACTIVE-org pin composes with the kind filter. */
+type DocQuery = {
+  eq: (k: string, v: unknown) => DocQuery;
+} & Promise<{ data: DocRow[] | null }>;
+
 export default async function CompliancePage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -65,23 +70,19 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
     supabase.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         order: (col: string, opts: { ascending: boolean }) => {
-          limit: (n: number) => {
-            eq: (
-              k: string,
-              v: unknown,
-            ) => Promise<{ data: DocRow[] | null }>;
-          } & Promise<{ data: DocRow[] | null }>;
+          limit: (n: number) => DocQuery;
         };
       };
     }
   )
     .select("id, kind, title, filename, expires_at, notes, created_at")
     .order("expires_at", { ascending: true })
-    .limit(500);
+    .limit(500)
+    // ACTIVE-org pin — insurance certificates and expiry dates are per-company;
+    // RLS admits every org the viewer belongs to.
+    .eq("org_id", ctx.org.id);
 
-  const result = filter
-    ? await baseQuery.eq("kind", filter)
-    : await (baseQuery as unknown as Promise<{ data: DocRow[] | null }>);
+  const result = filter ? await baseQuery.eq("kind", filter) : await baseQuery;
   const rows = result.data ?? [];
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? null : null;

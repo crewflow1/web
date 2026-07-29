@@ -73,16 +73,16 @@ export default async function PermitDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   const userId = user.id;
 
-  const result = await getPermit(id);
+  const result = await getPermit(ctx.org.id, id);
   if (!result) notFound();
   const { permit, conditions } = result;
 
   const [jobs, ramsOptions] = await Promise.all([
-    listJobOptions(),
-    listRamsOptions(),
+    listJobOptions(ctx.org.id),
+    listRamsOptions(ctx.org.id),
   ]);
   const live = permit.status === "issued" || permit.status === "active";
   const acks = live ? await listAcknowledgements("permit_to_work", permit.id) : [];

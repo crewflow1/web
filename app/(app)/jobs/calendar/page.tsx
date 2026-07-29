@@ -92,6 +92,9 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
         assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
       `,
     )
+    // ACTIVE-org pin — the staff filter above already comes from
+    // listStaffForOrg(ctx.org.id) (#456); the calendar grid itself did not.
+    .eq("org_id", ctx.org.id)
     .limit(1000);
   if (sp.status) q = q.eq("status", sp.status);
   if (sp.staff) q = q.eq("assigned_to", sp.staff);

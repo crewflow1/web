@@ -22,12 +22,12 @@ export default async function NewPermitPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 
   const [jobs, ramsOptions] = await Promise.all([
-    listJobOptions(),
-    listRamsOptions(),
+    listJobOptions(ctx.org.id),
+    listRamsOptions(ctx.org.id),
   ]);
 
   const error = errorMessage(sp.error);

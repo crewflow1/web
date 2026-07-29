@@ -5,11 +5,11 @@ import { LeadForm } from "../_form";
 import { listCustomersForLead, listStaffForLead } from "../_form-helpers";
 
 export default async function NewLeadPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
 
   const [customers, staff] = await Promise.all([
-    listCustomersForLead(),
-    listStaffForLead(),
+    listCustomersForLead(ctx.org.id),
+    listStaffForLead(ctx.org.id),
   ]);
 
   return (

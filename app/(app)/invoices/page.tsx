@@ -38,7 +38,7 @@ const STATUS_STYLES: Record<InvoiceStatus, string> = {
 };
 
 export default async function InvoicesPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -85,7 +85,15 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
     : "id, number, status, amount, vat_total, total, due_date, created_at";
   let q = (supabase.from("invoices" as never) as unknown as UntypedQ)
     .select(cols, { count: "exact" })
-    .order("created_at", { ascending: false });
+    // ACTIVE-org pin. RLS admits every org the viewer belongs to, so a dual-org
+    // member saw BOTH ledgers interleaved — and the exact count (which drives
+    // pagination and the "N invoices" headline) summed the two.
+    .eq("org_id", ctx.org.id)
+    // `id` is a unique tiebreaker: `created_at` alone is not a total order, so
+    // invoices sharing a timestamp could be skipped or repeated at a `.range()`
+    // page boundary (the F-1 silent-truncation class).
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false });
 
   if (status === "overdue") {
     // `overdue` is DERIVED, not stored — see lib/invoices/overdue.ts. Filtering
@@ -116,6 +124,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
       .from("customers")
       .select("name")
       .eq("id", customerFilter)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     filteredCustomerName = (c as { name?: string } | null)?.name ?? null;
   }

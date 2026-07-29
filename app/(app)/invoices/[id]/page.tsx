@@ -40,7 +40,7 @@ export default async function InvoiceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   // Cast: job_id is in the 20260520150000 migration but not yet in the
@@ -72,6 +72,11 @@ export default async function InvoiceDetailPage({
       `,
     )
     .eq("id", id)
+    // ACTIVE-org pin. The invoice API routes and the send/PDF paths were pinned
+    // in #459; this page was not, so org B's invoice (and its customer's email)
+    // rendered inside org A's shell where the money actions live. Pinning the
+    // SUBJECT also makes the line-item and payment reads below derived-safe.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   const invoice = invoiceRaw as unknown as LoadedInvoice | null;
 

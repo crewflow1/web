@@ -16,9 +16,9 @@ export default async function NewDiaryEntryPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
-  const jobs = await listJobOptions();
+  const jobs = await listJobOptions(ctx.org.id);
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))

@@ -63,7 +63,7 @@ const JOB_SELECT = `
 const CUSTOMER_MATCH_LIMIT = 200;
 
 export default async function JobsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const customerFilter =
     sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
@@ -90,6 +90,9 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
       const { data: matchCustomers } = await supabase
         .from("customers")
         .select("id")
+        // ACTIVE-org pin: without it the search resolves the OTHER org's
+        // customers into the `customer_id.in.(…)` branch below.
+        .eq("org_id", ctx.org.id)
         .or(custOr)
         .limit(CUSTOMER_MATCH_LIMIT);
       customerIdBranch = inIdsBranch(
@@ -108,6 +111,10 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   let listQuery = supabase
     .from("jobs")
     .select(JOB_SELECT, { count: "exact" })
+    // ACTIVE-org pin. `current_org_ids()` admits EVERY org the viewer belongs
+    // to, so RLS alone interleaves both companies' jobs AND inflates the
+    // headline count that drives pagination.
+    .eq("org_id", ctx.org.id)
     .order("scheduled_date", { ascending: true, nullsFirst: false })
     .order("id", { ascending: true })
     .range(offset, offset + PAGE_SIZE - 1);
@@ -120,6 +127,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   let todayQuery = supabase
     .from("jobs")
     .select(JOB_SELECT)
+    .eq("org_id", ctx.org.id)
     .eq("scheduled_date", todayIso)
     .order("id", { ascending: true });
 
@@ -162,6 +170,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
       .from("customers")
       .select("name")
       .eq("id", customerFilter)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     filteredCustomerName = (c as { name?: string } | null)?.name ?? null;
   }

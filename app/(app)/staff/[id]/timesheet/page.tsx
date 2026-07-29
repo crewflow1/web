@@ -71,6 +71,10 @@ export default async function TimesheetPage({
     supabase
       .from("time_entries")
       .select("id, user_id, job_id, started_at, ended_at, breaks, note, payroll_line_id")
+      // ACTIVE-org pin — a person who works for two companies through CrewFlow
+      // must not have the other company's hours (and pay) shown on this org's
+      // timesheet. `user_id` alone is not a scope.
+      .eq("org_id", ctx.org.id)
       .eq("user_id", staffId)
       .gte("started_at", `${monthStartIso}T00:00:00Z`)
       .order("started_at", { ascending: false }),

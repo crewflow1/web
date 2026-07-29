@@ -40,9 +40,13 @@ export async function GET(request: NextRequest) {
 
   const [{ data: invoicesRaw }, { data: financesRaw }, { data: org }] =
     await Promise.all([
+      // ACTIVE-org pins — this PDF is an HMRC VAT-return working paper. The org
+      // header below is already read by `ctx.org.id`, so an unpinned figure set
+      // would put BOTH companies' VAT under ONE company's letterhead.
       supabase
         .from("invoices")
         .select("number, status, amount, vat_total, total, paid_at")
+        .eq("org_id", ctx.org.id)
         .eq("status", "paid")
         .gte("paid_at", qStart)
         .lte("paid_at", qEndExclusive)
@@ -50,6 +54,7 @@ export async function GET(request: NextRequest) {
       supabase
         .from("finances")
         .select("category, amount, vat_total, created_at")
+        .eq("org_id", ctx.org.id)
         .gte("created_at", qStart)
         .lte("created_at", qEndExclusive)
         .order("created_at", { ascending: true }),

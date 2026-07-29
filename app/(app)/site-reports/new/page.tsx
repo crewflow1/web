@@ -23,13 +23,15 @@ export default async function NewSiteReportPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
   const { data: jobsRaw } = await supabase
     .from("jobs")
     .select("id, status, scheduled_date, customer:customers ( name )")
+    // ACTIVE-org pin — the job picker must not offer the other org's jobs.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
   const jobs = (jobsRaw ?? []) as unknown as JobOption[];

@@ -25,6 +25,8 @@ export default async function ImportAuditPage({
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     .eq("id", id)
+    // ACTIVE-org pin — same reasoning as the wizard: this page offers rollback.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!imp) notFound();
 

@@ -96,10 +96,10 @@ export default async function RiskAssessmentDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { user } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
   const userId = user.id;
 
-  const result = await getRiskAssessment(id);
+  const result = await getRiskAssessment(ctx.org.id, id);
   if (!result) notFound();
   const { ra, hazards } = result;
   // Required operatives = the crew rota'd to this RAMS's job (M6b). No job → not tracked.
@@ -117,12 +117,12 @@ export default async function RiskAssessmentDetailPage({
   const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
 
   // Revision lineage: the whole series (newest first) + the currently-live revision.
-  const siblings = await getRevisionSiblings(ra.root_risk_assessment_id);
+  const siblings = await getRevisionSiblings(ctx.org.id, ra.root_risk_assessment_id);
   const currentIssued = siblings.find((s) => s.status === "issued") ?? null;
   const isRevisionDraft = ra.revision_number > 1;
   const issueAction = isRevisionDraft ? issueRamsRevision : issueRiskAssessment;
 
-  const assessors = await listAssessors();
+  const assessors = await listAssessors(ctx.org.id);
   const assessorName = ra.assessor_id
     ? (assessors.find((a) => a.id === ra.assessor_id)?.name ?? "Assigned")
     : null;

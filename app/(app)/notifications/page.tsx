@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireOrgContext } from "@/server/auth/session";
 import { getLatestNotificationsForCustomer } from "@/server/services/notifications-service";
 import {
   NOTIFICATION_CATEGORIES,
@@ -19,9 +20,11 @@ import { markRead, markAllRead, dismiss } from "./actions";
 /**
  * Customer notifications centre (HQ-8).
  *
- * RLS-scoped via getLatestNotificationsForCustomer. The user only
- * sees notifications targeted at their org / themselves and with
- * audience IN ('customer', 'both').
+ * Scoped to the ACTIVE org via getLatestNotificationsForCustomer, and RLS-gated
+ * on top of that. RLS alone is NOT a scope — `current_org_ids()` admits every
+ * org the viewer belongs to — so a dual-org member's centre used to list the
+ * other company's alerts. The user only sees notifications targeted at the
+ * active org / themselves and with audience IN ('customer', 'both').
  */
 
 type SP = Promise<{
@@ -39,6 +42,7 @@ export default async function CustomerNotificationsPage({
 }: {
   searchParams: SP;
 }) {
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const category =
     (sp.category as NotificationCategory | "all" | undefined) ?? "all";
@@ -47,7 +51,7 @@ export default async function CustomerNotificationsPage({
   const state =
     (sp.state as "unread" | "all" | "dismissed" | undefined) ?? "all";
 
-  const all = await getLatestNotificationsForCustomer(200);
+  const all = await getLatestNotificationsForCustomer(ctx.org.id, 200);
   const filtered = filterNotifications(all, { category, priority, state });
   const sorted = prioritySort(filtered);
   const groups = groupByDate(sorted);

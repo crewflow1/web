@@ -21,7 +21,7 @@ export default async function ReconcilePage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const [{ data: statement }, { data: lines }, { data: invoices }] = await Promise.all([
@@ -29,6 +29,11 @@ export default async function ReconcilePage({
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
       .eq("id", id)
+      // ACTIVE-org pin — this page offers "match this line to this invoice",
+      // so the statement, its lines and the candidate invoices must all be one
+      // company's. Pinning the statement makes the line read (keyed on
+      // bank_statement_id) derived-safe; the invoice list is pinned directly.
+      .eq("org_id", ctx.org.id)
       .maybeSingle(),
     supabase
       .from("bank_statement_lines")
@@ -40,6 +45,7 @@ export default async function ReconcilePage({
     supabase
       .from("invoices")
       .select("id, number, total, status")
+      .eq("org_id", ctx.org.id)
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
 

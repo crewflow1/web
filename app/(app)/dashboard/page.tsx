@@ -130,7 +130,11 @@ export default async function DashboardPage() {
   sixMonthsAgo.setUTCHours(0, 0, 0, 0);
   const sixMonthsAgoIso = sixMonthsAgo.toISOString();
 
-  // Fetch everything in parallel under RLS.
+  // Fetch everything in parallel. RLS is the OUTER boundary, not the scope:
+  // `current_org_ids()` returns EVERY org the viewer belongs to, so an
+  // unpinned read makes EVERY tile on this page — job counts, revenue,
+  // profitability, pipeline value, team, payroll cost — the SUM of both of a
+  // dual-org owner's companies. Each read below is pinned to the ACTIVE org.
   const ACTIVITY_PAGE_SIZE = 25;
   const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes] =
     await Promise.all([
@@ -140,6 +144,7 @@ export default async function DashboardPage() {
           .select(
             "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
           )
+          .eq("org_id", ctx.org.id)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -150,6 +155,7 @@ export default async function DashboardPage() {
           .select(
             "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
           )
+          .eq("org_id", ctx.org.id)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -158,6 +164,7 @@ export default async function DashboardPage() {
         supabase
           .from("finances")
           .select("id, amount, vat_total, created_at, category, job_id")
+          .eq("org_id", ctx.org.id)
           .gte("created_at", sixMonthsAgoIso)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
@@ -168,15 +175,18 @@ export default async function DashboardPage() {
         .select(
           "id, source, urgency, service, postcode, created_at, customer:customers ( id, name )",
         )
+        .eq("org_id", ctx.org.id)
         .order("created_at", { ascending: false })
         .limit(5),
       supabase
         .from("memberships")
-        .select("user_id, role, user:users ( id, full_name, email )"),
+        .select("user_id, role, user:users ( id, full_name, email )")
+        .eq("org_id", ctx.org.id),
       fetchAllRows((from, to) =>
         supabase
           .from("quotes")
           .select("id, status, total, accepted_at, created_at, approved_at")
+          .eq("org_id", ctx.org.id)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -185,6 +195,7 @@ export default async function DashboardPage() {
         supabase
           .from("leads")
           .select("id, status, source, estimated_value, created_at")
+          .eq("org_id", ctx.org.id)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -195,7 +206,9 @@ export default async function DashboardPage() {
           "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
           { count: "exact" },
         )
+        .eq("org_id", ctx.org.id)
         .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
         .range(0, ACTIVITY_PAGE_SIZE - 1),
     ]);
 
@@ -205,10 +218,12 @@ export default async function DashboardPage() {
       supabase
         .from("invoice_payments")
         .select("amount, paid_at, source")
+        .eq("org_id", ctx.org.id)
         .gte("paid_at", monthStart.slice(0, 10)),
       supabase
         .from("bank_statement_lines")
         .select("id, amount, posted_at")
+        .eq("org_id", ctx.org.id)
         .eq("match_status", "suggested"),
     ]);
 
@@ -220,6 +235,7 @@ export default async function DashboardPage() {
       supabase
         .from("time_entries")
         .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
         .gte("started_at", thirtyDaysAgoIso)
         .order("started_at", { ascending: false })
         .order("id", { ascending: true })
@@ -227,7 +243,8 @@ export default async function DashboardPage() {
     ),
     supabase
       .from("memberships")
-      .select("user_id, role, user:users ( id, hourly_pay )"),
+      .select("user_id, role, user:users ( id, hourly_pay )")
+      .eq("org_id", ctx.org.id),
   ]);
 
   const jobs = jobsRes.data ?? [];
@@ -274,6 +291,7 @@ export default async function DashboardPage() {
   };
   type RetRelRow = { job_id: string | null; amount: number | string | null };
   type Paged<T> = {
+    eq: (k: string, v: unknown) => Paged<T>;
     order: (k: string, o: { ascending: boolean }) => {
       range: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
     };
@@ -282,12 +300,14 @@ export default async function DashboardPage() {
     fetchAllRows<RetTermsRow>((from, to) =>
       (supabase.from("jobs" as never) as unknown as { select: (c: string) => Paged<RetTermsRow> })
         .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
+        .eq("org_id", ctx.org.id)
         .order("id", { ascending: true })
         .range(from, to),
     ),
     fetchAllRows<RetRelRow>((from, to) =>
       (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
         .select("job_id, amount")
+        .eq("org_id", ctx.org.id)
         // Order by the UNIQUE primary key, not the non-unique job_id: fetchAllRows
         // needs a stable total order or rows sharing a sort-key value can be
         // dropped/duplicated at a 500-row page boundary (the F-1 truncation class).

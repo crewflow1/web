@@ -21,7 +21,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const url = request.nextUrl;
   const limit = Math.min(
@@ -37,7 +37,11 @@ export async function GET(request: NextRequest) {
       "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, quote_id, created_at",
       { count: "exact" },
     )
+    // ACTIVE-org pin + unique `id` tiebreaker — the POST half already stamps
+    // `org_id: ctx.org.id`; the GET list did not scope by it.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {

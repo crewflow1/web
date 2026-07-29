@@ -36,7 +36,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function QuotesPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -54,7 +54,13 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
       "id, number, status, total, valid_until, created_at, customer:customers ( id, name )",
       { count: "exact" },
     )
+    // ACTIVE-org pin — RLS admits every org the viewer belongs to, so both
+    // companies' quotes (and their totals) landed in one list.
+    .eq("org_id", ctx.org.id)
+    // `id` is a unique tiebreaker so quotes sharing a `created_at` cannot be
+    // skipped or repeated across a `.range()` page boundary.
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
   if (status && (QUOTE_STATUSES as readonly string[]).includes(status)) {
@@ -75,6 +81,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
       .from("customers")
       .select("name")
       .eq("id", customerFilter)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     filteredCustomerName = (c as { name?: string } | null)?.name ?? null;
   }

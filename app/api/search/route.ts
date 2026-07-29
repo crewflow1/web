@@ -84,7 +84,14 @@ type EmbeddedCustomer = {
 } | null;
 
 export async function GET(req: NextRequest) {
-  await requireOrgContext();
+  // The command palette is mounted in the app shell, so it is the single most
+  // reachable list surface in the product. RLS is the OUTER boundary, not the
+  // scope — `current_org_ids()` admits EVERY org the viewer belongs to — so
+  // every read below is pinned to the ACTIVE org. Without the pins a dual-org
+  // member's search returned the other company's customers, jobs, quotes,
+  // leads, invoices, RAMS, permits and staff, each linking into a detail page
+  // that (since #456/#459/#463) correctly 404s.
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
@@ -119,7 +126,15 @@ export async function GET(req: NextRequest) {
 
   // risk_assessments + permits_to_work post-date the generated types → loose cast.
   const loose = supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { or: (f: string) => { limit: (n: number) => Promise<{ data: Array<Record<string, string | null>> | null }> } } };
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          or: (f: string) => {
+            limit: (n: number) => Promise<{ data: Array<Record<string, string | null>> | null }>;
+          };
+        };
+      };
+    };
   };
 
   const hits: Hit[] = [];
@@ -135,16 +150,18 @@ export async function GET(req: NextRequest) {
       .select(
         "id, name, email, phone, address_line1, address_line2, city, county, postcode",
       )
+      .eq("org_id", ctx.org.id)
       .or(custOr)
       .limit(CHAIN_LIMIT),
     supabase
       .from("memberships")
       .select("user_id, role, user:users ( id, full_name, email )")
+      .eq("org_id", ctx.org.id)
       .limit(40),
     // RA number (reference) + RAMS title.
-    loose.from("risk_assessments").select("id, reference, title, status").or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
+    loose.from("risk_assessments").select("id, reference, title, status").eq("org_id", ctx.org.id).or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
     // Permit number (reference) + title.
-    loose.from("permits_to_work").select("id, reference, title, status").or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
+    loose.from("permits_to_work").select("id, reference, title, status").eq("org_id", ctx.org.id).or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
   ]);
 
   const customers = customersRes.data ?? [];
@@ -178,17 +195,20 @@ export async function GET(req: NextRequest) {
       .select(
         "id, status, scheduled_date, site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country, customer:customers ( name, address_line1, address_line2, city, county, postcode, country )",
       )
+      .eq("org_id", ctx.org.id)
       .or(jobOr)
       .order("created_at", { ascending: false })
       .limit(CHAIN_LIMIT),
     supabase
       .from("quotes")
       .select("id, number, status, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .or(quoteOr)
       .limit(CHAIN_LIMIT),
     supabase
       .from("leads")
       .select("id, service, source, postcode, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .or(leadOr)
       .limit(PER_TYPE),
   ]);
@@ -251,6 +271,7 @@ export async function GET(req: NextRequest) {
     const { data: invoiceRows } = await supabase
       .from("invoices")
       .select("id, number, status, total")
+      .eq("org_id", ctx.org.id)
       .or(invoiceOr)
       .limit(PER_TYPE);
     for (const inv of invoiceRows ?? []) {
