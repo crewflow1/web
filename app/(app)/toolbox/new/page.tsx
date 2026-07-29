@@ -12,9 +12,9 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string; job?: string }>;
 
 export default async function NewToolboxTalkPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
-  const options = await loadToolboxFormOptions();
+  const options = await loadToolboxFormOptions(ctx.org.id);
 
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
 

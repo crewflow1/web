@@ -56,7 +56,7 @@ type AssetQuery = Promise<{ data: AssetRow[] | null }> & {
 type SP = Promise<{ status?: string; saved?: string; error?: string }>;
 
 export default async function AssetsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -79,7 +79,11 @@ export default async function AssetsPage({ searchParams }: { searchParams: SP })
       "id, name, category, manufacturer, model, serial_number, registration, ownership, status, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(1000)
+    // ACTIVE-org pin. RLS (`current_org_ids()`) admits EVERY org the viewer
+    // belongs to, so without this a dual-org member sees both companies' plant
+    // interleaved in one register. Same class as #456/#459/#461/#463/#464.
+    .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
   const { data } = await query;
   const rows = data ?? [];

@@ -126,7 +126,12 @@ export async function buildDailyBriefing(
       // service). Org-pinned and best-effort like the rest of this batch, so a
       // fleet-less org contributes nothing and a failed read emits no lines.
       buildFleetComplianceRollup(orgId, todayIso),
-      db.from("briefing_dismissals").select("item_key").eq("user_id", userId).eq("dismissed_on", todayIso),
+      // ACTIVE-org pin: the write side stamps `org_id: ctx.org.id`, and
+      // `item_key` is a generic string ("overdue_invoices", …), so an unpinned
+      // read let a dismissal made in one org silently hide the SAME briefing
+      // line in the viewer's other org. Every sibling read in this batch is
+      // already org-pinned; this one was the exception.
+      db.from("briefing_dismissals").select("item_key").eq("org_id", orgId).eq("user_id", userId).eq("dismissed_on", todayIso),
     ]);
 
     // --- Overdue invoices --------------------------------------------------

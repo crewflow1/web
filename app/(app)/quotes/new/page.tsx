@@ -30,9 +30,9 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
   const supabase = await createClient();
 
   const [customers, properties, leads, orgRow] = await Promise.all([
-    listCustomersForQuote(),
-    listPropertiesForQuote(),
-    listLeadsForQuote(),
+    listCustomersForQuote(ctx.org.id),
+    listPropertiesForQuote(ctx.org.id),
+    listLeadsForQuote(ctx.org.id),
     supabase
       .from("organizations")
       .select("default_terms")

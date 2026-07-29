@@ -36,21 +36,26 @@ const SAVED_MAP: Record<string, string> = {
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function DiaryPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
   const { data } = await (
     supabase.from("site_diary_entries" as never) as unknown as {
       select: (cols: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean },
+        eq: (
+          k: string,
+          v: unknown,
         ) => {
           order: (
             col: string,
             opts: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: DiaryRow[] | null }> };
+          ) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean },
+            ) => { limit: (n: number) => Promise<{ data: DiaryRow[] | null }> };
+          };
         };
       };
     }
@@ -58,6 +63,8 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
     .select(
       "id, entry_date, job_id, weather, labour_count, work_summary, delays, created_at",
     )
+    // ACTIVE-org pin — the diary is dispute evidence and must be one company's.
+    .eq("org_id", ctx.org.id)
     .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(500);
@@ -71,6 +78,7 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
     const { data: jobs } = await supabase
       .from("jobs")
       .select("id, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .in("id", jobIds);
     for (const j of jobs ?? []) jobsMap.set(j.id, j.customer?.name ?? "Job");
   }

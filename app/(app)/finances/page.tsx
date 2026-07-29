@@ -47,7 +47,7 @@ export default async function FinancesPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -64,7 +64,14 @@ export default async function FinancesPage({
       "id, amount, currency, vat_rate, vat_total, category, receipt_url, job_id, created_at",
       { count: "exact" },
     )
+    // ACTIVE-org pin — expenses (and the exact count that paginates them) must
+    // come from ONE company; RLS admits every org the viewer belongs to.
+    .eq("org_id", ctx.org.id)
+    // Unique `id` tiebreaker so entries sharing a `created_at` cannot be skipped
+    // or repeated at a `.range()` page boundary — the monthly summary read below
+    // already does this; the main paged list did not.
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
   if (category && (FINANCE_CATEGORIES as readonly string[]).includes(category)) {
@@ -109,6 +116,7 @@ export default async function FinancesPage({
     const { data: chunk, error: summaryError } = await supabase
       .from("finances")
       .select("amount, vat_total, created_at")
+      .eq("org_id", ctx.org.id)
       .gte("created_at", summaryFloor)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })

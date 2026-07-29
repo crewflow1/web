@@ -179,7 +179,10 @@ export async function createRamsRevision(formData: FormData): Promise<void> {
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const sourceId = parsed.data.id;
 
-  const source = await getRiskAssessment(sourceId);
+  // ACTIVE-org pin: the new revision is stamped `org_id: ctx.org.id` below, so
+  // an unpinned source read let a dual-org member copy the OTHER company's
+  // issued RAMS (title, activity, hazards) into this org's register.
+  const source = await getRiskAssessment(ctx.org.id, sourceId);
   if (!source) redirect(`/health-safety?error=not_found`);
   const { ra, hazards } = source;
   // Only an issued (current or superseded) record is a snapshot worth revising.

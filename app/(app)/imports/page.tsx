@@ -32,6 +32,9 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
   const { data: imports } = await supabase
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
+    // ACTIVE-org pin — an import session is rollback-capable, so listing the
+    // other company's sessions here offers a destructive action on their data.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(20);
 

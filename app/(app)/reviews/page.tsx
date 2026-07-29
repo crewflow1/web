@@ -60,8 +60,13 @@ const ERROR_MAP: Record<string, string> = {
 
 type SP = Promise<{ status?: string; saved?: string; error?: string }>;
 
+/** Chainable `.eq()` so the ACTIVE-org pin composes with the status filter. */
+type ReviewQuery = {
+  eq: (k: string, v: unknown) => ReviewQuery;
+} & Promise<{ data: ReviewRow[] | null }>;
+
 export default async function ReviewsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -74,12 +79,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
     supabase.from("review_requests" as never) as unknown as {
       select: (cols: string) => {
         order: (col: string, opts: { ascending: boolean }) => {
-          limit: (n: number) => {
-            eq: (
-              k: string,
-              v: unknown,
-            ) => Promise<{ data: ReviewRow[] | null }>;
-          } & Promise<{ data: ReviewRow[] | null }>;
+          limit: (n: number) => ReviewQuery;
         };
       };
     }
@@ -92,11 +92,12 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
       `,
     )
     .order("send_at", { ascending: false })
-    .limit(200);
+    .limit(200)
+    // ACTIVE-org pin — review requests carry customer names and emails, so an
+    // unpinned list leaks the other company's customers onto this screen.
+    .eq("org_id", ctx.org.id);
 
-  const result = filter
-    ? await baseQuery.eq("status", filter)
-    : await (baseQuery as unknown as Promise<{ data: ReviewRow[] | null }>);
+  const result = filter ? await baseQuery.eq("status", filter) : await baseQuery;
   const rows = result.data ?? [];
 
   const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? null : null;

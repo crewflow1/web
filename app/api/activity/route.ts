@@ -24,7 +24,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function GET(request: NextRequest) {
   try {
-    await requireOrgContext();
+    const { ctx } = await requireOrgContext();
     const url = request.nextUrl;
     const page = Math.max(parseInt(url.searchParams.get("page") ?? "1", 10) || 1, 1);
     const offset = (page - 1) * PAGE_SIZE;
@@ -36,7 +36,11 @@ export async function GET(request: NextRequest) {
         "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
         { count: "exact" },
       )
+      // ACTIVE-org pin — this endpoint backs the /activity "load more" list, so
+      // it must agree with the page's own (now pinned) first page.
+      .eq("org_id", ctx.org.id)
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
     const from = url.searchParams.get("from");

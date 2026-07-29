@@ -79,7 +79,7 @@ type LineItemRow = {
 };
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const url = request.nextUrl;
   const format = (url.searchParams.get("format") ?? "simple").toLowerCase();
   const from = url.searchParams.get("from");
@@ -104,6 +104,9 @@ export async function GET(request: NextRequest) {
         quote:quotes ( customer:customers ( name ) )
       `,
     )
+    // ACTIVE-org pin — a Xero/Sage export must be exactly one company's sales
+    // ledger; RLS alone merged both companies into one accounting import.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: true })
     .limit(MAX_INVOICES);
 
@@ -187,6 +190,7 @@ export async function GET(request: NextRequest) {
     const { data: lis } = await supabase
       .from("invoice_line_items")
       .select("invoice_id, description, qty, unit_price, vat_rate, line_total, sort_order")
+      .eq("org_id", ctx.org.id)
       .in("invoice_id", invoiceIds)
       .order("sort_order", { ascending: true });
     const grouped = new Map<string, LineItemRow[]>();

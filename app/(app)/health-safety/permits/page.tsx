@@ -30,10 +30,13 @@ export default async function PermitsRegisterPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 
-  const [rows, jobs] = await Promise.all([listPermits(), listJobOptions()]);
+  const [rows, jobs] = await Promise.all([
+    listPermits(ctx.org.id),
+    listJobOptions(ctx.org.id),
+  ]);
   const jobLabel = new Map(jobs.map((j) => [j.id, j.label] as const));
   const now = new Date();
 

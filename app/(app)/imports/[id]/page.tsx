@@ -49,6 +49,11 @@ export default async function ImportWizardPage({
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     .eq("id", id)
+    // ACTIVE-org pin — `imports: admin all` is `is_org_admin(org_id)`, which a
+    // dual-org OWNER satisfies for BOTH orgs. This wizard commits and rolls
+    // back rows, so opening the other company's session here is destructive.
+    // Pinning the session makes the file/row reads below derived-safe.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!imp) notFound();
 

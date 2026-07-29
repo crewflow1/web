@@ -44,20 +44,27 @@ const ERROR_MAP: Record<string, string> = {
  */
 export default async function TemplatesPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
-        order: (
-          c: string,
-          o: { ascending: boolean },
-        ) => Promise<{ data: Row[] | null }>;
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          order: (
+            c: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: Row[] | null }>;
+        };
       };
     }
   )
     .select("id, family_id, version, name, categories, check_level, status, updated_at")
+    // ACTIVE-org pin — the template library is per-org; RLS alone blends both.
+    .eq("org_id", ctx.org.id)
     .order("updated_at", { ascending: false });
 
   // Group to one row per family: prefer the PUBLISHED version as the face of the

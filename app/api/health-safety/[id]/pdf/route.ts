@@ -14,10 +14,13 @@ import { RamsPdf, type RamsPdfInput } from "@/lib/pdf/rams-pdf";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  await requireOrgContext(); // auth gate; the header + data are scoped by RLS + the subject's own org
+  // Auth gate AND scope: RLS admits every org the viewer belongs to, so the
+  // subject is pinned to the ACTIVE org here. The header below still labels the
+  // PDF with the SUBJECT's own org — which, given the pin, is the active one.
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
-  const result = await getRiskAssessment(id);
+  const result = await getRiskAssessment(ctx.org.id, id);
   if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const { ra, hazards } = result;
   if (ra.status === "draft") return NextResponse.json({ error: "Not issued" }, { status: 409 });
@@ -28,7 +31,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const orgRow = await (supabase as unknown as { from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: { name: string } | null }> } } } })
     .from("organizations").select("name").eq("id", ra.org_id).maybeSingle();
 
-  const assessors = await listAssessors();
+  const assessors = await listAssessors(ctx.org.id);
   const signoffs = await listAcknowledgements("risk_assessment", ra.id);
 
   const input: RamsPdfInput = {

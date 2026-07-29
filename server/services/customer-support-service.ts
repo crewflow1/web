@@ -52,10 +52,16 @@ export type CustomerSupportTicketDetail = CustomerSupportTicket & {
 };
 
 // ---------------------------------------------------------------------
-// List the customer's tickets (RLS-scoped to their org).
+// List the tickets of the ACTIVE org (RLS-gated on top).
+//
+// RLS is the OUTER boundary, not the scope: `current_org_ids()` returns EVERY
+// org the viewer belongs to, so this used to list the other company's support
+// threads — including portal conversations naming that company's customers.
 // ---------------------------------------------------------------------
 
-export async function listMySupportTickets(): Promise<CustomerSupportTicket[]> {
+export async function listMySupportTickets(
+  orgId: string,
+): Promise<CustomerSupportTicket[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("support_tickets" as never)
@@ -79,6 +85,7 @@ export async function listMySupportTickets(): Promise<CustomerSupportTicket[]> {
         "customer_id",
       ].join(", "),
     )
+    .eq("org_id", orgId)
     .order("created_at", { ascending: false });
   if (error) {
     console.error("[customer-support] listMySupportTickets failed", error);

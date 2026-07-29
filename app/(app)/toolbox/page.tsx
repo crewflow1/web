@@ -39,21 +39,26 @@ const SAVED_MAP: Record<string, string> = {
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function ToolboxPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
   const { data } = await (
     supabase.from("toolbox_talks" as never) as unknown as {
       select: (cols: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean },
+        eq: (
+          k: string,
+          v: unknown,
         ) => {
           order: (
             col: string,
             opts: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: TalkRow[] | null }> };
+          ) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean },
+            ) => { limit: (n: number) => Promise<{ data: TalkRow[] | null }> };
+          };
         };
       };
     }
@@ -61,6 +66,9 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
     .select(
       "id, status, reference, talk_date, topic, presenter, attendees, attendee_count, job_id, created_at",
     )
+    // ACTIVE-org pin — the safety-briefing record is inspector-facing evidence
+    // and must be one company's; RLS admits every org the viewer belongs to.
+    .eq("org_id", ctx.org.id)
     .order("talk_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(500);
@@ -74,6 +82,7 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
     const { data: jobs } = await supabase
       .from("jobs")
       .select("id, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .in("id", jobIds);
     for (const j of jobs ?? []) jobsMap.set(j.id, j.customer?.name ?? "Job");
   }

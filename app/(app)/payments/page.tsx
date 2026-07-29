@@ -34,11 +34,15 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
     supabase
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
+      // ACTIVE-org pin — statements and the outstanding total below are money
+      // figures; RLS admits every org the viewer belongs to.
+      .eq("org_id", ctx.org.id)
       .order("uploaded_at", { ascending: false })
       .limit(20),
     supabase
       .from("invoices")
       .select("id, number, total, due_date, status")
+      .eq("org_id", ctx.org.id)
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
 

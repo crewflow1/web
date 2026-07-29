@@ -65,8 +65,13 @@ type EnquiryRow = {
 
 type SP = Promise<{ status?: string; error?: string }>;
 
+/** Chainable `.eq()` so the ACTIVE-org pin composes with the status filter. */
+type EnquiryQuery = {
+  eq: (k: string, v: unknown) => EnquiryQuery;
+} & Promise<{ data: EnquiryRow[] | null }>;
+
 export default async function InboxPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -79,9 +84,7 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
     supabase.from("inbound_enquiries" as never) as unknown as {
       select: (cols: string) => {
         order: (col: string, opts: { ascending: boolean }) => {
-          limit: (n: number) => {
-            eq: (k: string, v: unknown) => Promise<{ data: EnquiryRow[] | null }>;
-          } & Promise<{ data: EnquiryRow[] | null }>;
+          limit: (n: number) => EnquiryQuery;
         };
       };
     }
@@ -90,11 +93,12 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
       "id, channel, caller, raw_text, ai_summary, ai_confidence, job_type, urgency, postcode, budget_gbp, lead_id, status, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(200)
+    // ACTIVE-org pin — inbound enquiries carry caller numbers and transcripts;
+    // an unpinned inbox shows the other company's callers.
+    .eq("org_id", ctx.org.id);
 
-  const result = filter
-    ? await query.eq("status", filter)
-    : await (query as unknown as Promise<{ data: EnquiryRow[] | null }>);
+  const result = filter ? await query.eq("status", filter) : await query;
   const rows = result.data ?? [];
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? null : null;

@@ -19,7 +19,7 @@ import { csvEscape } from "@/lib/csv";
 const MAX_ROWS = 50_000;
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const url = request.nextUrl;
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
@@ -28,6 +28,9 @@ export async function GET(request: NextRequest) {
   let q = supabase
     .from("finances")
     .select("created_at, job_id, category, amount, vat_rate, vat_total, notes")
+    // ACTIVE-org pin — a bookkeeping export must contain exactly one company's
+    // ledger; RLS alone merged both into a single CSV.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: true })
     .limit(MAX_ROWS);
 

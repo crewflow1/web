@@ -24,19 +24,23 @@ export default async function NewReviewRequestPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
   const [customersRes, jobsRes] = await Promise.all([
+    // ACTIVE-org pins — both pickers wrote their selection onto a review
+    // request in THIS org, so a blended option produced a cross-org row.
     supabase
       .from("customers")
       .select("id, name, email" as never)
+      .eq("org_id", ctx.org.id)
       .order("name", { ascending: true })
       .limit(500),
     supabase
       .from("jobs")
       .select("id, customer_id, status, notes" as never)
+      .eq("org_id", ctx.org.id)
       .eq("status", "done")
       .order("updated_at", { ascending: false })
       .limit(200),

@@ -30,6 +30,9 @@ const financeRows = [
   },
 ];
 
+/** Every `.eq()` the route issues, so the active-org pin can be asserted. */
+const eqCalls: Array<[string, unknown]> = [];
+
 // Chainable query-builder stub: every builder method returns the same
 // thenable, which resolves to the finances rows when awaited.
 vi.mock("@/lib/supabase/server", () => ({
@@ -41,6 +44,10 @@ vi.mock("@/lib/supabase/server", () => ({
       chain.limit = () => chain;
       chain.gte = () => chain;
       chain.lte = () => chain;
+      chain.eq = (k: string, v: unknown) => {
+        eqCalls.push([k, v]);
+        return chain;
+      };
       chain.then = (resolve: (v: unknown) => unknown) =>
         resolve({ data: financeRows, error: null });
       return chain;
@@ -67,8 +74,16 @@ describe("GET /api/finances/export — notes are quoted exactly once", () => {
   let text: string;
 
   beforeEach(async () => {
+    eqCalls.length = 0;
     const res = await GET(makeRequest());
     text = await res.text();
+  });
+
+  it("is pinned to the ACTIVE org, not left to RLS", () => {
+    // RLS's current_org_ids() admits EVERY org the viewer belongs to, so a
+    // bookkeeping export without this predicate merges both of a dual-org
+    // owner's companies into one CSV. Runtime proof, not just source review.
+    expect(eqCalls).toContainEqual(["org_id", "org-1"]);
   });
 
   it("wraps a comma-bearing note in a single pair of quotes", () => {

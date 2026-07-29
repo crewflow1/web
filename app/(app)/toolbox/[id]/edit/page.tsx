@@ -60,7 +60,7 @@ export default async function EditToolboxTalkPage({
   if (!talk) notFound();
   if (talk.status !== "draft") redirect(`/toolbox/${id}?error=not_editable`);
 
-  const options = await loadToolboxFormOptions();
+  const options = await loadToolboxFormOptions(ctx.org.id);
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
 
   return (

@@ -54,7 +54,7 @@ export default async function EditDiaryEntryPage({
       .eq("id", id)
       .eq("org_id", ctx.org.id)
       .maybeSingle(),
-    listJobOptions(),
+    listJobOptions(ctx.org.id),
   ]);
 
   if (!entry) notFound();

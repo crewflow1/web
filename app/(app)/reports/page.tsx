@@ -47,12 +47,12 @@ const WEEK_LABEL = (iso: string): string => {
 };
 
 export default async function ReportsPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const [jobs, revenue, vat, top] = await Promise.all([
-    jobsPerWeek(8),
-    revenuePerMonth(12),
-    vatPerQuarter(4),
-    topCustomersByRevenue(10),
+    jobsPerWeek(ctx.org.id, 8),
+    revenuePerMonth(ctx.org.id, 12),
+    vatPerQuarter(ctx.org.id, 4),
+    topCustomersByRevenue(ctx.org.id, 10),
   ]);
 
   const totalJobs = jobs.reduce((s, r) => s + r.total, 0);

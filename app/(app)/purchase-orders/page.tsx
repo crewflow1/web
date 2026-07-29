@@ -27,20 +27,29 @@ export default async function PurchaseOrdersPage({
   searchParams: Promise<{ saved?: string }>;
 }) {
   const { saved } = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        order: (
+        eq: (
           k: string,
-          o: { ascending: boolean },
-        ) => { limit: (n: number) => Promise<{ data: PoRow[] | null }> };
+          v: unknown,
+        ) => {
+          order: (
+            k: string,
+            o: { ascending: boolean },
+          ) => { limit: (n: number) => Promise<{ data: PoRow[] | null }> };
+        };
       };
     }
   )
     .select("id, number, status, total, expected_date, supplier:suppliers ( name )")
+    // ACTIVE-org pin — the PO register must show one company's orders. The
+    // builder behind /purchase-orders/new was pinned in #463; the register
+    // itself was not.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(500); // bound the list like /assets (1000) and /site-reports (500)
 

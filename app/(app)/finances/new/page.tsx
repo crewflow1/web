@@ -19,7 +19,7 @@ type SP = Promise<{ job_id?: string }>;
 const uuid = z.string().uuid();
 
 export default async function NewFinancePage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const jobIdParam = sp.job_id ?? "";
   const jobId = uuid.safeParse(jobIdParam).success ? jobIdParam : undefined;
@@ -31,6 +31,9 @@ export default async function NewFinancePage({ searchParams }: { searchParams: S
       .from("jobs")
       .select("id, customer:customers ( name )")
       .eq("id", jobId)
+      // ACTIVE-org pin — the `?job=` deep-link must not resolve (and label) a
+      // job belonging to the viewer's other org.
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     if (job) {
       const customerName = (job.customer as { name?: string } | null)?.name;

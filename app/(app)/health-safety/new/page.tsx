@@ -30,9 +30,9 @@ export default async function NewRiskAssessmentPage({
 }: {
   searchParams: SP;
 }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
-  const assessors = await listAssessors();
+  const assessors = await listAssessors(ctx.org.id);
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))

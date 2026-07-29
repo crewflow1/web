@@ -27,7 +27,7 @@ import type { CalendarJob } from "@/lib/schedule/types";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const url = request.nextUrl;
   const from = url.searchParams.get("from") ?? "";
   const to = url.searchParams.get("to") ?? "";
@@ -48,6 +48,9 @@ export async function GET(request: NextRequest) {
         assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
       `,
     )
+    // ACTIVE-org pin — this feeds the calendar, so it must agree with the
+    // (now pinned) /jobs/calendar server render.
+    .eq("org_id", ctx.org.id)
     .limit(1000);
 
   const statusFilter = url.searchParams.get("status");

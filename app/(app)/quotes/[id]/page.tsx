@@ -145,9 +145,9 @@ export default async function EditQuotePage({
     user_agent: string | null;
   };
   const [customers, properties, leads, signaturesRes] = await Promise.all([
-    listCustomersForQuote(),
-    listPropertiesForQuote(),
-    listLeadsForQuote(),
+    listCustomersForQuote(ctx.org.id),
+    listPropertiesForQuote(ctx.org.id),
+    listLeadsForQuote(ctx.org.id),
     (
       supabase.from("signatures" as never) as unknown as {
         select: (cols: string) => {

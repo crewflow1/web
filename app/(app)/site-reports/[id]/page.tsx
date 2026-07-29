@@ -89,7 +89,9 @@ export default async function SiteReportDetailPage({
     supabase.from("site_reports" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: ReportRow | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: ReportRow | null }>;
+          };
         };
       };
     }
@@ -98,6 +100,9 @@ export default async function SiteReportDetailPage({
       "id, report_number, title, status, revision, job_id, period_start, period_end, content, snapshot, approved_at, issued_at, portal_published_at, portal_withdrawn_at, created_at",
     )
     .eq("id", id)
+    // ACTIVE-org pin — a client-facing report has publish/withdraw actions on
+    // this page, so it must be the ACTIVE org's report or nothing.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!report) notFound();

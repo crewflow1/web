@@ -58,7 +58,7 @@ type ReportQuery = Promise<{ data: ReportRow[] | null }> & {
 type SP = Promise<{ status?: string; job?: string; saved?: string; error?: string }>;
 
 export default async function SiteReportsPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -81,7 +81,9 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
       "id, report_number, title, status, revision, job_id, period_start, period_end, issued_at, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(500);
+    .limit(500)
+    // ACTIVE-org pin — client-facing reports must not interleave companies.
+    .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
   const { data } = await query;
   const rows = data ?? [];
@@ -94,6 +96,7 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
     const { data: jobs } = await supabase
       .from("jobs")
       .select("id, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
       .in("id", jobIds);
     for (const j of jobs ?? []) jobsMap.set(j.id, j.customer?.name ?? "Job");
   }

@@ -32,26 +32,31 @@ const GROUPS: ReadonlyArray<readonly [AssignmentType[], string]> = [
   [["stored_at_depot", "sent_for_repair", "returned_to_supplier"], "Depots, repair & suppliers"],
 ];
 
+/** Chainable `.eq()` so the active-org pin sits alongside the status filter. */
+type HoldingsQuery = {
+  eq: (k: string, v: unknown) => HoldingsQuery;
+  order: (
+    c: string,
+    o: { ascending: boolean },
+  ) => { limit: (n: number) => Promise<{ data: Row[] | null }> };
+};
+
 export default async function HoldingsPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);
 
   const { data } = await (
     supabase.from("asset_assignments" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          order: (
-            c: string,
-            o: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: Row[] | null }> };
-        };
-      };
+      select: (c: string) => HoldingsQuery;
     }
   )
     .select(
       "id, asset_id, assignment_type, location, assigned_at, expected_return_at, assignee_id, job_id, assets(id, name), users!asset_assignments_assignee_id_fkey(full_name, email)",
     )
+    // ACTIVE-org pin — RLS admits every org the viewer belongs to, so without
+    // this "who has what" mixes both companies' custody records.
+    .eq("org_id", ctx.org.id)
     .eq("status", "open")
     .order("assigned_at", { ascending: false })
     .limit(300);

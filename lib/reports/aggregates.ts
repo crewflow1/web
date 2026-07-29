@@ -4,9 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 /**
  * Reports module — pure SQL aggregates for the /reports page.
  *
- * All queries run under the caller's JWT (RLS-scoped). Aggregation is
- * done in TypeScript over fetched rows; with <5000 rows per entity per
- * org (the MVP target volume) this comfortably outperforms multiple
+ * All queries run under the caller's JWT (RLS-gated) AND are pinned to the
+ * ACTIVE org. The pin is load-bearing, not defence-in-depth: RLS's
+ * `current_org_ids()` returns EVERY org the viewer belongs to, so an unpinned
+ * read made every figure on /reports — jobs per week, revenue per month, VAT
+ * per quarter, top customers — the SUM of both of a dual-org owner's companies,
+ * with the other company's customer names listed by revenue. Same defect class
+ * as #456/#459/#461/#463/#464; the caller passes `ctx.org.id`.
+ *
+ * Aggregation is done in TypeScript over fetched rows; with <5000 rows per
+ * entity per org (the MVP target volume) this comfortably outperforms multiple
  * round-trips and avoids needing dedicated RPC views.
  */
 
@@ -60,13 +67,14 @@ function startOfQuarter(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), q * 3, 1));
 }
 
-export async function jobsPerWeek(weeks = 8): Promise<JobsPerWeek[]> {
+export async function jobsPerWeek(orgId: string, weeks = 8): Promise<JobsPerWeek[]> {
   const supabase = await createClient();
   const since = new Date(Date.now() - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
   const { data } = await supabase
     .from("jobs")
     .select("status, scheduled_date")
+    .eq("org_id", orgId)
     .gte("scheduled_date", since);
 
   // Pre-fill empty buckets so flat-line weeks show as 0 rather than gaps.
@@ -90,7 +98,10 @@ export async function jobsPerWeek(weeks = 8): Promise<JobsPerWeek[]> {
   return Array.from(buckets.values());
 }
 
-export async function revenuePerMonth(months = 12): Promise<RevenuePerMonth[]> {
+export async function revenuePerMonth(
+  orgId: string,
+  months = 12,
+): Promise<RevenuePerMonth[]> {
   const supabase = await createClient();
   const since = new Date();
   since.setUTCMonth(since.getUTCMonth() - months + 1);
@@ -100,6 +111,7 @@ export async function revenuePerMonth(months = 12): Promise<RevenuePerMonth[]> {
   const { data } = await supabase
     .from("invoices")
     .select("paid_at, total, status")
+    .eq("org_id", orgId)
     .eq("status", "paid")
     .gte("paid_at", since.toISOString());
 
@@ -121,7 +133,10 @@ export async function revenuePerMonth(months = 12): Promise<RevenuePerMonth[]> {
   return Array.from(buckets.values());
 }
 
-export async function vatPerQuarter(quarters = 4): Promise<VatPerQuarter[]> {
+export async function vatPerQuarter(
+  orgId: string,
+  quarters = 4,
+): Promise<VatPerQuarter[]> {
   const supabase = await createClient();
   const since = new Date();
   since.setUTCMonth(since.getUTCMonth() - quarters * 3 + 1);
@@ -133,11 +148,13 @@ export async function vatPerQuarter(quarters = 4): Promise<VatPerQuarter[]> {
     supabase
       .from("invoices")
       .select("paid_at, vat_total, status")
+      .eq("org_id", orgId)
       .eq("status", "paid")
       .gte("paid_at", since.toISOString()),
     supabase
       .from("finances")
       .select("created_at, vat_total")
+      .eq("org_id", orgId)
       .gte("created_at", since.toISOString()),
   ]);
 
@@ -173,7 +190,10 @@ export async function vatPerQuarter(quarters = 4): Promise<VatPerQuarter[]> {
   return Array.from(buckets.values());
 }
 
-export async function topCustomersByRevenue(limit = 10): Promise<TopCustomer[]> {
+export async function topCustomersByRevenue(
+  orgId: string,
+  limit = 10,
+): Promise<TopCustomer[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("invoices")
@@ -185,6 +205,7 @@ export async function topCustomersByRevenue(limit = 10): Promise<TopCustomer[]> 
         )
       `,
     )
+    .eq("org_id", orgId)
     .eq("status", "paid");
 
   const byCustomer = new Map<string, TopCustomer>();

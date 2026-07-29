@@ -41,6 +41,11 @@ export default async function PayrollRunPage({
       .from("payroll_runs")
       .select("id, cycle, period_start, period_end, status, finalised_at, created_at")
       .eq("id", id)
+      // ACTIVE-org pin — `payroll_runs: admin all` is `is_org_admin(org_id)`,
+      // which a dual-org OWNER satisfies for BOTH orgs. Pinning the run also
+      // makes the payroll_lines read below (keyed on payroll_run_id)
+      // derived-safe, so the other company's pay never renders here.
+      .eq("org_id", ctx.org.id)
       .maybeSingle(),
     supabase
       .from("payroll_lines")

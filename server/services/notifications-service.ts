@@ -262,19 +262,26 @@ async function fetchOrgEmails(
 }
 
 // ---------------------------------------------------------------------
-// READ — customer side (RLS-scoped via user JWT)
+// READ — customer side (RLS-gated via user JWT, pinned to the ACTIVE org)
 // ---------------------------------------------------------------------
+//
+// RLS is the OUTER boundary, not the scope: `current_org_ids()` returns EVERY
+// org the viewer belongs to, so an RLS-only read put the OTHER company's alerts
+// (and their deep links into that company's records) in this org's notification
+// centre and unread badge. The caller passes the ACTIVE org explicitly.
 
 const ALL_COLS =
   "id, org_id, user_id, audience, type, category, title, body, priority, source_module, source_id, action_url, read_at, dismissed_at, metadata, created_at, updated_at";
 
 export async function getLatestNotificationsForCustomer(
+  orgId: string,
   limit = 50,
 ): Promise<NotificationRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("notifications" as never)
     .select(ALL_COLS as never)
+    .eq("org_id" as never, orgId as never)
     .order("created_at" as never, { ascending: false })
     .limit(limit);
   if (error) {
@@ -284,11 +291,12 @@ export async function getLatestNotificationsForCustomer(
   return ((data ?? []) as unknown as NotificationRow[]).map(coerce);
 }
 
-export async function getUnreadCountForCustomer(): Promise<number> {
+export async function getUnreadCountForCustomer(orgId: string): Promise<number> {
   const supabase = await createClient();
   const { count, error } = await supabase
     .from("notifications" as never)
     .select("id" as never, { count: "exact", head: true })
+    .eq("org_id" as never, orgId as never)
     .is("read_at" as never, null)
     .is("dismissed_at" as never, null);
   if (error) {

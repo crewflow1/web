@@ -31,7 +31,7 @@ function isAllowedMime(mime: string | null | undefined): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const url = request.nextUrl;
 
@@ -51,7 +51,11 @@ export async function GET(request: NextRequest) {
       "id, amount, currency, vat_rate, vat_total, category, receipt_url, notes, job_id, created_at, updated_at",
       { count: "exact" },
     )
+    // ACTIVE-org pin + unique `id` tiebreaker — the POST half of this route
+    // already stamps `org_id: ctx.org.id`; the GET list did not scope by it.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (

@@ -13,12 +13,15 @@ import { AllocatePaymentForm, type OutstandingInvoice } from "./_allocate-form";
  * `allocate_payment` RPC (see `allocate-actions.ts`).
  */
 export default async function NewPaymentPage() {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data: invoices } = await supabase
     .from("invoices")
     .select("id, number, total, due_date, status, customer:customers ( name )")
+    // ACTIVE-org pin — recording a payment against the other org's invoice is a
+    // money defect; the picker must only offer this org's outstanding invoices.
+    .eq("org_id", ctx.org.id)
     .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
     .order("due_date", { ascending: true });
 
@@ -27,7 +30,11 @@ export default async function NewPaymentPage() {
 
   // Payments already recorded against these invoices → outstanding balances.
   const { data: paid } = invIds.length
-    ? await supabase.from("invoice_payments").select("invoice_id, amount").in("invoice_id", invIds)
+    ? await supabase
+        .from("invoice_payments")
+        .select("invoice_id, amount")
+        .eq("org_id", ctx.org.id)
+        .in("invoice_id", invIds)
     : { data: [] as Array<{ invoice_id: string; amount: number | string }> };
 
   const paidByInvoice = new Map<string, Array<{ amount: number | string }>>();

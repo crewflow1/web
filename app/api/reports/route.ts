@@ -20,13 +20,13 @@ import {
  */
 export async function GET() {
   try {
-    await requireOrgContext();
+    const { ctx } = await requireOrgContext();
     const [jobs_per_week, revenue_per_month, vat_per_quarter, top_customers] =
       await Promise.all([
-        jobsPerWeek(8),
-        revenuePerMonth(12),
-        vatPerQuarter(4),
-        topCustomersByRevenue(10),
+        jobsPerWeek(ctx.org.id, 8),
+        revenuePerMonth(ctx.org.id, 12),
+        vatPerQuarter(ctx.org.id, 4),
+        topCustomersByRevenue(ctx.org.id, 10),
       ]);
     return NextResponse.json({
       ok: true,

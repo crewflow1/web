@@ -57,17 +57,23 @@ export default async function TaxDashboardPage() {
   const monthKey = new Date().toISOString().slice(0, 7);
   const [{ data: invoicesRaw }, { data: financesRaw }, { data: payrollRaw }] =
     await Promise.all([
+      // ACTIVE-org pins. Every figure on this page is an HMRC-facing estimate
+      // (VAT due, PAYE/NI, Corporation Tax): RLS admits every org the viewer
+      // belongs to, so a dual-org owner's tax dashboard SUMMED both companies.
       supabase
         .from("invoices")
         .select("status, vat_total, total, amount, paid_at, created_at")
+        .eq("org_id", ctx.org.id)
         .gte("created_at", yearStartIso),
       supabase
         .from("finances")
         .select("vat_total, amount, created_at")
+        .eq("org_id", ctx.org.id)
         .gte("created_at", yearStartIso),
       supabase
         .from("payroll_lines")
         .select("paye_estimate, ni_estimate, run:payroll_runs ( period_start, status, cycle )")
+        .eq("org_id", ctx.org.id)
         .gte("created_at", `${monthKey}-01T00:00:00Z`),
     ]);
 

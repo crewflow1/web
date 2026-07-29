@@ -30,6 +30,9 @@ export default async function AppLayout({
       return supabase
         .from("notifications")
         .select("id, type, title, body, action_url, read_at, created_at")
+        // ACTIVE-org pin. `user_id` is not a scope for a dual-org member: the
+        // bell in org A's shell surfaced org B's alerts (and their deep links).
+        .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(30);

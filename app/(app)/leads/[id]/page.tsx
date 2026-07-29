@@ -74,7 +74,7 @@ export default async function LeadDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
   const { data: lead } = await supabase
@@ -88,6 +88,10 @@ export default async function LeadDetailPage({
       `,
     )
     .eq("id", id)
+    // ACTIVE-org pin — a lead in a non-active org must be indistinguishable
+    // from a missing one (this page `notFound()`s on null), otherwise org B's
+    // lead opens inside org A's shell where the actions live.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!lead) notFound();
 
@@ -99,6 +103,7 @@ export default async function LeadDetailPage({
     .from("leads")
     .select("contact_name, contact_email, contact_phone" as never)
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   const leadContact = (contactRaw ?? {}) as unknown as {
     contact_name: string | null;
@@ -107,19 +112,21 @@ export default async function LeadDetailPage({
   };
 
   const [customers, staff, callsRes, quoteRes, followupRes] = await Promise.all([
-    listCustomersForLead(),
-    listStaffForLead(),
+    listCustomersForLead(ctx.org.id),
+    listStaffForLead(ctx.org.id),
     supabase
       .from("calls")
       .select(
         "id, direction, status, caller_number, started_at, duration_sec, ai_summary, transcript",
       )
+      .eq("org_id", ctx.org.id)
       .eq("lead_id", id)
       .order("started_at", { ascending: false })
       .limit(20),
     supabase
       .from("quotes")
       .select("id, number, status, total, sent_at, accepted_at")
+      .eq("org_id", ctx.org.id)
       .eq("lead_id", id)
       .order("created_at", { ascending: false })
       .limit(5),

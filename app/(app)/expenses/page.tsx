@@ -44,7 +44,7 @@ const SAVED_MAP: Record<string, string> = {
 type SP = Promise<{ status?: string; saved?: string }>;
 
 export default async function ExpensesPage({ searchParams }: { searchParams: SP }) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -57,8 +57,10 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          order: (col: string, opts: { ascending: boolean }) => {
-            limit: (n: number) => Promise<{ data: DraftRow[] | null }>;
+          eq: (k: string, v: unknown) => {
+            order: (col: string, opts: { ascending: boolean }) => {
+              limit: (n: number) => Promise<{ data: DraftRow[] | null }>;
+            };
           };
         };
       };
@@ -67,6 +69,9 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
     .select(
       "id, supplier_name, amount, vat_rate, total, category, invoice_date, ai_confidence, status, finance_id, created_at, approved_at, rejected_at",
     )
+    // ACTIVE-org pin — receipt drafts are money documents; RLS alone put both
+    // companies' inboxes on one screen.
+    .eq("org_id", ctx.org.id)
     .eq("status", filter)
     .order("created_at", { ascending: false })
     .limit(200);

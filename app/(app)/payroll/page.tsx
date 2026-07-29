@@ -46,6 +46,10 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
   const { data: runs } = await supabase
     .from("payroll_runs")
     .select("id, cycle, period_start, period_end, status, finalised_at, created_at")
+    // ACTIVE-org pin — payroll is the most sensitive list in the product; RLS
+    // admits every org the viewer belongs to, so a dual-org owner saw both
+    // companies' runs (and their gross/net totals) in one register.
+    .eq("org_id", ctx.org.id)
     .order("period_start", { ascending: false })
     .limit(50);
 
@@ -56,6 +60,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
     const { data: lines } = await supabase
       .from("payroll_lines")
       .select("payroll_run_id, gross_pay, net_pay")
+      .eq("org_id", ctx.org.id)
       .in("payroll_run_id", runIds);
     for (const l of lines ?? []) {
       const t = totalsByRun.get(l.payroll_run_id) ?? { gross: 0, net: 0, count: 0 };
