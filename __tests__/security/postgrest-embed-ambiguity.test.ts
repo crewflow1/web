@@ -182,6 +182,12 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "cis_statements → users",
   "cis_subcontractors → users",
   "completion_certificates → users",
+  // GRNs (20261059, Train 24): received_by + created_by + voided_by all → users.
+  // Reviewed 2026-07-29: no PostgREST embed of users(...) exists on any
+  // goods_received_notes read (all GRN surfaces resolve names via explicit
+  // second queries), so no bare embed can hit PGRST201 today. Any future embed
+  // must name its FK constraint.
+  "goods_received_notes → users",
   "impersonation_sessions → users",
   "invoice_payments → invoices",
   "job_documents → users",
