@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
 import { settleForAxe } from "./_settle";
+import { contrastCandidacy } from "./_axe-canary";
 
 /**
  * HQ /admin accessibility — the admin-tier representative scans for the
@@ -54,10 +55,15 @@ test.describe("HQ admin — accessibility", () => {
   // context mid-settle. Scanning them needs a harness that tolerates
   // navigation — their sweep fixes share the same measured tones verified on
   // the routes below.
-  for (const [name, path] of [
-    ["ai receptionist setup detail (status buttons)", "DETAIL"],
-    ["ai receptionist deliveries", "/admin/ai-receptionist/deliveries"],
-    ["ai receptionist review queue", "/admin/ai-receptionist/review"],
+  // Third element: color-contrast candidacy floor (see e2e/_axe-canary.ts).
+  // Only the seeded detail page carries one — the admin shell plus the seeded
+  // setup dl/status buttons guarantee ≥40 audited nodes. Deliveries/review
+  // render unseeded empty states whose handful of content nodes cannot sit
+  // above a shell-only under-scan, so a floor there can't discriminate.
+  for (const [name, path, floor] of [
+    ["ai receptionist setup detail (status buttons)", "DETAIL", 40],
+    ["ai receptionist deliveries", "/admin/ai-receptionist/deliveries", 0],
+    ["ai receptionist review queue", "/admin/ai-receptionist/review", 0],
   ] as const) {
     test(`${name} has no WCAG 2.2 A/AA violations`, async ({ page }) => {
       const url = path === "DETAIL" ? `/admin/ai-receptionist/${setupId}` : path;
@@ -65,6 +71,9 @@ test.describe("HQ admin — accessibility", () => {
       await settleForAxe(page);
       const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
       expect(results.violations, JSON.stringify(results.violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) })), null, 2)).toEqual([]);
+      if (floor > 0) {
+        expect(contrastCandidacy(results), `axe under-scan canary: color-contrast must audit ≥${floor} nodes on ${url}`).toBeGreaterThanOrEqual(floor);
+      }
     });
   }
 });

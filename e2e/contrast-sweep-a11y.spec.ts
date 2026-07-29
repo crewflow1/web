@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
 import { settleForAxe } from "./_settle";
+import { contrastCandidacy } from "./_axe-canary";
 
 /**
  * Slate-tone contrast sweep — accessibility regression for the app-wide fix of
@@ -260,21 +261,25 @@ test.describe("slate-tone contrast sweep — accessibility", () => {
     }
   });
 
-  for (const [name, path] of [
-    ["site reports register (superseded + archived chips)", "/site-reports"],
-    ["site report detail (superseded)", "DETAIL_SR"],
-    ["asset templates register (superseded + archived faces)", "/assets/templates"],
-    ["asset template detail (superseded + archived versions)", "DETAIL_TPL"],
-    ["asset detail (chips + paused schedules + cancelled case)", "DETAIL_ASSET"],
-    ["asset holdings (due-back chips + since text)", "/assets/holdings"],
-    ["job hub (withdrawn RAMS, closed permit, withdrawn talk)", "JOB_HUB"],
-    ["toolbox register (withdrawn talk chip)", "/toolbox"],
-    ["purchase orders register (cancelled chip)", "/purchase-orders"],
-    ["purchase order detail (cancelled)", "DETAIL_PO"],
-    ["fleet vehicles table (Next due + unplated row)", "/fleet/vehicles"],
-    ["onboarding setup (skipped step dot)", "/onboarding/setup"],
-    ["job blueprints register", "BLUEPRINTS"],
-    ["customer portal reports (superseded + rev span)", "PORTAL"],
+  // Third element: color-contrast candidacy floor (see e2e/_axe-canary.ts).
+  // App-shell routes: a shell-only under-scan evaluates ~40 nodes and every
+  // seeded route guarantees ≥12 content nodes on a fresh DB → 50. The portal
+  // shell is far thinner (~8 nodes) with ≥12 seeded report nodes → 15.
+  for (const [name, path, floor] of [
+    ["site reports register (superseded + archived chips)", "/site-reports", 50],
+    ["site report detail (superseded)", "DETAIL_SR", 50],
+    ["asset templates register (superseded + archived faces)", "/assets/templates", 50],
+    ["asset template detail (superseded + archived versions)", "DETAIL_TPL", 50],
+    ["asset detail (chips + paused schedules + cancelled case)", "DETAIL_ASSET", 50],
+    ["asset holdings (due-back chips + since text)", "/assets/holdings", 50],
+    ["job hub (withdrawn RAMS, closed permit, withdrawn talk)", "JOB_HUB", 50],
+    ["toolbox register (withdrawn talk chip)", "/toolbox", 50],
+    ["purchase orders register (cancelled chip)", "/purchase-orders", 50],
+    ["purchase order detail (cancelled)", "DETAIL_PO", 50],
+    ["fleet vehicles table (Next due + unplated row)", "/fleet/vehicles", 50],
+    ["onboarding setup (skipped step dot)", "/onboarding/setup", 50],
+    ["job blueprints register", "BLUEPRINTS", 50],
+    ["customer portal reports (superseded + rev span)", "PORTAL", 15],
   ] as const) {
     test(`${name} has no WCAG 2.2 A/AA violations`, async ({ page }) => {
       const url =
@@ -290,6 +295,7 @@ test.describe("slate-tone contrast sweep — accessibility", () => {
       await settleForAxe(page);
       const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
       expect(results.violations, JSON.stringify(results.violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) })), null, 2)).toEqual([]);
+      expect(contrastCandidacy(results), `axe under-scan canary: color-contrast must audit ≥${floor} nodes on ${url}`).toBeGreaterThanOrEqual(floor);
     });
   }
 });

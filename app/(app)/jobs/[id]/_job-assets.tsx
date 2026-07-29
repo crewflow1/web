@@ -31,7 +31,9 @@ export async function JobAssetsSection({ jobId }: { jobId: string }) {
       };
     }
   )
-    .select("id, asset_id, assigned_at, expected_return_at, assets(id, name, status)")
+    // FK hint required: asset_assignments has two FKs to assets since the
+    // fleet migration; a bare assets(...) embed fails the whole query.
+    .select("id, asset_id, assigned_at, expected_return_at, assets!asset_assignments_asset_id_fkey(id, name, status)")
     .eq("job_id", jobId)
     .eq("status", "open")
     .order("assigned_at", { ascending: false })

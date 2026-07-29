@@ -52,7 +52,11 @@ export default async function HoldingsPage() {
     }
   )
     .select(
-      "id, asset_id, assignment_type, location, assigned_at, expected_return_at, assignee_id, job_id, assets(id, name), users!asset_assignments_assignee_id_fkey(full_name, email)",
+      // assets needs the explicit FK hint: the fleet migration added a second
+      // FK to assets (vehicle_asset_id), so a bare assets(...) embed is
+      // ambiguous and PostgREST rejects the WHOLE query (PGRST201) — which
+      // `data ?? []` then renders as "Nothing is checked out".
+      "id, asset_id, assignment_type, location, assigned_at, expected_return_at, assignee_id, job_id, assets!asset_assignments_asset_id_fkey(id, name), users!asset_assignments_assignee_id_fkey(full_name, email)",
     )
     // ACTIVE-org pin — RLS admits every org the viewer belongs to, so without
     // this "who has what" mixes both companies' custody records.
