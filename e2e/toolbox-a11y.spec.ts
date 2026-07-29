@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * Toolbox Talks accessibility + mobile regression (M7). Runs axe-core (WCAG 2.0/2.1/2.2
@@ -70,6 +71,7 @@ test.describe("toolbox talks — accessibility + mobile", () => {
         : path === "EDIT_DRAFT" ? `/toolbox/${draftId}/edit`
         : path;
       await page.goto(url);
+      await settleForAxe(page);
       const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
       expect(results.violations, JSON.stringify(results.violations.map((v) => ({ id: v.id, nodes: v.nodes.length })), null, 2)).toEqual([]);
     });

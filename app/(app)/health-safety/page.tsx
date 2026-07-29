@@ -41,7 +41,7 @@ const RA_STATUS_STYLES: Record<RaStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
   issued: "bg-emerald-100 text-emerald-800",
   superseded: "bg-amber-100 text-amber-800",
-  withdrawn: "bg-slate-100 text-slate-500",
+  withdrawn: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
 };
 
 /** Band → pill classes. Colour reinforces the label text; it never stands alone. */
@@ -226,7 +226,11 @@ export default async function HealthSafetyPage({
                   active ? "bg-slate-900 text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                {f.label} <span className="ml-1 opacity-70">{count}</span>
+                {/* Solid tones, never opacity-*: the blended count fell below WCAG AA 4.5:1. */}
+                {f.label}{" "}
+                <span className={`ml-1 ${active ? "text-slate-300" : "text-slate-600"}`}>
+                  {count}
+                </span>
               </Link>
             );
           })}
@@ -278,7 +282,7 @@ export default async function HealthSafetyPage({
                           {bandMeta.label} risk
                         </span>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
                           No hazards yet
                         </span>
                       )}

@@ -32,7 +32,7 @@ export const PERMIT_STATUS_STYLES: Record<EffectiveStatus, string> = {
   active: "bg-emerald-100 text-emerald-800",
   suspended: "bg-amber-100 text-amber-800",
   closed: "bg-slate-100 text-slate-600",
-  cancelled: "bg-slate-100 text-slate-500",
+  cancelled: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
   expired: "bg-red-100 text-red-800",
   not_yet_valid: "bg-amber-100 text-amber-900",
 };
