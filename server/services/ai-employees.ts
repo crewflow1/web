@@ -118,6 +118,11 @@ export async function loadAiEmployeeBySlug(
     .eq("ai_employee_id", employee.id)
     .order("created_at", { ascending: false })
     .limit(50);
+  // `memError` was bound and then never inspected — the exact shape this sweep
+  // removes, and the reason the merge guard in
+  // __tests__/security/loud-read-failures.test.ts asserts that a destructured
+  // error is USED. Match the sibling tasks read above.
+  if (memError) throw readFailure("ai-employees: memory", memError);
   const memory = (memRaw ?? []) as unknown as AiEmployeeMemoryEntry[];
 
   const activity = await listAdminActivity("ai_employees", employee.id, 50);

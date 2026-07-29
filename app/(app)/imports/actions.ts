@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -331,7 +331,7 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
   }
 
   // Run duplicate detection (admin client so we can see all org rows).
-  await annotateDuplicates(importId, ctx.org.id);
+  const dupesChecked = await annotateDuplicates(importId, ctx.org.id);
 
   await supabase
     .from("imports")
@@ -341,10 +341,27 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
 
   revalidatePath(`/imports/${importId}`);
   revalidatePath("/imports");
-  redirect(`/imports/${importId}?saved=uploaded`);
+  redirect(
+    `/imports/${importId}?saved=uploaded${dupesChecked ? "" : "&warn=duplicates_unchecked"}`,
+  );
 }
 
-async function annotateDuplicates(importId: string, orgId: string) {
+/**
+ * Duplicate flagging is ENRICHMENT layered over rows that are already staged.
+ *
+ * It must not throw. It runs at the very END of uploadImportFiles, after every
+ * `import_rows` insert has committed, and `import_rows` carries no unique key
+ * on (import_id, source_row_number) — so a throw here strands the session in
+ * `parsing` and the operator's only recourse, re-uploading, inserts EVERY row a
+ * second time. Silently duplicating the staging table is a worse failure than
+ * an unflagged duplicate, which the operator can still see and skip in the
+ * preview.
+ *
+ * Returns false when the pending-rows read was rejected, so the caller can tell
+ * the operator that duplicate detection did not run — the point is that
+ * "no duplicates found" and "we couldn't look" stay distinguishable.
+ */
+async function annotateDuplicates(importId: string, orgId: string): Promise<boolean> {
   const admin = createAdminClient();
   // SERVICE-ROLE read: RLS is bypassed entirely here, so this predicate is the
   // ONLY thing scoping it. `orgId` is the caller's ACTIVE org and the reference
@@ -358,9 +375,13 @@ async function annotateDuplicates(importId: string, orgId: string) {
     .eq("org_id", orgId)
     .eq("status", "pending");
   // A failed read must not pass as "no pending rows" — duplicates would then
-  // silently never be flagged for this import.
-  if (rowsError) throw readFailure("imports: duplicate annotation rows", rowsError);
-  if (!rows || rows.length === 0) return;
+  // silently never be flagged for this import. Report and signal; see the
+  // function header for why this is the one read here that must not throw.
+  if (rowsError) {
+    reportReadFailure("imports: duplicate annotation rows", rowsError);
+    return false;
+  }
+  if (!rows || rows.length === 0) return true;
 
   // Load existing rows once per entity type that's actually present.
   const types = new Set(rows.map((r) => r.entity_type ?? "unknown"));
@@ -421,6 +442,7 @@ async function annotateDuplicates(importId: string, orgId: string) {
         .eq("org_id", orgId);
     }
   }
+  return true;
 }
 
 /**
@@ -897,10 +919,12 @@ export async function overrideSheetEntity(
   }
 
   // Re-evaluate duplicates for the rows we just moved into their new type.
-  await annotateDuplicates(importId, ctx.org.id);
+  const recheck = await annotateDuplicates(importId, ctx.org.id);
 
   revalidatePath(`/imports/${importId}`);
-  redirect(`/imports/${importId}?saved=reclassified&count=${changed}`);
+  redirect(
+    `/imports/${importId}?saved=reclassified&count=${changed}${recheck ? "" : "&warn=duplicates_unchecked"}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

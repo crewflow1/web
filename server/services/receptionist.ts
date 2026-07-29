@@ -2094,6 +2094,11 @@ export async function processInboundEnquiry(
   })(input.provider_timestamp);
 
   // Step 1 — record raw enquiry (with the channel provider's message id + metadata, Part 11).
+  //
+  // `enquiryId` is assigned either from this insert or, on the 23505 dedup path
+  // below, from the enquiry a previous partial run already left behind.
+  let enquiryId: string | null = null;
+  let resumedAfterPartialIngest = false;
   const { data: enquiryRow, error: insErr } = await (
     admin.from("inbound_enquiries" as never) as unknown as {
       insert: (row: unknown) => {
@@ -2151,22 +2156,40 @@ export async function processInboundEnquiry(
         .eq("provider_message_id", input.provider_message_id)
         .maybeSingle();
       if (existing.data?.id) {
-        return {
-          enquiry_id: existing.data.id,
-          lead_id: existing.data.lead_id,
-          conversation_id: existing.data.conversation_id,
-          textback: { attempted: false, reason: "duplicate_message" },
-        };
+        // A prior run already reached the lead. This is a genuine duplicate
+        // delivery: short-circuit so extraction/lead/notify/reply run once.
+        if (existing.data.lead_id) {
+          return {
+            enquiry_id: existing.data.id,
+            lead_id: existing.data.lead_id,
+            conversation_id: existing.data.conversation_id,
+            textback: { attempted: false, reason: "duplicate_message" },
+          };
+        }
+        // No lead on the existing enquiry ⇒ the PRIOR attempt died between the
+        // enquiry insert and the lead insert (the lead-insert throw below is
+        // exactly that failure mode). Short-circuiting here is what STRANDED
+        // the enquiry: every redelivery took this branch and returned
+        // lead_id:null forever, so the redelivery the throw counts on could
+        // never actually finish the job. RESUME on the existing row instead.
+        enquiryId = existing.data.id;
+        conversationId = existing.data.conversation_id ?? conversationId;
+        resumedAfterPartialIngest = true;
       }
     }
-    throw new Error(`inbound_enquiries insert failed: ${insErr?.message ?? "no id"}`);
+    if (!enquiryId) {
+      throw new Error(`inbound_enquiries insert failed: ${insErr?.message ?? "no id"}`);
+    }
+  } else {
+    enquiryId = enquiryRow.id;
   }
-  const enquiryId = enquiryRow.id;
 
   // Thread the inbound message onto the conversation timeline — an entry that REFERENCES the
   // enquiry just recorded (its raw_text IS the content; no copy). Best-effort, exactly as the
   // resolve above: a threading failure is logged and swallowed, never surfaced to ingestion.
-  if (conversationId) {
+  // Not on a resume: the prior partial run already threaded this inbound turn,
+  // and appending again would duplicate it on the timeline.
+  if (conversationId && !resumedAfterPartialIngest) {
     try {
       await appendConversationMessage({
         conversation_id: conversationId,
@@ -2190,7 +2213,16 @@ export async function processInboundEnquiry(
   {
     // PostgREST errors RETURN, they don't throw — a try/catch alone is dead
     // code here, and it let a failed insert mark the enquiry "processed" with
-    // no lead. Loud fail: the route 500s and the provider redelivers.
+    // no lead.
+    //
+    // Loud fail: the route 500s. Note precisely what that does and does NOT
+    // buy. The enquiry row is ALREADY committed (step 1), so the throw does not
+    // roll ingestion back — the customer's message is durably recorded either
+    // way. What redelivery gets us is a second attempt at the LEAD, and only
+    // because the 23505 dedup path above now resumes an enquiry that has no
+    // lead instead of returning lead_id:null forever. If the provider never
+    // redelivers, the enquiry stays lead-less and visible as such; it is not
+    // silently marked qualified.
     const { data: leadRow, error: leadError } = await admin
       .from("leads")
       .insert({
@@ -2280,15 +2312,20 @@ export async function processInboundEnquiry(
   // AFTER — and independent of — lead creation: the missed CALL is the trigger, so a
   // caller is acknowledged even if extraction produced no lead. It NEVER throws, so it
   // cannot disturb the ingestion contract above; with the flag OFF it is wholly inert.
-  const textback = await maybeTextBackMissedCall({
-    org_id: input.org_id,
-    channel: input.channel,
-    conversation_id: conversationId,
-    enquiry_id: enquiryId,
-    lead_id: leadId,
-    caller: input.caller ?? null,
-    dedup_key: input.dedup_key ?? null,
-  });
+  // On a resume the prior run already ran (or deliberately skipped) the
+  // textback for this exact provider message; re-running it could text the
+  // caller twice for one missed call.
+  const textback: MissedCallTextbackResult = resumedAfterPartialIngest
+    ? { attempted: false, reason: "duplicate_message" }
+    : await maybeTextBackMissedCall({
+        org_id: input.org_id,
+        channel: input.channel,
+        conversation_id: conversationId,
+        enquiry_id: enquiryId,
+        lead_id: leadId,
+        caller: input.caller ?? null,
+        dedup_key: input.dedup_key ?? null,
+      });
 
   // The OUTBOUND reply is threaded onto the conversation timeline by the R15 CONVERSATION RUNTIME
   // ({@link runConversationTurn}), which `maybeTextBackMissedCall` now delegates to — so the runtime
