@@ -201,6 +201,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "invoice_payments → invoices",
   "job_documents → users",
   "leave_requests → users",
+  // Material requests (20261066, M4): requested_by + decided_by + created_by
+  // all → users. Reviewed 2026-07-29: the ONE embed of this pair
+  // (server/services/material-requests.ts, REQUEST_COLS) names both FK
+  // constraints explicitly — `users!material_requests_requested_by_fkey` and
+  // `users!material_requests_decided_by_fkey`. Any future embed must do the
+  // same; test 2 below enforces it.
+  "material_requests → users",
   "permits_to_work → users",
   "risk_assessments → users",
   "rota_entries → users",

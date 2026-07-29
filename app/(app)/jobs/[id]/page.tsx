@@ -14,6 +14,7 @@ import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
 import { JobDiarySection } from "./_job-diary";
 import { JobSnagsSection } from "./_job-snags";
+import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
 import { JobDocumentsPanel } from "./_job-documents";
 import { JobBlueprintsPanel } from "./_blueprints";
@@ -792,6 +793,12 @@ export default async function EditJobPage({
       <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
 
       <JobSnagsSection
+        jobId={job.id}
+        orgId={ctx.membership.org_id}
+        todayIso={todayIso}
+      />
+
+      <JobMaterialsSection
         jobId={job.id}
         orgId={ctx.membership.org_id}
         todayIso={todayIso}

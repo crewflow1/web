@@ -206,7 +206,10 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261059`–`20261060` | PO receiving (GRN + receipt state) | **APPLIED** — Train 24, #482 |
 | `20261061` | `sites` | **APPLIED** — Train 25, #483 |
 | `20261062` | `ai_invocations` | **APPLIED (prod tip)** — Train 26, #484 |
-| `20261063+` | **NEXT FREE** (candidates: asset status additions, operational stock M3 — blocked on D1) | unallocated |
+| `20261063`–`20261065` | O3 operational stock (items, movements ledger) | **CLAIMED — in flight** `feat/operational-stock` (C11) |
+| `20261066`–`20261067` | M4 material requests (+lines) | **CLAIMED — in flight** `feat/material-requests` (C11) |
+| `20261068` | AI quote-writer draft storage (ONLY if DDL proves needed) | **CLAIMED — in flight** `feat/ai-quote-writer-dark` (C11) |
+| `20261069+` | **NEXT FREE** | unallocated |
 
 
 > ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
