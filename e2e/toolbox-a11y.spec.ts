@@ -7,13 +7,24 @@ import { assertLocalE2eTarget } from "./_guard";
  * Toolbox Talks accessibility + mobile regression (M7). Runs axe-core (WCAG 2.0/2.1/2.2
  * A + AA) over the toolbox routes as the seeded owner, and verifies the delivered-talk
  * detail has NO horizontal overflow at a 375px phone width — the record renders as
- * stacked cards + a sign-off panel, never a wide scrolling table. Seeds a draft + a
- * delivered (issued) talk via service-role, then GET-navigates only (the write path is
- * proven in the toolbox integration + action suites).
+ * stacked cards + a sign-off panel, never a wide scrolling table. GET-navigates only
+ * (the write path is proven in the toolbox integration + action suites).
+ *
+ * Seeding is idempotent against a PERSISTENT local database. A delivered talk is
+ * non-deletable for every role (tg_tt_block_delete_when_issued), so the old per-run
+ * `Date.now()` seeds accumulated forever locally (13 delivered + 13 draft "A11y …
+ * <stamp>" rows by the time this was fixed) while fresh-volume CI rendered none — the
+ * two environments scanned different DOMs. Drafts ARE deletable, so the draft sentinel
+ * is cleared and recreated each run; the delivered sentinel is immutable evidence and
+ * is REUSED — created + issued only if absent.
  */
 
 const SLUG = "e2e-harness-org";
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
+/** Fixed sentinel identities — see the idempotency note above. */
+const DRAFT_TOPIC = "A11y draft E2E";
+const ISSUED_TOPIC = "A11y delivered E2E";
+const ISSUED_REF = "TBT-A11Y-E2E";
 
 function svc() {
   return createClient(assertLocalE2eTarget("toolbox-a11y.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -26,7 +37,6 @@ test.describe("toolbox talks — accessibility + mobile", () => {
 
   let draftId = "";
   let issuedId = "";
-  const stamp = Date.now();
 
   test.beforeAll(async () => {
     const db = svc();
@@ -34,20 +44,33 @@ test.describe("toolbox talks — accessibility + mobile", () => {
     const orgId = (await db.from("organizations").select("id").eq("slug", SLUG).maybeSingle()).data?.id as string | undefined;
     if (!orgId) throw new Error("seeded org not found — did globalSetup run?");
 
-    draftId = String((await t("toolbox_talks").insert({ org_id: orgId, topic: `A11y draft ${stamp}`, key_points: "Edge protection briefed" }).select("id").single()).data?.id);
+    // Clear every deletable row this spec has ever seeded: legacy stamped drafts, the
+    // previous run's draft sentinel, and a delivered sentinel that crashed before issue.
+    for (const pattern of ["A11y draft %", "A11y delivered %"]) {
+      const heal = await t("toolbox_talks").delete().eq("org_id", orgId).eq("status", "draft").like("topic", pattern);
+      if (heal.error) throw new Error(`a11y seed: draft talk cleanup failed (${heal.error.message})`);
+    }
 
-    issuedId = String((await t("toolbox_talks").insert({ org_id: orgId, topic: `A11y delivered ${stamp}`, key_points: "Harness clipped on above 2m; exclusion zone below" }).select("id").single()).data?.id);
-    const ref = `TBT-A11Y-${stamp}`;
+    draftId = String((await t("toolbox_talks").insert({ org_id: orgId, topic: DRAFT_TOPIC, key_points: "Edge protection briefed" }).select("id").single()).data?.id);
+
+    const found = await t("toolbox_talks").select("id").eq("org_id", orgId).eq("topic", ISSUED_TOPIC).eq("status", "issued").limit(1).maybeSingle();
+    if (found.error) throw new Error(`a11y seed: delivered talk lookup failed (${found.error.message})`);
+    if (found.data?.id) {
+      issuedId = String(found.data.id);
+      return;
+    }
+
+    issuedId = String((await t("toolbox_talks").insert({ org_id: orgId, topic: ISSUED_TOPIC, key_points: "Harness clipped on above 2m; exclusion zone below" }).select("id").single()).data?.id);
     const snapshot = {
-      talk_reference: ref, revision: 1, talk_date: new Date().toISOString().slice(0, 10),
+      talk_reference: ISSUED_REF, revision: 1, talk_date: new Date().toISOString().slice(0, 10),
       location: "Plot 4", site_label: "1 High St", delivered_by: "Site Manager",
-      topic: `A11y delivered ${stamp}`, key_points: "Harness clipped on above 2m; exclusion zone below",
+      topic: ISSUED_TOPIC, key_points: "Harness clipped on above 2m; exclusion zone below",
       ppe: ["Hard hat", "Harness"], rams_reference: null, rams_revision: null,
       permit_reference: null, permit_status_at_issue: null, external_attendees: [],
       issued_by_name: "Site Manager", issued_on: new Date().toISOString().slice(0, 10),
     };
     const iss = await t("toolbox_talks")
-      .update({ status: "issued", reference: ref, issued_at: new Date().toISOString(), snapshot })
+      .update({ status: "issued", reference: ISSUED_REF, issued_at: new Date().toISOString(), snapshot })
       .eq("id", issuedId).select("status").single();
     // Fail loudly if the delivered-talk seed didn't actually issue — otherwise the
     // "delivered" case would silently test a draft (which still shows the Deliver panel).
