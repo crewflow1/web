@@ -153,6 +153,7 @@ export async function createSiteReport(formData: FormData): Promise<void> {
     .from("jobs")
     .select("id, customer_id")
     .eq("id", data.job_id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (jobError) throw readFailure("site-reports: job resolve", jobError);
   if (!job) redirect(`/site-reports/new?error=bad_job`);

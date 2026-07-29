@@ -17,9 +17,12 @@ import type {
 /**
  * Server-only helpers that compute the deterministic insight payloads.
  *
- * Everything runs under the caller's JWT (RLS-scoped). When the LLM
- * lands the prose `summary` field gets populated by a separate code
- * path; until then it's null.
+ * Everything runs under the caller's JWT, and every read is additionally
+ * pinned to the caller's ACTIVE org (`orgId`): RLS admits every org the
+ * caller belongs to, so an unpinned read would blend two companies' data
+ * into one payload stamped with a single org_id. When the LLM lands the
+ * prose `summary` field gets populated by a separate code path; until
+ * then it's null.
  */
 
 const DAY_MS = 86_400_000;
@@ -50,6 +53,7 @@ export async function computeActivitySummary(
   const { data: actions, error: actionsError } = await supabase
     .from("activity_log")
     .select("action, created_at")
+    .eq("org_id", orgId)
     .gte("created_at", since);
   if (actionsError) throw readFailure("ai aggregates: activity log", actionsError);
 
@@ -84,9 +88,9 @@ export async function computeActivitySummary(
     .from("quotes")
     .select(
       "id, number, total, sent_at, viewed_at, accepted_at, declined_at, customer:customers ( name )",
-    );
+    )
+    .eq("org_id", orgId);
   if (quotesError) throw readFailure("ai aggregates: quotes", quotesError);
-
   let sent = 0;
   let viewed = 0;
   let accepted = 0;
@@ -166,9 +170,9 @@ export async function computeActivitySummary(
   const todayIso = invoiceBusinessToday();
   const { data: invoices, error: invoicesError } = await supabase
     .from("invoices")
-    .select("id, number, status, total, sent_at, due_date, paid_at");
+    .select("id, number, status, total, sent_at, due_date, paid_at")
+    .eq("org_id", orgId);
   if (invoicesError) throw readFailure("ai aggregates: invoices", invoicesError);
-
   const invoices_overdue_30d: StalledInvoice[] = [];
   for (const inv of invoices ?? []) {
     if (!isInvoiceOverdue(inv, todayIso)) continue;
@@ -190,9 +194,9 @@ export async function computeActivitySummary(
   // is the assignment, not whoever clicked the status button.
   const { data: jobs, error: jobsError } = await supabase
     .from("jobs")
-    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )");
+    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )")
+    .eq("org_id", orgId);
   if (jobsError) throw readFailure("ai aggregates: jobs", jobsError);
-
   const leaderMap = new Map<
     string,
     { user_id: string | null; name: string; completed_jobs: number }
@@ -240,6 +244,7 @@ export async function computeLeadInsights(
   const { data: leads, error: leadsError } = await supabase
     .from("leads")
     .select("id, status, source, estimated_value, created_at")
+    .eq("org_id", orgId)
     .gte("created_at", since);
   if (leadsError) throw readFailure("ai aggregates: leads", leadsError);
 

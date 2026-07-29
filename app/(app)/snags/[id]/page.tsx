@@ -83,7 +83,9 @@ export default async function SnagDetailPage({
     supabase.from("snags" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SnagRow | null; error: SupabaseReadError | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: SnagRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -92,6 +94,8 @@ export default async function SnagDetailPage({
       "id, title, description, location, trade, priority, status, job_id, assigned_to, reported_by, due_date, resolved_at, created_at, updated_at",
     )
     .eq("id", id)
+    // ACTIVE-ORG PIN — RLS admits every org the viewer belongs to.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (snagError) throw readFailure("snag: detail", snagError);
 
