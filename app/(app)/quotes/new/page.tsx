@@ -8,6 +8,7 @@ import {
   listLeadsForQuote,
 } from "../_form-helpers";
 import { createQuote } from "../actions";
+import { getQuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 
 /**
  * New-quote page.
@@ -77,6 +78,16 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
         defaultCustomerId={prefillCustomerId}
         defaultLeadId={prefillLeadId}
         defaultTerms={orgRow?.default_terms ?? ""}
+        // READINESS IS COMPUTED, NEVER ASSUMED. `getQuoteWriterReadiness()` is a
+        // pure, build-time-anchored read: no model bound ⇒ not available, whatever
+        // the environment says. It touches no database, so mounting the panel on a
+        // page-load path costs nothing and — crucially — wakes no model. AI wakes
+        // on a button press, never on a render.
+        quoteWriter={{
+          readiness: getQuoteWriterReadiness(),
+          canSeeBlockers: ctx.membership.role === "owner" || ctx.membership.role === "admin",
+          anchor: { leadId: prefillLeadId || null },
+        }}
       />
     </div>
   );
