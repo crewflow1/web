@@ -123,7 +123,27 @@ describe("tax/statutory reads are loud", () => {
     expect(inv, "never echo raw Postgres text to a caller").not.toMatch(
       /detail: linesError\.message/,
     );
-    expect(src("lib/email/send-quote.ts")).toMatch(/reason: "load_failed", detail: linesError\.message/);
+    // send-quote now gets the identical treatment across all three of its
+    // load-failure sites (quote, token, line items): refusal + Sentry capture,
+    // and the raw form is gone.
+    const q = src("lib/email/send-quote.ts");
+    expect(q).toMatch(/if \(linesError\) \{/);
+    expect(q).toMatch(
+      /Sentry\.captureException\(readFailure\("send-quote: line items", linesError\)\)/,
+    );
+    expect(q).toMatch(
+      /Sentry\.captureException\(readFailure\("send-quote: quote", qErr\)\)/,
+    );
+    expect(q).toMatch(
+      /Sentry\.captureException\(readFailure\("send-quote: token", tErr\)\)/,
+    );
+    expect(q, "never echo raw Postgres text to a caller").not.toMatch(
+      /detail: (linesError|qErr|tErr)\.message/,
+    );
+    // …and the two remaining route/lib siblings named in the follow-up.
+    expect(src("app/api/quotes/[id]/send/route.ts")).not.toMatch(/detail: qErr\.message/);
+    expect(src("app/api/invoices/[id]/remind/route.ts")).not.toMatch(/detail: invErr\.message/);
+    expect(src("lib/email/send-invoice.ts")).not.toMatch(/detail: iErr\.message/);
   });
 
   it("the tax page throws rather than rendering £0 HMRC estimates", () => {

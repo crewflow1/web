@@ -1,5 +1,7 @@
 import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
+import * as Sentry from "@sentry/nextjs";
+import { readFailure } from "@/lib/supabase/read-failure";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { sendEmail } from "@/lib/email/send";
@@ -85,7 +87,9 @@ export async function sendQuoteEmail(
 
   if (qErr) {
     console.error("[send-quote] load failed", qErr);
-    return { sent: false, reason: "load_failed", detail: qErr.message };
+        // Raw Postgres text never reaches the caller (house rule); Sentry carries it.
+    Sentry.captureException(readFailure("send-quote: quote", qErr));
+    return { sent: false, reason: "load_failed", detail: "Couldn't load the quote." };
   }
   if (!quote) return { sent: false, reason: "not_found" };
 
@@ -109,7 +113,9 @@ export async function sendQuoteEmail(
       : tokenQuery);
     if (tErr) {
       console.error("[send-quote] token allocation failed", tErr);
-      return { sent: false, reason: "load_failed", detail: tErr.message };
+            // Raw Postgres text never reaches the caller (house rule); Sentry carries it.
+      Sentry.captureException(readFailure("send-quote: token", tErr));
+      return { sent: false, reason: "load_failed", detail: "Couldn't load the acceptance token." };
     }
   }
   const portalUrl = `${env.NEXT_PUBLIC_APP_URL}/q/${token}`;
@@ -122,7 +128,9 @@ export async function sendQuoteEmail(
   if (linesError) {
     // Never email a PDF with totals but zero line items on a failed read.
     console.error("[send-quote] line items load failed", linesError);
-    return { sent: false, reason: "load_failed", detail: linesError.message };
+        // Raw Postgres text never reaches the caller (house rule); Sentry carries it.
+    Sentry.captureException(readFailure("send-quote: line items", linesError));
+    return { sent: false, reason: "load_failed", detail: "Couldn't load the quote's line items." };
   }
 
   const pdfInput: QuotePdfInput = {

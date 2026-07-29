@@ -48,7 +48,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     });
     console.error("[quote-send] quote load failed", qErr);
     return NextResponse.json(
-      { error: "load_failed", detail: qErr.message },
+      { error: "load_failed", detail: "Couldn't load the quote." },
       { status: 500 },
     );
   }
