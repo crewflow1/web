@@ -12,6 +12,7 @@ import {
   type AssetStatus,
 } from "@/lib/assets/schema";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { listSiteOptionsForOrg, type SitesClient } from "@/server/services/sites";
 import { deleteAsset, updateAssetStatus } from "../actions";
 import { generateOrRegenerateQr, revokeQr } from "../qr-actions";
 import { CustodySection, type CurrentAssignment } from "./_custody";
@@ -198,6 +199,7 @@ export default async function AssetDetailPage({
                 assignment_type: string;
                 job_id: string | null;
                 assignee_id: string | null;
+                site_id: string | null;
                 location: string | null;
                 assigned_at: string;
                 expected_return_at: string | null;
@@ -210,7 +212,7 @@ export default async function AssetDetailPage({
     }
   )
     .select(
-      "id, assignment_type, job_id, assignee_id, location, assigned_at, expected_return_at, issue_condition",
+      "id, assignment_type, job_id, assignee_id, site_id, location, assigned_at, expected_return_at, issue_condition",
     )
     .eq("asset_id", id)
     .eq("status", "open")
@@ -230,6 +232,18 @@ export default async function AssetDetailPage({
   const jobName = (jid: string | null) =>
     jid ? (jobs.find((j) => j.id === jid)?.label ?? "Job") : null;
 
+  // Company locations for the store-at-depot destination. ORG-PINNED inside the
+  // service: `sites_select` admits every org the viewer belongs to, so an
+  // unpinned read would offer another company's depot — a choice the
+  // site-org guard (20261061000000) would then refuse at write time.
+  // The currently-assigned site is kept even if retired, so the open assignment
+  // above never renders a blank where a real destination exists.
+  const sites = await listSiteOptionsForOrg(
+    supabase as unknown as SitesClient,
+    ctx.org.id,
+    { keepId: currentRaw?.site_id ?? null },
+  );
+
   const current: CurrentAssignment | null = currentRaw
     ? {
         id: currentRaw.id,
@@ -237,6 +251,9 @@ export default async function AssetDetailPage({
         job_name: jobName(currentRaw.job_id),
         assignee_name: currentRaw.assignee_id
           ? (staffOpts.find((s) => s.id === currentRaw.assignee_id)?.name ?? "Someone")
+          : null,
+        site_name: currentRaw.site_id
+          ? (sites.find((s) => s.id === currentRaw.site_id)?.name ?? null)
           : null,
         location: currentRaw.location,
         assigned_at: currentRaw.assigned_at,
@@ -519,6 +536,7 @@ export default async function AssetDetailPage({
         current={current}
         jobs={jobs}
         staff={staffOpts}
+        sites={sites}
         today={today}
       />
 

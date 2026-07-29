@@ -57,6 +57,7 @@ function parseCheckout(formData: FormData) {
     job_id: formData.get("job_id") ?? "",
     assignee_id: formData.get("assignee_id") ?? "",
     vehicle_asset_id: formData.get("vehicle_asset_id") ?? "",
+    site_id: formData.get("site_id") ?? "",
     location: formData.get("location") ?? "",
     issue_condition: formData.get("issue_condition") ?? "",
     issue_notes: formData.get("issue_notes") ?? "",
@@ -84,6 +85,10 @@ export async function checkOutAsset(_prev: FormState, formData: FormData): Promi
     job_id: d.job_id ?? null,
     assignee_id: d.assignee_id ?? null,
     vehicle_asset_id: d.vehicle_asset_id ?? null,
+    // The typed destination (public.sites). `tg_site_reference_org_integrity`
+    // (20261061000000) refuses a site from another org for EVERY role, so this
+    // needs no app-side check — a forged id is a DB refusal, translated below.
+    site_id: d.site_id ?? null,
     location: d.location ?? null,
     issue_condition: d.issue_condition ?? null,
     issue_notes: d.issue_notes ?? null,
@@ -187,6 +192,7 @@ export async function transferAsset(_prev: FormState, formData: FormData): Promi
     p_job_id: d.job_id ?? null,
     p_assignee_id: d.assignee_id ?? null,
     p_vehicle_asset_id: d.vehicle_asset_id ?? null,
+    p_site_id: d.site_id ?? null,
     p_location: d.location ?? null,
     p_issue_condition: d.issue_condition ?? null,
     p_issue_notes: d.issue_notes ?? null,

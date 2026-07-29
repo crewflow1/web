@@ -104,6 +104,8 @@ export interface FleetVehicle {
   financeMonthlyPayment: number | null;
   financeEndDate: string | null;
   homeDepot: string | null;
+  /** The typed home location (public.sites). Free text above is kept alongside. */
+  homeSiteId: string | null;
   odometerMiles: number | null;
   odometerRecordedAt: string | null;
   createdAt: string;
@@ -113,7 +115,7 @@ const VEHICLE_COLS =
   "asset_id, org_id, vin, variant, year_of_manufacture, first_registered_on, fuel_type, " +
   "vehicle_class, gross_weight_kg, mot_exempt, operational_status, finance_type, " +
   "finance_provider_id, finance_agreement_ref, finance_monthly_payment, finance_end_date, " +
-  "home_depot, odometer_miles, odometer_recorded_at, created_at";
+  "home_depot, home_site_id, odometer_miles, odometer_recorded_at, created_at";
 
 const ASSET_COLS =
   "id, name, registration, manufacturer, model, ownership, status, category, " +
@@ -180,6 +182,7 @@ export async function loadFleetVehicles(orgId: string): Promise<FleetVehicle[]> 
         financeMonthlyPayment: numOrNull(v.finance_monthly_payment),
         financeEndDate: (v.finance_end_date as string | null) ?? null,
         homeDepot: (v.home_depot as string | null) ?? null,
+        homeSiteId: (v.home_site_id as string | null) ?? null,
         odometerMiles: numOrNull(v.odometer_miles),
         odometerRecordedAt: (v.odometer_recorded_at as string | null) ?? null,
         createdAt: str(v.created_at),

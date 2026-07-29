@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { createVehicle } from "../../actions";
-import { loadSupplierOptions } from "../../_components/load";
+import { loadSiteOptions, loadSupplierOptions } from "../../_components/load";
 import { VehicleForm } from "../../_components/vehicle-form";
 import { Banner } from "../../_components/ui";
 import { errorMessage } from "../../_components/messages";
@@ -13,7 +13,10 @@ type SP = Promise<{ error?: string }>;
 export default async function NewVehiclePage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
-  const suppliers = await loadSupplierOptions(ctx.org.id);
+  const [suppliers, sites] = await Promise.all([
+    loadSupplierOptions(ctx.org.id),
+    loadSiteOptions(ctx.org.id),
+  ]);
   const err = errorMessage(sp.error);
 
   return (
@@ -40,6 +43,7 @@ export default async function NewVehiclePage({ searchParams }: { searchParams: S
       <VehicleForm
         action={createVehicle}
         suppliers={suppliers}
+        sites={sites}
         submitLabel="Add vehicle"
         cancelHref="/fleet/vehicles"
       />
