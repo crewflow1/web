@@ -150,7 +150,7 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
                         {row.work_summary}
                       </p>
                     ) : (
-                      <p className="mt-1.5 text-sm italic text-slate-400">
+                      <p className="mt-1.5 text-sm italic text-slate-500">
                         No work summary.
                       </p>
                     )}

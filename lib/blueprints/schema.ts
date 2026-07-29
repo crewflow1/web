@@ -23,7 +23,7 @@ export const BLUEPRINT_STATUS_STYLES: Record<BlueprintStatus, string> = {
   preliminary: "bg-amber-100 text-amber-700",
   for_construction: "bg-emerald-100 text-emerald-700",
   as_built: "bg-blue-100 text-blue-700",
-  superseded: "bg-slate-100 text-slate-500",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
 };
 
 /** Drawings render inline natively, so we accept only what a browser can show. */

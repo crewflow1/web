@@ -47,6 +47,23 @@ const createSchema = z.object({
 
 const idSchema = z.string().uuid();
 
+/**
+ * A chainable UPDATE filter for `review_requests` (not in the generated
+ * Supabase types, hence the cast style this file already uses).
+ *
+ * Every by-id write below carries `.eq("org_id", ctx.org.id)` on top of
+ * `.eq("id", id)`. `review_requests`' RLS is `org_id in current_org_ids()`,
+ * which admits EVERY org the caller belongs to — so a dual-org member working
+ * in org A could complete, cancel or SEND org B's review requests from A's
+ * shell. The email path is the serious one: it resolved the request from org
+ * B but composed the message from `ctx.org.id`, so org B's customer received
+ * an email under org A's name. Same wrong-letterhead class as the job
+ * certificates in #456.
+ */
+type ReviewUpd = PromiseLike<{ error: { message: string } | null }> & {
+  eq: (k: string, v: unknown) => ReviewUpd;
+};
+
 export async function createReviewRequestAction(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
   const parsed = createSchema.safeParse({
@@ -116,18 +133,18 @@ export async function createReviewRequestAction(formData: FormData): Promise<voi
 }
 
 export async function markReviewCompletedAction(id: string): Promise<void> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/reviews?error=bad_id");
   const tenant = await createClient();
   const { error } = await (
     tenant.from("review_requests" as never) as unknown as {
-      update: (r: unknown) => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
-      };
+      update: (r: unknown) => ReviewUpd;
     }
   )
     .update({ status: "completed", completed_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org pin — see the note above ReviewUpd.
+    .eq("org_id", ctx.org.id);
   if (error) redirect(`/reviews?error=update_failed`);
 
   await recordAdminActivity({
@@ -144,18 +161,18 @@ export async function markReviewCompletedAction(id: string): Promise<void> {
 }
 
 export async function cancelReviewRequestAction(id: string): Promise<void> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/reviews?error=bad_id");
   const tenant = await createClient();
   const { error } = await (
     tenant.from("review_requests" as never) as unknown as {
-      update: (r: unknown) => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
-      };
+      update: (r: unknown) => ReviewUpd;
     }
   )
     .update({ status: "cancelled" })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org pin — see the note above ReviewUpd.
+    .eq("org_id", ctx.org.id);
   if (error) redirect(`/reviews?error=update_failed`);
 
   await recordAdminActivity({
@@ -190,19 +207,25 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
     status: string;
     customer: { name: string | null; email: string | null } | null;
   };
+  type ReviewSel = {
+    eq: (k: string, v: unknown) => ReviewSel;
+    maybeSingle: () => Promise<{ data: ReviewRow | null }>;
+  };
+  // ACTIVE-org pin. This action SENDS AN EMAIL to the customer on the request,
+  // signed with the name of `ctx.org.id`. Unpinned, a dual-org member working
+  // in org A could load org B's review request and mail B's customer under A's
+  // company name — a real outbound message asserting the wrong identity, plus
+  // B's customer email address used from A's shell.
   const { data: review } = await (
     tenant.from("review_requests" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: ReviewRow | null }>;
-        };
-      };
+      select: (cols: string) => ReviewSel;
     }
   )
     .select(
       "id, customer_id, job_id, platform, status, customer:customers ( name, email )",
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!review) redirect(`/reviews?error=not_found`);
@@ -257,16 +280,17 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
   // Stamp sent_at + status='sent' so the cron skips this row.
   await (
     tenant.from("review_requests" as never) as unknown as {
-      update: (r: unknown) => {
-        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
-      };
+      update: (r: unknown) => ReviewUpd;
     }
   )
     .update({
       status: "sent",
       sent_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    // Active-org pin — see the note above ReviewUpd. The read above is pinned
+    // too, so this can only ever match the row we just mailed.
+    .eq("org_id", ctx.org.id);
 
   await recordAdminActivity({
     actorId: user.id,

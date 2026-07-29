@@ -204,7 +204,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
             aria-disabled={page <= 1}
             className={
               page <= 1
-                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-400"
+                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
                 : "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             }
           >
@@ -218,7 +218,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: SP 
             aria-disabled={page >= totalPages}
             className={
               page >= totalPages
-                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-400"
+                ? "pointer-events-none rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
                 : "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             }
           >

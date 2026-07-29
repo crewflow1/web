@@ -121,7 +121,7 @@ export default async function BlogPostPage({
             <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-amber-700">
               <span>{p.category}</span>
               <span className="text-slate-300">·</span>
-              <span className="text-slate-400">{p.readMinutes} min read</span>
+              <span className="text-slate-500">{p.readMinutes} min read</span>
             </div>
             <h1 className="mt-3 text-3xl font-bold leading-[1.15] tracking-tight text-slate-900 sm:text-4xl">
               {p.h1}

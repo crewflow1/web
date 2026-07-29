@@ -293,12 +293,12 @@ export default async function EditCustomerPage({
               <li key={`${t.kind}-${i}`} className="flex items-center justify-between px-6 py-2 text-sm">
                 {t.href ? (
                   <Link href={t.href} className="min-w-0 flex-1 truncate text-slate-700 hover:text-slate-900">
-                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-400">{t.kind}</span>
+                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-500">{t.kind}</span>
                     {t.label}
                   </Link>
                 ) : (
                   <span className="min-w-0 flex-1 truncate text-slate-700">
-                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-400">{t.kind}</span>
+                    <span className="mr-2 text-xs uppercase tracking-wide text-slate-500">{t.kind}</span>
                     {t.label}
                   </span>
                 )}

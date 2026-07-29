@@ -12,13 +12,17 @@ import { assertLocalE2eTarget } from "./_guard";
  * detail, seeing the PTW number, permit type, live status, validity window and
  * the confirmed control. Plus the logged-out boundary.
  *
- * The create/issue/lifecycle WRITE actions are proven at the integration tier
+ * The create/issue/lifecycle WRITE rules are proven at the integration tier
  * (__tests__/integration/health-safety/permits.test.ts — 14 real-Postgres cases,
- * incl. the issue-gate, transition matrix and immutability). The browser journey
- * reads a seeded record: the app middleware's getUser() intermittently bounces
- * authenticated write-POSTs to /login in this local harness (documented in
- * lib/supabase/middleware.ts; an existing action reproduces it; not our code),
- * so gating CI on a browser write would be flaky.
+ * incl. the issue-gate, transition matrix and immutability). The browser WRITE
+ * journey below exists for a different reason: permits actions used to call
+ * redirect() from the Server Action, and navigations at this route depth lose
+ * the Next 15.5 stranded-commit race (measured here: 60% of same-page saves
+ * never moved the browser while the row was written — vercel/next.js#83386).
+ * The actions now return FormState and <StateForm> document-navigates, and the
+ * page.url() assertions after each click pin exactly the behaviour that was
+ * broken — if someone converts a permit action back to redirect(), this goes
+ * red.
  */
 
 const SLUG = "e2e-harness-org";
@@ -34,6 +38,83 @@ test.describe("permits — behind the auth wall", () => {
   test("a logged-out visitor is sent to /login", async ({ page }) => {
     await page.goto("/health-safety/permits");
     await expect(page).toHaveURL(/\/login/);
+  });
+});
+
+/** React has attached a fiber to a form — the client dispatch is live. A
+ *  pre-hydration click would fall back to a native document POST and prove
+ *  nothing about the client-dispatch navigation under test. */
+async function waitForHydratedForm(page: import("@playwright/test").Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const el = document.querySelector("form");
+    return !!el && Object.keys(el).some((k) => k.startsWith("__reactFiber$"));
+  });
+}
+
+test.describe("permits — authenticated write journey lands every navigation", () => {
+  test.use({ storageState: "e2e/.auth/owner.json" });
+
+  test("create → edit → add condition → issue: the browser moves after every click", async ({
+    page,
+  }) => {
+    const stamp = Date.now();
+    const title = `Hot works — E2E write ${stamp}`;
+
+    // CREATE: /health-safety/permits/new → the new draft's own page.
+    await page.goto("/health-safety/permits/new");
+    await waitForHydratedForm(page);
+    await page.locator('select[name="permitType"]').selectOption("hot_works");
+    await page.locator('input[name="title"]').fill(title);
+    await page.locator('textarea[name="scope"]').fill("Weld the E2E beam");
+    // The issue gate requires a validity window — set it now (visible
+    // datetime-local inputs sync their hidden ISO twins client-side).
+    await page.locator('input[type="datetime-local"]').first().fill("2026-07-29T08:00");
+    await page.locator('input[type="datetime-local"]').last().fill("2099-07-29T18:00");
+    await page.getByRole("button", { name: /save draft/i }).click();
+    await expect(page).toHaveURL(/\/health-safety\/permits\/[0-9a-f-]{36}\?saved=created/, {
+      timeout: 20_000,
+    });
+    const permitUrl = new URL(page.url());
+    const permitId = permitUrl.pathname.split("/").pop()!;
+    await expect(page.getByRole("heading", { name: title })).toBeVisible();
+
+    // EDIT: same-route ?saved= swap — the shape that silently stranded 60% of
+    // saves before the FormState conversion.
+    const edited = `${title} (edited)`;
+    await waitForHydratedForm(page);
+    await page.locator('input[name="title"]').fill(edited);
+    await page.getByRole("button", { name: /save changes/i }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/health-safety/permits/${permitId}\\?saved=updated`),
+      { timeout: 20_000 },
+    );
+    await expect(page.getByRole("heading", { name: edited })).toBeVisible();
+
+    // ADD CONDITION (required, so it gates issue — and confirms the smaller
+    // inline StateForms dispatch + navigate too).
+    await waitForHydratedForm(page);
+    await page.locator("input#label").fill("Fire watch in place");
+    await page.getByRole("button", { name: /add condition/i }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/health-safety/permits/${permitId}\\?saved=condition`),
+      { timeout: 20_000 },
+    );
+    await expect(page.getByText("Fire watch in place").first()).toBeVisible();
+
+    // CONFIRM the condition, then ISSUE — the permit gets its permanent number.
+    await waitForHydratedForm(page);
+    await page.getByRole("button", { name: /^confirm/i }).first().click();
+    await expect(page).toHaveURL(
+      new RegExp(`/health-safety/permits/${permitId}\\?saved=condition`),
+      { timeout: 20_000 },
+    );
+    await waitForHydratedForm(page);
+    await page.getByRole("button", { name: /issue permit/i }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/health-safety/permits/${permitId}\\?saved=issued`),
+      { timeout: 20_000 },
+    );
+    await expect(page.getByText(/PTW-/).first()).toBeVisible();
   });
 });
 

@@ -333,7 +333,7 @@ export default async function FinancesPage({
                       {r.receipt_url ? (
                         <span className="text-xs text-slate-600">✓ uploaded</span>
                       ) : (
-                        <span className="text-xs text-slate-400">—</span>
+                        <span className="text-xs text-slate-500">—</span>
                       )}
                     </td>
                   </tr>

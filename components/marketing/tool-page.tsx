@@ -78,7 +78,7 @@ export function ToolPageShell({
               ))}
             </ul>
           ) : null}
-          <p className="mt-6 text-xs text-slate-400">
+          <p className="mt-6 text-xs text-slate-500">
             Estimates are guidance only — always confirm critical figures against your own
             measurements, supplier quotes and, for tax, your accountant or HMRC.
           </p>

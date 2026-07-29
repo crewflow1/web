@@ -350,7 +350,7 @@ export default async function HqNotificationsPage({
                     {n.body ? (
                       <p className="mt-1 text-xs text-slate-600">{n.body}</p>
                     ) : null}
-                    <p className="mt-1 text-[11px] text-slate-400">
+                    <p className="mt-1 text-[11px] text-slate-500">
                       {n.created_at.slice(0, 16).replace("T", " ")} UTC
                       {n.source_module ? ` · ${n.source_module}` : ""}
                     </p>

@@ -354,7 +354,7 @@ export default async function HqCustomerDetailPage({
             />
           </label>
           <label className="text-[11px] font-medium text-slate-600">
-            LTV override (£) <span className="text-slate-400">optional</span>
+            LTV override (£) <span className="text-slate-500">optional</span>
             <input
               name="ltv_gbp"
               type="number"
@@ -366,7 +366,7 @@ export default async function HqCustomerDetailPage({
             />
           </label>
           <label className="text-[11px] font-medium text-slate-600">
-            Billing email <span className="text-slate-400">optional</span>
+            Billing email <span className="text-slate-500">optional</span>
             <input
               name="billing_email"
               type="email"
@@ -392,7 +392,7 @@ export default async function HqCustomerDetailPage({
                 Stripe customer: <code>{org.stripe_customer_id}</code>
               </span>
             ) : (
-              <span className="ml-3 text-[11px] text-slate-400">
+              <span className="ml-3 text-[11px] text-slate-500">
                 Stripe not yet linked
               </span>
             )}
@@ -496,7 +496,7 @@ export default async function HqCustomerDetailPage({
             />
           </label>
           <label className="text-[11px] font-medium text-slate-600">
-            Migration stage <span className="text-slate-400">optional</span>
+            Migration stage <span className="text-slate-500">optional</span>
             <input
               name="migration_stage"
               type="text"
@@ -507,7 +507,7 @@ export default async function HqCustomerDetailPage({
             />
           </label>
           <label className="text-[11px] font-medium text-slate-600">
-            Migration ETA <span className="text-slate-400">optional</span>
+            Migration ETA <span className="text-slate-500">optional</span>
             <input
               name="migration_eta"
               type="date"
@@ -727,7 +727,7 @@ function ContactButton({
 }) {
   if (!href) {
     return (
-      <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-400">
+      <span className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
         {label}
       </span>
     );

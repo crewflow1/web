@@ -198,7 +198,7 @@ export function OrganizationForm({
                 htmlFor="default_terms"
                 className="block text-sm font-medium text-slate-800"
               >
-                Default terms <span className="text-xs text-slate-400">Optional</span>
+                Default terms <span className="text-xs text-slate-500">Optional</span>
               </label>
               <textarea
                 id="default_terms"

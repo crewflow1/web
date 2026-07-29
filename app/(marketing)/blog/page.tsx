@@ -59,13 +59,13 @@ export default function BlogHubPage() {
               <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-amber-700">
                 <span>{p.category}</span>
                 <span className="text-slate-300">·</span>
-                <span className="text-slate-400">{p.readMinutes} min read</span>
+                <span className="text-slate-500">{p.readMinutes} min read</span>
               </div>
               <h2 className="mt-2 text-xl font-semibold text-slate-900 group-hover:text-amber-800">
                 {p.title}
               </h2>
               <p className="mt-2 text-sm leading-relaxed text-slate-600">{p.excerpt}</p>
-              <div className="mt-4 text-xs text-slate-400">{fmtDate(p.datePublished)}</div>
+              <div className="mt-4 text-xs text-slate-500">{fmtDate(p.datePublished)}</div>
             </Link>
           ))}
         </div>

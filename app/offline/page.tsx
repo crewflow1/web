@@ -79,7 +79,7 @@ export default function OfflinePage() {
       <section className="mt-6" aria-label="Offline drawings">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Drawings on this device</h2>
         {items === null ? (
-          <p className="mt-2 text-sm text-slate-400">Checking…</p>
+          <p className="mt-2 text-sm text-slate-500">Checking…</p>
         ) : items.length === 0 ? (
           <p className="mt-2 text-sm text-slate-500">
             No drawings downloaded {identity ? "for this account" : ""} yet. When you have a connection, open a drawing and choose <strong>Download for offline</strong>.

@@ -204,11 +204,11 @@ export default async function PortalInvoicesPage({
       {paySummary.paidToDate > 0 || paySummary.dueNow > 0 ? (
         <section aria-label="Your payments" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Paid to date</p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Paid to date</p>
             <p className="mt-1 text-xl font-bold text-green-700">{GBP.format(paySummary.paidToDate)}</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Due now</p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Due now</p>
             <p className="mt-1 text-xl font-bold text-slate-900">{GBP.format(paySummary.dueNow)}</p>
           </div>
           {paySummary.overdue > 0 ? (
@@ -315,7 +315,7 @@ export default async function PortalInvoicesPage({
                     <dd
                       className={
                         outstanding === 0
-                          ? "text-slate-400"
+                          ? "text-slate-500"
                           : "font-medium text-slate-900"
                       }
                     >
@@ -380,16 +380,16 @@ export default async function PortalInvoicesPage({
                             </span>
                             {pf.filename}
                             {pf.notes ? (
-                              <span className="text-slate-400"> — {pf.notes}</span>
+                              <span className="text-slate-500"> — {pf.notes}</span>
                             ) : null}
                           </span>
-                          <span className="shrink-0 text-slate-400">
+                          <span className="shrink-0 text-slate-500">
                             {pf.uploaded_at.slice(0, 10)}
                           </span>
                         </li>
                       ))}
                     </ul>
-                    <p className="mt-1 text-[10px] text-slate-400">
+                    <p className="mt-1 text-[10px] text-slate-500">
                       {org.name} will confirm here once it&apos;s matched to your
                       payment.
                     </p>

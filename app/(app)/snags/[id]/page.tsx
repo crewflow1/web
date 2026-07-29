@@ -189,7 +189,7 @@ export default async function SnagDetailPage({
             {snag.description}
           </p>
         ) : (
-          <p className="text-sm italic text-slate-400">No details added.</p>
+          <p className="text-sm italic text-slate-500">No details added.</p>
         )}
         <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           <Detail label="Job / site">
