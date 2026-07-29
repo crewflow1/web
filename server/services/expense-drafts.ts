@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { isAiConfigured } from "@/lib/ai/safety";
@@ -119,13 +120,14 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
   // filter — a member of org B passing org A's draft_id finds no row and we
   // bail. Without this, the org-scoped UPDATE in step 2 would correctly no-op,
   // but the finances INSERT in step 1 would already have written a bogus row.
-  const { data: draft } = await (
+  const { data: draft, error: draftError } = await (
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             maybeSingle: () => Promise<{
               data: { id: string; status: string | null; finance_id: string | null } | null;
+              error: SupabaseReadError | null;
             }>;
           };
         };
@@ -136,6 +138,7 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
     .eq("id", parsed.draft_id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (draftError) throw readFailure("expense-drafts: draft gate", draftError);
   if (!draft) {
     return { ok: false, error: "draft_not_found" };
   }

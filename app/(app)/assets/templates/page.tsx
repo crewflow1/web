@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import {
@@ -47,7 +48,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (
@@ -57,7 +58,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
           order: (
             c: string,
             o: { ascending: boolean },
-          ) => Promise<{ data: Row[] | null }>;
+          ) => Promise<{ data: Row[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -66,6 +67,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: SP
     // ACTIVE-org pin — the template library is per-org; RLS alone blends both.
     .eq("org_id", ctx.org.id)
     .order("updated_at", { ascending: false });
+  if (error) throw readFailure("inspection templates: list", error);
 
   // Group to one row per family: prefer the PUBLISHED version as the face of the
   // family (that's what can start inspections); otherwise the newest version.

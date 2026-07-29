@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import * as Sentry from "@sentry/nextjs";
 import {
   verifyMetaSignature,
   parseMetaWebhookPayload,
@@ -108,6 +109,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (e) {
     // A whole-batch failure (not a per-item one) → 500 so Meta retries; the
     // claim ledger makes the retry idempotent.
+    Sentry.captureException(e, { tags: { route: "webhooks/whatsapp" } });
     console.error("[whatsapp-webhook] batch processing failed", e);
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "unknown_error" },

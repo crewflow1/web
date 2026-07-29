@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
@@ -44,7 +45,8 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
   // Permission: admins-only — bank statements are sensitive. Role comes from
   // ctx (the caller's own membership in the ACTIVE org); an unfiltered
   // memberships read would return every member's row and `.single()` would
-  // error in any org with ≥2 members, locking everyone out.
+  // error in any org with ≥2 members, locking everyone out. No read here means
+  // no read to fail loud — the #480 guard this replaced is obsolete, not lost.
   if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
     redirect("/payments?error=forbidden");
   }
@@ -98,7 +100,7 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
   // screen, persisted a cross-org reference in the reconciliation ledger, and
   // inflated org A's "suggested matches" count with rows that can never be
   // confirmed (confirmBankMatch re-checks the invoice's org and refuses).
-  const { data: invoices } = await supabase
+  const { data: invoices, error: invoicesError } = await supabase
     .from("invoices")
     .select(
       `
@@ -108,6 +110,9 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
     )
     .eq("org_id", ctx.org.id)
     .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]);
+  // Fail loud BEFORE inserting lines — a failed read here would score against
+  // an empty invoice list and persist every line as "unmatched".
+  if (invoicesError) throw readFailure("payments upload: invoices", invoicesError);
 
   type ScoredInv = {
     id: string;
@@ -175,11 +180,12 @@ export async function confirmBankMatch(
   }
 
   const supabase = await createClient();
-  const { data: line } = await supabase
+  const { data: line, error: lineError } = await supabase
     .from("bank_statement_lines")
     .select("id, org_id, bank_statement_id, amount, posted_at, reference, description")
     .eq("id", bankLineId)
     .maybeSingle();
+  if (lineError) throw readFailure("payments match: bank line", lineError);
   if (!line) return formError("Bank line not found.");
   if (line.org_id !== ctx.org.id) return formError("Bank line not found.");
   if (line.amount <= 0) return formError("Only incoming payments can be matched to invoices.");
@@ -199,11 +205,12 @@ export async function confirmBankMatch(
   // (invoices are select-scoped to the caller's orgs) and re-check org_id —
   // mirroring the bank-line checks above, and matching addInvoicePayment, which
   // already resolves its invoice this way. Fails closed.
-  const { data: inv } = await supabase
+  const { data: inv, error: invError } = await supabase
     .from("invoices")
     .select("id, org_id")
     .eq("id", targetInvoiceId)
     .maybeSingle();
+  if (invError) throw readFailure("payments match: invoice", invError);
   if (!inv) return formError("Invoice not found.");
   if (inv.org_id !== ctx.org.id) return formError("Invoice not found.");
 

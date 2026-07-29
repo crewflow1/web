@@ -6,6 +6,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
@@ -182,7 +183,7 @@ export async function rejectExpenseDraft(formData: FormData): Promise<void> {
   // posted expense to `rejected` and orphan its `finances` row. Mirrors the
   // idempotency guard in approveExpenseDraft.
   const supabase = await createClient();
-  const { data: draft } = await (
+  const { data: draft, error: draftError } = await (
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
@@ -193,6 +194,7 @@ export async function rejectExpenseDraft(formData: FormData): Promise<void> {
                 status: string | null;
                 finance_id: string | null;
               } | null;
+              error: SupabaseReadError | null;
             }>;
           };
         };
@@ -203,6 +205,9 @@ export async function rejectExpenseDraft(formData: FormData): Promise<void> {
     .eq("id", parsed.data.draft_id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed guard read must not masquerade as "draft not found" — throw so the
+  // reject never proceeds on an unverified draft.
+  if (draftError) throw readFailure("expense draft: reject guard", draftError);
   if (!draft) {
     redirect(`/expenses/${parsed.data.draft_id}?error=not_found`);
   }

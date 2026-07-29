@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { NewInvoiceForm } from "./_form";
@@ -18,7 +19,7 @@ import { NewInvoiceForm } from "./_form";
 export default async function NewInvoicePage() {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: quotes } = await supabase
+  const { data: quotes, error: quotesError } = await supabase
     .from("quotes")
     .select("id, number, subtotal, total, status")
     // ACTIVE-org pin — offering the other org's accepted quote here produces an
@@ -27,6 +28,7 @@ export default async function NewInvoicePage() {
     .eq("status", "accepted")
     .order("created_at", { ascending: false })
     .limit(500);
+  if (quotesError) throw readFailure("new invoice: accepted quotes", quotesError);
 
   const options = (quotes ?? []).map((q) => ({
     id: q.id,

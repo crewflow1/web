@@ -1,5 +1,9 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  readFailure,
+  type SupabaseReadError,
+} from "@/lib/supabase/read-failure";
 import { round2, toPounds } from "@/lib/money";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
 import { computeRetentionSchedule } from "@/lib/retentions/schedule";
@@ -21,7 +25,7 @@ import { computePortalSchedule, type PortalSchedule } from "@/lib/customers/port
  */
 
 type Row = Record<string, unknown>;
-type Q = PromiseLike<{ data: Row[] | null }> & {
+type Q = PromiseLike<{ data: Row[] | null; error: SupabaseReadError | null }> & {
   select: (c: string) => Q;
   eq: (k: string, v: unknown) => Q;
   in: (k: string, v: unknown[]) => Q;
@@ -37,60 +41,66 @@ export async function loadPortalSchedule(orgId: string, customerId: string): Pro
     const admin = createAdminClient() as unknown as LooseAdmin;
 
     // 1. The customer's OWN jobs — the cross-customer barrier.
-    const { data: jobData } = await admin
+    const { data: jobData, error: jobError } = await admin
       .from("jobs")
       .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
       .eq("org_id", orgId)
       .eq("customer_id", customerId);
+    if (jobError) throw readFailure("portal schedule: jobs", jobError);
     const jobRows = jobData ?? [];
     const jobIds = jobRows.map((j) => String(j.id));
     if (jobIds.length === 0) return EMPTY;
 
     // 2. Active plans for those jobs (one active plan per job).
-    const { data: planData } = await admin
+    const { data: planData, error: planError } = await admin
       .from("job_billing_plans")
       .select("id")
       .eq("org_id", orgId)
       .in("job_id", jobIds)
       .eq("status", "active");
+    if (planError) throw readFailure("portal schedule: billing plans", planError);
     const planIds = (planData ?? []).map((p) => String(p.id));
 
     // 3. Invoices + payments + releases for those jobs (stage status + retention).
-    const { data: invData } = await admin
+    const { data: invData, error: invError } = await admin
       .from("invoices")
       .select("id, status, due_date, total, amount, job_id")
       .eq("org_id", orgId)
       .in("job_id", jobIds);
+    if (invError) throw readFailure("portal schedule: invoices", invError);
     const invRows = invData ?? [];
     const invoiceById = new Map(invRows.map((i) => [String(i.id), i]));
     const paidByInvoice = new Map<string, number>();
     if (invRows.length > 0) {
-      const { data: payData } = await admin
+      const { data: payData, error: payError } = await admin
         .from("invoice_payments")
         .select("invoice_id, amount")
         .eq("org_id", orgId)
         .in("invoice_id", invRows.map((i) => String(i.id)));
+      if (payError) throw readFailure("portal schedule: invoice payments", payError);
       for (const p of payData ?? []) {
         const id = String(p.invoice_id);
         paidByInvoice.set(id, round2((paidByInvoice.get(id) ?? 0) + toPounds(mv(p.amount))));
       }
     }
-    const { data: relData } = await admin
+    const { data: relData, error: relError } = await admin
       .from("retention_releases")
       .select("job_id, amount")
       .eq("org_id", orgId)
       .in("job_id", jobIds);
+    if (relError) throw readFailure("portal schedule: retention releases", relError);
 
     // 4. Stages of the active plans (job- AND plan-scoped — belt and braces).
     let stageRows: Row[] = [];
     if (planIds.length > 0) {
-      const { data: stageData } = await admin
+      const { data: stageData, error: stageError } = await admin
         .from("job_billing_stages")
         .select("id, job_id, sequence, name, amount, vat_rate, due_date, invoice_id")
         .eq("org_id", orgId)
         .in("job_id", jobIds)
         .in("plan_id", planIds)
         .order("sequence", { ascending: true });
+      if (stageError) throw readFailure("portal schedule: billing stages", stageError);
       stageRows = stageData ?? [];
     }
 

@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import type {
   OnboardingSnapshot,
   ChecklistStepId,
@@ -33,13 +34,14 @@ export async function buildOnboardingSnapshot(
   const supabase = await createClient();
 
   // Fetch the org row in one shot.
-  const { data: orgRow } = await supabase
+  const { data: orgRow, error: orgError } = await supabase
     .from("organizations")
     .select(
       "name, phone, email, vat_number, logo_path, logo_url, bank_details, default_terms, address, onboarding_state",
     )
     .eq("id", orgId)
     .maybeSingle();
+  if (orgError) throw readFailure("onboarding-snapshot: org row", orgError);
 
   // Parallel counts — none of them touch the same table, so they fan
   // out concurrently and the response time is dominated by the slowest.

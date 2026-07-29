@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -146,9 +147,11 @@ export async function issuePermit(_prev: FormState, formData: FormData): Promise
   if (!parsed.success) return formError("That permit link looks wrong — reload and try again.");
   const id = parsed.data.id;
   const supabase = await createClient();
-  const { data: p } = await tbl(supabase)("permits_to_work")
+  const { data: p, error: permitError } = await tbl(supabase)("permits_to_work")
     .select("id, status, permit_type, title, scope, valid_from, valid_until, permit_conditions(required, confirmed)")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (permitError) throw readFailure("permits: issue guard", permitError);
   if (!p) return formError("Permit not found.");
   const gate = canIssue(p, (p.permit_conditions ?? []).map((c: { required: boolean; confirmed: boolean }) => ({ required: c.required, confirmed: c.confirmed })));
   if (!gate.ok) return formError(gate.reasons[0]!);

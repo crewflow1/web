@@ -177,7 +177,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       } else {
         // Find/create a Stripe customer for this org.
         const admin = createAdminClient();
-        const { data: orgRow } = await admin
+        const { data: orgRow, error: orgError } = await admin
           .from("organizations")
           .select(
             "id, name, billing_email, stripe_customer_id" as never,
@@ -190,7 +190,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           billing_email: string | null;
           stripe_customer_id: string | null;
         } | null;
-        if (!org) {
+        if (orgError) {
+          // Diagnostic endpoint — surface the real failure, don't let a
+          // failed read masquerade as "org not found".
+          sampleCheckout = { error: `org lookup failed: ${orgError.message}` };
+        } else if (!org) {
           sampleCheckout = { error: `org ${sampleOrgId} not found` };
         } else {
           let customerId = org.stripe_customer_id;

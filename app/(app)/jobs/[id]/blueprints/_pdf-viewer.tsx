@@ -111,14 +111,34 @@ export default function BlueprintViewer(props: Props) {
   const drawRef = useRef<{ pts: Norm[]; kind: MarkupKind } | null>(null);
   const rafRef = useRef(0);
 
+  // The server actions now THROW on a rejected read instead of returning [].
+  // A bare `catch {}` would convert that back into the exact lie the throw
+  // exists to remove — an overlay with no pins is indistinguishable from a
+  // drawing with no pins, and on a site drawing that difference is whether an
+  // operative sees a flagged hazard. Record the failure and say so.
+  const [layerError, setLayerError] = useState<{ pins: boolean; markup: boolean }>(
+    { pins: false, markup: false },
+  );
   const refreshPins = useCallback(async () => {
-    try { setPins(await getPinsAction(versionId)); } catch { /* leave prior pins */ }
+    try {
+      setPins(await getPinsAction(versionId));
+      setLayerError((e) => (e.pins ? { ...e, pins: false } : e));
+    } catch {
+      setLayerError((e) => (e.pins ? e : { ...e, pins: true })); // leave prior pins
+    }
   }, [versionId]);
   const refreshMarkups = useCallback(async () => {
-    try { setMarkups(await getMarkupAction(versionId)); } catch { /* leave prior markups */ }
+    try {
+      setMarkups(await getMarkupAction(versionId));
+      setLayerError((e) => (e.markup ? { ...e, markup: false } : e));
+    } catch {
+      setLayerError((e) => (e.markup ? e : { ...e, markup: true })); // leave prior markup
+    }
   }, [versionId]);
   useEffect(() => { void refreshPins(); }, [refreshPins]);
   useEffect(() => { void refreshMarkups(); }, [refreshMarkups]);
+  // Snag linking is an editing convenience, not safety information — an empty
+  // picker degrades the link form, it does not misrepresent the drawing.
   useEffect(() => { getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }, [jobId]);
 
   // --- load the document once (fetch bytes, then pdf.js) --------------------
@@ -433,6 +453,28 @@ export default function BlueprintViewer(props: Props) {
       tabIndex={-1}
       className="fixed inset-0 z-50 flex flex-col bg-slate-900/95 outline-none"
     >
+      {layerError.pins || layerError.markup ? (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 bg-amber-100 px-4 py-2 text-xs font-medium text-amber-900">
+          <span>
+            Couldn&rsquo;t load the{" "}
+            {layerError.pins && layerError.markup
+              ? "pins or markup"
+              : layerError.pins
+                ? "pins"
+                : "markup"}{" "}
+            for this drawing — what you see below may be incomplete. This is a
+            load failure, not an empty drawing.
+          </span>
+          <button
+            type="button"
+            onClick={() => { void refreshPins(); void refreshMarkups(); }}
+            className="rounded-md border border-amber-400 bg-white px-2 py-1 font-semibold text-amber-900 hover:bg-amber-50"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       {/* top bar */}
       <div className="flex items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="min-w-0 truncate text-sm">

@@ -63,11 +63,15 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the customer's PDF shows the
   // invoice as billed, unaffected by any later quote edit or deletion.
-  const { data: lines } = await admin
+  const { data: lines, error: linesError } = await admin
     .from("invoice_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("invoice_id", invoice.id)
     .order("sort_order", { ascending: true });
+  if (linesError) {
+    // A failed line-item read must not render a PDF with an empty body.
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
 
   const input: InvoicePdfInput = {
     number: invoice.number,

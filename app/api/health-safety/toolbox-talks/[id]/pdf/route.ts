@@ -21,10 +21,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const supabase = await createClient();
   const t = (name: string) => (supabase as unknown as { from: (t: string) => any }).from(name); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  const { data: talk } = await t("toolbox_talks")
+  const { data: talk, error: talkError } = await t("toolbox_talks")
     .select("id, org_id, status, snapshot")
     .eq("id", id)
     .maybeSingle();
+  if (talkError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!talk) return NextResponse.json({ error: "Not found" }, { status: 404 });
   // A draft (or any talk with no frozen snapshot) is not evidence.
   if (talk.status === "draft" || !talk.snapshot) {

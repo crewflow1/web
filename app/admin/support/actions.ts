@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import {
@@ -62,11 +63,14 @@ export async function replyAsHq(formData: FormData): Promise<void> {
 
   const supabase = createAdminClient();
   // We need the org_id to denorm into the message row.
-  const { data: ticket } = await supabase
+  const { data: ticket, error: ticketError } = await supabase
     .from("support_tickets" as never)
     .select("org_id" as never)
     .eq("id", parsed.data.ticket_id)
     .maybeSingle();
+  if (ticketError) {
+    throw readFailure("admin replyAsHq: support ticket", ticketError);
+  }
   if (!ticket) {
     redirect(`/admin/support?error=ticket_not_found`);
   }
@@ -235,12 +239,16 @@ export async function setTicketPriority(formData: FormData): Promise<void> {
   });
   if (!parsed.success) redirect(`/admin/support?error=invalid_input`);
   const supabase = createAdminClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("support_tickets" as never)
     .update({ priority: parsed.data.priority } as never)
     .eq("id", parsed.data.ticket_id)
     .select("org_id, ticket_number, subject" as never)
     .maybeSingle();
+  if (error) {
+    console.error("[admin-support] setTicketPriority failed", error);
+    redirect(`/admin/support/${parsed.data.ticket_id}?error=priority_failed`);
+  }
   const row = data as unknown as {
     org_id: string;
     ticket_number: number;

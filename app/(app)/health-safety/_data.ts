@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { RiskAssessmentRow, HazardRow, RevisionSibling } from "@/lib/health-safety/schema";
 
 /**
@@ -24,14 +25,16 @@ export async function listRiskAssessments(orgId: string): Promise<RaListItem[]> 
   const supabase = await createClient();
   const { data, error } = await (supabase as unknown as {
     from: (t: string) => {
-      select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: unknown }> } };
+      select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: SupabaseReadError | null }> } };
     };
   })
     .from("risk_assessments")
     .select(`${RA_COLUMNS}, risk_assessment_hazards(count)`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
-  if (error || !data) return [];
+  // Throw on a REJECTED query — `[]` is reserved for a genuinely empty register.
+  if (error) throw readFailure("health-safety: rams register", error);
+  if (!data) return [];
   return (data as Array<RiskAssessmentRow & { risk_assessment_hazards: Array<{ count: number }> }>).map((r) => ({
     ...r,
     hazard_count: r.risk_assessment_hazards?.[0]?.count ?? 0,
@@ -51,7 +54,7 @@ export async function getRiskAssessment(
   const supabase = await createClient();
   const { data: ra, error } = await (supabase as unknown as {
     from: (t: string) => {
-      select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: RiskAssessmentRow | null; error: unknown }> } } };
+      select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: RiskAssessmentRow | null; error: SupabaseReadError | null }> } } };
     };
   })
     .from("risk_assessments")
@@ -59,11 +62,14 @@ export async function getRiskAssessment(
     .eq("id", id)
     .eq("org_id", orgId)
     .maybeSingle();
-  if (error || !ra) return null;
+  // Throw on a REJECTED query — null is reserved for a genuinely missing row
+  // (callers notFound() on it).
+  if (error) throw readFailure("health-safety: risk assessment", error);
+  if (!ra) return null;
 
-  const { data: hazards } = await (supabase as unknown as {
+  const { data: hazards, error: hazardsError } = await (supabase as unknown as {
     from: (t: string) => {
-      select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: HazardRow[] | null }> } } } };
+      select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: HazardRow[] | null; error: SupabaseReadError | null }> } } } };
     };
   })
     .from("risk_assessment_hazards")
@@ -72,6 +78,7 @@ export async function getRiskAssessment(
     .eq("org_id", orgId)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
+  if (hazardsError) throw readFailure("health-safety: hazards", hazardsError);
 
   return { ra, hazards: hazards ?? [] };
 }
@@ -85,27 +92,29 @@ export async function getRevisionSiblings(
   rootId: string,
 ): Promise<RevisionSibling[]> {
   const supabase = await createClient();
-  const { data } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: RevisionSibling[] | null }> } } } };
+  const { data, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: RevisionSibling[] | null; error: SupabaseReadError | null }> } } } };
   })
     .from("risk_assessments")
     .select("id, reference, revision_number, status")
     .eq("root_risk_assessment_id", rootId)
     .eq("org_id", orgId)
     .order("revision_number", { ascending: false });
+  if (error) throw readFailure("health-safety: revision siblings", error);
   return data ?? [];
 }
 
 /** Members of the ACTIVE org who can be named as the assessor. */
 export async function listAssessors(orgId: string): Promise<Array<{ id: string; name: string }>> {
   const supabase = await createClient();
-  const { data } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ user_id: string; users: { full_name: string | null; email: string | null } | null }> | null }> } } };
+  const { data, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ user_id: string; users: { full_name: string | null; email: string | null } | null }> | null; error: SupabaseReadError | null }> } } };
   })
     .from("memberships")
     .select("user_id, users(full_name, email)")
     .eq("org_id", orgId)
     .order("created_at", { ascending: true });
+  if (error) throw readFailure("health-safety: assessor picker", error);
   return (data ?? []).map((m) => ({
     id: m.user_id,
     name: m.users?.full_name || m.users?.email || "Member",

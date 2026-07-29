@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -42,8 +43,10 @@ type CertRow = {
 type FromChain = {
   select: (c: string) => {
     eq: (k: string, v: unknown) => {
-      eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null }> };
-      maybeSingle: () => Promise<{ data: CertRow | null }>;
+      eq: (k: string, v: unknown) => {
+        maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }>;
+      };
+      maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }>;
     };
   };
   insert: (row: unknown) => {
@@ -142,7 +145,8 @@ export async function issueCertificate(
   if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
-  const { data: cert } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
+  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
+  if (certError) throw readFailure("certificate issue: certificate", certError);
   if (!cert) return formError("Certificate not found.");
   if (cert.status !== "draft") return formError("This certificate has already been issued.");
 
@@ -201,7 +205,8 @@ async function setPortal(jobId: string, certId: string, publish: boolean): Promi
   if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
-  const { data: cert } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
+  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
+  if (certError) throw readFailure("certificate portal: certificate", certError);
   if (!cert) return formError("Certificate not found.");
   if (cert.status !== "issued") return formError("The certificate isn't issued.");
 

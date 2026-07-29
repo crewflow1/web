@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   assessStatementFreshness,
   buildMonthlyReturnDataset,
@@ -80,10 +81,11 @@ export type CisContractorProfile = {
 
 export async function getContractorProfile(orgId: string): Promise<CisContractorProfile | null> {
   const c = await client();
-  const { data } = await table(c, "cis_contractor_profiles")
+  const { data, error } = await table(c, "cis_contractor_profiles")
     .select("org_id, legal_name, employer_paye_reference, accounts_office_reference, contractor_utr")
     .eq("org_id", orgId)
     .maybeSingle();
+  if (error) throw readFailure("cis: contractor profile", error);
   return (data as CisContractorProfile | null) ?? null;
 }
 
@@ -137,14 +139,20 @@ export async function listMonthSnapshots(
     .eq("org_id", orgId)
     .eq("tax_month_end", taxMonthEnd);
   if (supplierId) q = q.eq("supplier_id", supplierId);
-  const { data } = await q;
+  // Loud fail: a failed read must never build a NIL return — nil is a real,
+  // reportable state and cannot be allowed to alias a query failure.
+  const { data, error } = await q;
+  if (error) throw readFailure("cis: month payment snapshots", error);
   const rows = (data ?? []) as RawSnapshot[];
   if (rows.length === 0) return [];
 
-  const { data: payments } = await table(c, "supplier_payments")
+  // Loud fail: this join drives the voided-payment filter — on error it must
+  // block, not fail open into including voided payments.
+  const { data: payments, error: paymentsError } = await table(c, "supplier_payments")
     .select("id, paid_at, voided_at")
     .eq("org_id", orgId)
     .in("id", rows.map((r) => r.payment_id));
+  if (paymentsError) throw readFailure("cis: snapshot payments join", paymentsError);
 
   const byId = new Map(
     ((payments ?? []) as Array<{ id: string; paid_at: string; voided_at: string | null }>).map(
@@ -215,7 +223,8 @@ export async function listStatements(
   let q = table(c, "cis_statements").select(STATEMENT_COLUMNS).eq("org_id", orgId);
   if (opts.taxMonthEnd) q = q.eq("tax_month_end", opts.taxMonthEnd);
   if (opts.supplierId) q = q.eq("supplier_id", opts.supplierId);
-  const { data } = await q.order("tax_month_end", { ascending: false }).order("statement_number");
+  const { data, error } = await q.order("tax_month_end", { ascending: false }).order("statement_number");
+  if (error) throw readFailure("cis: statements list", error);
   return (data ?? []) as unknown as CisStatementRow[];
 }
 
@@ -224,11 +233,12 @@ export async function getStatement(
   statementId: string,
 ): Promise<CisStatementRow | null> {
   const c = await client();
-  const { data } = await table(c, "cis_statements")
+  const { data, error } = await table(c, "cis_statements")
     .select(STATEMENT_COLUMNS)
     .eq("org_id", orgId)
     .eq("id", statementId)
     .maybeSingle();
+  if (error) throw readFailure("cis: statement", error);
   return (data as unknown as CisStatementRow | null) ?? null;
 }
 
@@ -239,13 +249,14 @@ export async function getStatement(
  */
 export async function listStatementPayments(orgId: string, statementId: string) {
   const c = await client();
-  const { data } = await table(c, "cis_statement_payments")
+  const { data, error } = await table(c, "cis_statement_payments")
     .select(
       "payment_id, paid_on, cis_gross_payment, materials_total, cis_deduction, deduction_rate, cis_status",
     )
     .eq("org_id", orgId)
     .eq("statement_id", statementId)
     .order("paid_on");
+  if (error) throw readFailure("cis: statement payments", error);
   return (data ?? []) as Array<{
     payment_id: string;
     paid_on: string;
@@ -378,12 +389,13 @@ export async function getPreparedReturn(
   taxMonthEnd: string,
 ): Promise<CisMonthlyReturnRow | null> {
   const c = await client();
-  const { data } = await table(c, "cis_monthly_returns")
+  const { data, error } = await table(c, "cis_monthly_returns")
     .select(RETURN_COLUMNS)
     .eq("org_id", orgId)
     .eq("tax_month_end", taxMonthEnd)
     .is("superseded_at", null)
     .maybeSingle();
+  if (error) throw readFailure("cis: prepared return", error);
   return (data as unknown as CisMonthlyReturnRow | null) ?? null;
 }
 
@@ -407,18 +419,19 @@ export async function preparedReturnIsStale(row: CisMonthlyReturnRow): Promise<b
 
 export async function listPreparedReturns(orgId: string): Promise<CisMonthlyReturnRow[]> {
   const c = await client();
-  const { data } = await table(c, "cis_monthly_returns")
+  const { data, error } = await table(c, "cis_monthly_returns")
     .select(RETURN_COLUMNS)
     .eq("org_id", orgId)
     .is("superseded_at", null)
     .order("tax_month_end", { ascending: false })
     .limit(24);
+  if (error) throw readFailure("cis: prepared returns list", error);
   return (data ?? []) as unknown as CisMonthlyReturnRow[];
 }
 
 export async function listReturnLines(orgId: string, returnId: string) {
   const c = await client();
-  const { data } = await table(c, "cis_monthly_return_lines")
+  const { data, error } = await table(c, "cis_monthly_return_lines")
     .select(
       "supplier_id, subcontractor_name, subcontractor_utr_masked, verification_number, " +
         "verification_number_required, rate_is_uniform, deduction_rate, cis_status, " +
@@ -427,6 +440,7 @@ export async function listReturnLines(orgId: string, returnId: string) {
     .eq("org_id", orgId)
     .eq("return_id", returnId)
     .order("subcontractor_name");
+  if (error) throw readFailure("cis: return lines", error);
   return (data ?? []) as Array<Record<string, unknown>>;
 }
 

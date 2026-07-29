@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { PermitRow, PermitConditionRow } from "@/lib/health-safety/permits-schema";
 
 /**
@@ -21,13 +22,15 @@ type PermitListItem = PermitRow & { required_count: number; confirmed_required_c
 export async function listPermits(orgId: string): Promise<PermitListItem[]> {
   const supabase = await createClient();
   const { data, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: unknown }> } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: unknown; error: SupabaseReadError | null }> } } };
   })
     .from("permits_to_work")
     .select(`${P_COLS}, permit_conditions(required, confirmed)`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
-  if (error || !data) return [];
+  // Throw on a REJECTED query — `[]` is reserved for a genuinely empty register.
+  if (error) throw readFailure("permits: register", error);
+  if (!data) return [];
   return (data as Array<PermitRow & { permit_conditions: Array<{ required: boolean; confirmed: boolean }> }>).map((p) => {
     const conds = p.permit_conditions ?? [];
     const req = conds.filter((c) => c.required);
@@ -41,18 +44,21 @@ export async function getPermit(
 ): Promise<{ permit: PermitRow; conditions: PermitConditionRow[] } | null> {
   const supabase = await createClient();
   const { data: permit, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: PermitRow | null; error: unknown }> } } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: PermitRow | null; error: SupabaseReadError | null }> } } } };
   })
     .from("permits_to_work").select(P_COLS).eq("id", id).eq("org_id", orgId).maybeSingle();
-  if (error || !permit) return null;
-  const { data: conditions } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: PermitConditionRow[] | null }> } } } } };
+  // Throw on a REJECTED query — null is reserved for a genuinely missing row.
+  if (error) throw readFailure("permits: permit", error);
+  if (!permit) return null;
+  const { data: conditions, error: conditionsError } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: PermitConditionRow[] | null; error: SupabaseReadError | null }> } } } } };
   })
     .from("permit_conditions")
     .select("id, org_id, permit_id, label, required, confirmed, confirmed_by, confirmed_at, notes, sort_order")
     .eq("permit_id", id)
     .eq("org_id", orgId)
     .order("sort_order", { ascending: true }).order("created_at", { ascending: true });
+  if (conditionsError) throw readFailure("permits: conditions", conditionsError);
   return { permit, conditions: conditions ?? [] };
 }
 
@@ -61,13 +67,14 @@ export async function listRamsOptions(
   orgId: string,
 ): Promise<Array<{ id: string; label: string; job_id: string | null }>> {
   const supabase = await createClient();
-  const { data } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { in: (k: string, v: string[]) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; reference: string | null; title: string; job_id: string | null }> | null }> } } } };
+  const { data, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { in: (k: string, v: string[]) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<{ id: string; reference: string | null; title: string; job_id: string | null }> | null; error: SupabaseReadError | null }> } } } };
   })
     .from("risk_assessments")
     .select("id, reference, title, job_id")
     .eq("org_id", orgId)
     .in("status", ["issued", "superseded"])
     .order("created_at", { ascending: false });
+  if (error) throw readFailure("permits: rams options", error);
   return (data ?? []).map((r) => ({ id: r.id, label: `${r.reference ?? "RAMS"} — ${r.title}`, job_id: r.job_id }));
 }

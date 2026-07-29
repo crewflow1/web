@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { sendQuoteEmail } from "@/lib/email/send-quote";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 // PDF rendering inside the helper is Node only.
 export const runtime = "nodejs";
@@ -35,11 +37,21 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   // worst case of the active-org defect: it leaves the product. For a quote it
   // also mints a `public_token` — a live approve/reject credential for another
   // org's commercial document.
-  const { data: q } = await supabase
+  const { data: q, error: qErr } = await supabase
     .from("quotes")
     .select("id, org_id")
     .eq("id", id)
     .maybeSingle();
+  if (qErr) {
+    Sentry.captureException(readFailure("quote send: quote", qErr), {
+      tags: { route: "quotes/send" },
+    });
+    console.error("[quote-send] quote load failed", qErr);
+    return NextResponse.json(
+      { error: "load_failed", detail: qErr.message },
+      { status: 500 },
+    );
+  }
   if (!q || q.org_id !== ctx.org.id) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }

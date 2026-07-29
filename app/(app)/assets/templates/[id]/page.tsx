@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   CHECK_LEVEL_LABELS,
@@ -91,11 +92,13 @@ export default async function TemplateEditorPage({
   // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so a
   // by-id read alone renders another org's template here, and the editor
   // actions on this page then write against it.
-  const { data: t } = await (
+  const { data: t, error: templateError } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Row | null }> };
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -104,16 +107,20 @@ export default async function TemplateEditorPage({
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (templateError) throw readFailure("inspection template: detail", templateError);
   if (!t) notFound();
 
   // The version list walks family_id, which is NOT a primary key — without the
   // org predicate a shared/colliding family would blend versions across orgs.
-  const { data: versionsRaw } = await (
+  const { data: versionsRaw, error: versionsError } = await (
     supabase.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            order: (c: string, o: { ascending: boolean }) => Promise<{ data: VersionRow[] | null }>;
+            order: (
+              c: string,
+              o: { ascending: boolean },
+            ) => Promise<{ data: VersionRow[] | null; error: SupabaseReadError | null }>;
           };
         };
       };
@@ -123,6 +130,7 @@ export default async function TemplateEditorPage({
     .eq("family_id", t.family_id)
     .eq("org_id", ctx.org.id)
     .order("version", { ascending: false });
+  if (versionsError) throw readFailure("inspection template: version history", versionsError);
   const versions = versionsRaw ?? [];
 
   const parsedDef = templateDefinitionSchema.safeParse(t.definition);

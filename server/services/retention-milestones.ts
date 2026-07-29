@@ -44,11 +44,21 @@ export async function ensureMilestoneNotifications(
 ): Promise<{ emitted: ReadonlyArray<MilestoneId> }> {
   try {
     const supabase = await createClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("organizations")
       .select("onboarding_state")
       .eq("id", orgId)
       .maybeSingle();
+    if (error) {
+      // A failed read must NOT proceed with an empty previouslyNotified set —
+      // that would re-fire every already-notified milestone. Log and emit
+      // nothing this render; the next successful read resumes normally.
+      console.error("[retention-milestones] onboarding_state read failed", {
+        org_id: orgId,
+        err: error.message,
+      });
+      return { emitted: [] };
+    }
     const state =
       ((data?.onboarding_state ?? {}) as Record<string, unknown>) ?? {};
     const previouslyNotified = new Set<MilestoneId>(

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import type { AttachmentTargetTable } from "@/server/services/tenant-attachments";
 import { AttachmentsUploadForm, AttachmentRow } from "./AttachmentsClient";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Phase F — Drop-in attachments panel.
@@ -45,13 +46,15 @@ export async function AttachmentsPanel({
     !frozen && (ctx.membership.role === "owner" || ctx.membership.role === "admin");
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("tenant_attachments" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             order: (col: string, opts: { ascending: boolean }) => {
-              limit: (n: number) => Promise<{ data: Row[] | null }>;
+              limit: (
+                n: number,
+              ) => Promise<{ data: Row[] | null; error: SupabaseReadError | null }>;
             };
           };
         };
@@ -63,6 +66,19 @@ export async function AttachmentsPanel({
     .eq("target_id", targetId)
     .order("created_at", { ascending: false })
     .limit(100);
+  if (error) {
+    // Panel-scoped failure: "Attachments (0)" on a failed read looks like the
+    // evidence was deleted — show an explicit error block instead.
+    reportReadFailure("attachments: panel list", error);
+    return (
+      <section className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-red-800">Attachments</h2>
+        <p className="mt-1 text-sm text-red-700">
+          Couldn&apos;t load attachments. Refresh to try again.
+        </p>
+      </section>
+    );
+  }
 
   const rows = data ?? [];
 

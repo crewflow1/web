@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
 import { StateForm } from "@/components/forms/StateForm";
@@ -27,10 +28,14 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   // Caller's role from ctx — their own membership in the ACTIVE org. An
   // unfiltered memberships read returns every member's row (org-member
   // visibility policy) and `.single()` errors in any org with ≥2 members.
+  // No read here means no read to fail loud (#480's guard is obsolete, not lost).
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const [{ data: statements }, { data: outstandingRows }] = await Promise.all([
+  const [
+    { data: statements, error: statementsError },
+    { data: outstandingRows, error: outstandingError },
+  ] = await Promise.all([
     supabase
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
@@ -45,6 +50,9 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
       .eq("org_id", ctx.org.id)
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
+  if (statementsError) throw readFailure("payments: statements", statementsError);
+  // Money figure — a failed read must not render "£0.00 outstanding".
+  if (outstandingError) throw readFailure("payments: outstanding invoices", outstandingError);
 
   const outstandingTotal = (outstandingRows ?? []).reduce(
     (s, i) => s + Number(i.total ?? 0),

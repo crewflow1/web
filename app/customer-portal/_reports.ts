@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPortalVisible } from "@/lib/site-reports/portal";
 import type { ReportSnapshot } from "@/lib/site-reports/schema";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Customer-portal reads for Site Reports.
@@ -37,7 +38,9 @@ type ListChain = {
           not: (k: string, op: string, v: unknown) => {
             is: (k: string, v: unknown) => {
               order: (k: string, o: { ascending: boolean }) => {
-                limit: (n: number) => Promise<{ data: PortalReportListItem[] | null }>;
+                limit: (
+                  n: number,
+                ) => Promise<{ data: PortalReportListItem[] | null; error: SupabaseReadError | null }>;
               };
             };
           };
@@ -52,7 +55,7 @@ export async function listPortalReports(
   orgId: string,
 ): Promise<PortalReportListItem[]> {
   const admin = createAdminClient();
-  const { data } = await (
+  const { data, error } = await (
     admin.from("site_reports" as never) as unknown as ListChain
   )
     .select(
@@ -65,6 +68,7 @@ export async function listPortalReports(
     .is("portal_withdrawn_at", null)
     .order("portal_published_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("portal reports: list", error);
   // Defence-in-depth: never trust the SQL filter alone for a customer surface.
   return (data ?? []).filter((r) =>
     isPortalVisible({
@@ -95,7 +99,12 @@ type LoadChain = {
         eq: (
           k: string,
           v: unknown,
-        ) => { maybeSingle: () => Promise<{ data: (PortalReport & { portal_published_at: string | null; portal_withdrawn_at: string | null }) | null }> };
+        ) => {
+          maybeSingle: () => Promise<{
+            data: (PortalReport & { portal_published_at: string | null; portal_withdrawn_at: string | null }) | null;
+            error: SupabaseReadError | null;
+          }>;
+        };
       };
     };
   };
@@ -112,7 +121,7 @@ export async function loadPortalReport(
     return null;
   }
   const admin = createAdminClient();
-  const { data } = await (
+  const { data, error } = await (
     admin.from("site_reports" as never) as unknown as LoadChain
   )
     .select(
@@ -122,6 +131,7 @@ export async function loadPortalReport(
     .eq("customer_id", customerId)
     .eq("org_id", orgId)
     .maybeSingle();
+  if (error) throw readFailure("portal reports: load", error);
 
   if (!data) return null;
   if (

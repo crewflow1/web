@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   computeVatQuarter,
   computePayeMonth,
@@ -55,7 +56,11 @@ export default async function TaxDashboardPage() {
   const yearStartIso = startOfTaxYearIso();
 
   const monthKey = new Date().toISOString().slice(0, 7);
-  const [{ data: invoicesRaw }, { data: financesRaw }, { data: payrollRaw }] =
+  const [
+    { data: invoicesRaw, error: invoicesError },
+    { data: financesRaw, error: financesError },
+    { data: payrollRaw, error: payrollError },
+  ] =
     await Promise.all([
       // ACTIVE-org pins. Every figure on this page is an HMRC-facing estimate
       // (VAT due, PAYE/NI, Corporation Tax): RLS admits every org the viewer
@@ -76,6 +81,11 @@ export default async function TaxDashboardPage() {
         .eq("org_id", ctx.org.id)
         .gte("created_at", `${monthKey}-01T00:00:00Z`),
     ]);
+  // Loud fail: every figure here is an HMRC-facing estimate — an errored read
+  // must never render as £0 VAT/PAYE/CT due.
+  if (invoicesError) throw readFailure("tax: invoices", invoicesError);
+  if (financesError) throw readFailure("tax: finances", financesError);
+  if (payrollError) throw readFailure("tax: payroll lines", payrollError);
 
   const invoices = (invoicesRaw ?? []).map((i) => ({
     status: i.status as string,

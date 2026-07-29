@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import type { OrgStatus } from "@/server/auth/session";
 import {
   computeProgress,
@@ -56,7 +57,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
   // surfaced any more — the customer's live progress is the source
   // of truth (matches the directive's "Sync HQ onboarding % with
   // customer-facing computeProgress()" requirement).
-  const { data: orgsRaw } = await admin
+  const { data: orgsRaw, error: orgsError } = await admin
     .from("organizations")
     .select(
       [
@@ -80,6 +81,7 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
       ].join(", ") as never,
     )
     .order("created_at", { ascending: false });
+  if (orgsError) throw readFailure("hq-onboarding-snapshot: organizations", orgsError);
 
   type OrgRow = {
     id: string;
@@ -141,10 +143,11 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     committed_at: string | null;
     rolled_back_at: string | null;
   };
-  const { data: importsRaw } = await admin
+  const { data: importsRaw, error: importsError } = await admin
     .from("imports")
     .select("id, org_id, status, created_at, committed_at, rolled_back_at")
     .in("org_id", ids);
+  if (importsError) throw readFailure("hq-onboarding-snapshot: imports", importsError);
   const imports = ((importsRaw ?? []) as unknown as ImportRow[]);
 
   const importsByOrg = new Map<string, ImportRow[]>();
@@ -156,10 +159,11 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
 
   // ---------- Files (count per org via FK) ----------
   type FileRow = { id: string; org_id: string };
-  const { data: filesRaw } = await admin
+  const { data: filesRaw, error: filesError } = await admin
     .from("import_files")
     .select("id, org_id")
     .in("org_id", ids);
+  if (filesError) throw readFailure("hq-onboarding-snapshot: import files", filesError);
   const files = ((filesRaw ?? []) as unknown as FileRow[]);
   const filesByOrg = new Map<string, number>();
   for (const f of files) {
@@ -171,10 +175,11 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
   // bucket. RLS doesn't apply with service-role; we filter via the
   // org_ids we already know.
   type ImportRowRow = { org_id: string; status: string };
-  const { data: rowRowsRaw } = await admin
+  const { data: rowRowsRaw, error: rowRowsError } = await admin
     .from("import_rows")
     .select("org_id, status")
     .in("org_id", ids);
+  if (rowRowsError) throw readFailure("hq-onboarding-snapshot: import rows", rowRowsError);
   const rowRows = ((rowRowsRaw ?? []) as unknown as ImportRowRow[]);
   const importedByOrg = new Map<string, number>();
   const failedByOrg = new Map<string, number>();
@@ -413,7 +418,7 @@ export async function listImportsForOrg(
     committed_at: string | null;
     rolled_back_at: string | null;
   };
-  const { data: impsRaw } = await admin
+  const { data: impsRaw, error: impsError } = await admin
     .from("imports")
     .select(
       "id, name, status, created_at, committed_at, rolled_back_at",
@@ -421,6 +426,7 @@ export async function listImportsForOrg(
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(20);
+  if (impsError) throw readFailure("hq-onboarding-snapshot: org imports", impsError);
   const imports = ((impsRaw ?? []) as unknown as Imp[]);
   if (imports.length === 0) return [];
 
@@ -432,10 +438,11 @@ export async function listImportsForOrg(
     size_bytes: number | null;
     mime_type: string | null;
   };
-  const { data: filesRaw } = await admin
+  const { data: filesRaw, error: filesError } = await admin
     .from("import_files")
     .select("id, import_id, filename, row_count, size_bytes, mime_type")
     .in("import_id", imports.map((i) => i.id));
+  if (filesError) throw readFailure("hq-onboarding-snapshot: org import files", filesError);
   const files = ((filesRaw ?? []) as unknown as FileRow[]);
   const filesByImport = new Map<string, FileRow[]>();
   for (const f of files) {

@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
+import * as Sentry from "@sentry/nextjs";
 
 // PDF rendering inside the helper is Node only.
 export const runtime = "nodejs";
@@ -42,11 +44,24 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   // "sent". Resolve-then-compare, mirroring the sibling /remind route, so the
   // refusal happens before sendInvoiceEmail is ever called. 404 (not 403)
   // keeps a foreign id indistinguishable from a missing one.
-  const { data: inv } = await supabase
+  const { data: inv, error: invErr } = await supabase
     .from("invoices")
     .select("id, org_id")
     .eq("id", id)
     .maybeSingle();
+  if (invErr) {
+    // House rule: never echo raw Postgres/PostgREST text to a client — it can
+    // carry column names, constraint bodies and row values. The operator gets
+    // the real error in Sentry; the caller gets a stable code.
+    Sentry.captureException(readFailure("invoice send: invoice", invErr), {
+      tags: { route: "invoices/send" },
+    });
+    console.error("[invoice-send] invoice load failed", invErr);
+    return NextResponse.json(
+      { error: "load_failed", detail: "Couldn't load the invoice. Try again." },
+      { status: 500 },
+    );
+  }
   if (!inv || inv.org_id !== ctx.org.id) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }

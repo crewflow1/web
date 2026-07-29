@@ -56,11 +56,17 @@ export async function notifyOwnersOfLeaveRequest(params: {
       .maybeSingle();
     const requesterName = requester?.full_name ?? requester?.email ?? "A team member";
 
-    const { data: members } = await admin
+    const { data: members, error: membersError } = await admin
       .from("memberships")
       .select("user_id, role, users(email, full_name)")
       .eq("org_id", params.orgId)
       .in("role", ["owner", "admin"]);
+    if (membersError) {
+      // PostgREST errors RETURN — without this the catch below never fires and
+      // the owners silently never hear about the request.
+      console.error("[leave] owner recipients load failed", membersError);
+      return;
+    }
 
     const recipients = (members ?? [])
       .map((m) => (m.users as { email: string | null } | null)?.email)
@@ -93,11 +99,15 @@ export async function notifyStaffOfLeaveDecision(params: {
 }): Promise<void> {
   try {
     const admin = createAdminClient();
-    const { data: requester } = await admin
+    const { data: requester, error: requesterError } = await admin
       .from("users")
       .select("full_name, email")
       .eq("id", params.requesterId)
       .maybeSingle();
+    if (requesterError) {
+      console.error("[leave] decision recipient load failed", requesterError);
+      return;
+    }
     const to = requester?.email;
     if (!to) return;
 

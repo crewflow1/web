@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   OVERDUE_COLLECTABLE_STATUSES,
   invoiceBusinessToday,
@@ -205,11 +206,14 @@ export async function buildRetentionSnapshot(
 
   // Celebrated milestones live on organizations.onboarding_state.
   // The onboarding snapshot stops before this key, so fetch the raw row.
-  const { data: orgState } = await supabase
+  const { data: orgState, error: orgStateError } = await supabase
     .from("organizations")
     .select("onboarding_state")
     .eq("id", orgId)
     .maybeSingle();
+  if (orgStateError) {
+    throw readFailure("retention-snapshot: onboarding_state", orgStateError);
+  }
   const stateRaw = (orgState?.onboarding_state ?? {}) as Record<
     string,
     unknown

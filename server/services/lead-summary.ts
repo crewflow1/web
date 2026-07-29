@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { isAiConfigured } from "@/lib/ai/safety";
 
 /**
@@ -51,7 +52,7 @@ export async function summariseLead(
     last_activity_at: string;
     customer: { name: string | null; email: string | null } | null;
   };
-  const { data: row } = await admin
+  const { data: row, error: leadError } = await admin
     .from("leads")
     .select(
       `
@@ -63,6 +64,7 @@ export async function summariseLead(
     .eq("id", leadId)
     .eq("org_id", orgId)
     .maybeSingle();
+  if (leadError) throw readFailure("lead-summary: lead row", leadError);
   const lead = row as unknown as Row | null;
   // Returns null for a missing lead OR a lead in another org (the org_id
   // filter above makes those indistinguishable, by design — no existence

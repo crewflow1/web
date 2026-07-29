@@ -8,6 +8,7 @@ import {
 } from "@/server/services/rota";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
 import { CreateRotaForm } from "./_create-form";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Rota — weekly view, optionally month via ?view=month.
@@ -67,6 +68,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
   const startIso = `${isoDate(monday)}T00:00:00Z`;
   const endIso = `${isoDate(sunday)}T23:59:59Z`;
 
+  // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
   // Current user's role — from ctx (own membership in the ACTIVE org); an
   // unfiltered memberships read returns every member's row and `.single()`
   // errors in any org with ≥2 members.
@@ -74,10 +76,11 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   // Staff list for the assign form + display labels.
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("memberships")
     .select("user_id, role, user:users ( id, full_name, email )")
     .eq("org_id", ctx.org.id);
+  if (membersError) throw readFailure("rota: staff list", membersError);
   const memberById = new Map<string, { name: string; role: string }>();
   for (const m of members ?? []) {
     memberById.set(m.user_id, {

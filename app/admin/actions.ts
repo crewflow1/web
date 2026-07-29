@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { sendEmail } from "@/lib/email/send";
 import { env } from "@/lib/env";
 
@@ -300,11 +301,14 @@ export async function setDemoRequestStatus(formData: FormData): Promise<void> {
   const now = new Date().toISOString();
 
   // Pull email for the post-update notification.
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("demo_requests")
     .select("id, name, email, company, status")
     .eq("id", parsed.data.demo_id)
     .maybeSingle();
+  if (rowError) {
+    throw readFailure("admin setDemoRequestStatus: demo request", rowError);
+  }
   if (!row) {
     redirect("/admin/organizations?error=demo_not_found");
   }

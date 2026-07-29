@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   assertCaseTransition,
   caseCostsSchema,
@@ -44,7 +45,10 @@ type InsertOne = {
 type LoadOne = {
   select: (c: string) => {
     eq: (k: string, v: unknown) => {
-      eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CaseRow | null }> };
+      eq: (
+        k: string,
+        v: unknown,
+      ) => { maybeSingle: () => Promise<{ data: CaseRow | null; error: SupabaseReadError | null }> };
     };
   };
 };
@@ -86,11 +90,14 @@ function isAdmin(role: string): boolean {
 
 async function loadCase(orgId: string, id: string): Promise<CaseRow | null> {
   const tenant = await createClient();
-  const { data } = await (tenant.from("asset_maintenance_cases" as never) as unknown as LoadOne)
+  const { data, error } = await (tenant.from("asset_maintenance_cases" as never) as unknown as LoadOne)
     .select("id, asset_id, status, title, reinspection_required, work_performed, out_of_service, downtime_start, schedule_id, source_inspection_id")
     .eq("id", id)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: every caller treats null as "?error=case_missing" — a query
+  // failure must not wear that banner.
+  if (error) throw readFailure("maintenance: load case", error);
   return data;
 }
 

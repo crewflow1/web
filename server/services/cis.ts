@@ -11,6 +11,7 @@ import {
 } from "@/lib/cis/verification";
 import { isOutcomeStatus, type CisStatus, type CisSubcontractor } from "@/lib/cis/types";
 import type { CisProfileInput, CisVerificationInput } from "@/lib/cis/schema";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * CIS subcontractor service (M1).
@@ -77,11 +78,14 @@ export async function getCisProfile(
   supplierId: string,
 ): Promise<CisSubcontractor | null> {
   const table = await cisTable();
-  const { data } = await table
+  const { data, error } = await table
     .select(COLUMNS)
     .eq("org_id", orgId)
     .eq("supplier_id", supplierId)
     .maybeSingle();
+  // Loud fail: null means "no profile or not an admin" (documented above) —
+  // a query failure must not silently join that set.
+  if (error) throw readFailure("cis: subcontractor profile", error);
   return data ?? null;
 }
 

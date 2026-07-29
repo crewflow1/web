@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   LEAD_STAGES,
@@ -77,7 +78,7 @@ export default async function LeadDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: lead } = await supabase
+  const { data: lead, error: leadError } = await supabase
     .from("leads")
     .select(
       `
@@ -93,18 +94,22 @@ export default async function LeadDetailPage({
     // lead opens inside org A's shell where the actions live.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A rejected read must not masquerade as a missing lead — throw so the error
+  // boundary (and Sentry) see it; notFound() stays for a genuinely-null row.
+  if (leadError) throw readFailure("lead detail: lead", leadError);
   if (!lead) notFound();
 
   // contact_name/email/phone landed in migration 20260601000000 and
   // aren't in the generated Supabase types yet. We fetch them with a
   // string selector and an `unknown`-cast to keep the rest of the page
   // strongly typed.
-  const { data: contactRaw } = await supabase
+  const { data: contactRaw, error: contactError } = await supabase
     .from("leads")
     .select("contact_name, contact_email, contact_phone" as never)
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (contactError) throw readFailure("lead detail: contact", contactError);
   const leadContact = (contactRaw ?? {}) as unknown as {
     contact_name: string | null;
     contact_email: string | null;
@@ -134,7 +139,10 @@ export default async function LeadDetailPage({
       supabase.from("lead_followup_state" as never) as unknown as {
         select: (cols: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: FollowupStateRow | null }>;
+            maybeSingle: () => Promise<{
+              data: FollowupStateRow | null;
+              error: SupabaseReadError | null;
+            }>;
           };
         };
       }
@@ -143,6 +151,12 @@ export default async function LeadDetailPage({
       .eq("lead_id", id)
       .maybeSingle(),
   ]);
+
+  // These sections ARE the lead's record — a failed read rendering "no calls"
+  // or hiding the follow-up state would silently misstate the lead.
+  if (callsRes.error) throw readFailure("lead detail: calls", callsRes.error);
+  if (quoteRes.error) throw readFailure("lead detail: quotes", quoteRes.error);
+  if (followupRes.error) throw readFailure("lead detail: follow-up state", followupRes.error);
 
   const calls = callsRes.data ?? [];
   const quotes = quoteRes.data ?? [];

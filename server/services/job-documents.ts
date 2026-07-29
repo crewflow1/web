@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 
@@ -134,11 +135,12 @@ export async function createJobDocument(input: {
   const tenant = await createClient();
 
   // Confirm the job exists and belongs to the caller's org (RLS-gated read).
-  const { data: job } = await tenant
+  const { data: job, error: jobError } = await tenant
     .from("jobs")
     .select("id, org_id")
     .eq("id", input.jobId)
     .maybeSingle();
+  if (jobError) throw readFailure("job-documents: job gate", jobError);
   const jobRow = job as { id: string; org_id: string } | null;
   if (!jobRow || jobRow.org_id !== ctx.org.id) {
     return { ok: false, error: "job_not_found" };
@@ -213,11 +215,12 @@ export async function addJobDocumentVersion(input: {
   // private drop box can't SELECT the parent under RLS, so we can't gate on a
   // tenant read here. Because this bypasses RLS, we re-check org ownership in
   // code — without it, a member could target another org's document by id.
-  const { data: doc } = await admin
+  const { data: doc, error: docError } = await admin
     .from("job_documents" as never)
     .select("id, org_id, job_id, visibility, status")
     .eq("id", input.documentId)
     .maybeSingle();
+  if (docError) throw readFailure("job-documents: parent document", docError);
   const parent = doc as {
     id: string;
     org_id: string;

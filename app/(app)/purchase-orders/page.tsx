@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
 import { countPostedReceipts } from "./_receiving-data";
@@ -32,7 +33,7 @@ export default async function PurchaseOrdersPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
         eq: (
@@ -42,7 +43,9 @@ export default async function PurchaseOrdersPage({
           order: (
             k: string,
             o: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: PoRow[] | null }> };
+          ) => {
+            limit: (n: number) => Promise<{ data: PoRow[] | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -54,6 +57,7 @@ export default async function PurchaseOrdersPage({
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(500); // bound the list like /assets (1000) and /site-reports (500)
+  if (error) throw readFailure("purchase orders: register", error);
 
   const rows = data ?? [];
 

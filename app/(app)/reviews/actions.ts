@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { sendEmail } from "@/lib/email/send";
@@ -209,14 +210,14 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
   };
   type ReviewSel = {
     eq: (k: string, v: unknown) => ReviewSel;
-    maybeSingle: () => Promise<{ data: ReviewRow | null }>;
+    maybeSingle: () => Promise<{ data: ReviewRow | null; error: SupabaseReadError | null }>;
   };
   // ACTIVE-org pin. This action SENDS AN EMAIL to the customer on the request,
   // signed with the name of `ctx.org.id`. Unpinned, a dual-org member working
   // in org A could load org B's review request and mail B's customer under A's
   // company name — a real outbound message asserting the wrong identity, plus
   // B's customer email address used from A's shell.
-  const { data: review } = await (
+  const { data: review, error: reviewError } = await (
     tenant.from("review_requests" as never) as unknown as {
       select: (cols: string) => ReviewSel;
     }
@@ -228,6 +229,7 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
+  if (reviewError) throw readFailure("review email: review request", reviewError);
   if (!review) redirect(`/reviews?error=not_found`);
   if (review!.status === "completed" || review!.status === "cancelled") {
     redirect(`/reviews?error=already_resolved`);

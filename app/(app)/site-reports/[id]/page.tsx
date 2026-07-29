@@ -12,6 +12,7 @@ import {
   type SiteReportStatus,
 } from "@/lib/site-reports/state";
 import { isPortalVisible } from "@/lib/site-reports/portal";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   approveReport,
   archiveReport,
@@ -85,12 +86,12 @@ export default async function SiteReportDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: report } = await (
+  const { data: report, error: reportError } = await (
     supabase.from("site_reports" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: ReportRow | null }>;
+            maybeSingle: () => Promise<{ data: ReportRow | null; error: SupabaseReadError | null }>;
           };
         };
       };
@@ -104,6 +105,7 @@ export default async function SiteReportDetailPage({
     // this page, so it must be the ACTIVE org's report or nothing.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (reportError) throw readFailure("site report: detail", reportError);
 
   if (!report) notFound();
 

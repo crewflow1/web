@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
@@ -96,12 +97,11 @@ export default async function PurchaseOrderDetailPage({
 
   type PoQuery = {
     eq: (k: string, v: unknown) => PoQuery;
-    maybeSingle: () => Promise<{ data: Po | null }>;
+    maybeSingle: () => Promise<{ data: Po | null; error: SupabaseReadError | null }>;
   };
-  const { data: po } = await (
+  const { data: po, error: poError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => PoQuery;
-    }
+      select: (c: string) => PoQuery;    }
   )
     .select(
       "id, number, status, supplier_id, job_id, supplier_reference, expected_date, notes, subtotal, vat_total, total, supplier:suppliers ( name ), line_items:purchase_order_line_items ( id, description, qty, unit, unit_price, vat_rate, line_total, sort_order )",
@@ -116,6 +116,8 @@ export default async function PurchaseOrderDetailPage({
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
+  // A rejected read must not masquerade as a missing purchase order.
+  if (poError) throw readFailure("purchase order: purchase order", poError);
   if (!po) notFound();
 
   // Supplier bills recorded against this PO (finances entries) — the ACTUAL cost
@@ -129,11 +131,14 @@ export default async function PurchaseOrderDetailPage({
     category: string | null;
     created_at: string;
   };
-  const { data: billRows } = await (
+  const { data: billRows, error: billsError } = await (
     supabase.from("finances" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          order: (k: string, o: { ascending: boolean }) => Promise<{ data: BillRow[] | null }>;
+          order: (
+            k: string,
+            o: { ascending: boolean },
+          ) => Promise<{ data: BillRow[] | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -141,6 +146,9 @@ export default async function PurchaseOrderDetailPage({
     .select("id, amount, vat_total, reference, bill_date, category, created_at")
     .eq("purchase_order_id", id)
     .order("created_at", { ascending: false });
+  // Same page load as the PO itself — a failed read would show "not billed"
+  // against a PO that has bills, inviting a double entry.
+  if (billsError) throw readFailure("purchase order: bills", billsError);
   const bills = billRows ?? [];
   const billing = computePoBilling({ poTotal: po.total, bills });
 

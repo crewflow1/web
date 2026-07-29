@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -133,13 +134,14 @@ export async function recordRetentionRelease(
   // the insert target below, so an unscoped read let a release be written into
   // ANOTHER org's ledger. retention_percent / retention_releases /
   // invoices.job_id are not yet in the generated types — cast the readers.
-  const { data: job } = await (
+  const { data: job, error: jobError } = await (
     supabase.from("jobs" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             maybeSingle: () => Promise<{
               data: { id: string; org_id: string; retention_percent: number | string | null } | null;
+              error: SupabaseReadError | null;
             }>;
           };
         };
@@ -150,13 +152,23 @@ export async function recordRetentionRelease(
     .eq("id", jobId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (jobError) throw readFailure("retention release: job", jobError);
   if (!job) return formError("Job not found in this workspace.");
 
-  const [{ data: invoices }, { data: releases }] = await Promise.all([
+  const [
+    { data: invoices, error: invoicesError },
+    { data: releases, error: releasesError },
+  ] = await Promise.all([
     (
       supabase.from("invoices" as never) as unknown as {
         select: (c: string) => {
-          eq: (k: string, v: unknown) => Promise<{ data: Array<{ status: string; amount: number | string | null }> | null }>;
+          eq: (
+            k: string,
+            v: unknown,
+          ) => Promise<{
+            data: Array<{ status: string; amount: number | string | null }> | null;
+            error: SupabaseReadError | null;
+          }>;
         };
       }
     )
@@ -165,13 +177,23 @@ export async function recordRetentionRelease(
     (
       supabase.from("retention_releases" as never) as unknown as {
         select: (c: string) => {
-          eq: (k: string, v: unknown) => Promise<{ data: Array<{ amount: number | string | null }> | null }>;
+          eq: (
+            k: string,
+            v: unknown,
+          ) => Promise<{
+            data: Array<{ amount: number | string | null }> | null;
+            error: SupabaseReadError | null;
+          }>;
         };
       }
     )
       .select("amount")
       .eq("job_id", jobId),
   ]);
+  // A failed read here would zero the position and let the over-release
+  // pre-check pass on false data — fail loud before deriving anything.
+  if (invoicesError) throw readFailure("retention release: invoices", invoicesError);
+  if (releasesError) throw readFailure("retention release: releases", releasesError);
 
   const position = computeRetentionPosition({
     ratePercent: job.retention_percent,

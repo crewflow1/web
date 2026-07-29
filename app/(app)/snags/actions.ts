@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   createSnagSchema,
   reassignSnagSchema,
@@ -42,6 +43,7 @@ type SelectStatusChain = {
       ) => {
         maybeSingle: () => Promise<{
           data: { status: string; title: string | null } | null;
+          error: SupabaseReadError | null;
         }>;
       };
     };
@@ -157,13 +159,14 @@ export async function updateSnagStatus(formData: FormData): Promise<void> {
   const tenant = await createClient();
 
   // Read the current status (org-scoped) so we can derive resolved_at.
-  const { data: row } = await (
+  const { data: row, error: rowError } = await (
     tenant.from("snags" as never) as unknown as SelectStatusChain
   )
     .select("status, title")
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (rowError) throw readFailure("snags: status read", rowError);
   if (!row) redirect(`/snags?error=not_found`);
 
   const resolved = resolvedAtForTransition(

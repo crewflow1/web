@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { listPortalReports } from "@/app/customer-portal/_reports";
 import { listPortalCertificates } from "@/app/customer-portal/_certificates";
@@ -43,7 +44,7 @@ export default async function PortalDocumentsPage({
   const { customer, org } = loaded;
   const admin = createAdminClient();
 
-  const { data: quotesData } = await admin
+  const { data: quotesData, error: quotesError } = await admin
     .from("quotes")
     .select("id, number, status, total, sent_at, accepted_at, public_token")
     .eq("org_id", customer.org_id)
@@ -51,14 +52,20 @@ export default async function PortalDocumentsPage({
     .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
     .order("created_at", { ascending: false })
     .limit(100);
+  if (quotesError) {
+    throw readFailure("portal documents: quotes", quotesError);
+  }
 
-  const { data: invoicesData } = await admin
+  const { data: invoicesData, error: invoicesError } = await admin
     .from("invoices")
     .select("id, number, status, total, sent_at, created_at")
     .eq("org_id", customer.org_id)
     .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(100);
+  if (invoicesError) {
+    throw readFailure("portal documents: invoices", invoicesError);
+  }
 
   const reports = await listPortalReports(customer.id, customer.org_id);
   const certRows = await listPortalCertificates(customer.id, customer.org_id);

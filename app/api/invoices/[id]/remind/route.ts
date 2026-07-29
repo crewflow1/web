@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 export const runtime = "nodejs";
 
@@ -35,11 +37,21 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const supabase = await createClient();
 
   // Stop-on-paid check.
-  const { data: inv } = await supabase
+  const { data: inv, error: invErr } = await supabase
     .from("invoices")
     .select("id, status, org_id")
     .eq("id", id)
     .maybeSingle();
+  if (invErr) {
+    Sentry.captureException(readFailure("invoice remind: invoice", invErr), {
+      tags: { route: "invoices/remind" },
+    });
+    console.error("[invoice-remind] invoice load failed", invErr);
+    return NextResponse.json(
+      { error: "load_failed", detail: invErr.message },
+      { status: 500 },
+    );
+  }
   if (!inv) return NextResponse.json({ error: "not_found" }, { status: 404 });
   // Defence in depth: the read above is RLS-scoped, but assert org ownership
   // explicitly so a reminder can never be triggered for another org's invoice

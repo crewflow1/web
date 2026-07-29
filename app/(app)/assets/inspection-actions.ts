@@ -12,6 +12,7 @@ import {
   type InspectionStatus,
 } from "@/lib/assets/inspection";
 import { emitNotifications } from "@/server/services/notifications-service";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   canStartInspection,
   deriveOutcome,
@@ -59,7 +60,9 @@ type LoadChain = {
       eq: (
         k: string,
         v: unknown,
-      ) => { maybeSingle: () => Promise<{ data: InspectionRow | null }> };
+      ) => {
+        maybeSingle: () => Promise<{ data: InspectionRow | null; error: SupabaseReadError | null }>;
+      };
     };
   };
 };
@@ -153,11 +156,12 @@ export async function issueInspection(_prev: FormState, formData: FormData): Pro
   const tenant = await createClient();
 
   // Load the draft + its asset (RLS-scoped). notFound-equivalent → inline error.
-  const { data: insp } = await (tenant.from("asset_inspections" as never) as unknown as LoadChain)
+  const { data: insp, error: inspError } = await (tenant.from("asset_inspections" as never) as unknown as LoadChain)
     .select("id, asset_id, status, title, kind, safety_critical, content, reinspection_of, assets(id, name, asset_ref)")
     .eq("id", inspectionId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (inspError) throw readFailure("inspections: issue load", inspError);
   if (!insp) return formError("Inspection not found.");
   if (!parsed.success) return formError("Pick an outcome.");
 
@@ -302,11 +306,16 @@ export async function startInspectionFromTemplate(_prev: FormState, formData: Fo
   if (!assetId || !templateId) return formError("Please check the inspection details.");
 
   const tenant = await createClient();
-  const { data: template } = await (
+  const { data: template, error: templateError } = await (
     tenant.from("asset_inspection_templates" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplatePickRow | null }> };
+          eq: (
+            k: string,
+            v: unknown,
+          ) => {
+            maybeSingle: () => Promise<{ data: TemplatePickRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -315,6 +324,7 @@ export async function startInspectionFromTemplate(_prev: FormState, formData: Fo
     .eq("id", templateId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (templateError) throw readFailure("inspections: template pick", templateError);
   if (!template) return formError("Template not found.");
   // Only the LIVE version may seed new inspections (archived/superseded never).
   if (!canStartInspection(template.status)) return formError("Only published templates can start an inspection.");
@@ -365,10 +375,18 @@ export async function startInspectionFromTemplate(_prev: FormState, formData: Fo
 
 async function loadTemplatedInspection(orgId: string, inspectionId: string) {
   const tenant = await createClient();
-  const { data } = await (tenant.from("asset_inspections" as never) as unknown as {
+  const { data, error } = await (tenant.from("asset_inspections" as never) as unknown as {
     select: (c: string) => {
       eq: (k: string, v: unknown) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplatedInspectionRow | null }> };
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          maybeSingle: () => Promise<{
+            data: TemplatedInspectionRow | null;
+            error: SupabaseReadError | null;
+          }>;
+        };
       };
     };
   })
@@ -376,6 +394,8 @@ async function loadTemplatedInspection(orgId: string, inspectionId: string) {
     .eq("id", inspectionId)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: three actions turn null into "?error=inspection_missing".
+  if (error) throw readFailure("inspections: templated load", error);
   return data;
 }
 

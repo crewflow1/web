@@ -106,25 +106,41 @@ export async function runInspectionGenerator(
 
   for (const schedule of due) {
     // Resolve the CURRENT PUBLISHED version of the schedule's template family.
-    const { data: anchor } = await (
+    const { data: anchor, error: anchorError } = await (
       admin.from("asset_inspection_templates" as never) as unknown as {
         select: (c: string) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { family_id: string } | null }> };
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { family_id: string } | null;
+              error: { message: string } | null;
+            }>;
+          };
         };
       }
     )
       .select("family_id")
       .eq("id", schedule.template_id)
       .maybeSingle();
+    // A read failure is not "unpublished" — fail the run like the scan does;
+    // the cron is idempotent and resumes next tick.
+    if (anchorError) throw new Error(`generator template read failed: ${anchorError.message}`);
     if (!anchor) {
       summary.skipped_unpublished += 1;
       continue;
     }
-    const { data: published } = await (
+    const { data: published, error: publishedError } = await (
       admin.from("asset_inspection_templates" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplateRow | null }> };
+            eq: (
+              k: string,
+              v: unknown,
+            ) => {
+              maybeSingle: () => Promise<{
+                data: TemplateRow | null;
+                error: { message: string } | null;
+              }>;
+            };
           };
         };
       }
@@ -133,6 +149,7 @@ export async function runInspectionGenerator(
       .eq("family_id", anchor.family_id)
       .eq("status", "published")
       .maybeSingle();
+    if (publishedError) throw new Error(`generator template read failed: ${publishedError.message}`);
     if (!published) {
       summary.skipped_unpublished += 1;
       continue; // no advance: resumes (overdue) when re-published

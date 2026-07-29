@@ -7,6 +7,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { recordPaymentSchema } from "@/lib/payments/schema";
 import { computePaymentAllocation } from "@/lib/payments/allocation";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Record one real-world payment and allocate it across one or more invoices.
@@ -79,7 +80,10 @@ export async function recordAllocatedPayment(
     is: (k: string, v: unknown) => DupeQ;
     gte: (k: string, v: unknown) => DupeQ;
     limit: (n: number) => DupeQ;
-    maybeSingle: () => Promise<{ data: { id: string } | null }>;
+    maybeSingle: () => Promise<{
+      data: { id: string } | null;
+      error: SupabaseReadError | null;
+    }>;
   };
   const DEDUPE_WINDOW_MS = 10_000;
   const sinceIso = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
@@ -93,7 +97,18 @@ export async function recordAllocatedPayment(
     .gte("created_at", sinceIso)
     .limit(1);
   dupQuery = input.reference ? dupQuery.eq("reference", input.reference) : dupQuery.is("reference", null);
-  const { data: existingPayment } = await dupQuery.maybeSingle();
+  // FAIL CLOSED. This probe is the ONLY thing standing between a double submit
+  // and a duplicate row: there is no unique index behind it, so `data: null`
+  // from a REJECTED query is indistinguishable from "no recent duplicate" and
+  // the write proceeds. Refusing costs the operator one retry; guessing
+  // silently records the customer's money twice and understates what they still owe.
+  const { data: existingPayment, error: dupError } = await dupQuery.maybeSingle();
+  if (dupError) {
+    reportReadFailure("payment allocation: duplicate probe", dupError);
+    return formError(
+      "We couldn't safely check whether this was already recorded, so nothing was saved. Try again.",
+    );
+  }
   if (existingPayment) {
     console.warn("[payment-allocation] duplicate submit suppressed", {
       orgId: ctx.org.id,

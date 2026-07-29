@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { approveExpenseDraftAction, rejectExpenseDraft } from "../actions";
@@ -61,11 +62,11 @@ export default async function ExpenseDraftPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: row } = await (
+  const { data: row, error: rowError } = await (
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: DraftRow | null }>;
+          maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -76,6 +77,7 @@ export default async function ExpenseDraftPage({
     .eq("id", id)
     .maybeSingle();
 
+  if (rowError) throw readFailure("expense draft: detail", rowError);
   if (!row) notFound();
 
   // Active-org scoped: the picker must not offer a supplier from another org

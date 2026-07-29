@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPortalVisible } from "@/lib/site-reports/portal";
 import type { CertificateSnapshot } from "@/lib/completion-certificates/snapshot";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Customer-portal completion-certificate reads. Mirrors `_reports.ts`: the portal
@@ -24,8 +25,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 type Row = PortalCertificate;
 type EqChain = {
   eq: (k: string, v: unknown) => EqChain;
-  maybeSingle: () => Promise<{ data: Row | null }>;
-  order: (k: string, o: { ascending: boolean }) => Promise<{ data: Row[] | null }>;
+  maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
+  order: (
+    k: string,
+    o: { ascending: boolean },
+  ) => Promise<{ data: Row[] | null; error: SupabaseReadError | null }>;
 };
 type SelChain = { select: (c: string) => EqChain };
 
@@ -37,23 +41,27 @@ const COLS = "id, certificate_number, status, issued_at, snapshot, portal_publis
 export async function loadPortalCertificate(customerId: string, orgId: string, certId: string): Promise<PortalCertificate | null> {
   if (!UUID_RE.test(certId)) return null;
   const admin = createAdminClient();
-  const { data } = await (admin.from("completion_certificates" as never) as unknown as SelChain)
+  const { data, error } = await (admin.from("completion_certificates" as never) as unknown as SelChain)
     .select(COLS)
     .eq("id", certId)
     .eq("customer_id", customerId)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: null means "not yours / not published" (404) — a query failure
+  // must not tell the customer their certificate isn't available.
+  if (error) throw readFailure("portal certificates: load", error);
   if (!data || !data.snapshot || !visible(data)) return null;
   return data;
 }
 
 export async function listPortalCertificates(customerId: string, orgId: string): Promise<PortalCertificate[]> {
   const admin = createAdminClient();
-  const { data } = await (admin.from("completion_certificates" as never) as unknown as SelChain)
+  const { data, error } = await (admin.from("completion_certificates" as never) as unknown as SelChain)
     .select(COLS)
     .eq("customer_id", customerId)
     .eq("org_id", orgId)
     .eq("status", "issued")
     .order("issued_at", { ascending: false });
+  if (error) throw readFailure("portal certificates: list", error);
   return (data ?? []).filter((c) => c.snapshot && visible(c));
 }

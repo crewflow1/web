@@ -23,7 +23,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: line } = await supabase
+  const { data: line, error: lineError } = await supabase
     .from("payroll_lines")
     .select(
       `
@@ -35,6 +35,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .maybeSingle();
 
+  if (lineError) {
+    console.error("[payslip-pdf] payroll line load failed", lineError);
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!line) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const isOwn = line.user_id === user.id;

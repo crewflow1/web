@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { StateForm } from "@/components/forms/StateForm";
@@ -60,11 +61,15 @@ export default async function JobCertificatePage({
   }>(supabase, id, ctx.org.id, "id, status, customer_id");
   if (!jobRow) notFound();
 
-  const { data: cert } = await (
+  const { data: cert, error: certError } = await (
     supabase.from("completion_certificates" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          order: (k: string, o: { ascending: boolean }) => { limit: (n: number) => { maybeSingle: () => Promise<{ data: CertRow | null }> } };
+          order: (k: string, o: { ascending: boolean }) => {
+            limit: (n: number) => {
+              maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }>;
+            };
+          };
         };
       };
     }
@@ -74,6 +79,9 @@ export default async function JobCertificatePage({
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // A failed read here would render the "create a certificate" empty state over
+  // an EXISTING cert — fail loud instead.
+  if (certError) throw readFailure("job certificate: certificate", certError);
 
   const status = (cert?.status ?? null) as CertStatus | null;
   const published = Boolean(cert?.portal_published_at && !cert?.portal_withdrawn_at);

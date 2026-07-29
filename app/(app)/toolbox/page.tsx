@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
 import { TOOLBOX_TALK_STATUS_META, type ToolboxTalkStatus } from "@/lib/health-safety/toolbox-talks";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * /toolbox — on-site safety briefings that evolve into acknowledgeable evidence.
@@ -43,7 +44,7 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("toolbox_talks" as never) as unknown as {
       select: (cols: string) => {
         eq: (
@@ -57,7 +58,11 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
             order: (
               col: string,
               opts: { ascending: boolean },
-            ) => { limit: (n: number) => Promise<{ data: TalkRow[] | null }> };
+            ) => {
+              limit: (
+                n: number,
+              ) => Promise<{ data: TalkRow[] | null; error: SupabaseReadError | null }>;
+            };
           };
         };
       };
@@ -72,6 +77,7 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
     .order("talk_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(500);
+  if (error) throw readFailure("toolbox: register", error);
   const rows = data ?? [];
 
   const jobIds = [

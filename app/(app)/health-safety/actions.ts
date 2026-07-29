@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -120,9 +121,11 @@ export async function issueRiskAssessment(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   // Load current state (RLS-scoped) + hazard count to gate the transition.
-  const { data: ra } = await tbl(supabase)("risk_assessments")
+  const { data: ra, error: raError } = await tbl(supabase)("risk_assessments")
     .select("id, title, activity, assessor_id, status, risk_assessment_hazards(count)")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (raError) throw readFailure("rams: issue guard", raError);
   if (!ra) redirect(`/health-safety?error=not_found`);
   const hazardCount = ra.risk_assessment_hazards?.[0]?.count ?? 0;
   const gate = canIssue({ status: ra.status, title: ra.title, activity: ra.activity, assessorId: ra.assessor_id, hazardCount });
@@ -244,9 +247,11 @@ export async function issueRamsRevision(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   // Friendly pre-check (the DB re-enforces the gate + supersede atomically).
-  const { data: ra } = await tbl(supabase)("risk_assessments")
+  const { data: ra, error: raError } = await tbl(supabase)("risk_assessments")
     .select("id, title, activity, assessor_id, status, risk_assessment_hazards(count)")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (raError) throw readFailure("rams: revision issue guard", raError);
   if (!ra) redirect(`/health-safety?error=not_found`);
   const hazardCount = ra.risk_assessment_hazards?.[0]?.count ?? 0;
   const gate = canIssue({ status: ra.status, title: ra.title, activity: ra.activity, assessorId: ra.assessor_id, hazardCount });

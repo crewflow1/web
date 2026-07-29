@@ -10,6 +10,8 @@ import {
 } from "@/lib/email/templates/reminders";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { env } from "@/lib/env";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Render + send an invoice PDF.
@@ -135,11 +137,24 @@ export async function sendInvoiceEmail(
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the emailed PDF reproduces the
   // invoice as billed, independent of the live quote.
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("invoice_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("invoice_id", invoice.id)
     .order("sort_order", { ascending: true });
+  if (linesError) {
+    // Never email a PDF with totals but zero line items on a failed read.
+    // `detail` is returned to the API caller, so it must not carry raw
+    // Postgres text (column names, constraint bodies, row values). Sentry
+    // carries the real error instead.
+    Sentry.captureException(readFailure("send-invoice: line items", linesError));
+    console.error("[send-invoice] line items load failed", linesError);
+    return {
+      sent: false,
+      reason: "load_failed",
+      detail: "Couldn't load the invoice line items.",
+    };
+  }
 
   const pdfInput: InvoicePdfInput = {
     number: invoice.number,

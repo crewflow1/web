@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuoteBuilder } from "../_builder";
 import {
@@ -99,7 +100,7 @@ export default async function EditQuotePage({
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: quote } = await supabase
+  const { data: quote, error: quoteError } = await supabase
     .from("quotes")
     .select(
       `
@@ -114,6 +115,8 @@ export default async function EditQuotePage({
     )
     .eq("id", id)
     .maybeSingle();
+  // A failed read must throw, never masquerade as notFound.
+  if (quoteError) throw readFailure("quote detail: quote", quoteError);
   if (!quote) notFound();
   // The caller's role comes from ctx (their own membership row in the ACTIVE
   // org). Never derive it from an unfiltered memberships query: org members
@@ -122,11 +125,14 @@ export default async function EditQuotePage({
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const { data: rawItems } = await supabase
+  const { data: rawItems, error: itemsError } = await supabase
     .from("quote_line_items")
     .select("description, qty, unit, unit_price, vat_rate, sort_order")
     .eq("quote_id", id)
     .order("sort_order", { ascending: true });
+  // The builder saves by REPLACING line items wholesale — rendering an empty
+  // builder over a failed read would let a save wipe the real items.
+  if (itemsError) throw readFailure("quote detail: line items", itemsError);
 
   const lineItems: LineItem[] = (rawItems ?? []).map((li) => ({
     description: li.description,

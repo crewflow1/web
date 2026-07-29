@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { updateToolboxTalk } from "../../actions";
 import { loadToolboxFormOptions } from "../../_form-options";
 import { TalkForm } from "../../_talk-form";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Edit a DRAFT toolbox talk. A delivered (issued) talk is frozen evidence — the DB
@@ -41,11 +42,16 @@ export default async function EditToolboxTalkPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: talk } = await (
+  const { data: talk, error: talkError } = await (
     supabase.from("toolbox_talks" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TalkRow | null }> };
+          eq: (
+            k: string,
+            v: unknown,
+          ) => {
+            maybeSingle: () => Promise<{ data: TalkRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -56,6 +62,7 @@ export default async function EditToolboxTalkPage({
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (talkError) throw readFailure("toolbox talk: edit load", talkError);
 
   if (!talk) notFound();
   if (talk.status !== "draft") redirect(`/toolbox/${id}?error=not_editable`);

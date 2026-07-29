@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
@@ -70,7 +71,8 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
     q = q.eq("customer_id", customerFilter);
   }
 
-  const { data: rows, count } = await q;
+  const { data: rows, count, error } = await q;
+  if (error) throw readFailure("quotes: register", error);
   const totalCount = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 

@@ -280,19 +280,67 @@ export default function BlueprintCompare(props: Props) {
   );
 }
 
+/** Per-layer fetch state, so "not loaded" is never confused with "empty". */
+type Layer = { v: string | null; status: "idle" | "loading" | "loaded" | "error" };
+
 /** Read-only version-scoped annotation overlays for one surface (A/B). */
 function CompareAnnotations({ versionId, which, page, ann }: { versionId: string; which: "A" | "B"; page: number; ann: AnnToggles }) {
   const showPins = which === "A" ? ann.aPins : ann.bPins;
   const showMarkup = which === "A" ? ann.aMarkup : ann.bMarkup;
   const [pins, setPins] = useState<BlueprintPin[]>([]);
   const [markups, setMarkups] = useState<BlueprintMarkup[]>([]);
+  // Explicit load state per layer, keyed by versionId. The previous guard was
+  // `pins.length === 0`, which cannot tell "not fetched yet" from "fetched and
+  // genuinely empty": a version with no pins re-fetched on every toggle, and a
+  // FAILED fetch was swallowed by `.catch(() => {})` and never retried — the
+  // overlay then silently claimed the drawing had no annotations. Track the
+  // attempt, not the result length, and surface failure.
+  const [pinState, setPinState] = useState<Layer>({ v: null, status: "idle" });
+  const [markupState, setMarkupState] = useState<Layer>({ v: null, status: "idle" });
 
-  useEffect(() => { if (showPins && pins.length === 0) getPinsAction(versionId).then(setPins).catch(() => {}); }, [showPins, versionId, pins.length]);
-  useEffect(() => { if (showMarkup && markups.length === 0) getMarkupAction(versionId).then(setMarkups).catch(() => {}); }, [showMarkup, versionId, markups.length]);
+  useEffect(() => {
+    if (!showPins) return;
+    if (pinState.v === versionId && pinState.status !== "idle") return;
+    setPinState({ v: versionId, status: "loading" });
+    getPinsAction(versionId)
+      .then((rows) => { setPins(rows); setPinState({ v: versionId, status: "loaded" }); })
+      .catch(() => { setPins([]); setPinState({ v: versionId, status: "error" }); });
+  }, [showPins, versionId, pinState.v, pinState.status]);
+
+  useEffect(() => {
+    if (!showMarkup) return;
+    if (markupState.v === versionId && markupState.status !== "idle") return;
+    setMarkupState({ v: versionId, status: "loading" });
+    getMarkupAction(versionId)
+      .then((rows) => { setMarkups(rows); setMarkupState({ v: versionId, status: "loaded" }); })
+      .catch(() => { setMarkups([]); setMarkupState({ v: versionId, status: "error" }); });
+  }, [showMarkup, versionId, markupState.v, markupState.status]);
+
+  const failed =
+    (showPins && pinState.status === "error") ||
+    (showMarkup && markupState.status === "error");
 
   const p1 = page + 1;
   return (
     <>
+      {failed ? (
+        <div
+          role="alert"
+          className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900"
+        >
+          <span>{which}: couldn&rsquo;t load annotations — not an empty drawing.</span>
+          <button
+            type="button"
+            onClick={() => {
+              setPinState({ v: null, status: "idle" });
+              setMarkupState({ v: null, status: "idle" });
+            }}
+            className="rounded border border-amber-400 bg-white px-1.5 py-0.5 hover:bg-amber-50"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
       {showMarkup ? (
         <>
           <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>

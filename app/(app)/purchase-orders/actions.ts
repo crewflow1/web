@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { computeTotals } from "@/lib/quotes/totals";
@@ -168,7 +169,7 @@ export async function updatePurchaseOrder(
   // Only draft/sent POs are editable — a received/cancelled PO is settled.
   type EditQuery = {
     eq: (k: string, v: unknown) => EditQuery;
-    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+    maybeSingle: () => Promise<{ data: { status: string } | null; error: SupabaseReadError | null }>;
   };
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
@@ -257,17 +258,17 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   const supabase = await createClient();
   type StatusQuery = {
     eq: (k: string, v: unknown) => StatusQuery;
-    maybeSingle: () => Promise<{ data: { status: string } | null }>;
+    maybeSingle: () => Promise<{ data: { status: string } | null; error: SupabaseReadError | null }>;
   };
-  const { data: existing } = await (
+  const { data: existing, error: existingError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => StatusQuery;
-    }
+      select: (c: string) => StatusQuery;    }
   )
     .select("status")
     .eq("id", id)
     .eq("org_id", ctx.org.id) // ACTIVE-ORG PIN
     .maybeSingle();
+  if (existingError) throw readFailure("purchase order status: purchase order", existingError);
   if (!existing) redirect("/purchase-orders?error=not_found");
 
   if (!canTransitionPo(existing.status as PurchaseOrderStatus, to)) {
@@ -423,18 +424,21 @@ export async function recordSupplierBill(
     eq: (k: string, v: string) => BillPoQuery;
     maybeSingle: () => Promise<{
       data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+      error: SupabaseReadError | null;
     }>;
   };
-  const { data: po } = await (
+  const { data: po, error: poError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => BillPoQuery;
-    }
+      select: (c: string) => BillPoQuery;    }
   )
     .select("id, job_id, supplier_id")
     .eq("id", purchaseOrderId)
     .eq("org_id", ctx.org.id) // ACTIVE-ORG PIN
     .maybeSingle();
 
+  // Throw BEFORE any write — a failed read must not report "not found" and
+  // must never let a bill post without the PO's job/supplier inheritance.
+  if (poError) throw readFailure("supplier bill: purchase order", poError);
   if (!po) return formError("Purchase order not found.");
 
   // Belt to the pin's braces: the job the cost will be attributed to must be in
