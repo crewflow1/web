@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
-import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   listBlueprints, listBlueprintVersionsForBlueprints,
   type BlueprintRow, type BlueprintVersionRow,
@@ -160,16 +160,18 @@ export default async function JobBlueprintsPage({
 
                 {isAdmin ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                    <form action={setBlueprintStatus.bind(null, id, b.id)} className="flex items-center gap-2">
-                      <label className="text-xs text-slate-500" htmlFor={`status-${b.id}`}>Status</label>
-                      <select id={`status-${b.id}`} name="status" defaultValue={status} className="rounded-md border border-slate-300 px-2 py-1 text-xs">
-                        {BLUEPRINT_STATUSES.map((s) => <option key={s} value={s}>{BLUEPRINT_STATUS_LABELS[s]}</option>)}
-                      </select>
-                      <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Set</button>
-                    </form>
-                    <ConfirmForm action={removeBlueprint.bind(null, id, b.id)} confirm={`Delete drawing ${b.drawing_number} and all its revisions? This can't be undone.`}>
+                    <StateForm action={setBlueprintStatus.bind(null, id, b.id)}>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500" htmlFor={`status-${b.id}`}>Status</label>
+                        <select id={`status-${b.id}`} name="status" defaultValue={status} className="rounded-md border border-slate-300 px-2 py-1 text-xs">
+                          {BLUEPRINT_STATUSES.map((s) => <option key={s} value={s}>{BLUEPRINT_STATUS_LABELS[s]}</option>)}
+                        </select>
+                        <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Set</button>
+                      </div>
+                    </StateForm>
+                    <StateForm action={removeBlueprint.bind(null, id, b.id)} confirm={`Delete drawing ${b.drawing_number} and all its revisions? This can't be undone.`}>
                       <button type="submit" className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">Delete</button>
-                    </ConfirmForm>
+                    </StateForm>
                   </div>
                 ) : null}
               </li>

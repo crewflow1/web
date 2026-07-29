@@ -10,6 +10,7 @@ import {
   type InspectionStatus,
 } from "@/lib/assets/inspection";
 import { isInspectionOverdue } from "@/lib/assets/inspection-schedule";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   archiveInspection,
   createInspection,
@@ -87,7 +88,7 @@ export function InspectionsSection({
 
       {/* Start a templated inspection — the primary path once templates exist. */}
       {templates.length > 0 ? (
-        <form action={startInspectionFromTemplate} className="mt-4 flex flex-wrap items-end gap-2">
+        <StateForm action={startInspectionFromTemplate} className="mt-4 flex flex-wrap items-end gap-2">
           <input type="hidden" name="asset_id" value={assetId} />
           <label className="min-w-0 flex-1 text-xs font-medium text-slate-600">
             Start from template
@@ -110,7 +111,7 @@ export function InspectionsSection({
           <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
             Start inspection
           </button>
-        </form>
+        </StateForm>
       ) : (
         <p className="mt-3 text-xs text-slate-500">
           No published templates yet —{" "}
@@ -173,18 +174,18 @@ export function InspectionsSection({
                   >
                     Continue inspection
                   </Link>
-                  <form action={archiveInspection}>
+                  <StateForm action={archiveInspection}>
                     <input type="hidden" name="inspection_id" value={i.id} />
                     <input type="hidden" name="asset_id" value={assetId} />
                     <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                       Discard
                     </button>
-                  </form>
+                  </StateForm>
                 </div>
               ) : null}
               {i.status === "draft" && !i.template_id ? (
                 <div className="flex w-full flex-wrap items-end gap-2 pt-2">
-                  <form action={issueInspection} className="flex items-end gap-2">
+                  <StateForm action={issueInspection} className="flex items-end gap-2">
                     <input type="hidden" name="inspection_id" value={i.id} />
                     <label className="text-xs text-slate-600">
                       Outcome
@@ -207,14 +208,14 @@ export function InspectionsSection({
                     <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
                       Issue
                     </button>
-                  </form>
-                  <form action={archiveInspection}>
+                  </StateForm>
+                  <StateForm action={archiveInspection}>
                     <input type="hidden" name="inspection_id" value={i.id} />
                     <input type="hidden" name="asset_id" value={assetId} />
                     <button type="submit" className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                       Discard
                     </button>
-                  </form>
+                  </StateForm>
                 </div>
               ) : null}
             </li>
@@ -225,7 +226,7 @@ export function InspectionsSection({
       )}
 
       {/* Record a new draft inspection. */}
-      <form action={createInspection} className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
+      <StateForm action={createInspection} className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
         <input type="hidden" name="asset_id" value={assetId} />
         <label className="text-xs font-medium text-slate-600 sm:col-span-2">
           Inspection
@@ -266,7 +267,7 @@ export function InspectionsSection({
             Record inspection
           </button>
         </div>
-      </form>
+      </StateForm>
     </section>
   );
 }

@@ -27,14 +27,21 @@ export async function listAcknowledgements(
   return (data ?? []).map((a) => ({ ...a, signer_name: a.users?.full_name || a.users?.email || a.signed_name }));
 }
 
-/** Count of org members (the acknowledgement "expected" denominator). */
-export async function countOrgMembers(): Promise<number> {
+/**
+ * Count of ACTIVE-org members (the acknowledgement "expected" denominator).
+ * RLS cannot scope this on its own: org_member_visibility (20260515) lets a
+ * multi-org viewer read membership rows across ALL their orgs, so an unpinned
+ * head-count inflates the denominator. Callers pass ctx.org.id (#456/#468
+ * idiom), matching listAssessors over the same table.
+ */
+export async function countOrgMembers(orgId: string): Promise<number> {
   const supabase = await createClient();
   const { count } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string, o: { count: string; head: boolean }) => Promise<{ count: number | null }> };
+    from: (t: string) => { select: (c: string, o: { count: string; head: boolean }) => { eq: (k: string, v: string) => Promise<{ count: number | null }> } };
   })
     .from("memberships")
-    .select("user_id", { count: "exact", head: true });
+    .select("user_id", { count: "exact", head: true })
+    .eq("org_id", orgId);
   return count ?? 0;
 }
 

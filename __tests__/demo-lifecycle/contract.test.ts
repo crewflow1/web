@@ -109,6 +109,11 @@ describe("Lifecycle service (demo-lifecycle.ts)", () => {
   it("promoteDemoToCustomer handles existing auth user gracefully (idempotent invite)", () => {
     expect(src).toMatch(/already (registered|exists)/i);
     expect(src).toMatch(/auth_user_already_existed|demo\.invite_skipped/);
+    // Recovery must use the PAGINATED lookup — a bare listUsers() only
+    // sees the first ~50 users, so accounts beyond page 1 were reported
+    // as auth_create_user failures (loud-read-failures audit finding).
+    expect(src).toMatch(/findAuthUserByEmail/);
+    expect(src).not.toMatch(/\.listUsers\(/);
   });
 
   it("promoteDemoToCustomer rolls back the org if membership creation fails", () => {

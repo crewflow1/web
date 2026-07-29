@@ -1,11 +1,15 @@
 "use client";
 
 import { createCertificate } from "./actions";
+import { StateForm } from "@/components/forms/StateForm";
 import type { CertContent } from "@/lib/completion-certificates/schema";
 
 /**
  * Draft completion-certificate form. Every field is customer-facing by design
  * (no cost/margin/internal inputs), so the frozen snapshot cannot leak internals.
+ *
+ * Posts through <StateForm> (FormState + full-document navigation) — see
+ * components/forms/StateForm.tsx for why `redirect()` is unsafe at this depth.
  */
 export function CertificateForm({
   jobId,
@@ -15,7 +19,7 @@ export function CertificateForm({
   defaults: Partial<CertContent>;
 }) {
   return (
-    <form action={createCertificate.bind(null, jobId)} className="space-y-4">
+    <StateForm action={createCertificate.bind(null, jobId)} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-slate-700">Practical completion date</span>
@@ -67,6 +71,6 @@ export function CertificateForm({
       <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
         Create draft certificate
       </button>
-    </form>
+    </StateForm>
   );
 }

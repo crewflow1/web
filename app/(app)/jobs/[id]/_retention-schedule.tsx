@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { formatGbp } from "@/lib/money";
 import { setRetentionSchedule } from "../retention-actions";
+import { StateForm } from "@/components/forms/StateForm";
 import type { RetentionSchedule, MoietyStatus } from "@/lib/retentions/schedule";
 
 /**
@@ -82,7 +83,7 @@ export function RetentionScheduleSection({
       )}
 
       {isAdmin && editing ? (
-        <form
+        <StateForm
           action={setRetentionSchedule.bind(null, jobId)}
           className="mt-3 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 sm:grid-cols-3"
         >
@@ -130,7 +131,7 @@ export function RetentionScheduleSection({
               JCT default: 50% at completion, the rest at end of the defects period.
             </span>
           </div>
-        </form>
+        </StateForm>
       ) : null}
     </div>
   );

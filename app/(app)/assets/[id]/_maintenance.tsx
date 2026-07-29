@@ -11,6 +11,7 @@ import {
   type MaintenanceType,
 } from "@/lib/assets/maintenance";
 import { reportMaintenanceCase, transitionMaintenanceCase, upsertCaseCosts } from "../maintenance-actions";
+import { StateForm } from "@/components/forms/StateForm";
 import { startReinspection } from "../inspection-actions";
 
 export type MaintenanceCaseRow = {
@@ -80,7 +81,7 @@ export function MaintenanceSection({
 
       <details className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
         <summary className="cursor-pointer text-xs font-semibold text-slate-700">+ Report fault / plan work</summary>
-        <form action={reportMaintenanceCase} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <StateForm action={reportMaintenanceCase} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input type="hidden" name="asset_id" value={assetId} />
           <label className="text-xs font-medium text-slate-600 sm:col-span-2">
             What&apos;s wrong / what&apos;s needed
@@ -123,7 +124,7 @@ export function MaintenanceSection({
               Report
             </button>
           </div>
-        </form>
+        </StateForm>
       </details>
     </section>
   );
@@ -158,15 +159,15 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
       </div>
 
       {c.status === "ready_for_reinspection" && c.source_inspection_id ? (
-        <form action={startReinspection} className="mt-2">
+        <StateForm action={startReinspection} className="mt-2">
           <input type="hidden" name="inspection_id" value={c.source_inspection_id} />
           <button type="submit" className="rounded-md bg-purple-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-800">
             Start re-inspection
           </button>
-        </form>
+        </StateForm>
       ) : null}
       {isActiveCase(c.status) && nextStates.length > 0 ? (
-        <form action={transitionMaintenanceCase} className="mt-2 flex flex-wrap items-end gap-2">
+        <StateForm action={transitionMaintenanceCase} className="mt-2 flex flex-wrap items-end gap-2">
           <input type="hidden" name="case_id" value={c.id} />
           <label className="text-xs text-slate-600">
             Move to
@@ -195,22 +196,22 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
           <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
             Apply
           </button>
-        </form>
+        </StateForm>
       ) : null}
       {c.status === "cancelled" ? (
-        <form action={transitionMaintenanceCase} className="mt-2">
+        <StateForm action={transitionMaintenanceCase} className="mt-2">
           <input type="hidden" name="case_id" value={c.id} />
           <input type="hidden" name="to" value="reported" />
           <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
             Reopen
           </button>
-        </form>
+        </StateForm>
       ) : null}
 
       {isAdmin && isActiveCase(c.status) ? (
         <details className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
           <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Costs (admin only)</summary>
-          <form action={upsertCaseCosts} className="mt-2 flex flex-wrap items-end gap-2">
+          <StateForm action={upsertCaseCosts} className="mt-2 flex flex-wrap items-end gap-2">
             <input type="hidden" name="asset_id" value={assetId} />
             <input type="hidden" name="case_id" value={c.id} />
             {(["cost_parts", "cost_labour", "cost_external"] as const).map((f) => (
@@ -223,7 +224,7 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
             <button type="submit" className="rounded-md border border-slate-300 px-3 py-1 text-[11px] font-medium text-slate-700 hover:bg-white">
               Save costs
             </button>
-          </form>
+          </StateForm>
         </details>
       ) : null}
     </div>

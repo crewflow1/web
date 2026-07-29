@@ -67,13 +67,11 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
   const startIso = `${isoDate(monday)}T00:00:00Z`;
   const endIso = `${isoDate(sunday)}T23:59:59Z`;
 
-  // Current user's role.
-  const { data: myRow } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // Current user's role — from ctx (own membership in the ACTIVE org); an
+  // unfiltered memberships read returns every member's row and `.single()`
+  // errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   // Staff list for the assign form + display labels.
   const { data: members } = await supabase

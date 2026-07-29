@@ -24,7 +24,13 @@ vi.mock("@/server/services/staff-invite", () => ({
 
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: vi.fn(async () => ({
-    ctx: { org: { id: "org-1", name: "Acme Builders" } },
+    ctx: {
+      org: { id: "org-1", name: "Acme Builders" },
+      // requireAdmin reads the caller's role from ctx.membership (their own
+      // row, resolved upstream with a user_id filter) — never from an
+      // unfiltered memberships query, which breaks in ≥2-member orgs.
+      membership: { org_id: "org-1", role: membershipRole ?? "staff" },
+    },
     user: { id: "user-1" },
   })),
 }));
@@ -46,8 +52,10 @@ vi.mock("@/lib/email/send-leave", () => ({
   notifyStaffOfLeaveDecision: vi.fn(),
 }));
 
-// Server client: requireAdmin reads memberships.role; the action then looks
-// up public.users by email. Both go through createClient().from(table).
+// Caller's role — feeds the mocked ctx.membership above (read at
+// requireOrgContext-call time, so tests can flip it per case). The server
+// client below only serves the users-by-email lookup and the duplicate-
+// membership check; requireAdmin no longer queries memberships at all.
 let membershipRole: string | null = "admin";
 let existingUser: Record<string, unknown> | null = null;
 let membershipDup: Record<string, unknown> | null = null;
@@ -58,10 +66,7 @@ vi.mock("@/lib/supabase/server", () => ({
       const chain: Record<string, unknown> = {};
       chain.select = () => chain;
       chain.eq = () => chain;
-      chain.single = async () =>
-        table === "memberships"
-          ? { data: membershipRole ? { role: membershipRole } : null, error: null }
-          : { data: null, error: null };
+      chain.single = async () => ({ data: null, error: null });
       chain.maybeSingle = async () => {
         if (table === "users") return { data: existingUser, error: null };
         if (table === "memberships") return { data: membershipDup, error: null };
