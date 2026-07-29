@@ -86,7 +86,9 @@ export default async function ToolboxTalkPage({
   const { data: talk } = await (
     supabase.from("toolbox_talks" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TalkRow | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TalkRow | null }> };
+        };
       };
     }
   )
@@ -94,6 +96,7 @@ export default async function ToolboxTalkPage({
       "id, status, reference, revision_number, root_toolbox_talk_id, talk_date, topic, key_points, location, presenter, ppe, attendees, attendee_count, notes, job_id, risk_assessment_id, permit_to_work_id, created_by, issued_by, issued_at, created_at",
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!talk) notFound();

@@ -82,7 +82,9 @@ export default async function SnagDetailPage({
     supabase.from("snags" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SnagRow | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: SnagRow | null }>;
+          };
         };
       };
     }
@@ -91,6 +93,7 @@ export default async function SnagDetailPage({
       "id, title, description, location, trade, priority, status, job_id, assigned_to, reported_by, due_date, resolved_at, created_at, updated_at",
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!snag) notFound();

@@ -164,15 +164,19 @@ export async function updatePurchaseOrder(
   const supabase = await createClient();
 
   // Only draft/sent POs are editable — a received/cancelled PO is settled.
+  // Pinned to the ACTIVE org: RLS admits every org the caller belongs to.
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
+        };
       };
     }
   )
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!existing) return formError("Couldn't load the purchase order.");
   if (existing.status === "received" || existing.status === "cancelled") {
@@ -182,7 +186,11 @@ export async function updatePurchaseOrder(
   const totals = computeTotals(parsed.data.line_items);
   const { error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      update: (v: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      update: (v: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+        };
+      };
     }
   )
     .update({
@@ -194,7 +202,8 @@ export async function updatePurchaseOrder(
       notes: parsed.data.notes ?? null,
       expected_date: parsed.data.expected_date ?? null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[purchase-orders] update failed", error);
     return formError("Couldn't save changes. Try again.");
@@ -225,7 +234,7 @@ export async function updatePurchaseOrder(
 }
 
 export async function setPurchaseOrderStatus(id: string, formData: FormData) {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const to = String(formData.get("status") ?? "") as PurchaseOrderStatus;
@@ -234,15 +243,19 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
+  // Pinned to the ACTIVE org: RLS admits every org the caller belongs to.
   const { data: existing } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
+        };
       };
     }
   )
     .select("status")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!existing) redirect("/purchase-orders?error=not_found");
 
@@ -252,11 +265,16 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
 
   const { error } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      update: (v: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      update: (v: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+        };
+      };
     }
   )
     .update({ status: to })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[purchase-orders] status change failed", error);
     redirect(`/purchase-orders/${id}?error=status_failed`);
@@ -276,22 +294,30 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
 }
 
 export async function deletePurchaseOrder(id: string) {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const supabase = await createClient();
-  const { error } = await (
+  // Pinned to the ACTIVE org, and count-gated: RLS filters non-admins (and
+  // the pin filters foreign orgs) to 0 rows with NO error, which previously
+  // fell through to the success path and a false "deleted" audit entry.
+  const { error, count } = await (
     supabase.from("purchase_orders" as never) as unknown as {
-      delete: () => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }> };
+      delete: (opts?: { count?: string }) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }>;
+        };
+      };
     }
   )
-    .delete()
-    .eq("id", id);
+    .delete({ count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) {
-    // RLS filters non-admins → 0 rows, no error; treat as denied.
     console.error("[purchase-orders] delete failed", error);
     redirect(`/purchase-orders/${id}?error=delete_denied`);
   }
+  if (!count) redirect("/purchase-orders?error=not_found");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -359,20 +385,25 @@ export async function recordSupplierBill(
 
   const supabase = await createClient();
 
-  // Load the PO (RLS-scoped) — inherit its job + supplier.
+  // Load the PO — inherit its job + supplier. Pinned to the ACTIVE org (RLS
+  // admits every org the caller belongs to; the bill is stamped with
+  // ctx.org.id, so a foreign PO would cross-link two companies' finances).
   const { data: po } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: string) => {
-          maybeSingle: () => Promise<{
-            data: { id: string; job_id: string | null; supplier_id: string | null } | null;
-          }>;
+          eq: (k: string, v: string) => {
+            maybeSingle: () => Promise<{
+              data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+            }>;
+          };
         };
       };
     }
   )
     .select("id, job_id, supplier_id")
     .eq("id", purchaseOrderId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!po) return formError("Purchase order not found.");

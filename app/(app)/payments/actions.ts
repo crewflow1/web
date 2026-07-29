@@ -71,7 +71,9 @@ export async function uploadBankCsv(formData: FormData) {
     redirect("/payments?error=upload_failed");
   }
 
-  // 2. Pull unpaid invoices for scoring (RLS scopes to org).
+  // 2. Pull unpaid invoices for scoring — pinned to the ACTIVE org (RLS
+  // admits every org the caller belongs to, so an unpinned read would let
+  // the scorer suggest another company's invoice for this org's bank line).
   const { data: invoices } = await supabase
     .from("invoices")
     .select(
@@ -80,6 +82,7 @@ export async function uploadBankCsv(formData: FormData) {
         quote:quotes ( customer:customers ( name ) )
       `,
     )
+    .eq("org_id", ctx.org.id)
     .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]);
 
   type ScoredInv = {

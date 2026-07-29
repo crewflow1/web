@@ -80,7 +80,9 @@ export default async function PurchaseOrderDetailPage({
   const { data: po } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Po | null }> };
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Po | null }> };
+        };
       };
     }
   )
@@ -88,6 +90,7 @@ export default async function PurchaseOrderDetailPage({
       "id, number, status, supplier_id, job_id, supplier_reference, expected_date, notes, subtotal, vat_total, total, supplier:suppliers ( name ), line_items:purchase_order_line_items ( description, qty, unit, unit_price, vat_rate, line_total, sort_order )",
     )
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (!po) notFound();

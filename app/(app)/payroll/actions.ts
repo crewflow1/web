@@ -120,6 +120,7 @@ export async function createPayrollRun(
   const { data: entriesRaw } = await supabase
     .from("time_entries")
     .select("id, user_id, job_id, started_at, ended_at, breaks")
+    .eq("org_id", ctx.org.id)
     .gte("started_at", windowStartIso)
     .lte("started_at", windowEndIso)
     .not("ended_at", "is", null);
@@ -213,6 +214,7 @@ export async function finalisePayrollRun(runId: string) {
     .from("payroll_runs")
     .select("id, period_start, period_end, status")
     .eq("id", runId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}`);
@@ -227,6 +229,7 @@ export async function finalisePayrollRun(runId: string) {
     await supabase
       .from("time_entries")
       .update({ payroll_line_id: l.id })
+      .eq("org_id", ctx.org.id)
       .eq("user_id", l.user_id)
       .gte("started_at", `${run.period_start}T00:00:00Z`)
       .lte("started_at", `${run.period_end}T23:59:59.999Z`)
@@ -237,7 +240,8 @@ export async function finalisePayrollRun(runId: string) {
   await supabase
     .from("payroll_runs")
     .update({ status: "finalised", finalised_at: new Date().toISOString() })
-    .eq("id", runId);
+    .eq("id", runId)
+    .eq("org_id", ctx.org.id);
 
   revalidatePath(`/payroll/${runId}`);
   revalidatePath("/payroll");
@@ -253,10 +257,11 @@ export async function deletePayrollRun(runId: string) {
     .from("payroll_runs")
     .select("status")
     .eq("id", runId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}?error=cannot_delete_finalised`);
-  await supabase.from("payroll_runs").delete().eq("id", runId);
+  await supabase.from("payroll_runs").delete().eq("id", runId).eq("org_id", ctx.org.id);
   revalidatePath("/payroll");
   redirect("/payroll?saved=deleted");
 }

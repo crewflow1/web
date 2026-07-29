@@ -142,11 +142,14 @@ export async function createSiteReport(formData: FormData): Promise<void> {
 
   const tenant = await createClient();
 
-  // Resolve the job's customer for portal scoping (RLS-scoped read).
+  // Resolve the job's customer for portal scoping. job_id is form input and
+  // RLS admits every org the caller belongs to, so pin to the ACTIVE org —
+  // this also gates gatherReportSources below to an in-org job.
   const { data: job } = await tenant
     .from("jobs")
     .select("id, customer_id")
     .eq("id", data.job_id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (!job) redirect(`/site-reports/new?error=bad_job`);
 
