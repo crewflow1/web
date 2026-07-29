@@ -5,6 +5,8 @@ import {
   CONDITION_LABELS,
   isOverdue,
 } from "@/lib/assets/assignment";
+import { siteKindLabel } from "@/lib/sites/schema";
+import type { SiteOption } from "@/server/services/sites";
 import { checkOutAsset, returnAsset, transferAsset } from "../assignment-actions";
 
 /**
@@ -19,6 +21,8 @@ export type CurrentAssignment = {
   assignment_type: string;
   job_name: string | null;
   assignee_name: string | null;
+  /** Resolved name of the typed company location, when one was chosen. */
+  site_name: string | null;
   location: string | null;
   assigned_at: string;
   expected_return_at: string | null;
@@ -38,6 +42,7 @@ export function CustodySection({
   current,
   jobs,
   staff,
+  sites,
   today,
 }: {
   assetId: string;
@@ -45,6 +50,8 @@ export function CustodySection({
   current: CurrentAssignment | null;
   jobs: JobOpt[];
   staff: StaffOpt[];
+  /** Company locations (public.sites) — the store-at-depot destination. */
+  sites: SiteOption[];
   today: string;
 }) {
   const overdue = current
@@ -70,8 +77,15 @@ export function CustodySection({
                 </span>
               ) : null}
             </div>
+            {/* A named site outranks the free text: when both are present the
+                typed one is the authority, so showing the text as well would
+                offer two answers to one question. */}
             <p className="mt-2 text-slate-900">
-              {current.assignee_name ?? current.job_name ?? current.location ?? "—"}
+              {current.assignee_name ??
+                current.job_name ??
+                current.site_name ??
+                current.location ??
+                "—"}
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
               Since {current.assigned_at.slice(0, 10)}
@@ -105,6 +119,7 @@ export function CustodySection({
               assetId={assetId}
               jobs={jobs}
               staff={staff}
+              sites={sites}
               title="Transfer"
               submit="Transfer"
             />
@@ -119,6 +134,7 @@ export function CustodySection({
               assetId={assetId}
               jobs={jobs}
               staff={staff}
+              sites={sites}
               title="Check out"
               submit="Check out"
             />
@@ -138,6 +154,7 @@ function AssignForm({
   assetId,
   jobs,
   staff,
+  sites,
   title,
   submit,
 }: {
@@ -145,6 +162,7 @@ function AssignForm({
   assetId: string;
   jobs: JobOpt[];
   staff: StaffOpt[];
+  sites: SiteOption[];
   title: string;
   submit: string;
 }) {
@@ -173,7 +191,24 @@ function AssignForm({
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
-        <input name="location" type="text" placeholder="Depot / yard / location" className={fieldCls} />
+        {/* Store-at-depot destination. The named site is offered first; the
+            free-text box below it is KEPT so an org with no sites named yet
+            (and any one-off "round the back of the Portakabin") still works. */}
+        <select name="site_id" defaultValue="" className={fieldCls} aria-label="Site">
+          <option value="">{sites.length === 0 ? "No sites named yet…" : "Site…"}</option>
+          {sites.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} — {siteKindLabel(s.kind)}
+            </option>
+          ))}
+        </select>
+        <input
+          name="location"
+          type="text"
+          placeholder="Or type a location"
+          className={fieldCls}
+          aria-label="Location (free text)"
+        />
         <input name="expected_return_at" type="date" className={fieldCls} aria-label="Expected return" />
       </div>
       <div className="grid grid-cols-2 gap-2">

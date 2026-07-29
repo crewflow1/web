@@ -18,7 +18,7 @@ import {
   type FuelType,
   type OperationalStatus,
 } from "@/lib/fleet/schema";
-import { loadSupplierOptions, loadVehicleForOrg } from "../../_components/load";
+import { loadSiteOptions, loadSupplierOptions, loadVehicleForOrg } from "../../_components/load";
 import { recordComplianceCompletion, saveComplianceSchedule, deactivateComplianceSchedule } from "../../compliance-actions";
 import { createFuelLog } from "../../fuel-actions";
 import {
@@ -67,10 +67,16 @@ export default async function VehiclePage({
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
 
-  const [detail, suppliers] = await Promise.all([
+  const [detail, suppliers, sites] = await Promise.all([
     loadVehicleDetail(ctx.org.id, id),
     loadSupplierOptions(ctx.org.id),
+    // Org-pinned; includes a retired site when this vehicle still points at one,
+    // so the detail page never shows a blank where a real home site exists.
+    loadSiteOptions(ctx.org.id, vehicle.homeSiteId),
   ]);
+  const homeSite = vehicle.homeSiteId
+    ? (sites.find((s) => s.id === vehicle.homeSiteId) ?? null)
+    : null;
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const inService = isInService(vehicle);
@@ -715,7 +721,13 @@ export default async function VehiclePage({
             value={vehicle.grossWeightKg ? `${vehicle.grossWeightKg.toLocaleString("en-GB")} kg` : null}
           />
           <Detail label="MOT exempt" value={vehicle.motExempt ? "Yes" : "No"} />
-          <Detail label="Home depot" value={vehicle.homeDepot} />
+          {/* The named site is the authority; the free text is shown only when
+              there is no site to show, so the two can never contradict each
+              other on screen. */}
+          <Detail
+            label="Home site"
+            value={homeSite ? `${homeSite.name}${homeSite.active ? "" : " (retired)"}` : vehicle.homeDepot}
+          />
           <Detail
             label="Availability"
             value={OPERATIONAL_STATUS_LABELS[vehicle.operationalStatus as OperationalStatus] ?? null}

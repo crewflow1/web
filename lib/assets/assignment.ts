@@ -29,7 +29,15 @@ export const ASSIGNMENT_TYPE_LABELS: Record<AssignmentType, string> = {
   returned_to_supplier: "Returned to supplier",
 };
 
-/** The destination field each type carries (drives the form + validation). */
+/**
+ * The destination field each type carries (drives the form + validation).
+ *
+ * "location" now means EITHER a named company site (`site_id` → public.sites,
+ * 20261061000000) OR the original free text. Both are accepted and both are
+ * stored; the typed one is the authority. Nothing that worked before stops
+ * working, which is why this stayed one destination kind rather than becoming
+ * two.
+ */
 export const ASSIGNMENT_DESTINATION: Record<
   AssignmentType,
   "assignee" | "job" | "vehicle" | "location"
@@ -105,6 +113,13 @@ export function friendlyAssignmentError(
     if (message && /cannot be assigned/.test(message)) {
       return "That asset can't be assigned in its current state (retired, sold, lost or out of service).";
     }
+    // Checked BEFORE the general cross-org arm: `tg_site_reference_org_integrity`
+    // (20261061000000) raises "site … is not in org …", which the broader
+    // pattern below would otherwise absorb into a message naming the wrong
+    // field entirely.
+    if (message && /site .+ is not in org/.test(message)) {
+      return "The site you chose isn't in your organisation.";
+    }
     if (message && /not in org|not a member/.test(message)) {
       return "The job, person or vehicle you chose isn't in your organisation.";
     }
@@ -135,6 +150,8 @@ export const checkOutSchema = z
     job_id: optUuid,
     assignee_id: optUuid,
     vehicle_asset_id: optUuid,
+    /** A named company location (public.sites). Preferred over the free text. */
+    site_id: optUuid,
     location: optText(200),
     issue_condition: optCondition,
     issue_notes: optText(2000),
@@ -147,7 +164,10 @@ export const checkOutSchema = z
       if (need === "assignee") return !!v.assignee_id;
       if (need === "job") return !!v.job_id;
       if (need === "vehicle") return !!v.vehicle_asset_id;
-      return !!v.location; // depot / repair / supplier
+      // depot / repair / supplier: a named site OR free text. Either answers
+      // "where has it gone"; requiring the typed one would break every org that
+      // has not named its sites yet.
+      return !!v.site_id || !!v.location;
     },
     { message: "Choose where the asset is going", path: ["assignment_type"] },
   );

@@ -10,6 +10,8 @@ import {
   VEHICLE_CLASS_LABELS,
 } from "@/lib/fleet/schema";
 import type { FleetVehicle } from "@/server/services/fleet-snapshot";
+import type { SiteOption } from "@/server/services/sites";
+import { siteKindLabel } from "@/lib/sites/schema";
 import { inputClass, labelClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
 /**
@@ -26,12 +28,15 @@ export function VehicleForm({
   action,
   vehicle,
   suppliers,
+  sites,
   submitLabel,
   cancelHref,
 }: {
   action: (formData: FormData) => Promise<void>;
   vehicle?: FleetVehicle;
   suppliers: SupplierOption[];
+  /** Company locations (public.sites) — active, plus the one already chosen. */
+  sites: SiteOption[];
   submitLabel: string;
   cancelHref: string;
 }) {
@@ -206,7 +211,43 @@ export function VehicleForm({
               className={inputClass}
             />
           </FormField>
-          <FormField name="home_depot" label="Home depot / yard">
+          <FormField
+            name="home_site_id"
+            label="Home site"
+            help={
+              sites.length === 0
+                ? "No sites named yet — add your depots and yards under Sites."
+                : "Where this vehicle is based."
+            }
+          >
+            <select
+              id="home_site_id"
+              name="home_site_id"
+              defaultValue={v?.homeSiteId ?? ""}
+              className={inputClass}
+            >
+              <option value="">Not set</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} — {siteKindLabel(s.kind)}
+                  {s.active ? "" : " (retired)"}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        </Row>
+        {/* The free-text depot is KEPT, not replaced. Companies that have not
+            named their sites yet keep working exactly as before, and existing
+            values are never silently thrown away by a save. Once a site is
+            picked the text is redundant, which the hint says out loud rather
+            than the form deciding for the operator. */}
+        <Row>
+          <FormField
+            name="home_depot"
+            label="Home depot / yard (free text)"
+            help="The old free-text field. Kept so nothing is lost — prefer the picker above."
+            span={2}
+          >
             <input
               id="home_depot"
               name="home_depot"

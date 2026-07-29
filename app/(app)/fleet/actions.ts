@@ -74,6 +74,7 @@ function readVehicleForm(formData: FormData) {
     finance_monthly_payment: formString(formData, "finance_monthly_payment"),
     finance_end_date: formString(formData, "finance_end_date"),
     home_depot: formString(formData, "home_depot"),
+    home_site_id: formString(formData, "home_site_id"),
     odometer_miles: formString(formData, "odometer_miles"),
   });
 }
@@ -112,6 +113,10 @@ function rpcArgs(
     p_finance_monthly_payment: d.finance_monthly_payment ?? null,
     p_finance_end_date: d.finance_end_date ?? null,
     p_home_depot: d.home_depot ?? null,
+    // The typed home location. The RPC guards it: `tg_site_reference_org_integrity`
+    // (20261061000000) refuses a site belonging to another org for EVERY role,
+    // so a forged id in this field is a DB refusal, not a cross-tenant write.
+    p_home_site_id: d.home_site_id ?? null,
     p_odometer_miles: d.odometer_miles ?? null,
     p_created_by: userId,
   };
