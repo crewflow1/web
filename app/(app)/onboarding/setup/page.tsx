@@ -280,7 +280,7 @@ function StepStatusBadge({
     return (
       <span
         aria-label="Skipped"
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-medium text-slate-500"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-medium text-slate-600"
       >
         ·
       </span>

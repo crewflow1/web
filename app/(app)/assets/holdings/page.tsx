@@ -112,7 +112,7 @@ export default async function HoldingsPage() {
                       {r.expected_return_at ? (
                         <span
                           className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            overdue ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-500"
+                            overdue ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"
                           }`}
                         >
                           {overdue ? "Overdue — due back" : "Due back"} {r.expected_return_at}

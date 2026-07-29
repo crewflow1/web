@@ -46,8 +46,8 @@ const OUTCOME_STYLES: Record<InspectionOutcome, string> = {
 const STATUS_STYLES: Record<InspectionStatus, string> = {
   draft: "bg-slate-100 text-slate-600",
   issued: "bg-blue-100 text-blue-700",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 /**

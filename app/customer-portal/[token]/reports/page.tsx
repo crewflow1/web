@@ -58,7 +58,7 @@ export default async function PortalReportsPage({
                           Latest
                         </span>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
                           Superseded
                         </span>
                       )}

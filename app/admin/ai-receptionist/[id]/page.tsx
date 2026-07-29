@@ -196,7 +196,7 @@ export default async function HqAiReceptionistDetailPage({
                 disabled={status === s}
                 className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
                   status === s
-                    ? "border-slate-300 bg-slate-100 text-slate-500"
+                    ? "border-slate-300 bg-slate-100 text-slate-600"
                     : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >

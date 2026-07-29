@@ -36,7 +36,7 @@ const STATUS_STYLES: Partial<Record<MaintenanceStatus, string>> = {
   ready_for_reinspection: "bg-purple-100 text-purple-700",
   ready_for_return_to_service: "bg-emerald-100 text-emerald-800",
   completed: "bg-emerald-100 text-emerald-800",
-  cancelled: "bg-slate-100 text-slate-400",
+  cancelled: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 /**

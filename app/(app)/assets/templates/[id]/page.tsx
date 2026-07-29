@@ -47,8 +47,8 @@ type VersionRow = { id: string; version: number; status: TemplateStatus; publish
 const STATUS_STYLES: Record<TemplateStatus, string> = {
   draft: "bg-amber-100 text-amber-800",
   published: "bg-emerald-100 text-emerald-800",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 const SAVED_MAP: Record<string, string> = {
