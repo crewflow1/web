@@ -2,12 +2,14 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
+import { countPostedReceipts } from "./_receiving-data";
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 
 const STATUS_STYLE: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
   sent: "bg-blue-100 text-blue-700",
+  partially_received: "bg-amber-100 text-amber-800",
   received: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-slate-100 text-slate-600 line-through", // slate-600, not 400: AA contrast on slate-100
 };
@@ -55,6 +57,15 @@ export default async function PurchaseOrdersPage({
 
   const rows = data ?? [];
 
+  // Receipt badges (Warehouse M1). ONE extra query for the whole page — the
+  // register's job is "where is each order up to", and "sent" alone no longer
+  // answers that once part deliveries exist.
+  const receiptCounts = await countPostedReceipts(
+    supabase,
+    ctx.org.id,
+    rows.map((r) => r.id),
+  );
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
@@ -92,6 +103,7 @@ export default async function PurchaseOrdersPage({
                 <th className="px-4 py-2.5">Supplier</th>
                 <th className="px-4 py-2.5">Expected</th>
                 <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5">Deliveries</th>
                 <th className="px-4 py-2.5 text-right">Total</th>
               </tr>
             </thead>
@@ -109,6 +121,13 @@ export default async function PurchaseOrdersPage({
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[po.status] ?? "bg-slate-100 text-slate-600"}`}>
                       {poStatusLabel(po.status)}
                     </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">
+                    {(() => {
+                      const n = receiptCounts.get(po.id) ?? 0;
+                      if (n > 0) return `${n} received`;
+                      return po.status === "sent" ? "Awaiting" : "—";
+                    })()}
                   </td>
                   <td className="px-4 py-2.5 text-right font-medium text-slate-900">{GBP.format(Number(po.total ?? 0))}</td>
                 </tr>

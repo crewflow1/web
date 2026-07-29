@@ -31,4 +31,29 @@ describe("computeCommittedCosts", () => {
     expect(p.onOrder).toBe(100.3);
     expect(p.committed).toBe(100.3);
   });
+
+  // ── Warehouse M1: part-received is its own bucket ─────────────────────────
+  it("splits partially_received out of on-order and keeps the buckets disjoint", () => {
+    const p = computeCommittedCosts([
+      { status: "draft", total: 500 },
+      { status: "sent", total: 1200 },
+      { status: "partially_received", total: 300 },
+      { status: "received", total: 800 },
+      { status: "cancelled", total: 9999 },
+    ]);
+    expect(p.onOrder).toBe(1700); // draft + sent only
+    expect(p.partiallyReceived).toBe(300);
+    expect(p.received).toBe(800);
+    // the three sub-buckets partition the committed total exactly
+    expect(p.onOrder + p.partiallyReceived + p.received).toBe(p.committed);
+    expect(p.committed).toBe(2800);
+    expect(p.count).toBe(4);
+  });
+
+  it("counts a partially_received PO as LIVE (it was invisible before M1)", () => {
+    const p = computeCommittedCosts([{ status: "partially_received", total: 250 }]);
+    expect(p.committed).toBe(250);
+    expect(p.count).toBe(1);
+    expect(hasCommittedCosts(p)).toBe(true);
+  });
 });

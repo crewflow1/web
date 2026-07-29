@@ -612,6 +612,9 @@ export default async function EditJobPage({
                 <p className="text-xs text-slate-500">
                   {committed.count} order{committed.count === 1 ? "" : "s"}
                   {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
+                  {committed.partiallyReceived > 0
+                    ? ` · ${GBP.format(committed.partiallyReceived)} part-received`
+                    : ""}
                 </p>
               </div>
             ) : null}

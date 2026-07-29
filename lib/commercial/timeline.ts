@@ -75,7 +75,10 @@ const ACCEPTED = "accepted";
 const DECLINED = "declined";
 const PENDING = new Set(["sent", "viewed"]);
 const INVOICE_RAISED = new Set(["sent", "awaiting_payment", "partially_paid", "paid", "overdue"]);
-const PO_LIVE = new Set(["draft", "sent", "received"]); // not cancelled
+// not cancelled. `partially_received` joined the status set in 20261060000000;
+// omitting it here would silently drop a part-delivered order off the job's
+// commercial timeline the instant its first delivery was booked.
+const PO_LIVE = new Set(["draft", "sent", "partially_received", "received"]);
 
 /** date-only → ISO instant; pass full timestamps through; null-safe. */
 function toIso(v: string | null | undefined): string | null {
