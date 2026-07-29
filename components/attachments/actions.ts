@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import { requireOrgContext } from "@/server/auth/session";
-import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   uploadTenantAttachment,
   deleteTenantAttachment,
@@ -109,9 +109,16 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
     .select("org_id, storage_path")
     .eq("id", id.data)
     .maybeSingle();
-  // Loud fail: null means "not yours / doesn't exist" — a query failure must
-  // not render as a silently dead download link.
-  if (rowError) throw readFailure("attachments: signed-url row", rowError);
+  // REPORT, don't throw. This action is called from a click handler inside
+  // startTransition (AttachmentsClient.onOpen); a thrown Server Action error
+  // there is unhandled on the client and takes the WHOLE page down for one
+  // broken download. The client already renders "Couldn't open the file." on
+  // null, which is an explicit failure state — not the silent-empty lie this
+  // sweep exists to remove — and Sentry still gets the exception.
+  if (rowError) {
+    reportReadFailure("attachments: signed-url row", rowError);
+    return null;
+  }
 
   if (!row?.storage_path) return null;
   // Never sign a path that doesn't live under the row's own org — a poisoned storage_path
@@ -123,6 +130,9 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
   const { data: signed, error: signError } = await admin.storage
     .from("tenant-attachments")
     .createSignedUrl(row.storage_path, 60);
-  if (signError) throw readFailure("attachments: sign url", signError);
+  if (signError) {
+    reportReadFailure("attachments: sign url", signError);
+    return null;
+  }
   return signed?.signedUrl ?? null;
 }

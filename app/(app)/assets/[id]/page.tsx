@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { StateForm } from "@/components/forms/StateForm";
@@ -224,9 +224,20 @@ export default async function AssetDetailPage({
   const { data: jobsRaw, error: jobsError } = await supabase
     .from("jobs")
     .select("id, scheduled_date, customer:customers ( name )")
+    // ACTIVE-org pin. `jobs_select` is `org_id in current_org_ids()`, so for a
+    // dual-org member this picker listed the OTHER company's jobs alongside
+    // this one's — and picking one would assign this org's asset to a job it
+    // has no relation to. Every sibling read on this page is org-scoped; this
+    // one was the straggler.
+    .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
-  if (jobsError) throw readFailure("asset detail: job picker", jobsError);
+  // PANEL-scoped, not page-scoped: this is the custody picker. A dead picker
+  // must not 500 the whole asset page (status, inspections, safety blocks and
+  // maintenance are all still useful and all read fine). Report it and render
+  // an explicit notice above the custody section — never an empty <select>
+  // that reads as "this org has no jobs".
+  if (jobsError) reportReadFailure("asset detail: job picker", jobsError);
   const jobs = (jobsRaw ?? []).map((j) => ({
     id: j.id,
     label: (j.customer?.name ?? "Job") + (j.scheduled_date ? ` · ${j.scheduled_date}` : ""),
@@ -313,7 +324,10 @@ export default async function AssetDetailPage({
     .select("id, name, version, categories")
     .eq("status", "published")
     .order("name", { ascending: true });
-  if (templatesError) throw readFailure("asset detail: published templates", templatesError);
+  // PANEL-scoped for the same reason as the job picker: the template pickers
+  // feed the inspections + schedules sections, and an empty list there reads as
+  // "your org has published no templates". Notice instead of a 500.
+  if (templatesError) reportReadFailure("asset detail: published templates", templatesError);
   const publishedTemplates: PublishedTemplate[] = templatesRaw ?? [];
 
   // Standing inspection schedules for this asset (with their template names).
@@ -552,6 +566,7 @@ export default async function AssetDetailPage({
 
       <SafetyBlocksSection assetId={asset.id} blocks={safetyBlocks} isAdmin={canDelete} />
 
+      {jobsError ? <PickerNotice what="job list" /> : null}
       <CustodySection
         assetId={asset.id}
         assetActive={status === "active"}
@@ -602,6 +617,7 @@ export default async function AssetDetailPage({
         </div>
       </section>
 
+      {templatesError ? <PickerNotice what="inspection templates" /> : null}
       <InspectionsSection assetId={asset.id} inspections={inspections} templates={publishedTemplates} today={today} blocked={blockedFromIssue} />
 
       <MaintenanceSection assetId={asset.id} cases={maintenanceCases} isAdmin={canDelete} />
@@ -613,6 +629,7 @@ export default async function AssetDetailPage({
         today={today}
       />
 
+      {templatesError ? <PickerNotice what="inspection templates" /> : null}
       <SchedulesSection
         assetId={asset.id}
         schedules={schedules}
@@ -634,6 +651,23 @@ export default async function AssetDetailPage({
           <span className="ml-3 text-xs text-slate-500">Prefer a status change (retired/sold) to keep the history.</span>
         </StateForm>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Explicit failure state for a picker whose read was rejected. The point of the
+ * whole loud-reads sweep: an empty <select> is indistinguishable from "you have
+ * none", so say which one it is. Panel-scoped — the rest of the page renders.
+ */
+function PickerNotice({ what }: { what: string }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    >
+      Couldn&rsquo;t load the {what} just now, so the picker below is empty — that
+      isn&rsquo;t a sign you have none. Refresh to try again.
     </div>
   );
 }
