@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   ASSET_OWNERSHIP_LABELS,
   ASSET_STATUS_LABELS,
@@ -507,7 +508,7 @@ export default async function AssetDetailPage({
           {ASSET_STATUSES.map((s) => {
             const isCurrent = s === status;
             return (
-              <form key={s} action={updateAssetStatus}>
+              <StateForm key={s} action={updateAssetStatus}>
                 <input type="hidden" name="id" value={asset.id} />
                 <input type="hidden" name="status" value={s} />
                 <button
@@ -521,7 +522,7 @@ export default async function AssetDetailPage({
                 >
                   {ASSET_STATUS_LABELS[s]}
                 </button>
-              </form>
+              </StateForm>
             );
           })}
         </div>
@@ -547,11 +548,11 @@ export default async function AssetDetailPage({
             : "No QR identity yet. Generate one to print a label; the label carries only an opaque token."}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <form action={generateOrRegenerateQr.bind(null, asset.id)}>
+          <StateForm action={generateOrRegenerateQr.bind(null, asset.id)}>
             <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
               {qr ? "Regenerate (invalidates old label)" : "Generate QR identity"}
             </button>
-          </form>
+          </StateForm>
           {qr ? (
             <>
               <a
@@ -570,11 +571,11 @@ export default async function AssetDetailPage({
               >
                 Print sheet
               </a>
-              <form action={revokeQr.bind(null, asset.id)}>
+              <StateForm action={revokeQr.bind(null, asset.id)}>
                 <button type="submit" className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50">
                   Revoke
                 </button>
-              </form>
+              </StateForm>
             </>
           ) : null}
         </div>
@@ -605,12 +606,12 @@ export default async function AssetDetailPage({
       <AttachmentsPanel targetTable="assets" targetId={asset.id} />
 
       {canDelete ? (
-        <form action={deleteAsset.bind(null, asset.id)}>
+        <StateForm action={deleteAsset.bind(null, asset.id)}>
           <button type="submit" className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50">
             Delete asset
           </button>
           <span className="ml-3 text-xs text-slate-500">Prefer a status change (retired/sold) to keep the history.</span>
-        </form>
+        </StateForm>
       ) : null}
     </div>
   );

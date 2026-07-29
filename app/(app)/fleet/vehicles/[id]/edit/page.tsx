@@ -8,6 +8,7 @@ import {
   loadVehicleForOrg,
 } from "../../../_components/load";
 import { VehicleForm } from "../../../_components/vehicle-form";
+import { StateForm } from "../../../_components/state-form";
 import { Banner, secondaryButtonClass } from "../../../_components/ui";
 import { errorMessage } from "../../../_components/messages";
 
@@ -77,12 +78,12 @@ export default async function EditVehiclePage({
           </Link>{" "}
           instead.
         </p>
-        <form action={removeVehicleProfile} className="mt-3">
+        <StateForm action={removeVehicleProfile} className="mt-3">
           <input type="hidden" name="asset_id" value={id} />
           <button type="submit" className={secondaryButtonClass}>
             Remove vehicle profile
           </button>
-        </form>
+        </StateForm>
       </section>
     </div>
   );

@@ -417,7 +417,7 @@ export default async function HqNotesPage({
                   <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
                     {n.body}
                   </p>
-                  <p className="mt-2 text-[10px] text-slate-400">
+                  <p className="mt-2 text-[10px] text-slate-500">
                     {n.author_email} · {n.created_at.slice(0, 16).replace("T", " ")} UTC
                     {n.updated_at !== n.created_at
                       ? ` · edited ${n.updated_at.slice(0, 10)}`

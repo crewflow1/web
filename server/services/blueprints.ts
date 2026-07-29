@@ -48,10 +48,18 @@ type BpFilter = {
   order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null }>;
   maybeSingle: () => Promise<{ data: Record<string, unknown> | null }>;
 };
+/**
+ * A DELETE filter. `.eq()` is chainable AND awaitable so a call site can scope
+ * by id alone (the create/rollback cleanup paths, which already hold a row they
+ * just inserted) or by id AND org (deleteBlueprint's active-org pin).
+ */
+type BpDelete = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
+  eq: (k: string, v: unknown) => BpDelete;
+};
 type BpClient = {
   from: (t: string) => {
     insert: (r: unknown) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> } };
-    delete: (opts?: { count?: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+    delete: (opts?: { count?: string }) => BpDelete;
     select: (c: string) => BpFilter;
   };
 };
@@ -235,18 +243,34 @@ export async function getBlueprintVersionUrl(versionId: string): Promise<Bluepri
 
 /** Delete a drawing + all revisions + storage bytes. Admin-only (RLS), audited. */
 export async function deleteBlueprint(blueprintId: string): Promise<BlueprintResult> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const tenant = await createClient();
   const admin = createAdminClient();
 
-  // Gather paths (RLS read) BEFORE the delete so we can clean storage.
-  const { data: versions } = await bp(tenant).from("blueprint_versions").select("storage_path").eq("blueprint_id", blueprintId).order("version", { ascending: true });
+  // ACTIVE-org pin, on BOTH halves of the pair. `blueprints_delete` is
+  // `is_org_admin(org_id)`, which an owner/admin of two orgs satisfies for
+  // BOTH — so without these predicates a dual-org owner working in org A could
+  // delete org B's drawing and wipe its storage bytes.
+  //
+  // The two predicates MUST move together. Pinning only the DELETE would leave
+  // the path-gathering read reaching across orgs; pinning only the read is
+  // worse — the wrong-org read returns no paths while the unpinned DELETE
+  // still removes the row, ORPHANING every stored byte of that drawing with
+  // nothing left in the database pointing at it. Both, or neither.
+  //
+  // Gather paths (RLS + org pin) BEFORE the delete so we can clean storage.
+  const { data: versions } = await bp(tenant).from("blueprint_versions").select("storage_path").eq("blueprint_id", blueprintId).eq("org_id", ctx.org.id).order("version", { ascending: true });
   const paths = (versions ?? []).map((v) => String(v.storage_path)).filter(Boolean);
 
   // Tenant delete — RLS refuses non-admins (0 rows). Only clean storage when a
   // row was ACTUALLY deleted, so a non-admin's denied delete never removes bytes.
-  const { error, count } = await bp(tenant).from("blueprints").delete({ count: "exact" }).eq("id", blueprintId);
+  const { error, count } = await bp(tenant).from("blueprints").delete({ count: "exact" }).eq("id", blueprintId).eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: "Couldn't delete the drawing." };
+  // Zero rows has three causes, deliberately treated alike: not an admin, the
+  // drawing is gone, or it belongs to a DIFFERENT org the caller happens to
+  // belong to. A non-active org's drawing must be indistinguishable from one
+  // the caller may not delete — and in all three cases NOTHING was deleted, so
+  // the storage cleanup below is correctly skipped and the bytes stay intact.
   if (!count) return { ok: false, error: "Only owners/admins can delete a drawing." };
   if (paths.length > 0) await admin.storage.from(BUCKET).remove(paths);
 

@@ -427,7 +427,7 @@ export default async function PublicQuotePage({
           </section>
         ) : null}
 
-        <footer className="pt-4 text-center text-xs text-slate-400">
+        <footer className="pt-4 text-center text-xs text-slate-600">
           Powered by CrewFlow
         </footer>
       </div>

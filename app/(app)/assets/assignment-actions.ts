@@ -1,7 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -12,6 +10,7 @@ import {
   returnSchema,
   transferSchema,
 } from "@/lib/assets/assignment";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Asset assignment (custody) actions.
@@ -21,6 +20,16 @@ import {
  * references + eligibility (23514). These actions translate those violations
  * into construction-language errors — never a raw SQL string — and NEVER do a
  * check-then-insert. Transfer goes through an atomic RPC.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a same-route ?saved= redirect back to /assets/[id] swaps the page segment
+ * itself and loses the Next 15.5 stranded-commit race (upstream
+ * vercel/next.js#83386) — the row is written but the URL never changes and no
+ * error surfaces. See components/forms/StateForm.tsx. No revalidatePath,
+ * deliberately: these surfaces render per-request (cookie-authed reads, no
+ * Next data cache), so revalidating only added weight to the racy action
+ * response.
  */
 
 type InsertResult = { error: { message: string; code?: string } | null };
@@ -57,16 +66,14 @@ function parseCheckout(formData: FormData) {
   };
 }
 
-export async function checkOutAsset(formData: FormData): Promise<void> {
+export async function checkOutAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  const assetId = String(formData.get("asset_id") ?? "");
   const parsed = checkOutSchema.safeParse(parseCheckout(formData));
   if (!parsed.success) {
-    const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Check the form";
-    redirect(`/assets/${assetId}?error=${encodeURIComponent(first)}`);
+    const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Please check the form.";
+    return formError(first);
   }
-  const d = parsed.success ? parsed.data : null;
-  if (!d) redirect(`/assets/${assetId}?error=validation`);
+  const d = parsed.data;
 
   const tenant = await createClient();
   const { error } = await (
@@ -92,8 +99,7 @@ export async function checkOutAsset(formData: FormData): Promise<void> {
   });
   if (error) {
     // The DB invariant (23505 unique / 23514 guard) is the gate — translate it.
-    const msg = friendlyAssignmentError(error.code, error.message);
-    redirect(`/assets/${d.asset_id}?error=${encodeURIComponent(msg)}`);
+    return formError(friendlyAssignmentError(error.code, error.message));
   }
 
   await recordAdminActivity({
@@ -105,11 +111,10 @@ export async function checkOutAsset(formData: FormData): Promise<void> {
     metadata: { assignment_type: d.assignment_type },
   });
 
-  revalidatePath(`/assets/${d.asset_id}`);
-  redirect(`/assets/${d.asset_id}?saved=checked_out`);
+  return formSuccess({ redirectTo: `/assets/${d.asset_id}?saved=checked_out` });
 }
 
-export async function returnAsset(formData: FormData): Promise<void> {
+export async function returnAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = String(formData.get("asset_id") ?? "");
   const parsed = returnSchema.safeParse({
@@ -118,9 +123,8 @@ export async function returnAsset(formData: FormData): Promise<void> {
     return_notes: formData.get("return_notes") ?? "",
     return_meter_reading: formData.get("return_meter_reading") ?? "",
   });
-  if (!parsed.success) redirect(`/assets/${assetId}?error=validation`);
-  const d = parsed.success ? parsed.data : null;
-  if (!d) redirect(`/assets/${assetId}?error=validation`);
+  if (!parsed.success) return formError("Please check the form.");
+  const d = parsed.data;
 
   const tenant = await createClient();
   // Close the OPEN assignment only — the status='open' filter makes a repeated
@@ -144,9 +148,9 @@ export async function returnAsset(formData: FormData): Promise<void> {
     .eq("status", "open");
   if (error) {
     console.error("[asset-assignments] return failed", error);
-    redirect(`/assets/${assetId}?error=update_failed`);
+    return formError("Couldn't update the asset.");
   }
-  if (!count) redirect(`/assets/${assetId}?error=not_open`);
+  if (!count) return formError("That asset isn't currently checked out.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -160,20 +164,17 @@ export async function returnAsset(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=returned`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=returned` });
 }
 
-export async function transferAsset(formData: FormData): Promise<void> {
+export async function transferAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  const assetId = String(formData.get("asset_id") ?? "");
   const parsed = transferSchema.safeParse(parseCheckout(formData));
   if (!parsed.success) {
-    const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Check the form";
-    redirect(`/assets/${assetId}?error=${encodeURIComponent(first)}`);
+    const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Please check the form.";
+    return formError(first);
   }
-  const d = parsed.success ? parsed.data : null;
-  if (!d) redirect(`/assets/${assetId}?error=validation`);
+  const d = parsed.data;
 
   const tenant = await createClient();
   // Atomic close-old + open-new (one transaction) — never two client calls.
@@ -199,8 +200,7 @@ export async function transferAsset(formData: FormData): Promise<void> {
     p_assigned_by: user.id,
   });
   if (error) {
-    const msg = friendlyAssignmentError(error.code, error.message);
-    redirect(`/assets/${d.asset_id}?error=${encodeURIComponent(msg)}`);
+    return formError(friendlyAssignmentError(error.code, error.message));
   }
 
   await recordAdminActivity({
@@ -212,6 +212,5 @@ export async function transferAsset(formData: FormData): Promise<void> {
     metadata: { assignment_type: d.assignment_type },
   });
 
-  revalidatePath(`/assets/${d.asset_id}`);
-  redirect(`/assets/${d.asset_id}?saved=transferred`);
+  return formSuccess({ redirectTo: `/assets/${d.asset_id}?saved=transferred` });
 }

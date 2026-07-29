@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { CHECK_LEVELS, CHECK_LEVEL_LABELS } from "@/lib/assets/inspection-template";
+import { StateForm } from "@/components/forms/StateForm";
 import { createTemplate } from "../../template-actions";
 
 export const metadata = { title: "New inspection template · CrewFlow" };
@@ -21,7 +22,7 @@ export default async function NewTemplatePage() {
         </p>
       </header>
 
-      <form action={createTemplate} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <StateForm action={createTemplate} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <label className="block text-xs font-medium text-slate-600">
           Name
           <input
@@ -73,7 +74,7 @@ export default async function NewTemplatePage() {
         <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
           Create draft
         </button>
-      </form>
+      </StateForm>
     </div>
   );
 }

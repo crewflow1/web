@@ -31,7 +31,9 @@ export async function JobAssetsSection({ jobId }: { jobId: string }) {
       };
     }
   )
-    .select("id, asset_id, assigned_at, expected_return_at, assets(id, name, status)")
+    // FK hint required: asset_assignments has two FKs to assets since the
+    // fleet migration; a bare assets(...) embed fails the whole query.
+    .select("id, asset_id, assigned_at, expected_return_at, assets!asset_assignments_asset_id_fkey(id, name, status)")
     .eq("job_id", jobId)
     .eq("status", "open")
     .order("assigned_at", { ascending: false })
@@ -53,7 +55,7 @@ export async function JobAssetsSection({ jobId }: { jobId: string }) {
             </Link>
             <span className="text-xs text-slate-500">since {r.assigned_at.slice(0, 10)}</span>
             {r.expected_return_at ? (
-              <span className="ml-auto text-xs text-slate-400">due back {r.expected_return_at}</span>
+              <span className="ml-auto text-xs text-slate-500">due back {r.expected_return_at}</span>
             ) : null}
           </li>
         ))}

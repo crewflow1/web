@@ -56,7 +56,7 @@ export function PaymentProofRow({ proof }: { proof: PaymentProof }) {
         </p>
         {proof.notes ? (
           <p className="mt-0.5 text-xs text-slate-600">
-            <span className="text-slate-400">Customer note:</span> {proof.notes}
+            <span className="text-slate-500">Customer note:</span> {proof.notes}
           </p>
         ) : null}
         {error ? (

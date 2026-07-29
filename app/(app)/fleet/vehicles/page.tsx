@@ -277,7 +277,7 @@ export default async function VehicleRegisterPage({ searchParams }: { searchPara
                       <td className="px-4 py-3">
                         <OperationalPill status={v.operationalStatus} />
                         {!isInService(v) && v.assetStatus !== "active" ? (
-                          <span className="ml-1 text-xs text-slate-400">({v.assetStatus})</span>
+                          <span className="ml-1 text-xs text-slate-500">({v.assetStatus})</span>
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
@@ -289,7 +289,7 @@ export default async function VehicleRegisterPage({ searchParams }: { searchPara
                             critical={worst.severity === "critical"}
                           />
                         ) : (
-                          <span className="text-xs text-slate-400">All current</span>
+                          <span className="text-xs text-slate-500">All current</span>
                         )}
                       </td>
                     </tr>

@@ -226,7 +226,7 @@ export default async function HqImpersonationPage({
                 <span className="text-slate-500">
                   → {s.target_org_name ?? s.target_org_id.slice(0, 8)}
                 </span>
-                <span className="text-slate-400">
+                <span className="text-slate-500">
                   {s.started_at.slice(0, 16).replace("T", " ")}
                   {s.ended_at
                     ? ` → ${s.ended_at.slice(0, 16).replace("T", " ")}`

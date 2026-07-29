@@ -140,7 +140,7 @@ function WorklistBody({ model }: { model: WorklistViewModel }) {
   return (
     <div className="space-y-3">
       {model.loading.isLoading ? (
-        <p className="text-xs text-slate-400">{model.loading.message}</p>
+        <p className="text-xs text-slate-600">{model.loading.message}</p>
       ) : null}
 
       {model.error.isError ? (
@@ -168,7 +168,7 @@ function SummaryLine({ model }: { model: WorklistViewModel }) {
   return (
     <p className="text-sm text-slate-600">
       {model.summary.label}
-      {model.summary.filtered ? <span className="ml-1 text-slate-400">(filtered)</span> : null}
+      {model.summary.filtered ? <span className="ml-1 text-slate-600">(filtered)</span> : null}
     </p>
   );
 }
@@ -224,7 +224,7 @@ function WorklistTableRow({ row }: { row: WorklistRow }) {
         {row.conversationId ? (
           <span className="font-mono text-xs text-slate-700">{row.conversationId}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-500">—</span>
         )}
         <Link
           href={detailPath(row.coordinationId)}
@@ -246,7 +246,7 @@ function WorklistTableRow({ row }: { row: WorklistRow }) {
             ))}
           </span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-500">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-slate-700">{row.modeLabel}</td>
@@ -256,7 +256,7 @@ function WorklistTableRow({ row }: { row: WorklistRow }) {
             Required
           </span>
         ) : (
-          <span className="text-xs text-slate-400">No</span>
+          <span className="text-xs text-slate-500">No</span>
         )}
       </td>
       <td className="px-4 py-3 text-xs text-slate-500 hidden lg:table-cell">{row.at.slice(0, 10)}</td>

@@ -104,7 +104,7 @@ export function DemoDetailPanel({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
           >
             ✕
           </button>
@@ -325,7 +325,7 @@ function ContactLink({
 }) {
   if (!href || disabled) {
     return (
-      <span className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-400">
+      <span className="inline-flex cursor-not-allowed items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
         {label}
       </span>
     );

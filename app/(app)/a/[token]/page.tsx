@@ -38,7 +38,7 @@ export default async function ScanPage({
 
   return (
     <div className="mx-auto max-w-md space-y-5 px-4 py-8">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
         Scanned asset
       </p>
 
@@ -66,7 +66,7 @@ export default async function ScanPage({
         </Link>
       </div>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-slate-600">
         Check-out, return and transfer are on the asset page.
       </p>
     </div>

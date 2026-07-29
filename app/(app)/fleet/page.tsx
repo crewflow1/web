@@ -195,7 +195,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                               <p className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
                                 <Plate registration={v?.registration ?? null} />
                                 {c.inService ? null : (
-                                  <span className="text-slate-400">not in service</span>
+                                  <span className="text-slate-500">not in service</span>
                                 )}
                               </p>
                             </div>
@@ -240,7 +240,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <div className="p-4">
                   {mpg == null ? (
                     <>
-                      <p className="text-2xl font-bold tabular-nums text-slate-400">—</p>
+                      <p className="text-2xl font-bold tabular-nums text-slate-500">—</p>
                       <p className="mt-1 text-xs text-slate-500">
                         Not calculable yet. Consumption can only be measured between two
                         consecutive brim-full fills that both carry a mileage reading. Log full

@@ -189,7 +189,7 @@ export default async function HqReceptionistReviewDetailPage({
               ) : null}
             </div>
           ) : (
-            <span className="text-xs text-slate-400">No conversation to assign</span>
+            <span className="text-xs text-slate-500">No conversation to assign</span>
           )}
         </div>
       </section>
