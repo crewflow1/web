@@ -123,9 +123,20 @@ Kept as designed, with the reviewed reason:
   block the issue"), PDF letterhead/branding lookups.
 - Idempotency heuristics whose primary write is loud and DB-backstopped:
   quotes accepted/invoice-reuse pre-checks (partial unique index), staff
-  already-member check, payments/purchase-orders 10s dedupe windows.
-  Exception taken: supplier-payments dedupe guards have NO DB natural-key
-  backstop — noted as follow-up.
+  already-member check, purchase-orders 10s dedupe window.
+
+  **Correction (review pass).** The earlier wording here had it backwards: it
+  filed the payments dedupe window with the DB-backstopped guards and flagged
+  only supplier-payments as the exception. NEITHER has a DB natural-key
+  backstop. `payments`/`supplier_payments` carry no unique index over
+  (org, amount, paid_at, method, reference, created_by), so the 10-second probe
+  is the ONLY duplicate check that exists, and `data: null` from a rejected
+  query is indistinguishable from "no recent duplicate". Both now FAIL CLOSED —
+  a failed probe refuses the write and tells the operator to retry, rather than
+  recording a customer's payment twice (`payments/allocate-actions.ts`) or
+  paying a subcontractor twice and filing the CIS deduction with it
+  (`suppliers/[id]/payments/actions.ts`, both the M2 and M3 probes). A refused
+  save costs a retry; a duplicated one inverts the ledger silently.
 - Post-write side-channel notifications with fallbacks (support ticket reply
   notification subject, admin owner-email lookup) — the write succeeds and
   the notification degrades.

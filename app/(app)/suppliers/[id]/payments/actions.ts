@@ -14,6 +14,7 @@ import { supplierPaymentSchema, voidSupplierPaymentSchema } from "@/lib/supplier
 import { cisBillDetailsSchema, cisPaymentSchema } from "@/lib/cis/schema";
 import { recordCisPayment, saveBillCisDetails } from "@/server/services/cis-deduction";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * H2-CIS M2 server actions — recording and voiding supplier payments.
@@ -102,7 +103,10 @@ export async function recordPayment(
     is: (k: string, v: unknown) => DupeQ;
     gte: (k: string, v: unknown) => DupeQ;
     limit: (n: number) => DupeQ;
-    maybeSingle: () => Promise<{ data: { id: string } | null }>;
+    maybeSingle: () => Promise<{
+      data: { id: string } | null;
+      error: SupabaseReadError | null;
+    }>;
   };
   const DEDUPE_WINDOW_MS = 10_000;
   const sinceIso = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
@@ -120,7 +124,18 @@ export async function recordPayment(
   dupQuery = input.reference
     ? dupQuery.eq("reference", input.reference)
     : dupQuery.is("reference", null);
-  const { data: existing } = await dupQuery.maybeSingle();
+  // FAIL CLOSED. This probe is the ONLY thing standing between a double submit
+  // and a duplicate row: there is no unique index behind it, so `data: null`
+  // from a REJECTED query is indistinguishable from "no recent duplicate" and
+  // the write proceeds. Refusing costs the operator one retry; guessing
+  // silently pays a subcontractor twice and files the CIS deduction twice with it.
+  const { data: existing, error: dupError } = await dupQuery.maybeSingle();
+  if (dupError) {
+    reportReadFailure("cis payment: duplicate probe", dupError);
+    return formError(
+      "We couldn't safely check whether this was already recorded, so nothing was saved. Try again.",
+    );
+  }
   if (existing) {
     console.warn("[supplier-payments] duplicate submit suppressed", {
       orgId: ctx.org.id,
@@ -292,7 +307,10 @@ export async function recordCisPaymentAction(
     is: (k: string, v: unknown) => DupeQ;
     gte: (k: string, v: unknown) => DupeQ;
     limit: (n: number) => DupeQ;
-    maybeSingle: () => Promise<{ data: { id: string } | null }>;
+    maybeSingle: () => Promise<{
+      data: { id: string } | null;
+      error: SupabaseReadError | null;
+    }>;
   };
   const sinceIso = new Date(Date.now() - 10_000).toISOString();
   let dupQuery = (supabase.from("supplier_payments" as never) as unknown as DupeQ)
@@ -308,7 +326,15 @@ export async function recordCisPaymentAction(
   dupQuery = input.reference
     ? dupQuery.eq("reference", input.reference)
     : dupQuery.is("reference", null);
-  const { data: existing } = await dupQuery.maybeSingle();
+  // FAIL CLOSED — same reasoning as recordPayment above. Nothing but this
+  // probe stops a double submit becoming a second real payment.
+  const { data: existing, error: dupError } = await dupQuery.maybeSingle();
+  if (dupError) {
+    reportReadFailure("cis payment: duplicate probe", dupError);
+    return formError(
+      "We couldn't safely check whether this was already recorded, so nothing was saved. Try again.",
+    );
+  }
   if (existing) {
     console.warn("[cis-payments] duplicate submit suppressed", {
       orgId: ctx.org.id,

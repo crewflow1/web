@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 export const runtime = "nodejs";
 
@@ -41,6 +43,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .maybeSingle();
   if (invErr) {
+    Sentry.captureException(readFailure("invoice remind: invoice", invErr), {
+      tags: { route: "invoices/remind" },
+    });
     console.error("[invoice-remind] invoice load failed", invErr);
     return NextResponse.json(
       { error: "load_failed", detail: invErr.message },

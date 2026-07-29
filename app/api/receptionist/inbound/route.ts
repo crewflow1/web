@@ -4,6 +4,7 @@ import { z } from "zod";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { INBOUND_CHANNELS } from "@/lib/receptionist/types";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * POST /api/receptionist/inbound
@@ -83,7 +84,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   let body: unknown;
   try {
     body = await request.json();
-  } catch {
+  } catch (e) {
+    // Reachable only past the shared-secret check above, so this is OUR channel
+    // adapter posting something unparseable — a real integration defect, not
+    // internet noise. Console alone pages nobody.
+    Sentry.captureException(e, { tags: { route: "receptionist/inbound", stage: "parse" } });
     return NextResponse.json(
       { ok: false, error: "Bad request body" },
       { status: 400 },
@@ -107,6 +112,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    // Fail CLOSED and page someone. Silently 500ing an inbound enquiry means a
+    // customer's call/message is dropped with nobody the wiser.
+    Sentry.captureException(e, { tags: { route: "receptionist/inbound", stage: "process" } });
     console.error("[api/receptionist/inbound] failed", e);
     return NextResponse.json(
       {

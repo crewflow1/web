@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { sendQuoteEmail } from "@/lib/email/send-quote";
+import { readFailure } from "@/lib/supabase/read-failure";
+import * as Sentry from "@sentry/nextjs";
 
 // PDF rendering inside the helper is Node only.
 export const runtime = "nodejs";
@@ -41,6 +43,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .eq("id", id)
     .maybeSingle();
   if (qErr) {
+    Sentry.captureException(readFailure("quote send: quote", qErr), {
+      tags: { route: "quotes/send" },
+    });
     console.error("[quote-send] quote load failed", qErr);
     return NextResponse.json(
       { error: "load_failed", detail: qErr.message },
