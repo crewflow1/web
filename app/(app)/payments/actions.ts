@@ -85,7 +85,19 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
     return formError("Upload failed — try again.");
   }
 
-  // 2. Pull unpaid invoices for scoring (RLS scopes to org).
+  // 2. Pull unpaid invoices for scoring, pinned to the ACTIVE org.
+  //
+  // The note here used to credit the row-level policy with scoping this read.
+  // That is untrue for a dual-org member: `invoices_select` is
+  // `org_id in current_org_ids()`, which returns EVERY org they belong to —
+  // the misplaced confidence is why this site survived earlier sweeps. It
+  // meant a bank CSV uploaded to org A scored its incoming
+  // payments against org B's sales ledger and, on a >=70 score, wrote org B's
+  // `invoice_id` onto an org A bank line as a `suggested` match. That put
+  // another company's invoice number and customer name on org A's reconcile
+  // screen, persisted a cross-org reference in the reconciliation ledger, and
+  // inflated org A's "suggested matches" count with rows that can never be
+  // confirmed (confirmBankMatch re-checks the invoice's org and refuses).
   const { data: invoices } = await supabase
     .from("invoices")
     .select(
@@ -94,6 +106,7 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
         quote:quotes ( customer:customers ( name ) )
       `,
     )
+    .eq("org_id", ctx.org.id)
     .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]);
 
   type ScoredInv = {

@@ -74,11 +74,22 @@ export async function setBlueprintStatus(jobId: string, blueprintId: string, _pr
   }
 
   const supabase = await createClient();
+  type BpUpd = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
+    eq: (k: string, v: unknown) => BpUpd;
+  };
   const { error, count } = await (
     supabase.from("blueprints" as never) as unknown as {
-      update: (r: unknown, o?: { count?: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+      update: (r: unknown, o?: { count?: string }) => BpUpd;
     }
-  ).update({ status }, { count: "exact" }).eq("id", blueprintId);
+  )
+    .update({ status }, { count: "exact" })
+    .eq("id", blueprintId)
+    // Active-org pin — the same predicate deleteBlueprint carries. The
+    // `isAdmin` check above is on the ACTIVE org's membership, but
+    // `blueprints_update` admits every org the caller belongs to, so without
+    // this an owner working in org A could flip an org B drawing's status
+    // (e.g. mark a live construction issue "superseded") from A's shell.
+    .eq("org_id", ctx.org.id);
   if (error || !count) return formError("Couldn't update the status.");
   await recordAdminActivity({ actorId: user.id, actorEmail: user.email ?? null, action: "blueprint.status_set", targetTable: "blueprints", targetId: blueprintId, metadata: { status } });
   return formSuccess({ redirectTo: `/jobs/${jobId}/blueprints?saved=status` });
