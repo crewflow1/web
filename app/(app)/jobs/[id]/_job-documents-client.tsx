@@ -351,7 +351,7 @@ export function DocumentRow({
           >
             {doc.status === "in_progress" ? "in progress" : doc.status}
           </span>
-          <span className="text-slate-400">
+          <span className="text-slate-500">
             {versions.length} version{versions.length === 1 ? "" : "s"}
           </span>
         </div>
@@ -446,7 +446,7 @@ export function DocumentRow({
                   <p className="truncate text-slate-800">
                     v{v.version_no} · {v.filename}
                   </p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     {formatBytes(v.size_bytes)}
                     {formatBytes(v.size_bytes) ? " · " : ""}
                     {v.created_at.slice(0, 10)}

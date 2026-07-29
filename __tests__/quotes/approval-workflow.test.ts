@@ -3,9 +3,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 /**
  * Wave 2 — Quote Approval Workflow unit tests.
  *
- * Mocks the Supabase client + role check so we can verify state
+ * Mocks the Supabase client + org context so we can verify state
  * transitions, send-gate, edit-revert, and the staff-blocked path
  * without a live DB.
+ *
+ * The caller's role comes from ctx.membership.role (requireOrgContext),
+ * NOT from a memberships query: org members can read each other's rows,
+ * so an org-only-filtered `.select("role").single()` returns every member
+ * and errors in any org with ≥2 members. The owner-approves case below
+ * pins that reviewQuote never issues such a query.
  *
  * Cases (per CEO spec):
  *   1. Cannot send without approval
@@ -20,7 +26,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type QueueEntry = { data?: unknown; error?: unknown; count?: number };
 type Queues = {
-  membership: QueueEntry[]; // role lookup
+  // Canary: role derivation must NOT hit memberships. Any unexpected pop
+  // throws "no queued response"; the owner-approves case also seeds this
+  // queue with a 2-member-org failure response and asserts it's untouched.
+  membership: QueueEntry[];
   quoteLookup: QueueEntry[]; // current status lookup
   update: QueueEntry[];
   insert: QueueEntry[];
@@ -117,6 +126,11 @@ function makeMockSupabase() {
 
 const mockSb = makeMockSupabase();
 
+// Caller's role, read at requireOrgContext-call time — ctx.membership is the
+// caller's OWN row in the active org (upstream it's resolved with a user_id
+// filter, so a 2-member org can't corrupt it). Tests mutate this per case.
+const caller = { role: "owner" };
+
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => mockSb.client),
 }));
@@ -127,7 +141,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: vi.fn(async () => ({
-    ctx: { org: { id: "org-1" } },
+    ctx: {
+      org: { id: "org-1" },
+      membership: { org_id: "org-1", role: caller.role },
+    },
     user: { id: "user-owner" },
   })),
 }));
@@ -161,6 +178,7 @@ function expectRedirectTo(fn: () => Promise<unknown>, contains: string) {
 }
 
 beforeEach(() => {
+  caller.role = "owner";
   mockSb.queue.membership.length = 0;
   mockSb.queue.quoteLookup.length = 0;
   mockSb.queue.update.length = 0;
@@ -220,7 +238,7 @@ describe("sendQuote — approval gate", () => {
 
 describe("reviewQuote — owner/admin can approve; staff blocked", () => {
   it("Staff CANNOT approve (redirected to /dashboard?error=forbidden)", async () => {
-    mockSb.enqueue("membership", { data: { role: "staff" }, error: null });
+    caller.role = "staff";
     const fd = new FormData();
     fd.set("action", "approve");
     await expectRedirectTo(() => actions.reviewQuote("11111111-1111-1111-1111-111111111111", fd), "forbidden");
@@ -229,7 +247,12 @@ describe("reviewQuote — owner/admin can approve; staff blocked", () => {
   });
 
   it("OWNER approves (sets status=approved + approved_by + approved_at)", async () => {
-    mockSb.enqueue("membership", { data: { role: "owner" }, error: null });
+    // Regression pin (2-member org): this is what an org-only-filtered
+    // memberships role read returns when the org has two members — PostgREST
+    // .single() errors on two rows. The pre-fix reviewQuote consumed it and
+    // forbade the owner. The fixed action derives the role from ctx and must
+    // leave this queue entry untouched.
+    mockSb.enqueue("membership", { data: null, error: { code: "PGRST116" } });
     mockSb.enqueue("quoteLookup", {
       data: { status: "pending_approval" },
       error: null,
@@ -248,10 +271,12 @@ describe("reviewQuote — owner/admin can approve; staff blocked", () => {
       approved_by: "user-owner",
     });
     expect((upd!.payload as { approved_at: string }).approved_at).toBeTruthy();
+    // The 2-member-org poison pill was never read.
+    expect(mockSb.queue.membership.length).toBe(1);
   });
 
   it("ADMIN approves with same effect as owner", async () => {
-    mockSb.enqueue("membership", { data: { role: "admin" }, error: null });
+    caller.role = "admin";
     mockSb.enqueue("quoteLookup", {
       data: { status: "pending_approval" },
       error: null,
@@ -268,7 +293,7 @@ describe("reviewQuote — owner/admin can approve; staff blocked", () => {
   });
 
   it("Reject requires a comment", async () => {
-    mockSb.enqueue("membership", { data: { role: "admin" }, error: null });
+    caller.role = "admin";
     const fd = new FormData();
     fd.set("action", "reject");
     fd.set("comment", "");
@@ -279,7 +304,7 @@ describe("reviewQuote — owner/admin can approve; staff blocked", () => {
   });
 
   it("Admin rejects with a comment", async () => {
-    mockSb.enqueue("membership", { data: { role: "admin" }, error: null });
+    caller.role = "admin";
     mockSb.enqueue("quoteLookup", {
       data: { status: "pending_approval" },
       error: null,

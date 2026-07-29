@@ -11,7 +11,7 @@ const STATUS_STYLE: Record<string, string> = {
   sent: "bg-blue-100 text-blue-700",
   partially_received: "bg-amber-100 text-amber-800",
   received: "bg-emerald-100 text-emerald-700",
-  cancelled: "bg-slate-100 text-slate-400 line-through",
+  cancelled: "bg-slate-100 text-slate-600 line-through", // slate-600, not 400: AA contrast on slate-100
 };
 
 type PoRow = {

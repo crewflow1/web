@@ -153,7 +153,7 @@ export function ActivityFeed({
             {loading ? "Loading…" : "Load more"}
           </button>
         ) : (
-          <span className="text-xs text-slate-400">No more activity</span>
+          <span className="text-xs text-slate-500">No more activity</span>
         )}
       </div>
     </section>

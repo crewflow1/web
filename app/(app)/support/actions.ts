@@ -140,12 +140,19 @@ export async function replyToSupportTicket(
   //                             so stamping it made the org's reply render as
   //                             the homeowner's own message — and pinged
   //                             CrewFlow about a conversation it isn't part of.
-  // RLS scopes this read to the caller's org, so a foreign ticket_id resolves
-  // to no row and we fail closed rather than guessing an actor.
+  // A foreign ticket_id must resolve to no row so we fail closed rather than
+  // guessing an actor. RLS alone does NOT achieve that: `support_tickets`'
+  // policy is `org_id in current_org_ids()`, which admits every org the caller
+  // belongs to, so a dual-org member working in org A could post a reply into
+  // org B's ticket thread — the message row stamped `org_id: ctx.org.id` (A)
+  // while hanging off B's ticket, and, for an HQ thread, an HQ notification
+  // carrying B's ticket number and subject line attributed to A. Hence the
+  // explicit ACTIVE-org pin.
   const { data: tRow } = await supabase
     .from("support_tickets" as never)
     .select("subject, ticket_number, customer_id" as never)
     .eq("id" as never, parsed.data.ticket_id)
+    .eq("org_id" as never, ctx.membership.org_id as never)
     .maybeSingle();
   const tInfo = tRow as unknown as {
     subject?: string;

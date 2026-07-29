@@ -1,11 +1,14 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { fuelLogSchema, vehicleIdSchema } from "@/lib/fleet/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
+import { FLEET_ERRORS } from "./_components/messages";
+
+/** Sentence for a known code; unknown codes fall through readable, like errorMessage(). */
+const fleetMsg = (code: string): string => FLEET_ERRORS[code] ?? code;
 
 /**
  * Fuel log actions.
@@ -18,6 +21,10 @@ import { fuelLogSchema, vehicleIdSchema } from "@/lib/fleet/schema";
  *
  * NOT A LEDGER: this records what went in the tank. It deliberately does not
  * post to `finances` — see the 20261058000000 header.
+ *
+ * These actions return `FormState` (client navigates via `redirectTo`) instead
+ * of calling `redirect()` — see the header of ./actions.ts for the router race
+ * that forbids Server-Action redirects between /fleet/vehicles/* routes.
  */
 
 type InsertChain = {
@@ -39,10 +46,14 @@ function fs(fd: FormData, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-export async function createFuelLog(formData: FormData): Promise<void> {
+export async function createFuelLog(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = fs(formData, "asset_id");
-  const returnTo = fs(formData, "return_to") === "fuel" ? "/fleet/fuel" : `/fleet/vehicles/${assetId}`;
+  const returnTo =
+    fs(formData, "return_to") === "fuel" ? "/fleet/fuel" : `/fleet/vehicles/${assetId}`;
 
   const parsed = fuelLogSchema.safeParse({
     asset_id: assetId,
@@ -61,10 +72,10 @@ export async function createFuelLog(formData: FormData): Promise<void> {
     const first =
       Object.values(fields).flat()[0] ??
       parsed.error.flatten().formErrors[0] ??
-      "validation";
-    redirect(`${returnTo}?error=${encodeURIComponent(first)}#fuel`);
+      "Check the fuel entry and try again.";
+    return formError(first);
   }
-  const d = parsed.data!;
+  const d = parsed.data;
 
   const tenant = await createClient();
   const { error } = await (
@@ -93,7 +104,7 @@ export async function createFuelLog(formData: FormData): Promise<void> {
         : m.includes("foreign key")
           ? "not_found"
           : "fuel_failed";
-    redirect(`${returnTo}?error=${code}#fuel`);
+    return formError(fleetMsg(code));
   }
 
   await recordAdminActivity({
@@ -110,19 +121,25 @@ export async function createFuelLog(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/fuel");
-  revalidatePath(`/fleet/vehicles/${d.asset_id}`);
-  redirect(`${returnTo}?saved=fuel_logged#fuel`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({ redirectTo: `${returnTo}?saved=fuel_logged#fuel` });
 }
 
 /** Delete is admin-only at the DB (fuel logs are expense evidence). */
-export async function deleteFuelLog(formData: FormData): Promise<void> {
+export async function deleteFuelLog(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const id = fs(formData, "id");
   const assetId = fs(formData, "asset_id");
-  const returnTo = fs(formData, "return_to") === "fuel" ? "/fleet/fuel" : `/fleet/vehicles/${assetId}`;
-  if (!vehicleIdSchema.safeParse(id).success) redirect(`${returnTo}?error=bad_id#fuel`);
+  const returnTo =
+    fs(formData, "return_to") === "fuel" ? "/fleet/fuel" : `/fleet/vehicles/${assetId}`;
+  if (!vehicleIdSchema.safeParse(id).success) return formError(fleetMsg("bad_id"));
 
   const tenant = await createClient();
   const { error, count } = await (
@@ -134,9 +151,9 @@ export async function deleteFuelLog(formData: FormData): Promise<void> {
 
   if (error) {
     console.error("[fleet] deleteFuelLog failed", error);
-    redirect(`${returnTo}?error=delete_failed#fuel`);
+    return formError(fleetMsg("delete_failed"));
   }
-  if (!count) redirect(`${returnTo}?error=forbidden#fuel`);
+  if (!count) return formError(fleetMsg("forbidden"));
 
   await recordAdminActivity({
     actorId: user.id,
@@ -147,8 +164,10 @@ export async function deleteFuelLog(formData: FormData): Promise<void> {
     metadata: { asset_id: assetId },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/fuel");
-  revalidatePath(`/fleet/vehicles/${assetId}`);
-  redirect(`${returnTo}?saved=fuel_deleted#fuel`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({ redirectTo: `${returnTo}?saved=fuel_deleted#fuel` });
 }

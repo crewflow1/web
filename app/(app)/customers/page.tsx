@@ -200,7 +200,7 @@ export default async function CustomersPage({
                     </div>
                     <span
                       aria-hidden
-                      className="shrink-0 self-center text-slate-400"
+                      className="shrink-0 self-center text-slate-500"
                     >
                       ›
                     </span>

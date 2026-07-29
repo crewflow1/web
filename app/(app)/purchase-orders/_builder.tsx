@@ -202,7 +202,7 @@ export function PurchaseOrderBuilder({
                 type="button"
                 aria-label="Remove line"
                 onClick={() => setRows((rs) => (rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs))}
-                className="col-span-1 rounded-md text-xs text-slate-400 hover:text-red-600"
+                className="col-span-1 rounded-md text-xs text-slate-600 hover:text-red-600"
               >
                 ✕
               </button>

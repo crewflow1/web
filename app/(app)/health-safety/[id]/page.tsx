@@ -48,7 +48,7 @@ const RA_STATUS_STYLES: Record<RaStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
   issued: "bg-emerald-100 text-emerald-800",
   superseded: "bg-amber-100 text-amber-800",
-  withdrawn: "bg-slate-100 text-slate-500",
+  withdrawn: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
 };
 
 /** Band → pill classes. Colour reinforces the label; the label carries the meaning. */
@@ -809,7 +809,7 @@ export default async function RiskAssessmentDetailPage({
                 className={
                   gate.ok
                     ? primaryBtn
-                    : "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-500"
+                    : "inline-flex min-h-[44px] cursor-not-allowed items-center justify-center rounded-md bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600"
                 }
               >
                 {isRevisionDraft ? `Issue revision ${ra.revision_number}` : "Issue risk assessment"}

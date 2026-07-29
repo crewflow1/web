@@ -51,7 +51,7 @@ export default async function CustomerSupportTicketPage({
         </Link>
         <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-bold text-slate-900">
-            <span className="text-slate-400">#{ticket.ticket_number}</span>{" "}
+            <span className="text-slate-600">#{ticket.ticket_number}</span>{" "}
             {ticket.subject}
           </h1>
           <span className="text-[11px] text-slate-500">

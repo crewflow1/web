@@ -168,9 +168,9 @@ export default async function HqAiReceptionistDetailPage({
           <Detail label="Instagram" value={row.instagram_handle} />
           <Detail label="Preferred voice" value={row.preferred_voice} />
           <Detail label="Trade type" value={row.trade_type} />
-          <div className="sm:col-span-2">
-            <Detail label="Business hours" value={row.business_hours} multiline />
-          </div>
+          {/* className on Detail itself: a wrapper div would nest div-in-div
+              inside the <dl>, which fails axe's only-dlitems check. */}
+          <Detail label="Business hours" value={row.business_hours} multiline className="sm:col-span-2" />
         </dl>
         <p className="mt-3 text-xs text-slate-500">
           Created {row.created_at.slice(0, 10)} · Last update{" "}
@@ -196,7 +196,7 @@ export default async function HqAiReceptionistDetailPage({
                 disabled={status === s}
                 className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
                   status === s
-                    ? "border-slate-300 bg-slate-100 text-slate-500"
+                    ? "border-slate-300 bg-slate-100 text-slate-600"
                     : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >
@@ -293,6 +293,7 @@ export default async function HqAiReceptionistDetailPage({
             rows={5}
             maxLength={4000}
             defaultValue={row.hq_notes ?? ""}
+            aria-label="Internal notes"
             className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
           <button
@@ -311,13 +312,15 @@ function Detail({
   label,
   value,
   multiline,
+  className,
 }: {
   label: string;
   value: string | null;
   multiline?: boolean;
+  className?: string;
 }) {
   return (
-    <div>
+    <div className={className}>
       <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </dt>

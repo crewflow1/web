@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
-import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   listBlueprints, listBlueprintVersionsForBlueprints,
   type BlueprintRow, type BlueprintVersionRow,
@@ -146,8 +146,8 @@ export default async function JobBlueprintsPage({
                           <span className="text-slate-700">
                             <strong>{v.revision}</strong>
                             {v.version === b.current_version ? <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">current</span> : null}
-                            {v.revision_date ? <span className="text-slate-400"> · {v.revision_date}</span> : null}
-                            {v.notes ? <span className="text-slate-400"> · {v.notes}</span> : null}
+                            {v.revision_date ? <span className="text-slate-500"> · {v.revision_date}</span> : null}
+                            {v.notes ? <span className="text-slate-500"> · {v.notes}</span> : null}
                           </span>
                           <a href={`/jobs/${id}/blueprints/f/${v.id}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${b.drawing_number} ${v.revision} in a new tab`} className="text-xs font-medium text-slate-600 hover:text-slate-900">
                             Open · {fmtSize(v.size_bytes)}
@@ -160,16 +160,18 @@ export default async function JobBlueprintsPage({
 
                 {isAdmin ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                    <form action={setBlueprintStatus.bind(null, id, b.id)} className="flex items-center gap-2">
-                      <label className="text-xs text-slate-500" htmlFor={`status-${b.id}`}>Status</label>
-                      <select id={`status-${b.id}`} name="status" defaultValue={status} className="rounded-md border border-slate-300 px-2 py-1 text-xs">
-                        {BLUEPRINT_STATUSES.map((s) => <option key={s} value={s}>{BLUEPRINT_STATUS_LABELS[s]}</option>)}
-                      </select>
-                      <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Set</button>
-                    </form>
-                    <ConfirmForm action={removeBlueprint.bind(null, id, b.id)} confirm={`Delete drawing ${b.drawing_number} and all its revisions? This can't be undone.`}>
+                    <StateForm action={setBlueprintStatus.bind(null, id, b.id)}>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-500" htmlFor={`status-${b.id}`}>Status</label>
+                        <select id={`status-${b.id}`} name="status" defaultValue={status} className="rounded-md border border-slate-300 px-2 py-1 text-xs">
+                          {BLUEPRINT_STATUSES.map((s) => <option key={s} value={s}>{BLUEPRINT_STATUS_LABELS[s]}</option>)}
+                        </select>
+                        <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Set</button>
+                      </div>
+                    </StateForm>
+                    <StateForm action={removeBlueprint.bind(null, id, b.id)} confirm={`Delete drawing ${b.drawing_number} and all its revisions? This can't be undone.`}>
                       <button type="submit" className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">Delete</button>
-                    </ConfirmForm>
+                    </StateForm>
                   </div>
                 ) : null}
               </li>

@@ -159,7 +159,7 @@ export function PageHero({
           {bullets ? (
             <div className="lg:col-span-5">
               <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                   What you get
                 </p>
                 <CheckList items={bullets} className="mt-4" />
@@ -252,7 +252,7 @@ export function FaqSection({
             >
               <summary className="flex cursor-pointer items-center justify-between text-base font-semibold text-slate-900 marker:hidden [&::-webkit-details-marker]:hidden">
                 {q.q}
-                <span aria-hidden className="ml-4 text-slate-400 transition group-open:rotate-45">
+                <span aria-hidden className="ml-4 text-slate-500 transition group-open:rotate-45">
                   +
                 </span>
               </summary>

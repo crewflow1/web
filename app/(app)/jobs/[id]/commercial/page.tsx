@@ -179,14 +179,14 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
             ({formatGbp(cash.pendingVariations)}) — not in the contract value yet.
           </p>
         ) : null}
-        <p className="mt-3 text-[11px] text-slate-400">Cash figures include VAT — the amounts that move through the bank.</p>
+        <p className="mt-3 text-[11px] text-slate-500">Cash figures include VAT — the amounts that move through the bank.</p>
       </section>
 
       {/* Internal exposure — never customer-facing. */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900">Cost &amp; profit</h2>
-          <span className="text-[11px] uppercase tracking-wide text-slate-400">internal · excl. VAT</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-500">internal · excl. VAT</span>
         </div>
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile
@@ -229,7 +229,7 @@ function Tile({
       <dd className={`mt-0.5 ${strong ? "text-lg font-bold" : "text-base font-semibold"} ${tone === "amber" ? "text-amber-700" : "text-slate-900"}`}>
         {pill ? <span className={`inline-block rounded-full px-2 py-0.5 text-sm font-semibold ${pill}`}>{value}</span> : value}
       </dd>
-      {sub ? <dd className="mt-0.5 text-[11px] text-slate-400">{sub}</dd> : null}
+      {sub ? <dd className="mt-0.5 text-[11px] text-slate-600">{sub}</dd> : null}
     </div>
   );
 }

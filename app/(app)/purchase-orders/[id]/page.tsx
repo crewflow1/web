@@ -40,7 +40,7 @@ const STATUS_STYLE: Record<string, string> = {
   sent: "bg-blue-100 text-blue-700",
   partially_received: "bg-amber-100 text-amber-800",
   received: "bg-emerald-100 text-emerald-700",
-  cancelled: "bg-slate-100 text-slate-400",
+  cancelled: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 const ERROR_COPY: Record<string, string> = {

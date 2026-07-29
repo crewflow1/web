@@ -243,7 +243,7 @@ export default async function HqSupportListPage({
               >
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                       #{t.ticket_number}
                     </span>
                     <span className="text-sm font-semibold text-slate-900">

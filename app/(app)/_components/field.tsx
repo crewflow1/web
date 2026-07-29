@@ -52,7 +52,7 @@ export function Field({
           {required ? <span className="ml-0.5 text-red-500">*</span> : null}
         </span>
         {optional ? (
-          <span className="text-xs text-slate-400">Optional</span>
+          <span className="text-xs text-slate-500">Optional</span>
         ) : null}
       </label>
       <input
@@ -126,7 +126,7 @@ export function TextareaField({
           {required ? <span className="ml-0.5 text-red-500">*</span> : null}
         </span>
         {optional ? (
-          <span className="text-xs text-slate-400">Optional</span>
+          <span className="text-xs text-slate-500">Optional</span>
         ) : null}
       </label>
       <textarea

@@ -57,7 +57,7 @@ export function PaymentsPanel({
         <div>
           <dt className="text-xs uppercase tracking-wide text-slate-500">Outstanding</dt>
           <dd
-            className={`mt-0.5 text-lg font-semibold ${outstanding === 0 ? "text-slate-400" : "text-slate-900"}`}
+            className={`mt-0.5 text-lg font-semibold ${outstanding === 0 ? "text-slate-500" : "text-slate-900"}`}
           >
             {GBP.format(outstanding)}
           </dd>

@@ -58,12 +58,12 @@ export default async function PortalReportsPage({
                           Latest
                         </span>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
                           Superseded
                         </span>
                       )}
                       {r.revision > 1 ? (
-                        <span className="text-slate-400">rev {r.revision}</span>
+                        <span className="text-slate-500">rev {r.revision}</span>
                       ) : null}
                     </div>
                     <p className="mt-1 text-sm font-medium text-slate-900">{r.title}</p>

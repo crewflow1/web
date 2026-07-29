@@ -6,6 +6,8 @@ import {
   isOverdue,
 } from "@/lib/assets/assignment";
 import { checkOutAsset, returnAsset, transferAsset } from "../assignment-actions";
+import { StateForm } from "@/components/forms/StateForm";
+import type { FormState } from "@/lib/forms/state";
 
 /**
  * Custody section on the asset detail page. Shows the current open assignment
@@ -81,7 +83,7 @@ export function CustodySection({
           </div>
 
           <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 lg:grid-cols-2">
-            <form action={returnAsset} className="space-y-2">
+            <StateForm action={returnAsset} className="space-y-2">
               <input type="hidden" name="id" value={current.id} />
               <input type="hidden" name="asset_id" value={assetId} />
               <p className="text-sm font-medium text-slate-800">Return</p>
@@ -98,7 +100,7 @@ export function CustodySection({
               <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
                 Return asset
               </button>
-            </form>
+            </StateForm>
 
             <AssignForm
               action={transferAsset}
@@ -141,7 +143,7 @@ function AssignForm({
   title,
   submit,
 }: {
-  action: (formData: FormData) => void | Promise<void>;
+  action: (prev: FormState, formData: FormData) => Promise<FormState>;
   assetId: string;
   jobs: JobOpt[];
   staff: StaffOpt[];
@@ -149,12 +151,15 @@ function AssignForm({
   submit: string;
 }) {
   return (
-    <form action={action} className="space-y-2">
+    <StateForm action={action} className="space-y-2">
       <input type="hidden" name="asset_id" value={assetId} />
       <p className="text-sm font-medium text-slate-800">{title}</p>
       <div>
         <label className={labelCls}>Where to</label>
-        <select name="assignment_type" defaultValue="allocated_to_job" className={fieldCls}>
+        {/* aria-label like every other control here: the visual label above is
+            unassociated, and this form renders multiple times per page so a
+            fixed htmlFor/id pair would collide. */}
+        <select name="assignment_type" defaultValue="allocated_to_job" className={fieldCls} aria-label="Where to">
           {ASSIGNMENT_TYPES.map((t) => (
             <option key={t} value={t}>{ASSIGNMENT_TYPE_LABELS[t]}</option>
           ))}
@@ -188,6 +193,6 @@ function AssignForm({
       <button type="submit" className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
         {submit}
       </button>
-    </form>
+    </StateForm>
   );
 }

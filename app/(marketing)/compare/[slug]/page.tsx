@@ -82,7 +82,7 @@ export default async function ComparisonPage({
           <p className="mt-4 text-lg leading-relaxed text-slate-600">{c.positioning}</p>
           <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
             <span className="font-semibold text-slate-900">{c.competitor.name} in one line:</span>{" "}
-            {c.competitor.oneLiner} <span className="text-slate-400">·</span>{" "}
+            {c.competitor.oneLiner} <span className="text-slate-500">·</span>{" "}
             <span className="font-semibold text-slate-900">Best for:</span> {c.competitor.bestFor}
           </div>
         </div>
@@ -100,7 +100,7 @@ export default async function ComparisonPage({
         <div className="mx-auto max-w-3xl">
           <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">The verdict</h2>
           <p className="mt-4 text-lg leading-relaxed text-slate-600">{c.verdict}</p>
-          <p className="mt-6 text-xs text-slate-400">
+          <p className="mt-6 text-xs text-slate-500">
             {c.competitor.name} details reflect publicly available positioning as of{" "}
             {REVIEWED_FMT(c.lastReviewed)}. Always check {c.competitor.name}&apos;s website for their
             latest features and pricing.

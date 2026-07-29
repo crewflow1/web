@@ -301,7 +301,7 @@ function CustomerBillingRowView({
             Stripe: <code>{row.stripe_customer_id}</code>
           </span>
         ) : (
-          <span className="text-[10px] text-slate-400">Stripe not linked</span>
+          <span className="text-[10px] text-slate-500">Stripe not linked</span>
         )}
       </div>
 
@@ -405,7 +405,7 @@ function ExpandedBilling({
               />
             </label>
             <label className="block text-slate-700">
-              Notes <span className="text-slate-400">optional</span>
+              Notes <span className="text-slate-500">optional</span>
               <input
                 name="notes"
                 type="text"
@@ -471,7 +471,7 @@ function InvoiceRow({ row }: { row: BillingInvoiceRow }) {
           {row.failure_reason ? ` · ${row.failure_reason}` : ""}
         </p>
         {row.notes ? (
-          <p className="mt-0.5 text-[10px] text-slate-400">{row.notes}</p>
+          <p className="mt-0.5 text-[10px] text-slate-500">{row.notes}</p>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
