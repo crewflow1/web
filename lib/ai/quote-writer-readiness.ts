@@ -25,7 +25,7 @@
  *
  *   pipelineImplemented — the schema, prompt, context builder and storage
  *                         EXIST in this build.        (build-time fact — TRUE)
- *   featureRegistered   — `quote_writer` is in the governor's registry, so a
+ *   featureRegistered   — `quote.writer_draft` is in the governor's registry, so a
  *                         call could be governed.     (build-time fact — TRUE)
  *   modelBindingPresent — the drafting tier maps to a model.        (FALSE)
  *   credentialsPresent  — the vendor secret is set.        (configuration)
@@ -50,7 +50,7 @@ import { featureDefinition, TASK_CLASS_TIER, type AiTier } from "./governor/regi
  * Stability note: this value is written to `ai_invocations.feature` and to
  * `ai_quote_drafts` provenance. Renaming it breaks historic telemetry.
  */
-export const QUOTE_WRITER_FEATURE = "quote_writer";
+export const QUOTE_WRITER_FEATURE = "quote.writer_draft";
 
 /**
  * The task class quote drafting runs as. `drafting` — customer-facing prose a
@@ -83,7 +83,7 @@ export type QuoteWriterReadiness = {
   available: boolean;
   /** The pipeline exists in this build. True. */
   pipelineImplemented: boolean;
-  /** `quote_writer` is a registered governed capability. True. */
+  /** `quote.writer_draft` is a registered governed capability. True. */
   featureRegistered: boolean;
   /** The tier this feature routes to (`mid`, from the `drafting` class). */
   tier: AiTier | null;

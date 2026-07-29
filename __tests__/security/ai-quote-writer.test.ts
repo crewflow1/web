@@ -446,7 +446,7 @@ describe("B. model output cannot reach a customer", () => {
 // =====================================================================
 
 describe("every model call goes through the governor, as a registered drafting call", () => {
-  it("`quote_writer` is registered, as `drafting`", () => {
+  it("`quote.writer_draft` is registered, as `drafting`", () => {
     const def = featureDefinition(QUOTE_WRITER_FEATURE);
     expect(def).not.toBeNull();
     expect(def!.taskClass).toBe("drafting");

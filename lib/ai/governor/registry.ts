@@ -154,7 +154,7 @@ export type AiFeatureDefinition = {
  *
  * NOTE THE ONE ASYMMETRY, because it is the honest part. The first three
  * capabilities degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a
- * fixed acknowledgement — so a user cannot tell whether AI ran. `quote_writer`
+ * fixed acknowledgement — so a user cannot tell whether AI ran. `quote.writer_draft`
  * cannot: a scope of works is not computable from a customer's description, so
  * there is no fallback to degrade to. Dark means it produces NOTHING and says
  * so. A registry entry claiming otherwise would be the false-green this
@@ -189,8 +189,8 @@ export const AI_FEATURES = {
    * refused by `invokeWithGovernor` rather than silently routed to the
    * expensive tier.
    */
-  quote_writer: {
-    key: "quote_writer",
+  "quote.writer_draft": {
+    key: "quote.writer_draft",
     label: "Quote writer draft",
     taskClass: "drafting",
     degradesTo:

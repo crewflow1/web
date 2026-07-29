@@ -165,7 +165,7 @@ compromise is a bad draft a human throws away.**
 
 ## 5. Governance
 
-Every model call goes through `invokeWithGovernor("quote_writer", "drafting", …)`.
+Every model call goes through `invokeWithGovernor("quote.writer_draft", "drafting", …)`.
 There is no other path, and no vendor SDK is imported anywhere in the feature —
 the model arrives through `getTextProvider()`, the existing provider abstraction.
 

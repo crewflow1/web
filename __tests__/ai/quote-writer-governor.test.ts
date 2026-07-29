@@ -596,7 +596,7 @@ describe("the ceiling is a START gate, not a reserve — and here is the size of
 // =====================================================================
 
 describe("the registry is the authority on what class a call runs as", () => {
-  it("`quote_writer` is REGISTERED as drafting", async () => {
+  it("`quote.writer_draft` is REGISTERED as drafting", async () => {
     const { featureDefinition } = await import("@/lib/ai/governor/registry");
     expect(featureDefinition(QUOTE_WRITER_FEATURE)?.taskClass).toBe("drafting");
     expect(QUOTE_WRITER_TASK_CLASS).toBe("drafting");
