@@ -28,6 +28,7 @@ import {
   updatePermit,
 } from "../actions";
 import { PermitFormFields } from "../_fields";
+import { StateForm } from "@/components/forms/StateForm";
 import {
   dangerBtn,
   disabledBtn,
@@ -240,7 +241,7 @@ export default async function PermitDetailPage({
         </h2>
 
         {editable ? (
-          <form action={updatePermit} className="mt-4 space-y-5">
+          <StateForm action={updatePermit} className="mt-4 space-y-5">
             <input type="hidden" name="id" value={permit.id} />
             <PermitFormFields
               jobs={jobs}
@@ -264,7 +265,7 @@ export default async function PermitDetailPage({
                 Save changes
               </button>
             </div>
-          </form>
+          </StateForm>
         ) : (
           <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
             <Detail label="Permit type">
@@ -369,7 +370,7 @@ export default async function PermitDetailPage({
                 {editable ? (
                   <div className="flex items-center gap-2">
                     {c.confirmed ? (
-                      <form action={confirmPermitCondition}>
+                      <StateForm action={confirmPermitCondition}>
                         <input type="hidden" name="id" value={c.id} />
                         <input type="hidden" name="permitId" value={permit.id} />
                         <input type="hidden" name="confirmed" value="off" />
@@ -377,25 +378,25 @@ export default async function PermitDetailPage({
                           Unconfirm
                           <span className="sr-only"> condition: {c.label}</span>
                         </button>
-                      </form>
+                      </StateForm>
                     ) : (
-                      <form action={confirmPermitCondition}>
+                      <StateForm action={confirmPermitCondition}>
                         <input type="hidden" name="id" value={c.id} />
                         <input type="hidden" name="permitId" value={permit.id} />
                         <button type="submit" className={confirmBtn}>
                           Confirm
                           <span className="sr-only"> condition: {c.label}</span>
                         </button>
-                      </form>
+                      </StateForm>
                     )}
-                    <form action={deletePermitCondition}>
+                    <StateForm action={deletePermitCondition}>
                       <input type="hidden" name="id" value={c.id} />
                       <input type="hidden" name="permitId" value={permit.id} />
                       <button type="submit" className={removeBtn}>
                         Remove
                         <span className="sr-only"> condition: {c.label}</span>
                       </button>
-                    </form>
+                    </StateForm>
                   </div>
                 ) : null}
               </li>
@@ -416,7 +417,7 @@ export default async function PermitDetailPage({
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {suggestions.map((s) => (
-                    <form key={s} action={addPermitCondition}>
+                    <StateForm key={s} action={addPermitCondition}>
                       <input type="hidden" name="permitId" value={permit.id} />
                       <input type="hidden" name="label" value={s} />
                       <input type="hidden" name="required" value="on" />
@@ -428,7 +429,7 @@ export default async function PermitDetailPage({
                       <button type="submit" className={suggestBtn}>
                         + {s}
                       </button>
-                    </form>
+                    </StateForm>
                   ))}
                 </div>
               </div>
@@ -438,7 +439,7 @@ export default async function PermitDetailPage({
               <h3 className="text-sm font-semibold text-slate-900">
                 Add a condition
               </h3>
-              <form action={addPermitCondition} className="mt-3 space-y-4">
+              <StateForm action={addPermitCondition} className="mt-3 space-y-4">
                 <input type="hidden" name="permitId" value={permit.id} />
                 <input
                   type="hidden"
@@ -474,7 +475,7 @@ export default async function PermitDetailPage({
                     Add condition
                   </button>
                 </div>
-              </form>
+              </StateForm>
             </div>
           </div>
         ) : null}
@@ -537,7 +538,7 @@ export default async function PermitDetailPage({
                 </ul>
               </div>
             ) : null}
-            <form action={issuePermit}>
+            <StateForm action={issuePermit}>
               <input type="hidden" name="id" value={permit.id} />
               <button
                 type="submit"
@@ -547,15 +548,15 @@ export default async function PermitDetailPage({
               >
                 Issue permit
               </button>
-            </form>
+            </StateForm>
             {canCancel ? (
-              <form action={transitionPermit} className="pt-1">
+              <StateForm action={transitionPermit} className="pt-1">
                 <input type="hidden" name="id" value={permit.id} />
                 <input type="hidden" name="verb" value="cancel" />
                 <button type="submit" className={dangerBtn}>
                   Cancel this draft
                 </button>
-              </form>
+              </StateForm>
             ) : null}
           </div>
         ) : terminal ? (
@@ -572,36 +573,35 @@ export default async function PermitDetailPage({
             </p>
             <div className="flex flex-wrap gap-3">
               {canActivate ? (
-                <form action={transitionPermit}>
+                <StateForm action={transitionPermit}>
                   <input type="hidden" name="id" value={permit.id} />
                   <input type="hidden" name="verb" value="activate" />
                   <button type="submit" className={primaryBtn}>
                     {status === "suspended" ? "Resume work" : "Activate"}
                   </button>
-                </form>
+                </StateForm>
               ) : null}
               {canSuspend ? (
-                <form action={transitionPermit}>
+                <StateForm action={transitionPermit}>
                   <input type="hidden" name="id" value={permit.id} />
                   <input type="hidden" name="verb" value="suspend" />
                   <button type="submit" className={warnBtn}>
                     Suspend
                   </button>
-                </form>
+                </StateForm>
               ) : null}
               {canCancel ? (
-                <form action={transitionPermit}>
+                <StateForm action={transitionPermit}>
                   <input type="hidden" name="id" value={permit.id} />
                   <input type="hidden" name="verb" value="cancel" />
                   <button type="submit" className={dangerBtn}>
                     Cancel permit
                   </button>
-                </form>
+                </StateForm>
               ) : null}
             </div>
             {canClose ? (
-              <form
-                action={transitionPermit}
+              <StateForm action={transitionPermit}
                 className="rounded-lg border border-slate-200 bg-slate-50 p-4"
               >
                 <input type="hidden" name="id" value={permit.id} />
@@ -626,7 +626,7 @@ export default async function PermitDetailPage({
                     Close permit
                   </button>
                 </div>
-              </form>
+              </StateForm>
             ) : null}
           </div>
         )}
