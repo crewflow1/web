@@ -1,17 +1,25 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { generateOpaqueToken } from "@/lib/assets/qr-token";
 import { assetIdSchema } from "@/lib/assets/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 /**
  * Asset QR identity actions. Generation/regeneration goes through the atomic
  * rotate RPC (revoke-old + insert-new in one txn); the one-active partial index
  * is the real gate. The token is crypto-random and minted here.
+ *
+ * These actions return `FormState` (the client navigates via `redirectTo`
+ * through <StateForm>, a full document load) instead of calling `redirect()`:
+ * a Server-Action redirect back to /assets/[id] swaps the page segment itself
+ * and loses the Next 15.5 stranded-commit race (upstream vercel/next.js#83386):
+ * the row is written but the URL never changes and no error surfaces. See
+ * components/forms/StateForm.tsx. No revalidatePath, deliberately: these
+ * surfaces render per-request (cookie-authed reads, no Next data cache), so
+ * revalidating only added weight to the racy action response.
  */
 
 type UpdateActiveChain = {
@@ -30,9 +38,12 @@ type UpdateActiveChain = {
   };
 };
 
-export async function generateOrRegenerateQr(assetId: string): Promise<void> {
+export async function generateOrRegenerateQr(
+  assetId: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  if (!assetIdSchema.safeParse(assetId).success) redirect(`/assets?error=bad_id`);
+  if (!assetIdSchema.safeParse(assetId).success) return formError("Invalid asset.");
 
   const tenant = await createClient();
   const token = generateOpaqueToken();
@@ -51,7 +62,7 @@ export async function generateOrRegenerateQr(assetId: string): Promise<void> {
   });
   if (error) {
     console.error("[asset-qr] rotate failed", error);
-    redirect(`/assets/${assetId}?error=qr_failed`);
+    return formError("Couldn't update the QR identity. Try again.");
   }
 
   await recordAdminActivity({
@@ -63,13 +74,15 @@ export async function generateOrRegenerateQr(assetId: string): Promise<void> {
     metadata: {},
   });
 
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=qr`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=qr` });
 }
 
-export async function revokeQr(assetId: string): Promise<void> {
+export async function revokeQr(
+  assetId: string,
+  _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  if (!assetIdSchema.safeParse(assetId).success) redirect(`/assets?error=bad_id`);
+  if (!assetIdSchema.safeParse(assetId).success) return formError("Invalid asset.");
 
   const tenant = await createClient();
   // Revoke the current active identity. status='active' filter makes a repeat a
@@ -86,9 +99,9 @@ export async function revokeQr(assetId: string): Promise<void> {
     .eq("active", true);
   if (error) {
     console.error("[asset-qr] revoke failed", error);
-    redirect(`/assets/${assetId}?error=qr_failed`);
+    return formError("Couldn't update the QR identity. Try again.");
   }
-  if (!count) redirect(`/assets/${assetId}?error=no_active_qr`);
+  if (!count) return formError("This asset has no active QR identity.");
 
   await recordAdminActivity({
     actorId: user.id,
@@ -99,6 +112,5 @@ export async function revokeQr(assetId: string): Promise<void> {
     metadata: {},
   });
 
-  revalidatePath(`/assets/${assetId}`);
-  redirect(`/assets/${assetId}?saved=qr_revoked`);
+  return formSuccess({ redirectTo: `/assets/${assetId}?saved=qr_revoked` });
 }

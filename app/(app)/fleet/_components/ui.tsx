@@ -206,7 +206,12 @@ export function FilterPill({
       }
     >
       {label}
-      {count != null ? <span className="ml-1 opacity-70 tabular-nums">{count}</span> : null}
+      {/* Solid tones, never opacity-*: the blended count fell below WCAG AA 4.5:1. */}
+      {count != null ? (
+        <span className={`ml-1 tabular-nums ${active ? "text-slate-300" : "text-slate-600"}`}>
+          {count}
+        </span>
+      ) : null}
     </Link>
   );
 }

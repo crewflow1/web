@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
+import { StateForm } from "@/components/forms/StateForm";
 import { JobForm } from "../_form";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { loadJobForOrg } from "@/lib/jobs/load";
@@ -498,7 +499,7 @@ export default async function EditJobPage({
 
           {isAdmin ? (
             <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2">
-              <form action={setJobRetentionRate.bind(null, job.id)} className="flex items-end gap-2">
+              <StateForm action={setJobRetentionRate.bind(null, job.id)} className="flex items-end gap-2">
                 <label className="flex-1 text-xs font-medium text-slate-600">
                   Retention rate (%)
                   <input
@@ -517,10 +518,10 @@ export default async function EditJobPage({
                 >
                   Save rate
                 </button>
-              </form>
+              </StateForm>
 
               {retention.isActive && maxReleasable(retention) > 0 ? (
-                <form action={recordRetentionRelease.bind(null, job.id)} className="flex items-end gap-2">
+                <StateForm action={recordRetentionRelease.bind(null, job.id)} className="flex items-end gap-2">
                   <label className="flex-1 text-xs font-medium text-slate-600">
                     Record release (£)
                     <input
@@ -539,7 +540,7 @@ export default async function EditJobPage({
                   >
                     Release
                   </button>
-                </form>
+                </StateForm>
               ) : null}
             </div>
           ) : null}

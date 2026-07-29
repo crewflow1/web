@@ -25,6 +25,8 @@ import {
   removeItem,
   removeSection,
 } from "../../template-actions";
+import { StateForm } from "@/components/forms/StateForm";
+import type { FormState } from "@/lib/forms/state";
 
 export const metadata = { title: "Inspection template · CrewFlow" };
 
@@ -169,7 +171,7 @@ export default async function TemplateEditorPage({
       {/* Lifecycle actions */}
       <div className="flex flex-wrap items-center gap-2">
         {editable ? (
-          <form action={publishTemplate}>
+          <StateForm action={publishTemplate}>
             <input type="hidden" name="template_id" value={t.id} />
             <button
               type="submit"
@@ -177,29 +179,29 @@ export default async function TemplateEditorPage({
             >
               Publish v{t.version}
             </button>
-          </form>
+          </StateForm>
         ) : null}
         {t.status === "published" || t.status === "superseded" ? (
-          <form action={createNextVersion}>
+          <StateForm action={createNextVersion}>
             <input type="hidden" name="template_id" value={t.id} />
             <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
               Create new version
             </button>
-          </form>
+          </StateForm>
         ) : null}
-        <form action={cloneTemplate}>
+        <StateForm action={cloneTemplate}>
           <input type="hidden" name="template_id" value={t.id} />
           <button type="submit" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             Clone as new template
           </button>
-        </form>
+        </StateForm>
         {t.status !== "archived" ? (
-          <form action={archiveTemplate}>
+          <StateForm action={archiveTemplate}>
             <input type="hidden" name="template_id" value={t.id} />
             <button type="submit" className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50">
               Archive
             </button>
-          </form>
+          </StateForm>
         ) : null}
       </div>
 
@@ -221,13 +223,13 @@ export default async function TemplateEditorPage({
             {editable ? (
               <div className="flex items-center gap-1">
                 <MoveButtons action={moveSection} hidden={{ template_id: t.id, section_key: s.key }} />
-                <form action={removeSection}>
+                <StateForm action={removeSection}>
                   <input type="hidden" name="template_id" value={t.id} />
                   <input type="hidden" name="section_key" value={s.key} />
                   <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50">
                     Remove
                   </button>
-                </form>
+                </StateForm>
               </div>
             ) : null}
           </div>
@@ -261,13 +263,13 @@ export default async function TemplateEditorPage({
                 {editable ? (
                   <span className="ml-auto flex items-center gap-1">
                     <MoveButtons action={moveItem} hidden={{ template_id: t.id, item_key: i.key }} />
-                    <form action={removeItem}>
+                    <StateForm action={removeItem}>
                       <input type="hidden" name="template_id" value={t.id} />
                       <input type="hidden" name="item_key" value={i.key} />
                       <button type="submit" className="rounded-md border border-slate-300 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50">
                         Remove
                       </button>
-                    </form>
+                    </StateForm>
                   </span>
                 ) : null}
                 {i.guidance ? (
@@ -285,7 +287,7 @@ export default async function TemplateEditorPage({
       ))}
 
       {editable ? (
-        <form action={addSection} className="flex items-end gap-2 rounded-xl border border-dashed border-slate-300 bg-white p-4">
+        <StateForm action={addSection} className="flex items-end gap-2 rounded-xl border border-dashed border-slate-300 bg-white p-4">
           <input type="hidden" name="template_id" value={t.id} />
           <label className="flex-1 text-xs font-medium text-slate-600">
             New section
@@ -300,7 +302,7 @@ export default async function TemplateEditorPage({
           <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
             Add section
           </button>
-        </form>
+        </StateForm>
       ) : null}
 
       {/* Version history */}
@@ -334,13 +336,13 @@ function MoveButtons({
   action,
   hidden,
 }: {
-  action: (formData: FormData) => Promise<void>;
+  action: (prev: FormState, formData: FormData) => Promise<FormState>;
   hidden: Record<string, string>;
 }) {
   return (
     <>
       {(["up", "down"] as const).map((dir) => (
-        <form key={dir} action={action}>
+        <StateForm key={dir} action={action}>
           {Object.entries(hidden).map(([k, v]) => (
             <input key={k} type="hidden" name={k} value={v} />
           ))}
@@ -352,7 +354,7 @@ function MoveButtons({
           >
             {dir === "up" ? "↑" : "↓"}
           </button>
-        </form>
+        </StateForm>
       ))}
     </>
   );
@@ -376,7 +378,7 @@ function AddItemForm({ templateId, sectionKey }: { templateId: string; sectionKe
   return (
     <details className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
       <summary className="cursor-pointer text-xs font-semibold text-slate-700">+ Add item</summary>
-      <form action={addItem} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <StateForm action={addItem} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <input type="hidden" name="template_id" value={templateId} />
         <input type="hidden" name="section_key" value={sectionKey} />
         <label className="text-xs font-medium text-slate-600 sm:col-span-2">
@@ -462,7 +464,7 @@ function AddItemForm({ templateId, sectionKey }: { templateId: string; sectionKe
             Add item
           </button>
         </div>
-      </form>
+      </StateForm>
     </details>
   );
 }

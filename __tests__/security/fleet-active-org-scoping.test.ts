@@ -139,13 +139,13 @@ describe("fleet writes — every mutation is pinned to the active org", () => {
   it("createVehicle captures ctx and passes it as the RPC's org", () => {
     const F = fn(ACTIONS, "createVehicle");
     expect(F).toMatch(/const \{ ctx, user \} = await requireOrgContext\(\)/);
-    expect(F).toMatch(/rpcArgs\(parsed\.data!, ctx\.org\.id, null, user\.id, ownership\)/);
+    expect(F).toMatch(/rpcArgs\(parsed\.data, ctx\.org\.id, null, user\.id, ownership\)/);
   });
 
   it("updateVehicle passes the active org as the RPC's org pin", () => {
     const F = fn(ACTIONS, "updateVehicle");
     expect(F).toMatch(/const \{ ctx, user \} = await requireOrgContext\(\)/);
-    expect(F).toMatch(/rpcArgs\(parsed\.data!, ctx\.org\.id, id, user\.id, ownership\)/);
+    expect(F).toMatch(/rpcArgs\(parsed\.data, ctx\.org\.id, id, user\.id, ownership\)/);
   });
 
   it("rpcArgs maps orgId onto p_org_id — the predicate the RPC scopes by", () => {

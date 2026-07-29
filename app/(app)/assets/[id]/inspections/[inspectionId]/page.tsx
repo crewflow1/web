@@ -15,6 +15,7 @@ import {
   type TemplateSnapshot,
 } from "@/lib/assets/inspection-template";
 import { completeTemplatedInspection, saveInspectionAnswers } from "../../../inspection-actions";
+import { InspectionRunForm } from "./_run-form";
 
 export const metadata = { title: "Inspection · CrewFlow" };
 
@@ -144,7 +145,12 @@ export default async function InspectionRunPage({
         </div>
       ) : null}
 
-      <form action={completeTemplatedInspection} className="space-y-5">
+      <InspectionRunForm
+        completeAction={completeTemplatedInspection}
+        saveAction={saveInspectionAnswers}
+        running={running}
+        className="space-y-5"
+      >
         <input type="hidden" name="inspection_id" value={insp.id} />
 
         {snapshot.sections.map((s, sIdx) => (
@@ -170,27 +176,7 @@ export default async function InspectionRunPage({
           </section>
         ))}
 
-        {running ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Complete inspection
-            </button>
-            <button
-              type="submit"
-              formAction={saveInspectionAnswers}
-              className="rounded-md border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Save progress
-            </button>
-            <span className="text-xs text-slate-500">
-              Completing derives the outcome from your answers and locks the record.
-            </span>
-          </div>
-        ) : null}
-      </form>
+      </InspectionRunForm>
 
       {/* Photos / evidence ride the universal attachments pipeline. */}
       <AttachmentsPanel targetTable="asset_inspections" targetId={insp.id} />

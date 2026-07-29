@@ -44,13 +44,11 @@ export default async function StaffPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  // Current user's role — gates the invite form.
-  const { data: myRow } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
+  // Current user's role — gates the invite form. From ctx (own membership in
+  // the ACTIVE org): an unfiltered memberships read returns every member's
+  // row and `.single()` errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const { data: membersRaw } = await supabase
     .from("memberships")
