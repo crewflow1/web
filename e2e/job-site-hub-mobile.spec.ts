@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * Job Site Hub — mobile + accessibility regression.
@@ -15,6 +16,15 @@ import { assertLocalE2eTarget } from "./_guard";
  * GET-navigates only; every write path is proved in the unit + integration
  * tiers. Axe is scoped to the three hub sections so this spec fails for the
  * hub's own accessibility, never for an unrelated panel on a busy page.
+ *
+ * Seeding is idempotent against a PERSISTENT local database: everything this
+ * spec creates is deletable (no issued-evidence freeze applies to diary rows,
+ * snags, DRAFT talks or job-target attachments), so beforeAll deletes this
+ * spec's own signature rows and reseeds fixed "Hub E2E" rows — the
+ * blueprint-pins pattern. The old per-run `Date.now()` titles existed to dodge
+ * residue collisions and grew every hub panel (and the timeline, which reads
+ * these tables directly) by four rows per local run, drifting the scanned DOM
+ * ever further from fresh-volume CI's.
  */
 
 const SLUG = "e2e-harness-org";
@@ -36,8 +46,6 @@ function svc() {
 test.describe("job site hub — mobile + accessibility", () => {
   test.use({ storageState: "e2e/.auth/owner.json" });
 
-  const stamp = Date.now();
-
   test.beforeAll(async () => {
     const db = svc();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +55,22 @@ test.describe("job site hub — mobile + accessibility", () => {
       | undefined;
     if (!orgId) throw new Error("seeded org not found — did globalSetup run?");
 
+    // Delete this spec's own rows from every earlier run (legacy stamped `Hub <ms>` titles
+    // and the previous run's `Hub E2E` sentinels alike — one prefix covers both). Scoped to
+    // the sentinel job + this signature so a concurrently-running spec's seeds (e.g.
+    // blueprint-pins snags, toolbox-a11y talks) are never touched. Deleting a snag also
+    // cascades any linked pin, never the reverse — so no strays in either direction.
+    for (const [table, column] of [
+      ["snags", "title"],
+      ["site_diary_entries", "work_summary"],
+      ["toolbox_talks", "topic"],
+    ] as const) {
+      const heal = await t(table).delete().eq("org_id", orgId).eq("job_id", JOB).like(column, "Hub %");
+      if (heal.error) throw new Error(`hub cleanup (${table}): ${heal.error.message}`);
+    }
+    const healAtt = await t("tenant_attachments").delete().eq("org_id", orgId).eq("target_table", "jobs").eq("target_id", JOB).like("filename", "hub-%");
+    if (healAtt.error) throw new Error(`hub cleanup (attachment): ${healAtt.error.message}`);
+
     const diary = await t("site_diary_entries")
       .insert({
         org_id: orgId,
@@ -54,7 +78,7 @@ test.describe("job site hub — mobile + accessibility", () => {
         entry_date: "2026-07-18",
         weather: "Dry am, heavy rain pm",
         labour_count: 8,
-        work_summary: `Hub ${stamp} — first fix upstairs, screed poured to plots 3 and 4`,
+        work_summary: "Hub E2E — first fix upstairs, screed poured to plots 3 and 4",
         delays: "Concrete wagon two hours late",
       })
       .select("id")
@@ -64,16 +88,16 @@ test.describe("job site hub — mobile + accessibility", () => {
     // Every row carries the SAME keys: a PostgREST bulk insert does not fall back
     // to a column default for a key that is absent from one object — it writes NULL.
     const snags = await t("snags").insert([
-      { org_id: orgId, job_id: JOB, title: `Hub ${stamp} cracked tile`, status: "open", priority: "high", location: "Plot 4 ensuite", due_date: "2026-01-01", resolved_at: null },
-      { org_id: orgId, job_id: JOB, title: `Hub ${stamp} loose socket`, status: "open", priority: "low", location: null, due_date: null, resolved_at: null },
-      { org_id: orgId, job_id: JOB, title: `Hub ${stamp} signed off`, status: "verified", priority: "medium", location: null, due_date: null, resolved_at: new Date().toISOString() },
+      { org_id: orgId, job_id: JOB, title: "Hub E2E cracked tile", status: "open", priority: "high", location: "Plot 4 ensuite", due_date: "2026-01-01", resolved_at: null },
+      { org_id: orgId, job_id: JOB, title: "Hub E2E loose socket", status: "open", priority: "low", location: null, due_date: null, resolved_at: null },
+      { org_id: orgId, job_id: JOB, title: "Hub E2E signed off", status: "verified", priority: "medium", location: null, due_date: null, resolved_at: new Date().toISOString() },
     ]);
     if (snags.error) throw new Error(`hub seed (snags): ${snags.error.message}`);
 
     const talk = await t("toolbox_talks").insert({
       org_id: orgId,
       job_id: JOB,
-      topic: `Hub ${stamp} working at height`,
+      topic: "Hub E2E working at height",
       talk_date: "2026-07-18",
       attendee_count: 8,
     });
@@ -84,9 +108,9 @@ test.describe("job site hub — mobile + accessibility", () => {
       org_id: orgId,
       target_table: "jobs",
       target_id: JOB,
-      filename: `hub-${stamp}-a-very-long-unbroken-site-photo-filename-from-a-phone-camera.jpg`,
+      filename: "hub-e2e-a-very-long-unbroken-site-photo-filename-from-a-phone-camera.jpg",
       mime_type: "image/jpeg",
-      storage_path: `${orgId}/jobs/${JOB}/hub-${stamp}.jpg`,
+      storage_path: `${orgId}/jobs/${JOB}/hub-e2e.jpg`,
     });
     if (att.error) throw new Error(`hub seed (attachment): ${att.error.message}`);
   });
@@ -144,6 +168,7 @@ test.describe("job site hub — mobile + accessibility", () => {
   test("the hub panels have no WCAG 2.2 A/AA violations", async ({ page }) => {
     await page.goto(`/jobs/${JOB}`);
     await page.waitForLoadState("networkidle");
+    await settleForAxe(page);
     let builder = new AxeBuilder({ page }).withTags(WCAG);
     for (const selector of HUB_SECTIONS) builder = builder.include(selector);
     const results = await builder.analyze();

@@ -1,13 +1,30 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 const uuid = z.string().uuid();
+
+/**
+ * Bank statement + reconciliation actions.
+ *
+ * These return `FormState` (the client navigates via `redirectTo` through
+ * <StateForm>, a full document load) instead of calling `redirect()`. A
+ * Server-Action redirect on the reconcile page swaps the route tree at depth 5
+ * and this file revalidated up to three paths per action — the exact
+ * weight/depth class measured losing 60-100% of navigations to the Next 15.5
+ * stranded-commit race under `next start` (rows written, URL frozen, no error
+ * anywhere; upstream vercel/next.js#83386). See components/forms/StateForm.tsx
+ * and the fleet fix (8e4a846).
+ *
+ * No revalidatePath, deliberately: every payments surface renders per-request
+ * (cookie-authed reads, no Next data cache), so the post-navigation document
+ * load is always fresh — revalidation only added weight to the racy response.
+ */
 
 /**
  * Upload a CSV bank statement.
@@ -18,28 +35,26 @@ const uuid = z.string().uuid();
  *   3. For each incoming line (amount > 0), score against unpaid invoices
  *      in the org. If a single invoice scores >= 70, write a 'suggested'
  *      match. Otherwise leave 'unmatched'.
- *   4. Redirect to /payments/reconcile/[statementId]
+ *   4. Navigate to /payments/reconcile/[statementId]
  */
-export async function uploadBankCsv(formData: FormData) {
+export async function uploadBankCsv(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  // Permission: admins-only — bank statements are sensitive.
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  if (!me || (me.role !== "owner" && me.role !== "admin")) {
+  // Permission: admins-only — bank statements are sensitive. Role comes from
+  // ctx (the caller's own membership in the ACTIVE org); an unfiltered
+  // memberships read would return every member's row and `.single()` would
+  // error in any org with ≥2 members, locking everyone out.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
     redirect("/payments?error=forbidden");
   }
 
   const file = formData.get("file") as File | null;
   if (!file || !(file instanceof File) || file.size === 0) {
-    redirect("/payments?error=no_file");
+    return formError("Choose a CSV file to upload.");
   }
   if (file.size > 5 * 1024 * 1024) {
-    redirect("/payments?error=file_too_large");
+    return formError("That file is too large — 5 MB at most.");
   }
   const text = await file.text();
 
@@ -47,11 +62,10 @@ export async function uploadBankCsv(formData: FormData) {
   try {
     rows = parseBankCsv(text);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "CSV parse failed";
-    redirect(`/payments?error=${encodeURIComponent(msg)}`);
+    return formError(err instanceof Error ? err.message : "CSV parse failed");
   }
   if (rows.length === 0) {
-    redirect("/payments?error=no_rows");
+    return formError("No usable rows found in that CSV.");
   }
 
   // 1. Create the statement row.
@@ -68,7 +82,7 @@ export async function uploadBankCsv(formData: FormData) {
     .single();
   if (stmtErr || !stmt) {
     console.error("[payments] statement insert failed", stmtErr);
-    redirect("/payments?error=upload_failed");
+    return formError("Upload failed — try again.");
   }
 
   // 2. Pull unpaid invoices for scoring, pinned to the ACTIVE org.
@@ -141,29 +155,23 @@ export async function uploadBankCsv(formData: FormData) {
     .insert(linesToInsert);
   if (linesErr) {
     console.error("[payments] lines insert failed", linesErr);
-    redirect(`/payments/reconcile/${stmt.id}?error=lines_failed`);
+    return formSuccess({ redirectTo: `/payments/reconcile/${stmt.id}?error=lines_failed` });
   }
 
-  revalidatePath("/payments");
-  revalidatePath(`/payments/reconcile/${stmt.id}`);
-  redirect(`/payments/reconcile/${stmt.id}?saved=uploaded`);
+  return formSuccess({ redirectTo: `/payments/reconcile/${stmt.id}?saved=uploaded` });
 }
 
-/**
- * Operator confirms a suggested match (or manually picks a different
- * invoice). This creates the invoice_payments row, links the bank line,
- * flips its status to 'confirmed'.
- */
 export async function confirmBankMatch(
   bankLineId: string,
+  _prev: FormState,
   formData: FormData,
-) {
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  if (!uuid.safeParse(bankLineId).success) redirect("/payments");
+  if (!uuid.safeParse(bankLineId).success) return formError("That line link looks wrong — reload and try again.");
 
   const targetInvoiceId = String(formData.get("invoice_id") ?? "");
   if (!uuid.safeParse(targetInvoiceId).success) {
-    redirect(`/payments?error=invalid_invoice`);
+    return formError("Pick an invoice to match against.");
   }
 
   const supabase = await createClient();
@@ -172,9 +180,9 @@ export async function confirmBankMatch(
     .select("id, org_id, bank_statement_id, amount, posted_at, reference, description")
     .eq("id", bankLineId)
     .maybeSingle();
-  if (!line) redirect("/payments?error=not_found");
-  if (line.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
-  if (line.amount <= 0) redirect("/payments?error=not_an_incoming_payment");
+  if (!line) return formError("Bank line not found.");
+  if (line.org_id !== ctx.org.id) return formError("Bank line not found.");
+  if (line.amount <= 0) return formError("Only incoming payments can be matched to invoices.");
 
   // SECURITY: `invoice_id` arrives from the form and was previously trusted.
   // The bank line above is org-checked; the invoice was not, and nothing
@@ -196,8 +204,8 @@ export async function confirmBankMatch(
     .select("id, org_id")
     .eq("id", targetInvoiceId)
     .maybeSingle();
-  if (!inv) redirect("/payments?error=not_found");
-  if (inv.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
+  if (!inv) return formError("Invoice not found.");
+  if (inv.org_id !== ctx.org.id) return formError("Invoice not found.");
 
   // Insert payment + link the line in one round trip (the trigger
   // auto-derives invoice status).
@@ -218,7 +226,7 @@ export async function confirmBankMatch(
     .single();
   if (payErr || !payment) {
     console.error("[payments] match payment insert failed", payErr);
-    redirect(`/payments/reconcile/${line.bank_statement_id}?error=match_failed`);
+    return formError("Couldn't record the payment — try again.");
   }
 
   const { error: updErr } = await supabase
@@ -232,7 +240,9 @@ export async function confirmBankMatch(
   if (updErr) {
     console.error("[payments] line update failed", updErr);
     // Payment is recorded — don't unwind, but flag.
-    redirect(`/payments/reconcile/${line.bank_statement_id}?error=match_partially_failed`);
+    return formSuccess({
+      redirectTo: `/payments/reconcile/${line.bank_statement_id}?error=match_partially_failed`,
+    });
   }
 
   // Recompute matched_count from the lines table — single source of truth.
@@ -248,15 +258,16 @@ export async function confirmBankMatch(
       .eq("id", line.bank_statement_id);
   }
 
-  revalidatePath(`/payments/reconcile/${line.bank_statement_id}`);
-  revalidatePath("/payments");
-  revalidatePath("/dashboard");
-  redirect(`/payments/reconcile/${line.bank_statement_id}?saved=matched`);
+  return formSuccess({ redirectTo: `/payments/reconcile/${line.bank_statement_id}?saved=matched` });
 }
 
-export async function ignoreBankLine(bankLineId: string) {
+export async function ignoreBankLine(
+  bankLineId: string,
+  _prev: FormState,
+  _formData: FormData,
+): Promise<FormState> {
   const { ctx } = await requireOrgContext();
-  if (!uuid.safeParse(bankLineId).success) redirect("/payments");
+  if (!uuid.safeParse(bankLineId).success) return formError("That line link looks wrong — reload and try again.");
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -267,6 +278,5 @@ export async function ignoreBankLine(bankLineId: string) {
   if (error) {
     console.error("[payments] ignore failed", error);
   }
-  revalidatePath("/payments");
-  redirect("/payments?saved=ignored");
+  return formSuccess({ redirectTo: "/payments?saved=ignored" });
 }

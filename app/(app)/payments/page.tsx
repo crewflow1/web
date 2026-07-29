@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
+import { StateForm } from "@/components/forms/StateForm";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -23,12 +24,11 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: me } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("org_id", ctx.org.id)
-    .single();
-  const isAdmin = me?.role === "owner" || me?.role === "admin";
+  // Caller's role from ctx — their own membership in the ACTIVE org. An
+  // unfiltered memberships read returns every member's row (org-member
+  // visibility policy) and `.single()` errors in any org with ≥2 members.
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const [{ data: statements }, { data: outstandingRows }] = await Promise.all([
     supabase
@@ -119,9 +119,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             name. Anything 70%+ confidence is suggested; you confirm or pick
             a different invoice.
           </p>
-          <form
+          <StateForm
             action={uploadBankCsv}
-            encType="multipart/form-data"
             className="mt-4 flex flex-wrap items-end gap-2"
           >
             <input
@@ -137,7 +136,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
             >
               Upload + match
             </button>
-          </form>
+          </StateForm>
         </section>
       ) : null}
 

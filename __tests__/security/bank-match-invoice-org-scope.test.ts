@@ -57,7 +57,9 @@ describe("confirmBankMatch — the invoice must belong to the caller's org", () 
   it("fails closed when the invoice does not resolve", () => {
     // Another org's invoice is filtered out by the invoices SELECT policy
     // (`org_id in (select current_org_ids())`), so it arrives here as no row.
-    expect(FN).toMatch(/if \(!inv\) redirect\(/);
+    // The action returns FormState (see the file header for the router race),
+    // so failing closed is `return formError(...)`, not a redirect.
+    expect(FN).toMatch(/if \(!inv\) return formError\(/);
   });
 
   it("performs BOTH checks before the invoice_payments insert, not after", () => {
