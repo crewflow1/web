@@ -1,13 +1,16 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { FLEET_COMPLIANCE_TYPES, FLEET_COMPLIANCE_LABELS } from "@/lib/fleet/compliance";
 import { vehicleIdSchema } from "@/lib/fleet/schema";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state";
+import { FLEET_ERRORS } from "./_components/messages";
+
+/** Sentence for a known code; unknown codes fall through readable, like errorMessage(). */
+const fleetMsg = (code: string): string => FLEET_ERRORS[code] ?? code;
 
 /**
  * Fleet compliance actions — MOT, insurance, road tax and service, carried on
@@ -19,6 +22,10 @@ import { vehicleIdSchema } from "@/lib/fleet/schema";
  * RPC's `p_org_id`, which every statement inside it is scoped by. RLS alone
  * would not do this: `is_org_admin(org_id)` passes for every org the caller
  * administers, not just the active one.
+ *
+ * These actions return `FormState` (client navigates via `redirectTo`) instead
+ * of calling `redirect()` — see the header of ./actions.ts for the router race
+ * that forbids Server-Action redirects between /fleet/vehicles/* routes.
  */
 
 type InsertChain = {
@@ -107,7 +114,10 @@ function firstError(e: z.ZodError): string {
  * whose RLS is ADMIN-ONLY on write (20261003000000) — a member's insert returns
  * no error and zero rows, so this is count-gated and reports a refusal.
  */
-export async function saveComplianceSchedule(formData: FormData): Promise<void> {
+export async function saveComplianceSchedule(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const parsed = scheduleSchema.safeParse({
     asset_id: fs(formData, "asset_id"),
@@ -118,13 +128,8 @@ export async function saveComplianceSchedule(formData: FormData): Promise<void> 
     lead_time_days: fs(formData, "lead_time_days"),
     supplier_id: fs(formData, "supplier_id"),
   });
-  const assetId = fs(formData, "asset_id");
-  if (!parsed.success) {
-    redirect(
-      `/fleet/vehicles/${assetId}?error=${encodeURIComponent(firstError(parsed.error))}#compliance`,
-    );
-  }
-  const d = parsed.data!;
+  if (!parsed.success) return formError(firstError(parsed.error));
+  const d = parsed.data;
 
   const tenant = await createClient();
   const { error } = await (
@@ -147,7 +152,7 @@ export async function saveComplianceSchedule(formData: FormData): Promise<void> 
     const code = error.message.toLowerCase().includes("not in org")
       ? "cross_org_reference"
       : "schedule_failed";
-    redirect(`/fleet/vehicles/${assetId}?error=${code}#compliance`);
+    return formError(fleetMsg(code));
   }
 
   await recordAdminActivity({
@@ -159,20 +164,25 @@ export async function saveComplianceSchedule(formData: FormData): Promise<void> 
     metadata: { maintenance_type: d.maintenance_type, next_due: d.next_due },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/compliance");
-  revalidatePath(`/fleet/vehicles/${d.asset_id}`);
-  redirect(`/fleet/vehicles/${d.asset_id}?saved=scheduled#compliance`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({
+    redirectTo: `/fleet/vehicles/${d.asset_id}?saved=scheduled#compliance`,
+  });
 }
 
 /** Stop tracking an obligation. Deactivates rather than deletes — history stays. */
-export async function deactivateComplianceSchedule(formData: FormData): Promise<void> {
+export async function deactivateComplianceSchedule(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const scheduleId = fs(formData, "schedule_id");
   const assetId = fs(formData, "asset_id");
-  if (!vehicleIdSchema.safeParse(scheduleId).success) {
-    redirect(`/fleet/vehicles/${assetId}?error=bad_id#compliance`);
-  }
+  if (!vehicleIdSchema.safeParse(scheduleId).success) return formError(fleetMsg("bad_id"));
 
   const tenant = await createClient();
   const { error, count } = await (
@@ -184,9 +194,9 @@ export async function deactivateComplianceSchedule(formData: FormData): Promise<
 
   if (error) {
     console.error("[fleet] deactivateComplianceSchedule failed", error);
-    redirect(`/fleet/vehicles/${assetId}?error=schedule_failed#compliance`);
+    return formError(fleetMsg("schedule_failed"));
   }
-  if (!count) redirect(`/fleet/vehicles/${assetId}?error=forbidden#compliance`);
+  if (!count) return formError(fleetMsg("forbidden"));
 
   await recordAdminActivity({
     actorId: user.id,
@@ -197,10 +207,14 @@ export async function deactivateComplianceSchedule(formData: FormData): Promise<
     metadata: { asset_id: assetId },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/compliance");
-  revalidatePath(`/fleet/vehicles/${assetId}`);
-  redirect(`/fleet/vehicles/${assetId}?saved=schedule_stopped#compliance`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({
+    redirectTo: `/fleet/vehicles/${assetId}?saved=schedule_stopped#compliance`,
+  });
 }
 
 /**
@@ -208,7 +222,10 @@ export async function deactivateComplianceSchedule(formData: FormData): Promise<
  * the schedule forward, atomically (see the RPC header in 20261057000000 for
  * why a half-write here is dangerous rather than merely untidy).
  */
-export async function recordComplianceCompletion(formData: FormData): Promise<void> {
+export async function recordComplianceCompletion(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
   const assetId = fs(formData, "asset_id");
   const parsed = completionSchema.safeParse({
@@ -222,12 +239,8 @@ export async function recordComplianceCompletion(formData: FormData): Promise<vo
     supplier_id: fs(formData, "supplier_id"),
     work_performed: fs(formData, "work_performed"),
   });
-  if (!parsed.success) {
-    redirect(
-      `/fleet/vehicles/${assetId}?error=${encodeURIComponent(firstError(parsed.error))}#compliance`,
-    );
-  }
-  const d = parsed.data!;
+  if (!parsed.success) return formError(firstError(parsed.error));
+  const d = parsed.data;
 
   const tenant = await createClient();
   const { error } = await (tenant as unknown as RpcChain).rpc(
@@ -257,7 +270,7 @@ export async function recordComplianceCompletion(formData: FormData): Promise<vo
         : m.includes("not in org")
           ? "cross_org_reference"
           : "completion_failed";
-    redirect(`/fleet/vehicles/${assetId}?error=${code}#compliance`);
+    return formError(fleetMsg(code));
   }
 
   await recordAdminActivity({
@@ -273,8 +286,12 @@ export async function recordComplianceCompletion(formData: FormData): Promise<vo
     },
   });
 
-  revalidatePath("/fleet");
-  revalidatePath("/fleet/compliance");
-  revalidatePath(`/fleet/vehicles/${d.asset_id}`);
-  redirect(`/fleet/vehicles/${d.asset_id}?saved=completed#compliance`);
+  // No revalidatePath here, deliberately: every fleet surface is force-dynamic
+  // and the client router treats dynamic content as immediately stale, so the
+  // post-navigation fetch is always fresh. Revalidating also makes the action
+  // response carry a full re-render of this deep route, which is exactly the
+  // payload whose client-side commit can strand (see the header note).
+  return formSuccess({
+    redirectTo: `/fleet/vehicles/${d.asset_id}?saved=completed#compliance`,
+  });
 }
