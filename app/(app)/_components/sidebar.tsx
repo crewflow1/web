@@ -36,6 +36,9 @@ const ADMIN_LINKS = [
   { href: "/cis", label: "CIS" },
   { href: "/tax", label: "Tax" },
   { href: "/staff", label: "Staff" },
+  // Operations heads the estate group: the cross-cutting "what needs me" view,
+  // then the registers it reads from.
+  { href: "/operations", label: "Operations" },
   { href: "/assets", label: "Assets" },
   { href: "/fleet", label: "Fleet" },
   { href: "/compliance", label: "Compliance" },
