@@ -217,6 +217,168 @@ export async function advanceMaterialRequestFulfilment(
 }
 
 /**
+ * RE-DERIVE a request's fulfilment from the live stock ledger and, if it has
+ * moved, advance its status through the one blessed RPC.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS IS THE JOIN THE TWO LANES DEFERRED TO RELEASE TIME
+ * ═══════════════════════════════════════════════════════════════════════════
+ * M4 shipped `advance_material_request_fulfilment` taking a caller-supplied
+ * `p_fulfilled` because, on its own branch, only the app could read a stock
+ * schema that was not frozen yet (20261067 seam note). Both lanes are now in
+ * main, so the honest sum is available — and it is computed HERE, by
+ * `readIssuedForLines`, which is the corrections-EXCLUDING derivation
+ * (record_stock_correction does not copy material_request_line_id, so a naive
+ * sum over movement_type='issue' over-reports a reversed issue). We read the
+ * real movements and hand the RPC the truth; the RPC still owns the status
+ * ARITHMETIC and the security marker. No parallel path, no hand-set status.
+ *
+ * BEST-EFFORT, and deliberately one-directional in effect: the RPC only walks
+ * a request FORWARD (approved → partially_fulfilled → fulfilled) and treats
+ * `fulfilled` as terminal (20261067). So a correction that reduces a
+ * PARTIALLY-fulfilled request re-derives to a lower position but the status
+ * stays `partially_fulfilled` rather than reverting to `approved` — which is
+ * correct: the request is still open, and every SURFACE renders the DERIVED
+ * position (computeMaterialFulfilment), which is always the live truth. The
+ * status column is a forward-only cache of that truth, never its source.
+ *
+ * An UNMEASURED read (stock module pending / a real read failure) returns null
+ * and advances NOTHING: a stale-forward badge is recoverable, a false
+ * 'fulfilled' leaves a site without its materials.
+ */
+export async function reconcileRequestFulfilment(
+  db: StockSeamClient,
+  orgId: string,
+  requestId: string,
+): Promise<string | null> {
+  // This request's line ids, ACTIVE-ORG pinned. current_org_ids() admits every
+  // org the caller belongs to; the pin narrows it to the company being worked
+  // in, so a dual-org member cannot reconcile the other company's request.
+  const { data, error } = await db
+    .from("material_request_lines")
+    .select("id")
+    .eq("org_id", orgId) // ACTIVE-ORG PIN
+    .eq("material_request_id", requestId)
+    .limit(MOVEMENT_LIMIT);
+  if (error) {
+    console.error("[material-fulfilment] reconcile: line read failed", error);
+    return null;
+  }
+  const lineIds = ((data ?? []) as Array<{ id: string | null }>)
+    .map((r) => r.id)
+    .filter((id): id is string => typeof id === "string");
+  if (lineIds.length === 0) return null;
+
+  const { issued, stockModulePending } = await readIssuedForLines(db, orgId, lineIds);
+  // An absent or failed measurement must NEVER advance a status. This is the
+  // same refusal computeMaterialFulfilment makes on the read side.
+  if (stockModulePending) return null;
+
+  return advanceMaterialRequestFulfilment(db, orgId, requestId, issued);
+}
+
+/**
+ * Reconcile whatever material request a stock movement was fulfilling — the
+ * CORRECTION path's hook.
+ *
+ * When an issue that carried a material_request_line_id is reversed, the
+ * correction row does NOT carry that id (record_stock_correction only writes
+ * corrects_movement_id), so the ORIGINAL movement is where the linkage lives.
+ * The stock-correction action passes the id of the movement it reversed; we
+ * read the line it named, find that line's request, and re-derive. This is the
+ * write that makes "the reversal returns the line to outstanding" show up in
+ * the request's status, not only on the next page render.
+ */
+export async function reconcileFulfilmentForMovement(
+  db: StockSeamClient,
+  orgId: string,
+  movementId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("stock_movements")
+    .select("material_request_line_id")
+    .eq("org_id", orgId) // ACTIVE-ORG PIN
+    .eq("id", movementId)
+    .limit(1);
+  if (error) {
+    if (!isStockModuleAbsent(error)) {
+      console.error("[material-fulfilment] reconcile-for-movement: read failed", error);
+    }
+    return null;
+  }
+  const lineId = (
+    (data ?? [])[0] as { material_request_line_id: string | null } | undefined
+  )?.material_request_line_id;
+  if (!lineId) return null; // this movement never touched a material request
+
+  const { data: lineRows, error: lineErr } = await db
+    .from("material_request_lines")
+    .select("material_request_id")
+    .eq("org_id", orgId) // ACTIVE-ORG PIN
+    .eq("id", lineId)
+    .limit(1);
+  if (lineErr) {
+    console.error("[material-fulfilment] reconcile-for-movement: line lookup failed", lineErr);
+    return null;
+  }
+  const requestId = (
+    (lineRows ?? [])[0] as { material_request_id: string | null } | undefined
+  )?.material_request_id;
+  if (!requestId) return null;
+
+  return reconcileRequestFulfilment(db, orgId, requestId);
+}
+
+export type IssueToRequestLineInput = {
+  itemId: string;
+  siteId: string;
+  qty: number;
+  requestLineId: string;
+  jobId?: string | null;
+  notes?: string | null;
+};
+
+export type IssueToRequestLineResult =
+  | { ok: true; movementId: string; status: string | null }
+  | { ok: false; code?: string; message?: string };
+
+/**
+ * Issue stock AGAINST a material request line, then advance the request.
+ *
+ * The generic issueStock action deliberately always sends
+ * p_material_request_line_id = null (the frozen contract exercised, and pinned
+ * by __tests__/security/operational-stock.test.ts). Fulfilling a REQUEST is a
+ * different intent with a different provenance, so it gets its own path — this
+ * one — which sets the line id and then reconciles. record_stock_issue keeps
+ * every guarantee it already has (the per-(item, site) lock, the negative-stock
+ * refusal, the active-org composite FKs); we add only the request advance.
+ */
+export async function issueStockToRequestLine(
+  db: StockSeamClient,
+  orgId: string,
+  requestId: string,
+  input: IssueToRequestLineInput,
+): Promise<IssueToRequestLineResult> {
+  const { data, error } = await db.rpc("record_stock_issue", {
+    p_org_id: orgId, // ACTIVE-ORG PIN
+    p_item_id: input.itemId,
+    p_site_id: input.siteId,
+    p_qty: input.qty,
+    p_job_id: input.jobId ?? null,
+    p_material_request_line_id: input.requestLineId,
+    p_notes: input.notes ?? null,
+  });
+  if (error || typeof data !== "string") {
+    return { ok: false, code: error?.code ?? undefined, message: error?.message ?? undefined };
+  }
+  // The movement is committed. Re-derive and advance — best-effort, because a
+  // stale badge is recoverable but failing the whole action after real stock
+  // has moved is not.
+  const status = await reconcileRequestFulfilment(db, orgId, requestId);
+  return { ok: true, movementId: data, status };
+}
+
+/**
  * Does an item id belong to this org's stock catalogue?
  *
  * THE APP-LAYER HALF OF THE DEFERRED-FK DEBT. `material_request_lines.

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { formatDateUK, formatDayKeyUK } from "@/lib/time/format";
 import { StateForm } from "@/components/forms/StateForm";
+import { listSitesForOrg, type SiteRow, type SitesClient } from "@/server/services/sites";
 import {
   loadMaterialRequest,
   userLabel,
@@ -25,6 +27,7 @@ import {
   cancelMaterialRequest,
   createPoDraftFromRequest,
   decideMaterialRequest,
+  fulfilRequestLineFromStock,
   submitMaterialRequest,
 } from "../actions";
 
@@ -75,6 +78,22 @@ export default async function MaterialRequestDetailPage({
     isAdmin &&
     (request.status === "approved" || request.status === "partially_fulfilled") &&
     fulfilment.totalOutstanding > 0;
+
+  // THE PRODUCER of fulfilment. A request that is live and measurable can have
+  // its catalogue-linked lines issued straight from stock — the one path that
+  // stamps a material_request_line_id onto a movement and advances the request
+  // (fulfilRequestLineFromStock → the cross-lane seam). Only offered when the
+  // stock module is actually reachable: "stock module pending" means we cannot
+  // measure fulfilment, so we must not invite an issue against it either.
+  const canFulfilFromStock =
+    !fulfilment.stockModulePending &&
+    (request.status === "approved" || request.status === "partially_fulfilled");
+  let fulfilSites: { id: string; name: string }[] = [];
+  if (canFulfilFromStock) {
+    const supabase = await createClient();
+    const rows = await listSitesForOrg<SiteRow>(supabase as unknown as SitesClient, ctx.org.id);
+    fulfilSites = rows.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }));
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 pb-10">
@@ -237,6 +256,57 @@ export default async function MaterialRequestDetailPage({
                       </span>
                     ) : null}
                   </p>
+                ) : null}
+                {/*
+                  THE PRODUCER. Issuing from stock stamps this line's id onto the
+                  movement and advances the request (fulfilRequestLineFromStock →
+                  the seam). Only offered for a catalogue-linked, still-outstanding
+                  line while the stock module is reachable — a free-text line is
+                  sourced through "Create PO draft" instead.
+                */}
+                {canFulfilFromStock && fulfilSites.length > 0 && line.stock_item_id && pos && !pos.complete ? (
+                  <StateForm
+                    action={fulfilRequestLineFromStock}
+                    className="mt-2 flex flex-wrap items-end gap-2"
+                  >
+                    <input type="hidden" name="request_id" value={request.id} />
+                    <input type="hidden" name="material_request_line_id" value={line.id} />
+                    <label className="text-xs">
+                      <span className="block text-slate-500">Issue</span>
+                      <input
+                        type="number"
+                        name="qty"
+                        step="0.01"
+                        min="0.01"
+                        defaultValue={pos.outstanding}
+                        className="mt-0.5 w-24 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                      />
+                    </label>
+                    <label className="text-xs">
+                      <span className="block text-slate-500">From</span>
+                      <select
+                        name="site_id"
+                        required
+                        defaultValue=""
+                        className="mt-0.5 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                      >
+                        <option value="" disabled>
+                          Pick a site
+                        </option>
+                        {fulfilSites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="submit"
+                      className="min-h-9 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white hover:bg-slate-800"
+                    >
+                      Issue from stock
+                    </button>
+                  </StateForm>
                 ) : null}
               </li>
             );

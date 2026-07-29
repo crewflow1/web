@@ -20,6 +20,10 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import {
+  reconcileFulfilmentForMovement,
+  type StockSeamClient,
+} from "@/server/services/material-fulfilment";
 
 /**
  * OPERATIONAL STOCK — server actions.
@@ -470,8 +474,8 @@ export async function correctStockMovement(
     return formError(parsed.error.issues[0]?.message ?? "Say why this is being reversed.");
   }
 
-  const supabase = (await createClient()) as unknown as RpcClient;
-  const { data, error } = await supabase.rpc("record_stock_correction", {
+  const supabase = await createClient();
+  const { data, error } = await (supabase as unknown as RpcClient).rpc("record_stock_correction", {
     p_org_id: ctx.org.id, // ACTIVE-ORG PIN
     p_movement_id: parsed.data.movement_id,
     p_reason: parsed.data.reason,
@@ -490,6 +494,24 @@ export async function correctStockMovement(
     targetId: data,
     metadata: { corrects: parsed.data.movement_id, reason: parsed.data.reason },
   });
+
+  // CROSS-LANE SEAM. If the movement we just reversed was fulfilling a material
+  // request line, re-derive that request so its status reflects the reversal —
+  // a corrected issue returns the line to outstanding, which is the whole reason
+  // the seam EXCLUDES corrected issues. The correction row does not carry the
+  // line id, so the seam is handed the ORIGINAL movement id. Best-effort by
+  // contract: a stock correction must never fail because a materials badge could
+  // not be refreshed. The single blessed writer of the derived status is still
+  // advance_material_request_fulfilment, reached only through the seam.
+  try {
+    await reconcileFulfilmentForMovement(
+      supabase as unknown as StockSeamClient,
+      ctx.org.id,
+      parsed.data.movement_id,
+    );
+  } catch (e) {
+    console.error("[stock] correction fulfilment reconcile failed", e);
+  }
 
   const safeItemId = stockIdSchema.safeParse(itemId).success ? itemId : undefined;
   return formSuccess({

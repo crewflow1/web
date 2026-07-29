@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
@@ -17,8 +16,13 @@ import {
   notifyRequesterOfMaterialDecision,
   type MaterialRequestEmailInfo,
 } from "@/lib/email/send-material-request";
-import { isStockItemInOrg, type StockSeamClient } from "@/server/services/material-fulfilment";
+import {
+  isStockItemInOrg,
+  issueStockToRequestLine,
+  type StockSeamClient,
+} from "@/server/services/material-fulfilment";
 import { loadMaterialRequest } from "@/server/services/material-requests";
+import { friendlyStockError } from "@/lib/stock/schema";
 import { computeTotals } from "@/lib/quotes/totals";
 
 /**
@@ -43,6 +47,24 @@ import { computeTotals } from "@/lib/quotes/totals";
  *
  * Neither material_requests nor material_request_lines is in the generated
  * Supabase types yet, so writers are cast — the established `as never` idiom.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NAVIGATION: redirectTo, NEVER revalidatePath — the deep-swap commit race
+ * ═══════════════════════════════════════════════════════════════════════════
+ * There is DELIBERATELY no `revalidatePath` / `revalidateTag` in this file, and
+ * it is not an oversight. The detail route `/materials/requests/[id]` is
+ * `force-dynamic` and its buttons post through StateForm (useActionState). Next
+ * 15.5 re-renders every revalidated route INSIDE the server-action response;
+ * with the current route in that payload, `useActionState` never commits the
+ * returned state — the write lands, the POST returns 200, and the form sits on
+ * its pending state for ever. The stock lane BISECTED exactly this ("an operator
+ * would issue the same stock twice", app/(app)/stock/actions.ts) and the fleet
+ * lane documents the same ban (app/(app)/fleet/actions.ts). So every write here
+ * ends in `formSuccess({ redirectTo })`, which StateForm turns into a FULL
+ * DOCUMENT navigation (window.location.assign) that re-fetches the destination
+ * fresh — no cache entry to invalidate, no state left uncommitted.
+ * __tests__/security/material-requests.test.ts pins the absence so it cannot
+ * creep back.
  */
 
 const idSchema = z.string().uuid();
@@ -314,11 +336,8 @@ export async function createMaterialRequest(
     if (!sent.ok) return formError(sent.error);
   }
 
-  revalidatePath("/materials/requests");
-  if (parsed.data.job_id) revalidatePath(`/jobs/${parsed.data.job_id}`);
-  // FormState + redirectTo → StateForm does window.location.assign. NEVER
-  // redirect() from a deep server action: Next 15.5 silently drops the
-  // navigation at route-swap depth ≥4 (docs/… deep-swap commit race).
+  // redirectTo → StateForm's full document navigation, which re-fetches the
+  // destination fresh; no revalidatePath (see the file header's deep-swap note).
   return formSuccess({ redirectTo: `/materials/requests/${requestId}?saved=1` });
 }
 
@@ -389,9 +408,9 @@ export async function submitMaterialRequest(
   const sent = await submitRequestRow(supabase, ctx, id);
   if (!sent.ok) return formError(sent.error);
 
-  revalidatePath("/materials/requests");
-  revalidatePath(`/materials/requests/${id}`);
-  return formSuccess({ successMessage: "Request sent for approval." });
+  // Full-document navigation refreshes the queue and the detail page; no
+  // revalidatePath (the deep-swap commit race — see the file header).
+  return formSuccess({ redirectTo: `/materials/requests/${id}?saved=1` });
 }
 
 // ── Decide ──────────────────────────────────────────────────────────────────
@@ -484,12 +503,8 @@ export async function decideMaterialRequest(
     reason,
   );
 
-  revalidatePath("/materials/requests");
-  revalidatePath(`/materials/requests/${id}`);
-  if (row.job_id) revalidatePath(`/jobs/${row.job_id}`);
-  return formSuccess({
-    successMessage: decision === "approved" ? "Request approved." : "Request rejected.",
-  });
+  // Full-document navigation; no revalidatePath (deep-swap race — file header).
+  return formSuccess({ redirectTo: `/materials/requests/${id}?saved=1` });
 }
 
 // ── Cancel ──────────────────────────────────────────────────────────────────
@@ -528,11 +543,8 @@ export async function cancelMaterialRequest(
   }
   if (!data) return formError("That request can no longer be cancelled.");
 
-  revalidatePath("/materials/requests");
-  revalidatePath(`/materials/requests/${id}`);
-  const jobId = (data as { job_id?: string | null }).job_id;
-  if (jobId) revalidatePath(`/jobs/${jobId}`);
-  return formSuccess({ successMessage: "Request cancelled." });
+  // Full-document navigation; no revalidatePath (deep-swap race — file header).
+  return formSuccess({ redirectTo: `/materials/requests/${id}?saved=1` });
 }
 
 // ── Procurement handoff ─────────────────────────────────────────────────────
@@ -652,7 +664,96 @@ export async function createPoDraftFromRequest(
     return formError("Couldn't copy the lines onto the purchase order.");
   }
 
-  revalidatePath("/purchase-orders");
-  revalidatePath(`/materials/requests/${id}`);
+  // No revalidatePath (deep-swap race — file header); redirectTo re-fetches.
   return formSuccess({ redirectTo: `/purchase-orders/${po.id}?saved=1` });
+}
+
+// ── Fulfil from stock ─────────────────────────────────────────────────────────
+
+const fulfilFromStockSchema = z.object({
+  request_id: z.string().uuid(),
+  material_request_line_id: z.string().uuid(),
+  site_id: z.string().uuid("Pick where the stock is coming from"),
+  qty: z.coerce
+    .number({ invalid_type_error: "Enter how much to issue" })
+    .positive("The quantity must be above zero")
+    .max(9_999_999, "That's too big"),
+  notes: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(2000).optional(),
+  ),
+});
+
+/**
+ * Issue stock AGAINST a request line — the PRODUCER end of the fulfilment loop.
+ *
+ * This is the ONE path that stamps a material_request_line_id onto a stock issue
+ * (the generic issueStock action always sends null — the frozen contract, pinned
+ * by __tests__/security/operational-stock.test.ts). The heavy lifting — the
+ * movement, the per-(item, site) advisory lock, the negative-stock refusal and
+ * then the status advance — all live behind the ONE cross-lane seam
+ * (issueStockToRequestLine → reconcileRequestFulfilment → the single blessed
+ * advance_material_request_fulfilment writer). This action only decides WHAT: an
+ * approved / part-fulfilled request, a line that belongs to it and names a
+ * catalogue item, and a quantity.
+ *
+ * OVER-ISSUE IS ALLOWED, not clamped here. The stores may legitimately hand out
+ * 15 against a request for 10; record_stock_issue still caps it at the on-hand
+ * balance, and the request simply reads as satisfied — the surplus is surfaced
+ * on the detail page, never silently swallowed and never made into a negative
+ * outstanding. Fulfilment is DERIVED, so this action never writes a status.
+ */
+export async function fulfilRequestLineFromStock(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { ctx } = await requireOrgContext();
+  const parsed = fulfilFromStockSchema.safeParse({
+    request_id: formData.get("request_id") ?? "",
+    material_request_line_id: formData.get("material_request_line_id") ?? "",
+    site_id: formData.get("site_id") ?? "",
+    qty: formData.get("qty") ?? "",
+    notes: formData.get("notes") ?? "",
+  });
+  if (!parsed.success) {
+    return formError(parsed.error.issues[0]?.message ?? "Check the details and try again.");
+  }
+
+  // ACTIVE-ORG PINNED read. loadMaterialRequest returns null for a request in
+  // the caller's OTHER org, so a dual-org member cannot fulfil the wrong one.
+  const detail = await loadMaterialRequest(ctx.org.id, parsed.data.request_id);
+  if (!detail) return formError("That request isn't available.");
+  if (detail.request.status !== "approved" && detail.request.status !== "partially_fulfilled") {
+    return formError("Only an approved request can be fulfilled from stock.");
+  }
+
+  const line = detail.lines.find((l) => l.id === parsed.data.material_request_line_id);
+  if (!line) return formError("That line isn't on this request.");
+  if (!line.stock_item_id) {
+    return formError(
+      "That line isn't linked to a stock item, so it can't be issued from stock — raise a purchase order for it instead.",
+    );
+  }
+
+  const supabase = await createClient();
+  const result = await issueStockToRequestLine(
+    supabase as unknown as StockSeamClient,
+    ctx.org.id, // ACTIVE-ORG PIN
+    parsed.data.request_id,
+    {
+      itemId: line.stock_item_id,
+      siteId: parsed.data.site_id,
+      qty: parsed.data.qty,
+      // The job the request is for — the movement records WHY the stock left.
+      jobId: detail.request.job_id,
+      requestLineId: parsed.data.material_request_line_id,
+      notes: parsed.data.notes ?? null,
+    },
+  );
+  if (!result.ok) {
+    return formError(friendlyStockError(result.code, result.message));
+  }
+
+  // Full-document navigation; no revalidatePath (deep-swap race — file header).
+  return formSuccess({ redirectTo: `/materials/requests/${parsed.data.request_id}?saved=1` });
 }
