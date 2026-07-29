@@ -37,7 +37,7 @@ const STATUS_STYLES: Partial<Record<MaintenanceStatus, string>> = {
   ready_for_reinspection: "bg-purple-100 text-purple-700",
   ready_for_return_to_service: "bg-emerald-100 text-emerald-800",
   completed: "bg-emerald-100 text-emerald-800",
-  cancelled: "bg-slate-100 text-slate-400",
+  cancelled: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 /**
@@ -154,8 +154,8 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
         {c.reinspection_required ? (
           <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">Re-inspection required</span>
         ) : null}
-        {hours != null ? <span className="text-[11px] text-slate-400">{hours}h down</span> : null}
-        <span className="ml-auto text-xs text-slate-400">{c.created_at.slice(0, 10)}</span>
+        {hours != null ? <span className="text-[11px] text-slate-500">{hours}h down</span> : null}
+        <span className="ml-auto text-xs text-slate-500">{c.created_at.slice(0, 10)}</span>
       </div>
 
       {c.status === "ready_for_reinspection" && c.source_inspection_id ? (

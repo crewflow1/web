@@ -200,7 +200,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
                 return (
                   <th key={d} className="px-3 py-2 text-left">
                     <div>{d}</div>
-                    <div className="text-[10px] font-normal text-slate-400">{isoDate(day)}</div>
+                    <div className="text-[10px] font-normal text-slate-600">{isoDate(day)}</div>
                   </th>
                 );
               })}

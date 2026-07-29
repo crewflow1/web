@@ -587,7 +587,7 @@ function ComplianceLine({ row }: { row: OpsComplianceRow }) {
           <p className="truncate text-sm font-medium text-slate-900">{row.assetName}</p>
           <p className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
             <Plate registration={row.registration} />
-            {row.status.inService ? null : <span className="text-slate-400">not in service</span>}
+            {row.status.inService ? null : <span className="text-slate-500">not in service</span>}
           </p>
         </div>
         <CompliancePill

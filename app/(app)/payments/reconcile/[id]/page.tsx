@@ -157,7 +157,7 @@ export default async function ReconcilePage({
                           <div className="mt-0.5 text-slate-500">{GBP.format(matched.total)}</div>
                         </div>
                       ) : (
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-slate-500">
                           {isIncoming ? "no match found" : "outgoing — skip"}
                         </span>
                       )}

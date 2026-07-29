@@ -488,7 +488,7 @@ export default async function EditJobPage({
                   <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                     <span className="text-slate-600">
                       {r.released_on}
-                      {r.note ? <span className="text-slate-400"> · {r.note}</span> : null}
+                      {r.note ? <span className="text-slate-500"> · {r.note}</span> : null}
                     </span>
                     <span className="font-medium text-slate-900">{formatGbp(r.amount)}</span>
                   </li>
@@ -609,7 +609,7 @@ export default async function EditJobPage({
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
                   {GBP.format(committed.committed)}
                 </dd>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   {committed.count} order{committed.count === 1 ? "" : "s"}
                   {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
                 </p>
@@ -621,7 +621,7 @@ export default async function EditJobPage({
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
                   {GBP.format(billedActual)}
                 </dd>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   {poBilledRows.length} bill{poBilledRows.length === 1 ? "" : "s"}
                   {committed.committed > 0
                     ? ` · ${Math.round((billedActual / committed.committed) * 100)}% of committed`

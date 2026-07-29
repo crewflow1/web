@@ -220,7 +220,7 @@ export default async function CisStatementPage({
         </div>
       ) : null}
 
-      <p className="text-xs text-slate-400">Content hash {statement.content_hash}</p>
+      <p className="text-xs text-slate-600">Content hash {statement.content_hash}</p>
     </div>
   );
 }

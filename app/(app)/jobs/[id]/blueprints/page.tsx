@@ -146,8 +146,8 @@ export default async function JobBlueprintsPage({
                           <span className="text-slate-700">
                             <strong>{v.revision}</strong>
                             {v.version === b.current_version ? <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">current</span> : null}
-                            {v.revision_date ? <span className="text-slate-400"> · {v.revision_date}</span> : null}
-                            {v.notes ? <span className="text-slate-400"> · {v.notes}</span> : null}
+                            {v.revision_date ? <span className="text-slate-500"> · {v.revision_date}</span> : null}
+                            {v.notes ? <span className="text-slate-500"> · {v.notes}</span> : null}
                           </span>
                           <a href={`/jobs/${id}/blueprints/f/${v.id}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${b.drawing_number} ${v.revision} in a new tab`} className="text-xs font-medium text-slate-600 hover:text-slate-900">
                             Open · {fmtSize(v.size_bytes)}

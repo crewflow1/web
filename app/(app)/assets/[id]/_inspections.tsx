@@ -47,8 +47,8 @@ const OUTCOME_STYLES: Record<InspectionOutcome, string> = {
 const STATUS_STYLES: Record<InspectionStatus, string> = {
   draft: "bg-slate-100 text-slate-600",
   issued: "bg-blue-100 text-blue-700",
-  superseded: "bg-slate-100 text-slate-500",
-  archived: "bg-slate-100 text-slate-400",
+  superseded: "bg-slate-100 text-slate-600", // slate-600, not 500: AA contrast on slate-100
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 /**
@@ -137,7 +137,7 @@ export function InspectionsSection({
                 <span className="font-medium text-slate-900">{i.title}</span>
               )}
               {i.template_version ? (
-                <span className="text-[11px] text-slate-400">template v{i.template_version}</span>
+                <span className="text-[11px] text-slate-500">template v{i.template_version}</span>
               ) : null}
               {i.kind ? <span className="text-xs text-slate-500">{INSPECTION_KIND_LABELS[i.kind]}</span> : null}
               {i.safety_critical ? (
@@ -162,7 +162,7 @@ export function InspectionsSection({
                   {INSPECTION_OUTCOME_LABELS[i.outcome]}
                 </span>
               ) : null}
-              <span className="ml-auto text-xs text-slate-400">
+              <span className="ml-auto text-xs text-slate-500">
                 {(i.inspected_at ?? i.created_at).slice(0, 10)}
               </span>
 

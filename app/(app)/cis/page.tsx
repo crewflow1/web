@@ -230,7 +230,7 @@ export default async function CisPage({
                       <td className="py-2 pr-4 text-slate-600">{line.utrMasked ?? "—"}</td>
                       <td className="py-2 pr-4 text-slate-600">
                         {ver.kind === "not_required" ? (
-                          <span className="text-slate-400">Not required</span>
+                          <span className="text-slate-500">Not required</span>
                         ) : ver.kind === "present" ? (
                           ver.text
                         ) : (

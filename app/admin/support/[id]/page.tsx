@@ -63,7 +63,7 @@ export default async function HqSupportTicketDetailPage({
         </Link>
         <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-bold text-slate-900">
-            <span className="text-slate-400">#{ticket.ticket_number}</span>{" "}
+            <span className="text-slate-600">#{ticket.ticket_number}</span>{" "}
             {ticket.subject}
           </h1>
           <Link
@@ -285,7 +285,7 @@ export default async function HqSupportTicketDetailPage({
                 {timeline.map((row) => (
                   <li key={row.id} className="flex justify-between gap-2">
                     <span>{row.action}</span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-500">
                       {row.created_at.slice(0, 16).replace("T", " ")}
                     </span>
                   </li>

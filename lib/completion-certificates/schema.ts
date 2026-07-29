@@ -23,7 +23,7 @@ export const CERT_STATUS_STYLES: Record<CertStatus, string> = {
   draft: "bg-slate-100 text-slate-600",
   issued: "bg-emerald-100 text-emerald-700",
   superseded: "bg-amber-100 text-amber-700",
-  archived: "bg-slate-100 text-slate-400",
+  archived: "bg-slate-100 text-slate-600", // slate-600, not 400: AA contrast on slate-100
 };
 
 const TRANSITIONS: Record<CertStatus, readonly CertStatus[]> = {

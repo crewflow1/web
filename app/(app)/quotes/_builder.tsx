@@ -231,7 +231,7 @@ export function QuoteBuilder({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-800" htmlFor="property_id">
-              Site / property <span className="text-xs text-slate-400">Optional</span>
+              Site / property <span className="text-xs text-slate-500">Optional</span>
             </label>
             <select
               id="property_id"
@@ -251,7 +251,7 @@ export function QuoteBuilder({
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-slate-800" htmlFor="lead_id">
-              Linked lead <span className="text-xs text-slate-400">Optional</span>
+              Linked lead <span className="text-xs text-slate-500">Optional</span>
             </label>
             <select
               id="lead_id"
@@ -269,7 +269,7 @@ export function QuoteBuilder({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-800" htmlFor="valid_until">
-              Valid until <span className="text-xs text-slate-400">Optional</span>
+              Valid until <span className="text-xs text-slate-500">Optional</span>
             </label>
             <input
               id="valid_until"
@@ -386,7 +386,7 @@ export function QuoteBuilder({
                       onClick={() => removeLine(idx)}
                       disabled={items.length <= 1}
                       aria-label="Remove line"
-                      className="rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-600 disabled:opacity-40"
+                      className="rounded-md px-1.5 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-red-600 disabled:opacity-40"
                     >
                       ✕
                     </button>
@@ -425,7 +425,7 @@ export function QuoteBuilder({
         <div className="mt-4 grid grid-cols-1 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-800" htmlFor="notes">
-              Notes <span className="text-xs text-slate-400">Visible on the customer PDF</span>
+              Notes <span className="text-xs text-slate-500">Visible on the customer PDF</span>
             </label>
             <textarea
               id="notes"

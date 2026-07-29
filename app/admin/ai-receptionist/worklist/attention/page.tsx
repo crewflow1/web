@@ -235,14 +235,14 @@ function AttentionQueueTableRow({
         >
           {row.coordinationIdShort}
         </Link>
-        <div className="mt-1 text-xs text-slate-400">
+        <div className="mt-1 text-xs text-slate-500">
           {row.conversationIdShort ? (
             <span className="font-mono">conv {row.conversationIdShort}</span>
           ) : (
             <span>no conversation</span>
           )}
         </div>
-        <div className="mt-1 text-xs text-slate-400">{row.recordedAt}</div>
+        <div className="mt-1 text-xs text-slate-500">{row.recordedAt}</div>
       </td>
       <td className="px-4 py-3">
         <PriorityBadge row={row} />
@@ -261,7 +261,7 @@ function AttentionQueueTableRow({
             ))}
           </div>
         ) : (
-          <div className="mt-1 text-xs text-slate-400">—</div>
+          <div className="mt-1 text-xs text-slate-500">—</div>
         )}
       </td>
       <td className="px-4 py-3">
@@ -271,7 +271,7 @@ function AttentionQueueTableRow({
         <OwnershipBadge row={row} />
         <div className="mt-1 text-xs text-slate-500">{row.ownershipSummary}</div>
         {row.ownershipStatus === "owned" && row.heldSince !== "—" ? (
-          <div className="mt-0.5 text-xs text-slate-400">Since {row.heldSince}</div>
+          <div className="mt-0.5 text-xs text-slate-500">Since {row.heldSince}</div>
         ) : null}
         {/* R60 claim-from-queue — shown only on unowned rows (row.canClaim). It delegates the claim to the client
             button, which consumes the existing R46 runtime via the queue action; the page inlines no write runtime, no

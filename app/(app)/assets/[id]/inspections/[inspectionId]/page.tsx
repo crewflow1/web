@@ -220,7 +220,7 @@ function ItemField({
         {item.requires_photo_on_fail ? (
           <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">Photo on fail</span>
         ) : null}
-        {!item.required ? <span className="text-[11px] text-slate-400">Optional</span> : null}
+        {!item.required ? <span className="text-[11px] text-slate-500">Optional</span> : null}
       </div>
       {item.guidance ? <p className="mt-0.5 text-xs text-slate-500">{item.guidance}</p> : null}
 

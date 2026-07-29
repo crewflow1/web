@@ -96,7 +96,7 @@ export function SetupChecklist({ snapshot }: { snapshot: OnboardingSnapshot }) {
               ) : (
                 <span
                   aria-label="Not done"
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 bg-white text-xs text-slate-400"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 bg-white text-xs text-slate-500"
                 >
                   ○
                 </span>
@@ -110,7 +110,7 @@ export function SetupChecklist({ snapshot }: { snapshot: OnboardingSnapshot }) {
               >
                 {step.title}
                 {step.required ? null : (
-                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                     Optional
                   </span>
                 )}

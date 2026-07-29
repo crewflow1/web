@@ -127,7 +127,7 @@ export function RetentionScheduleSection({
             >
               Save schedule
             </button>
-            <span className="ml-2 text-[11px] text-slate-400">
+            <span className="ml-2 text-[11px] text-slate-600">
               JCT default: 50% at completion, the rest at end of the defects period.
             </span>
           </div>

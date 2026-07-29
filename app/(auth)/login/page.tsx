@@ -98,7 +98,7 @@ export default async function LoginPage({
         </button>
       </form>
 
-      <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+      <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
         <div className="h-px flex-1 bg-slate-200" />
         <span>or</span>
         <div className="h-px flex-1 bg-slate-200" />

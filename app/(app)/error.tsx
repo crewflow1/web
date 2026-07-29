@@ -62,7 +62,7 @@ export default function CustomerAppError({
         </Link>
       </div>
       {error.digest ? (
-        <p className="mt-8 text-xs text-slate-400">
+        <p className="mt-8 text-xs text-slate-600">
           Reference: {error.digest}
         </p>
       ) : null}

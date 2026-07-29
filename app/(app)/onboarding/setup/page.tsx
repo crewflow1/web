@@ -165,7 +165,7 @@ export default async function OnboardingSetupPage({
                   : complete
                     ? "border-emerald-200"
                     : dismissed
-                      ? "border-slate-200 opacity-70"
+                      ? "border-slate-200" // no opacity-*: blending drags the card's AA text below 4.5:1; the Skipped badge carries the state
                       : "border-slate-200"
               }`}
             >
@@ -280,7 +280,7 @@ function StepStatusBadge({
     return (
       <span
         aria-label="Skipped"
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-medium text-slate-500"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-medium text-slate-600"
       >
         ·
       </span>

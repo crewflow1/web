@@ -340,7 +340,7 @@ export default async function AdminOrganizationsPage({
         )}
       </section>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-slate-600">
         <Link href="/dashboard" className="hover:text-slate-700">
           ← Back to CrewFlow
         </Link>

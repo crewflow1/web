@@ -195,7 +195,7 @@ export default async function PortalMessagesPage({
                         {lastVisible.body}
                       </p>
                     ) : null}
-                    <p className="mt-2 text-[11px] font-medium text-slate-400">
+                    <p className="mt-2 text-[11px] font-medium text-slate-500">
                       View conversation →
                     </p>
                   </a>
