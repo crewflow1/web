@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * Job Site Hub — mobile + accessibility regression.
@@ -144,6 +145,7 @@ test.describe("job site hub — mobile + accessibility", () => {
   test("the hub panels have no WCAG 2.2 A/AA violations", async ({ page }) => {
     await page.goto(`/jobs/${JOB}`);
     await page.waitForLoadState("networkidle");
+    await settleForAxe(page);
     let builder = new AxeBuilder({ page }).withTags(WCAG);
     for (const selector of HUB_SECTIONS) builder = builder.include(selector);
     const results = await builder.analyze();
