@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { gatherReportSources } from "@/server/services/site-report-sources";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   defaultSelection,
   materializeSnapshot,
@@ -56,7 +57,9 @@ type SelectReportChain = {
       eq: (
         k: string,
         v: unknown,
-      ) => { maybeSingle: () => Promise<{ data: ReportRow | null }> };
+      ) => {
+        maybeSingle: () => Promise<{ data: ReportRow | null; error: SupabaseReadError | null }>;
+      };
     };
   };
 };
@@ -93,7 +96,7 @@ async function getReport(
   orgId: string,
   id: string,
 ): Promise<ReportRow | null> {
-  const { data } = await (
+  const { data, error } = await (
     reports(tenant).from("site_reports") as unknown as SelectReportChain
   )
     .select(
@@ -102,6 +105,9 @@ async function getReport(
     .eq("id", id)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail for all seven action callers: a failed read must not become the
+  // "not_found" banner while the report actually exists.
+  if (error) throw readFailure("site-reports: load", error);
   return data;
 }
 
@@ -143,11 +149,12 @@ export async function createSiteReport(formData: FormData): Promise<void> {
   const tenant = await createClient();
 
   // Resolve the job's customer for portal scoping (RLS-scoped read).
-  const { data: job } = await tenant
+  const { data: job, error: jobError } = await tenant
     .from("jobs")
     .select("id, customer_id")
     .eq("id", data.job_id)
     .maybeSingle();
+  if (jobError) throw readFailure("site-reports: job resolve", jobError);
   if (!job) redirect(`/site-reports/new?error=bad_job`);
 
   // Seed the draft: aggregate the period's sources and propose them all.

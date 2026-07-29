@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { createImport } from "./actions";
 import { CONNECTORS } from "@/lib/imports/connectors";
@@ -29,7 +30,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: imports } = await supabase
+  const { data: imports, error: importsError } = await supabase
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     // ACTIVE-org pin — an import session is rollback-capable, so listing the
@@ -37,6 +38,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(20);
+  if (importsError) throw readFailure("imports: register", importsError);
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
   const savedMessage = sp.saved

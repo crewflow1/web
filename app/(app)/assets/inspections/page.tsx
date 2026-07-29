@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { isInspectionOverdue } from "@/lib/assets/inspection-schedule";
 import {
@@ -44,7 +45,7 @@ type InspQuery<T> = {
   order: (
     c: string,
     o: { ascending: boolean },
-  ) => { limit: (n: number) => Promise<{ data: T[] | null }> };
+  ) => { limit: (n: number) => Promise<{ data: T[] | null; error: SupabaseReadError | null }> };
 };
 
 export default async function InspectionsOverviewPage() {
@@ -54,7 +55,7 @@ export default async function InspectionsOverviewPage() {
   const nowIso = new Date().toISOString();
 
   // Open due work (draft + due_at), oldest first — served by the partial index.
-  const { data: dueRaw } = await (
+  const { data: dueRaw, error: dueError } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => InspQuery<DueRow>;
     }
@@ -65,13 +66,14 @@ export default async function InspectionsOverviewPage() {
     .not("due_at", "is", null)
     .order("due_at", { ascending: true })
     .limit(100);
+  if (dueError) throw readFailure("inspections overview: due", dueError);
   const dueAll = dueRaw ?? [];
   const overdue = dueAll.filter((d) => isInspectionOverdue(d.due_at, today));
   const dueUpcoming = dueAll.filter((d) => !isInspectionOverdue(d.due_at, today));
 
   // Safety picture: issued safety-critical records + live overrides, grouped
   // per asset, run through the unit-tested mirror of the DB clearing predicate.
-  const { data: safetyRaw } = await (
+  const { data: safetyRaw, error: safetyError } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => InspQuery<FailRow>;
     }
@@ -84,7 +86,8 @@ export default async function InspectionsOverviewPage() {
     .eq("status", "issued")
     .order("created_at", { ascending: false })
     .limit(400);
-  const { data: overridesRaw } = await (
+  if (safetyError) throw readFailure("inspections overview: issued safety records", safetyError);
+  const { data: overridesRaw, error: overridesError } = await (
     supabase.from("asset_inspection_overrides" as never) as unknown as {
       select: (c: string) => InspQuery<OverrideRow & { asset_id: string }>;
     }
@@ -93,6 +96,7 @@ export default async function InspectionsOverviewPage() {
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (overridesError) throw readFailure("inspections overview: overrides", overridesError);
 
   const byAsset = new Map<string, { name: string; rows: FailRow[] }>();
   for (const row of safetyRaw ?? []) {

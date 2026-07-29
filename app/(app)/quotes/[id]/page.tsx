@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuoteBuilder } from "../_builder";
 import {
@@ -100,7 +101,10 @@ export default async function EditQuotePage({
   const supabase = await createClient();
 
   // Role + quote in parallel.
-  const [{ data: myRow }, { data: quote }] = await Promise.all([
+  const [
+    { data: myRow, error: myRowError },
+    { data: quote, error: quoteError },
+  ] = await Promise.all([
     supabase.from("memberships").select("role").eq("org_id", ctx.org.id).single(),
     supabase
       .from("quotes")
@@ -118,14 +122,24 @@ export default async function EditQuotePage({
       .eq("id", id)
       .maybeSingle(),
   ]);
+  // Role read is .single(): PGRST116 (no row) is tolerated as a null myRow
+  // (isAdmin stays false); any other failure is a broken read. The quote read
+  // must throw rather than masquerade as notFound.
+  if (myRowError && myRowError.code !== "PGRST116") {
+    throw readFailure("quote detail: role", myRowError);
+  }
+  if (quoteError) throw readFailure("quote detail: quote", quoteError);
   if (!quote) notFound();
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
-  const { data: rawItems } = await supabase
+  const { data: rawItems, error: itemsError } = await supabase
     .from("quote_line_items")
     .select("description, qty, unit, unit_price, vat_rate, sort_order")
     .eq("quote_id", id)
     .order("sort_order", { ascending: true });
+  // The builder saves by REPLACING line items wholesale — rendering an empty
+  // builder over a failed read would let a save wipe the real items.
+  if (itemsError) throw readFailure("quote detail: line items", itemsError);
 
   const lineItems: LineItem[] = (rawItems ?? []).map((li) => ({
     description: li.description,

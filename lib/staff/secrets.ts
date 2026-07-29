@@ -9,6 +9,7 @@
 
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 const UK_NI_REGEX = /^[A-CEGHJ-PR-TW-Z]{2}[0-9]{6}[A-D]$/;
 
@@ -36,10 +37,13 @@ export async function fetchNiNumbersForOrg(
   orgId: string,
 ): Promise<Map<string, string>> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("staff_secrets")
     .select("user_id, ni_number")
     .eq("org_id", orgId);
+  // Loud fail: an empty map legitimately means "RLS says not yours" — a query
+  // failure must not silently strip NI numbers from payroll tables/CSVs.
+  if (error) throw readFailure("staff secrets: NI numbers", error);
   const out = new Map<string, string>();
   for (const row of (data ?? []) as SecretsRow[]) {
     if (row.ni_number) out.set(row.user_id, row.ni_number);

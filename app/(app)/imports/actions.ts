@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -97,11 +98,13 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, org_id, status")
     .eq("id", importId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: upload guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status === "committed") {
     redirect(`/imports/${importId}?error=already_committed`);
@@ -336,11 +339,14 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
 
 async function annotateDuplicates(importId: string, orgId: string) {
   const admin = createAdminClient();
-  const { data: rows } = await admin
+  const { data: rows, error: rowsError } = await admin
     .from("import_rows")
     .select("id, entity_type, mapped")
     .eq("import_id", importId)
     .eq("status", "pending");
+  // A failed read must not pass as "no pending rows" — duplicates would then
+  // silently never be flagged for this import.
+  if (rowsError) throw readFailure("imports: duplicate annotation rows", rowsError);
   if (!rows || rows.length === 0) return;
 
   // Load existing rows once per entity type that's actually present.
@@ -414,11 +420,13 @@ export async function commitImport(importId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, org_id, status")
     .eq("id", importId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: commit guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "detected") {
     redirect(`/imports/${importId}?error=not_ready`);
@@ -429,12 +437,15 @@ export async function commitImport(importId: string) {
   // `pending` with verified confidence). The confidence floor is a
   // belt-and-suspenders guard — uncertain rows never reach `pending` —
   // but it also documents the contract in one place.
-  const { data: rows } = await admin
+  const { data: rows, error: rowsError } = await admin
     .from("import_rows")
     .select("id, entity_type, mapped, confidence, status")
     .eq("import_id", importId)
     .in("status", ["pending"])
     .gte("confidence", REVIEW_THRESHOLD);
+  // Throw BEFORE the status flip below: a failed read would otherwise commit
+  // "0 imported" and mark the whole session committed — a false success.
+  if (rowsError) throw readFailure("imports: commit rows", rowsError);
 
   let imported = 0;
   let skipped = 0;
@@ -521,20 +532,26 @@ export async function rollbackImport(importId: string) {
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  const { data: importRow } = await supabase
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, status")
     .eq("id", importId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: rollback guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "committed") {
     redirect(`/imports/${importId}?error=not_committed`);
   }
 
-  const { data: audit } = await admin
+  const { data: audit, error: auditError } = await admin
     .from("import_audit")
     .select("target_table, target_id")
     .eq("import_id", importId);
+  // Throw BEFORE any delete/status flip: a failed audit read would otherwise
+  // delete nothing yet mark the session rolled_back — orphaning every
+  // imported row with no way back.
+  if (auditError) throw readFailure("imports: rollback audit", auditError);
   // Reverse insertion order so children get removed before parents.
   const grouped = new Map<string, string[]>();
   for (const a of audit ?? []) {
@@ -586,11 +603,13 @@ export async function ignoreDuplicateRow(rowId: string) {
   if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
   const supabase = await createClient();
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("import_rows")
     .select("import_id")
     .eq("id", rowId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (rowError) throw readFailure("imports: ignore-duplicate guard", rowError);
   if (!row) redirect("/imports?error=not_found");
   await supabase
     .from("import_rows")
@@ -637,11 +656,13 @@ export async function resolveReviewRow(rowId: string, formData: FormData) {
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
 
   const supabase = await createClient();
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("import_rows")
     .select("id, import_id, status, entity_type, mapped, raw")
     .eq("id", rowId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (rowError) throw readFailure("imports: review-row guard", rowError);
   if (!row) redirect("/imports?error=not_found");
 
   const importId = row.import_id as string;
@@ -754,11 +775,13 @@ export async function overrideSheetEntity(
   if (to === fromEntity) redirect(`/imports/${importId}`);
 
   const supabase = await createClient();
-  const { data: importRow } = await supabase
+  const { data: importRow, error: importRowError } = await supabase
     .from("imports")
     .select("id, status")
     .eq("id", importId)
     .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: override guard", importRowError);
   if (!importRow) redirect("/imports?error=not_found");
   if (importRow.status !== "detected") {
     redirect(`/imports/${importId}?error=not_reviewable`);
@@ -766,12 +789,15 @@ export async function overrideSheetEntity(
 
   // Re-classify every still-open row of the detected `fromEntity`. Rows that
   // already committed/skipped/duplicated are left alone.
-  const { data: rows } = await supabase
+  const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
     .select("id, raw")
     .eq("import_id", importId)
     .eq("entity_type", fromEntity)
     .in("status", ["pending", "needs_review"]);
+  // Throw before redirecting: a failed read would report "reclassified 0 rows"
+  // as a success while changing nothing.
+  if (rowsError) throw readFailure("imports: override rows", rowsError);
 
   let changed = 0;
   for (const r of rows ?? []) {

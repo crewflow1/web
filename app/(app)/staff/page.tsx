@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
 import { PendingInvites } from "./_pending-invites";
 import { listPendingInvites } from "./_invites";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Staff list page.
@@ -45,14 +46,19 @@ export default async function StaffPage({
   const supabase = await createClient();
 
   // Current user's role — gates the invite form.
-  const { data: myRow } = await supabase
+  const { data: myRow, error: myRowError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  // PGRST116 = genuinely not a member (isAdmin false is correct); any other
+  // error must not silently strip the admin controls from the page.
+  if (myRowError && myRowError.code !== "PGRST116") {
+    throw readFailure("staff: viewer role", myRowError);
+  }
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
-  const { data: membersRaw } = await supabase
+  const { data: membersRaw, error: membersError } = await supabase
     .from("memberships")
     .select(
       `
@@ -62,6 +68,7 @@ export default async function StaffPage({
     )
     .eq("org_id", ctx.org.id)
     .order("role", { ascending: true });
+  if (membersError) throw readFailure("staff: members register", membersError);
 
   const members = (membersRaw ?? []) as MemberRow[];
 

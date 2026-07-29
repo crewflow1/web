@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { defaultPeriod } from "@/lib/payroll/compute";
 import { createPayrollRun } from "./actions";
@@ -43,7 +44,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: runs } = await supabase
+  const { data: runs, error: runsError } = await supabase
     .from("payroll_runs")
     .select("id, cycle, period_start, period_end, status, finalised_at, created_at")
     // ACTIVE-org pin — payroll is the most sensitive list in the product; RLS
@@ -52,16 +53,19 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
     .eq("org_id", ctx.org.id)
     .order("period_start", { ascending: false })
     .limit(50);
+  if (runsError) throw readFailure("payroll register: runs", runsError);
 
   // Sum gross/net per run for the list view.
   const runIds = (runs ?? []).map((r) => r.id);
   const totalsByRun = new Map<string, { gross: number; net: number; count: number }>();
   if (runIds.length > 0) {
-    const { data: lines } = await supabase
+    const { data: lines, error: linesError } = await supabase
       .from("payroll_lines")
       .select("payroll_run_id, gross_pay, net_pay")
       .eq("org_id", ctx.org.id)
       .in("payroll_run_id", runIds);
+    // Money figures — a failed read must not render every run as £0.00.
+    if (linesError) throw readFailure("payroll register: totals", linesError);
     for (const l of lines ?? []) {
       const t = totalsByRun.get(l.payroll_run_id) ?? { gross: 0, net: 0, count: 0 };
       t.gross += Number(l.gross_pay ?? 0);

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   SNAG_PRIORITIES,
   SNAG_PRIORITY_LABELS,
@@ -78,11 +79,11 @@ export default async function SnagDetailPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: snag } = await (
+  const { data: snag, error: snagError } = await (
     supabase.from("snags" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SnagRow | null }>;
+          maybeSingle: () => Promise<{ data: SnagRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -92,6 +93,7 @@ export default async function SnagDetailPage({
     )
     .eq("id", id)
     .maybeSingle();
+  if (snagError) throw readFailure("snag: detail", snagError);
 
   if (!snag) notFound();
 

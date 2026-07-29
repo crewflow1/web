@@ -234,7 +234,13 @@ export async function runMemoryLifecycleWorker(
     // (2) Expiry + decay archival (one bounded, idempotent SQL sweep). Cheap +
     //     the most important reducer, so it always runs first.
     {
-      const { data } = await call("hq_memory_expire_sweep", { p_limit: scanLimit });
+      const { data, error } = await call("hq_memory_expire_sweep", { p_limit: scanLimit });
+      if (error) {
+        // A failed sweep must not report ok:"swept nothing" — 'error' is the
+        // documented stopped value for exactly this.
+        console.error("[memory-lifecycle] expire sweep failed:", error.message);
+        stopped = "error";
+      }
       if (data && typeof data === "object") {
         const d = data as { ttl_expired?: unknown; decayed_archived?: unknown };
         ttlExpired = typeof d.ttl_expired === "number" ? d.ttl_expired : 0;
@@ -244,14 +250,18 @@ export async function runMemoryLifecycleWorker(
 
     // (3) Deduplication: detect near-duplicate pairs (read-only), then merge
     //     each into its keeper. With no embeddings the detector returns [].
-    if (maxSupersedes > 0) {
+    if (maxSupersedes > 0 && stopped === "ok") {
       if (Date.now() > deadline) {
         stopped = "deadline";
       } else {
-        const { data } = await call("hq_memory_dedupe_pairs", {
+        const { data, error } = await call("hq_memory_dedupe_pairs", {
           p_limit: scanLimit,
           p_threshold: dedupeThreshold,
         });
+        if (error) {
+          console.error("[memory-lifecycle] dedupe detector failed:", error.message);
+          stopped = "error";
+        }
         const pairs = parsePairs(data);
         duplicatePairs = pairs.length;
         for (const pair of pairs.slice(0, maxSupersedes)) {
@@ -270,7 +280,11 @@ export async function runMemoryLifecycleWorker(
     //     configured (graceful — the deterministic state stays in place), or when
     //     a prior phase already exhausted the run's wall-clock budget.
     if (provider && maxSummaries > 0 && stopped === "ok") {
-      const { data } = await call("hq_memory_summary_candidates", { p_limit: maxSummaries });
+      const { data, error } = await call("hq_memory_summary_candidates", { p_limit: maxSummaries });
+      if (error) {
+        console.error("[memory-lifecycle] summary detector failed:", error.message);
+        stopped = "error";
+      }
       // p_limit already bounds the detector to maxSummaries; the slice is
       // belt-and-suspenders (symmetric with the supersede cap) so the run can
       // never exceed its budget even if the detector returns more than asked.

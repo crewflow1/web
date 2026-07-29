@@ -21,7 +21,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const { token } = await params;
   const admin = createAdminClient();
 
-  const { data: quote } = await admin
+  const { data: quote, error: quoteError } = await admin
     .from("quotes")
     .select(
       `
@@ -33,16 +33,19 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     )
     .eq("public_token", token)
     .maybeSingle();
+  if (quoteError) return new Response("Query failed", { status: 500 });
 
   if (!quote) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: lines } = await admin
+  const { data: lines, error: linesError } = await admin
     .from("quote_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("quote_id", quote.id)
     .order("sort_order", { ascending: true });
+  // Never serve a public PDF with totals but zero line items.
+  if (linesError) return new Response("Query failed", { status: 500 });
 
   const input: QuotePdfInput = {
     number: quote.number,

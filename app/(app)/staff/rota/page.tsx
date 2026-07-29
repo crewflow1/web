@@ -8,6 +8,7 @@ import {
 } from "@/server/services/rota";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
 import { CreateRotaForm } from "./_create-form";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Rota — weekly view, optionally month via ?view=month.
@@ -68,18 +69,24 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
   const endIso = `${isoDate(sunday)}T23:59:59Z`;
 
   // Current user's role.
-  const { data: myRow } = await supabase
+  const { data: myRow, error: myRowError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  // PGRST116 = genuinely not a member (isAdmin false is correct); any other
+  // error must not silently strip the admin controls from the page.
+  if (myRowError && myRowError.code !== "PGRST116") {
+    throw readFailure("rota: viewer role", myRowError);
+  }
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
   // Staff list for the assign form + display labels.
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("memberships")
     .select("user_id, role, user:users ( id, full_name, email )")
     .eq("org_id", ctx.org.id);
+  if (membersError) throw readFailure("rota: staff list", membersError);
   const memberById = new Map<string, { name: string; role: string }>();
   for (const m of members ?? []) {
     memberById.set(m.user_id, {

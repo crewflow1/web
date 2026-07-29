@@ -9,6 +9,7 @@ import {
   validateBlueprintFile, sniffBlueprintType, blueprintStorageKey, extForMime,
   type CreateBlueprintInput, type Discipline, type BlueprintMime,
 } from "@/lib/blueprints/schema";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
  * Blueprint Centre service — the drawing register (Phase 2 WOW).
@@ -45,8 +46,11 @@ function checkBytes(file: UploadFile): { ok: true; mime: BlueprintMime; hash: st
 type BpFilter = {
   eq: (k: string, v: unknown) => BpFilter;
   in: (k: string, v: unknown[]) => BpFilter;
-  order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null }>;
-  maybeSingle: () => Promise<{ data: Record<string, unknown> | null }>;
+  order: (
+    k: string,
+    o: { ascending: boolean },
+  ) => Promise<{ data: Record<string, unknown>[] | null; error: SupabaseReadError | null }>;
+  maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: SupabaseReadError | null }>;
 };
 type BpClient = {
   from: (t: string) => {
@@ -71,12 +75,13 @@ export async function createBlueprint(input: {
   // Confirm the job is in the ACTIVE org. RLS is not enough: `current_org_ids()`
   // admits every org the viewer belongs to, so an RLS-only check let a dual-org
   // member hang a drawing stamped `org_id: ctx.org.id` off the OTHER org's job.
-  const { data: job } = await tenant
+  const { data: job, error: jobError } = await tenant
     .from("jobs")
     .select("id")
     .eq("id", input.jobId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (jobError) throw readFailure("blueprints: job gate", jobError);
   if (!job) return { ok: false, error: "Job not found." };
 
   // 1. Shell (tenant → RLS).
@@ -128,7 +133,8 @@ export async function addBlueprintRevision(input: {
   if (!checked.ok) return { ok: false, error: checked.error };
 
   const tenant = await createClient();
-  const { data: shell } = await bp(tenant).from("blueprints").select("id, org_id, job_id, drawing_number").eq("id", input.blueprintId).maybeSingle();
+  const { data: shell, error: shellError } = await bp(tenant).from("blueprints").select("id, org_id, job_id, drawing_number").eq("id", input.blueprintId).maybeSingle();
+  if (shellError) throw readFailure("blueprints: drawing gate", shellError);
   if (!shell) return { ok: false, error: "Drawing not found." };
   if (shell.org_id !== ctx.org.id) return { ok: false, error: "Drawing not found." }; // service-role re-check invariant
 
@@ -179,9 +185,10 @@ export type BlueprintVersionRow = {
 export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprints")
+  const { data, error } = await bp(tenant).from("blueprints")
     .select("id, drawing_number, title, discipline, status, current_version, updated_at")
     .eq("job_id", jobId).eq("org_id", ctx.org.id).order("drawing_number", { ascending: true });
+  if (error) throw readFailure("blueprints: register", error);
   return (data ?? []) as unknown as BlueprintRow[];
 }
 
@@ -189,9 +196,10 @@ export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
 export async function listBlueprintVersions(blueprintId: string): Promise<BlueprintVersionRow[]> {
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprint_versions")
+  const { data, error } = await bp(tenant).from("blueprint_versions")
     .select("id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
     .eq("blueprint_id", blueprintId).eq("org_id", ctx.org.id).order("version", { ascending: false });
+  if (error) throw readFailure("blueprints: versions", error);
   return (data ?? []) as unknown as BlueprintVersionRow[];
 }
 
@@ -203,11 +211,12 @@ export async function listBlueprintVersionsForBlueprints(
   if (blueprintIds.length === 0) return out;
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
-  const { data } = await bp(tenant).from("blueprint_versions")
+  const { data, error } = await bp(tenant).from("blueprint_versions")
     .select("id, blueprint_id, version, revision, revision_date, file_name, mime_type, size_bytes, notes, uploaded_at")
     .eq("org_id", ctx.org.id)
     .in("blueprint_id", blueprintIds)
     .order("version", { ascending: false });
+  if (error) throw readFailure("blueprints: versions batch", error);
   for (const row of (data ?? []) as unknown as (BlueprintVersionRow & { blueprint_id: string; mime_type: string })[]) {
     (out[row.blueprint_id] ??= []).push(row);
   }
@@ -221,8 +230,9 @@ export async function getBlueprintVersionUrl(versionId: string): Promise<Bluepri
   // ACTIVE-org pin. `storagePathBelongsToOrg` below proves the path is under the
   // ROW's own org (an anti-poisoning check from the storage-evidence wave); it
   // does NOT prove the row is in the org the viewer is currently working in.
-  const { data: version } = await bp(tenant).from("blueprint_versions")
+  const { data: version, error: versionError } = await bp(tenant).from("blueprint_versions")
     .select("id, org_id, storage_path, mime_type, file_name").eq("id", versionId).eq("org_id", ctx.org.id).maybeSingle();
+  if (versionError) throw readFailure("blueprints: version url", versionError);
   if (!version) return { ok: false, error: "not_found" };
   // Refuse to sign a path not under the row's own org (poisoned cross-tenant pointer).
   if (!storagePathBelongsToOrg(String(version.storage_path), String(version.org_id))) return { ok: false, error: "not_found" };

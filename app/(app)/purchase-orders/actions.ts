@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { computeTotals } from "@/lib/quotes/totals";
@@ -234,16 +235,22 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   }
 
   const supabase = await createClient();
-  const { data: existing } = await (
+  const { data: existing, error: existingError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { status: string } | null }> };
+        eq: (k: string, v: unknown) => {
+          maybeSingle: () => Promise<{
+            data: { status: string } | null;
+            error: SupabaseReadError | null;
+          }>;
+        };
       };
     }
   )
     .select("status")
     .eq("id", id)
     .maybeSingle();
+  if (existingError) throw readFailure("purchase order status: purchase order", existingError);
   if (!existing) redirect("/purchase-orders?error=not_found");
 
   if (!canTransitionPo(existing.status as PurchaseOrderStatus, to)) {
@@ -360,12 +367,13 @@ export async function recordSupplierBill(
   const supabase = await createClient();
 
   // Load the PO (RLS-scoped) — inherit its job + supplier.
-  const { data: po } = await (
+  const { data: po, error: poError } = await (
     supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: string) => {
           maybeSingle: () => Promise<{
             data: { id: string; job_id: string | null; supplier_id: string | null } | null;
+            error: SupabaseReadError | null;
           }>;
         };
       };
@@ -375,6 +383,9 @@ export async function recordSupplierBill(
     .eq("id", purchaseOrderId)
     .maybeSingle();
 
+  // Throw BEFORE any write — a failed read must not report "not found" and
+  // must never let a bill post without the PO's job/supplier inheritance.
+  if (poError) throw readFailure("supplier bill: purchase order", poError);
   if (!po) return formError("Purchase order not found.");
 
   // Idempotency / double-submit guard — a retried POST or a double-click racing the

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   ASSET_CATEGORY_SUGGESTIONS,
@@ -24,14 +25,18 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
   // post-types tables. Pinned to the active org: RLS returns every org the
   // viewer belongs to, which would blend another org's suppliers into this
   // picker for a dual-org member.
-  const { data: suppliersRaw } = await (
+  const { data: suppliersRaw, error: suppliersError } = await (
     supabase.from("suppliers" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           order: (
             col: string,
             o: { ascending: boolean },
-          ) => { limit: (n: number) => Promise<{ data: { id: string; name: string }[] | null }> };
+          ) => {
+            limit: (
+              n: number,
+            ) => Promise<{ data: { id: string; name: string }[] | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -40,6 +45,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
     .eq("org_id", ctx.org.id)
     .order("name", { ascending: true })
     .limit(500);
+  if (suppliersError) throw readFailure("new asset: supplier picker", suppliersError);
   const suppliers = suppliersRaw ?? [];
 
   const errorMessage = sp.error

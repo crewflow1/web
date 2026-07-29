@@ -22,6 +22,7 @@ import {
 import { createMemory } from "@/server/sdk/memory";
 import { getResearchReport } from "@/server/services/hq-research";
 import { getQualificationReport } from "@/server/services/hq-qualification";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * CrewFlow HQ — Draft Generation service (CEO Directive 010, Phase 3).
@@ -199,10 +200,11 @@ export async function generateDraft(input: GenerateDraftInput): Promise<DraftRes
 export async function getDraft(id: string): Promise<DraftRow | null> {
   if (!id?.trim()) return null;
   const admin = createAdminClient();
-  const { data } = await drafts<DraftRow>(admin)
+  const { data, error } = await drafts<DraftRow>(admin)
     .select(ROW_COLUMNS)
     .eq("id", id)
     .maybeSingle();
+  if (error) throw readFailure("hq-drafts: draft", error);
   return data ?? null;
 }
 

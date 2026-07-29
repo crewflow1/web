@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
 
@@ -23,14 +24,21 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: me } = await supabase
+  const { data: me, error: meError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  // requireOrgContext guarantees the membership row exists — any failure here
+  // is a broken read, and letting it default isAdmin to false hides the upload
+  // form for a real admin.
+  if (meError) throw readFailure("payments: role", meError);
   const isAdmin = me?.role === "owner" || me?.role === "admin";
 
-  const [{ data: statements }, { data: outstandingRows }] = await Promise.all([
+  const [
+    { data: statements, error: statementsError },
+    { data: outstandingRows, error: outstandingError },
+  ] = await Promise.all([
     supabase
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
@@ -45,6 +53,9 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
       .eq("org_id", ctx.org.id)
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
+  if (statementsError) throw readFailure("payments: statements", statementsError);
+  // Money figure — a failed read must not render "£0.00 outstanding".
+  if (outstandingError) throw readFailure("payments: outstanding invoices", outstandingError);
 
   const outstandingTotal = (outstandingRows ?? []).reduce(
     (s, i) => s + Number(i.total ?? 0),

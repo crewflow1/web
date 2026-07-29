@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { listRiskAssessments } from "./_data";
@@ -108,13 +109,13 @@ export default async function HealthSafetyPage({
   const bandByRa = new Map<string, RiskBand>();
   if (scoredIds.length > 0) {
     const supabase = await createClient();
-    const { data: hazardRows } = await (
+    const { data: hazardRows, error: hazardRowsError } = await (
       supabase.from("risk_assessment_hazards" as never) as unknown as {
         select: (c: string) => {
           in: (
             k: string,
             v: string[],
-          ) => Promise<{ data: HazardBandRow[] | null }>;
+          ) => Promise<{ data: HazardBandRow[] | null; error: SupabaseReadError | null }>;
         };
       }
     )
@@ -122,6 +123,9 @@ export default async function HealthSafetyPage({
         "risk_assessment_id, likelihood, severity, residual_likelihood, residual_severity",
       )
       .in("risk_assessment_id", scoredIds);
+    // A failed read here would render "No hazards yet" against assessments that
+    // HAVE hazards — a false claim about safety data, so fail the page instead.
+    if (hazardRowsError) throw readFailure("health-safety register: hazard bands", hazardRowsError);
 
     const grouped = new Map<string, HazardBandRow[]>();
     for (const h of hazardRows ?? []) {

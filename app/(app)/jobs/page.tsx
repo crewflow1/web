@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
@@ -87,7 +88,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   if (term) {
     const custOr = ilikeOrFilter(term, CUSTOMER_SEARCH_COLUMNS);
     if (custOr) {
-      const { data: matchCustomers } = await supabase
+      const { data: matchCustomers, error: matchError } = await supabase
         .from("customers")
         .select("id")
         // ACTIVE-org pin: without it the search resolves the OTHER org's
@@ -95,6 +96,10 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         .eq("org_id", ctx.org.id)
         .or(custOr)
         .limit(CUSTOMER_MATCH_LIMIT);
+      // A failed pre-pass would silently drop the customer branch from the
+      // search — results would LOOK complete while missing every
+      // customer-matched job.
+      if (matchError) throw readFailure("jobs: customer search", matchError);
       customerIdBranch = inIdsBranch(
         "customer_id",
         (matchCustomers ?? []).map((c) => c.id),

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { AcknowledgementRow } from "@/lib/health-safety/acknowledgements-schema";
 import type { AckSubjectType, RevisableSubject } from "@/lib/health-safety/acknowledgements";
 import { RAMS_REVISABLE } from "@/lib/health-safety/acknowledgements";
@@ -16,25 +17,27 @@ export async function listAcknowledgements(
   subjectId: string,
 ): Promise<AckWithName[]> {
   const supabase = await createClient();
-  const { data } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<AcknowledgementRow & { users: { full_name: string | null; email: string | null } | null }> | null }> } } } };
+  const { data, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<AcknowledgementRow & { users: { full_name: string | null; email: string | null } | null }> | null; error: SupabaseReadError | null }> } } } };
   })
     .from("safety_acknowledgements")
     .select("id, org_id, subject_type, subject_id, subject_version, user_id, acknowledged_at, statement, statement_version, signed_name, users(full_name, email)")
     .eq("subject_type", subjectType)
     .eq("subject_id", subjectId)
     .order("acknowledged_at", { ascending: false });
+  if (error) throw readFailure("health-safety: acknowledgements", error);
   return (data ?? []).map((a) => ({ ...a, signer_name: a.users?.full_name || a.users?.email || a.signed_name }));
 }
 
 /** Count of org members (the acknowledgement "expected" denominator). */
 export async function countOrgMembers(): Promise<number> {
   const supabase = await createClient();
-  const { count } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string, o: { count: string; head: boolean }) => Promise<{ count: number | null }> };
+  const { count, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string, o: { count: string; head: boolean }) => Promise<{ count: number | null; error: SupabaseReadError | null }> };
   })
     .from("memberships")
     .select("user_id", { count: "exact", head: true });
+  if (error) throw readFailure("health-safety: member count", error);
   return count ?? 0;
 }
 
@@ -93,10 +96,11 @@ export type Operative = { id: string; name: string };
 export async function requiredOperatives(jobId: string | null): Promise<Operative[]> {
   if (!jobId) return [];
   const supabase = await createClient();
-  const { data: rows } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => Promise<{ data: Array<{ user_id: string }> | null }> } };
+  const { data: rows, error } = await (supabase as unknown as {
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => Promise<{ data: Array<{ user_id: string }> | null; error: SupabaseReadError | null }> } };
   })
     .from("rota_entries").select("user_id").eq("job_id", jobId);
+  if (error) throw readFailure("health-safety: rota required operatives", error);
   const ids = [...new Set((rows ?? []).map((r) => r.user_id))];
   if (ids.length === 0) return [];
   // Names via the same memberships→users embed listAssessors uses (unambiguous FK).

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   CHECKLIST_STEP_ORDER,
   type ChecklistStepId,
@@ -34,11 +35,14 @@ function isValidStepId(id: string): id is ChecklistStepId {
 async function readState(): Promise<Record<string, unknown>> {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("organizations")
     .select("onboarding_state")
     .eq("id", ctx.org.id)
     .maybeSingle();
+  // Every caller read-modify-writes this jsonb — a failed read returning {}
+  // would CLOBBER the whole onboarding_state on the subsequent write.
+  if (error) throw readFailure("onboarding setup: state", error);
   const raw = data?.onboarding_state;
   return (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
 }

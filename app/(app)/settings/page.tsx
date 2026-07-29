@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
@@ -25,17 +26,21 @@ export default async function SettingsPage() {
 
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const { data: profile } = await supabase
+  // These feed EDIT forms — rendering blank defaults over a failed read would
+  // let a save wipe the real profile/org values. Fail loud.
+  const { data: profile, error: profileError } = await supabase
     .from("users")
     .select("id, email, full_name, phone")
     .eq("id", user.id)
     .maybeSingle();
+  if (profileError) throw readFailure("settings: profile", profileError);
 
-  const { data: org } = await supabase
+  const { data: org, error: orgError } = await supabase
     .from("organizations")
     .select("id, name, phone, email, vat_number, address, logo_path, logo_url, default_terms, bank_details")
     .eq("id", ctx.org.id)
     .maybeSingle();
+  if (orgError) throw readFailure("settings: organisation", orgError);
 
   // Resolve a display src for the current logo (signed URL for an uploaded
   // file, or a legacy external URL for back-compat). Drives the preview.
@@ -62,10 +67,15 @@ export default async function SettingsPage() {
         ? { label: "Live", style: "bg-emerald-100 text-emerald-800" }
         : { label: "Pending", style: "bg-amber-100 text-amber-800" };
 
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("memberships")
     .select("role, user:users ( id, full_name, email )")
     .eq("org_id", ctx.org.id);
+  if (membersError) {
+    // Panel-scoped failure: the rest of settings stays useful — render an
+    // explicit error block below instead of an empty member list.
+    reportReadFailure("settings: members", membersError);
+  }
 
   const address =
     (org?.address as { line1?: string; city?: string; postcode?: string } | null) ?? {};
@@ -271,6 +281,14 @@ export default async function SettingsPage() {
       </section>
 
       {/* Members ------------------------------------------------------- */}
+      {membersError ? (
+        <section className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-red-800">Members</h2>
+          <p className="mt-1 text-sm text-red-700">
+            Couldn&apos;t load the members of this organisation. Refresh to try again.
+          </p>
+        </section>
+      ) : (
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900">Members</h2>
@@ -317,6 +335,7 @@ export default async function SettingsPage() {
           attach them to this org.
         </p>
       </section>
+      )}
     </div>
   );
 }

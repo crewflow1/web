@@ -28,6 +28,7 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   computeRelationshipScore,
 } from "@/lib/sales/intelligence";
@@ -604,10 +605,11 @@ export async function runResearchTask(taskId?: string): Promise<RunOutcome> {
 /** Read back a completed task's headline score from its persisted result jsonb. */
 async function scoreOfTask(taskId: string): Promise<number | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{ result: ResearchResult | null }>(admin)
+  const { data, error } = await taskReads<{ result: ResearchResult | null }>(admin)
     .select("result")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-research: task score", error);
   return data?.result?.summary?.score ?? null;
 }
 
@@ -1202,12 +1204,15 @@ async function loadRelationshipScore(
   admin: AdminClient,
   companyId: string,
 ): Promise<number | null> {
-  const { data } = await (
+  const { data, error } = await (
     admin.from("hq_sales_timeline_events" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           order: (c: string, o: { ascending: boolean }) => {
-            limit: (n: number) => PromiseLike<{ data: SalesTimelineEvent[] | null }>;
+            limit: (n: number) => PromiseLike<{
+              data: SalesTimelineEvent[] | null;
+              error: SupabaseReadError | null;
+            }>;
           };
         };
       };
@@ -1217,20 +1222,25 @@ async function loadRelationshipScore(
     .eq("company_id", companyId)
     .order("occurred_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("hq-research: relationship timeline", error);
   return computeRelationshipScore((data ?? []) as SalesTimelineEvent[]).score;
 }
 
 async function loadExistingContactNames(companyId: string): Promise<Set<string>> {
   const admin = createAdminClient();
-  const { data } = await (
+  const { data, error } = await (
     admin.from("hq_sales_contacts" as never) as unknown as {
       select: (c: string) => {
-        eq: (k: string, v: unknown) => PromiseLike<{ data: Pick<SalesContact, "full_name">[] | null }>;
+        eq: (k: string, v: unknown) => PromiseLike<{
+          data: Pick<SalesContact, "full_name">[] | null;
+          error: SupabaseReadError | null;
+        }>;
       };
     }
   )
     .select("full_name")
     .eq("company_id", companyId);
+  if (error) throw readFailure("hq-research: existing contact names", error);
   const set = new Set<string>();
   for (const row of data ?? []) {
     const n = normaliseName(row.full_name);
@@ -1269,7 +1279,7 @@ export async function getResearchRunState(
   taskId: string,
 ): Promise<ResearchRunState | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{
+  const { data, error } = await taskReads<{
     id: string;
     subject_id: string | null;
     status: string;
@@ -1281,6 +1291,7 @@ export async function getResearchRunState(
     .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-research: run state", error);
   if (!data) return null;
 
   const company = data.subject_id ? await getCompany(data.subject_id) : null;
@@ -1303,12 +1314,13 @@ export async function getResearchRunState(
  *  straight to a live or finished run. */
 export async function latestResearchTaskId(companyId: string): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{ id: string }>(admin)
+  const { data, error } = await taskReads<{ id: string }>(admin)
     .select("id")
     .eq("subject_id", companyId)
     .eq("task_type", RESEARCH_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(1);
+  if (error) throw readFailure("hq-research: latest research task", error);
   return Array.isArray(data) && data[0] ? data[0].id : null;
 }
 
@@ -1379,11 +1391,12 @@ type RecentTaskRow = {
 export async function listRecentResearchRuns(limit = 12): Promise<ResearchRunRow[]> {
   const admin = createAdminClient();
   const capped = Math.min(Math.max(limit, 1), 50);
-  const { data } = await taskReads<RecentTaskRow>(admin)
+  const { data, error } = await taskReads<RecentTaskRow>(admin)
     .select("id, subject_id, status, result, created_at, finished_at")
     .eq("task_type", RESEARCH_TASK_TYPE)
     .order("created_at", { ascending: false })
     .limit(capped);
+  if (error) throw readFailure("hq-research: recent research runs", error);
 
   const rows = Array.isArray(data) ? data : [];
   const names = await loadCompanyNames(
@@ -1432,12 +1445,13 @@ export async function getResearchMetrics(): Promise<ResearchMetrics> {
   ]);
 
   // Aggregate the most-recent completed runs' summaries (capped window).
-  const { data } = await taskReads<{ result: ResearchResult | null; finished_at: string | null }>(admin)
+  const { data, error } = await taskReads<{ result: ResearchResult | null; finished_at: string | null }>(admin)
     .select("result, finished_at")
     .eq("task_type", RESEARCH_TASK_TYPE)
     .eq("status", "completed")
     .order("finished_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("hq-research: metrics aggregate", error);
 
   let scoreSum = 0;
   let scored = 0;
@@ -1542,7 +1556,7 @@ export type ResearchReportView = {
 
 export async function getResearchReport(taskId: string): Promise<ResearchReportView | null> {
   const admin = createAdminClient();
-  const { data } = await taskReads<{
+  const { data, error } = await taskReads<{
     id: string;
     subject_id: string | null;
     status: string;
@@ -1554,6 +1568,7 @@ export async function getResearchReport(taskId: string): Promise<ResearchReportV
     .select("id, subject_id, status, result, started_at, finished_at, error_message")
     .eq("id", taskId)
     .maybeSingle();
+  if (error) throw readFailure("hq-research: research report", error);
   if (!data) return null;
 
   const company = data.subject_id ? await getCompany(data.subject_id) : null;

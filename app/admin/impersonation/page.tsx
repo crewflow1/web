@@ -5,6 +5,7 @@ import {
   getActiveImpersonation,
 } from "@/server/services/impersonation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   startImpersonation,
   endImpersonation,
@@ -37,10 +38,13 @@ export default async function HqImpersonationPage({
   const active = sessions.filter((s) => s.ended_at === null);
 
   const admin = createAdminClient();
-  const { data: orgs } = await admin
+  const { data: orgs, error: orgsError } = await admin
     .from("organizations")
     .select("id, name" as never)
     .order("name", { ascending: true });
+  if (orgsError) {
+    throw readFailure("admin impersonation: organizations", orgsError);
+  }
   const orgList = ((orgs ?? []) as unknown) as Array<{
     id: string;
     name: string;

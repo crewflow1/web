@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 
@@ -53,13 +54,13 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
       ? sp.status
       : "extracted";
 
-  const { data } = await (
+  const { data, error } = await (
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             order: (col: string, opts: { ascending: boolean }) => {
-              limit: (n: number) => Promise<{ data: DraftRow[] | null }>;
+              limit: (n: number) => Promise<{ data: DraftRow[] | null; error: SupabaseReadError | null }>;
             };
           };
         };
@@ -75,6 +76,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
     .eq("status", filter)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (error) throw readFailure("expenses: drafts queue", error);
 
   const rows = data ?? [];
   const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? null : null;

@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -98,10 +99,11 @@ export type ApprovalResult =
 // ---------------------------------------------------------------------
 
 async function readApproval(admin: AdminClient, id: string): Promise<ApprovalRow | null> {
-  const { data } = await approvals<ApprovalRow>(admin)
+  const { data, error } = await approvals<ApprovalRow>(admin)
     .select(ROW_COLUMNS)
     .eq("id", id)
     .maybeSingle();
+  if (error) throw readFailure("hq-approvals: approval row", error);
   return data ?? null;
 }
 
@@ -353,12 +355,13 @@ export type ExpireDueResult = { ok: boolean; expired: number };
 export async function expireDueApprovals(nowIso?: string, limit = 50): Promise<ExpireDueResult> {
   const admin = createAdminClient();
   const cutoff = nowIso ?? new Date().toISOString();
-  const { data } = await approvals<{ id: string }>(admin)
+  const { data, error } = await approvals<{ id: string }>(admin)
     .select("id")
     .in("state", ACTIVE_STATES as unknown as string[])
     .lt("expires_at", cutoff)
     .order("expires_at", { ascending: true })
     .limit(Math.min(Math.max(limit, 1), 200));
+  if (error) throw readFailure("hq-approvals: due approvals", error);
   const ids = (Array.isArray(data) ? data : []).map((r) => r.id);
   let expired = 0;
   for (const id of ids) {
@@ -427,11 +430,12 @@ export async function getApproval(id: string): Promise<ApprovalRow | null> {
 /** The review queue: active items (pending + escalated), oldest first. */
 export async function listPendingApprovals(limit = 50): Promise<ApprovalRow[]> {
   const admin = createAdminClient();
-  const { data } = await approvals<ApprovalRow>(admin)
+  const { data, error } = await approvals<ApprovalRow>(admin)
     .select(ROW_COLUMNS)
     .in("state", ACTIVE_STATES as unknown as string[])
     .order("requested_at", { ascending: true })
     .limit(Math.min(Math.max(limit, 1), 200));
+  if (error) throw readFailure("hq-approvals: pending approvals", error);
   return Array.isArray(data) ? data : [];
 }
 
@@ -442,11 +446,12 @@ export async function listApprovalsForSubject(
   limit = 50,
 ): Promise<ApprovalRow[]> {
   const admin = createAdminClient();
-  const { data } = await approvals<ApprovalRow>(admin)
+  const { data, error } = await approvals<ApprovalRow>(admin)
     .select(ROW_COLUMNS)
     .eq("subject_type", subjectType)
     .eq("subject_id", subjectId)
     .order("requested_at", { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 200));
+  if (error) throw readFailure("hq-approvals: approvals for subject", error);
   return Array.isArray(data) ? data : [];
 }

@@ -11,6 +11,7 @@ import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -31,15 +32,20 @@ export default async function StaffDetailPage({
   const supabase = await createClient();
 
   // Current user's role.
-  const { data: myRow } = await supabase
+  const { data: myRow, error: myRowError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  // PGRST116 = genuinely not a member (isAdmin false is correct); any other
+  // error must not silently strip the admin controls from the page.
+  if (myRowError && myRowError.code !== "PGRST116") {
+    throw readFailure("staff detail: viewer role", myRowError);
+  }
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
   // Target row + extended profile.
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("memberships")
     .select(
       `
@@ -50,6 +56,7 @@ export default async function StaffDetailPage({
     .eq("org_id", ctx.org.id)
     .eq("user_id", id)
     .maybeSingle();
+  if (rowError) throw readFailure("staff detail: member", rowError);
 
   if (!row) notFound();
 

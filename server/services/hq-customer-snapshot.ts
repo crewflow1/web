@@ -10,6 +10,7 @@ import {
   type HealthResult,
 } from "@/lib/hq/customer-financials";
 import type { OrgStatus } from "@/server/auth/session";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * CrewFlow HQ — Customers OS per-customer snapshot.
@@ -117,7 +118,7 @@ export async function loadCustomerSnapshot(
   const admin = createAdminClient();
 
   // ---------- 1. Org row -----------------------------------------------
-  const { data: orgRaw } = await admin
+  const { data: orgRaw, error: orgError } = await admin
     .from("organizations")
     .select(
       [
@@ -151,6 +152,7 @@ export async function loadCustomerSnapshot(
     )
     .eq("id", orgId)
     .maybeSingle();
+  if (orgError) throw readFailure("hq customer: org", orgError);
 
   if (!orgRaw) return null;
   const org = orgRaw as unknown as CustomerOrg;
@@ -190,12 +192,13 @@ export async function loadCustomerSnapshot(
   }
 
   // ---------- 4. Imports (migration timeline source) -------------------
-  const { data: importsRaw } = await admin
+  const { data: importsRaw, error: importsError } = await admin
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(10);
+  if (importsError) throw readFailure("hq customer: imports", importsError);
   const imports = (importsRaw ?? []) as CustomerSnapshot["imports"];
 
   // ---------- 5. Invoice/payment events (best-effort) ------------------
@@ -395,7 +398,7 @@ export type CustomerListRow = {
 
 export async function listCustomersForHq(): Promise<CustomerListRow[]> {
   const admin = createAdminClient();
-  const { data: orgs } = await admin
+  const { data: orgs, error: orgsError } = await admin
     .from("organizations")
     .select(
       [
@@ -413,6 +416,7 @@ export async function listCustomersForHq(): Promise<CustomerListRow[]> {
       ].join(", ") as never,
     )
     .order("created_at", { ascending: false });
+  if (orgsError) throw readFailure("hq customers: list", orgsError);
 
   type Row = Omit<CustomerListRow, "owner_email" | "owner_name">;
   const baseRows = ((orgs ?? []) as unknown as Row[]);

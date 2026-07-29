@@ -155,7 +155,7 @@ export async function loadMySupportTicket(
   // Fetch messages. RLS policy filters internal=true away from
   // tenant SELECTs automatically — we don't have to (and shouldn't
   // try to) replicate that filter here.
-  const { data: msgs } = await supabase
+  const { data: msgs, error: msgsError } = await supabase
     .from("support_messages" as never)
     .select(
       [
@@ -170,6 +170,10 @@ export async function loadMySupportTicket(
     )
     .eq("ticket_id", ticketId)
     .order("created_at", { ascending: true });
+  if (msgsError) {
+    console.error("[customer-support] loadMySupportTicket messages failed", msgsError);
+    return null;
+  }
 
   // On a portal thread, 'customer' is the END-CUSTOMER (author_id is null —
   // they have no user row), not this org. Name them from the ticket's customer

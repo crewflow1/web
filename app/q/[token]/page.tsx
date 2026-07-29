@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { publicAcceptQuote, publicDeclineQuote } from "./actions";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Public customer-facing quote view.
@@ -33,7 +34,7 @@ export default async function PublicQuotePage({
   const sp = await searchParams;
   const admin = createAdminClient();
 
-  const { data: quote } = await admin
+  const { data: quote, error: quoteError } = await admin
     .from("quotes")
     .select(
       `
@@ -47,6 +48,9 @@ export default async function PublicQuotePage({
     )
     .eq("public_token", token)
     .maybeSingle();
+  // Loud fail: a query failure must never tell a paying customer their quote
+  // link is invalid — that costs acceptances.
+  if (quoteError) throw readFailure("public quote: load", quoteError);
 
   // Wave 2 — hide quotes that haven't cleared the approval gate. We still
   // serve a friendly "link not available" page rather than a bare 404
@@ -91,11 +95,13 @@ export default async function PublicQuotePage({
       .eq("id", quote.id);
   }
 
-  const { data: lineItems } = await admin
+  const { data: lineItems, error: lineItemsError } = await admin
     .from("quote_line_items")
     .select("description, qty, unit, unit_price, vat_rate, line_total, sort_order")
     .eq("quote_id", quote.id)
     .order("sort_order", { ascending: true });
+  // Never render an acceptable quote with totals but zero scope lines.
+  if (lineItemsError) throw readFailure("public quote: line items", lineItemsError);
 
   const org = quote.org;
   // Uploaded logos live in a private bucket → resolve a short-lived signed URL.

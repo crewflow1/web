@@ -7,6 +7,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   notifyOnSupportReplyToHq,
 } from "@/lib/notifications/events";
@@ -142,11 +143,14 @@ export async function replyToSupportTicket(
   //                             CrewFlow about a conversation it isn't part of.
   // RLS scopes this read to the caller's org, so a foreign ticket_id resolves
   // to no row and we fail closed rather than guessing an actor.
-  const { data: tRow } = await supabase
+  const { data: tRow, error: tRowError } = await supabase
     .from("support_tickets" as never)
     .select("subject, ticket_number, customer_id" as never)
     .eq("id" as never, parsed.data.ticket_id)
     .maybeSingle();
+  // Loud fail: stay fail-closed, but a query failure must not read as
+  // "ticket not found".
+  if (tRowError) throw readFailure("support: thread resolve", tRowError);
   const tInfo = tRow as unknown as {
     subject?: string;
     ticket_number?: number;

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import {
@@ -78,13 +79,18 @@ export async function updateCustomerFinancials(
   const now = new Date().toISOString();
 
   // Pull the current row so the audit entry can carry old → new.
-  const { data: prev } = await supabase
+  const { data: prev, error: prevError } = await supabase
     .from("organizations")
     .select(
       "setup_fee_status, setup_fee_paid_at, mrr_gbp, billing_email, ltv_gbp" as never,
     )
     .eq("id", parsed.data.org_id)
     .maybeSingle();
+  if (prevError) {
+    // Throw BEFORE the write: a failed read here would mis-stamp
+    // setup_fee_paid_at (the paid-transition logic depends on prevRow).
+    throw readFailure("admin updateCustomerFinancials: organization", prevError);
+  }
   const prevRow = prev as unknown as {
     setup_fee_status: string | null;
     setup_fee_paid_at: string | null;
@@ -191,11 +197,16 @@ export async function updateCustomerProgress(formData: FormData): Promise<void> 
   // Capture the previous values so we only notify on milestone
   // crossings (10/25/50/75/100) — avoids spamming the customer
   // every time the operator nudges the slider by 1%.
-  const { data: prevRow } = await supabase
+  const { data: prevRow, error: prevRowError } = await supabase
     .from("organizations")
     .select("onboarding_percent, migration_percent" as never)
     .eq("id", parsed.data.org_id)
     .maybeSingle();
+  if (prevRowError) {
+    // Throw BEFORE the write + notifications: a failed read reads as
+    // "previous = 0%" and would spam spurious milestone notifications.
+    throw readFailure("admin updateCustomerProgress: organization", prevRowError);
+  }
   const prev = (prevRow as unknown as {
     onboarding_percent?: number | null;
     migration_percent?: number | null;
@@ -486,11 +497,16 @@ export async function markSetupComplete(formData: FormData): Promise<void> {
   const supabase = createAdminClient();
   // Read existing state, merge completed_at, write back. Preserves
   // dismissed_steps / celebrated_milestones / etc.
-  const { data: row } = await supabase
+  const { data: row, error: rowError } = await supabase
     .from("organizations")
     .select("onboarding_state")
     .eq("id", parsed.data.org_id)
     .maybeSingle();
+  if (rowError) {
+    // Throw BEFORE the merge-write: a failed read reads as "state = {}"
+    // and the write-back would clobber dismissed_steps / milestones.
+    throw readFailure("admin markSetupComplete: onboarding_state", rowError);
+  }
   const state = ((row?.onboarding_state ?? {}) as Record<string, unknown>) ?? {};
   const next = {
     ...state,
@@ -530,13 +546,17 @@ export async function resendInvite(formData: FormData): Promise<void> {
 
   // Resolve the org owner via memberships → users.
   type OwnerRow = { user: { email: string | null } | null };
-  const { data: rawOwner } = await supabase
+  const { data: rawOwner, error: ownerError } = await supabase
     .from("memberships")
     .select("user:users ( email )")
     .eq("org_id", parsed.data.org_id)
     .eq("role", "owner")
     .limit(1)
     .maybeSingle();
+  if (ownerError) {
+    // Distinct from the genuine "no owner email on file" case below.
+    throw readFailure("admin resendInvite: org owner lookup", ownerError);
+  }
   const owner = rawOwner as unknown as OwnerRow | null;
   const email = owner?.user?.email ?? null;
   if (!email) {

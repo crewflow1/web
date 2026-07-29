@@ -11,6 +11,7 @@ import {
 } from "@/server/services/staff-invite";
 import { requireOrgContext } from "@/server/auth/session";
 import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   updateStaffProfileSchema,
   updateStaffRoleSchema,
@@ -45,11 +46,14 @@ const uuid = z.string().uuid();
 
 async function requireAdmin(orgId: string) {
   const supabase = await createClient();
-  const { data: me } = await supabase
+  const { data: me, error } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", orgId)
     .single();
+  // PGRST116 = genuinely no membership row → forbidden; any other error is a
+  // failed read and must not masquerade as a role decision.
+  if (error && error.code !== "PGRST116") throw readFailure("staff: admin gate", error);
   if (!me || (me.role !== "owner" && me.role !== "admin")) {
     redirect("/dashboard?error=forbidden");
   }
@@ -304,18 +308,21 @@ export async function updateStaffRole(userId: string, formData: FormData) {
   }
 
   const supabase = await createClient();
-  // Prevent demoting the last owner.
-  const { count: ownerCount } = await supabase
+  // Prevent demoting the last owner. Loud fail on either read: a failed target
+  // read silently SKIPS this guard and could demote the last owner (org lockout).
+  const { count: ownerCount, error: ownerCountError } = await supabase
     .from("memberships")
     .select("id", { count: "exact", head: true })
     .eq("org_id", ctx.org.id)
     .eq("role", "owner");
-  const { data: target } = await supabase
+  if (ownerCountError) throw readFailure("staff: owner count guard", ownerCountError);
+  const { data: target, error: targetError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
+  if (targetError) throw readFailure("staff: role-change target", targetError);
   if (target?.role === "owner" && (ownerCount ?? 0) <= 1) {
     redirect(`/staff/${userId}?error=last_owner_lock`);
   }
@@ -402,12 +409,15 @@ export async function removeStaff(userId: string) {
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const supabase = await createClient();
-  const { data: target } = await supabase
+  const { data: target, error: targetError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
+  // Loud fail: on a failed read this guard silently passes and the OWNER
+  // membership becomes deletable (org lockout).
+  if (targetError) throw readFailure("staff: remove-target role", targetError);
   if (target?.role === "owner") {
     redirect(`/staff/${userId}?error=cannot_remove_owner`);
   }

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   MILESTONE_IDS,
   type MilestoneId,
@@ -42,11 +43,14 @@ export async function dismissMilestone(formData: FormData): Promise<void> {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("organizations")
     .select("onboarding_state")
     .eq("id", ctx.org.id)
     .maybeSingle();
+  // A failed read must never fall through to the update below with an empty
+  // state — that would clobber every other onboarding_state key.
+  if (error) throw readFailure("dashboard: onboarding state (dismiss milestone)", error);
   const state = ((data?.onboarding_state ?? {}) as Record<string, unknown>) ?? {};
   const existing = Array.isArray(state.celebrated_milestones)
     ? (state.celebrated_milestones as string[])
@@ -81,11 +85,13 @@ export async function dismissNudge(formData: FormData): Promise<void> {
 
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("organizations")
     .select("onboarding_state")
     .eq("id", ctx.org.id)
     .maybeSingle();
+  // Same read-modify-write hazard as dismissMilestone — throw before the write.
+  if (error) throw readFailure("dashboard: onboarding state (dismiss nudge)", error);
   const state =
     ((data?.onboarding_state ?? {}) as Record<string, unknown>) ?? {};
   const existing = Array.isArray(state.dismissed_nudges)

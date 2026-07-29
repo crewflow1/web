@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
 
@@ -24,7 +25,11 @@ export default async function ReconcilePage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const [{ data: statement }, { data: lines }, { data: invoices }] = await Promise.all([
+  const [
+    { data: statement, error: statementError },
+    { data: lines, error: linesError },
+    { data: invoices, error: invoicesError },
+  ] = await Promise.all([
     supabase
       .from("bank_statements")
       .select("id, filename, uploaded_at, line_count, matched_count")
@@ -49,7 +54,12 @@ export default async function ReconcilePage({
       .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
   ]);
 
+  // A rejected statement read must not masquerade as a missing statement, and
+  // failed lines/invoices reads must not render "all reconciled" over money.
+  if (statementError) throw readFailure("payments reconcile: statement", statementError);
   if (!statement) notFound();
+  if (linesError) throw readFailure("payments reconcile: lines", linesError);
+  if (invoicesError) throw readFailure("payments reconcile: invoices", invoicesError);
 
   const invoicesById = new Map<string, { number: string; total: number; status: string }>();
   for (const i of invoices ?? []) {

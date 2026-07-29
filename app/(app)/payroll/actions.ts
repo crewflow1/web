@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
@@ -66,12 +67,15 @@ export async function createPayrollRun(
   // -----------------------------------------------------------------
   const windowEndIso = `${period_end}T23:59:59.999Z`;
   const windowStartIso = `${period_start}T00:00:00Z`;
-  const { data: openEntries } = await supabase
+  const { data: openEntries, error: openError } = await supabase
     .from("time_entries")
     .select("id, user_id, started_at, user:users ( full_name, email )")
     .eq("org_id", ctx.org.id)
     .is("ended_at", null)
     .lte("started_at", windowEndIso);
+  // Fail loud — a failed read here would FAIL OPEN, skipping the open-entry
+  // guard and silently dropping still-clocked-in hours from the run.
+  if (openError) throw readFailure("payroll create: open entries", openError);
   if (openEntries && openEntries.length > 0) {
     type OpenRow = {
       user: { full_name: string | null; email: string | null } | null;
@@ -113,16 +117,20 @@ export async function createPayrollRun(
   }
 
   // Pull every member + their hourly_pay.
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("memberships")
     .select("user_id, user:users ( id, full_name, hourly_pay )")
     .eq("org_id", ctx.org.id);
-  const { data: entriesRaw } = await supabase
+  // A failed read here would write a £0 run and report success — payroll
+  // mismatches are RED, so fail loud instead.
+  if (membersError) throw readFailure("payroll create: members", membersError);
+  const { data: entriesRaw, error: entriesError } = await supabase
     .from("time_entries")
     .select("id, user_id, job_id, started_at, ended_at, breaks")
     .gte("started_at", windowStartIso)
     .lte("started_at", windowEndIso)
     .not("ended_at", "is", null);
+  if (entriesError) throw readFailure("payroll create: hours", entriesError);
   const entries = (entriesRaw ?? []) as TimeEntry[];
   const hoursByU = hoursByUser(
     entries,
@@ -209,19 +217,23 @@ export async function finalisePayrollRun(runId: string) {
   if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
   const supabase = await createClient();
 
-  const { data: run } = await supabase
+  const { data: run, error: runError } = await supabase
     .from("payroll_runs")
     .select("id, period_start, period_end, status")
     .eq("id", runId)
     .maybeSingle();
+  if (runError) throw readFailure("payroll finalise: run", runError);
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}`);
 
   // Lock the time entries whose user appears in this run.
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("payroll_lines")
     .select("id, user_id")
     .eq("payroll_run_id", runId);
+  // Fail loud BEFORE finalising — a failed read here would finalise the run
+  // with every time entry left unlocked.
+  if (linesError) throw readFailure("payroll finalise: lines", linesError);
 
   for (const l of lines ?? []) {
     await supabase
@@ -249,11 +261,14 @@ export async function deletePayrollRun(runId: string) {
   const { ctx } = await requireOrgContext();
   if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
   const supabase = await createClient();
-  const { data: run } = await supabase
+  const { data: run, error: runError } = await supabase
     .from("payroll_runs")
     .select("status")
     .eq("id", runId)
     .maybeSingle();
+  // Throw BEFORE the delete — a failed status read must never let a finalised
+  // run slip past the immutability check.
+  if (runError) throw readFailure("payroll delete: run", runError);
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}?error=cannot_delete_finalised`);
   await supabase.from("payroll_runs").delete().eq("id", runId);

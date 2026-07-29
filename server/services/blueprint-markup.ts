@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -19,9 +20,9 @@ import {
 
 export type MarkupResult<T = { id: string }> = { ok: true; data: T } | { ok: false; error: string };
 
-type MarkupChain = PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }> & {
+type MarkupChain = PromiseLike<{ data: Record<string, unknown>[] | null; error: SupabaseReadError | null }> & {
   eq: (k: string, v: unknown) => MarkupChain;
-  order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null; error: unknown }>;
+  order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null; error: SupabaseReadError | null }>;
 };
 type MarkupClient = {
   from: (t: string) => {
@@ -42,12 +43,13 @@ type RawMarkup = {
 /** Active markup on a drawing revision. RLS scopes the read to the caller's orgs. */
 export async function listMarkupForVersion(versionId: string): Promise<BlueprintMarkup[]> {
   const supabase = mc(await createClient());
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("blueprint_markup")
     .select("id, blueprint_version_id, page_number, shape, geom, color, text_content, stroke_width, created_at, created_by")
     .eq("blueprint_version_id", versionId)
     .eq("status", "active")
     .order("created_at", { ascending: true });
+  if (error) throw readFailure("blueprint-markup: markup for version", error);
   return ((data ?? []) as unknown as RawMarkup[]).map((m) => ({
     id: m.id, blueprint_version_id: m.blueprint_version_id, page_number: m.page_number,
     kind: m.shape, points: Array.isArray(m.geom?.points) ? m.geom.points : [],

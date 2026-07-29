@@ -135,11 +135,16 @@ export async function sendInvoiceEmail(
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the emailed PDF reproduces the
   // invoice as billed, independent of the live quote.
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("invoice_line_items")
     .select("description, qty, unit_price, vat_rate, line_total, sort_order")
     .eq("invoice_id", invoice.id)
     .order("sort_order", { ascending: true });
+  if (linesError) {
+    // Never email a PDF with totals but zero line items on a failed read.
+    console.error("[send-invoice] line items load failed", linesError);
+    return { sent: false, reason: "load_failed", detail: linesError.message };
+  }
 
   const pdfInput: InvoicePdfInput = {
     number: invoice.number,

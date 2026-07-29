@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -139,9 +140,11 @@ export async function issuePermit(formData: FormData): Promise<void> {
   if (!parsed.success) redirect(`${base}?error=bad_id`);
   const id = parsed.data.id;
   const supabase = await createClient();
-  const { data: p } = await tbl(supabase)("permits_to_work")
+  const { data: p, error: permitError } = await tbl(supabase)("permits_to_work")
     .select("id, status, permit_type, title, scope, valid_from, valid_until, permit_conditions(required, confirmed)")
     .eq("id", id).eq("org_id", ctx.org.id).maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (permitError) throw readFailure("permits: issue guard", permitError);
   if (!p) redirect(`${base}?error=not_found`);
   const gate = canIssue(p, (p.permit_conditions ?? []).map((c: { required: boolean; confirmed: boolean }) => ({ required: c.required, confirmed: c.confirmed })));
   if (!gate.ok) redirect(`${base}/${id}?error=${encodeURIComponent(gate.reasons[0]!)}`);

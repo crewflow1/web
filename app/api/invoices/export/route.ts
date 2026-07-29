@@ -187,12 +187,18 @@ export async function GET(request: NextRequest) {
 
   let lineItemsByInvoice = new Map<string, LineItemRow[]>();
   if (invoiceIds.length > 0) {
-    const { data: lis } = await supabase
+    const { data: lis, error: lisError } = await supabase
       .from("invoice_line_items")
       .select("invoice_id, description, qty, unit_price, vat_rate, line_total, sort_order")
       .eq("org_id", ctx.org.id)
       .in("invoice_id", invoiceIds)
       .order("sort_order", { ascending: true });
+    if (lisError) {
+      // A failed line-item read must not produce a CSV with silently
+      // missing rows — that's a corrupt accounting export.
+      console.error("[invoices] export line items failed", lisError);
+      return NextResponse.json({ error: "Failed to export" }, { status: 500 });
+    }
     const grouped = new Map<string, LineItemRow[]>();
     for (const li of (lis ?? []) as unknown as LineItemRow[]) {
       const arr = grouped.get(li.invoice_id) ?? [];

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   uploadImportFiles,
@@ -45,7 +46,7 @@ export default async function ImportWizardPage({
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: imp } = await supabase
+  const { data: imp, error: impError } = await supabase
     .from("imports")
     .select("id, name, status, created_at, committed_at, rolled_back_at")
     .eq("id", id)
@@ -55,9 +56,10 @@ export default async function ImportWizardPage({
     // Pinning the session makes the file/row reads below derived-safe.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (impError) throw readFailure("import wizard: session", impError);
   if (!imp) notFound();
 
-  const [{ data: files }, { data: rows }] = await Promise.all([
+  const [{ data: files, error: filesError }, { data: rows, error: rowsError }] = await Promise.all([
     supabase
       .from("import_files")
       .select("id, filename, row_count, size_bytes, mime_type")
@@ -68,6 +70,8 @@ export default async function ImportWizardPage({
       .eq("import_id", id)
       .order("confidence", { ascending: false }),
   ]);
+  if (filesError) throw readFailure("import wizard: files", filesError);
+  if (rowsError) throw readFailure("import wizard: rows", rowsError);
 
   // Summary by entity type — covers both the pre-commit detection
   // view (counts + confidence) and the post-commit progress view

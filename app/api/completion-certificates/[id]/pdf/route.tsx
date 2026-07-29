@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { certContentSchema } from "@/lib/completion-certificates/schema";
 import {
@@ -36,14 +37,17 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: cert } = await (
+  const { data: cert, error: certError } = await (
     supabase.from("completion_certificates" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null }> } };
+      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }> } };
     }
   )
     .select("id, status, job_id, certificate_number, content, snapshot")
     .eq("id", id)
     .maybeSingle();
+  if (certError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
   if (!cert) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Org branding.

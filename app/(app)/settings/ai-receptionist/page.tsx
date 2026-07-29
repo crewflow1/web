@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AiReceptionistForm } from "./_form";
 import { saveAiReceptionistSetup } from "./actions";
@@ -48,11 +49,11 @@ export default async function AiReceptionistSettingsPage() {
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const supabase = await createClient();
 
-  const { data: row } = await (
+  const { data: row, error } = await (
     supabase.from("ai_receptionist_setups" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: SetupRow | null }>;
+          maybeSingle: () => Promise<{ data: SetupRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -62,6 +63,9 @@ export default async function AiReceptionistSettingsPage() {
     )
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  // A failed read would render the blank "not started" form over an existing
+  // setup — and a save from it would clobber the real config. Fail loud.
+  if (error) throw readFailure("ai receptionist settings: setup", error);
 
   const status = (row?.status as AiReceptionistStatus | undefined) ?? "not_started";
   const customerBadge =

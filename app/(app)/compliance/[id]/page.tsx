@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   deleteComplianceDocument,
   getComplianceDocSignedUrl,
@@ -39,12 +40,12 @@ export default async function ComplianceDocPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: row } = await (
+  const { data: row, error: rowError } = await (
     supabase.from("compliance_documents" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: DocRow | null }>;
+            maybeSingle: () => Promise<{ data: DocRow | null; error: SupabaseReadError | null }>;
           };
         };
       };
@@ -58,6 +59,7 @@ export default async function ComplianceDocPage({
     // indistinguishable from a missing one (the page notFound()s on null).
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (rowError) throw readFailure("compliance doc: detail", rowError);
 
   if (!row) notFound();
 

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   quoteFormSchema,
@@ -369,12 +370,13 @@ export async function sendQuote(id: string) {
   // Active-org scoped: a quote in another of the caller's orgs must read as
   // not_found, so the status gate below can never be evaluated — much less
   // satisfied — against a row this session has no business sending.
-  const { data: current } = await supabase
+  const { data: current, error: currentError } = await supabase
     .from("quotes")
     .select("status")
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (currentError) throw readFailure("quote send: quote", currentError);
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "approved") {
     redirect(
@@ -429,11 +431,16 @@ export async function sendQuote(id: string) {
 
 async function requireQuoteApprover(orgId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: me } = await supabase
+  const { data: me, error: meError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", orgId)
     .single();
+  if (meError && meError.code !== "PGRST116") {
+    // PGRST116 (no row) falls through to forbidden; anything else is a broken
+    // read, not a missing membership.
+    throw readFailure("quote review: approver role", meError);
+  }
   if (!me || (me.role !== "owner" && me.role !== "admin")) {
     redirect("/dashboard?error=forbidden");
   }
@@ -445,12 +452,13 @@ export async function requestQuoteApproval(id: string) {
 
   const supabase = await createClient();
   // Active-org scoped — a quote in another of the caller's orgs is not_found.
-  const { data: current } = await supabase
+  const { data: current, error: currentError } = await supabase
     .from("quotes")
     .select("status, org_id")
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (currentError) throw readFailure("quote approval request: quote", currentError);
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "draft" && current.status !== "rejected") {
     redirect(
@@ -509,12 +517,13 @@ export async function reviewQuote(id: string, formData: FormData) {
   // same user may be only an ordinary member. The separation-of-duties count
   // below is likewise taken over the active org's memberships, so it would
   // have been answering a question about the wrong org entirely.
-  const { data: current } = await supabase
+  const { data: current, error: currentError } = await supabase
     .from("quotes")
     .select("status, created_by")
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (currentError) throw readFailure("quote review: quote", currentError);
   if (!current) redirect(`/quotes/${id}?error=not_found`);
   if (current.status !== "pending_approval") {
     redirect(
@@ -1100,11 +1109,17 @@ export async function declineQuoteByToken(
   const admin = createAdminClient();
   const now = new Date().toISOString();
 
-  const { data: quote } = await admin
+  const { data: quote, error: quoteError } = await admin
     .from("quotes")
     .select("id, status, notes")
     .eq("public_token", token)
     .maybeSingle();
+  // Public surface — report the failure and return a retryable error distinct
+  // from "not found" so a transient failure doesn't read as a dead link.
+  if (quoteError) {
+    reportReadFailure("quote decline (public): quote", quoteError);
+    return { ok: false, error: "Couldn't load the quote — try again." };
+  }
   if (!quote) return { ok: false, error: "Quote not found" };
   if (quote.status === "accepted") return { ok: false, error: "Quote already accepted" };
   if (quote.status === "declined") return { ok: true, quoteId: quote.id };

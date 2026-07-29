@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -51,7 +52,7 @@ const SAVED_MAP: Record<string, string> = {
   deleted: "Report deleted.",
 };
 
-type ReportQuery = Promise<{ data: ReportRow[] | null }> & {
+type ReportQuery = Promise<{ data: ReportRow[] | null; error: SupabaseReadError | null }> & {
   eq: (k: string, v: unknown) => ReportQuery;
 };
 
@@ -85,7 +86,8 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
     // ACTIVE-org pin — client-facing reports must not interleave companies.
     .eq("org_id", ctx.org.id);
   if (statusFilter) query = query.eq("status", statusFilter);
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) throw readFailure("site reports: register", error);
   const rows = data ?? [];
 
   const jobIds = [

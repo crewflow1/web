@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../_helpers";
 import { PortalShell } from "./_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -63,18 +64,21 @@ export default async function PortalOverviewPage({
   // (wrong "outstanding" total / missing recent invoice on a busy org).
   // Scope the invoices read to THIS customer's quote ids in the query
   // instead — the same per-customer scoping the invoices list page uses.
-  const { data: quotesData } = await admin
+  const { data: quotesData, error: quotesError } = await admin
     .from("quotes")
     .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
     .eq("org_id", customer.org_id)
     .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(50);
+  if (quotesError) {
+    throw readFailure("portal overview: quotes", quotesError);
+  }
   const allQuotes = quotesData ?? [];
 
   // Scope invoices by their own customer anchor (Issue #349 Phase 1), not via
   // quote_id — authoritative and survives quote loss (see the invoices page).
-  const { data: invoicesData } = await admin
+  const { data: invoicesData, error: invoicesError } = await admin
     .from("invoices")
     .select(
       "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
@@ -83,6 +87,10 @@ export default async function PortalOverviewPage({
     .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(50);
+  if (invoicesError) {
+    // A failed read would show "£0 outstanding" — a lie about money.
+    throw readFailure("portal overview: invoices", invoicesError);
+  }
   const invoices: Array<{
     id: string;
     number: string;

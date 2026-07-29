@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { getApproval } from "@/server/services/hq-approvals";
 import { getDraft, type DraftRow } from "@/server/services/hq-drafts";
 import { getEmailProvider, emailCostUsd, type EmailMessage } from "@/lib/comms";
@@ -467,10 +468,13 @@ export async function isSuppressed(address: string): Promise<boolean> {
 }
 
 async function addressIsSuppressed(admin: AdminClient, address: string): Promise<boolean> {
-  const { data } = await suppressionsTable<SuppressionRow>(admin)
+  const { data, error } = await suppressionsTable<SuppressionRow>(admin)
     .select("id")
     .eq("address", normalizeAddress(address))
     .limit(1);
+  // A failed suppression read must BLOCK the send — never fail open past the
+  // do-not-contact list.
+  if (error) throw readFailure("hq-comms: suppression check", error);
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -508,7 +512,8 @@ async function upsertSuppression(admin: AdminClient, p: UpsertSuppression): Prom
 // ---------------------------------------------------------------------
 
 async function readCommunication(admin: AdminClient, id: string): Promise<CommunicationRow | null> {
-  const { data } = await comms<CommunicationRow>(admin).select(ROW_COLUMNS).eq("id", id).maybeSingle();
+  const { data, error } = await comms<CommunicationRow>(admin).select(ROW_COLUMNS).eq("id", id).maybeSingle();
+  if (error) throw readFailure("hq-comms: communication row", error);
   return data ?? null;
 }
 
@@ -516,10 +521,13 @@ async function readByProviderMessageId(
   admin: AdminClient,
   providerMessageId: string,
 ): Promise<CommunicationRow | null> {
-  const { data } = await comms<CommunicationRow>(admin)
+  const { data, error } = await comms<CommunicationRow>(admin)
     .select(ROW_COLUMNS)
     .eq("provider_message_id", providerMessageId)
     .maybeSingle();
+  // A bounce webhook that can't find its communication must be a VISIBLE
+  // failure, not a silently dropped event.
+  if (error) throw readFailure("hq-comms: communication by provider message id", error);
   return data ?? null;
 }
 
@@ -533,11 +541,12 @@ export async function listCommunicationsForDraft(
   limit = 50,
 ): Promise<CommunicationRow[]> {
   if (!draftId?.trim()) return [];
-  const { data } = await comms<CommunicationRow>(createAdminClient())
+  const { data, error } = await comms<CommunicationRow>(createAdminClient())
     .select(ROW_COLUMNS)
     .eq("draft_id", draftId)
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (error) throw readFailure("hq-comms: communications for draft", error);
   return data ?? [];
 }
 
@@ -547,20 +556,22 @@ export async function listCommunicationsForSubject(
   limit = 50,
 ): Promise<CommunicationRow[]> {
   if (!subjectType?.trim() || !subjectId?.trim()) return [];
-  const { data } = await comms<CommunicationRow>(createAdminClient())
+  const { data, error } = await comms<CommunicationRow>(createAdminClient())
     .select(ROW_COLUMNS)
     .eq("subject_type", subjectType)
     .eq("subject_id", subjectId)
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (error) throw readFailure("hq-comms: communications for subject", error);
   return data ?? [];
 }
 
 export async function listSuppressions(limit = 100): Promise<SuppressionRow[]> {
-  const { data } = await suppressionsTable<SuppressionRow>(createAdminClient())
+  const { data, error } = await suppressionsTable<SuppressionRow>(createAdminClient())
     .select(SUPPRESSION_COLUMNS)
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (error) throw readFailure("hq-comms: suppressions list", error);
   return data ?? [];
 }
 

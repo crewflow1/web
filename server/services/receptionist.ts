@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
@@ -490,7 +491,9 @@ type RecordReplyTransportRpc = (
 // and not in the typed client's row map).
 type TransportProbeFilter = {
   eq: (column: string, value: unknown) => TransportProbeFilter;
-  limit: (count: number) => Promise<{ data: { id: string }[] | null }>;
+  limit: (
+    count: number,
+  ) => Promise<{ data: { id: string }[] | null; error: SupabaseReadError | null }>;
 };
 type TransportProbe = {
   select: (cols: string) => TransportProbeFilter;
@@ -569,12 +572,15 @@ async function recordTransport(args: {
 async function findSentTransport(orgId: string, dedupKey: string): Promise<string | null> {
   const admin = createAdminClient();
   const probe = admin.from("ai_reply_transports" as never) as unknown as TransportProbe;
-  const { data } = await probe
+  const { data, error } = await probe
     .select("id")
     .eq("org_id", orgId)
     .eq("dedup_key", dedupKey)
     .eq("status", "sent")
     .limit(1);
+  // Loud fail: this guard is what stops a second attempt reaching a provider —
+  // a failed read must BLOCK dispatch, never fail open into a duplicate send.
+  if (error) throw readFailure("receptionist: sent-transport dedup probe", error);
   const rows = (data as { id: string }[] | null) ?? [];
   return rows[0]?.id ?? null;
 }
@@ -2181,8 +2187,11 @@ export async function processInboundEnquiry(
   // (the directive's "AI NEVER commits work" rule). The owner can
   // promote the lead to a customer manually.
   let leadId: string | null = null;
-  try {
-    const { data: leadRow } = await admin
+  {
+    // PostgREST errors RETURN, they don't throw — a try/catch alone is dead
+    // code here, and it let a failed insert mark the enquiry "processed" with
+    // no lead. Loud fail: the route 500s and the provider redelivers.
+    const { data: leadRow, error: leadError } = await admin
       .from("leads")
       .insert({
         org_id: input.org_id,
@@ -2195,9 +2204,8 @@ export async function processInboundEnquiry(
       })
       .select("id")
       .single();
+    if (leadError) throw readFailure("receptionist: inbound lead insert", leadError);
     leadId = (leadRow as { id?: string } | null)?.id ?? null;
-  } catch (e) {
-    console.error("[receptionist] lead insert failed", e);
   }
 
   // Step 4 — update enquiry with extraction + lead link.

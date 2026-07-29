@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
 
@@ -25,11 +26,16 @@ export async function uploadBankCsv(formData: FormData) {
   const supabase = await createClient();
 
   // Permission: admins-only — bank statements are sensitive.
-  const { data: me } = await supabase
+  const { data: me, error: meError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  if (meError && meError.code !== "PGRST116") {
+    // PGRST116 (no row) falls through to the forbidden redirect below; any
+    // other failure is a broken read, not a missing membership.
+    throw readFailure("payments upload: role", meError);
+  }
   if (!me || (me.role !== "owner" && me.role !== "admin")) {
     redirect("/payments?error=forbidden");
   }
@@ -72,7 +78,7 @@ export async function uploadBankCsv(formData: FormData) {
   }
 
   // 2. Pull unpaid invoices for scoring (RLS scopes to org).
-  const { data: invoices } = await supabase
+  const { data: invoices, error: invoicesError } = await supabase
     .from("invoices")
     .select(
       `
@@ -81,6 +87,9 @@ export async function uploadBankCsv(formData: FormData) {
       `,
     )
     .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]);
+  // Fail loud BEFORE inserting lines — a failed read here would score against
+  // an empty invoice list and persist every line as "unmatched".
+  if (invoicesError) throw readFailure("payments upload: invoices", invoicesError);
 
   type ScoredInv = {
     id: string;
@@ -154,11 +163,12 @@ export async function confirmBankMatch(
   }
 
   const supabase = await createClient();
-  const { data: line } = await supabase
+  const { data: line, error: lineError } = await supabase
     .from("bank_statement_lines")
     .select("id, org_id, bank_statement_id, amount, posted_at, reference, description")
     .eq("id", bankLineId)
     .maybeSingle();
+  if (lineError) throw readFailure("payments match: bank line", lineError);
   if (!line) redirect("/payments?error=not_found");
   if (line.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
   if (line.amount <= 0) redirect("/payments?error=not_an_incoming_payment");
@@ -178,11 +188,12 @@ export async function confirmBankMatch(
   // (invoices are select-scoped to the caller's orgs) and re-check org_id —
   // mirroring the bank-line checks above, and matching addInvoicePayment, which
   // already resolves its invoice this way. Fails closed.
-  const { data: inv } = await supabase
+  const { data: inv, error: invError } = await supabase
     .from("invoices")
     .select("id, org_id")
     .eq("id", targetInvoiceId)
     .maybeSingle();
+  if (invError) throw readFailure("payments match: invoice", invError);
   if (!inv) redirect("/payments?error=not_found");
   if (inv.org_id !== ctx.org.id) redirect("/payments?error=forbidden");
 

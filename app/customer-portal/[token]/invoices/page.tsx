@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -92,7 +93,7 @@ export default async function PortalInvoicesPage({
   // an invoice whose quote was deleted keeps its customer_id, so it still
   // appears here instead of vanishing. org_id + customer_id keeps it strictly
   // this customer's, on the RLS-bypassing admin client.
-  const { data: invoicesData } = await admin
+  const { data: invoicesData, error: invoicesError } = await admin
     .from("invoices")
     .select(
       "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, created_at",
@@ -101,6 +102,9 @@ export default async function PortalInvoicesPage({
     .eq("customer_id", customer.id)
     .order("created_at", { ascending: false })
     .limit(200);
+  if (invoicesError) {
+    throw readFailure("portal invoices: invoices", invoicesError);
+  }
   const invoices: Array<{
     id: string;
     number: string;
@@ -118,10 +122,14 @@ export default async function PortalInvoicesPage({
   const paidByInvoice = new Map<string, number>();
   if (invoices.length > 0) {
     const ids = invoices.map((i) => i.id);
-    const { data: payments } = await admin
+    const { data: payments, error: paymentsError } = await admin
       .from("invoice_payments")
       .select("invoice_id, amount")
       .in("invoice_id", ids);
+    if (paymentsError) {
+      // A failed payments read would show every invoice as fully unpaid.
+      throw readFailure("portal invoices: payments", paymentsError);
+    }
     for (const p of payments ?? []) {
       const prev = paidByInvoice.get(p.invoice_id) ?? 0;
       paidByInvoice.set(p.invoice_id, prev + Number(p.amount ?? 0));
@@ -157,7 +165,7 @@ export default async function PortalInvoicesPage({
   const proofsByInvoice = new Map<string, ProofRow[]>();
   if (invoices.length > 0) {
     const ids = invoices.map((i) => i.id);
-    const { data: proofs } = await (
+    const { data: proofs, error: proofsError } = await (
       admin.from("portal_uploads" as never) as unknown as {
         select: (cols: string) => ProofQuery;
       }
@@ -169,6 +177,10 @@ export default async function PortalInvoicesPage({
       .eq("kind", "payment_proof")
       .in("target_id", ids)
       .order("uploaded_at", { ascending: false });
+    if (proofsError) {
+      // A failed proofs read would tell the customer their proof never landed.
+      throw readFailure("portal invoices: payment proofs", proofsError);
+    }
     for (const pf of proofs ?? []) {
       const list = proofsByInvoice.get(pf.target_id) ?? [];
       list.push(pf);

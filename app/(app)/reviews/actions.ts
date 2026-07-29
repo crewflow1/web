@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { sendEmail } from "@/lib/email/send";
@@ -190,11 +191,11 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
     status: string;
     customer: { name: string | null; email: string | null } | null;
   };
-  const { data: review } = await (
+  const { data: review, error: reviewError } = await (
     tenant.from("review_requests" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: ReviewRow | null }>;
+          maybeSingle: () => Promise<{ data: ReviewRow | null; error: SupabaseReadError | null }>;
         };
       };
     }
@@ -205,6 +206,7 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
     .eq("id", id)
     .maybeSingle();
 
+  if (reviewError) throw readFailure("review email: review request", reviewError);
   if (!review) redirect(`/reviews?error=not_found`);
   if (review!.status === "completed" || review!.status === "cancelled") {
     redirect(`/reviews?error=already_resolved`);

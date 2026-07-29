@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   assertTemplateTransition,
   createTemplateSchema,
@@ -39,7 +40,10 @@ type TemplateRow = {
 type LoadOne = {
   select: (c: string) => {
     eq: (k: string, v: unknown) => {
-      eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: TemplateRow | null }> };
+      eq: (
+        k: string,
+        v: unknown,
+      ) => { maybeSingle: () => Promise<{ data: TemplateRow | null; error: SupabaseReadError | null }> };
     };
   };
 };
@@ -80,11 +84,14 @@ const templates = (t: Awaited<ReturnType<typeof createClient>>) =>
 
 async function loadTemplate(orgId: string, id: string): Promise<TemplateRow | null> {
   const tenant = await createClient();
-  const { data } = await (templates(tenant) as unknown as LoadOne)
+  const { data, error } = await (templates(tenant) as unknown as LoadOne)
     .select("id, family_id, version, name, description, categories, check_level, status, definition")
     .eq("id", id)
     .eq("org_id", orgId)
     .maybeSingle();
+  // Loud fail: callers turn null into "?error=template_missing" — a query
+  // failure must not wear that banner.
+  if (error) throw readFailure("templates: load", error);
   return data;
 }
 

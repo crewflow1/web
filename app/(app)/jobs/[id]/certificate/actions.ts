@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -35,8 +36,10 @@ type CertRow = {
 type FromChain = {
   select: (c: string) => {
     eq: (k: string, v: unknown) => {
-      eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null }> };
-      maybeSingle: () => Promise<{ data: CertRow | null }>;
+      eq: (k: string, v: unknown) => {
+        maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }>;
+      };
+      maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }>;
     };
   };
   insert: (row: unknown) => {
@@ -132,7 +135,8 @@ export async function issueCertificate(jobId: string, certId: string): Promise<v
   if (!isAdmin) redirect(`/jobs/${jobId}/certificate?error=denied`);
 
   const supabase = await createClient();
-  const { data: cert } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
+  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
+  if (certError) throw readFailure("certificate issue: certificate", certError);
   if (!cert) redirect(`/jobs/${jobId}/certificate?error=not_found`);
   if (cert.status !== "draft") redirect(`/jobs/${jobId}/certificate?error=already_issued`);
 
@@ -192,7 +196,8 @@ async function setPortal(jobId: string, certId: string, publish: boolean): Promi
   if (!isAdmin) redirect(`/jobs/${jobId}/certificate?error=denied`);
 
   const supabase = await createClient();
-  const { data: cert } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
+  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
+  if (certError) throw readFailure("certificate portal: certificate", certError);
   if (!cert) redirect(`/jobs/${jobId}/certificate?error=not_found`);
   if (cert.status !== "issued") redirect(`/jobs/${jobId}/certificate?error=not_issued`);
 

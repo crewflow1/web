@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listAdminActivity, type AdminActivityRow } from "@/server/services/hq-audit";
+import { readFailure } from "@/lib/supabase/read-failure";
 import {
   type AiEmployee,
   type AiEmployeeTask,
@@ -93,23 +94,25 @@ export async function loadAiEmployeeBySlug(
 ): Promise<AiEmployeeDetail | null> {
   const admin = createAdminClient();
 
-  const { data: raw } = await admin
+  const { data: raw, error: rawError } = await admin
     .from("ai_employees" as never)
     .select(EMPLOYEE_COLUMNS)
     .eq("slug", slug)
     .maybeSingle();
+  if (rawError) throw readFailure("ai-employees: by slug", rawError);
   if (!raw) return null;
   const employee = raw as unknown as AiEmployee;
 
-  const { data: tasksRaw } = await admin
+  const { data: tasksRaw, error: tasksError } = await admin
     .from("ai_employee_tasks" as never)
     .select(TASK_COLUMNS)
     .eq("ai_employee_id", employee.id)
     .order("created_at", { ascending: false })
     .limit(50);
+  if (tasksError) throw readFailure("ai-employees: tasks", tasksError);
   const tasks = (tasksRaw ?? []) as unknown as AiEmployeeTask[];
 
-  const { data: memRaw } = await admin
+  const { data: memRaw, error: memError } = await admin
     .from("ai_employee_memory" as never)
     .select(MEMORY_COLUMNS)
     .eq("ai_employee_id", employee.id)

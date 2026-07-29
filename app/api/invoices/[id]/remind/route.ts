@@ -35,11 +35,18 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const supabase = await createClient();
 
   // Stop-on-paid check.
-  const { data: inv } = await supabase
+  const { data: inv, error: invErr } = await supabase
     .from("invoices")
     .select("id, status, org_id")
     .eq("id", id)
     .maybeSingle();
+  if (invErr) {
+    console.error("[invoice-remind] invoice load failed", invErr);
+    return NextResponse.json(
+      { error: "load_failed", detail: invErr.message },
+      { status: 500 },
+    );
+  }
   if (!inv) return NextResponse.json({ error: "not_found" }, { status: 404 });
   // Defence in depth: the read above is RLS-scoped, but assert org ownership
   // explicitly so a reminder can never be triggered for another org's invoice

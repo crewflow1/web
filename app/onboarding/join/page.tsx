@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Button } from "@/components/ui/button";
 import { acceptOrgInvite } from "./actions";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Invitation-acceptance page.
@@ -51,11 +52,14 @@ export default async function JoinPage({
   // Look up the inviting org's name (admin client — RLS would block us
   // until membership exists).
   const admin = createAdminClient();
-  const { data: org } = await admin
+  const { data: org, error: orgError } = await admin
     .from("organizations")
     .select("id, name")
     .eq("id", orgId)
     .maybeSingle();
+  // Loud fail: a query failure must not dump a validly-invited user into the
+  // create-a-new-company flow (which could mint a duplicate org).
+  if (orgError) throw readFailure("onboarding join: invite org", orgError);
   if (!org) {
     redirect("/onboarding/company?error=invite_org_missing");
   }

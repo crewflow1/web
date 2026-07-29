@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../../_helpers";
 import { PortalShell } from "../../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -61,7 +62,7 @@ export default async function PortalThreadPage({
       error: { message: string } | null;
     }>;
   };
-  const { data: ticketRaw } = await (
+  const { data: ticketRaw, error: ticketError } = await (
     admin.from("support_tickets" as never) as unknown as {
       select: (cols: string) => TicketLookup;
     }
@@ -72,6 +73,11 @@ export default async function PortalThreadPage({
     .eq("customer_id", customer.id)
     .maybeSingle();
 
+  // A failed read must NOT render as "invalid link" — that tells the customer
+  // their working portal URL has expired.
+  if (ticketError) {
+    throw readFailure("portal thread: ticket", ticketError);
+  }
   if (!ticketRaw) return <InvalidLinkPage kind="portal" />;
   const ticket = ticketRaw as unknown as {
     id: string;
@@ -95,7 +101,7 @@ export default async function PortalThreadPage({
       error: { message: string } | null;
     }>;
   };
-  const { data: msgsRaw } = await (
+  const { data: msgsRaw, error: msgsError } = await (
     admin.from("support_messages" as never) as unknown as {
       select: (cols: string) => MsgQuery;
     }
@@ -109,6 +115,9 @@ export default async function PortalThreadPage({
     // previously rendered to them as though the org had written it.
     .in("author_kind", ["customer", "org"])
     .order("created_at", { ascending: true });
+  if (msgsError) {
+    throw readFailure("portal thread: messages", msgsError);
+  }
   type MsgRow = {
     id: string;
     body: string;

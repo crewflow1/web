@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { createMemory } from "@/server/services/hq-memory";
 import { listMemoryTypes, listMemorySources } from "@/server/services/hq-memory";
 import {
@@ -1847,13 +1848,14 @@ export async function promoteResearchToMemory(
   actor: Actor,
 ): Promise<WriteResult> {
   const admin = createAdminClient();
-  const { data: report } = await table<SalesResearchReport>(
+  const { data: report, error: reportError } = await table<SalesResearchReport>(
     admin,
     "hq_sales_research_reports",
   )
     .select(RESEARCH_COLUMNS)
     .eq("id", reportId)
     .maybeSingle();
+  if (reportError) throw readFailure("hq-sales: research report", reportError);
   if (!report) return { ok: false, error: "Research report not found" };
   if (report.memory_id) return { ok: true, id: report.memory_id };
 
@@ -1938,13 +1940,14 @@ export async function promoteOutcomeToMemory(
   actor: Actor,
 ): Promise<WriteResult> {
   const admin = createAdminClient();
-  const { data: event } = await table<SalesTimelineEvent>(
+  const { data: event, error: eventError } = await table<SalesTimelineEvent>(
     admin,
     "hq_sales_timeline_events",
   )
     .select(TIMELINE_COLUMNS)
     .eq("id", eventId)
     .maybeSingle();
+  if (eventError) throw readFailure("hq-sales: timeline event", eventError);
   if (!event) return { ok: false, error: "Timeline event not found" };
   if (event.memory_id) return { ok: true, id: event.memory_id };
   if (!isPromotableOutcome(event.event_type)) {

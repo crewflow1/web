@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnSetupFeePaid } from "@/lib/notifications/events";
@@ -262,10 +263,17 @@ export async function setBillingInvoiceStatus(
 
   // Load the row for audit metadata + so we can flip the org's
   // setup_fee_status when this is the setup invoice.
-  const { data: rowData } = await untypedAdminTable("billing_invoices")
+  const { data: rowData, error: rowError } = await untypedAdminTable(
+    "billing_invoices",
+  )
     .select("id, org_id, kind, amount_gbp")
     .eq("id", parsed.data.invoice_id)
     .maybeSingle();
+  if (rowError) {
+    // Throw BEFORE the status update: proceeding with a failed read would
+    // flip the invoice without syncing the org's setup_fee_status.
+    throw readFailure("admin setBillingInvoiceStatus: invoice", rowError);
+  }
   const row = rowData as
     | {
         id: string;

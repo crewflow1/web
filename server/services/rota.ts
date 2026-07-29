@@ -17,12 +17,14 @@ import "server-only";
  * in __tests__/integration/rls/rota-isolation.test.ts, not just in review.
  */
 
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+
 type Row = Record<string, unknown>;
 
 export type RotaClient = {
   from: (t: string) => RotaBuilder;
 };
-type RotaBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
+type RotaBuilder = PromiseLike<{ data: Row[] | null; error: SupabaseReadError | null }> & {
   select: (c: string) => RotaBuilder;
   eq: (k: string, v: unknown) => RotaBuilder;
   gte: (k: string, v: unknown) => RotaBuilder;
@@ -59,13 +61,14 @@ export async function listWeekRotaEntries(
   startIso: string,
   endIso: string,
 ): Promise<RotaEntryRow[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from("rota_entries")
     .select("id, user_id, job_id, starts_at, ends_at, notes")
     .eq("org_id", orgId)
     .gte("starts_at", startIso)
     .lte("starts_at", endIso)
     .order("starts_at", { ascending: true });
+  if (error) throw readFailure("rota: week entries", error);
   return (data ?? []) as unknown as RotaEntryRow[];
 }
 
@@ -74,12 +77,13 @@ export async function listRotaJobOptions(
   db: RotaClient,
   orgId: string,
 ): Promise<RotaJobOption[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from("jobs")
     .select("id, status, scheduled_date, customer:customers ( name )")
     .eq("org_id", orgId)
     .order("scheduled_date", { ascending: false, nullsFirst: false })
     .limit(ROTA_JOB_PICKER_LIMIT);
+  if (error) throw readFailure("rota: job options", error);
   return (data ?? []) as unknown as RotaJobOption[];
 }
 
@@ -94,12 +98,15 @@ export async function listUserShiftsOnDay(
   userId: string,
   dayStart: string,
 ): Promise<ShiftWindow[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from("rota_entries")
     .select("starts_at, ends_at")
     .eq("org_id", orgId)
     .eq("user_id", userId)
     .gte("starts_at", `${dayStart}T00:00:00Z`)
     .lte("starts_at", `${dayStart}T23:59:59Z`);
+  // A failed overlap read must BLOCK the shift write — an empty result here
+  // would let a double-booked shift through.
+  if (error) throw readFailure("rota: user shifts on day", error);
   return (data ?? []) as unknown as ShiftWindow[];
 }

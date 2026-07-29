@@ -8,6 +8,7 @@ import {
 } from "../actions";
 import { CreateLeaveForm } from "./_create-form";
 import { formatDateUK } from "@/lib/time/format";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Leave requests — submit, review (approve/reject), cancel.
@@ -55,11 +56,16 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const { data: myRow } = await supabase
+  const { data: myRow, error: myRowError } = await supabase
     .from("memberships")
     .select("role")
     .eq("org_id", ctx.org.id)
     .single();
+  // PGRST116 = genuinely not a member (isAdmin false is correct); any other
+  // error must not silently strip the admin controls from the page.
+  if (myRowError && myRowError.code !== "PGRST116") {
+    throw readFailure("leave: viewer role", myRowError);
+  }
   const isAdmin = myRow?.role === "owner" || myRow?.role === "admin";
 
   const filter = sp.filter ?? (isAdmin ? "pending" : "mine");
@@ -75,7 +81,8 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   if (filter === "mine") q = q.eq("user_id", user.id);
   if (filter === "pending") q = q.eq("status", "pending");
 
-  const { data: rowsRaw } = await q;
+  const { data: rowsRaw, error: rowsError } = await q;
+  if (rowsError) throw readFailure("leave: requests", rowsError);
   const rows = (rowsRaw ?? []) as LeaveRow[];
 
   // Member name lookup.
@@ -90,13 +97,14 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
 
   // Leave calendar: org-wide upcoming approved + pending leave.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const { data: upcomingRaw } = await supabase
+  const { data: upcomingRaw, error: upcomingError } = await supabase
     .from("leave_requests")
     .select("id, user_id, type, starts_at, ends_at, status")
     .eq("org_id", ctx.org.id)
     .in("status", ["approved", "pending"])
     .gte("ends_at", todayIso)
     .order("starts_at", { ascending: true });
+  if (upcomingError) throw readFailure("leave: upcoming calendar", upcomingError);
   const upcoming = (upcomingRaw ?? []) as Pick<
     LeaveRow,
     "id" | "user_id" | "type" | "starts_at" | "ends_at" | "status"

@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { listAdminActivity } from "@/server/services/hq-audit";
 import { DemosBoard } from "./_board";
 import { DemosFilters } from "./_filters";
@@ -37,12 +38,15 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const admin = createAdminClient();
 
-  const { data: rawDemos } = await admin
+  const { data: rawDemos, error: demosError } = await admin
     .from("demo_requests")
     .select(
       "id, name, company, email, phone, status, employees, turnover_range, current_systems, preferred_demo_time, notes, source, created_at" as never,
     )
     .order("created_at", { ascending: false });
+  if (demosError) {
+    throw readFailure("admin demos board: demo_requests", demosError);
+  }
 
   const demos = ((rawDemos ?? []) as unknown as DemoRow[]);
 

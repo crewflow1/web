@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import {
@@ -66,13 +67,13 @@ export default async function InspectionRunPage({
   // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so
   // id + asset_id alone would render another org's inspection (an immutable
   // safety record) inside this org's shell.
-  const { data: insp } = await (
+  const { data: insp, error: inspError } = await (
     supabase.from("asset_inspections" as never) as unknown as {
       select: (c: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
             eq: (k: string, v: unknown) => {
-              maybeSingle: () => Promise<{ data: Row | null }>;
+              maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
             };
           };
         };
@@ -86,6 +87,7 @@ export default async function InspectionRunPage({
     .eq("asset_id", assetId)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (inspError) throw readFailure("inspection run: inspection", inspError);
   if (!insp || !insp.template_snapshot) notFound();
 
   const snapshot = insp.template_snapshot;

@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   uploadTenantAttachment,
   deleteTenantAttachment,
@@ -93,11 +94,14 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
   if (!id.success) return null;
 
   const tenant = await createClient();
-  const { data: row } = await (
+  const { data: row, error: rowError } = await (
     tenant.from("tenant_attachments" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: { org_id: string | null; storage_path: string | null } | null }>;
+          maybeSingle: () => Promise<{
+            data: { org_id: string | null; storage_path: string | null } | null;
+            error: SupabaseReadError | null;
+          }>;
         };
       };
     }
@@ -105,6 +109,9 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
     .select("org_id, storage_path")
     .eq("id", id.data)
     .maybeSingle();
+  // Loud fail: null means "not yours / doesn't exist" — a query failure must
+  // not render as a silently dead download link.
+  if (rowError) throw readFailure("attachments: signed-url row", rowError);
 
   if (!row?.storage_path) return null;
   // Never sign a path that doesn't live under the row's own org — a poisoned storage_path
@@ -113,8 +120,9 @@ export async function getAttachmentSignedUrl(attachmentId: string): Promise<stri
   if (!storagePathBelongsToOrg(row.storage_path, row.org_id)) return null;
 
   const admin = createAdminClient();
-  const { data: signed } = await admin.storage
+  const { data: signed, error: signError } = await admin.storage
     .from("tenant-attachments")
     .createSignedUrl(row.storage_path, 60);
+  if (signError) throw readFailure("attachments: sign url", signError);
   return signed?.signedUrl ?? null;
 }
