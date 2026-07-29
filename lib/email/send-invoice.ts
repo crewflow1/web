@@ -118,7 +118,9 @@ export async function sendInvoiceEmail(
 
   if (iErr) {
     console.error("[send-invoice] load failed", iErr);
-    return { sent: false, reason: "load_failed", detail: iErr.message };
+        // Raw Postgres text never reaches the caller (house rule); Sentry carries it.
+    Sentry.captureException(readFailure("send-invoice: invoice", iErr));
+    return { sent: false, reason: "load_failed", detail: "Couldn't load the invoice." };
   }
   if (!invoice) return { sent: false, reason: "not_found" };
 

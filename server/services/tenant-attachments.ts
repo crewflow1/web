@@ -43,15 +43,10 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 // Mirrors the DB CHECK on tenant_attachments.target_table. This list is what
 // the upload action validates against, so a target the database accepts but
-// this list omits is simply unreachable from the app.
-//
-// KNOWN DRIFT (pre-existing, deliberately NOT fixed by the receiving work that
-// added 'goods_received_notes'): the live CHECK also permits
-// 'asset_maintenance_cases' (20261002000000) and 'asset_fuel_logs'
-// (20261058000000), which never made it into this list. Those two domains
-// therefore cannot take attachments through the app today. Widening the union
-// is a one-line, zero-risk fix, but it belongs to the assets/fleet surface, not
-// to purchase-order receiving.
+// this list omits is simply unreachable from the app. A security test derives
+// the CHECK's value set from the migrations and asserts this list equals it,
+// so the two can no longer drift (the maintenance-case and fuel-log targets
+// sat DB-enabled but app-unreachable for weeks exactly this way).
 export const ATTACHMENT_TARGET_TABLES = [
   "customers",
   "jobs",
@@ -67,6 +62,8 @@ export const ATTACHMENT_TARGET_TABLES = [
   "assets",
   "asset_assignments",
   "asset_inspections",
+  "asset_maintenance_cases",
+  "asset_fuel_logs",
   // delivery-note photos: the whole point of receiving on a phone in a yard.
   "goods_received_notes",
 ] as const;

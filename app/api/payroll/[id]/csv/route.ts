@@ -28,6 +28,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       .from("payroll_runs")
       .select("cycle, period_start, period_end, org_id")
       .eq("id", id)
+      // ACTIVE-ORG PIN (the sibling lines/[id]/pdf idiom): RLS admits every
+      // org the caller belongs to, so without this a dual-org admin in org A
+      // could export org B's full payroll CSV — names, NI, gross, PAYE, net.
+      .eq("org_id", ctx.org.id)
       .maybeSingle(),
     supabase
       .from("payroll_lines")
@@ -38,6 +42,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         `,
       )
       .eq("payroll_run_id", id)
+      .eq("org_id", ctx.org.id)
       .order("gross_pay", { ascending: false }),
     fetchNiNumbersForOrg(ctx.org.id),
   ]);

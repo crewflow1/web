@@ -48,7 +48,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     });
     console.error("[invoice-remind] invoice load failed", invErr);
     return NextResponse.json(
-      { error: "load_failed", detail: invErr.message },
+      { error: "load_failed", detail: "Couldn't load the invoice." },
       { status: 500 },
     );
   }
