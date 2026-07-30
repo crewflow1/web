@@ -949,13 +949,16 @@ describe("a crashed process cannot hold the budget hostage", () => {
     // cosmetic and the ceiling must be right without it.
     seedSpend(ORG_A, AI_MONTHLY_CEILING_PENCE - COST_PER_CALL_PENCE);
 
-    let stuck: (() => void) | null = null;
-    const hanging = invokeWithGovernor(
+    // A holder object rather than a bare `let`: the resolver is assigned inside a
+    // callback, and TypeScript's control-flow analysis would otherwise narrow the
+    // variable to `null` at the call site below.
+    const unstick: { go: (() => void) | null } = { go: null };
+    const hanging = invokeWithGovernor<string>(
       QUOTE_WRITER_FEATURE,
       QUOTE_WRITER_TASK_CLASS,
       () =>
-        new Promise((resolve) => {
-          stuck = () => resolve({ value: "late", usage: null });
+        new Promise<{ value: string; usage: null }>((resolve) => {
+          unstick.go = () => resolve({ value: "late", usage: null });
         }),
       { orgId: ORG_A, dedupeContent: "the call that crashed" },
     );
@@ -990,7 +993,7 @@ describe("a crashed process cannot hold the budget hostage", () => {
     } finally {
       Date.now = realNow;
     }
-    stuck?.();
+    unstick.go?.();
     await hanging;
   });
 
