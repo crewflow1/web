@@ -23,6 +23,10 @@ const ADMIN_LINKS = [
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
   { href: "/health-safety", label: "Health & safety" },
+  // Works quality (ITPs) sits beside H&S, not under Snagging: snags are defects
+  // FOUND after the fact, an ITP is the plan that proves the works were built
+  // right in the first place. Different question, opposite direction.
+  { href: "/quality", label: "Works quality" },
   { href: "/site-reports", label: "Site reports" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
@@ -67,6 +71,8 @@ const STAFF_LINKS = [
   { href: "/snags", label: "Snagging" },
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
+  // Staff need this: the person signing off a hold point on site IS site staff.
+  { href: "/quality", label: "Works quality" },
   { href: "/staff/leave", label: "Leave" },
   { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },

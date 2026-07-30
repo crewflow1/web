@@ -66,6 +66,9 @@ export const ATTACHMENT_TARGET_TABLES = [
   "asset_fuel_logs",
   // delivery-note photos: the whole point of receiving on a phone in a yard.
   "goods_received_notes",
+  // works-quality evidence: the photo / test certificate that backs an ITP
+  // sign-off. Append-only once the sign-off exists (20261076).
+  "inspection_signoffs",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 
