@@ -5,6 +5,10 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
+import {
+  employerCostsForStoredLine,
+  type EmployerCostEstimate,
+} from "@/lib/payroll/compute";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -72,6 +76,23 @@ export default async function PayrollRunPage({
   const niByUser = await fetchNiNumbersForOrg(ctx.org.id);
   const lines = linesRaw ?? [];
 
+  // Employer NI + pension per line, DERIVED from the stored gross at the rates in
+  // force for this run's own period. Employer cost is a cost to the BUSINESS, never
+  // a deduction from the worker — it is shown alongside net pay, never inside it.
+  const runCycle = run.cycle === "weekly" ? "weekly" : "monthly";
+  const employerByLine = new Map<string, EmployerCostEstimate>();
+  for (const l of lines) {
+    employerByLine.set(
+      l.id,
+      employerCostsForStoredLine(l.gross_pay, runCycle, run.period_start),
+    );
+  }
+  const ratesTaxYear =
+    employerByLine.values().next().value?.employer_rates_tax_year ?? null;
+  const ratesExtrapolated = Array.from(employerByLine.values()).some(
+    (e) => e.employer_rates_extrapolated,
+  );
+
   const totals = lines.reduce(
     (acc, l) => {
       acc.hours += Number(l.hours ?? 0);
@@ -79,9 +100,22 @@ export default async function PayrollRunPage({
       acc.paye += Number(l.paye_estimate ?? 0);
       acc.ni += Number(l.ni_estimate ?? 0);
       acc.net += Number(l.net_pay ?? 0);
+      const emp = employerByLine.get(l.id);
+      acc.employerNi += emp?.employer_ni_estimate ?? 0;
+      acc.employerPension += emp?.employer_pension_estimate ?? 0;
+      acc.employmentCost += emp?.employment_cost_estimate ?? 0;
       return acc;
     },
-    { hours: 0, gross: 0, paye: 0, ni: 0, net: 0 },
+    {
+      hours: 0,
+      gross: 0,
+      paye: 0,
+      ni: 0,
+      net: 0,
+      employerNi: 0,
+      employerPension: 0,
+      employmentCost: 0,
+    },
   );
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
@@ -168,9 +202,38 @@ export default async function PayrollRunPage({
         <Stat label="Hours" value={totals.hours.toFixed(2)} />
         <Stat label="Gross" value={GBP.format(totals.gross)} />
         <Stat label="PAYE est" value={GBP.format(totals.paye)} />
-        <Stat label="NI est" value={GBP.format(totals.ni)} />
+        <Stat label="Employee NI est" value={GBP.format(totals.ni)} />
         <Stat label="Net" value={GBP.format(totals.net)} emphasis />
       </section>
+
+      {/* Employer-side cost of employment — on TOP of gross, never deducted from
+          the worker. This is the figure job costing charges as labour. */}
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <Stat label="Employer NI est" value={GBP.format(totals.employerNi)} />
+        <Stat
+          label="Employer pension est"
+          value={GBP.format(totals.employerPension)}
+        />
+        <Stat
+          label="Total employment cost est"
+          value={GBP.format(totals.employmentCost)}
+          emphasis
+        />
+      </section>
+      <p className="text-xs text-slate-500">
+        Employer NI and pension are <strong>estimates</strong> of the cost of
+        employing your team — they are paid by the business on top of gross pay, not
+        deducted from it, and they are what job costing charges as labour. Employer
+        NI is due to HMRC with your PAYE bill; employer pension goes to your pension
+        provider.{" "}
+        {ratesExtrapolated
+          ? `No published rate table exists for this period's tax year yet, so ${ratesTaxYear} rates were projected forward — confirm the current year's figures.`
+          : `Based on ${ratesTaxYear} rates.`}{" "}
+        The Employment Allowance (up to £10,500/year), under-21/apprentice/veteran NI
+        categories and pension opt-outs are not modelled, so the employer NI figure
+        may be higher than you actually owe. Confirm with your accountant before
+        filing or paying.
+      </p>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -183,15 +246,16 @@ export default async function PayrollRunPage({
                 <th className="px-4 py-2 text-right">£/h</th>
                 <th className="px-4 py-2 text-right">Gross</th>
                 <th className="px-4 py-2 text-right">PAYE</th>
-                <th className="px-4 py-2 text-right">NI</th>
+                <th className="px-4 py-2 text-right">Employee NI</th>
                 <th className="px-4 py-2 text-right">Net</th>
+                <th className="px-4 py-2 text-right">Employer cost</th>
                 <th className="px-4 py-2 text-right">Payslip</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {lines.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={10} className="px-4 py-6 text-center text-sm text-slate-500">
                     No staff had hours logged in this period.
                   </td>
                 </tr>
@@ -217,6 +281,13 @@ export default async function PayrollRunPage({
                   </td>
                   <td className="px-4 py-2 text-right font-semibold text-slate-900">
                     {GBP.format(Number(l.net_pay ?? 0))}
+                  </td>
+                  {/* Employer NI + pension — the business's cost, on top of gross. */}
+                  <td className="px-4 py-2 text-right text-slate-700">
+                    {GBP.format(
+                      (employerByLine.get(l.id)?.employer_ni_estimate ?? 0) +
+                        (employerByLine.get(l.id)?.employer_pension_estimate ?? 0),
+                    )}
                   </td>
                   <td className="px-4 py-2 text-right">
                     <a

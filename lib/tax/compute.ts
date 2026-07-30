@@ -7,12 +7,14 @@
  *                    25% (main rate, profit over £250k)
  *                    Marginal relief between £50k–£250k (approximated)
  *   VAT              already computed from invoice/finance rows
- *   PAYE             placeholder until time-tracking lands
+ *   PAYE             PAYE + employee NI + employer NI from payroll runs
  *
  * Every figure carries a `confidence` flag in the calling UI:
  *   'computed' — derived from real CrewFlow data
  *   'placeholder' — needs upstream data we don't have yet
  */
+
+import { employerCostsForStoredLine } from "@/lib/payroll/compute";
 
 const UK_CT_SMALL_RATE = 0.19;
 const UK_CT_MAIN_RATE = 0.25;
@@ -27,7 +29,15 @@ export type TaxSummary = {
     confidence: "computed" | "placeholder";
   };
   paye_month: {
+    /**
+     * TOTAL estimated payment to HMRC: PAYE + employee NI + EMPLOYER NI. Employer
+     * pension is deliberately excluded — it is paid to the pension provider, not
+     * to HMRC, so it is not part of this liability.
+     */
     estimate: number;
+    paye_estimate: number;
+    employee_ni_estimate: number;
+    employer_ni_estimate: number;
     confidence: "computed" | "placeholder";
     note: string;
   };
@@ -87,16 +97,30 @@ export function computeVatQuarter(
 type PayrollLineRow = {
   paye_estimate: number | string | null;
   ni_estimate: number | string | null;
+  /**
+   * REQUIRED — employer NI is derived from it. Not optional: an omitted gross would
+   * silently drop employer NI out of an HMRC liability figure, which is exactly the
+   * understatement this fix exists to remove.
+   */
+  gross_pay: number | string | null;
   run: { period_start: string; status: string; cycle: string } | null;
 };
 
 /**
- * PAYE / NI estimate for the current calendar month.
+ * PAYE / NI estimate for the current calendar month — what is owed to HMRC.
  *
- * Sums PAYE + NI across every payroll_line whose parent run's period
- * starts in the current month. Returns 'placeholder' confidence when
- * no payroll has been run yet, so the UI can keep the "set this up"
- * affordance until it has real data.
+ * Sums PAYE + employee NI + EMPLOYER NI across every payroll_line whose parent run's
+ * period starts in the current month. Returns 'placeholder' confidence when no
+ * payroll has been run yet, so the UI can keep the "set this up" affordance until it
+ * has real data.
+ *
+ * Employer secondary NI is a genuine part of the monthly PAYE bill, so leaving it out
+ * understated this liability for every org with staff. It is DERIVED from the stored
+ * gross via the one shared `employerCostsForStoredLine`, at the rates in force for
+ * the run's own period — never re-priced at today's rates.
+ *
+ * Employer PENSION is intentionally NOT included: it is payable to the pension
+ * provider, not to HMRC.
  */
 export function computePayeMonth(
   payrollLines: PayrollLineRow[] = [],
@@ -105,6 +129,9 @@ export function computePayeMonth(
   if (payrollLines.length === 0) {
     return {
       estimate: 0,
+      paye_estimate: 0,
+      employee_ni_estimate: 0,
+      employer_ni_estimate: 0,
       confidence: "placeholder",
       note: "No payroll runs this month. Generate a weekly or monthly payroll in /payroll to populate this tile.",
     };
@@ -112,16 +139,27 @@ export function computePayeMonth(
   const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   let paye = 0;
   let ni = 0;
+  let employerNi = 0;
   for (const l of payrollLines) {
     if (!l.run) continue;
     if (l.run.period_start.slice(0, 7) !== monthKey) continue;
     paye += Number(l.paye_estimate ?? 0);
     ni += Number(l.ni_estimate ?? 0);
+    const cycle = l.run.cycle === "weekly" ? "weekly" : "monthly";
+    employerNi += employerCostsForStoredLine(
+      l.gross_pay,
+      cycle,
+      l.run.period_start,
+    ).employer_ni_estimate;
   }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
   return {
-    estimate: Math.round((paye + ni) * 100) / 100,
+    estimate: round2(paye + ni + employerNi),
+    paye_estimate: round2(paye),
+    employee_ni_estimate: round2(ni),
+    employer_ni_estimate: round2(employerNi),
     confidence: "computed",
-    note: `PAYE ${paye.toFixed(2)} + NI ${ni.toFixed(2)} from this month's payroll runs. Pay HMRC by the 22nd of the following month.`,
+    note: `Estimate: PAYE ${paye.toFixed(2)} + employee NI ${ni.toFixed(2)} + employer NI ${employerNi.toFixed(2)} from this month's payroll runs. Pay HMRC by the 22nd of the following month. Confirm with your accountant before paying — the Employment Allowance may reduce the employer NI due.`,
   };
 }
 
