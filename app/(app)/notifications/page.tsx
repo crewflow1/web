@@ -14,7 +14,9 @@ import {
   prioritySort,
   filterNotifications,
   groupByDate,
+  badgeText,
 } from "@/lib/notifications/sort";
+import { formatDateTimeUK } from "@/lib/time/format";
 import { markRead, markAllRead, dismiss } from "./actions";
 
 /**
@@ -81,7 +83,7 @@ export default async function CustomerNotificationsPage({
             Notifications
             {unreadCount > 0 ? (
               <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white">
-                {unreadCount}
+                {badgeText(unreadCount)}
               </span>
             ) : null}
           </h1>
@@ -227,7 +229,7 @@ export default async function CustomerNotificationsPage({
                             </p>
                           ) : null}
                           <p className="mt-1 text-[11px] text-slate-500">
-                            {n.created_at.slice(0, 16).replace("T", " ")} UTC
+                            {formatDateTimeUK(n.created_at)}
                           </p>
                         </div>
                         <div className="flex items-center gap-1">
