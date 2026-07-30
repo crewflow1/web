@@ -1,7 +1,18 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { buildOrgCash } from "@/server/services/org-cash";
+import {
+  buildOrgCashOut,
+  cashOutVisibleToRole,
+  computeCashPosition,
+  EMPTY_CASH_OUT_VIEW,
+} from "@/server/services/org-cash-out";
 import { formatGbp } from "@/lib/money";
+import {
+  CASH_OUT_CERTAINTY_LABEL,
+  type CashOutComponent,
+  type CashOutQueueItem,
+} from "@/lib/commercial/cash-out";
 import type { CashQueueItem } from "@/lib/commercial/org-cash";
 
 export const dynamic = "force-dynamic";
@@ -64,13 +75,101 @@ function OutlookRow({ label, amount, certainty, accent }: { label: string; amoun
   );
 }
 
+/**
+ * One money-OUT row. Every row states its own certainty in plain English and
+ * flags an ESTIMATE as an estimate — an estimate must never be presented as a
+ * liability (the same doctrine as `OutlookRow` on the money-in side). Each row
+ * links through to the records the figure came from.
+ */
+function OutflowRow({ row }: { row: CashOutComponent }) {
+  // Muted for the two rows OUTSIDE the position: they are real money, but they
+  // are not part of "what you owe now" and must not read with the same weight.
+  const tone = row.inPosition ? "text-slate-900" : "text-slate-600";
+  return (
+    <Link
+      href={row.href}
+      className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-3 last:border-0 hover:bg-slate-50"
+    >
+      <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+        <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-slate-900">
+          <span className="min-w-0 break-words">{row.label}</span>
+          <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+            {CASH_OUT_CERTAINTY_LABEL[row.certainty]}
+          </span>
+          {row.isEstimate ? (
+            <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+              Estimate
+            </span>
+          ) : null}
+          {row.inPosition ? null : (
+            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-slate-600">
+              not in the position
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {row.count != null && row.count > 0 ? `${row.count} ${row.count === 1 ? "record" : "records"} · ` : ""}
+          {row.dueOn ? `pay by ${row.dueOn} · ` : ""}
+          {row.basis}
+        </p>
+      </div>
+      <span className={`shrink-0 text-lg font-bold tabular-nums ${tone}`}>{formatGbp(row.amount)}</span>
+    </Link>
+  );
+}
+
+/** One open supplier bill in the payables queue. */
+function BillRow({ item }: { item: CashOutQueueItem }) {
+  return (
+    <li>
+      <Link href={item.href} className="flex items-center justify-between gap-3 p-3 hover:bg-slate-50">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-slate-900">
+            {item.supplierName ?? "Supplier"}
+            {item.reference ? ` · ${item.reference}` : ""}
+          </p>
+          <p className="text-xs text-slate-500">
+            {item.billDate ? `bill dated ${item.billDate}` : "no bill date"}
+            {item.status === "part_paid" ? ` · ${formatGbp(item.gross - item.outstanding)} paid` : ""}
+          </p>
+        </div>
+        <span className="shrink-0 text-sm font-semibold text-slate-900">{formatGbp(item.outstanding)}</span>
+      </Link>
+    </li>
+  );
+}
+
 export default async function CashPage() {
   const { ctx } = await requireOrgContext();
   if (ctx.membership.role === "staff") {
     const { redirect } = await import("next/navigation");
     redirect("/me");
   }
-  const { summary: s, forecast: f, queues, recentlyPaid, readyStages, unscheduledJobs, loadError } = await buildOrgCash(ctx.org.id);
+  // Money-out reads the admin-only ledgers (supplier payments, CIS snapshots,
+  // payroll). Today the role domain is owner|admin|staff and staff are already
+  // redirected above, so this is always true — it is here so that ADDING a role
+  // cannot silently produce an OVERSTATED payables figure: without admin rights
+  // the settlement ledger comes back empty and every bill reads as fully unpaid,
+  // which is wrong in the dangerous direction. Withheld beats understated.
+  const showOutflows = cashOutVisibleToRole(ctx.membership.role);
+  const [
+    { summary: s, forecast: f, queues, recentlyPaid, readyStages, unscheduledJobs, loadError },
+    out,
+  ] = await Promise.all([
+    buildOrgCash(ctx.org.id),
+    showOutflows
+      ? buildOrgCashOut(ctx.org.id)
+      : Promise.resolve({ ...EMPTY_CASH_OUT_VIEW, loadError: false }),
+  ]);
+
+  // THE position: what you can collect now, minus what you owe now. Money-in
+  // comes from computeOrgCashSummary; money-out from computeOrgCashOut. Nothing
+  // is recomputed here.
+  const position = computeCashPosition({
+    collectableNow: s.collectableNow,
+    outflowDueNow: out.summary.outflowDueNow,
+    estimatedOutflow: out.summary.outflowEstimated,
+  });
 
   // Group ready-to-invoice stages by job for a compact drill-down list.
   const readyByJob = new Map<string, { jobLabel: string | null; total: number; count: number }>();
@@ -84,17 +183,82 @@ export default async function CashPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-slate-900">Get paid</h1>
-        <p className="mt-1 text-sm text-slate-600">What you&rsquo;re owed, what&rsquo;s late, what&rsquo;s coming, and what&rsquo;s ready to invoice.</p>
+        <h1 className="text-2xl font-bold text-slate-900">Cash position</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          {showOutflows
+            ? "What you can collect, what you owe, and the difference."
+            : "What you’re owed, what’s late, what’s coming, and what’s ready to invoice."}
+        </p>
       </header>
 
-      {loadError ? (
+      {loadError || out.loadError ? (
         <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           We couldn&rsquo;t load your cash position just now — the figures below may be incomplete. Please refresh; if it keeps happening, contact support rather than trusting a &ldquo;nothing owed&rdquo; reading.
         </div>
       ) : null}
 
-      <section aria-label="Cash summary" className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      {showOutflows ? (
+        <section
+          aria-labelledby="position-heading"
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+        >
+          <h2 id="position-heading" className="text-sm font-semibold text-slate-900">
+            Net position
+          </h2>
+          <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3">
+            <div className="min-w-0">
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Collectable now</dt>
+              <dd className="mt-0.5 text-xl font-bold tabular-nums text-slate-900">
+                {formatGbp(position.collectableNow)}
+              </dd>
+              <p className="mt-0.5 text-xs text-slate-500">invoiced, net of retention still withheld</p>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Owed out now</dt>
+              <dd className="mt-0.5 text-xl font-bold tabular-nums text-slate-900">
+                &minus;{formatGbp(position.outflowDueNow)}
+              </dd>
+              <p className="mt-0.5 text-xs text-slate-500">
+                bills, CIS, VAT and draft payroll — see the breakdown below
+              </p>
+            </div>
+            <div className="min-w-0 border-t border-slate-100 pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Net position</dt>
+              <dd
+                className={`mt-0.5 text-2xl font-bold tabular-nums ${
+                  position.net < 0 ? "text-red-700" : "text-green-700"
+                }`}
+              >
+                {formatGbp(position.net)}
+              </dd>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {position.net < 0
+                  ? "you owe more than you can collect right now"
+                  : "what you could collect beyond what you owe"}
+              </p>
+            </div>
+          </dl>
+          <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+            {position.hasEstimate ? (
+              <>
+                <strong className="font-semibold text-amber-800">
+                  {formatGbp(position.estimatedOutflow)} of the outflow is an estimate
+                </strong>{" "}
+                (VAT and draft payroll), so treat the net figure as an indication, not a bank balance. This
+                is not your cash at bank — CrewFlow doesn&rsquo;t see your bank account. It excludes rent,
+                finance, PAYE/NI and anything else you haven&rsquo;t recorded here.
+              </>
+            ) : (
+              <>
+                This is not your cash at bank — CrewFlow doesn&rsquo;t see your bank account. It excludes rent,
+                finance, PAYE/NI and anything else you haven&rsquo;t recorded here.
+              </>
+            )}
+          </p>
+        </section>
+      ) : null}
+
+      <section aria-label="Money in" className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Collectable now" value={formatGbp(s.collectableNow)} accent="text-slate-900" hint={s.retentionWithheldFromCollectable > 0 ? `${formatGbp(s.owedNow)} owed − ${formatGbp(s.retentionWithheldFromCollectable)} retention still withheld` : `${formatGbp(s.owedNow)} owed`} />
         <Stat label="Overdue" value={formatGbp(s.overdue)} accent={s.overdue > 0 ? "text-red-700" : undefined} hint={`${s.overdueCount} ${s.overdueCount === 1 ? "invoice" : "invoices"}`} />
         <Stat label="Due this week" value={formatGbp(s.dueThisWeek)} />
@@ -105,7 +269,7 @@ export default async function CashPage() {
 
       <section aria-labelledby="outlook-heading" className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 p-4">
-          <h2 id="outlook-heading" className="text-sm font-semibold text-slate-900">Cash outlook</h2>
+          <h2 id="outlook-heading" className="text-sm font-semibold text-slate-900">Money in — cash outlook</h2>
           <p className="mt-0.5 text-xs text-slate-500">
             Sorted by certainty — invoiced money is committed; planned billing is a plan, not guaranteed cash.
           </p>
@@ -145,6 +309,55 @@ export default async function CashPage() {
           />
         ) : null}
       </section>
+
+      {showOutflows ? (
+        <section aria-labelledby="outflow-heading" className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4">
+            <h2 id="outflow-heading" className="text-sm font-semibold text-slate-900">
+              Money out — what you owe
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Sorted by certainty, and nothing counted twice: a purchase order the supplier has already
+              invoiced is in unpaid bills, never also in committed spend. Tap a row for the records behind
+              it.
+            </p>
+          </div>
+          {out.components.map((row) => (
+            <OutflowRow key={row.key} row={row} />
+          ))}
+          <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="text-sm font-semibold text-slate-900">Owed out now</p>
+              <span className="text-lg font-bold tabular-nums text-slate-900">
+                {formatGbp(out.summary.outflowDueNow)}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Unpaid bills + CIS due + VAT + draft payroll. Committed orders and CIS past its deadline are
+              deliberately outside this total. CIS figures cover the last {out.cisLookbackMonths} tax months.
+              {out.summary.vatReclaim > 0
+                ? ` Your VAT estimate is a ${formatGbp(out.summary.vatReclaim)} reclaim this quarter, so VAT adds nothing to the total — we don't book an estimated refund as money in.`
+                : ""}
+            </p>
+          </div>
+        </section>
+      ) : null}
+
+      {showOutflows && out.unpaidBillQueue.length > 0 ? (
+        <section aria-labelledby="q-bills" className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <h2 id="q-bills" className="border-b border-slate-100 p-3 text-sm font-semibold text-slate-900">
+            Supplier bills to pay
+            {out.unpaidBillTotalCount > out.unpaidBillQueue.length
+              ? ` — biggest ${out.unpaidBillQueue.length} of ${out.unpaidBillTotalCount}`
+              : ""}
+          </h2>
+          <ul className="divide-y divide-slate-100">
+            {out.unpaidBillQueue.map((item) => (
+              <BillRow key={item.id} item={item} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {unscheduledJobs.length > 0 ? (
         <section aria-labelledby="unsched-heading" className="rounded-xl border border-amber-200 bg-amber-50/40 shadow-sm">

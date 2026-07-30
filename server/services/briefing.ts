@@ -8,6 +8,7 @@ import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
 import { loadScheduleConflicts } from "./schedule-integrity";
 import { buildFleetComplianceRollup } from "./fleet-snapshot";
 import { loadLowStockSignal, type StockClient } from "./stock";
+import { loadCisHmrcSignal, type CashOutClient } from "./org-cash-out";
 import { rollupKind } from "@/lib/schedule/conflicts";
 import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
@@ -106,6 +107,7 @@ export async function buildDailyBriefing(
       scheduleConflictRows,
       fleetRollup,
       lowStock,
+      cisDueToHmrc,
       dismissRes,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
@@ -133,6 +135,12 @@ export async function buildDailyBriefing(
       // tracks no stock contributes nothing, and a failed read emits no line
       // rather than a false all-clear. Detection only — nothing is ordered.
       loadLowStockSignal(supabase as unknown as StockClient, orgId),
+      // H2-CASH M4 MONEY-OUT — CIS you withheld and owe HMRC, with the statutory
+      // deadline. TWO org-pinned reads (not the whole money-out wave), reusing
+      // /cash's own `computeCisHmrcDue` so the two surfaces cannot disagree. The
+      // ledger is admin-only at the database, so a non-admin viewer gets no
+      // signal rather than a false nil — the same fail-quiet posture as lowStock.
+      loadCisHmrcSignal(supabase as unknown as CashOutClient, orgId, todayIso),
       // ACTIVE-org pin: the write side stamps `org_id: ctx.org.id`, and
       // `item_key` is a generic string ("overdue_invoices", …), so an unpinned
       // read let a dismissal made in one org silently hide the SAME briefing
@@ -244,6 +252,7 @@ export async function buildDailyBriefing(
       readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobCount },
       cashDueSoon,
       unscheduled: { totalAmount: unscheduledTotal, jobCount: unscheduledJobCount },
+      cisDueToHmrc,
       scheduleConflicts: {
         doubleBooked: rollupKind(scheduleConflictRows, "staff_double_booked"),
         leaveClashes: rollupKind(scheduleConflictRows, "leave_clash"),
