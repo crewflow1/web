@@ -274,6 +274,20 @@ early persistence*), and **authorised R2 only** — the durable shadow observati
 shadow labelling, preserving the **planned · shadow-observed · applied** distinction, with no real tool
 application, approval sweep, employee migration, API Gateway, cost metering or live cut-over — *no R3
 increment begins until R2 has been independently reviewed and approved.*
+On the **R2** review — the durable executor-shadow observation store (explicit shadow-labelled records
+in a store structurally separate from the application store; still default-off, still crossing **no**
+execution boundary and writing **no** application record; PRs **#265** [the Shadow Truthfulness Rule
+homed as the thirtieth §2 standard] and **#266** [the R2 shadow-store code] now **merged**) — the CEO
+**approved and accepted R2**, set the permanent **Shadow Isolation Rule** (the **thirty-first** §2
+standard, homed in the [Kernel Contract Map](./kernel-contract-map.md) §2: *shadow execution data must
+remain structurally isolated from real execution data; a shadow record must never be query-compatible
+with a real application record unless explicitly converted by a reviewed rollout phase; shadow
+infrastructure may inform cut-over decisions but must not become part of the real execution path by
+accident*), and **authorised R3 only** — controlled live autonomous execution under runtime-owned
+executor invocation, with durable application-store writes, kill-switch protection and the shadow
+comparison retained, and with no approval sweep, employee migration, API Gateway or cost metering; R3
+must prove autonomous actions can cross the executor boundary safely under runtime control — *no R4
+increment begins until R3 has been independently reviewed and approved.*
 
 ---
 
