@@ -1271,6 +1271,43 @@ if it persists at all, it persists as **explicitly shadow**.
 
 ---
 
+### The Shadow Isolation Rule
+
+A **thirty-first** standard, set by CEO directive on the review of **Directive #016 R2** (the durable
+executor-shadow observation store; independent CTO review). Where the **Shadow Truthfulness Rule** (the
+thirtieth) governs *what a shadow may record* — never state that implies a real side effect occurred —
+this one governs *where that record lives and how it may relate to real execution data*, and fixes the
+**structural separation** the truthfulness guarantee rests on:
+
+> **Shadow execution data must remain structurally isolated from real execution data. A shadow record
+> must never be query-compatible with a real application record unless explicitly converted by a
+> reviewed rollout phase. Shadow infrastructure may inform cut-over decisions. It must not become part
+> of the real execution path by accident.**
+
+It is the **substrate** complement to the truthfulness rule. Truthfulness forbids a shadow from
+*writing* a record indistinguishable from an applied one; isolation forbids the shadow's records from
+*living* where a real one is read — in the same table, under the same shape, inside the same query a
+later apply, an idempotency check, or an audit treats as ground truth. A shadow that is honestly
+labelled but stored query-compatibly with the application store could still be **swept into the real
+execution path by accident**: a `select … from applications` that forgot a predicate, an idempotency
+read that spanned both kinds, a report that unioned them. Isolation removes that failure mode by
+construction — shadow data sits in its **own store**, with its **own vocabulary**, never union- or
+shape-compatible with the application record; the only path from *shadow-observed* to *applied* is an
+**explicit, reviewed rollout phase** (the cut-over), never an implicit query or a shared row.
+
+This is the guarantee **R2** already embodies and every later increment must preserve. R2's observations
+live in a dedicated shadow store (`hq_ai_executor_shadow_observations`) whose `outcome` vocabulary
+(`planned`/`refused`/`error`) is **not** the application vocabulary (`applied`/`failed`) — no query can
+mistake one table's rows for the other's. **R3** (the live executor rollout) introduces the real
+application store as a **distinct structure**: the two substrates never share a table, a shape, or a
+read path. Shadow infrastructure keeps its proper job — it **informs** the cut-over by supplying the
+parity evidence the **Shadow Validation Rule** (the sixteenth) demands — but it never **becomes** the
+execution path. Generalised beyond #016, the rule is **permanent and platform-wide**: no shadow of any
+subsystem may share the substrate of the real operation it shadows; its storage stays isolated until a
+reviewed phase — and only a reviewed phase — converts it.
+
+---
+
 ## 3. The contract map
 
 For every kernel layer: what state/authority it **owns**, the surface it **exposes**,
