@@ -52,6 +52,8 @@ function codeOf(ts: string): string {
 
 const MIG_DIR = resolve(ROOT, "supabase/migrations");
 const MIGRATION = "supabase/migrations/20261062000000_ai_invocations.sql";
+/** The atomic budget reservation — slot 20261070, this lane's only slot. */
+const RESERVATION = "supabase/migrations/20261070000000_ai_budget_reservation.sql";
 const SEAM = "lib/ai/governor.ts";
 const POLICY = "lib/ai/governor/policy.ts";
 const REGISTRY = "lib/ai/governor/registry.ts";
@@ -498,15 +500,68 @@ describe("B. the existing dark provider paths now route through the governor", (
     expect(idxThrow).toBeGreaterThan(idxRecord);
   });
 
-  it("the DARK SHORT-CIRCUIT comes before any budget or dedupe read", () => {
-    // This is what makes wiring three dark seams a genuine no-op.
+  it("the DARK SHORT-CIRCUIT comes before the RESERVATION — no claim on a dark build", () => {
+    // This is what makes wiring the dark seams a genuine no-op, and it still
+    // holds with the atomic reservation in place: the reservation sits BEHIND
+    // the short-circuit, so `ai_cost_reservations` stays empty in production.
     const code = codeOf(read(SEAM));
     const idxDark = code.indexOf("isGovernorActivated()");
-    const idxBudget = code.indexOf("await checkBudget(");
-    const idxDedupe = code.indexOf("hasRecentIdentical(");
+    const idxReserve = code.indexOf("await reserveBudget(");
+    const idxSettle = code.indexOf("await settleReservation(");
     expect(idxDark).toBeGreaterThan(-1);
-    expect(idxDark).toBeLessThan(idxBudget);
-    expect(idxDark).toBeLessThan(idxDedupe);
+    expect(idxReserve).toBeGreaterThan(-1);
+    expect(idxSettle).toBeGreaterThan(-1);
+    expect(idxDark).toBeLessThan(idxReserve);
+    expect(idxDark).toBeLessThan(idxSettle);
+  });
+
+  it("the ceiling is decided by ONE atomic RPC, never by a read-then-act in TypeScript", () => {
+    // THE pin for this whole wave. The old governor decided the ceiling with
+    // `await checkBudget(...)` and the duplicate question with a `select` over
+    // the ledger, both inside `invokeWithGovernor` — two reads with the provider
+    // call between them and the write. Neither may return.
+    const code = codeOf(read(SEAM));
+    const invoke = code.slice(code.indexOf("export async function invokeWithGovernor"));
+    expect(invoke, "invokeWithGovernor must not read the budget to decide it").not.toMatch(
+      /await\s+checkBudget\s*\(/,
+    );
+    expect(invoke, "the dedupe probe must not be a TypeScript read").not.toMatch(
+      /hasRecentIdentical/,
+    );
+    // …and the decision it DOES make is a single RPC to the SQL gate.
+    expect(code).toMatch(/const\s+RESERVE_FN\s*=\s*"ai_reserve_invocation"/);
+    expect(code).toMatch(/\.rpc\(RESERVE_FN,/);
+  });
+
+  it("the reservation FAILS CLOSED — an error refuses the call, it never falls through", () => {
+    // The one place the governor's fail-open posture is deliberately reversed.
+    // A reservation that failed open would mean the ceiling is unenforced
+    // whenever the database hiccups, which is not a control at all.
+    const code = codeOf(read(SEAM));
+    const fn = code.slice(
+      code.indexOf("export async function reserveBudget"),
+      code.indexOf("export async function settleReservation"),
+    );
+    expect(fn.length).toBeGreaterThan(0);
+    expect(fn).toMatch(/reason:\s*"reservation_unavailable"/);
+
+    // Every error exit is a REFUSAL. Checked by isolating the two error paths —
+    // the `if (error)` branch and the `catch` — and asserting neither can hand
+    // back a claim. A single grep over the whole function would pass on the
+    // happy path's own `reserved` and prove nothing.
+    const errBranch = fn.slice(fn.indexOf("if (error)"), fn.indexOf("const row ="));
+    const catchBlock = fn.slice(fn.lastIndexOf("} catch (e)"));
+    expect(errBranch.length).toBeGreaterThan(0);
+    expect(catchBlock.length).toBeGreaterThan(0);
+    for (const [name, block] of [
+      ["error branch", errBranch],
+      ["catch block", catchBlock],
+    ] as const) {
+      expect(block, `${name} must refuse`).toMatch(/outcome:\s*"blocked"/);
+      expect(block, `${name} must not admit a claim`).not.toMatch(/outcome:\s*"reserved"/);
+    }
+    // An unrecognised SQL outcome is refused too, never assumed benign.
+    expect(fn).toMatch(/unrecognised reservation outcome/);
   });
 
   it("the seam states the event-driven doctrine — AI wakes on change, never on page load", () => {
@@ -520,6 +575,247 @@ describe("B. the existing dark provider paths now route through the governor", (
 // =====================================================================
 // 7. The HQ view is HQ-gated and reads through the service role only.
 // =====================================================================
+
+// =====================================================================
+// 8. THE ATOMIC RESERVATION (slot 20261070) — hygiene and trust boundary.
+// =====================================================================
+
+describe("20261070 migration hygiene", () => {
+  it("exists in its reserved slot, and nothing else claims a duplicate prefix", () => {
+    const versions = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.split("_")[0]!)
+      .sort();
+    expect(existsSync(resolve(ROOT, RESERVATION))).toBe(true);
+    expect(versions).toContain("20261070000000");
+    expect(new Set(versions).size, "duplicate migration version prefixes").toBe(versions.length);
+  });
+
+  it("sorts strictly AFTER the applied production tip (20261069)", () => {
+    const versions = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.split("_")[0]!)
+      .sort();
+    expect(versions.indexOf("20261070000000")).toBeGreaterThan(
+      versions.indexOf("20261069000000"),
+    );
+  });
+
+  it("claims ONLY its own slot — 20261071 belongs to another lane", () => {
+    const trespass = readdirSync(MIG_DIR).filter((f) => /^2026107[1-9]/.test(f));
+    for (const f of trespass) {
+      expect(f).not.toMatch(/reservation|ai_budget|ai_invocation|governor/i);
+    }
+  });
+
+  it("is ADDITIVE — one new table, and it alters no existing one", () => {
+    const exec = execOf(read(RESERVATION));
+    // `ai_invocations` is INSERTED INTO by the settlement function, never
+    // altered: its immutability trigger, its CHECKs and its RLS are the things
+    // this wave was careful not to weaken.
+    expect(exec).not.toMatch(/\balter\s+table\s+public\.(?!ai_cost_reservations)/i);
+    expect(exec).not.toMatch(/\bdrop\s+table\b/i);
+    expect(exec).not.toMatch(/drop\s+trigger\s+if\s+exists\s+ai_invocations_immutable/i);
+    const creates = exec.match(/create\s+table\s+if\s+not\s+exists\s+public\.(\w+)/gi) ?? [];
+    expect(creates).toHaveLength(1);
+    expect(exec).toMatch(/create\s+table\s+if\s+not\s+exists\s+public\.ai_cost_reservations/i);
+  });
+
+  it("documents its own rollback", () => {
+    const prose = read(RESERVATION).slice(0, 8000);
+    expect(prose).toMatch(/drop\s+table\s+if\s+exists\s+public\.ai_cost_reservations/i);
+    expect(prose).toMatch(/drop\s+function\s+if\s+exists\s+public\.ai_reserve_invocation/i);
+  });
+});
+
+describe("the reservation gate is ATOMIC, and the lock is the load-bearing part", () => {
+  const exec = execOf(read(RESERVATION));
+
+  it("takes a per-ORG advisory transaction lock before it reads", () => {
+    // THE pin. A conditional `insert ... select ... where sum(...) <= ceiling`
+    // is NOT sufficient at READ COMMITTED: two transactions both evaluate the
+    // predicate against a snapshot taken before either inserted, both find room,
+    // and both commit. Removing this line reproduces the overshoot — measured,
+    // with a transcript, in docs/ai-cost-governor.md.
+    expect(exec).toMatch(
+      /perform\s+pg_advisory_xact_lock\s*\(\s*hashtext\s*\(\s*'ai_budget_reservation'\s*\)\s*,\s*hashtext\s*\(\s*p_org_id::text\s*\)\s*\)/i,
+    );
+    // Transaction-scoped, never session-scoped: a session lock survives a
+    // crashed backend and would wedge an org's AI until the connection died.
+    expect(exec).not.toMatch(/pg_advisory_lock\s*\(/i);
+  });
+
+  it("the lock is taken BEFORE the aggregates it protects", () => {
+    const fn = exec.slice(
+      exec.indexOf("create or replace function public.ai_reserve_invocation"),
+      exec.indexOf("revoke all on function public.ai_reserve_invocation"),
+    );
+    expect(fn.length).toBeGreaterThan(0);
+    const idxLock = fn.indexOf("pg_advisory_xact_lock");
+    const idxCommitted = fn.indexOf("from public.ai_invocations i");
+    const idxInsert = fn.indexOf("insert into public.ai_cost_reservations");
+    expect(idxLock).toBeGreaterThan(-1);
+    expect(idxLock).toBeLessThan(idxCommitted);
+    expect(idxLock).toBeLessThan(idxInsert);
+  });
+
+  it("BOTH gates are in the insert's own WHERE — the check and the write are one statement", () => {
+    // (a) the band gate: at or over the ceiling, nothing starts, whatever it costs.
+    expect(exec).toMatch(/where\s+v_committed\s*\+\s*v_reserved\s*<\s*p_ceiling_pence/i);
+    // (b) the reserve gate: this call must fit.
+    expect(exec).toMatch(
+      /and\s+v_committed\s*\+\s*v_reserved\s*\+\s*v_claim\s*<=\s*p_ceiling_pence/i,
+    );
+  });
+
+  it("the budget is COMMITTED plus LIVE CLAIMS — an expired claim consumes nothing", () => {
+    expect(exec).toMatch(/coalesce\s*\(\s*sum\s*\(\s*i\.estimated_cost_pence\s*\)/i);
+    expect(exec).toMatch(/coalesce\s*\(\s*sum\s*\(\s*r\.estimate_pence\s*\)/i);
+    // The lazy TTL reclaim: the arithmetic filters on expiry, so the ceiling is
+    // right whether or not the cosmetic 'expired' stamp ever runs.
+    expect(exec).toMatch(/r\.state\s*=\s*'reserved'\s*and\s*r\.expires_at\s*>\s*now\(\)/i);
+  });
+
+  it("the month boundary is EUROPE/LONDON, matching the ledger's own rollups", () => {
+    const windows = exec.match(/at\s+time\s+zone\s+'Europe\/London'/gi) ?? [];
+    expect(windows.length).toBeGreaterThanOrEqual(4);
+    expect(exec).toMatch(/date_trunc\s*\(\s*'month'/i);
+  });
+
+  it("DEDUPE is decided inside the same critical section, not by a prior read", () => {
+    const fn = exec.slice(
+      exec.indexOf("create or replace function public.ai_reserve_invocation"),
+      exec.indexOf("revoke all on function public.ai_reserve_invocation"),
+    );
+    const idxLock = fn.indexOf("pg_advisory_xact_lock");
+    const idxDedupe = fn.indexOf("r.content_hash = p_content_hash");
+    expect(idxDedupe).toBeGreaterThan(-1);
+    expect(idxDedupe).toBeGreaterThan(idxLock);
+    // Only a LIVE claim or a recent SUCCESS suppresses — a failed or released
+    // attempt must never block the retry it is the reason for.
+    expect(fn).toMatch(/r\.state\s*=\s*'settled'\s+and\s+r\.success/i);
+    // The window is still SLIDING, not a tumbling bucket, so no pair of
+    // identical submits either side of a bucket edge both pay.
+    expect(fn).toMatch(/r\.created_at\s*>=\s*now\(\)\s*-\s*make_interval/i);
+  });
+
+  it("settlement writes the ledger row AND frees the claim in ONE function", () => {
+    const fn = exec.slice(
+      exec.indexOf("create or replace function public.ai_settle_reservation"),
+      exec.indexOf("revoke all on function public.ai_settle_reservation"),
+    );
+    expect(fn).toMatch(/insert\s+into\s+public\.ai_invocations/i);
+    expect(fn).toMatch(/update\s+public\.ai_cost_reservations/i);
+    // Row-locked, so two settlements of one claim serialise rather than race.
+    expect(fn).toMatch(/for\s+update/i);
+    // Idempotent: only a live claim settles.
+    expect(fn).toMatch(/already_settled/i);
+  });
+
+  it("contains no dynamic SQL and no SECURITY DEFINER anywhere", () => {
+    // A definer-rights reservation function would be a FORGE primitive: any
+    // caller could claim (or exhaust) another tenant's budget. A definer-rights
+    // rollup would be the cross-tenant read primitive the 20261031-37 storage
+    // wave existed to eliminate.
+    expect(exec).not.toMatch(/security\s+definer/i);
+    expect(exec).not.toMatch(/\bexecute\s+format\s*\(/i);
+    expect(exec).not.toMatch(/\bexecute\s+'/i);
+  });
+
+  it("both write RPCs are granted to service_role ONLY", () => {
+    for (const fn of ["ai_reserve_invocation", "ai_settle_reservation", "ai_release_reservation"]) {
+      expect(exec, `${fn} must revoke from public`).toMatch(
+        new RegExp(`revoke\\s+all\\s+on\\s+function\\s+public\\.${fn}\\(`, "i"),
+      );
+      const grant = exec.match(
+        new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${fn}\\([^)]*\\)\\s*\\n?\\s*to\\s+([^;]+);`, "i"),
+      );
+      expect(grant, `${fn} must have a grant`).not.toBeNull();
+      expect(grant![1]!.trim()).toBe("service_role");
+    }
+  });
+});
+
+describe("ai_cost_reservations — the trust boundary matches the ledger's", () => {
+  const exec = execOf(read(RESERVATION));
+
+  it("RLS is enabled with EXACTLY ONE policy: admin SELECT", () => {
+    expect(exec).toMatch(
+      /alter\s+table\s+public\.ai_cost_reservations\s+enable\s+row\s+level\s+security/i,
+    );
+    const policies =
+      exec.match(/create\s+policy\s+\w+\s+on\s+public\.ai_cost_reservations/gi) ?? [];
+    expect(policies).toHaveLength(1);
+    expect(exec).toMatch(
+      /create\s+policy\s+ai_cost_reservations_select\s+on\s+public\.ai_cost_reservations\s+for\s+select\s+using\s*\(\s*public\.is_org_admin\s*\(\s*org_id\s*\)\s*\)/i,
+    );
+  });
+
+  it("has NO insert / update / delete policy — a tenant cannot FORGE or free a claim", () => {
+    // A forged claim is a denial-of-service primitive: claim the whole ceiling
+    // and every AI call is refused until the TTL lapses. A tenant-freeable claim
+    // is the inverse — a way to spend past the ceiling.
+    expect(exec).not.toMatch(/for\s+insert/i);
+    expect(exec).not.toMatch(/create\s+policy[^;]*for\s+update/i);
+    expect(exec).not.toMatch(/create\s+policy[^;]*for\s+delete/i);
+    expect(exec).not.toMatch(/for\s+all\b/i);
+  });
+
+  it("a DETERMINISTIC claim is structurally unrepresentable, as on the ledger", () => {
+    expect(exec).toMatch(
+      /task_class\s+text\s+not\s+null\s+check\s*\(\s*task_class\s+in\s*\(\s*'classification'\s*,\s*'drafting'\s*,\s*'complex'\s*\)\s*\)/i,
+    );
+    expect(exec).not.toMatch(/task_class\s+in\s*\([^)]*'deterministic'/i);
+  });
+
+  it("a claim can never be FREE — the floor is structural, not just in TypeScript", () => {
+    // A zero claim consumes no budget, so N concurrent unpriced calls would all
+    // pass however many there were.
+    expect(exec).toMatch(/estimate_pence\s+integer\s+not\s+null\s+check\s*\(\s*estimate_pence\s*>=\s*1\s*\)/i);
+  });
+
+  it("the claim's IDENTITY is frozen and a terminal state is TERMINAL", () => {
+    // Walking a settled claim back to 'reserved' would double-count committed
+    // spend; editing its amount after the fact would make the gate meaningless.
+    expect(exec).toMatch(/before\s+update\s+on\s+public\.ai_cost_reservations/i);
+    expect(exec).toMatch(/execute\s+function\s+public\.tg_ai_cost_reservations_lifecycle\(\)/i);
+    expect(exec).toMatch(/new\.estimate_pence\s+is\s+distinct\s+from\s+old\.estimate_pence/i);
+    expect(exec).toMatch(/new\.org_id\s+is\s+distinct\s+from\s+old\.org_id/i);
+    expect(exec).toMatch(/new\.expires_at\s+is\s+distinct\s+from\s+old\.expires_at/i);
+    expect(exec).toMatch(/old\.state\s*<>\s*'reserved'/i);
+    expect(exec).toMatch(/is\s+already\s+%/i);
+  });
+
+  it("the FK anonymisation hole is cut narrowly, with IS NOT DISTINCT FROM", () => {
+    // `on delete set null` is implemented as an UPDATE, so a blanket refusal
+    // would make this table block user deletion — the same class of failure a
+    // DELETE guard would be.
+    expect(exec).toMatch(/new\s+is\s+not\s+distinct\s+from\s+v_expected/i);
+    expect(exec).not.toMatch(/if\s+new\s*=\s*v_expected/i);
+  });
+
+  it("DELETE is deliberately NOT guarded, so org teardown still cascades", () => {
+    // A BEFORE DELETE guard would abort tenant teardown and GDPR erasure — the
+    // exact failure 20261052 was written to fix.
+    expect(exec).not.toMatch(/before\s+delete\s+on\s+public\.ai_cost_reservations/i);
+    expect(exec).toMatch(
+      /org_id\s+uuid\s+not\s+null\s+references\s+public\.organizations\s*\(\s*id\s*\)\s+on\s+delete\s+cascade/i,
+    );
+  });
+
+  it("stores NO prompt and NO model output — only the SHA-256 fingerprint", () => {
+    expect(exec).toMatch(/content_hash\s+text\s+check[^,]*\^\[0-9a-f\]\{64\}\$/i);
+    expect(exec).not.toMatch(/\b(prompt|request_body|response_body|transcript|completion)\s+text/i);
+  });
+
+  it("introduces NO cron, NO provider and NO credential", () => {
+    // Reclaim is LAZY by design: nothing external stands between a crashed
+    // process and the budget it was holding.
+    expect(exec).not.toMatch(/cron\.|pg_cron|schedule\s*\(/i);
+    expect(exec).not.toMatch(/anthropic|openai|claude|gpt-|api_key|secret/i);
+    expect(exec).not.toMatch(/\bhttp\b|\bnet\.\w+|extension/i);
+  });
+});
 
 describe("the HQ cost view is gated and privilege-honest", () => {
   it("the page requires HQ", () => {

@@ -32,7 +32,8 @@ import "server-only";
  *     has changed.
  *   - If the same answer would do, do not ask again. That is what the recent-
  *     duplicate check below is for; it is a backstop for the doctrine, not a
- *     substitute for following it.
+ *     substitute for following it. It is now a DB-level guarantee rather than a
+ *     hopeful read — but a backstop that cannot be raced is still a backstop.
  *
  * WHAT THIS MODULE GUARANTEES
  * ---------------------------
@@ -42,6 +43,47 @@ import "server-only";
  *      AND failures, with tokens, latency and an estimated cost.
  *   3. TRANSPARENCY. HQ can see spend by org and by feature, and a spike is
  *      flagged against the org's own history.
+ *   4. ATOMICITY UNDER CONCURRENCY. See below — this is the one that was
+ *      missing, and it is the one that made the ceiling a suggestion.
+ *
+ * THE RESERVATION — WHY THE CEILING USED TO BE A SUGGESTION
+ * --------------------------------------------------------
+ * The first version of this module read the month's total, ran the call, then
+ * recorded the cost. That is a READ-THEN-ACT decision, and it failed in exactly
+ * the two ways read-then-act always fails:
+ *
+ *   - N calls issued in the same tick all read the SAME pre-spend total, all
+ *     found themselves under the ceiling, and all spent. Overshoot was bounded
+ *     only by (in-flight x per-call cost). Sequential traffic was exact, which
+ *     is why it looked fine.
+ *   - The duplicate probe raced identically: ten SIMULTANEOUS identical submits
+ *     all missed and all paid. One impatient double-click cost ten times.
+ *
+ * Both were measured, pinned as findings, and are now fixed by moving the
+ * decision into ONE SQL statement under a per-org advisory lock
+ * (supabase/migrations/20261070000000). The shape is RESERVE, then SETTLE:
+ *
+ *   1. RESERVE — `ai_reserve_invocation` re-reads committed + live-reserved
+ *      inside a lock and conditionally inserts a claim only if this call's
+ *      pessimistic cost still fits. The claim is visible to every other caller
+ *      the instant it commits, which is the property a post-hoc ledger row can
+ *      never have. No set of concurrent callers can exceed the ceiling.
+ *   2. CALL the provider. The lock is NOT held across it.
+ *   3. SETTLE — `ai_settle_reservation` writes the immutable ledger row and
+ *      frees the claim in one transaction, so there is no window in which the
+ *      spend is recorded but the claim still stands (over-blocking) or the claim
+ *      is freed but the spend is not (under-counting).
+ *
+ * A crashed process cannot hold budget hostage: a claim carries a TTL and every
+ * arithmetic path counts only unexpired claims, so the headroom comes back by
+ * itself with no cron in the refusal path.
+ *
+ * ONE RESIDUE, STATED RATHER THAN HIDDEN. The ceiling holds exactly while each
+ * call's true cost is no greater than the claim it was admitted on. A call that
+ * costs MORE than its own worst-case envelope can push committed spend past the
+ * ceiling by the shortfall. That is why the envelope lives on the model binding
+ * as a required field, and why `ai_reservations_month_totals.overrun_count`
+ * exists: a non-zero count means the envelope is too tight for the bound model.
  *
  * WHAT IT DELIBERATELY DOES NOT DO
  * --------------------------------
@@ -53,15 +95,18 @@ import "server-only";
  * THE DARK SHORT-CIRCUIT (why wiring this in changed nothing)
  * ----------------------------------------------------------
  * When no tier is bound to a model, `invokeWithGovernor` runs the caller's
- * function immediately and returns — no budget read, no dedupe read, no ledger
- * write, not one extra database round trip. Wiring a dark seam through the
- * governor therefore costs nothing and changes nothing observable, which is the
- * only honest way to install a control ahead of the thing it controls.
+ * function immediately and returns — no reservation, no ledger write, not one
+ * extra database round trip. Wiring a dark seam through the governor therefore
+ * costs nothing and changes nothing observable, which is the only honest way to
+ * install a control ahead of the thing it controls. That is still true with the
+ * reservation in place: it sits BEHIND the short-circuit, so today's production
+ * behaviour is byte-identical and `ai_cost_reservations` stays empty.
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   featureDefinition,
+  reservationEnvelopeOf,
   resolveModel,
   tierFor,
   type AiFeature,
@@ -71,12 +116,14 @@ import { isGovernorActivated } from "./governor/readiness";
 import {
   AI_MONTHLY_CEILING_PENCE,
   DEDUPE_WINDOW_MS,
+  RESERVATION_TTL_MS,
   SPIKE_BASELINE_MONTHS,
-  budgetPermits,
   detectSpike,
   estimateCostPence,
   evaluateBudget,
   invocationHash,
+  reservationClaimPence,
+  settlementCostPence,
   trailingAverage,
   trailingMonths,
   ukMonthKeyOf,
@@ -88,6 +135,9 @@ import {
 export type { BudgetStatus, MonthKey } from "./governor/policy";
 export {
   AI_MONTHLY_CEILING_PENCE,
+  FAILURE_FLOOR_PENCE,
+  MIN_RESERVATION_PENCE,
+  RESERVATION_TTL_MS,
   budgetPercent,
   budgetPermits,
   detectSpike,
@@ -95,6 +145,8 @@ export {
   evaluateBudget,
   formatPence,
   invocationHash,
+  reservationClaimPence,
+  settlementCostPence,
   trailingAverage,
   ukMonthKeyOf,
   ukMonthWindow,
@@ -104,6 +156,9 @@ export type { AiFeature, AiTaskClass, AiTier } from "./governor/registry";
 export { getAiGovernorReadiness, isGovernorActivated } from "./governor/readiness";
 
 const LEDGER = "ai_invocations";
+const RESERVE_FN = "ai_reserve_invocation";
+const SETTLE_FN = "ai_settle_reservation";
+const RELEASE_FN = "ai_release_reservation";
 
 /**
  * The ledger table is newer than the checked-in generated types
@@ -113,15 +168,9 @@ const LEDGER = "ai_invocations";
  * `expense_drafts` in server/services/expense-drafts.ts for the same shape.
  */
 type LedgerRow = Record<string, unknown>;
-type Filter = {
-  eq(column: string, value: unknown): Filter;
-  gte(column: string, value: unknown): Filter;
-  limit(n: number): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
-};
 type Db = {
   from(table: string): {
     insert(row: LedgerRow): PromiseLike<{ error: { message: string } | null }>;
-    select(columns: string): Filter;
   };
   rpc(
     fn: string,
@@ -138,8 +187,17 @@ export type BudgetSnapshot = {
   orgId: string;
   /** The Europe/London budget month, `YYYY-MM`. */
   month: MonthKey;
-  /** Spend so far this month, integer pence. */
+  /** COMMITTED spend so far this month, integer pence. Ledger rows only. */
   spentPence: number;
+  /**
+   * Budget claimed by calls that are IN FLIGHT right now, integer pence.
+   *
+   * Not spend — a claim, which either becomes spend or is given back. It is
+   * reported separately from `spentPence` because conflating the two would make
+   * the ledger's own totals unreconcilable, and counted in `status` because
+   * whether the NEXT call is permitted depends on both.
+   */
+  reservedPence: number;
   /** The ceiling in force. */
   ceilingPence: number;
   status: BudgetStatus;
@@ -161,19 +219,65 @@ export type BudgetSnapshot = {
  * The exposure is bounded by the fact that the read failing is itself an
  * incident that surfaces elsewhere. If AI ever becomes load-bearing rather than
  * additive, this is the line to revisit.
+ *
+ * THAT FAIL-OPEN IS PRESERVED AND IT IS NO LONGER THE CEILING. This function is
+ * now an OBSERVATION — it feeds the HQ view, the spike baseline and the
+ * warning bands. The ceiling itself is enforced by `reserveBudget`, which is a
+ * WRITE and therefore fails CLOSED: see its own note for why the two postures
+ * differ rather than contradict.
  */
 export async function checkBudget(orgId: string, month?: MonthKey): Promise<BudgetSnapshot> {
   const monthKey = month ?? ukMonthKeyOf(new Date());
   const ceilingPence = AI_MONTHLY_CEILING_PENCE;
 
-  const spentPence = await readMonthSpendPence(orgId, monthKey);
+  const [spentPence, reservedPence] = await Promise.all([
+    readMonthSpendPence(orgId, monthKey),
+    readMonthReservedPence(orgId, monthKey),
+  ]);
   return {
     orgId,
     month: monthKey,
     spentPence,
+    reservedPence,
     ceilingPence,
-    status: evaluateBudget(spentPence, ceilingPence),
+    // Committed AND claimed: the honest answer to "is there room for another
+    // call", which is what a budget status is for.
+    status: evaluateBudget(spentPence + reservedPence, ceilingPence),
   };
+}
+
+/**
+ * Live (unexpired) claims for one org in one UK budget month, in pence.
+ *
+ * 0 on any read failure, mirroring `readMonthSpendPence` — this read feeds the
+ * advisory surfaces, never the refusal, so the same reasoning applies. The
+ * refusal path never calls it: `ai_reserve_invocation` recomputes the figure
+ * itself, inside its lock, where it cannot be stale.
+ */
+async function readMonthReservedPence(orgId: string, month: MonthKey): Promise<number> {
+  const { startMs } = ukMonthWindow(month);
+  if (!Number.isFinite(startMs)) return 0;
+  try {
+    const { data, error } = await db(createAdminClient()).rpc("ai_reservations_month_totals", {
+      p_org_id: orgId,
+      p_month: new Date(startMs + 86_400_000).toISOString().slice(0, 10),
+    });
+    if (error) {
+      console.error("[ai/governor] reservation totals read failed", error);
+      return 0;
+    }
+    const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+    return num(rows[0]?.live_pence);
+  } catch (e) {
+    console.error("[ai/governor] reservation totals read threw", e);
+    return 0;
+  }
+}
+
+/** A DB numeric (which arrives as a string for bigint) as a finite number. 0 otherwise. */
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /** Total spend for one org in one UK budget month, in pence. 0 on any read failure. */
@@ -277,6 +381,242 @@ export async function recordInvocation(input: RecordInvocationInput): Promise<bo
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 2b. The atomic reservation — reserve, settle, release
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Why a request was refused as a duplicate. Both mean "we did not pay twice". */
+export type DuplicateReason =
+  /** An identical request is running RIGHT NOW and has not settled yet. */
+  | "in_flight"
+  /** An identical request SUCCEEDED inside the dedupe window. */
+  | "recent_success";
+
+/** Why the governor refused to let a call reach a provider. */
+export type BlockReason =
+  /** The org has no headroom left this month for a call of this size. */
+  | "ceiling"
+  /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */
+  | "reservation_unavailable";
+
+export type ReservationResult =
+  | {
+      outcome: "reserved";
+      reservationId: string;
+      committedPence: number;
+      reservedPence: number;
+      ceilingPence: number;
+      claimPence: number;
+    }
+  | {
+      outcome: "blocked";
+      committedPence: number;
+      reservedPence: number;
+      ceilingPence: number;
+      reason: BlockReason;
+    }
+  | {
+      outcome: "duplicate";
+      reason: DuplicateReason;
+      committedPence: number;
+      reservedPence: number;
+      ceilingPence: number;
+    };
+
+/**
+ * Claim budget for ONE call, atomically.
+ *
+ * Everything load-bearing happens inside `ai_reserve_invocation`: the month's
+ * committed + live-reserved total is re-read under a per-org advisory lock and
+ * the claim is written by a conditional insert, so the check and the write are
+ * one indivisible act. This function is a thin, honest translator — it holds NO
+ * decision of its own, because a decision here would be a decision outside the
+ * lock, which is the defect being fixed.
+ *
+ * IT FAILS CLOSED, and that is a deliberate departure from `checkBudget`'s
+ * fail-open. The two are not in tension:
+ *
+ *   - `checkBudget` is a READ feeding an advisory status. Failing open costs a
+ *     wrong number on a dashboard; the call still runs and is still recorded, so
+ *     any consequence is visible.
+ *   - This is the AUTHORISATION. Failing open would mean the ceiling is not
+ *     enforced whenever the database hiccups — "the control is bypassed on
+ *     error" is not a control, and it is precisely the property this lane
+ *     exists to install. Failing closed costs exactly the documented degraded
+ *     path each governed feature already has and already tests (an empty draft,
+ *     a deterministic extraction, a fixed acknowledgement, "AI drafting is
+ *     off"). A degraded AI answer against unbounded money is not a close call.
+ */
+export async function reserveBudget(input: {
+  orgId: string;
+  userId?: string | null;
+  feature: string;
+  taskClass: Exclude<AiTaskClass, "deterministic">;
+  claimPence: number;
+  contentHash?: string | null;
+  ceilingPence?: number;
+}): Promise<ReservationResult> {
+  const ceilingPence = input.ceilingPence ?? AI_MONTHLY_CEILING_PENCE;
+  try {
+    const { data, error } = await db(createAdminClient()).rpc(RESERVE_FN, {
+      p_org_id: input.orgId,
+      p_feature: input.feature,
+      p_task_class: input.taskClass,
+      p_estimate_pence: Math.max(1, Math.round(input.claimPence || 1)),
+      p_user_id: input.userId ?? null,
+      p_content_hash: input.contentHash ?? null,
+      p_ceiling_pence: ceilingPence,
+      p_ttl_seconds: Math.max(1, Math.round(RESERVATION_TTL_MS / 1000)),
+      p_dedupe_window_seconds: Math.max(0, Math.round(DEDUPE_WINDOW_MS / 1000)),
+    });
+    if (error) {
+      console.error("[ai/governor] RESERVATION FAILED — refusing the call", error);
+      return {
+        outcome: "blocked",
+        committedPence: 0,
+        reservedPence: 0,
+        ceilingPence,
+        reason: "reservation_unavailable",
+      };
+    }
+    const row = (Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : undefined) ?? {};
+    const committedPence = num(row.committed_pence);
+    const reservedPence = num(row.reserved_pence);
+    const outcome = String(row.outcome ?? "");
+
+    if (outcome === "reserved" && typeof row.reservation_id === "string") {
+      return {
+        outcome: "reserved",
+        reservationId: row.reservation_id,
+        committedPence,
+        reservedPence,
+        ceilingPence: num(row.ceiling_pence) || ceilingPence,
+        claimPence: Math.max(1, Math.round(input.claimPence || 1)),
+      };
+    }
+    if (outcome === "duplicate") {
+      return {
+        outcome: "duplicate",
+        reason: row.duplicate_reason === "recent_success" ? "recent_success" : "in_flight",
+        committedPence,
+        reservedPence,
+        ceilingPence: num(row.ceiling_pence) || ceilingPence,
+      };
+    }
+    // `blocked`, and anything unrecognised. An outcome this build does not know
+    // is refused rather than assumed benign — a renamed SQL outcome must not
+    // silently become "go ahead".
+    if (outcome !== "blocked") {
+      console.error(`[ai/governor] unrecognised reservation outcome "${outcome}" — refusing`);
+    }
+    return {
+      outcome: "blocked",
+      committedPence,
+      reservedPence,
+      ceilingPence: num(row.ceiling_pence) || ceilingPence,
+      reason: outcome === "blocked" ? "ceiling" : "reservation_unavailable",
+    };
+  } catch (e) {
+    console.error("[ai/governor] RESERVATION THREW — refusing the call", e);
+    return {
+      outcome: "blocked",
+      committedPence: 0,
+      reservedPence: 0,
+      ceilingPence,
+      reason: "reservation_unavailable",
+    };
+  }
+}
+
+/**
+ * Settle a claim: write the immutable ledger row and free the claim, in ONE
+ * database transaction.
+ *
+ * BEST-EFFORT AT THIS LAYER, exactly like `recordInvocation` and for the same
+ * reason: the customer-facing call has already happened, and an accounting
+ * problem must not become a feature outage. Returns whether the settlement
+ * landed so the caller (and the tests) can tell.
+ *
+ * If the claim has vanished — an org torn down mid-flight — this falls back to
+ * the ordinary ledger write, so the spend is still recorded. If the claim is
+ * already settled, nothing is written twice: the SQL function is idempotent on
+ * `state = 'reserved'`, so a retry after a network blip cannot double-charge.
+ *
+ * A settlement that fails outright leaves the claim standing until its TTL
+ * lapses. That errs towards over-blocking for ten minutes rather than
+ * under-counting spend, which is the safe direction for a safety limit.
+ */
+export async function settleReservation(input: {
+  reservationId: string;
+  success: boolean;
+  costPence: number;
+  usage: InvocationUsage;
+  latencyMs: number;
+  errorCode?: string | null;
+  /** Used only if the reservation has vanished, so the spend is still recorded. */
+  fallback: RecordInvocationInput;
+}): Promise<boolean> {
+  try {
+    const { data, error } = await db(createAdminClient()).rpc(SETTLE_FN, {
+      p_reservation_id: input.reservationId,
+      p_success: input.success,
+      p_cost_pence: Math.max(0, Math.round(input.costPence || 0)),
+      p_provider: input.usage.provider,
+      p_model: input.usage.model,
+      p_input_tokens: Math.max(0, Math.round(input.usage.inputTokens || 0)),
+      p_output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
+      p_latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
+      p_error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
+    });
+    if (error) {
+      console.error("[ai/governor] settlement failed", error);
+      return false;
+    }
+    const row = (Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : undefined) ?? {};
+    const outcome = String(row.outcome ?? "");
+    if (outcome === "settled") return true;
+    if (outcome === "already_settled") {
+      // Idempotent: the first settlement already wrote the ledger row.
+      return true;
+    }
+    // 'not_found' — the reservation is gone. Record the spend anyway.
+    console.error(`[ai/governor] reservation ${input.reservationId} vanished (${outcome})`);
+    return await recordInvocation(input.fallback);
+  } catch (e) {
+    console.error("[ai/governor] settlement threw", e);
+    return false;
+  }
+}
+
+/**
+ * Give a claim back without recording anything.
+ *
+ * The `usage: null` path: the governed function took its own degraded leg and
+ * never reached a provider, so there is nothing to account for. Recording a
+ * phantom invocation is exactly what `GovernedCall.usage === null` exists to
+ * prevent; leaving the claim to time out would hold headroom for ten minutes
+ * against a call that never happened.
+ */
+export async function releaseReservation(
+  reservationId: string,
+  reason = "no_provider_call",
+): Promise<boolean> {
+  try {
+    const { error } = await db(createAdminClient()).rpc(RELEASE_FN, {
+      p_reservation_id: reservationId,
+      p_reason: reason,
+    });
+    if (error) {
+      console.error("[ai/governor] release failed", error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("[ai/governor] release threw", e);
+    return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 3. invokeWithGovernor — the wrapper every AI call passes through
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -296,10 +636,34 @@ export type GovernedCall<T> = {
 export type GovernorOutcome<T> =
   /** The function ran. `recorded` says whether an invocation landed in the ledger. */
   | { status: "ran"; value: T; budget: BudgetStatus; recorded: boolean; dark: boolean }
-  /** The org is at or over its ceiling. The function was NOT called. */
-  | { status: "blocked"; budget: "blocked"; spentPence: number; ceilingPence: number }
-  /** An identical request ran within the dedupe window. The function was NOT called. */
-  | { status: "duplicate"; contentHash: string };
+  /**
+   * No claim on the budget could be taken, so the function was NOT called.
+   *
+   * `reason` distinguishes "the org has no headroom" from "the reservation
+   * itself could not be taken" — operationally very different, identically
+   * degraded. Every caller's existing `blocked` handling is correct for both,
+   * which is why this is one status rather than two.
+   */
+  | {
+      status: "blocked";
+      budget: "blocked";
+      spentPence: number;
+      ceilingPence: number;
+      reason: BlockReason;
+    }
+  /**
+   * An identical request is in flight or recently succeeded. The function was
+   * NOT called and nothing was charged.
+   *
+   * The loser is told plainly rather than handed the winner's result. Returning
+   * the winner's output would need either a cache of model outputs — a new
+   * store of customer prose in a subsystem that deliberately keeps only a
+   * SHA-256 fingerprint — or a wait on another request, which turns a cost
+   * control into a latency coupling with its own timeout failures. "An identical
+   * request is already running" is the honest answer and the callers already
+   * degrade correctly on it.
+   */
+  | { status: "duplicate"; contentHash: string; reason: DuplicateReason };
 
 export type InvokeWithGovernorInput = {
   orgId: string;
@@ -331,11 +695,15 @@ export type InvokeWithGovernorInput = {
  *      environment rather than degrading quietly in production.
  *   3. NOT ACTIVATED → run the function and return. No reads, no writes. This
  *      is the state today, and it is why wiring the dark seams changed nothing.
- *   4. BUDGET → blocked refuses WITHOUT calling the function. The whole point.
- *   5. DEDUPE → an identical recent request refuses without calling.
- *   6. RUN, timing it. On throw: record the failure, then RETHROW so the
- *      caller's existing catch behaves exactly as before.
- *   7. `usage: null` ⇒ the function degraded internally; record nothing.
+ *   4. RESERVE — ONE atomic SQL call that decides the ceiling AND the duplicate
+ *      question together, under a lock, and claims the budget if it fits. Both
+ *      refusals happen WITHOUT calling the function. The whole point, and the
+ *      reason steps 4 and 5 used to be two racy reads and are now one write.
+ *   5. RUN, timing it. On throw: settle the claim as a FAILURE, then RETHROW so
+ *      the caller's existing catch behaves exactly as before.
+ *   6. `usage: null` ⇒ the function degraded internally; RELEASE the claim and
+ *      record nothing.
+ *   7. Otherwise SETTLE: the ledger row and the claim, in one transaction.
  */
 export async function invokeWithGovernor<T>(
   feature: AiFeature,
@@ -375,106 +743,130 @@ export async function invokeWithGovernor<T>(
     return { status: "ran", value: call.value, budget: "allowed", recorded: false, dark: true };
   }
 
-  // 4. The ceiling.
-  const budget = await checkBudget(input.orgId);
-  if (!budgetPermits(budget.status)) {
-    console.warn(
-      `[ai/governor] BLOCKED ${feature} for org ${input.orgId}: ` +
-        `${budget.spentPence}p spent of a ${budget.ceilingPence}p monthly ceiling.`,
-    );
-    return {
-      status: "blocked",
-      budget: "blocked",
-      spentPence: budget.spentPence,
-      ceilingPence: budget.ceilingPence,
-    };
-  }
-
-  // 5. Recent-duplicate refusal.
+  // 4. THE ATOMIC RESERVATION. The ceiling and the duplicate question, decided
+  //    together inside one lock, with the budget claimed if the answer is yes.
   const contentHash =
     typeof input.dedupeContent === "string" && input.dedupeContent.length > 0
       ? invocationHash(feature, taskClass, input.dedupeContent)
       : null;
-  if (contentHash && (await hasRecentIdentical(input.orgId, feature, contentHash))) {
-    return { status: "duplicate", contentHash };
+
+  const binding = resolveModel(taskClass);
+  const claimPence = reservationClaimPence(binding, reservationEnvelopeOf(binding));
+
+  const reservation = await reserveBudget({
+    orgId: input.orgId,
+    userId: input.userId ?? null,
+    feature,
+    taskClass,
+    claimPence,
+    contentHash,
+  });
+
+  if (reservation.outcome === "blocked") {
+    console.warn(
+      `[ai/governor] BLOCKED ${feature} for org ${input.orgId} (${reservation.reason}): ` +
+        `${reservation.committedPence}p committed + ${reservation.reservedPence}p in flight, ` +
+        `claim ${claimPence}p, ceiling ${reservation.ceilingPence}p.`,
+    );
+    return {
+      status: "blocked",
+      budget: "blocked",
+      // `spentPence` keeps its meaning — committed spend — so every existing
+      // caller that surfaces it to an operator still shows a real figure.
+      spentPence: reservation.committedPence,
+      ceilingPence: reservation.ceilingPence,
+      reason: reservation.reason,
+    };
+  }
+  if (reservation.outcome === "duplicate") {
+    return { status: "duplicate", contentHash: contentHash!, reason: reservation.reason };
   }
 
-  // 6/7. Run it, time it, account for it.
+  // The advisory status the caller sees: the position BEFORE this call's own
+  // claim, which is exactly what it meant before the reservation existed.
+  const budgetStatus = evaluateBudget(
+    reservation.committedPence + reservation.reservedPence,
+    reservation.ceilingPence,
+  );
+  const fallbackUsage = {
+    provider: binding?.provider ?? "unknown",
+    model: binding?.model ?? "unknown",
+    inputTokens: 0,
+    outputTokens: 0,
+  };
+
+  // 5/6/7. Run it, time it, account for it.
   const startedAt = Date.now();
   let call: GovernedCall<T>;
   try {
     call = await fn();
   } catch (err) {
-    const binding = resolveModel(taskClass);
-    await recordInvocation({
-      orgId: input.orgId,
-      userId: input.userId ?? null,
-      feature,
-      taskClass,
-      usage: {
-        provider: binding?.provider ?? "unknown",
-        model: binding?.model ?? "unknown",
-        // A failed call still billed its input on most vendors, but we did not
-        // get a usage report — recording 0 is honest about what we know.
-        inputTokens: 0,
-        outputTokens: 0,
-      },
-      latencyMs: Date.now() - startedAt,
+    const errorCode = errorCodeOf(err);
+    const latencyMs = Date.now() - startedAt;
+    // A FAILURE IS SETTLED, NOT RELEASED. A call that reached a provider and
+    // then failed has, on most vendors, already billed its input tokens — see
+    // FAILURE_FLOOR_PENCE for why recording that as free would make a retry
+    // storm invisible to the very ceiling that exists to stop one. Tokens are
+    // recorded as 0 because we genuinely did not get a usage report.
+    await settleReservation({
+      reservationId: reservation.reservationId,
       success: false,
-      errorCode: errorCodeOf(err),
-      contentHash,
+      costPence: settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 }),
+      usage: fallbackUsage,
+      latencyMs,
+      errorCode,
+      fallback: {
+        orgId: input.orgId,
+        userId: input.userId ?? null,
+        feature,
+        taskClass,
+        usage: fallbackUsage,
+        latencyMs,
+        success: false,
+        errorCode,
+        contentHash,
+        estimatedCostPence: settlementCostPence(false, binding, {
+          inputTokens: 0,
+          outputTokens: 0,
+        }),
+      },
     });
     // RETHROW: the caller's existing catch owns the degraded path.
     throw err;
   }
   const latencyMs = Date.now() - startedAt;
 
-  // The function took its own degraded path — no provider was reached.
+  // The function took its own degraded path — no provider was reached, so the
+  // claim is given back immediately and nothing is recorded.
   if (!call.usage) {
-    return { status: "ran", value: call.value, budget: budget.status, recorded: false, dark: false };
+    await releaseReservation(reservation.reservationId, "no_provider_call");
+    return { status: "ran", value: call.value, budget: budgetStatus, recorded: false, dark: false };
   }
 
-  const recorded = await recordInvocation({
-    orgId: input.orgId,
-    userId: input.userId ?? null,
-    feature,
-    taskClass,
+  const costPence = settlementCostPence(true, binding, {
+    inputTokens: call.usage.inputTokens,
+    outputTokens: call.usage.outputTokens,
+  });
+  const recorded = await settleReservation({
+    reservationId: reservation.reservationId,
+    success: true,
+    costPence,
     usage: call.usage,
     latencyMs,
-    success: true,
-    contentHash,
+    fallback: {
+      orgId: input.orgId,
+      userId: input.userId ?? null,
+      feature,
+      taskClass,
+      usage: call.usage,
+      latencyMs,
+      success: true,
+      contentHash,
+      estimatedCostPence: costPence,
+    },
   });
 
-  return { status: "ran", value: call.value, budget: budget.status, recorded, dark: false };
-}
-
-/** Has an identical request for this org+feature run inside the dedupe window? */
-async function hasRecentIdentical(
-  orgId: string,
-  feature: string,
-  contentHash: string,
-): Promise<boolean> {
-  const since = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
-  try {
-    const { data, error } = await db(createAdminClient())
-      .from(LEDGER)
-      .select("id")
-      .eq("org_id", orgId)
-      .eq("feature", feature)
-      .eq("content_hash", contentHash)
-      .eq("success", true)
-      .gte("created_at", since)
-      .limit(1);
-    if (error) {
-      // A dedupe read failure must not block real work — fall through and call.
-      console.error("[ai/governor] dedupe probe failed", error);
-      return false;
-    }
-    return (data ?? []).length > 0;
-  } catch (e) {
-    console.error("[ai/governor] dedupe probe threw", e);
-    return false;
-  }
+  return { status: "ran", value: call.value, budget: budgetStatus, recorded, dark: false };
 }
 
 /** A short, stable, PII-free code for the ledger's `error_code`. */
