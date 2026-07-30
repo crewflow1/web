@@ -9,6 +9,7 @@ import {
   type SitesClient,
 } from "@/server/services/sites";
 import { compareSites, formatSiteAddress, siteKindLabel } from "@/lib/sites/schema";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui";
 import { EmptyState } from "../_components/empty-state";
 
 export const dynamic = "force-dynamic";
@@ -186,56 +187,56 @@ function SiteTable({
       {rows.length === 0 ? (
         <p className="px-4 py-6 text-sm text-slate-500">{empty}</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Kind</th>
-                <th className="hidden px-4 py-3 md:table-cell">Where</th>
-                <th className="px-4 py-3 text-right">In use by</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((row) => {
-                const u = usage.get(row.id) ?? EMPTY_SITE_USAGE;
-                const address = formatSiteAddress(row);
-                return (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/sites/${row.id}`}
-                        className={`font-medium hover:text-slate-700 ${
-                          muted ? "text-slate-500" : "text-slate-900"
-                        }`}
-                      >
-                        {row.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{siteKindLabel(row.kind)}</td>
-                    <td className="hidden px-4 py-3 text-slate-600 md:table-cell">
-                      {address || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs tabular-nums text-slate-600">
-                      {u.vehicles === 0 && u.custody === 0
-                        ? "—"
-                        : [
-                            u.vehicles > 0
-                              ? `${u.vehicles} vehicle${u.vehicles === 1 ? "" : "s"}`
-                              : null,
-                            u.custody > 0
-                              ? `${u.custody} custody record${u.custody === 1 ? "" : "s"}`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <THead>
+            <TR hover={false}>
+              <TH>Name</TH>
+              <TH>Kind</TH>
+              <TH hideBelow="md">Where</TH>
+              <TH numeric>In use by</TH>
+            </TR>
+          </THead>
+          <TBody>
+            {rows.map((row) => {
+              const u = usage.get(row.id) ?? EMPTY_SITE_USAGE;
+              const address = formatSiteAddress(row);
+              return (
+                <TR key={row.id}>
+                  <TD>
+                    <Link
+                      href={`/sites/${row.id}`}
+                      className={`font-medium hover:text-slate-700 ${
+                        muted ? "text-slate-500" : "text-slate-900"
+                      }`}
+                    >
+                      {row.name}
+                    </Link>
+                  </TD>
+                  <TD muted>{siteKindLabel(row.kind)}</TD>
+                  <TD muted hideBelow="md">
+                    {address || "—"}
+                  </TD>
+                  {/* text-xs: the usage summary is a sentence of counts, not a
+                      headline figure, and reads a size down. */}
+                  <TD numeric muted className="text-xs">
+                    {u.vehicles === 0 && u.custody === 0
+                      ? "—"
+                      : [
+                          u.vehicles > 0
+                            ? `${u.vehicles} vehicle${u.vehicles === 1 ? "" : "s"}`
+                            : null,
+                          u.custody > 0
+                            ? `${u.custody} custody record${u.custody === 1 ? "" : "s"}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                  </TD>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
       )}
     </section>
   );
