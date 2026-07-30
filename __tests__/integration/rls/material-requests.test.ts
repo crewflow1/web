@@ -74,6 +74,11 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
   let outsiderToken = "";
   let requestB = "";
   let lineB = "";
+  // Stock fixtures. Since 20261071 the fulfilment RPC DERIVES its quantities
+  // from stock_movements, so proving the advance needs real movements — a
+  // caller-supplied number is no longer accepted from anybody.
+  let itemA = "";
+  let siteA = "";
 
   const svc = () => db(serviceClient());
 
@@ -171,6 +176,30 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
   const setStatus = (client: unknown, id: string, status: string, extra: Row = {}) =>
     db(client).from("material_requests").update({ status, ...extra }).eq("id", id);
 
+  /**
+   * Issue REAL stock against a request line, as the dual admin.
+   *
+   * The fulfilment RPC derives from these movements and from nothing else
+   * (20261071), so every advance below is driven by stock that actually moved.
+   */
+  const issueAgainst = (lineId: string, qty: number) =>
+    rpc(userClient(dualToken)).rpc("record_stock_issue", {
+      p_org_id: orgA,
+      p_item_id: itemA,
+      p_site_id: siteA,
+      p_qty: qty,
+      p_job_id: null,
+      p_material_request_line_id: lineId,
+      p_notes: null,
+    });
+
+  /** Ask the database to re-derive. Two ids — there is nothing else to pass. */
+  const advance = (id: string, orgId = orgA, client: unknown = userClient(dualToken)) =>
+    rpc(client).rpc("advance_material_request_fulfilment", {
+      p_request_id: id,
+      p_org_id: orgId,
+    });
+
   beforeAll(async () => {
     orgA = await makeOrg("MR Probe A", `${TOKEN}-a`);
     orgB = await makeOrg("MR Probe B", `${TOKEN}-b`);
@@ -211,6 +240,31 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
     const b = await makeRequest(orgB, jobB, `${TOKEN}-MR-9001`, dualUserId);
     requestB = b.id;
     lineB = b.lines[0] ?? "";
+
+    // A catalogue item, a place, and enough on the shelf for every advance
+    // below to be driven by stock that really moved.
+    const item = await svc()
+      .from("stock_items")
+      .insert({ org_id: orgA, name: `${TOKEN} Cement 25kg`, unit: "bag" })
+      .select("id")
+      .single();
+    expect(item.error, item.error?.message).toBeNull();
+    itemA = String(item.data?.id ?? "");
+    const site = await svc()
+      .from("sites")
+      .insert({ org_id: orgA, name: `${TOKEN} Yard`, kind: "depot" })
+      .select("id")
+      .single();
+    expect(site.error, site.error?.message).toBeNull();
+    siteA = String(site.data?.id ?? "");
+    const seeded = await rpc(serviceClient()).rpc("record_stock_adjustment", {
+      p_org_id: orgA,
+      p_item_id: itemA,
+      p_site_id: siteA,
+      p_delta: 5000,
+      p_reason: "opening count for the fulfilment proofs",
+    });
+    expect(seeded.error, seeded.error?.message).toBeNull();
   });
 
   afterAll(async () => {
@@ -450,31 +504,49 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
       expect(await statusOf(id)).toBe("approved");
     });
 
-    it("the RPC advances partial → full, and only the RPC can", async () => {
+    /**
+     * REWRITTEN FOR 20261071, AND THE OLD ASSERTION WAS THE DEFECT.
+     *
+     * This test used to advance a request by handing the RPC a `p_fulfilled`
+     * array it invented — `[{ line_id, qty: 20 }]` with no stock movement
+     * anywhere. It went green, and that green WAS the hole: any member with a
+     * JWT could mark their own org's £4,000 request fulfilled without a single
+     * bag of cement leaving the yard (proven against the live local schema
+     * before the fix). The RPC now DERIVES from stock_movements and the
+     * 3-argument form is gone, so the only way to advance a request is to move
+     * real stock — which is what this test now does.
+     */
+    it("the RPC advances partial → full, DERIVED from real issue movements", async () => {
       const { id, lines } = await makeRequest(orgA, jobA, `${TOKEN}-MR-RPC`, dualUserId);
       await setStatus(userClient(dualToken), id, "submitted");
       await setStatus(userClient(dualToken), id, "approved");
 
-      const partial = await rpc(userClient(dualToken)).rpc(
+      // THE OLD ATTACK, now unrepresentable: the 3-argument form does not exist.
+      const fabricated = await rpc(userClient(dualToken)).rpc(
         "advance_material_request_fulfilment",
-        {
-          p_request_id: id,
-          p_org_id: orgA,
-          p_fulfilled: [{ line_id: lines[0], qty: 20 }],
-        },
+        { p_request_id: id, p_org_id: orgA, p_fulfilled: [{ line_id: lines[0], qty: 20 }] },
       );
+      expect(fabricated.error, "the caller-supplied-quantities form still exists").not.toBeNull();
+      expect(fabricated.error?.code).toBe("PGRST202");
+
+      // ...and with no movements the derivation says so: nothing advances.
+      const idle = await advance(id);
+      expect(idle.error, idle.error?.message).toBeNull();
+      expect(idle.data, "a request with no issues advanced anyway").toBe("approved");
+      expect(await statusOf(id)).toBe("approved");
+
+      // 20 of line 1 really issued → partial (line 2 is still outstanding).
+      const i1 = await issueAgainst(lines[0]!, 20);
+      expect(i1.error, i1.error?.message).toBeNull();
+      const partial = await advance(id);
       expect(partial.error, partial.error?.message).toBeNull();
       expect(partial.data).toBe("partially_fulfilled");
       expect(await statusOf(id)).toBe("partially_fulfilled");
 
-      const full = await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: id,
-        p_org_id: orgA,
-        p_fulfilled: [
-          { line_id: lines[0], qty: 20 },
-          { line_id: lines[1], qty: 12.5 },
-        ],
-      });
+      // 12.5 of line 2 really issued → every line met → fulfilled.
+      const i2 = await issueAgainst(lines[1]!, 12.5);
+      expect(i2.error, i2.error?.message).toBeNull();
+      const full = await advance(id);
       expect(full.error, full.error?.message).toBeNull();
       expect(full.data).toBe("fulfilled");
       expect(await statusOf(id)).toBe("fulfilled");
@@ -485,36 +557,55 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
       await setStatus(userClient(dualToken), id, "submitted");
       await setStatus(userClient(dualToken), id, "approved");
 
-      const r = await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: id,
-        p_org_id: orgA,
-        p_fulfilled: [{ line_id: lines[0], qty: 5000 }],
-      });
+      // 50 issued against a line asking for 20 — a real over-issue, from real
+      // stock. It must not paper over line 2's untouched 12.5.
+      const over = await issueAgainst(lines[0]!, 50);
+      expect(over.error, over.error?.message).toBeNull();
+      const r = await advance(id);
       expect(r.error, r.error?.message).toBeNull();
       expect(r.data, "an over-issue papered over a short line").toBe("partially_fulfilled");
     });
 
-    it("the RPC refuses a line that is not on the request", async () => {
+    /**
+     * REPLACES "the RPC refuses a line that is not on the request".
+     *
+     * That test policed a caller-supplied line id, which no longer exists as an
+     * input. The guarantee it was reaching for is now STRUCTURAL and stronger,
+     * and this proves both halves of it.
+     */
+    it("a foreign line cannot contribute — refused by the FK, and absent from the derivation", async () => {
       const { id } = await makeRequest(orgA, jobA, `${TOKEN}-MR-FOREIGNLINE`, dualUserId);
       await setStatus(userClient(dualToken), id, "submitted");
       await setStatus(userClient(dualToken), id, "approved");
 
-      const r = await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: id,
-        p_org_id: orgA,
-        p_fulfilled: [{ line_id: lineB, qty: 1 }], // org B's line
+      // (a) AT THE DATABASE. An org-A movement naming org-B's line is refused by
+      // the composite FK added in 20261071 — for service_role too, which
+      // bypasses RLS entirely, so this is structural and not a policy.
+      const crafted = await svc().from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: itemA,
+        site_id: siteA,
+        movement_type: "issue",
+        qty: 1,
+        material_request_line_id: lineB, // org B's line
       });
-      expect(r.error, "a foreign line advanced the request").not.toBeNull();
-      expect(r.error?.message ?? "").toMatch(/not on this material request/i);
+      expect(crafted.error, "a cross-org line id was written onto a movement").not.toBeNull();
+      expect(crafted.error?.code).toBe("23503"); // foreign_key_violation
+
+      // (b) IN THE DERIVATION. An issue against a DIFFERENT org-A request's line
+      // is perfectly legal, and must not advance THIS request.
+      const other = await makeRequest(orgA, jobA, `${TOKEN}-MR-OTHERREQ`, dualUserId);
+      const elsewhere = await issueAgainst(other.lines[0]!, 20);
+      expect(elsewhere.error, elsewhere.error?.message).toBeNull();
+      const r = await advance(id);
+      expect(r.error, r.error?.message).toBeNull();
+      expect(r.data, "another request's issue advanced this one").toBe("approved");
+      expect(await statusOf(id)).toBe("approved");
     });
 
     it("the RPC refuses a request that has no fulfilment position", async () => {
-      const { id, lines } = await makeRequest(orgA, jobA, `${TOKEN}-MR-NOPOS`, dualUserId);
-      const r = await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: id,
-        p_org_id: orgA,
-        p_fulfilled: [{ line_id: lines[0], qty: 20 }],
-      });
+      const { id } = await makeRequest(orgA, jobA, `${TOKEN}-MR-NOPOS`, dualUserId);
+      const r = await advance(id);
       expect(r.error, "a DRAFT request was advanced").not.toBeNull();
       expect(r.error?.message ?? "").toMatch(/no fulfilment position/i);
     });
@@ -547,11 +638,7 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
     it("the RPC refuses to advance the OTHER company's request via the wrong org", async () => {
       // The dual user is an admin of BOTH, so RLS admits the row. Only the
       // active-org pin inside the RPC stops the cross-company write.
-      const r = await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: requestB, // org B's request
-        p_org_id: orgA, // ...claimed as org A
-        p_fulfilled: [{ line_id: lineB, qty: 1 }],
-      });
+      const r = await advance(requestB /* org B's request */, orgA /* claimed as A */);
       expect(r.error, "org B's request advanced under org A's pin").not.toBeNull();
       expect(r.error?.message ?? "").toMatch(/not found/i);
     });
@@ -641,28 +728,70 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
       expect(ok).toBe(present ? false : true);
     });
 
-    it("a request LINE may carry a stock_item_id with no FK (the frozen contract)", async () => {
-      // The deferred-FK debt, exercised: the column accepts a uuid the database
-      // cannot validate, because the table it points at belongs to another lane.
-      // Org integrity for it lives in the app layer (isStockItemInOrg).
+    /**
+     * INVERTED BY 20261071 — the debt this test documented is now PAID.
+     *
+     * It used to assert that `stock_item_id` "may carry a uuid the database
+     * cannot validate", because `stock_items` lived on a lane that did not
+     * exist here. That was true and it was the whole point: org integrity for
+     * this column rested on ONE app-layer check (isStockItemInOrg), so a direct
+     * PostgREST insert could hand a request line another company's item id —
+     * proven, then closed. Both lanes are now in one database and the composite
+     * FK exists, so the old assertion is exactly backwards.
+     */
+    it("a request LINE is now FK-bound to its org's stock catalogue", async () => {
       const req = await svc()
         .from("material_requests")
         .insert({ org_id: orgA, number: `${TOKEN}-MR-STOCKID`, requested_by: dualUserId })
         .select("id")
         .single();
-      const line = await svc()
+      const reqId = String(req.data?.id ?? "");
+
+      // A uuid that is no item at all — refused, where it used to be accepted.
+      const dangling = await svc().from("material_request_lines").insert({
+        org_id: orgA,
+        material_request_id: reqId,
+        description: "Catalogue-linked material",
+        qty: 5,
+        unit: "ea",
+        stock_item_id: "00000000-0000-0000-0000-0000000000ff",
+      });
+      expect(dangling.error, "a dangling stock_item_id was accepted").not.toBeNull();
+      expect(dangling.error?.code).toBe("23503");
+
+      // ANOTHER COMPANY's item — the cross-tenant case the app check stood in
+      // for. Refused for service_role too, so it is structural, not a policy.
+      const itemB = await svc()
+        .from("stock_items")
+        .insert({ org_id: orgB, name: `${TOKEN} B cement`, unit: "bag" })
+        .select("id")
+        .single();
+      const foreign = await svc().from("material_request_lines").insert({
+        org_id: orgA,
+        material_request_id: reqId,
+        description: "Smuggled catalogue link",
+        qty: 5,
+        unit: "ea",
+        stock_item_id: String(itemB.data?.id ?? ""),
+      });
+      expect(foreign.error, "an org-B item was linked to an org-A line").not.toBeNull();
+      expect(foreign.error?.code).toBe("23503");
+
+      // ...and the legitimate same-org link still works, which is what makes the
+      // two refusals above meaningful rather than a blanket wall.
+      const ok = await svc()
         .from("material_request_lines")
         .insert({
           org_id: orgA,
-          material_request_id: String(req.data?.id ?? ""),
+          material_request_id: reqId,
           description: "Catalogue-linked material",
           qty: 5,
           unit: "ea",
-          stock_item_id: "00000000-0000-0000-0000-0000000000ff",
+          stock_item_id: itemA,
         })
         .select("id")
         .single();
-      expect(line.error, line.error?.message).toBeNull();
+      expect(ok.error, ok.error?.message).toBeNull();
     });
   });
 
@@ -695,14 +824,13 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
       const { id, lines } = await makeRequest(orgA, jobA, `${TOKEN}-MR-FEED`, dualUserId);
       await setStatus(userClient(dualToken), id, "submitted");
       await setStatus(userClient(dualToken), id, "approved");
-      await rpc(userClient(dualToken)).rpc("advance_material_request_fulfilment", {
-        p_request_id: id,
-        p_org_id: orgA,
-        p_fulfilled: [
-          { line_id: lines[0], qty: 20 },
-          { line_id: lines[1], qty: 12.5 },
-        ],
-      });
+      // Both lines really issued, then re-derived — the only route to
+      // 'fulfilled' since 20261071.
+      await issueAgainst(lines[0]!, 20);
+      await issueAgainst(lines[1]!, 12.5);
+      const advanced = await advance(id);
+      expect(advanced.error, advanced.error?.message).toBeNull();
+      expect(advanced.data).toBe("fulfilled");
 
       const feed = await svc()
         .from("activity_log")

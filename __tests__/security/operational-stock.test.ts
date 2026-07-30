@@ -8,6 +8,10 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const MIG_ITEMS = "supabase/migrations/20261063000000_stock_items.sql";
 const MIG_LEDGER = "supabase/migrations/20261064000000_stock_movements.sql";
 const MIG_RPCS = "supabase/migrations/20261065000000_stock_rpcs.sql";
+/** The transfer-leg correction guard (P1-A). */
+const MIG_GUARD = "supabase/migrations/20261069000000_stock_correction_transfer_guard.sql";
+/** Residual hardening: the two composite FKs, the write-path gate, the derived RPC. */
+const MIG_RESIDUAL = "supabase/migrations/20261071000000_stock_residual_hardening.sql";
 const ACTIONS = "app/(app)/stock/actions.ts";
 const SERVICE = "server/services/stock.ts";
 const LIB_BALANCE = "lib/stock/balance.ts";
@@ -48,6 +52,12 @@ describe("operational stock never touches `finances`", () => {
     [MIG_ITEMS, sqlOnly(read(MIG_ITEMS))],
     [MIG_LEDGER, sqlOnly(read(MIG_LEDGER))],
     [MIG_RPCS, sqlOnly(read(MIG_RPCS))],
+    // Every LATER migration that touches this milestone belongs here too — the
+    // boundary is only as strong as its least-swept file, and both of these
+    // redefine the write RPCs, which is exactly where a cost would be smuggled
+    // in now.
+    [MIG_GUARD, sqlOnly(read(MIG_GUARD))],
+    [MIG_RESIDUAL, sqlOnly(read(MIG_RESIDUAL))],
     [ACTIONS, codeOf(read(ACTIONS))],
     [SERVICE, codeOf(read(SERVICE))],
     [LIB_BALANCE, codeOf(read(LIB_BALANCE))],
@@ -97,7 +107,10 @@ describe("operational stock never touches `finances`", () => {
   });
 
   it("no stock RPC accepts or writes a money value", () => {
-    const sql = sqlOnly(read(MIG_RPCS));
+    // Swept across EVERY migration that defines or redefines a write RPC, not
+    // just the original one: 20261069 and 20261071 both `create or replace`
+    // them, so either could carry a new money parameter.
+    const sql = [MIG_RPCS, MIG_GUARD, MIG_RESIDUAL].map((f) => sqlOnly(read(f))).join("\n");
     for (const money of ["p_price", "p_cost", "p_value", "p_amount", "p_vat"]) {
       expect(sql, `${money} is a parameter of a stock RPC`).not.toMatch(
         new RegExp(`\\b${money}\\b`),
@@ -106,12 +119,14 @@ describe("operational stock never touches `finances`", () => {
   });
 
   it("the boundary is DOCUMENTED where a contributor will actually read it", () => {
-    // Three places, because the temptation arrives from three directions: the
-    // schema, the module, and the domain doc.
+    // Every file a contributor might open and be tempted to extend: the schema
+    // (including the later hardening passes), the module, and the domain doc.
     for (const [name, src] of [
       [MIG_ITEMS, read(MIG_ITEMS)],
       [MIG_LEDGER, read(MIG_LEDGER)],
       [MIG_RPCS, read(MIG_RPCS)],
+      [MIG_GUARD, read(MIG_GUARD)],
+      [MIG_RESIDUAL, read(MIG_RESIDUAL)],
       [LIB_MOVEMENTS, read(LIB_MOVEMENTS)],
       [DOC, read(DOC)],
     ] as const) {
@@ -356,8 +371,14 @@ describe("the GRN → stock bridge", () => {
   });
 
   it("keeps the M4 material-request column a PLAIN COLUMN with the FK recorded as debt", () => {
-    // The M4 lane owns migration slots 66/67; their table does not exist yet, so
-    // an FK here would not apply. The contract is the RPC parameter.
+    // A statement about THIS FILE, and still true: when 20261064 was written the
+    // M4 lane owned slots 66/67 and its table did not exist, so the FK could not
+    // be declared here and the contract was the RPC parameter.
+    //
+    // THE DEBT IS NOW PAID — in 20261071, not here (see the FK assertions in
+    // "the deferred cross-lane FKs" below). This test deliberately still reads
+    // the ORIGINAL file: rewriting history to claim the FK was always there
+    // would erase the reason the seam existed at all.
     expect(ledger).toMatch(/material_request_line_id uuid,/);
     expect(ledger).not.toMatch(/material_request_line_id uuid[^,]*references/i);
     expect(read(MIG_LEDGER)).toMatch(/PLAIN COLUMN, NO FOREIGN KEY/);
@@ -372,6 +393,185 @@ describe("the GRN → stock bridge", () => {
     expect(read(MIG_RPCS)).toMatch(/FROZEN CONTRACT WITH THE M4 MATERIAL-REQUESTS LANE/);
     // and the app always sends it, so the shape M4 will use is exercised today
     expect(codeOf(read(ACTIONS))).toMatch(/p_material_request_line_id: null,/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5b. RESIDUAL HARDENING (20261071) — the four seams the review left open
+// ---------------------------------------------------------------------------
+
+describe("the deferred cross-lane FKs are closed, org-binding and teardown-safe", () => {
+  const sql = sqlOnly(read(MIG_RESIDUAL));
+
+  it("binds BOTH sides of the seam by COMPOSITE FK, not by app-layer pin alone", () => {
+    // The review's specific finding: the crafted cross-org line id was refused
+    // only by the seam's active-org READ filter, which never stopped the WRITE.
+    for (const [cols, target] of [
+      ["material_request_line_id, org_id", "public\\.material_request_lines \\(id, org_id\\)"],
+      ["stock_item_id, org_id", "public\\.stock_items \\(id, org_id\\)"],
+    ] as const) {
+      expect(sql, `${cols} must be bound by composite FK`).toMatch(
+        new RegExp(`foreign key \\(${cols}\\)\\s*\\n?\\s*references ${target}`, "i"),
+      );
+    }
+  });
+
+  it("uses DEFERRABLE NO ACTION, never RESTRICT — the 20261052 teardown lesson", () => {
+    // RESTRICT can never be deferred, so a `delete from organizations` that
+    // cascades one side before the other aborts tenant teardown outright. That
+    // is exactly how the 20261052 org-teardown P1 happened.
+    const fks = sql.match(/on delete no action deferrable initially deferred/gi) ?? [];
+    expect(fks.length, "both FKs must be deferrable NO ACTION").toBe(2);
+    expect(sql).not.toMatch(/on delete restrict/i);
+    expect(sql).not.toMatch(/on delete cascade/i);
+  });
+
+  it("adds them NOT VALID then VALIDATEs separately, so a release cannot fail on dirty data", () => {
+    // Neither column can be repaired in place: stock_movements is append-only
+    // for every role and request lines freeze once submitted. So the migration
+    // must tolerate a pre-existing violation rather than abort the release.
+    expect((sql.match(/not valid;/gi) ?? []).length).toBe(2);
+    expect((sql.match(/validate constraint/gi) ?? []).length).toBe(2);
+    expect(sql, "VALIDATE must be inside a handler").toMatch(
+      /when foreign_key_violation then\s*\n\s*raise warning/i,
+    );
+  });
+});
+
+describe("a tenant principal cannot insert a movement outside a write path", () => {
+  const sql = sqlOnly(read(MIG_RESIDUAL));
+
+  it("the insert policy requires the transaction marker, naming the org", () => {
+    expect(sql).toMatch(/create policy "stock_movements: members insert only through the write paths"/);
+    expect(sql).toMatch(
+      /coalesce\(current_setting\('crewflow\.stock_write', true\), ''\) = org_id::text/,
+    );
+    // ...and the old unconditional policy is gone, not merely shadowed.
+    expect(sql).toMatch(
+      /drop policy if exists "stock_movements: members can insert" on public\.stock_movements/,
+    );
+  });
+
+  it("a BEFORE INSERT trigger says the same thing, JWT-gated so service_role stays trusted", () => {
+    expect(sql).toMatch(
+      /create trigger stock_movements_authorised_write\s*\n?\s*before insert on public\.stock_movements/i,
+    );
+    // The house asymmetry: auth.uid() is null for the trusted service role.
+    expect(sql).toMatch(/if auth\.uid\(\) is null then\s*\n\s*return new;/);
+    // Named to sort BEFORE stock_movements_derive so the clearest refusal wins.
+    expect("stock_movements_authorised_write" < "stock_movements_derive").toBe(true);
+  });
+
+  it("EVERY write path sets the marker and clears it again", () => {
+    // Five set/clear pairs. A path that set it and never cleared it would leave
+    // a direct insert authorised for the rest of the transaction.
+    const set = sql.match(/set_config\('crewflow\.stock_write', p_org_id::text, true\)/g) ?? [];
+    const clear = sql.match(/set_config\('crewflow\.stock_write', '', true\)/g) ?? [];
+    expect(set.length, "receipt + issue + transfer + adjustment + correction").toBe(5);
+    // ...plus one extra clear in record_stock_receipt_from_grn's exception path.
+    expect(clear.length).toBe(6);
+  });
+
+  it("keeps every rewritten RPC SECURITY INVOKER — not a privileged back door", () => {
+    // The whole point of the marker is that it closes the direct route WITHOUT
+    // making the write paths SECURITY DEFINER, which would give up the caller's
+    // RLS, every composite FK and every guard trigger on the path.
+    for (const name of [
+      "record_stock_receipt_from_grn",
+      "record_stock_issue",
+      "record_stock_transfer",
+      "record_stock_adjustment",
+      "record_stock_correction",
+    ]) {
+      const start = sql.indexOf(`create or replace function public.${name}(`);
+      expect(start, `${name} not rewritten in this migration`).toBeGreaterThan(-1);
+      const header = sql.slice(start, sql.indexOf("$$", start));
+      expect(header, `${name} must not be SECURITY DEFINER`).not.toMatch(/security definer/i);
+    }
+  });
+
+  it("preserves the 20261069 transfer-leg guard while rewriting the correction RPC", () => {
+    // record_stock_correction is redefined here, so the guard shipped one
+    // migration earlier could be silently dropped by last-writer-wins — the
+    // hazard 20261061 warns about by name.
+    expect(sql).toMatch(/one leg of a transfer/i);
+    expect(sql).toMatch(/if v_group is not null then/);
+  });
+
+  it("keeps the admin-only adjustment gate in the rewritten RPC", () => {
+    expect(sql).toMatch(/if auth\.uid\(\) is not null and not public\.is_org_admin\(p_org_id\) then/);
+    expect(sql).toMatch(/only an owner or admin can adjust stock/);
+  });
+
+  it("keeps all four advisory locks in the rewritten write paths", () => {
+    const locks = sql.match(/pg_advisory_xact_lock\(\s*\n?\s*hashtext\('stock_balance'\)/g) ?? [];
+    expect(locks.length, "issue + transfer + adjustment + correction").toBe(4);
+  });
+});
+
+describe("fulfilment quantities are DERIVED, and the status can be corrected", () => {
+  const sql = sqlOnly(read(MIG_RESIDUAL));
+  const seam = codeOf(read("server/services/material-fulfilment.ts"));
+
+  it("DROPS the caller-supplied-quantities form rather than leaving it inert", () => {
+    // An inert parameter that still looks authoritative is how a trust boundary
+    // gets quietly restored by a later edit.
+    expect(sql).toMatch(
+      /drop function if exists public\.advance_material_request_fulfilment\(uuid, uuid, jsonb\)/,
+    );
+    expect(sql).toMatch(
+      /create or replace function public\.advance_material_request_fulfilment\(\s*\n?\s*p_request_id uuid,\s*\n?\s*p_org_id\s+uuid\s*\n?\s*\)/,
+    );
+    expect(sql, "the new form must take no jsonb").not.toMatch(
+      /advance_material_request_fulfilment\([^)]*jsonb[^)]*\)\s*returns text/i,
+    );
+  });
+
+  it("derives from stock_movements, EXCLUDING corrected issues", () => {
+    // record_stock_correction does not copy material_request_line_id onto the
+    // correction row, so a naive sum over issues over-reports a reversed issue
+    // and would leave a stripped site reading 'fulfilled'.
+    expect(sql).toMatch(/from public\.stock_movements m/);
+    expect(sql).toMatch(/and m\.movement_type = 'issue'/);
+    expect(sql).toMatch(
+      /not exists \(\s*\n?\s*select 1 from public\.stock_movements c\s*\n?\s*where c\.corrects_movement_id = m\.id/,
+    );
+    // ...and the join is on the composite the new FK enforces.
+    expect(sql).toMatch(/on li\.id = m\.material_request_line_id\s*\n?\s*and li\.org_id = m\.org_id/);
+  });
+
+  it("the app no longer sends quantities at all", () => {
+    expect(seam, "the seam must not supply p_fulfilled").not.toMatch(/p_fulfilled/);
+    expect(seam).toMatch(/p_request_id: requestId/);
+    expect(seam).toMatch(/p_org_id: orgId/);
+  });
+
+  it("walks BACK off fulfilled only through the marker, and only to partially_fulfilled", () => {
+    expect(sql).toMatch(/if v_status = 'fulfilled' and v_state <> 'full' then/);
+    expect(sql).toMatch(/v_target := 'partially_fulfilled';/);
+    // The transition trigger's carve-out is exactly one edge, marker-gated.
+    expect(sql).toMatch(
+      /old\.status = 'fulfilled'\s*\n?\s*and new\.status = 'partially_fulfilled'\s*\n?\s*and v_marker = new\.id::text/,
+    );
+    expect(sql).toMatch(
+      /\(old\.status = 'fulfilled'\s+and new\.status = 'partially_fulfilled'\)/,
+    );
+  });
+
+  it("`rejected` and `cancelled` stay HARD terminal — they are human decisions", () => {
+    expect(sql).toMatch(/if old\.status in \('fulfilled', 'rejected', 'cancelled'\) then/);
+    // The carve-out names `fulfilled` and nothing else.
+    const carve = sql.slice(
+      sql.indexOf("if old.status in ('fulfilled', 'rejected', 'cancelled') then"),
+    );
+    const block = carve.slice(0, carve.indexOf("end if;"));
+    expect(block).toMatch(/old\.status = 'fulfilled'/);
+    expect(block).not.toMatch(/old\.status = 'rejected'/);
+    expect(block).not.toMatch(/old\.status = 'cancelled'/);
+  });
+
+  it("never walks back to `approved` — an issue that happened cannot un-happen", () => {
+    expect(sql).toMatch(/if v_target = 'approved' then\s*\n\s*return v_status;/);
   });
 });
 

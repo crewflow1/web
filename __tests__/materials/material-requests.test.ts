@@ -381,14 +381,60 @@ describe("nextFulfilmentStatus — when the app bothers to call the RPC", () => 
     expect(nextFulfilmentStatus("partially_fulfilled", none)).toBeNull();
   });
 
+  // ── the walk-back (20261071) ────────────────────────────────────────────────
+  /**
+   * `status` is a CACHE of a derivation, and before 20261071 it could only move
+   * one way — so a request whose issues were all reversed went on reading
+   * `fulfilled` for ever. That column drives the office queue's filters and
+   * `isMaterialRequestOverdue` treats `fulfilled` as "nobody is waiting", so the
+   * site that lost its cement dropped off the radar.
+   *
+   * THE INVARIANT: status = 'fulfilled' ⟹ the derived position is 'full'. These
+   * mirror advance_material_request_fulfilment exactly; a drift between the two
+   * is the hazard this whole module is built to avoid.
+   */
+  it("walks BACK off fulfilled when the derivation drops to partial", () => {
+    expect(nextFulfilmentStatus("fulfilled", partial)).toBe("partially_fulfilled");
+  });
+
+  it("walks BACK off fulfilled even when the derivation drops all the way to none", () => {
+    // 'none' does NOT become 'approved': the request is open and something did
+    // happen here, which is what `partially_fulfilled` means. Landing on
+    // 'approved' would also contradict the never-walk-back-to-approved rule.
+    expect(nextFulfilmentStatus("fulfilled", none)).toBe("partially_fulfilled");
+  });
+
+  it("leaves a genuinely fulfilled request alone (no pointless round trip)", () => {
+    expect(nextFulfilmentStatus("fulfilled", full)).toBeNull();
+  });
+
+  it("an UNMEASURED position still moves nothing, from any status", () => {
+    // The one case where staleness is the correct answer: we cannot see, so we
+    // must not claim. A false walk-back would reopen a satisfied request.
+    const pending = computeMaterialFulfilment({
+      lines: [line("a", 20)],
+      issued: [],
+      stockModulePending: true,
+    });
+    for (const s of ["approved", "partially_fulfilled", "fulfilled"] as const) {
+      expect(nextFulfilmentStatus(s, pending), s).toBeNull();
+    }
+  });
+
   it("returns null when nothing would move (no pointless round trip)", () => {
     expect(nextFulfilmentStatus("approved", none)).toBeNull();
     expect(nextFulfilmentStatus("partially_fulfilled", partial)).toBeNull();
   });
 
   it("refuses to advance a request that has no fulfilment position", () => {
-    for (const s of ["draft", "submitted", "fulfilled", "rejected", "cancelled"] as const) {
+    // `fulfilled` is deliberately NOT in this list any more. Since 20261071 it
+    // HAS a position — it is a cache of one — and its no-op case is covered
+    // above by "leaves a genuinely fulfilled request alone". These five have no
+    // position at all: two have not been decided, three are human-terminal.
+    for (const s of ["draft", "submitted", "rejected", "cancelled"] as const) {
       expect(nextFulfilmentStatus(s, full), s).toBeNull();
+      expect(nextFulfilmentStatus(s, partial), s).toBeNull();
+      expect(nextFulfilmentStatus(s, none), s).toBeNull();
     }
   });
 });

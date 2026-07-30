@@ -265,3 +265,101 @@ export function formatPence(pence: number): string {
   const safe = Number.isFinite(pence) ? pence : 0;
   return `£${(safe / 100).toFixed(2)}`;
 }
+
+// ---------------------------------------------------------------------------
+// The atomic reservation — claim size, TTL, and what a failure costs
+// ---------------------------------------------------------------------------
+
+/**
+ * How long a claim on the budget stays live before it is reclaimed, in ms.
+ *
+ * TEN MINUTES, and the two bounds that pin it:
+ *
+ *   LOWER — it must comfortably exceed the longest a governed provider call can
+ *   take, including the SDK's own retries. A TTL that lapsed mid-call would let
+ *   a second caller reserve the same headroom while the first was still
+ *   spending it, which is the defect this whole mechanism exists to remove.
+ *
+ *   UPPER — it is the maximum time a CRASHED process can hold budget hostage. A
+ *   process that dies between reserving and settling leaves its claim standing;
+ *   ten minutes of one call's worth of headroom is a bounded, self-healing
+ *   inconvenience, where "until the month rolls" would be an outage.
+ *
+ * It is deliberately SHORTER than DEDUPE_WINDOW_MS: a crashed request's claim
+ * must expire before its duplicate-suppression does, or a retry of the exact
+ * request that crashed would be refused as a duplicate of a call that never
+ * completed.
+ *
+ * Reclaim is LAZY — the SQL counts only unexpired claims, so no cron, no
+ * sweeper, and nothing external in the refusal path.
+ */
+export const RESERVATION_TTL_MS = 10 * 60_000;
+
+/**
+ * The floor on a budget CLAIM, in integer pence.
+ *
+ * `estimateCostPence` returns 0 for an unpriced or unbound model, and a claim of
+ * zero consumes no budget — so N concurrent unpriced calls would all pass the
+ * gate however many of them there were, which is precisely the hole the
+ * reservation exists to close. One penny per in-flight call bounds worst-case
+ * concurrency at the ceiling itself.
+ *
+ * This floors the CLAIM ONLY. What a call is RECORDED as costing is still
+ * exactly what the estimator says — the ledger's honesty is untouched.
+ */
+export const MIN_RESERVATION_PENCE = 1;
+
+/**
+ * What a FAILED provider call is recorded as costing when the vendor reported
+ * no usage, in integer pence.
+ *
+ * ONE PENNY, NOT ZERO, and this is a deliberate change from recording nothing.
+ *
+ * A call that reached a provider and then failed has, on every major vendor,
+ * already billed its input tokens. We do not get a usage report, so the honest
+ * token counts are 0 and 0 — but recording the COST as £0 makes a retry storm
+ * completely invisible to the ceiling, and a retry storm is the single most
+ * likely way the ceiling ever gets tested. "Ten thousand failures cost nothing"
+ * is the same arithmetic `estimateCostPence` already refuses when it rounds a
+ * sub-penny call UP rather than down.
+ *
+ * The trade is explicit: at most one penny per failed call of over-reporting,
+ * against an unbounded and unbudgeted spend. It also bounds a crash loop at
+ * 10,000 failures per org per month, after which the ceiling stops it — which
+ * is the behaviour a safety limit is for.
+ */
+export const FAILURE_FLOOR_PENCE = 1;
+
+/**
+ * The pessimistic claim for ONE call, in integer pence — what the atomic gate
+ * reserves before the provider is reached.
+ *
+ * Built from the binding's own worst-case token envelope (see
+ * `AiModelBinding.reserveInputTokens`), through the same estimator the ledger
+ * uses, so the claim and the eventual cost are denominated identically. Floored
+ * at `MIN_RESERVATION_PENCE` so an unpriced model cannot produce a free claim.
+ */
+export function reservationClaimPence(
+  binding: { usdPerMTokIn: number; usdPerMTokOut: number } | null,
+  envelope: { inputTokens: number; outputTokens: number } | null,
+): number {
+  if (!envelope) return MIN_RESERVATION_PENCE;
+  return Math.max(MIN_RESERVATION_PENCE, estimateCostPence(binding, envelope));
+}
+
+/**
+ * What one settled invocation is recorded as costing.
+ *
+ * A success costs exactly what the estimator says, including 0 for an unpriced
+ * model — unchanged from before the reservation existed. A failure costs at
+ * least `FAILURE_FLOOR_PENCE`; see that constant for why free failures are not
+ * an option.
+ */
+export function settlementCostPence(
+  success: boolean,
+  binding: { usdPerMTokIn: number; usdPerMTokOut: number } | null,
+  usage: { inputTokens: number; outputTokens: number },
+): number {
+  const estimated = estimateCostPence(binding, usage);
+  return success ? estimated : Math.max(FAILURE_FLOOR_PENCE, estimated);
+}
