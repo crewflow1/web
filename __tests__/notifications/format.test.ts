@@ -1,32 +1,41 @@
 import { describe, it, expect } from "vitest";
-import { relativeTime, unreadCount, badgeText } from "@/lib/notifications/format";
+import { unreadCount, badgeText } from "@/lib/notifications/format";
+import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 
-describe("relativeTime", () => {
+/**
+ * `relativeTime` moved to lib/time/relative.ts (one implementation, seven
+ * former copies). The ladder this module documented is preserved verbatim as
+ * `RELATIVE_TIME_PRESETS.notification`, so the original assertions are kept
+ * here — retargeted at the preset — as the contract they always were.
+ */
+describe("relativeTime — notification preset", () => {
   const now = new Date("2026-05-20T12:00:00Z");
+  const rel = (iso: string) =>
+    relativeTime(iso, { ...RELATIVE_TIME_PRESETS.notification, now });
 
   it("returns Xs ago for seconds", () => {
-    expect(relativeTime("2026-05-20T11:59:30Z", now)).toBe("30s ago");
+    expect(rel("2026-05-20T11:59:30Z")).toBe("30s ago");
   });
   it("returns Xm ago for minutes", () => {
-    expect(relativeTime("2026-05-20T11:30:00Z", now)).toBe("30m ago");
+    expect(rel("2026-05-20T11:30:00Z")).toBe("30m ago");
   });
   it("returns Xh ago for hours", () => {
-    expect(relativeTime("2026-05-20T08:00:00Z", now)).toBe("4h ago");
+    expect(rel("2026-05-20T08:00:00Z")).toBe("4h ago");
   });
   it("returns Xd ago for days", () => {
-    expect(relativeTime("2026-05-15T12:00:00Z", now)).toBe("5d ago");
+    expect(rel("2026-05-15T12:00:00Z")).toBe("5d ago");
   });
   it("returns Xmo ago for months", () => {
-    expect(relativeTime("2026-02-20T12:00:00Z", now)).toBe("2mo ago");
+    expect(rel("2026-02-20T12:00:00Z")).toBe("2mo ago");
   });
   it("returns Xy ago for years", () => {
-    expect(relativeTime("2024-05-20T12:00:00Z", now)).toBe("2y ago");
+    expect(rel("2024-05-20T12:00:00Z")).toBe("2y ago");
   });
   it("handles future timestamps gracefully", () => {
-    expect(relativeTime("2027-01-01T00:00:00Z", now)).toBe("just now");
+    expect(rel("2027-01-01T00:00:00Z")).toBe("just now");
   });
   it("returns — for invalid dates", () => {
-    expect(relativeTime("not-a-date", now)).toBe("—");
+    expect(rel("not-a-date")).toBe("—");
   });
 });
 

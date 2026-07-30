@@ -219,22 +219,14 @@ export type AiEmployeeMemoryEntry = {
 // Small formatting helpers (pure)
 // ---------------------------------------------------------------------
 
-/** "—" | "just now" | "12m ago" | "3h ago" | "5d ago" | ISO date. */
-export function relativeTime(iso: string | null): string {
-  if (!iso) return "—";
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "—";
-  const diff = Date.now() - then;
-  if (diff < 0) return iso.slice(0, 10);
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return iso.slice(0, 10);
-}
+/**
+ * "—" | "just now" | "12m ago" | "3h ago" | "5d ago" | ISO date.
+ *
+ * Re-exported, not re-implemented: this exact ladder IS the default contract of
+ * `lib/time/relative.ts`. The re-export keeps the boardroom / sales / memory
+ * facades (which pass it through) importing one vocabulary from one module.
+ */
+export { relativeTime } from "@/lib/time/relative";
 
 /** Count employees per status — drives the boardroom status cards. */
 export function countByStatus(

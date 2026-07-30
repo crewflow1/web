@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { markNotificationsRead, markOneNotificationRead } from "./notifications-actions";
+import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 
 /**
  * Bell-icon dropdown — opens to show the most-recent 15 notifications.
@@ -111,7 +112,7 @@ function NotificationRow({ n, close }: { n: Notification; close: () => void }) {
             <div className="mt-0.5 truncate text-xs text-slate-500">{n.body}</div>
           ) : null}
           <div className="mt-0.5 text-[11px] text-slate-500">
-            {relativeTime(n.created_at)}
+            {relativeTime(n.created_at, RELATIVE_TIME_PRESETS.notification)}
           </div>
         </div>
       </div>
@@ -135,17 +136,4 @@ function NotificationRow({ n, close }: { n: Notification; close: () => void }) {
     );
   }
   return <li className="px-3 py-2">{body}</li>;
-}
-
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  const diff = Date.now() - t;
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
 }

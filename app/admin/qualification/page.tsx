@@ -14,6 +14,7 @@ import {
 import { searchCompanies } from "@/server/services/hq-sales";
 import { QUALIFICATION_DECISION_LABELS } from "@/lib/qualification/model";
 import { scoreBandLabel } from "@/lib/sales/model";
+import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 import {
   QualificationLauncher,
   QuickQualifyButton,
@@ -193,7 +194,8 @@ export default async function QualificationHomePage({
             <h2 className="text-sm font-semibold text-white">Recent verdicts</h2>
             {metrics.lastCompletedAt ? (
               <span className="text-[11px] text-slate-500">
-                Last completed {relativeTime(metrics.lastCompletedAt)}
+                Last completed{" "}
+                {relativeTime(metrics.lastCompletedAt, RELATIVE_TIME_PRESETS.hqConsole)}
               </span>
             ) : null}
           </div>
@@ -233,7 +235,9 @@ function RunRow({ run }: { run: QualificationRunRow }) {
             </span>
             {run.confidence != null ? <span>{run.confidence}% confidence</span> : null}
             {run.transitioned ? <span className="text-emerald-400/80">moved</span> : null}
-            {when ? <span>{relativeTime(when)}</span> : null}
+            {when ? (
+              <span>{relativeTime(when, RELATIVE_TIME_PRESETS.hqConsole)}</span>
+            ) : null}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -251,18 +255,4 @@ function RunRow({ run }: { run: QualificationRunRow }) {
       </Link>
     </li>
   );
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
