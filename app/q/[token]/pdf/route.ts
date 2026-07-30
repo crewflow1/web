@@ -26,6 +26,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     .select(
       `
         id, number, status, subtotal, vat_total, total, valid_until,
+        eot_requested_completion_date, eot_agreed_completion_date,
         notes, terms,
         customer:customers ( name ),
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
@@ -54,6 +55,8 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     vat_total: Number(quote.vat_total ?? 0),
     total: Number(quote.total ?? 0),
     valid_until: quote.valid_until,
+    eot_requested_completion_date: quote.eot_requested_completion_date,
+    eot_agreed_completion_date: quote.eot_agreed_completion_date,
     notes: quote.notes,
     terms: quote.terms,
     customer_name: quote.customer?.name ?? null,
