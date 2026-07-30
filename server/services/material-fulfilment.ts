@@ -179,11 +179,17 @@ export async function readIssuedForLines(
  * Ask the database to re-derive and (if it has moved) advance the request's
  * status.
  *
- * THE APP NEVER WRITES 'partially_fulfilled' OR 'fulfilled'. This RPC is the
- * only writer the database will accept them from (20261067's transition
- * trigger refuses both from any other path), and the RPC — not this caller —
- * decides which of them the quantities mean. We supply quantities; it supplies
- * the verdict.
+ * THE APP NEVER WRITES 'partially_fulfilled' OR 'fulfilled', AND SINCE
+ * 20261071 IT NO LONGER SUPPLIES THE QUANTITIES EITHER. It passes two ids and
+ * nothing else; the RPC reads the issue movements itself (corrections excluded,
+ * the same rule `readIssuedForLines` uses) and decides what they mean.
+ *
+ * WHY THE `p_fulfilled` ARGUMENT IS GONE. M4 shipped it because, on its own
+ * branch, only the app could read a stock schema that was not frozen yet
+ * (20261067's seam note). That left a real hole: any member could call the RPC
+ * directly with invented quantities and mark their own org's request fulfilled
+ * with no issue movement in existence — proven, then closed by 20261071, which
+ * DROPPED the 3-argument form rather than leaving it inert.
  *
  * Best-effort by contract: a failure here must never break the read that
  * triggered it. A stale badge is recoverable; a 500 on the job page is not.
@@ -192,16 +198,11 @@ export async function advanceMaterialRequestFulfilment(
   db: StockSeamClient,
   orgId: string,
   requestId: string,
-  issued: readonly IssuedQty[],
 ): Promise<string | null> {
   try {
     const { data, error } = await db.rpc("advance_material_request_fulfilment", {
       p_request_id: requestId,
-      p_org_id: orgId,
-      p_fulfilled: issued.map((i) => ({
-        line_id: i.material_request_line_id,
-        qty: Number(i.qty ?? 0),
-      })),
+      p_org_id: orgId, // ACTIVE-ORG PIN
     });
     if (error) {
       if (!isStockModuleAbsent(error)) {
@@ -226,55 +227,37 @@ export async function advanceMaterialRequestFulfilment(
  * M4 shipped `advance_material_request_fulfilment` taking a caller-supplied
  * `p_fulfilled` because, on its own branch, only the app could read a stock
  * schema that was not frozen yet (20261067 seam note). Both lanes are now in
- * main, so the honest sum is available — and it is computed HERE, by
- * `readIssuedForLines`, which is the corrections-EXCLUDING derivation
- * (record_stock_correction does not copy material_request_line_id, so a naive
- * sum over movement_type='issue' over-reports a reversed issue). We read the
- * real movements and hand the RPC the truth; the RPC still owns the status
- * ARITHMETIC and the security marker. No parallel path, no hand-set status.
+ * main, so the derivation moved INTO THE DATABASE (20261071): the RPC sums the
+ * real issue movements itself, excluding corrected ones, and this function is
+ * the thin trigger for it. That is strictly better than computing the sum here
+ * and handing it over — there is now no arrangement of app inputs that can
+ * assert a fulfilment position the ledger does not support.
  *
- * BEST-EFFORT, and deliberately one-directional in effect: the RPC only walks
- * a request FORWARD (approved → partially_fulfilled → fulfilled) and treats
- * `fulfilled` as terminal (20261067). So a correction that reduces a
- * PARTIALLY-fulfilled request re-derives to a lower position but the status
- * stays `partially_fulfilled` rather than reverting to `approved` — which is
- * correct: the request is still open, and every SURFACE renders the DERIVED
- * position (computeMaterialFulfilment), which is always the live truth. The
- * status column is a forward-only cache of that truth, never its source.
+ * WHY THERE IS NO `stockModulePending` GUARD LEFT. There used to be one,
+ * because the sum was measured HERE and an unmeasured read must never advance a
+ * status. The sum is now measured inside the same transaction as the write, by
+ * the database, over tables that 20261071 hard-depends on — so "we could not
+ * see the stock lane" is no longer a state this path can be in. If the RPC
+ * itself is unreachable the call returns null and advances nothing, which is
+ * the same refusal by a shorter route.
  *
- * An UNMEASURED read (stock module pending / a real read failure) returns null
- * and advances NOTHING: a stale-forward badge is recoverable, a false
- * 'fulfilled' leaves a site without its materials.
+ * BEST-EFFORT, and no longer one-directional: the RPC walks a request forward
+ * (approved → partially_fulfilled → fulfilled) and, since 20261071, BACK off
+ * `fulfilled` when the derivation no longer supports it. A correction that
+ * reduces a PARTIALLY-fulfilled request still leaves it `partially_fulfilled`
+ * (the request is open and something did happen); a correction that reduces a
+ * FULLY-fulfilled one now walks it back rather than leaving the column claiming
+ * `fulfilled` for ever. Every surface renders the DERIVED position
+ * (computeMaterialFulfilment) either way; the status column is a cache of that
+ * truth, and the invariant it now holds is `fulfilled` ⟹ derived position is
+ * `full`.
  */
 export async function reconcileRequestFulfilment(
   db: StockSeamClient,
   orgId: string,
   requestId: string,
 ): Promise<string | null> {
-  // This request's line ids, ACTIVE-ORG pinned. current_org_ids() admits every
-  // org the caller belongs to; the pin narrows it to the company being worked
-  // in, so a dual-org member cannot reconcile the other company's request.
-  const { data, error } = await db
-    .from("material_request_lines")
-    .select("id")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .eq("material_request_id", requestId)
-    .limit(MOVEMENT_LIMIT);
-  if (error) {
-    console.error("[material-fulfilment] reconcile: line read failed", error);
-    return null;
-  }
-  const lineIds = ((data ?? []) as Array<{ id: string | null }>)
-    .map((r) => r.id)
-    .filter((id): id is string => typeof id === "string");
-  if (lineIds.length === 0) return null;
-
-  const { issued, stockModulePending } = await readIssuedForLines(db, orgId, lineIds);
-  // An absent or failed measurement must NEVER advance a status. This is the
-  // same refusal computeMaterialFulfilment makes on the read side.
-  if (stockModulePending) return null;
-
-  return advanceMaterialRequestFulfilment(db, orgId, requestId, issued);
+  return advanceMaterialRequestFulfilment(db, orgId, requestId);
 }
 
 /**

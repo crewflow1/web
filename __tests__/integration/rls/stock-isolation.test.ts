@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 
 /**
@@ -781,9 +781,12 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
       expect(r.error?.message ?? "").toMatch(/leg of a transfer/i);
     }
 
-    // ...and a DIRECT PostgREST correction insert is refused too — the structural
-    // backstop in tg_stock_movements_derive covers the member insert policy.
-    const direct = await db(userClient(dualToken))
+    // ...and a DIRECT insert is refused too, at BOTH layers. As a MEMBER the
+    // write-path gate (20261071) stops it before any derivation runs; as
+    // SERVICE_ROLE — which bypasses RLS and that gate — the structural backstop
+    // in tg_stock_movements_derive still refuses it. Proving only the member
+    // case would leave the derive-trigger guard untested from 20261071 onward.
+    const directMember = await db(userClient(dualToken))
       .from("stock_movements")
       .insert({
         org_id: orgA,
@@ -794,7 +797,22 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
         corrects_movement_id: String(legOut.data?.id ?? ""),
         notes: "direct leg correction",
       });
-    expect(direct.error, "a direct-insert leg correction slipped through").not.toBeNull();
+    expect(directMember.error, "a direct-insert leg correction slipped through").not.toBeNull();
+
+    const directService = await svc().from("stock_movements").insert({
+      org_id: orgA,
+      stock_item_id: item,
+      site_id: src,
+      movement_type: "correction",
+      qty: 10,
+      corrects_movement_id: String(legOut.data?.id ?? ""),
+      notes: "service-role leg correction",
+    });
+    expect(
+      directService.error,
+      "service_role corrected a single transfer leg — the derive-trigger backstop is gone",
+    ).not.toBeNull();
+    expect(directService.error?.message ?? "").toMatch(/leg of a transfer/i);
 
     // CONSERVATION HELD: total unchanged, and the pair is intact (0 @ src, 10 @ dst).
     expect(await companyTotal(orgA), "stock was manufactured").toBe(before);
@@ -925,6 +943,211 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
       .eq("grn_line_id", grnLineA)
       .eq("movement_type", "receipt");
     expect(receipts.data ?? []).toHaveLength(1);
+  });
+
+  // ── the direct-insert residue, closed by 20261071 ─────────────────────────
+  /**
+   * WHAT A MEMBER COULD DO BY GOING STRAIGHT TO PostgREST, BEFORE 20261071.
+   *
+   * `stock_movements` granted members a bare INSERT policy because the write
+   * RPCs are SECURITY INVOKER and need the caller's own insert right. That was
+   * recorded as ONE accepted residue ("can drive a balance negative"). Probed as
+   * a plain `staff` member against the live local schema, it was FOUR things,
+   * three of which are authority bypasses rather than self-harm:
+   *
+   *   1. a direct `issue` of 1000 against a site holding 10 → balance −990;
+   *   2. a direct `adjustment_out` → the ADMIN-ONLY adjustment gate bypassed,
+   *      the one movement with no counterparty, "the write that can conceal a
+   *      loss" (20261065000000 §4);
+   *   3. a bare `transfer_in` → conservation broken, stock from nothing — the
+   *      same class 20261069000000 fixed for transfer-leg corrections;
+   *   4. a direct `receipt` off a DRAFT delivery line → the posted-evidence
+   *      check bypassed.
+   *
+   * All four are now refused by the write-path gate. Each assertion below is
+   * paired with the RPC route still working, so the gate cannot pass by simply
+   * breaking stock writes for everybody.
+   */
+  describe("a tenant principal can only write through a stock write path", () => {
+    let gateItem = "";
+    let gateSite = "";
+
+    beforeAll(async () => {
+      gateItem = await makeItem(orgA, "Gate blocks");
+      gateSite = await makeSite(orgA, "Gate yard");
+      const seed = await rpc(userClient(dualToken)).rpc("record_stock_adjustment", {
+        p_org_id: orgA,
+        p_item_id: gateItem,
+        p_site_id: gateSite,
+        p_delta: 10,
+        p_reason: "opening count",
+      });
+      expect(seed.error, seed.error?.message).toBeNull();
+    });
+
+    it("1. REFUSES a direct `issue` that would drive the balance negative", async () => {
+      const before = await balance(orgA, gateItem, gateSite);
+      expect(before).toBe(10);
+
+      const direct = await db(userClient(memberToken)).from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: gateItem,
+        site_id: gateSite,
+        movement_type: "issue",
+        qty: 1000,
+      });
+      expect(direct.error, "a member drove a balance negative by direct insert").not.toBeNull();
+      expect(direct.error?.code).toBe("42501"); // insufficient_privilege
+      expect(await balance(orgA, gateItem, gateSite)).toBe(10);
+
+      // ...and the RPC route still works and still floors at the balance.
+      const viaRpc = await rpc(userClient(memberToken)).rpc("record_stock_issue", {
+        p_org_id: orgA,
+        p_item_id: gateItem,
+        p_site_id: gateSite,
+        p_qty: 4,
+        p_job_id: null,
+        p_material_request_line_id: null,
+        p_notes: null,
+      });
+      expect(viaRpc.error, viaRpc.error?.message).toBeNull();
+      expect(await balance(orgA, gateItem, gateSite)).toBe(6);
+    });
+
+    it("2. the ADMIN-ONLY adjustment gate can no longer be walked around", async () => {
+      // The gate itself, working, so the bypass below is a real escalation.
+      const viaRpc = await rpc(userClient(memberToken)).rpc("record_stock_adjustment", {
+        p_org_id: orgA,
+        p_item_id: gateItem,
+        p_site_id: gateSite,
+        p_delta: -5,
+        p_reason: "member write-off",
+      });
+      expect(viaRpc.error?.message ?? "").toMatch(/owner or admin/i);
+
+      const direct = await db(userClient(memberToken)).from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: gateItem,
+        site_id: gateSite,
+        movement_type: "adjustment_out",
+        qty: 5,
+        notes: "direct write-off, no admin needed",
+      });
+      expect(direct.error, "a member wrote off stock with no admin gate").not.toBeNull();
+      expect(direct.error?.code).toBe("42501");
+      expect(await balance(orgA, gateItem, gateSite)).toBe(6);
+    });
+
+    it("3. REFUSES a bare `transfer_in` — conservation cannot be broken by insert", async () => {
+      const before = await companyTotal(orgA);
+      const direct = await db(userClient(memberToken)).from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: gateItem,
+        site_id: gateSite,
+        movement_type: "transfer_in",
+        qty: 500,
+      });
+      expect(direct.error, "a member manufactured 500 units from nothing").not.toBeNull();
+      expect(direct.error?.code).toBe("42501");
+      expect(await companyTotal(orgA), "stock was manufactured").toBe(before);
+    });
+
+    it("4. REFUSES a direct `receipt` off an unposted delivery line", async () => {
+      const grn = await svc()
+        .from("goods_received_notes")
+        .insert({
+          org_id: orgA,
+          purchase_order_id: poA,
+          number: `${TOKEN}-GRN-DRAFT`,
+          status: "draft",
+          delivery_date: "2026-07-30",
+        })
+        .select("id")
+        .single();
+      expect(grn.error, grn.error?.message).toBeNull();
+      const draftLine = await svc()
+        .from("goods_received_lines")
+        .insert({
+          org_id: orgA,
+          goods_received_note_id: String(grn.data?.id ?? ""),
+          purchase_order_line_item_id: poLineA,
+          qty_received: 10,
+        })
+        .select("id")
+        .single();
+      expect(draftLine.error, draftLine.error?.message).toBeNull();
+
+      // The RPC refuses it for the right reason...
+      const viaRpc = await rpc(userClient(memberToken)).rpc("record_stock_receipt_from_grn", {
+        p_org_id: orgA,
+        p_grn_line_id: String(draftLine.data?.id ?? ""),
+        p_item_id: gateItem,
+        p_site_id: gateSite,
+        p_notes: null,
+      });
+      expect(viaRpc.error?.message ?? "").toMatch(/post it before taking it into stock/i);
+
+      // ...and the direct route no longer exists to go around it.
+      const direct = await db(userClient(memberToken)).from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: gateItem,
+        site_id: gateSite,
+        movement_type: "receipt",
+        qty: 10,
+        grn_line_id: String(draftLine.data?.id ?? ""),
+      });
+      expect(direct.error, "unposted delivery evidence landed in stock").not.toBeNull();
+      expect(direct.error?.code).toBe("42501");
+    });
+
+    it("the write marker does not survive the RPC that set it", async () => {
+      // It is transaction-local (`set_config(..., true)`) and cleared inside each
+      // write path, so a member cannot ride a previous call's authorisation on a
+      // pooled connection. Same client, immediately after a successful RPC.
+      const client = userClient(memberToken);
+      const ok = await rpc(client).rpc("record_stock_issue", {
+        p_org_id: orgA,
+        p_item_id: gateItem,
+        p_site_id: gateSite,
+        p_qty: 1,
+        p_job_id: null,
+        p_material_request_line_id: null,
+        p_notes: null,
+      });
+      expect(ok.error, ok.error?.message).toBeNull();
+
+      const after = await db(client).from("stock_movements").insert({
+        org_id: orgA,
+        stock_item_id: gateItem,
+        site_id: gateSite,
+        movement_type: "adjustment_in",
+        qty: 999,
+        notes: "riding the previous call's marker",
+      });
+      expect(after.error, "the write marker leaked past the RPC that set it").not.toBeNull();
+      expect(after.error?.code).toBe("42501");
+    });
+
+    it("SERVICE_ROLE is still trusted — the documented asymmetry, stated by a test", async () => {
+      // Not an oversight: service_role is reachable only from server-side code
+      // holding the secret key, and every authority check in this schema is
+      // JWT-gated the same way (the adjustment gate, tg_ra_lifecycle,
+      // tg_goods_received_note_lifecycle, tg_material_request_transition). The
+      // integration harness's own ground-truth fixtures depend on it.
+      const direct = await svc()
+        .from("stock_movements")
+        .insert({
+          org_id: orgA,
+          stock_item_id: gateItem,
+          site_id: gateSite,
+          movement_type: "adjustment_in",
+          qty: 1,
+          notes: "trusted server-side write",
+        })
+        .select("id")
+        .single();
+      expect(direct.error, direct.error?.message).toBeNull();
+    });
   });
 
   // ── THE dual-org proof, and the mutation proof ───────────────────────────
