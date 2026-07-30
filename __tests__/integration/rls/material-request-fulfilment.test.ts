@@ -390,11 +390,19 @@ describeIntegration("material request fulfilment · the joined stock journey", (
     expect(reconciled).toBe("partially_fulfilled");
   });
 
-  it("CORRECTED ISSUE (derivation, single line): full → none, purely from the exclusion", async () => {
-    // Isolates the derivation from the terminal-status caveat: a single-line
-    // request reaches 'fulfilled', but the DERIVED position — what every surface
-    // renders — correctly returns to 'none'/outstanding once the issue is
-    // reversed. A naive sum would still say 'full' here.
+  /**
+   * THE WALK-BACK (residual 3, closed by 20261071).
+   *
+   * Before this migration the derivation returned to 'none' here — correctly —
+   * while the `status` column went on saying `fulfilled` for ever, because M4
+   * froze that value as terminal and made the RPC forward-only. That column is
+   * not decoration: it drives the office queue's filters and
+   * `isMaterialRequestOverdue` treats `fulfilled` as "nobody is waiting", so a
+   * site whose cement was booked out and then reversed dropped off the radar.
+   *
+   * THE INVARIANT NOW: status = 'fulfilled' ⟹ the derived position is 'full'.
+   */
+  it("WALK-BACK: reversing the only issue takes a single-line request OFF 'fulfilled'", async () => {
     const itemA = await makeItem(orgA, "Single cement");
     const siteA = await makeSite(orgA, "Single yard");
     await seedStock(orgA, itemA, siteA, 20);
@@ -412,17 +420,74 @@ describeIntegration("material request fulfilment · the joined stock journey", (
       }),
     );
     expect(issue.status).toBe("fulfilled");
+    expect(await statusOf(id)).toBe("fulfilled");
     expect((await derive(orgA, specs)).state).toBe("full");
 
-    await rpc(userClient(dualToken)).rpc("record_stock_correction", {
+    const corr = await rpc(userClient(dualToken)).rpc("record_stock_correction", {
       p_org_id: orgA,
       p_movement_id: issue.movementId,
       p_reason: "never left the yard",
     });
+    expect(corr.error, corr.error?.message).toBeNull();
 
+    // The DERIVED position returns to 'none' — the corrections-excluding rule.
     const pos = await derive(orgA, specs);
     expect(pos.state, "the corrected issue is excluded — the derivation says 'none'").toBe("none");
     expect(pos.lines[0]!.outstanding).toBe(20);
+
+    // ...AND THE STATUS FOLLOWS IT. This is the whole of residual 3.
+    const walked = await reconcileFulfilmentForMovement(seam(), orgA, issue.movementId);
+    expect(walked, "the request stayed on a status the ledger no longer supports").toBe(
+      "partially_fulfilled",
+    );
+    expect(await statusOf(id)).toBe("partially_fulfilled");
+
+    // The request is OPEN again, so the office can see it and act: it is
+    // overdue-eligible once more, and an admin can now stand it down.
+    const cancelled = await db(userClient(dualToken))
+      .from("material_requests")
+      .update({ status: "cancelled" })
+      .eq("id", id)
+      .eq("org_id", orgA);
+    expect(cancelled.error, cancelled.error?.message).toBeNull();
+    expect(await statusOf(id)).toBe("cancelled");
+  });
+
+  it("WALK-BACK is a RE-DERIVATION, not an edit: a hand-set move off 'fulfilled' is refused", async () => {
+    const itemA = await makeItem(orgA, "Handset cement");
+    const siteA = await makeSite(orgA, "Handset yard");
+    await seedStock(orgA, itemA, siteA, 10);
+    const { id, lines } = await makeApprovedRequest(orgA, null, `${TOKEN}-HAND`, [
+      { desc: "Cement", qty: 10, stockItemId: itemA },
+    ]);
+    mustIssue(
+      await issueStockToRequestLine(seam(), orgA, id, {
+        itemId: itemA,
+        siteId: siteA,
+        qty: 10,
+        requestLineId: lines[0]!,
+      }),
+    );
+    expect(await statusOf(id)).toBe("fulfilled");
+
+    // An ADMIN — the strongest tenant role — cannot walk it back by hand. The
+    // marker is the only key, and only the RPC holds it. The message is still
+    // the terminal one, so the derived path is not advertised.
+    for (const target of ["partially_fulfilled", "approved", "cancelled"]) {
+      const r = await db(userClient(dualToken))
+        .from("material_requests")
+        .update({ status: target })
+        .eq("id", id)
+        .eq("org_id", orgA);
+      expect(r.error, `an admin hand-set fulfilled → ${target}`).not.toBeNull();
+      expect(r.error?.message ?? "").toMatch(/is final/i);
+    }
+    expect(await statusOf(id)).toBe("fulfilled");
+
+    // ...and a re-derivation that still says 'full' does not churn the row.
+    const noop = await reconcileRequestFulfilment(seam(), orgA, id);
+    expect(noop).toBe("fulfilled");
+    expect(await statusOf(id)).toBe("fulfilled");
   });
 
   // ── 3. Over-issue ────────────────────────────────────────────────────────────
@@ -460,17 +525,30 @@ describeIntegration("material request fulfilment · the joined stock journey", (
 
   // ── 4. Cross-org ─────────────────────────────────────────────────────────────
 
-  it("CROSS-ORG: a crafted org-B issue carrying org-A's line id never counts for org A", async () => {
+  /**
+   * STRENGTHENED BY 20261071 — the crafted write is no longer merely uncounted,
+   * it is IMPOSSIBLE.
+   *
+   * This test used to assert that the crafted org-B movement carrying org-A's
+   * line id WAS WRITABLE ("we prove the WRITE succeeds so the defence being
+   * tested is real"), and that the app-layer active-org pin then kept it out of
+   * org A's sum. That was an honest account of the frozen cross-lane contract:
+   * the linkage column had no FK, so the only defence was a read filter.
+   *
+   * The composite FK in 20261071 closes it at the DATABASE, which is a strictly
+   * stronger claim — so this now proves the WRITE is refused at three levels
+   * (the RPC's message, PostgREST as a member, and service_role bypassing RLS
+   * entirely) and keeps the original read-side proof underneath it.
+   */
+  it("CROSS-ORG: a crafted org-B issue carrying org-A's line id is REFUSED at the database", async () => {
     const itemA = await makeItem(orgA, "XOrg cement");
     const { id, lines } = await makeApprovedRequest(orgA, null, `${TOKEN}-XORG`, [
       { desc: "Cement", qty: 10, stockItemId: itemA },
     ]);
     const lineA = lines[0]!;
-
-    // The linkage column has NO foreign key (the frozen contract), so org B CAN
-    // physically write org A's line id onto its own movement — this is craftable,
-    // and we prove the WRITE succeeds so the defence being tested is real.
     await seedStock(orgB, itemB, siteB, 10);
+
+    // (1) THROUGH THE RPC — a sentence, raised before anything is written.
     const bIssue = await rpc(userClient(dualToken)).rpc("record_stock_issue", {
       p_org_id: orgB,
       p_item_id: itemB,
@@ -480,22 +558,65 @@ describeIntegration("material request fulfilment · the joined stock journey", (
       p_material_request_line_id: lineA, // org A's line, smuggled onto an org-B movement
       p_notes: "crafted cross-org",
     });
-    expect(bIssue.error, bIssue.error?.message).toBeNull();
-    const crafted = await svc()
-      .from("stock_movements")
-      .select("org_id, material_request_line_id")
-      .eq("id", String(bIssue.data))
-      .maybeSingle();
-    expect(String(crafted.data?.org_id), "the crafted row really is in org B").toBe(orgB);
-    expect(String(crafted.data?.material_request_line_id), "and really carries org A's line id").toBe(lineA);
+    expect(bIssue.error, "the RPC accepted another company's request line").not.toBeNull();
+    expect(bIssue.error?.message ?? "").toMatch(/material request line not found/i);
 
-    // ...yet the seam pins the ACTIVE org, so org A's derivation never sees it.
+    // (2) DIRECT, AS SERVICE_ROLE — bypassing RLS and the RPC entirely. This is
+    // the composite FK itself, and it is what makes the refusal structural
+    // rather than a policy or a message.
+    const direct = await svc().from("stock_movements").insert({
+      org_id: orgB,
+      stock_item_id: itemB,
+      site_id: siteB,
+      movement_type: "issue",
+      qty: 10,
+      material_request_line_id: lineA,
+    });
+    expect(direct.error, "a cross-org line id was writable for service_role").not.toBeNull();
+    expect(direct.error?.code).toBe("23503"); // foreign_key_violation
+
+    // (3) NOTHING LANDED, so the read side has nothing to filter — and the
+    // original guarantee still holds: org A's derivation is empty and a
+    // reconcile cannot be tricked into advancing org A's request.
     const { issued } = await readIssuedForLines(seam(), orgA, [lineA]);
     expect(issued, "an org-B movement must not count toward org A's fulfilment").toEqual([]);
-
-    // and a reconcile cannot be tricked into advancing org A's request by it.
     await reconcileRequestFulfilment(seam(), orgA, id);
-    expect(await statusOf(id), "org A's request is untouched by the cross-org movement").toBe("approved");
+    expect(await statusOf(id), "org A's request is untouched by the cross-org movement").toBe(
+      "approved",
+    );
+  });
+
+  /**
+   * THE CONSTRAINT ITSELF IS PROVEN LOAD-BEARING OUT OF BAND.
+   *
+   * A mutation proof for an FK needs DDL (drop it, show the write lands, restore
+   * it), and neither the harness nor any app role can issue DDL — deliberately.
+   * The alternative would be a test-only `exec_sql` RPC, which is a permanent
+   * arbitrary-SQL surface in production to serve one assertion: not a trade this
+   * codebase makes.
+   *
+   * So it is proven the way this milestone already proves its advisory lock —
+   * two real psql sessions, transcript recorded in docs/operational-stock.md
+   * ("Two real psql sessions, last 10 units..."). With
+   * `stock_movements_mrl_org_fkey` dropped the crafted cross-org write SUCCEEDS;
+   * restored, it is refused 23503; and `VALIDATE` fails while the orphan it
+   * created is still there, which is why the migration adds the constraint NOT
+   * VALID first and validates as a separate, catchable step.
+   */
+  it("a DANGLING request line id is refused too — the FK is a reference, not an org compare", async () => {
+    // The cross-org case is proven above. This is the other half: a uuid that is
+    // no line at all. An org comparison in a trigger would have let it through;
+    // a real foreign key does not.
+    const dangling = await svc().from("stock_movements").insert({
+      org_id: orgA,
+      stock_item_id: await makeItem(orgA, "Dangling cement"),
+      site_id: await makeSite(orgA, "Dangling yard"),
+      movement_type: "issue",
+      qty: 1,
+      material_request_line_id: "00000000-0000-0000-0000-0000000000fe",
+    });
+    expect(dangling.error, "a dangling request line id was accepted").not.toBeNull();
+    expect(dangling.error?.code).toBe("23503");
   });
 
   // ── 5. Baseline: the derivation reports honestly ─────────────────────────────
