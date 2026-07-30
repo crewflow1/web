@@ -15,10 +15,15 @@ import type {
   OpsSafetyRow,
 } from "@/lib/operations/compose";
 import { EmptyState } from "../_components/empty-state";
-// Fleet's presentational primitives, reused rather than reproduced: a van's
-// compliance chip and number plate must look identical here and on /fleet, and
-// Stat/SectionCard/Banner are the same tokens the rest of the app already uses.
-import { Banner, CompliancePill, Plate, SectionCard, Stat } from "../fleet/_components/ui";
+// The generic design-system primitives: one AA-verified tone map behind every
+// status pill and KPI value on this page, instead of a colour decision re-typed
+// at each call site. See components/ui/tokens.ts.
+import { Badge, StatTile } from "@/components/ui";
+// Fleet's DOMAIN primitives, reused rather than reproduced: a van's compliance
+// chip and number plate must look identical here and on /fleet, and those two
+// encode wording (a day count becomes "12d late"), not just colour, so they stay
+// where the domain rules live.
+import { Banner, CompliancePill, Plate, SectionCard } from "../fleet/_components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -141,8 +146,12 @@ export default async function OperationsPage() {
         </Banner>
       ) : null}
 
+      {/* Tone carries severity and nothing else: red is a live breach or an
+          overdue duty, amber is "needs you soon", emerald is "inside its
+          window". The hint line always states the fact in words, so the colour
+          is reinforcement rather than the message. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Stat
+        <StatTile
           label="Off the road"
           value={String(offRoad)}
           hint={
@@ -150,10 +159,10 @@ export default async function OperationsPage() {
               ? "Every vehicle available"
               : `${estate.vehicles.inWorkshop} in the workshop`
           }
-          accent={offRoad > 0 ? "text-amber-700" : "text-emerald-700"}
+          tone={offRoad > 0 ? "amber" : "emerald"}
           href="/fleet/vehicles"
         />
-        <Stat
+        <StatTile
           label="Renewals due"
           value={String(fleet.attention.length)}
           hint={
@@ -163,16 +172,16 @@ export default async function OperationsPage() {
                 ? "All dates current"
                 : "MOT, tax, insurance, service"
           }
-          accent={
+          tone={
             fleet.breaches.length > 0
-              ? "text-red-700"
+              ? "red"
               : fleet.attention.length > 0
-                ? "text-amber-700"
-                : "text-emerald-700"
+                ? "amber"
+                : "emerald"
           }
           href="/fleet/compliance"
         />
-        <Stat
+        <StatTile
           label="Out of action"
           value={String(equipment.unusableAssetCount)}
           hint={
@@ -182,10 +191,10 @@ export default async function OperationsPage() {
                 ? "Nothing withdrawn from use"
                 : "Broken down or blocked"
           }
-          accent={equipment.unusableAssetCount > 0 ? "text-red-700" : "text-emerald-700"}
+          tone={equipment.unusableAssetCount > 0 ? "red" : "emerald"}
           href="/assets"
         />
-        <Stat
+        <StatTile
           label="Inspections overdue"
           value={String(inspections.overdue.length)}
           hint={
@@ -193,10 +202,10 @@ export default async function OperationsPage() {
               ? `${inspections.upcoming.length} more open`
               : "Nothing waiting"
           }
-          accent={inspections.overdue.length > 0 ? "text-red-700" : "text-emerald-700"}
+          tone={inspections.overdue.length > 0 ? "red" : "emerald"}
           href="/assets/inspections"
         />
-        <Stat
+        <StatTile
           label="Clashes today"
           value={String(schedule.imminent.length)}
           hint={
@@ -206,7 +215,7 @@ export default async function OperationsPage() {
                 ? "Rota and jobs agree"
                 : "Today and tomorrow"
           }
-          accent={schedule.imminent.length > 0 ? "text-amber-700" : "text-emerald-700"}
+          tone={schedule.imminent.length > 0 ? "amber" : "emerald"}
           href="/staff/rota/conflicts"
         />
       </div>
@@ -337,7 +346,7 @@ export default async function OperationsPage() {
 
         <div className="space-y-4">
           <SectionCard title="The estate">
-            <dl className="divide-y divide-slate-100 text-sm">
+            <ul className="divide-y divide-slate-100 text-sm">
               <GlanceRow
                 label="Vehicles"
                 value={String(estate.vehicles.total)}
@@ -363,7 +372,7 @@ export default async function OperationsPage() {
                 hint={`${estate.assets.idle} sat in the yard`}
                 href="/assets/holdings"
               />
-            </dl>
+            </ul>
           </SectionCard>
 
           <SectionCard
@@ -395,7 +404,7 @@ export default async function OperationsPage() {
             title="Running costs"
             action={<CardLink href="/fleet/fuel">Fuel and costs</CardLink>}
           >
-            <dl className="divide-y divide-slate-100 text-sm">
+            <ul className="divide-y divide-slate-100 text-sm">
               <GlanceRow
                 label="Fuel logged"
                 value={formatGbp(costs.fuel.spend)}
@@ -412,7 +421,7 @@ export default async function OperationsPage() {
                 hint="Fuel plus repairs only — not finance, insurance or depreciation."
                 strong
               />
-            </dl>
+            </ul>
           </SectionCard>
 
           <SectionCard title={`Done in the last ${window.recentDays} days`}>
@@ -539,6 +548,19 @@ function FirstStep({ href, title, body }: { href: string; title: string; body: s
   );
 }
 
+/**
+ * A label/value fact row, optionally linking to the surface it came from.
+ *
+ * Renders as a list item, NOT a `<dt>`/`<dd>` pair. The definition-list markup
+ * this used to emit was invalid and axe flagged it as two serious violations
+ * (`definition-list` + `dlitem`, 9 nodes): a row that links wraps its own
+ * `<dt>`/`<dd>` in an `<a>`, so the `<dl>` ended up with an `<a>` child and the
+ * terms lost their required `<dl>` parent. A definition list cannot express "the
+ * whole term/definition pair is one link", so this is a list of facts instead —
+ * which is also what every other section on this page already uses. Boxes are
+ * unchanged (`dt`/`dd`/`div` are all `display:block` and Tailwind's preflight
+ * zeroes their margins), so the fix is invisible.
+ */
 function GlanceRow({
   label,
   value,
@@ -555,24 +577,28 @@ function GlanceRow({
   const body = (
     <div className="flex items-baseline justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <dt className={strong ? "font-semibold text-slate-900" : "text-slate-700"}>{label}</dt>
+        <div className={strong ? "font-semibold text-slate-900" : "text-slate-700"}>{label}</div>
         {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
       </div>
-      <dd
+      <div
         className={`shrink-0 tabular-nums ${
           strong ? "text-lg font-bold text-slate-900" : "font-medium text-slate-900"
         }`}
       >
         {value}
-      </dd>
+      </div>
     </div>
   );
-  return href ? (
-    <Link href={href} className="block hover:bg-slate-50">
-      {body}
-    </Link>
-  ) : (
-    body
+  return (
+    <li>
+      {href ? (
+        <Link href={href} className="block hover:bg-slate-50">
+          {body}
+        </Link>
+      ) : (
+        body
+      )}
+    </li>
   );
 }
 
@@ -614,9 +640,9 @@ function CaseLine({ row }: { row: OpsCaseRow }) {
             {row.typeLabel} · {row.title}
           </p>
         </div>
-        <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+        <Badge tone="red" className="shrink-0">
           {row.statusLabel}
-        </span>
+        </Badge>
       </Link>
     </li>
   );
@@ -637,13 +663,17 @@ function SafetyLine({ row }: { row: OpsSafetyRow }) {
               : `${row.blocks.length} failed safety inspections`}
           </p>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
-            row.blocking ? "bg-red-600 text-white" : "bg-amber-100 text-amber-800"
-          }`}
+        {/* A live block gets the emphatic solid fill; a recorded override is a
+            warning, not a stop. `solid` is bg-red-700 (6.47:1 with white) where
+            this previously used red-600 (4.83:1) — the same statement, further
+            clear of the AA floor. */}
+        <Badge
+          tone={row.blocking ? "red" : "amber"}
+          variant={row.blocking ? "solid" : "pill"}
+          className="shrink-0 font-semibold"
         >
           {row.blocking ? "Blocked from issue" : "Override recorded"}
-        </span>
+        </Badge>
       </Link>
     </li>
   );
@@ -660,13 +690,15 @@ function InspectionLine({ row }: { row: OpsInspectionRow }) {
           <p className="truncate text-sm font-medium text-slate-900">{row.title}</p>
           <p className="mt-0.5 truncate text-xs text-slate-500">{row.assetName}</p>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums ${
-            row.overdue ? "bg-red-100 text-red-800" : "bg-blue-50 text-blue-700"
-          }`}
+        {/* Overdue is a duty already missed; merely due is information. The soft
+            blue fill is the same low-emphasis recipe this page shipped with. */}
+        <Badge
+          tone={row.overdue ? "red" : "blue"}
+          variant={row.overdue ? "pill" : "soft"}
+          className="shrink-0 tabular-nums"
         >
           {row.overdue ? "Was due" : "Due"} {row.dueAt}
-        </span>
+        </Badge>
       </Link>
     </li>
   );
@@ -678,9 +710,9 @@ function CustodyLine({ row }: { row: OpsCustodyRow }) {
       <Link href={row.href} className="block p-3 hover:bg-slate-50">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="min-w-0 truncate text-sm font-medium text-slate-900">{row.assetName}</p>
-          <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium tabular-nums text-red-800">
+          <Badge tone="red" className="shrink-0 tabular-nums">
             due back {row.expectedReturnAt}
-          </span>
+          </Badge>
         </div>
         <p className="mt-0.5 text-xs text-slate-500">With {row.holderLabel}</p>
       </Link>
