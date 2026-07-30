@@ -47,6 +47,7 @@ const ADMIN_LINKS = [
   // holding are different questions, and the stock you hold outlives the order
   // it arrived on.
   { href: "/stock", label: "Stock" },
+  { href: "/materials/requests", label: "Material requests" },
   // The company's own places (depots, yards, lock-ups) — reference data both
   // registers above point at. NOT customer job sites, which live on the job.
   { href: "/sites", label: "Sites" },
