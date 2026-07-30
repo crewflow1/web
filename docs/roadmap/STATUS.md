@@ -4,10 +4,25 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-29 (Continuation 11 — O3 stock + M4 material requests + AI quote writer dark)
-**Production `main`:** `8b4377f`
-**Production migration tip:** `20261068`
-**Providers:** email **live**; SMS, WhatsApp, voice, Stripe **dark** (deliberate — activation needs CEO/cost/legal approval)
+**Last reconciled:** 2026-07-30 (Continuation 12 — control-plane truth pass; stranded-work recovery)
+**Production `main`:** `106fd9b` (+ this docs train)
+**Production migration tip:** `20261069` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC **dark**. **AI providers DARK** — but see the
+AI-governance warning below: a key alone would switch on **5 UNGOVERNED** generative paths outside the
+£100 ceiling. AI is a provider state and belongs on this line.
+
+## ⚠️ AI GOVERNANCE — 5 UNGOVERNED CALL SITES (audited 2026-07-30)
+
+The governor covers **3** paths (`ai-quote-writer`, `expense-drafts` receipt OCR, `receptionist-generation`).
+An audit found **5 more that bypass it entirely**, gating only on a bare `isAiConfigured()`:
+`lib/ai/insight-narrative.ts:112` · `server/services/ai-question.ts:82` · `server/services/hq-drafts.ts:233` ·
+`server/services/memory-lifecycle.ts:222` · `lib/imports/ocr.ts:134` (this one instantiates the Anthropic
+SDK directly). **Two are tenant-facing** (`/insights` narrative and its QuestionBox).
+
+**Consequence: setting `ANTHROPIC_API_KEY` today would switch on 5 generative/vision paths OUTSIDE the
+£100/org ceiling** — precisely the failure `lib/ai/quote-writer-readiness.ts` exists to prevent. Earlier
+notes said "4 legacy call sites"; it is 5. Governing them is small, zero-migration, and must land BEFORE
+any key is ever set.
 
 ## Status vocabulary
 
@@ -66,7 +81,7 @@
 |---|---|---|
 | Blueprint Centre (viewer, pins, markup, compare, offline, PWA) | **PRODUCTION** | shipped via release train `#421`; `app/(app)/blueprints/**`, migrations `20261014`–`20261017` |
 | Variation management (request → approve → quote/invoice → audit) | **PRODUCTION** | `quotes.variation_number`; `20260520180000_variation_orders.sql`; accepted-quote immutability `20261004` |
-| Offline mode / PWA | **PRODUCTION** | `public/sw.js`, offline shell, logout purge, real-offline E2E |
+| Offline mode / PWA | **PARTIAL — READ-ONLY** (was PRODUCTION; corrected 2026-07-30) | The offline shell + IndexedDB drawing cache are real and good (`public/sw.js`, `lib/blueprints/offline-store.ts`, `/offline` renders the real viewer from local bytes). But audited tree-wide: **no sync queue, no outbox, no retry, no idempotency key, no conflict detection anywhere**. A foreman with no signal can READ a pre-downloaded drawing and nothing else — no offline diary, snag or photo. 'Offline mode' in a construction product means work without signal; that is gap #10 below |
 | AI WhatsApp Assistant | **BUILT-DARK (inbound + outbound + receipts)** | consolidated in #433 (prod `9a633cd`); webhook returns 404 and `/api/health` reports `whatsapp:false` with the flag off — verified post-deploy. Activation needs `NEXT_PUBLIC_FEATURE_WHATSAPP=true` + `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` (+ `WHATSAPP_APP_SECRET`/`WHATSAPP_VERIFY_TOKEN` inbound) + per-org DB state |
 | Native mobile apps (iOS/Android) | **NOT BUILT** | PWA is the current mobile strategy |
 
@@ -74,9 +89,9 @@
 
 | Item | Status | Evidence |
 |---|---|---|
-| AI Business Coach / Daily Briefing | **PRODUCTION** (deterministic) | `lib/briefing/compose.ts`, `server/services/briefing.ts`, `20261038_briefing_dismissals`; ranked money + safety signals, non-dismissible live breaches |
-| AI Voice Receptionist | **BUILT-DARK (inbound engine)** | ~40 `lib/receptionist/conversation-*.ts` + ~30 `server/services/receptionist-*.ts` on main; Vapi telephony **NOT BUILT** (#113 superseded) |
-| AI Quote Writer | **NOT BUILT** | needs an LLM key (provider decision) |
+| Daily Briefing | **PRODUCTION** (deterministic, 21 signals) | `lib/briefing/compose.ts`, `server/services/briefing.ts`, `20261038_briefing_dismissals`; ranked money + safety signals, non-dismissible live breaches |
+| AI Voice Receptionist | **BUILT-DARK — but it is a TEXT engine; there is NO VOICE** | 22,361 LOC across 81 files is a genuinely strong inbound-**enquiry text** engine (intent, slot extraction, gap-filling, governed generation, human claim/release worklist). Audited 2026-07-30: **zero** hits tree-wide for vapi/twiml/telephony/call_sid/audio/transcription/speech/tts/stt, and **no `phone_numbers` table exists in the repo** — so phone→org routing has no schema either. Voice needs: telephony provider, routing migration, audio streaming, STT/TTS, barge-in, real-time turn loop. 'Vapi telephony NOT BUILT' read like the last mile; it is the whole road |
+| AI Quote Writer | **BUILT-DARK** (see Train 30) | **This row said NOT BUILT until 2026-07-30 — it was wrong and 44 lines from the train that shipped it.** `lib/ai/{quote-context,quote-prompt,quote-draft-schema,quote-draft-pipeline,quote-writer-readiness}.ts`, `server/services/ai-quote-writer.ts`, `20261068`, live panel in the quote builder. Remaining before activation: model binding (a CEO/cost decision — all `TIER_MODEL` tiers are null), the atomic governor reservation, and `checkBudget`'s fail-open |
 | AI Scheduler | **PARTIAL** (deterministic detection) | Train 16 (#460): `lib/schedule-integrity` + `/staff/rota/conflicts` + briefing signals — double-bookings, assignee-without-shift, leave clashes, unassigned imminent jobs, custody anomalies. Observe→explain only; recommendation/auto-move NOT built |
 | AI Cashflow | **PARTIAL** | deterministic forecast shipped in H2-CASH M3 (`lib/commercial/cash-forecast.ts`): overdue / due / planned / unscheduled, honest certainty labels, no fake probability |
 
@@ -91,7 +106,7 @@
 | H&S evidence PDFs + integrity | **PRODUCTION** | SHA-256 `content_hash`, write-once immutability, storage byte lockdown (`20261031`–`20261037`) |
 | Snagging | **PRODUCTION** | `20260919000000_snags.sql` + full vertical: `app/(app)/snags/{page,new,[id],actions.ts}` (`createSnag`/`updateSnagStatus`/`reassignSnag`/`setSnagPriority`/`deleteSnag`), lifecycle open→in_progress→fixed→verified/wont_fix, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: no job-page embed, no e2e spec |
 | Daily site diary | **PRODUCTION** | `20260920000000_site_diary.sql` + full CRUD: `app/(app)/diary/{page,[id],[id]/edit,actions.ts,_form}`, `lib/site-diary/schema.ts`, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: not surfaced on the job page; weather is free text (no provider) |
-| Digital inspections + templates | **PRODUCTION** | inspections M4/M4b (immutable snapshots, scheduling) |
+| Asset/plant inspections + templates | **PRODUCTION** (mis-filed here until 2026-07-30 — these are **asset** inspections, not site QA) | Migrations `20260927`–`20261001` are all `asset_inspection*`; routes are `/assets/[id]/inspections/**`. **There is NO site/works quality inspection: no ITP, no hold points, no witness/approval regime, no per-job inspection register.** Under a Site-Management heading the old label read as site QA — it never was |
 | Progress tracking | **PARTIAL** | `progress_percent` DOES ship inside `site_reports.content` (validated 0–100) and is surfaced to the customer portal. True gap: no job-level progress log / time series / S-curve |
 | Weather intelligence + Extension-of-Time letters | **NOT BUILT** | needs a weather provider (free tiers exist) |
 | Site timeline | **PRODUCTION** | `lib/site-ops/timeline.ts` (#442) — pure, total order, Europe/London day buckets; composes diary+snags+inspections+toolbox+RAMS/permits+docs+photos onto the job page |
@@ -108,7 +123,7 @@
 | Purchase orders | **PRODUCTION** | Programme C slice 2 |
 | Supplier invoices / committed costs | **PRODUCTION** | Programme C slice 3 |
 | Profitability + VAT summary reporting | **PRODUCTION** | `lib/profitability/compute.ts`, dashboard/reports |
-| Payroll (timesheets → PAYE lines) | **PRODUCTION** | `lib/payroll/compute.ts`, `payroll_lines` |
+| Payroll (timesheets → PAYE lines) | **PARTIAL — ESTIMATES ONLY** (corrected 2026-07-30) | `lib/payroll/compute.ts` line 1 says so itself: annualise → flat bands → divide. **No employer NI, no pension/auto-enrolment**, no tax codes, no cumulative basis, no RTI/FPS, no P60/P45. Materially: employer NI + pension are real job costs, so **every margin figure is understated** |
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
 | CIS M3 — deduction calc + reverse-charge VAT | **PRODUCTION** | `20261051_cis_deduction` (#443, Train 8): HMRC-verified rules (20/30/gross, exclusions, CITB, 6th–5th tax month), server-derived rate, cumulative partial-payment maths, reverse charge as a real treatment; splits labour vs qualifying materials (CIS never applies to materials or VAT). Hardened by `20261053`/`20261054` (#452, Train 11): basis freeze incl. INSERT-after-part-payment door, settlement floor, enforced trigger firing order |
@@ -171,7 +186,7 @@
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-**Production migration tip is `20261062` (AI invocations ledger, applied).** Slots BELOW
+**Production migration tip is `20261069` (stock correction transfer guard, applied).** Slots BELOW
 that are closed forever — Supabase keys identity on the numeric prefix, so a
 lower-numbered file added later replays out of order from scratch. We have hit this
 twice (#128 `20260711`, #136 `20260706`).
@@ -212,8 +227,20 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261062` | `ai_invocations` | **APPLIED (prod tip)** — Train 26, #484 |
 | `20261063`–`20261065` | O3 operational stock | **APPLIED** — Train 28, #489 |
 | `20261066`–`20261067` | M4 material requests | **APPLIED** — Train 29, #490 |
-| `20261068` | AI quote drafts | **APPLIED (prod tip)** — Train 30, #491 |
-| `20261069+` | **NEXT FREE** (candidates: request-line/stock FKs deferred-debt hardening, asset status additions) | unallocated |
+| `20261068` | AI quote drafts | **APPLIED** — Train 30, #491 |
+| `20261069` | stock correction transfer guard | **APPLIED (prod tip)** — Train 31, #493 |
+| `20261070` | AI budget reservation | **CLAIMED — in flight** `feat/ai-budget-reservation` (C12) |
+| `20261071` | stock residual hardening (deferred FKs et al) | **CLAIMED — in flight** `fix/stock-residual-hardening` (C12) |
+| `20261072+` | **NEXT FREE** | unallocated |
+
+> ### ⚠️ THIS TABLE WAS A LIVE TRAP UNTIL 2026-07-30
+> A read-only audit found this file simultaneously claiming tip `20261062` (here),
+> `20261068` (header) and declaring **`20261069+` "NEXT FREE"** — while `20261069`
+> was **already applied in production**. Following it would have claimed a colliding
+> prefix: exactly the failure the warnings above and below describe. Three lessons,
+> now procedure: (1) the tip appears in ONE place in this file, not three; (2) always
+> read it from the database, never from this table; (3) a slot row moves to APPLIED in
+> the same train that applies it, never later.
 
 
 > ### ⚠️ CORRECTION (2026-07-27) — the org-teardown slot MUST move
