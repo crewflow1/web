@@ -15,6 +15,7 @@ import { researchAiEnabled } from "@/server/services/research-llm";
 import { ResearchLauncher } from "./_launcher";
 import { Tile, ProvenanceBadge } from "./_components";
 import { STATUS_LABEL, STATUS_PILL, scoreTone } from "./_styles";
+import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 
 /**
  * Research AI — section home (CEO Directive 005, Phase 1 + 10).
@@ -151,7 +152,8 @@ export default async function ResearchHomePage({
             <h2 className="text-sm font-semibold text-white">Recent research</h2>
             {metrics.lastCompletedAt ? (
               <span className="text-[11px] text-slate-500">
-                Last completed {relativeTime(metrics.lastCompletedAt)}
+                Last completed{" "}
+                {relativeTime(metrics.lastCompletedAt, RELATIVE_TIME_PRESETS.hqConsole)}
               </span>
             ) : null}
           </div>
@@ -214,7 +216,9 @@ function RunRow({ run }: { run: ResearchRunRow }) {
               {STATUS_LABEL[run.status]}
             </span>
             {run.decisionMakers != null ? <span>{run.decisionMakers} DMs</span> : null}
-            {when ? <span>{relativeTime(when)}</span> : null}
+            {when ? (
+              <span>{relativeTime(when, RELATIVE_TIME_PRESETS.hqConsole)}</span>
+            ) : null}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -226,18 +230,4 @@ function RunRow({ run }: { run: ResearchRunRow }) {
       </Link>
     </li>
   );
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }

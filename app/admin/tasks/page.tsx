@@ -13,6 +13,7 @@ import {
   type QueueBucket,
   type TaskQueueRow,
 } from "@/server/services/hq-task-queue";
+import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 
 /**
  * AI Task Queue — the unified operator read model for the Generic Task Engine
@@ -212,7 +213,7 @@ function EmployeeRow({ summary }: { summary: EmployeeQueueSummary }) {
         )}
         {summary.lastActivityAt ? (
           <span className="ml-1 text-[11px] text-slate-500">
-            {relativeTime(summary.lastActivityAt)}
+            {relativeTime(summary.lastActivityAt, RELATIVE_TIME_PRESETS.hqConsole)}
           </span>
         ) : null}
       </div>
@@ -248,7 +249,11 @@ function TaskRow({ task }: { task: TaskQueueRow }) {
       </div>
       <div className="flex shrink-0 items-center gap-3 text-right">
         <BucketGlyph bucket={task.bucket} />
-        {when ? <span className="text-[11px] text-slate-500">{relativeTime(when)}</span> : null}
+        {when ? (
+          <span className="text-[11px] text-slate-500">
+            {relativeTime(when, RELATIVE_TIME_PRESETS.hqConsole)}
+          </span>
+        ) : null}
       </div>
     </li>
   );
@@ -284,18 +289,4 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 function humaniseType(taskType: string): string {
   const spaced = taskType.replace(/[_-]+/g, " ").trim();
   return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : taskType;
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }

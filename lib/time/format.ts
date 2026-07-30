@@ -11,7 +11,9 @@
  */
 
 export const UK_TIME_ZONE = "Europe/London";
-const LOCALE = "en-GB";
+/** Exported so siblings (lib/time/relative.ts) never re-declare the locale. */
+export const UK_LOCALE = "en-GB";
+const LOCALE = UK_LOCALE;
 
 type DateInput = Date | string | number | null | undefined;
 
@@ -78,6 +80,23 @@ export function formatDateShortUK(input: DateInput): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: UK_TIME_ZONE,
+  });
+}
+
+/**
+ * Day + month with no year, e.g. "1 Jun" in Europe/London.
+ *
+ * For "older than a month" relative-time fallbacks, where the year is implied
+ * by context. London-pinned like every other helper here: without a timeZone a
+ * 23:30 BST instant renders as the PREVIOUS day on a UTC server.
+ */
+export function formatDayMonthUK(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return d.toLocaleDateString(LOCALE, {
+    day: "numeric",
+    month: "short",
     timeZone: UK_TIME_ZONE,
   });
 }

@@ -190,25 +190,14 @@ export function activityHref(row: ActivityRow): string | null {
   }
 }
 
-const SHORT_LOCALE = "en-GB";
-const RELATIVE = new Intl.RelativeTimeFormat(SHORT_LOCALE, { numeric: "auto" });
-
-export function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return iso;
-  const diffSec = (then - Date.now()) / 1000;
-  const abs = Math.abs(diffSec);
-  if (abs < 60) return RELATIVE.format(Math.round(diffSec), "second");
-  if (abs < 3600) return RELATIVE.format(Math.round(diffSec / 60), "minute");
-  if (abs < 86400) return RELATIVE.format(Math.round(diffSec / 3600), "hour");
-  if (abs < 604800) return RELATIVE.format(Math.round(diffSec / 86400), "day");
-  return new Date(iso).toLocaleDateString(SHORT_LOCALE, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Europe/London",
-  });
-}
+/**
+ * The feed's long-form relative time ("2 minutes ago", "yesterday"), falling
+ * back to a full London-pinned date past a week. Re-exported, not
+ * re-implemented — the maths lives in `lib/time/relative.ts` with the six other
+ * copies it had drifted from. Kept under this name so the feed call sites and
+ * the `lib/events/render` facade are unchanged.
+ */
+export { relativeTimeVerbose as relativeTime } from "@/lib/time/relative";
 
 /** Coarse filter prefixes the UI exposes as quick filters. */
 export const ACTIVITY_TYPES = [

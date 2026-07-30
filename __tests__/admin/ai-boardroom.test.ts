@@ -410,22 +410,22 @@ describe("model — countByStatus tallies the roster", () => {
 });
 
 describe("model — relativeTime formats activity timestamps", () => {
+  // Pinned reference point: these boundaries must not depend on the wall clock.
+  // The implementation now lives in lib/time/relative.ts and is re-exported
+  // here; `now` is injectable, so the offsets are exact rather than approximate.
+  const NOW = new Date("2026-05-20T12:00:00.000Z");
+  const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+
   it("handles null, recent, and old timestamps", async () => {
     const { relativeTime } = await import("@/lib/ai-employees/model");
-    expect(relativeTime(null)).toBe("—");
-    expect(relativeTime(new Date(Date.now() - 30_000).toISOString())).toBe(
-      "just now",
-    );
-    expect(relativeTime(new Date(Date.now() - 5 * 60_000).toISOString())).toBe(
-      "5m ago",
-    );
-    expect(
-      relativeTime(new Date(Date.now() - 3 * 3_600_000).toISOString()),
-    ).toBe("3h ago");
-    expect(
-      relativeTime(new Date(Date.now() - 2 * 86_400_000).toISOString()),
-    ).toBe("2d ago");
+    expect(relativeTime(null, { now: NOW })).toBe("—");
+    expect(relativeTime(ago(30_000), { now: NOW })).toBe("just now");
+    expect(relativeTime(ago(5 * 60_000), { now: NOW })).toBe("5m ago");
+    expect(relativeTime(ago(3 * 3_600_000), { now: NOW })).toBe("3h ago");
+    expect(relativeTime(ago(2 * 86_400_000), { now: NOW })).toBe("2d ago");
     // > 30 days falls back to an ISO date prefix.
-    expect(relativeTime("2020-01-15T10:00:00.000Z")).toBe("2020-01-15");
+    expect(relativeTime("2020-01-15T10:00:00.000Z", { now: NOW })).toBe(
+      "2020-01-15",
+    );
   });
 });
