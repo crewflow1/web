@@ -1,17 +1,30 @@
 /**
  * CrewFlow design system — one import surface.
  *
- *   import { Badge, StatTile, toneClass } from "@/components/ui";
+ *   import { Badge, StatTile, Table, toneClass } from "@/components/ui";
  *
  * Everything exported here is a server component or a pure function; nothing in
  * this barrel pulls in a client boundary, so it is safe to import from a server
  * component without turning the caller into one.
  *
+ * `Modal` is the ONE primitive deliberately left out, because it is a client
+ * component. Import it from its own module:
+ *
+ *   import { Modal } from "@/components/ui/modal";
+ *
+ * That is a measured rule, not a stylistic one. With `export { Modal } from
+ * "./modal"` here, `next build` put /operations — a page that renders no dialog
+ * and imports only { Badge, StatTile } — at 1.52 kB / 179 kB first load, against
+ * 498 B / 171 kB on origin/main: barrel tracing dragged the client boundary into
+ * every consumer of this file. Deleting the re-export returned it to 499 B /
+ * 171 kB. __tests__/ui/design-system-adoption.test.ts pins it out.
+ *
  * Every COMPONENT exported here is rendered by a real surface. A primitive
  * nobody renders is debt that still has to be reviewed, typechecked and kept
  * AA-correct, so it does not get a re-export to make it look load-bearing —
- * __tests__/ui/design-system-adoption.test.ts pins `Badge` and `StatTile` to
- * real call sites and fails if the last consumer of one is refactored away.
+ * __tests__/ui/design-system-adoption.test.ts pins `Badge`, `StatTile`, `Table`
+ * and `Modal` to real call sites and fails if the last consumer of one is
+ * refactored away.
  *
  * The token exports are the deliberate exception: `toneClass` currently has no
  * caller outside this directory, because Badge and StatTile resolve colour on a
@@ -35,6 +48,18 @@ export {
 // Atoms.
 export { Badge, badgeClass } from "./badge";
 export { StatTile } from "./stat-tile";
+
+// Table chrome. Server components, so this re-export costs nothing:
+// /sites is 501 B / 171 kB after adoption, byte-identical to origin/main.
+export {
+  Table,
+  THead,
+  TBody,
+  TR,
+  TH,
+  TD,
+  type Breakpoint,
+} from "./table";
 
 // Pre-existing primitives, re-exported so `@/components/ui` is the one door.
 export {

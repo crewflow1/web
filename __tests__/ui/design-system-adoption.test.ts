@@ -72,8 +72,15 @@ function consumersOf(exportName: string): string[] {
  * nothing outside the design system imports `toneClass` directly, and nothing
  * should have to — tokens are reached transitively through these components,
  * which `tokens.ts is reached by the adopted components` below proves instead.
+ *
+ * `Table` and `Modal` were the two primitives the first recovery pass left on the
+ * stranded branch, for exactly the reason this list exists: /operations had
+ * neither a table nor a dialog, and an unadopted primitive is debt. They are here
+ * now because they have real consumers — /sites and /staff respectively.
+ * `THead`/`TBody`/`TR`/`TH`/`TD` are not listed separately: they are unusable
+ * without `Table`, so pinning the entry point pins the set.
  */
-const RECOVERED = ["Badge", "StatTile"] as const;
+const RECOVERED = ["Badge", "StatTile", "Table", "Modal"] as const;
 
 describe("recovered design-system primitives are adopted", () => {
   it("finds source files to scan (guards the guard)", () => {
@@ -164,21 +171,145 @@ describe("the design system stays light-only and server-safe", () => {
     }
   });
 
-  it("keeps the recovered primitives free of client boundaries", () => {
-    // Badge/StatTile/tokens are pure server components. A stray "use client"
-    // would drag every consuming page's subtree into the client bundle.
-    for (const f of ["tokens.ts", "badge.tsx", "stat-tile.tsx", "index.ts"]) {
+  /**
+   * modal.tsx is the ONE client module here, and it has to be: a focus trap, a
+   * scroll lock and Escape handling are browser behaviours. Everything else must
+   * stay server-side — a stray "use client" would drag every consuming page's
+   * subtree into the client bundle.
+   */
+  const CLIENT_MODULES = ["modal.tsx"];
+
+  it("keeps every primitive except Modal free of client boundaries", () => {
+    for (const f of uiFiles.filter((f) => !CLIENT_MODULES.includes(f))) {
       const src = readFileSync(join(UI_DIR, f), "utf8");
       expect(src, `${f} became a client component`).not.toContain('"use client"');
     }
   });
 
+  it("keeps Modal out of the barrel, because the barrel is imported by server pages", () => {
+    // MEASURED, not precautionary. With `export { Modal } from "./modal"` in
+    // index.ts, `next build` put /operations — a page that renders no dialog and
+    // imports only { Badge, StatTile } — at 1.52 kB / 179 kB first load, against
+    // 498 B / 171 kB on origin/main. Barrel-tracing pulled the client boundary
+    // into every consumer. Removing the re-export returned it to 498 B / 171 kB.
+    // Modal is imported from "@/components/ui/modal" instead.
+    const barrel = codeOf(join(UI_DIR, "index.ts"));
+    expect(barrel, "index.ts re-exports the client Modal").not.toMatch(
+      /export\s*\{[^}]*\bModal\b[^}]*\}\s*from/,
+    );
+    expect(barrel, "index.ts re-exports from ./modal").not.toMatch(/from\s*["']\.\/modal["']/);
+    // …and the surfaces that use it reach it directly.
+    for (const file of consumersOf("Modal")) {
+      const src = readFileSync(file, "utf8");
+      expect(src, `${file} should import Modal from its own module`).toMatch(
+        /from ["']@\/components\/ui\/modal["']/,
+      );
+    }
+  });
+
   it("does not depend on framer-motion", () => {
-    // The stranded branch's primitives were motion-heavy. Nothing recovered
-    // here animates, and a server component cannot import framer-motion.
+    /**
+     * framer-motion IS a dependency (^12.40.0) and the stranded branch's modal
+     * was built on it, but it has zero consumers in app/(app) — all six live in
+     * app/_marketing and app/admin. Eight of the nine hand-rolled dialogs ship no
+     * entrance animation at all, so the primitive's 150ms scale-and-fade comes
+     * from tailwindcss-animate (already installed, already registered) for zero
+     * client JS. Comment lines are stripped because the modules deliberately
+     * explain the decision in prose.
+     */
     for (const f of uiFiles) {
-      const src = readFileSync(join(UI_DIR, f), "utf8");
-      expect(src, `${f} imports framer-motion`).not.toContain("framer-motion");
+      expect(codeOf(join(UI_DIR, f)), `${f} imports framer-motion`).not.toContain(
+        "framer-motion",
+      );
+    }
+  });
+
+  it("keeps tailwind-merge out of the client primitive", () => {
+    // `cn` is tailwind-merge. In a SERVER primitive it is free — it runs at render
+    // time and ships nothing. In a CLIENT one it is 8 kB of first-load JS: with
+    // `import { cn } from "@/lib/utils"` in modal.tsx, `next build` put /staff at
+    // 196 kB against 188 kB on origin/main, and the extra chunk was
+    // tailwind-merge's conflict tables. Modal has two constant class strings and
+    // no `className` prop, so there is nothing to merge and nothing to buy.
+    for (const f of CLIENT_MODULES) {
+      const code = codeOf(join(UI_DIR, f));
+      expect(code, `${f} pulls tailwind-merge into the client bundle`).not.toMatch(
+        /from ["']@\/lib\/utils["']/,
+      );
+      expect(code, `${f} calls cn()`).not.toMatch(/\bcn\(/);
+    }
+  });
+
+  it("keeps the modal entrance finite and unfilled, so axe gates cannot hang", () => {
+    // e2e/_settle.ts gates every axe scan on `document.getAnimations().length === 0`.
+    // `animate-in` sets only `animation-name`, so a finished animation stops being
+    // in-effect and drains from that list. `fill-mode-*` (or an infinite
+    // `animate-pulse`/`animate-spin`) would keep it in effect and hang every
+    // scanned route, forever.
+    const code = codeOf(join(UI_DIR, "modal.tsx"));
+    expect(code, "modal.tsx fills its entrance animation").not.toMatch(/fill-mode-/);
+    expect(code, "modal.tsx uses an infinite animation").not.toMatch(
+      /animate-(?:pulse|spin|ping|bounce)/,
+    );
+    // The reduced-motion escape hatch is CSS, not a framer-motion hook.
+    expect(code, "modal.tsx does not honour prefers-reduced-motion").toContain(
+      "motion-reduce:animate-none",
+    );
+  });
+});
+
+describe("the table and modal primitives own only slate chrome", () => {
+  const UI_DIR = join(ROOT, "components", "ui");
+
+  it("spells no tone-varying colour by hand", () => {
+    // Neither takes a `tone`, and neither should: a table cell's and a dialog
+    // shell's colour is slate chrome, identical whatever the row or dialog means.
+    // A cell or dialog that must carry status renders a <Badge> inside it, where
+    // the tone is AA-verified by tokens.test.ts. A blue/emerald/amber/red/indigo
+    // literal appearing here is a colour decision escaping the token map.
+    for (const f of ["table.tsx", "modal.tsx"]) {
+      expect(codeOf(join(UI_DIR, f)), `${f} hand-spells a tone colour`).not.toMatch(
+        /\b(?:bg|text|ring|border|divide)-(?:blue|emerald|amber|red|indigo)-\d{2,3}\b/,
+      );
+    }
+  });
+
+  it("leaves no hand-rolled table chrome in a surface that imports Table", () => {
+    // Half-adoption is the state that lets the primitive and the surface drift.
+    // A surface using <Table> must not also spell a <table>/<thead>/<tbody> class
+    // list of its own.
+    for (const file of consumersOf("Table")) {
+      const handRolled = codeOf(file).match(/<(?:table|thead|tbody)\s+className=/g);
+      expect(
+        handRolled,
+        `${file} imports Table but still hand-rolls table chrome: ${handRolled?.join(", ")}`,
+      ).toBeNull();
+    }
+  });
+
+  it("leaves no hand-rolled dialog in a surface that imports Modal", () => {
+    // The whole point of Modal is that role="dialog" + aria-modal + the focus
+    // trap exist once. A surface that imports it and still writes its own
+    // role="dialog" has kept a second, untrapped dialog alive.
+    for (const file of consumersOf("Modal")) {
+      // Comment-stripped: _invite-modal.tsx's header explains the very defect it
+      // no longer has ("role=\"dialog\" sat on the full-viewport backdrop").
+      const handRolled = codeOf(file).match(/role="dialog"|aria-modal=/g);
+      expect(
+        handRolled,
+        `${file} imports Modal but still hand-rolls a dialog: ${handRolled?.join(", ")}`,
+      ).toBeNull();
+    }
+  });
+
+  it("requires an accessible name on every Modal call site", () => {
+    // `labelledBy` is a required prop precisely so a dialog cannot ship nameless,
+    // but a required prop can still be passed an id that does not exist. This
+    // catches the omission; e2e/staff-invite-dialog-a11y.spec.ts resolves the id
+    // in a real browser and fails if it dangles.
+    for (const file of consumersOf("Modal")) {
+      const src = readFileSync(file, "utf8");
+      expect(src, `${file} renders a Modal without labelledBy`).toMatch(/labelledBy=/);
     }
   });
 });
