@@ -177,6 +177,10 @@ export function computeMaterialFulfilment(input: {
  * (20261067). Keeping the rule here too means the common "nothing changed"
  * case costs no round trip.
  *
+ * IT MUST MIRROR THE DATABASE EXACTLY. Two definitions of "fulfilled" that can
+ * drift is the hazard this whole module is built to avoid, so when 20261071
+ * taught the RPC to walk a request BACK off `fulfilled`, this followed.
+ *
  * Returns null when the stock module is pending: an absent measurement must
  * never be allowed to advance a status.
  */
@@ -185,16 +189,32 @@ export function nextFulfilmentStatus(
   position: MaterialFulfilmentPosition,
 ): MaterialRequestStatus | null {
   if (position.stockModulePending) return null;
-  if (current !== "approved" && current !== "partially_fulfilled") return null;
-  const target =
+  // `fulfilled` HAS a fulfilment position now: it is a cache of a derivation,
+  // and a cache that cannot be corrected is a cache that can lie (20261071 §4).
+  if (
+    current !== "approved" &&
+    current !== "partially_fulfilled" &&
+    current !== "fulfilled"
+  ) {
+    return null;
+  }
+  let target: MaterialRequestStatus =
     position.state === "full"
       ? "fulfilled"
       : position.state === "partial"
         ? "partially_fulfilled"
         : "approved";
+  // THE WALK-BACK. A request claiming `fulfilled` whose issues have been
+  // reversed must stop claiming it. Both 'none' and 'partial' land on
+  // `partially_fulfilled` — "open, and something happened here" — mirroring
+  // advance_material_request_fulfilment. The INVARIANT: status = 'fulfilled'
+  // implies the derived position is 'full'.
+  if (current === "fulfilled" && position.state !== "full") {
+    target = "partially_fulfilled";
+  }
   if (target === current) return null;
-  // Never walk BACKWARDS: an issue that has happened cannot un-happen from
-  // this side (a stock correction is the other lane's reversal movement,
+  // Never walk back to `approved`: an issue that has happened cannot un-happen
+  // from this side (a stock correction is the other lane's reversal movement,
   // which simply re-derives here).
   if (target === "approved") return null;
   return target;

@@ -1,7 +1,9 @@
 # O3 — Operational stock
 
-Migrations `20261063000000` – `20261065000000`. Surface: `/stock`, plus a
-"put into stock" affordance on the purchase-order page.
+Migrations `20261063000000` – `20261065000000`, hardened by `20261069000000`
+(transfer-leg corrections) and `20261071000000` (residual hardening: the two
+cross-lane FKs, the write-path gate, the derived fulfilment RPC). Surface:
+`/stock`, plus a "put into stock" affordance on the purchase-order page.
 
 ---
 
@@ -141,6 +143,165 @@ B: ERROR: not enough Blocks: 0.00 in stock at the site it is leaving, 10.00 requ
 company_total: 10.00 before → 10.00 after      depot 0.00 · yard 10.00 · lock-up (no rows)
 ```
 
+### Only a stock write path may insert a movement (`20261071000000`)
+
+Members held a bare INSERT policy on `stock_movements`, because the write RPCs
+are `SECURITY INVOKER` and need the caller's own insert right. That was recorded
+as **one** accepted residue — "can drive a balance negative". Probed as a plain
+`staff` member with an ordinary JWT straight against PostgREST, it was **four**,
+and three of them are authority bypasses rather than self-harm:
+
+| # | direct insert | result before `20261071` |
+|---|---|---|
+| 1 | `issue` 1000 against a site holding 10 | accepted, **balance −990** |
+| 2 | `adjustment_out` | accepted — **the admin-only adjustment gate bypassed** |
+| 3 | bare `transfer_in` 500 | accepted — **stock manufactured from nothing** |
+| 4 | `receipt` off a **draft** GRN line | accepted — **posted-evidence check bypassed** |
+
+Defect 2 walks straight past the gate that `20261065000000` §4 argues for at
+length ("the write that can conceal a loss, and the reason a stock system is
+believed or not"). Defect 3 is the same class `20261069000000` fixed for
+transfer-leg corrections, by a plainer route.
+
+**The fix keeps every RPC `SECURITY INVOKER` and makes the insert right
+conditional on being inside one.** A transaction-local marker
+(`crewflow.stock_write`, set to the org id) is required by the insert policy and
+by a `BEFORE INSERT` trigger; each of the five write paths sets it immediately
+before its `INSERT` and clears it immediately after. This is the idiom
+`20261067000000` already uses for `crewflow.mr_fulfilment`.
+
+**Why not the two options that were written down:**
+
+- **A balance constraint trigger** fixes only defect 1 — it polices the *number*,
+  not the *authority*, and three of the four are authority. It is not sound alone
+  either (a per-row re-sum is not serialised without the same advisory lock the
+  direct path skipped). And the cost is **unbounded**: measured on this schema,
+  200 reps per figure, one `(item, site)` pair —
+
+  | movements at the pair | balance `SUM` | bare `INSERT` | ratio |
+  |---|---|---|---|
+  | 1 000 | 0.125 ms | 0.047 ms | **2.7×** |
+  | 10 000 | 0.709 ms | 0.035 ms | **20.3×** |
+
+  The insert is flat; the aggregate grows linearly with an append-only ledger, so
+  it only ever gets worse.
+- **`SECURITY DEFINER` write paths** would give up the caller's RLS, every guard
+  trigger and every composite FK on the path — the "none of these is a privileged
+  back door" property the milestone was built around — and would need tenancy
+  re-implemented in five places.
+
+**`service_role` stays trusted, deliberately.** It is not a tenant principal, and
+every authority check in this schema is JWT-gated the same way (the adjustment
+gate, `tg_ra_lifecycle`, `tg_goods_received_note_lifecycle`,
+`tg_material_request_transition`). A negative balance is still *constructible* by
+trusted server-side code; it is no longer constructible by any user of the
+product.
+
+**Mutation proof** (one transaction, rolled back; role `authenticated` with a real
+JWT `sub`, so `auth.uid()` and `current_org_ids()` behave as in production):
+
+```
+3a  gate PRESENT   member direct `issue` 1000        → ERROR 42501 (write-path gate)
+3b  gate PRESENT   same member via record_stock_issue → ok, balance 6.00
+3c  gate REMOVED   issue 1000 + adjustment_out 5 + transfer_in 500
+                   → all three INSERT 0 1, balance_without_the_gate = -495.00
+3d  gate RESTORED  member direct `issue` 1000        → ERROR 42501 again
+```
+
+### The two cross-lane FKs, closed (`20261071000000`)
+
+`stock_movements.material_request_line_id` and
+`material_request_lines.stock_item_id` were plain uuids with no integrity in
+either direction — the two lanes were built in parallel and neither table existed
+on the other's branch. Both candidate keys (`material_request_lines_id_org_key`,
+`stock_items_id_org_key`) were added at the time so this could be closed without
+touching either table's shape.
+
+Until now the refusal of a crafted cross-org line id was the **seam's active-org
+read filter**, which never stopped the write. Both are now composite,
+org-binding, `NO ACTION DEFERRABLE INITIALLY DEFERRED` (never `RESTRICT` — that
+can never be deferred, and a cascade that removes one side first would abort
+tenant teardown, which is exactly how the `20261052000000` P1 happened).
+
+Added **`NOT VALID` then `VALIDATE` in a handler**, so the migration cannot fail
+on dirty data. Neither column can be repaired in place: `stock_movements` refuses
+every UPDATE for every role, and request lines freeze once submitted — a repair
+would mean disabling another milestone's guard triggers to rewrite ledger
+history. Clean data validates (local pre-check: **0 violations on both**); dirty
+data leaves the constraint `NOT VALID`, still enforcing every new write, with a
+`WARNING` naming the count instead of a failed release.
+
+**Mutation proof** (same rolled-back transaction):
+
+```
+1a  FK PRESENT   org-B movement carrying org-A's line id  → ERROR 23503
+1b  FK DROPPED   the same write                           → INSERT 0 1, orphan_rows_written = 1
+1c  FK NOT VALID every NEW write                           → ERROR 23503
+1d  FK NOT VALID `VALIDATE CONSTRAINT` with the orphan     → ERROR 23503
+                 ^ why the migration splits add from validate
+2a  FK PRESENT   org-A line naming org-B's stock item      → ERROR 23503
+2b  FK DROPPED   the same line                             → INSERT 0 1, cross_org_lines = 1
+```
+
+### Material-request fulfilment is derived *in the database* (`20261071000000`)
+
+M4 shipped `advance_material_request_fulfilment(request, org, p_fulfilled jsonb)`
+taking the quantities from its caller, because on its own branch only the app
+could read a stock schema that was not frozen yet. Its own header named the debt
+and the fix. Confirmed live: **a plain member called it with a fabricated
+`p_fulfilled` and moved their own org's request to `partially_fulfilled` with zero
+issue movements in existence.**
+
+The 3-argument form is now **dropped, not ignored** — an inert parameter that
+still looks authoritative is how a trust boundary gets quietly restored. The RPC
+derives the quantities itself, using the same rule the app-side reader uses:
+sum `qty` over `movement_type = 'issue'` carrying each line id, **excluding any
+issue that has been reversed** (`not exists (correction where
+corrects_movement_id = m.id)`), because `record_stock_correction` does not copy
+the line id onto the correction row — so a naive sum over-reports a reversed issue
+and would leave a stripped site reading "fulfilled". It stays `SECURITY INVOKER`,
+so the derivation is RLS-filtered *and* pinned to `p_org_id`.
+
+`server/services/material-fulfilment.ts` therefore passes **two ids and nothing
+else**, and `reconcileRequestFulfilment` no longer needs a `stockModulePending`
+guard: the sum is now measured inside the same transaction as the write, over
+tables this migration hard-depends on, so "we could not see the stock lane" is not
+a state that path can be in.
+
+### `fulfilled` is a cache, so it can be corrected (`20261071000000`)
+
+M4 froze `fulfilled` as terminal and made the RPC forward-only, so correcting the
+issues behind a fully-fulfilled request fixed the derived display while the
+`status` column went on saying `fulfilled` for ever. That column is not
+decoration: it drives the office queue's filters, the badge, and
+`isMaterialRequestOverdue` (which treats `fulfilled` as "nobody is waiting"). A
+site whose cement was booked out and then reversed silently dropped off the
+office's radar.
+
+**Why this is not a loosening.** `status` is a cache of a derivation — both
+`20261067000000` and the seam say so — and a cache that can only move one way is
+a cache that can be wrong. Now that the derivation lives in the database, the
+cache can simply follow it, and the question *"who may walk it back?"* dissolves:
+nobody may, because it is not a human act. It is a re-derivation, requested
+through the same single writer, gated by the same transaction marker, computed
+from the same ledger. The graph gains exactly **one** edge.
+
+**The invariant, and it is tested:** `status = 'fulfilled'` ⟹ the derived position
+is `full`.
+
+Scope kept narrow:
+
+- `rejected` and `cancelled` stay **hard terminal** — human decisions, no
+  carve-out.
+- The walk-back lands on `partially_fulfilled`, never on `approved`, even when the
+  derivation drops to `none`. "Open, and something happened here" is exactly true
+  after a reversal, and it preserves the existing rule that an issue which
+  happened cannot un-happen from this side. The precise position (`none` vs
+  `partial`) is what every surface renders, derived live.
+- A **hand-set** move out of `fulfilled` is still refused — with the same
+  `% is final` message it always had, so the derived path is not advertised.
+  Proven for an *admin*, the strongest tenant role.
+
 ### The GRN void rule: **refuse the void while the stock receipt stands**
 
 Once a delivery line has been taken into stock, voiding its GRN could mean
@@ -270,18 +431,26 @@ revalidation at all, says why at length, and
 
 | item | why it is deferred | where it lands |
 |---|---|---|
-| **`material_request_line_id` FK** | the M4 lane's `material_request_lines` table does not exist yet (they own slots 66/67) | the first M4 migration; the exact DDL is in the `20261064000000` column comment |
+| ~~**`material_request_line_id` FK**~~ | **CLOSED by `20261071000000`** — both cross-lane FKs are now composite, org-binding and validated | — |
+| ~~**Direct-insert residue**~~ | **CLOSED by `20261071000000`** — the write-path marker; and it was four defects, not one (see above) | — |
 | **Van / mobile stock** | custody ≠ fungible quantity (above) | a `sites` kind or a mobile-location concept, decided with the fleet lane |
 | **Return from job** | "did it come back or was it never used" is a stock-take question this milestone does not ask | a return affordance once stock-takes exist |
-| **Direct-insert residue** | `stock_movements` grants members INSERT because the RPCs are SECURITY INVOKER, so a direct PostgREST write can bypass the lock and drive a balance negative. Closing it means either SECURITY DEFINER (losing RLS + every guard — a worse trade) or a full re-sum constraint trigger (still unserialised) | revisit if a tolerance setting is ever added |
+| **`service_role` can still construct a negative balance** | it bypasses RLS and the write-path gate is JWT-gated, matching every other authority check in this schema. Making it unrepresentable needs the balance constraint trigger whose cost is measured above (20.3× the insert at 10k movements, growing) and which would still only cover *one* of the four defects | revisit only if untrusted code ever holds the service key — at which point far more than stock is exposed |
 | **Movement paging** | `listStockMovements` reads up to `STOCK_MOVEMENT_LIMIT` (5000) and folds in-process, because the same rows drive both the balances and the history | if a tenant outgrows it: the `stock_balances` view for totals + a paged history |
 | **Site delete message** | a site holding stock is protected by a *deferred* FK, so the refusal arrives at COMMIT as a raw `23503` rather than the friendly `tg_sites_delete_guard` message | extending that guard means redefining another milestone's function — see `20261061000000`'s own warning about last-writer-wins |
+| **Stock-item delete message** | same shape, newly introduced: deleting an item a *request line* names is now refused by `material_request_lines_item_org_fkey` at COMMIT as a raw `23503`. The app never offers item deletion (deactivate instead), so no user path reaches it | a friendly pre-check in the delete action if item deletion is ever surfaced |
 
 ## Escalations for the CEO
 
 1. **D1 — stock valuation.** Should stock be an asset released to cost on issue?
    Until decided, this stays a quantity ledger. (No action needed to keep
    shipping; the ledger is a prerequisite either way.)
-2. **Negative-stock tolerance.** Currently refused outright. If merchants'
-   habits make that impractical, it becomes a per-org setting applied in the
-   four RPCs.
+2. **Negative-stock tolerance.** Currently refused outright, and since
+   `20261071000000` refused on *every* path a user can reach rather than only the
+   RPCs. If merchants' habits make that impractical, it becomes a per-org setting
+   applied in the four RPCs — which are now genuinely the only way in.
+3. **Should `correction` be admin-gated?** `20261069000000` decided *no*, on three
+   grounds that all held only because a correction has a counterparty, is floored,
+   and cannot be silent. That reasoning is unchanged and now rests on firmer
+   ground (a member can no longer insert a correction directly at all). Recorded
+   here because it is a policy question, not a technical one.
