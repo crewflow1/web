@@ -82,6 +82,34 @@ export type AiModelBinding = {
   /** Vendor price per 1,000,000 tokens, in USD, split input/output. */
   usdPerMTokIn: number;
   usdPerMTokOut: number;
+
+  /**
+   * THE RESERVATION ENVELOPE: the WORST-CASE token count one call on this model
+   * may consume. Not the typical count — the largest one a single invocation
+   * could plausibly reach with this model's context window and output cap.
+   *
+   * WHY IT LIVES ON THE BINDING AND IS REQUIRED.
+   * The atomic ceiling reservation (supabase/migrations/20261070000000) claims
+   * budget BEFORE the call, when the real token count is unknowable. It has to
+   * claim SOMETHING, and the ceiling holds exactly only while the claim is at
+   * least as large as the eventual cost. Putting these two numbers on the
+   * binding as REQUIRED fields makes that impossible to forget: TypeScript
+   * refuses an activation diff that binds a model without stating its
+   * worst case. A separate lookup table would have been one more thing to
+   * remember, and the failure mode of forgetting is silent over-spend.
+   *
+   * A caller may NOT shrink this. A per-call override would be a way for a call
+   * site to under-reserve and slip past the gate, which is exactly the class of
+   * self-promotion `taskClass` is already protected against.
+   *
+   * CALIBRATION IS A PRE-ACTIVATION STEP. Too small and committed spend can
+   * pass the ceiling by the shortfall; too large and the org is refused while
+   * real headroom remains. `ai_reservations_month_totals.overrun_count` counts
+   * settled claims whose true cost exceeded the estimate — a non-zero figure
+   * means these numbers are too small for the bound model.
+   */
+  reserveInputTokens: number;
+  reserveOutputTokens: number;
 };
 
 /**
@@ -113,6 +141,23 @@ export function resolveModel(taskClass: AiTaskClass): AiModelBinding | null {
 /** The abstract tier for a task class (`null` for `deterministic`). */
 export function tierFor(taskClass: AiTaskClass): AiTier | null {
   return TASK_CLASS_TIER[taskClass];
+}
+
+/**
+ * The worst-case token envelope for a binding, or `null` when nothing is bound.
+ *
+ * Takes the BINDING rather than the task class on purpose: the seam has already
+ * resolved it, and a second internal `resolveModel` call here would be a second
+ * source of truth for "which model is this" that a caller could not intercept.
+ */
+export function reservationEnvelopeOf(
+  binding: AiModelBinding | null,
+): { inputTokens: number; outputTokens: number } | null {
+  if (!binding) return null;
+  return {
+    inputTokens: binding.reserveInputTokens,
+    outputTokens: binding.reserveOutputTokens,
+  };
 }
 
 /**

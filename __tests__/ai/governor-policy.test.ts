@@ -4,6 +4,9 @@ import {
   BUDGET_WARN_50_FRACTION,
   BUDGET_WARN_80_FRACTION,
   DEDUPE_WINDOW_MS,
+  FAILURE_FLOOR_PENCE,
+  MIN_RESERVATION_PENCE,
+  RESERVATION_TTL_MS,
   SPIKE_BASELINE_MONTHS,
   SPIKE_MULTIPLIER,
   USD_TO_GBP,
@@ -15,6 +18,8 @@ import {
   evaluateBudget,
   formatPence,
   invocationHash,
+  reservationClaimPence,
+  settlementCostPence,
   trailingAverage,
   trailingMonths,
   ukMonthKeyOf,
@@ -77,6 +82,7 @@ describe("evaluateBudget — the band boundaries", () => {
     [80, "warn_80"],
     [99, "warn_80"],
     [100, "blocked"],
+    [101, "blocked"],
   ];
 
   for (const [pct, expected] of CASES) {
@@ -368,5 +374,107 @@ describe("estimateCostPence — integer pence, failing safe", () => {
     // the figure the per-feature SQL rollup exists to avoid aggregating in TS.
     const perCall = estimateCostPence(CHEAP, { inputTokens: 1, outputTokens: 1 });
     expect(AI_MONTHLY_CEILING_PENCE / perCall).toBeLessThanOrEqual(10_000);
+  });
+});
+
+// =====================================================================
+// 6. The reservation's own arithmetic — the claim, the TTL, the failure floor.
+// =====================================================================
+
+describe("the budget CLAIM is pessimistic and never free", () => {
+  const PRICED = { usdPerMTokIn: 12.5, usdPerMTokOut: 25 };
+
+  it("is the estimator applied to the binding's WORST-CASE envelope", () => {
+    // 1,000,000 in x $12.50/MTok = $12.50 ⇒ 1000p. The claim must be the same
+    // arithmetic the ledger will later use, or the two are denominated
+    // differently and the ceiling cannot be exact.
+    expect(reservationClaimPence(PRICED, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(1_000);
+    expect(
+      reservationClaimPence(PRICED, { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+    ).toBe(3_000);
+  });
+
+  it("NEVER returns zero, even for an unpriced or unbound model", () => {
+    // A zero claim consumes no budget, so N concurrent unpriced calls would all
+    // pass the gate however many of them there were — the exact hole the
+    // reservation exists to close.
+    expect(MIN_RESERVATION_PENCE).toBe(1);
+    expect(reservationClaimPence(null, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(1);
+    expect(
+      reservationClaimPence({ usdPerMTokIn: 0, usdPerMTokOut: 0 }, { inputTokens: 1e9, outputTokens: 1e9 }),
+    ).toBe(1);
+    // …and with no envelope at all — a class that reaches no model.
+    expect(reservationClaimPence(PRICED, null)).toBe(1);
+  });
+
+  it("rounds UP, so a claim is never smaller than the cost it is standing in for", () => {
+    // The condition on which the ceiling holds exactly. A claim that rounded
+    // down would admit calls it could not cover.
+    for (const tokens of [1, 7, 999, 12_345, 999_999]) {
+      const claim = reservationClaimPence(PRICED, { inputTokens: tokens, outputTokens: tokens });
+      const cost = estimateCostPence(PRICED, { inputTokens: tokens, outputTokens: tokens });
+      expect(claim).toBeGreaterThanOrEqual(cost);
+      expect(Number.isInteger(claim)).toBe(true);
+    }
+  });
+
+  it("worst-case concurrency is bounded by the ceiling itself", () => {
+    // The floor's purpose in one line: at 1p per in-flight call, at most 10,000
+    // calls can be in flight against a £100 ceiling.
+    expect(AI_MONTHLY_CEILING_PENCE / MIN_RESERVATION_PENCE).toBe(10_000);
+  });
+});
+
+describe("a FAILED call is never recorded as free", () => {
+  const PRICED = { usdPerMTokIn: 12.5, usdPerMTokOut: 0 };
+
+  it("a success costs exactly what the estimator says, including nothing", () => {
+    expect(settlementCostPence(true, PRICED, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(1_000);
+    // Unpriced ⇒ 0. Cost is observability, never a correctness gate, so an
+    // unpriced success still runs and is still recorded — at 0.
+    expect(settlementCostPence(true, null, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(0);
+  });
+
+  it("a failure with no usage report still costs the floor, not zero", () => {
+    // A call that reached a provider and failed has, on every major vendor,
+    // already billed its input. Recording it as £0 would make a retry storm —
+    // the single likeliest way the ceiling ever gets tested — invisible to it.
+    expect(FAILURE_FLOOR_PENCE).toBe(1);
+    expect(settlementCostPence(false, PRICED, { inputTokens: 0, outputTokens: 0 })).toBe(1);
+    expect(settlementCostPence(false, null, { inputTokens: 0, outputTokens: 0 })).toBe(1);
+  });
+
+  it("a failure that DID report usage costs the real figure, not the floor", () => {
+    expect(settlementCostPence(false, PRICED, { inputTokens: 1_000_000, outputTokens: 0 })).toBe(1_000);
+  });
+
+  it("a crash loop is bounded rather than free", () => {
+    // 10,000 failures at a penny each is the whole ceiling; the 10,001st is
+    // refused. Before the floor, the number was unbounded.
+    const perFailure = settlementCostPence(false, PRICED, { inputTokens: 0, outputTokens: 0 });
+    expect(AI_MONTHLY_CEILING_PENCE / perFailure).toBe(10_000);
+  });
+});
+
+describe("the reservation TTL is bounded on both sides", () => {
+  it("is ten minutes", () => {
+    expect(RESERVATION_TTL_MS).toBe(600_000);
+  });
+
+  it("comfortably exceeds any plausible provider call, retries included", () => {
+    // A TTL that lapsed mid-call would let a second caller reserve the same
+    // headroom while the first was still spending it.
+    expect(RESERVATION_TTL_MS).toBeGreaterThan(60_000);
+  });
+
+  it("is SHORTER than the dedupe window, so a crashed request can be retried", () => {
+    // Were it longer, retrying the exact request that crashed would be refused
+    // as a duplicate of a call that never completed — for the difference.
+    expect(RESERVATION_TTL_MS).toBeLessThan(DEDUPE_WINDOW_MS);
+  });
+
+  it("is short enough that a crashed process cannot hold budget for long", () => {
+    // The upper bound: not "until the month rolls".
+    expect(RESERVATION_TTL_MS).toBeLessThanOrEqual(30 * 60_000);
   });
 });

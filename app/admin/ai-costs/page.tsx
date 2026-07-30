@@ -121,8 +121,17 @@ export default async function AiCostsPage() {
       {/* 2. This month, estate-wide. */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">This month</h2>
-        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <Kpi label="Total spend" value={formatPence(snap.totalPence)} />
+        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
+          <Kpi label="Committed spend" value={formatPence(snap.totalPence)} />
+          {/* IN FLIGHT is not spend — it is budget claimed by calls that have
+              not settled. It is shown beside the committed figure because the
+              ceiling is enforced against the SUM, so a page that showed only
+              committed spend would report headroom an org does not have. */}
+          <Kpi
+            label="In flight"
+            value={formatPence(snap.totalReservedPence)}
+            tone={snap.totalReservedPence > 0 ? "amber" : undefined}
+          />
           <Kpi label="Invocations" value={String(snap.totalInvocations)} />
           <Kpi
             label="Failures"
@@ -140,6 +149,19 @@ export default async function AiCostsPage() {
             tone={snap.spikingOrgs.length > 0 ? "amber" : undefined}
           />
         </dl>
+        {/* THE CALIBRATION ALARM. A settled claim that cost more than it
+            reserved is the one way committed spend can pass the ceiling, so it
+            is stated rather than left to be inferred from a total. */}
+        {snap.totalOverruns > 0 ? (
+          <p className="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-xs font-medium text-red-900">
+            {snap.totalOverruns} settled call{snap.totalOverruns === 1 ? "" : "s"} cost MORE than the
+            budget reserved for {snap.totalOverruns === 1 ? "it" : "them"}. The ceiling holds exactly
+            only while a call&rsquo;s real cost stays within its reservation, so the worst-case token
+            envelope on the bound model (<code>reserveInputTokens</code> /{" "}
+            <code>reserveOutputTokens</code> in lib/ai/governor/registry.ts) is too small and should
+            be raised.
+          </p>
+        ) : null}
       </section>
 
       {/* 3. By org. */}
@@ -147,7 +169,8 @@ export default async function AiCostsPage() {
         <header className="flex items-baseline justify-between">
           <h2 className="text-base font-semibold text-slate-900">By organisation</h2>
           <p className="text-[11px] text-slate-500">
-            spike = more than 3× that org&rsquo;s own trailing average
+            % of ceiling counts committed spend AND in-flight claims · spike = more than 3× that
+            org&rsquo;s own trailing average
           </p>
         </header>
         {snap.byOrg.length === 0 ? (
@@ -160,7 +183,8 @@ export default async function AiCostsPage() {
               <thead className="bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Organisation</th>
-                  <th className="px-3 py-2 text-right">Spend</th>
+                  <th className="px-3 py-2 text-right">Committed</th>
+                  <th className="px-3 py-2 text-right">In flight</th>
                   <th className="px-3 py-2 text-right">% of ceiling</th>
                   <th className="px-3 py-2 text-right">Calls</th>
                   <th className="px-3 py-2 text-right">Fails</th>
@@ -255,6 +279,16 @@ function OrgRow({ org }: { org: AiCostOrgRow }) {
       </td>
       <td className="px-3 py-2 text-right font-medium text-slate-800">
         {formatPence(org.spentPence)}
+      </td>
+      <td
+        className={`px-3 py-2 text-right ${
+          org.reservedPence > 0 ? "font-medium text-amber-800" : "text-slate-400"
+        }`}
+      >
+        {formatPence(org.reservedPence)}
+        {org.liveReservations > 0 ? (
+          <span className="ml-1 text-[10px] text-amber-700">({org.liveReservations})</span>
+        ) : null}
       </td>
       <td className="px-3 py-2 text-right text-slate-600">{org.percentOfCeiling}%</td>
       <td className="px-3 py-2 text-right text-slate-600">{org.invocations}</td>
