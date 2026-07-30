@@ -109,9 +109,21 @@ export function validateAiResponse(raw: unknown): AiResponse | null {
 }
 
 /**
- * Returns true when at least one provider key is present. Used by the
- * fallback path — when this is false, every AI surface still works
- * but renders deterministic content + a "AI not configured" badge.
+ * Returns true when at least one provider key is present.
+ *
+ * A PROBE, NOT A GATE — and it must never become one again. It used to be the
+ * condition seven AI paths branched on, which made a vendor credential
+ * sufficient to reach a model while every cost tier in
+ * lib/ai/governor/registry.ts still mapped to NO model: real spend, outside the
+ * £100/org/month ceiling, absent from the invocation ledger. The question a call
+ * site has to ask is `isGovernorActivated()` (lib/ai/governor/readiness.ts) —
+ * "is a model BOUND and reachable" — which a stray key cannot answer yes.
+ *
+ * `__tests__/security/ai-governance-closure.test.ts` pins that this function has
+ * ZERO callers, so the regression cannot return quietly. It stays exported
+ * because "is a credential present" is still a true and occasionally useful
+ * fact — the ops env snapshot reports it, and readiness needs it to tell an
+ * operator that a key is set while nothing is bound.
  */
 export function isAiConfigured(): boolean {
   return (

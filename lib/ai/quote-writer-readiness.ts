@@ -94,9 +94,17 @@ export type QuoteWriterReadiness = {
   /** Everything standing between an operator and a draft. Empty ⇒ available. */
   blockers: string[];
   /**
-   * A vendor credential is present while no tier is bound — the drift case the
-   * governor reports. Surfaced here too because this is the screen an operator
-   * is actually looking at when they wonder why nothing happens.
+   * Forwarded from the governor: an inference path in this build could reach a
+   * provider on a credential alone, outside the ceiling and the ledger.
+   *
+   * FALSE by construction since the governance closure — every provider door
+   * requires governor activation. It is forwarded rather than dropped so that if
+   * such a path is ever added back (which requires raising
+   * `AI_UNGOVERNED_INFERENCE_ENTRY_POINTS` in a diff), this screen learns about
+   * it for free. The operator-facing "you have a key but no model" hint is NOT
+   * this field — see `credentialsPresent` + `modelBindingPresent`, which is what
+   * the panel renders, because that hint is about an activation half-done and is
+   * useful whether or not anything ungoverned exists.
    */
   ungovernedCredentialRisk: boolean;
 };

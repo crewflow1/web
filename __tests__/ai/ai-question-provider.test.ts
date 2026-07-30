@@ -131,11 +131,16 @@ afterEach(() => {
 // ---------------------------------------------------------------------
 
 describe("askAi — one model door via the shared abstraction", () => {
-  it("returns a deterministic answer when AI is not configured (feature off)", async () => {
+  it("returns a deterministic answer when the model door is shut (feature off)", async () => {
+    // "Not configured" is now decided by the DOOR, not by a key check the
+    // handler makes for itself: `getTextProvider()` requires the AI Cost
+    // Governor to be activated (a bound cost tier), so a vendor credential on a
+    // deploy no longer reaches a model. The observable contract is unchanged —
+    // a deterministic answer, and no generation.
     isAiConfiguredMock.mockReturnValue(false);
+    getTextProviderMock.mockReturnValue(null);
     const out = await askAi({ orgId: "ORG-1", question: "Summarise this month." });
     expect(out.generated_by).toBe("deterministic");
-    expect(getTextProviderMock).not.toHaveBeenCalled();
     expect(generateMock).not.toHaveBeenCalled();
   });
 
@@ -283,9 +288,28 @@ describe("ai-question wiring (source-pinned architecture)", () => {
     expect(code).toMatch(/temperature:\s*0/);
   });
 
-  it("the deterministic fallback + the isAiConfigured gate are preserved", () => {
+  it("the deterministic fallback is preserved, and the gate is ACTIVATION not a key", () => {
     const code = read(HANDLER);
     expect(code).toMatch(/deterministicAnswer/);
-    expect(code).toMatch(/if \(!isAiConfigured\(\)\)/);
+    // The bare credential gate is GONE. It answered "is a vendor key present",
+    // which stopped deciding anything once the model door required a bound cost
+    // tier — and leaving it in the file would have left a bare-credential gate
+    // for the next reader to copy. The door is now the only gate.
+    //
+    // Asserted on the IMPORT and on the gate SHAPE rather than on the bare
+    // identifier: the module header explains what changed and why, and prose
+    // that documents a removal must not read as the removal having failed.
+    expect(code).not.toMatch(/^\s*isAiConfigured,\s*$/m);
+    expect(code).not.toMatch(/if \(!isAiConfigured\(\)\)/);
+    expect(code).toMatch(/const provider = getTextProvider\(\)/);
+  });
+
+  it("the model call is GOVERNED — the £100 ceiling and the ledger are in the path", () => {
+    const code = read(HANDLER);
+    expect(code).toMatch(/invokeWithGovernor\(\s*\n?\s*"insights\.question"/);
+    // Both governor refusals degrade to the deterministic answer, which is what
+    // this handler already returns with no provider — so no caller and no UI
+    // learns a new outcome from the cost control.
+    expect(code).toMatch(/if \(outcome\.status !== "ran"\)/);
   });
 });

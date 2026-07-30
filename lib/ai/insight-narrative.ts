@@ -1,5 +1,6 @@
 import "server-only";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
+import { invokeWithGovernor } from "@/lib/ai/governor";
 
 /**
  * Tenant AI Insights — the NARRATE-ONLY summary generator (Vision 2030 AI-1).
@@ -30,6 +31,25 @@ import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
  * unsupported provider, a provider throw/timeout, or an empty generation → also
  * `null`. The caller treats `null` as "render deterministic only", so
  * degradation is invisible to the tenant.
+ *
+ * GOVERNED. The provider call passes through `invokeWithGovernor`
+ * (lib/ai/governor.ts) — the £100/org/month ceiling, the recent-duplicate
+ * refusal, and the tokens/latency/cost ledger. Until this change it did not: the
+ * only gate was `getTextProvider()`, a bare credential check, so setting
+ * `ANTHROPIC_API_KEY` on a deploy would have switched THIS TENANT-FACING path on
+ * outside the ceiling entirely. Budget refusal and duplicate refusal both return
+ * `null`, which is the same value every other degraded leg here returns, so no
+ * caller learns a new outcome.
+ *
+ * THE ONE DOCTRINE CAVEAT, stated because the governor's header demands it. "AI
+ * wakes on meaningful change, never on page load" — and this is reached from a
+ * PAGE RENDER (server/services/ai-insights.ts, via /insights). What keeps that
+ * honest is the caller's day-bucketed KV cache: at most one generation per org
+ * per kind per window per day. When KV is absent (CI / preview) that bound is
+ * gone and every render would generate, which is exactly the pattern the header
+ * warns about — so the governor's 15-minute dedupe window is a REAL backstop
+ * here, not a formality. Moving narration onto an event is the proper fix and is
+ * a separate change.
  */
 
 export type InsightKind = "activity" | "lead";
@@ -104,10 +124,17 @@ function isSupportedProvider(provider: string): boolean {
 /**
  * Generate a narrative for a deterministic insight payload, or `null` when the
  * feature is off or the model cannot be trusted. Never throws.
+ *
+ * `actor` is REQUIRED, not optional, and that is the point: a governed call has
+ * to name the organisation whose ceiling it spends from. An optional org id
+ * would be a way to spend money nobody is accountable for. The id is used ONLY
+ * for budget attribution — it is stripped from the payload before the prompt is
+ * built (see `stripOrgId`) and never reaches a model.
  */
 export async function generateInsightNarrative(
   kind: InsightKind,
   payload: unknown,
+  actor: { orgId: string; userId?: string | null },
 ): Promise<InsightNarrative | null> {
   const provider = getTextProvider();
   if (!provider) return null; // feature off → deterministic-only
@@ -118,14 +145,45 @@ export async function generateInsightNarrative(
   const startedAt = Date.now();
   let result: TextResult;
   try {
-    result = await provider.generate(prompt, {
-      system: INSIGHT_NARRATIVE_SYSTEM,
-      temperature: 0, // bounded determinism — stable narration of fixed facts
-      maxTokens: NARRATIVE_MAX_TOKENS,
-      signal: AbortSignal.timeout(NARRATIVE_TIMEOUT_MS),
-    });
+    const outcome = await invokeWithGovernor(
+      "insights.narrative",
+      "drafting",
+      async () => {
+        const generated = await provider.generate(prompt, {
+          system: INSIGHT_NARRATIVE_SYSTEM,
+          temperature: 0, // bounded determinism — stable narration of fixed facts
+          maxTokens: NARRATIVE_MAX_TOKENS,
+          signal: AbortSignal.timeout(NARRATIVE_TIMEOUT_MS),
+        });
+        return {
+          value: generated,
+          // The vendor's own billed counts. The ledger records provider truth.
+          usage: {
+            provider: provider.info.provider,
+            model: generated.model,
+            inputTokens: generated.inputTokens,
+            outputTokens: generated.outputTokens,
+          },
+        };
+      },
+      {
+        orgId: actor.orgId,
+        userId: actor.userId ?? null,
+        // The exact prompt is the dedupe identity: the same snapshot narrated
+        // twice within the window is the same paragraph. Only its SHA-256
+        // reaches the ledger — never the tenant's figures.
+        dedupeContent: `${kind} ${prompt}`,
+      },
+    );
+    // Over the ceiling, or an identical narration already in flight: the
+    // deterministic cards render alone, exactly as they do with no provider. A
+    // cost control that broke /insights would be worse than the spend.
+    if (outcome.status !== "ran") return null;
+    result = outcome.value;
   } catch (err) {
-    // Transient provider failure → the deterministic UI stays intact.
+    // Transient provider failure → the deterministic UI stays intact. The
+    // governor has already RECORDED the failure and rethrown; this catch owns
+    // the degraded path exactly as it did before.
     console.error("[ai/insights] narrative generation failed", err);
     return null;
   }

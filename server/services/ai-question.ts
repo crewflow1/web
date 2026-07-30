@@ -1,9 +1,9 @@
 import "server-only";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import { getTextProvider, textCostUsd } from "@/lib/ai/text";
+import { invokeWithGovernor } from "@/lib/ai/governor";
 import {
   AI_FORBIDDEN_ACTIONS,
-  isAiConfigured,
   validateAiResponse,
   type AiResponse,
 } from "@/lib/ai/safety";
@@ -27,11 +27,23 @@ import {
  * boundaries. Temperature is pinned to 0 — the model DESCRIBES the
  * snapshot, it never invents a number the snapshot does not contain.
  *
- * Cost: every model-backed answer records the provider's authoritative
- * token counts + `textCostUsd` price to the structured log. The Q&A has no
- * per-answer DB row, so — consistent with `[ai/insights]` and the repo's
- * "cost is observability, never a correctness gate" doctrine — that log line
- * is the cost sink.
+ * GOVERNED. The model call passes through `invokeWithGovernor`
+ * (lib/ai/governor.ts): the £100/org/month ceiling, the recent-duplicate
+ * refusal, and the durable tokens/latency/cost ledger. Until this change the
+ * only gates were `isAiConfigured()` and `getTextProvider()` — both bare
+ * credential checks — so setting `ANTHROPIC_API_KEY` on a deploy would have
+ * switched this TENANT-FACING answer box on with no ceiling and no ledger row.
+ * Both refusals return the deterministic answer, which is exactly what this
+ * handler already returns when no provider is configured, so the caller and the
+ * UI learn no new outcome. The `isAiConfigured()` pre-check is GONE rather than
+ * kept: it answered a question that no longer decides anything (a key without a
+ * bound tier yields no provider), and leaving it would have left a bare
+ * credential gate in the file for the next reader to copy.
+ *
+ * Cost: every model-backed answer ALSO records the provider's authoritative
+ * token counts + `textCostUsd` price to the structured log — kept because it is
+ * greppable in a way a database row is not, and because the ledger is empty
+ * until a tier is bound.
  *
  * Org isolation: the slim snapshot is a purpose-built projection that carries
  * NO `org_id` and no PII, so nothing tenant-identifying ever reaches the
@@ -72,13 +84,10 @@ export async function askAi(input: {
   const snap = await buildRetentionSnapshot(orgId);
   const slim = slimSnapshot(snap);
 
-  if (!isAiConfigured()) {
-    return deterministicAnswer(question, slim);
-  }
-
   // ONE model door — the shared provider abstraction. No vendor SDK, no API
-  // key read: `getTextProvider()` owns selection + graceful null. When it
-  // yields nothing usable, the deterministic answer stands in unchanged.
+  // key read: `getTextProvider()` owns selection, the governor's activation
+  // requirement, and graceful null. When it yields nothing usable, the
+  // deterministic answer stands in unchanged.
   const provider = getTextProvider();
   if (!provider || !isSupportedProvider(provider.info.provider)) {
     return deterministicAnswer(question, slim);
@@ -88,12 +97,46 @@ export async function askAi(input: {
   const startedAt = Date.now();
 
   try {
-    const result = await provider.generate(userPrompt, {
-      system: SYSTEM_PROMPT,
-      temperature: 0,
-      maxTokens: ANSWER_MAX_TOKENS,
-      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS),
-    });
+    const outcome = await invokeWithGovernor(
+      "insights.question",
+      "drafting",
+      async () => {
+        const generated = await provider.generate(userPrompt, {
+          system: SYSTEM_PROMPT,
+          temperature: 0,
+          maxTokens: ANSWER_MAX_TOKENS,
+          signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS),
+        });
+        return {
+          value: generated,
+          usage: {
+            provider: provider.info.provider,
+            model: generated.model,
+            inputTokens: generated.inputTokens,
+            outputTokens: generated.outputTokens,
+          },
+        };
+      },
+      {
+        orgId,
+        // A tenant asked this, at a keyboard — unlike the narrative, there IS a
+        // person. The signed-in user is not threaded this far today (the route
+        // authenticates and passes orgId only), so this stays null rather than
+        // guessing; the ledger's user_id is nullable for exactly this reason.
+        userId: null,
+        // The question plus the snapshot it is answered against: re-asking the
+        // SAME question while nothing has changed is waste, but asking it again
+        // after the data moves is not. Only the SHA-256 reaches the ledger.
+        dedupeContent: userPrompt,
+      },
+    );
+    // Over the ceiling, or the identical question already in flight: the
+    // deterministic answer stands in, labelled `deterministic` so the UI can
+    // say so. Identical to the no-provider leg.
+    if (outcome.status !== "ran") {
+      return deterministicAnswer(question, slim);
+    }
+    const result = outcome.value;
 
     const raw = extractJson(result.text);
     // `generated_by` is OUR truth (the provider that actually ran), not the
@@ -118,6 +161,8 @@ export async function askAi(input: {
       return parsed;
     }
   } catch (err) {
+    // Unchanged: the governor RECORDS the failure and rethrows, so this catch
+    // still owns the degraded path exactly as it did before.
     console.error("[ai-question] LLM call failed", err);
   }
 

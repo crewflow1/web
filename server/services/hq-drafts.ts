@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
+import { invokeWithGovernor } from "@/lib/ai/governor";
+import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import {
   assembleDraftPrompt,
   draftPromptChecksum,
@@ -233,23 +235,70 @@ async function buildDraft(
   const provider = getTextProvider();
 
   // No provider configured → deterministic fallback (the DEFAULT path in CI, where
-  // no LLM key is set — so generation is reproducible end-to-end).
+  // no LLM key is set — so generation is reproducible end-to-end). Since the
+  // governance closure this ALSO covers "a vendor key is set but no cost tier is
+  // bound": the factory requires governor activation, not merely a credential.
   if (!provider) return fallbackBuilt(kind, context, "no_provider");
 
   const genProvenance = generatedProvenance(provider.info.provider);
   if (!genProvenance) return fallbackBuilt(kind, context, "unsupported_provider");
 
+  // WHOSE BUDGET. HQ is not a tenant, and the ledger's `org_id` is NOT NULL for
+  // good reason (see lib/ai/governor/attribution.ts) — so HQ's own AI spend is
+  // billed to CrewFlow's own organisation row. Unset ⇒ FAIL CLOSED to the
+  // deterministic draft: an invocation nobody is billed for is an invocation
+  // outside the ceiling, which is the defect this lane exists to remove.
+  const budgetOrgId = hqBudgetOrgId();
+  if (!budgetOrgId) return fallbackBuilt(kind, context, "no_budget_org");
+
   const startedAt = Date.now();
   let result: TextResult;
   try {
-    result = await provider.generate(prompt.user, {
-      system: prompt.system,
-      temperature: 0, // bounded determinism (ADR 0002): temperature 0 + pinned model.
-      maxTokens,
-    });
+    // GOVERNED. Until this change the only gate was `getTextProvider()` — a bare
+    // credential check — so a key on a deploy switched the whole Draft Engine on
+    // outside the £100/month ceiling and outside the ledger. Both governor
+    // refusals degrade to the DETERMINISTIC draft, so generation stays TOTAL and
+    // every caller still receives a persisted row.
+    const outcome = await invokeWithGovernor(
+      "hq.draft",
+      "drafting",
+      async () => {
+        const generated = await provider.generate(prompt.user, {
+          system: prompt.system,
+          temperature: 0, // bounded determinism (ADR 0002): temperature 0 + pinned model.
+          maxTokens,
+        });
+        return {
+          value: generated,
+          usage: {
+            provider: provider.info.provider,
+            model: generated.model,
+            inputTokens: generated.inputTokens,
+            outputTokens: generated.outputTokens,
+          },
+        };
+      },
+      {
+        orgId: budgetOrgId,
+        // A system-initiated generation: no signed-in human authored it.
+        userId: null,
+        // The prompt is already deterministic for a given kind+context (that is
+        // what `prompt_checksum` records), so an identical prompt inside the
+        // window is the identical draft. Re-generating it is pure waste.
+        dedupeContent: `${kind} ${prompt.system} ${prompt.user}`,
+      },
+    );
+    if (outcome.status === "blocked") {
+      return fallbackBuilt(kind, context, "budget_blocked");
+    }
+    if (outcome.status === "duplicate") {
+      return fallbackBuilt(kind, context, "duplicate_request");
+    }
+    result = outcome.value;
   } catch (err) {
     // A transient provider failure degrades to the deterministic draft — generation
-    // never fails. The reason is recorded for observability.
+    // never fails. The reason is recorded for observability. The governor has
+    // already RECORDED the failure and rethrown; this catch is unchanged.
     return fallbackBuilt(kind, context, `provider_error: ${errMessage(err)}`);
   }
   const latencyMs = Date.now() - startedAt;

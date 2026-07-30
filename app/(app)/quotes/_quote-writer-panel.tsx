@@ -104,7 +104,14 @@ function DarkNotice({
               <li key={b}>{b}</li>
             ))}
           </ul>
-          {readiness.ungovernedCredentialRisk ? (
+          {/*
+            The "key present, no model connected" hint. Driven by the two facts
+            directly rather than by `ungovernedCredentialRisk`, which since the
+            governance closure means something narrower ("an ungoverned path
+            exists") and is false by construction. The hint itself is still worth
+            showing: it is an activation half-done either way.
+          */}
+          {readiness.credentialsPresent && !readiness.modelBindingPresent ? (
             <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
               An AI provider credential is present in this environment while no model is
               connected. That combination is worth resolving either way — connect a model

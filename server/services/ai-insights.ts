@@ -93,7 +93,12 @@ export async function resolveInsightNarrative(args: {
     }
   }
 
-  const narrative = await generateInsightNarrative(kind, payload);
+  // The org id is passed for BUDGET ATTRIBUTION only — the generator strips it
+  // from the payload before the prompt is built, so it still never reaches a
+  // model. `userId: null`: a narration is a render-time enrichment, not an
+  // action a person took, which is the same reason the ledger's user_id is
+  // nullable for system work.
+  const narrative = await generateInsightNarrative(kind, payload, { orgId, userId: null });
   if (!narrative) {
     // No provider configured, or the model failed / returned nothing.
     return { summary: null, cache: "disabled" };

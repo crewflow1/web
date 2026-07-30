@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
-import { isAiConfigured } from "@/lib/ai/safety";
+import { getVisionProvider } from "@/lib/ai/vision";
 import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
 import { expenseDraftApproveSchema } from "@/lib/suppliers/schema";
 import { z } from "zod";
@@ -25,9 +25,10 @@ import { z } from "zod";
  *
  *   4. Operator rejects → draft moves to `rejected` with a reason.
  *
- * AI extraction is best-effort — when no AI key is configured, the
- * draft is created with NULL extraction fields and the operator
- * types the values manually.
+ * AI extraction is best-effort — when no vision provider is available
+ * (no cost tier bound, or no vendor credential), the draft is created
+ * with NULL extraction fields and the operator types the values
+ * manually. That is the live path in production today.
  */
 
 export type DraftExtraction = {
@@ -53,7 +54,7 @@ export async function createExpenseDraftFromUpload(input: {
   const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
-  // AI extraction. When no key, fields stay null; operator fills.
+  // AI extraction. No vision provider ⇒ fields stay null; operator fills.
   // Runs under the AI Cost Governor — see maybeExtractReceipt.
   const extraction = await maybeExtractReceipt(input.rawBytes, input.mimeType, {
     orgId: ctx.org.id,
@@ -215,8 +216,7 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
 }
 
 // ---------------------------------------------------------------------
-// AI extraction — Claude vision on a receipt image/PDF.
-// Reuses the existing imports/ocr.ts pattern.
+// AI extraction — vision on a receipt image/PDF, through the SHARED door.
 //
 // GOVERNED. The provider call is wrapped in `invokeWithGovernor`
 // (lib/ai/governor.ts), which is the seam every AI call in CrewFlow passes
@@ -224,11 +224,19 @@ export async function approveExpenseDraft(input: z.infer<typeof expenseDraftAppr
 // re-upload of a receipt it already read minutes ago, and records tokens /
 // latency / estimated cost for the ones it lets through.
 //
-// DARK TODAY, AND UNCHANGED BY THE WRAPPING. No tier is bound to a model and no
-// provider credential is set in production, so `isAiConfigured()` below is false
-// and this function returns the same empty extraction it always did, without the
-// governor performing a single database read. The degraded path — the operator
-// types the values — is the live behaviour and remains byte-for-byte identical.
+// ONE VISION DOOR. This used to construct `@anthropic-ai/sdk` itself and gate on
+// `isAiConfigured()` — a bare credential check. So did lib/imports/ocr.ts, with
+// its own copy of the same SDK construction, its own model string and its own
+// PDF-vs-image block. Both now go through lib/ai/vision, which owns the
+// transport and — the load-bearing part — requires the governor to be ACTIVATED
+// (a bound cost tier), not merely a key to be present. A credential on a deploy
+// can no longer switch paid vision extraction on outside the ceiling.
+//
+// DARK TODAY, AND UNCHANGED BY THE WRAPPING. No tier is bound to a model, so
+// `getVisionProvider()` below returns null and this function returns the same
+// empty extraction it always did, without the governor performing a single
+// database read. The degraded path — the operator types the values — is the live
+// behaviour and remains byte-for-byte identical.
 //
 // EVENT-DRIVEN. This is an upload handler: it runs when a receipt ARRIVES, once
 // per receipt. It is never on a render path.
@@ -239,7 +247,8 @@ async function maybeExtractReceipt(
   mimeType: string,
   actor: { orgId: string; userId: string | null },
 ): Promise<DraftExtraction> {
-  if (!isAiConfigured() || !bytes || bytes.length === 0) {
+  const vision = getVisionProvider();
+  if (!vision || !bytes || bytes.length === 0) {
     return zeroExtraction();
   }
   const isImage = mimeType.startsWith("image/");
@@ -253,7 +262,7 @@ async function maybeExtractReceipt(
     const outcome = await invokeWithGovernor(
       "expense.receipt_extraction",
       "classification",
-      () => readReceiptWithProvider(base64, mimeType, isPdf),
+      () => readReceiptWithProvider(vision, base64, mimeType, isPdf),
       {
         orgId: actor.orgId,
         userId: actor.userId,
@@ -281,63 +290,49 @@ async function maybeExtractReceipt(
  * that. Throws on any provider failure — the caller owns the degraded path.
  */
 async function readReceiptWithProvider(
+  vision: NonNullable<ReturnType<typeof getVisionProvider>>,
   base64: string,
   mimeType: string,
   isPdf: boolean,
 ): Promise<GovernedCall<DraftExtraction>> {
-  const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-  const docBlock: Record<string, unknown> = isPdf
-    ? {
-        type: "document",
-        source: { type: "base64", media_type: "application/pdf", data: base64 },
-      }
-    : {
-        type: "image",
-        source: { type: "base64", media_type: mimeType, data: base64 },
-      };
-  const model = "claude-haiku-4-5";
-  const msg = await client.messages.create(
+  const result = await vision.extract(
     {
-      model,
-      max_tokens: 600,
-      system: [
-        "You read a UK supplier receipt or invoice and return ONE JSON object:",
-        '{ "amount": number|null, "vat_rate": 0|5|20|null, "vat_total": number|null, "total": number|null, "supplier_name": string|null, "category": string|null, "invoice_date": "YYYY-MM-DD"|null, "reference": string|null, "confidence": 0-100 }',
-        "amount is the NET (ex-VAT) figure. total is gross (inc VAT).",
-        "If unclear, return null + lower confidence. NEVER hallucinate.",
-      ].join("\n"),
-      messages: [
-        {
-          role: "user",
-          content: [
-            docBlock as never,
-            { type: "text", text: "Extract the values per the schema." },
-          ],
-        },
-      ],
+      kind: isPdf ? "pdf" : "image",
+      mediaType: isPdf ? "application/pdf" : mimeType,
+      base64,
     },
-    { signal: AbortSignal.timeout(15_000) },
+    {
+      system: RECEIPT_SYSTEM_PROMPT,
+      instruction: "Extract the values per the schema.",
+      // A receipt is one page of fields; 600 tokens is ample and bounds the cost.
+      maxTokens: 600,
+      signal: AbortSignal.timeout(15_000),
+    },
   );
   // The vendor's own billed counts — the ledger records provider truth, never
   // an estimate of the token count.
   const usage = {
-    provider: "anthropic",
-    model: msg.model ?? model,
-    inputTokens: msg.usage?.input_tokens ?? 0,
-    outputTokens: msg.usage?.output_tokens ?? 0,
+    provider: vision.info.provider,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
   };
-  const block = msg.content[0];
-  if (block?.type === "text") {
-    const raw = extractJson(block.text);
-    if (raw && typeof raw === "object") {
-      return { value: normaliseExtraction(raw as Record<string, unknown>), usage };
-    }
+  const raw = extractJson(result.text);
+  if (raw && typeof raw === "object") {
+    return { value: normaliseExtraction(raw as Record<string, unknown>), usage };
   }
   // A response we could not parse still COST what it cost — report the usage so
   // the ledger reflects the spend, and return the same empty draft as before.
   return { value: zeroExtraction(), usage };
 }
+
+/** The fixed framing. No receipt content can steer it. */
+const RECEIPT_SYSTEM_PROMPT = [
+  "You read a UK supplier receipt or invoice and return ONE JSON object:",
+  '{ "amount": number|null, "vat_rate": 0|5|20|null, "vat_total": number|null, "total": number|null, "supplier_name": string|null, "category": string|null, "invoice_date": "YYYY-MM-DD"|null, "reference": string|null, "confidence": 0-100 }',
+  "amount is the NET (ex-VAT) figure. total is gross (inc VAT).",
+  "If unclear, return null + lower confidence. NEVER hallucinate.",
+].join("\n");
 
 function zeroExtraction(): DraftExtraction {
   return {
