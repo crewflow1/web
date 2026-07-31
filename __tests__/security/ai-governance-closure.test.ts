@@ -179,13 +179,10 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     expect(ungovernedEntryPoints()).toEqual([]);
   });
 
-  it("agrees with the constant the READINESS SURFACE reports to operators", async () => {
+  it("agrees with the constant the READINESS SURFACE reports to operators", () => {
     // The pin that stops the green light drifting from the code. The readiness
     // field is derived from this number, so a source regression makes the HQ page
     // go amber on its own rather than staying green by assertion.
-    const { AI_UNGOVERNED_INFERENCE_ENTRY_POINTS, getAiGovernorReadiness } = await import(
-      "@/lib/ai/governor/readiness"
-    );
     expect(ungovernedEntryPoints().length).toBe(AI_UNGOVERNED_INFERENCE_ENTRY_POINTS);
     expect(AI_UNGOVERNED_INFERENCE_ENTRY_POINTS).toBe(0);
 
@@ -288,8 +285,7 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
 // ---------------------------------------------------------------------------
 
 describe("the registry is once again the COMPLETE list of what may spend", () => {
-  it("registers all seven closed paths, with the reviewed task class", async () => {
-    const { AI_FEATURES, featureDefinition } = await import("@/lib/ai/governor/registry");
+  it("registers all seven closed paths, with the reviewed task class", () => {
     const expected = {
       // Tenant-facing prose a customer reads ⇒ `drafting`, the class whose cost
       // tier exists for exactly that. Not `complex`: the model is handed finished
@@ -420,6 +416,22 @@ vi.mock("@/server/services/retention-snapshot", () => ({
   buildRetentionSnapshot: buildSnapshotMock,
 }));
 
+/**
+ * STATIC imports, deliberately — `vi.mock` is hoisted above them by the vitest
+ * transform, so the doors and the admin client are already mocked by the time
+ * these modules load. They were `await import(...)` inside each test at first,
+ * which paid a cold module-graph load (the governor pulls in the Supabase client)
+ * on the FIRST assertion of the file and made that one test the slowest thing in
+ * the suite — enough to trip the default 5s timeout on a loaded machine. Moving
+ * the cost to collection removes the flake without weakening an assertion.
+ */
+import { AI_UNGOVERNED_INFERENCE_ENTRY_POINTS, getAiGovernorReadiness } from "@/lib/ai/governor/readiness";
+import { AI_FEATURES, featureDefinition, isAnyTierBound } from "@/lib/ai/governor/registry";
+import { isGovernorActivated } from "@/lib/ai/governor";
+import { generateInsightNarrative } from "@/lib/ai/insight-narrative";
+import { askAi } from "@/server/services/ai-question";
+import { ocrFileToSheet, OcrUnavailableError } from "@/lib/imports/ocr";
+
 const SNAP = {
   now: "2026-07-10T00:00:00.000Z",
   last_activity_at: "2026-07-08T00:00:00.000Z",
@@ -461,15 +473,12 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
     });
   });
 
-  it("the build really is dark — otherwise every assertion below is vacuous", async () => {
-    const { isGovernorActivated } = await import("@/lib/ai/governor");
-    const { isAnyTierBound } = await import("@/lib/ai/governor/registry");
+  it("the build really is dark — otherwise every assertion below is vacuous", () => {
     expect(isAnyTierBound()).toBe(false);
     expect(isGovernorActivated()).toBe(false);
   });
 
   it("insights.narrative — returns the prose, touches NO database", async () => {
-    const { generateInsightNarrative } = await import("@/lib/ai/insight-narrative");
     textGenerate.mockResolvedValue({
       text: "  Steady pipeline this month.  ",
       model: "fake-model",
@@ -489,7 +498,6 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
   });
 
   it("insights.question — returns the model answer, touches NO database", async () => {
-    const { askAi } = await import("@/server/services/ai-question");
     textGenerate.mockResolvedValue({
       text: JSON.stringify({
         answer: "Quotes are converting steadily.",
@@ -509,7 +517,6 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
   });
 
   it("imports.ocr — returns the parsed sheet, touches NO database", async () => {
-    const { ocrFileToSheet } = await import("@/lib/imports/ocr");
     visionExtract.mockResolvedValue({
       text: JSON.stringify({
         kind: "invoice",
@@ -540,7 +547,6 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
     // The governor settles failures as spend when activated. Dark, there is
     // nothing to settle — but the caller's own catch must behave exactly as
     // before, which is what preserves every degraded path.
-    const { generateInsightNarrative } = await import("@/lib/ai/insight-narrative");
     textGenerate.mockRejectedValue(new Error("429 Too Many Requests"));
 
     const out = await generateInsightNarrative("activity", {}, { orgId: "ORG-1", userId: null });
@@ -556,9 +562,6 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
     // state a stray credential must not be able to leave.
     getTextProviderMock.mockReturnValue(null);
     getVisionProviderMock.mockReturnValue(null);
-    const { generateInsightNarrative } = await import("@/lib/ai/insight-narrative");
-    const { askAi } = await import("@/server/services/ai-question");
-    const { ocrFileToSheet, OcrUnavailableError } = await import("@/lib/imports/ocr");
 
     expect(
       await generateInsightNarrative("activity", {}, { orgId: "ORG-1", userId: null }),
