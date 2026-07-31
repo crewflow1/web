@@ -53,12 +53,22 @@ export default async function SuppliersPage() {
             People and companies you pay. Used on expenses + finances.
           </p>
         </div>
-        <Link
-          href="/suppliers/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Add supplier
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {rows.length > 0 ? (
+            <Link
+              href="/suppliers/compare"
+              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Compare performance
+            </Link>
+          ) : null}
+          <Link
+            href="/suppliers/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Add supplier
+          </Link>
+        </div>
       </header>
 
       {rows.length === 0 ? (

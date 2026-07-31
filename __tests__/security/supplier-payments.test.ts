@@ -395,8 +395,8 @@ describe("supplier payments service — tenant client only, never service_role",
     // admin-only RLS still applies. Asserted in its own tier,
     // __tests__/security/cis-statements.test.ts.
     //
-    // `aged-ledgers.ts` (the aged-creditors half of /reports/ageing) is the
-    // second READ-ONLY consumer, admitted on the same terms:
+    // `aged-ledgers.ts` (the aged-creditors half of /reports/ageing) is another
+    // READ-ONLY consumer, admitted on the same terms:
     //   - tenant client only (`createClient` from lib/supabase/server), so the
     //     admin-only RLS on both tables remains the real boundary;
     //   - no insert/update/delete/upsert/rpc anywhere in the file — pinned by
@@ -418,12 +418,25 @@ describe("supplier payments service — tenant client only, never service_role",
     // service uses — instead of a second settlement formula. Tenant client only,
     // never service_role. Asserted in its own tier,
     // __tests__/security/cash-out-no-new-arithmetic.test.ts.
+    // `supplier-performance.ts` joins the same two tables for the SAME reason
+    // and under the same terms: it reads `supplier_payments` and
+    // `supplier_payment_allocations` to date each bill's settling payment and to
+    // exclude VOIDED payments from the settlement-speed measure. It is READ-ONLY
+    // — no insert, update, delete or rpc anywhere in the module — it takes the
+    // TENANT client as an argument so admin-only RLS applies to every call, and
+    // it re-derives no settlement arithmetic (it composes
+    // `computeBillSettlements` from lib/suppliers/payments.ts, the authority this
+    // service also uses). All three properties are asserted in their own tier,
+    // __tests__/security/supplier-performance-readonly.test.ts, and the org
+    // pinning is proven against real Postgres in
+    // __tests__/integration/rls/supplier-performance-active-org.test.ts.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/aged-ledgers.ts",
       "server/services/cis-statements.ts",
       "server/services/org-cash-out.ts",
       "server/services/supplier-payments.ts",
+      "server/services/supplier-performance.ts",
     ]);
   });
 
