@@ -616,11 +616,37 @@ describe("CIS M3 RLS is admin-only", () => {
     // discipline this pin exists to protect — tenant client only, never
     // service_role — which its own tier asserts in
     // __tests__/security/cis-statements.test.ts.
+    //
+    // `org-cash-out.ts` (H2-CASH M4) is the third legitimate reader: it reads
+    // `cis_payment_snapshots` to answer "how much CIS do we still owe HMRC" on
+    // the cash-position page, and it SUMS the frozen figures through M4's own
+    // `buildMonthlyReturnDataset` rather than recomputing a rate, a basis or a
+    // deduction. Read-only by construction (its client type cannot express a
+    // write) and tenant-client only. Its own tier,
+    // __tests__/security/cash-out-no-new-arithmetic.test.ts, asserts that it
+    // adds no CIS arithmetic.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/cis-deduction.ts",
       "server/services/cis-statements.ts",
+      "server/services/org-cash-out.ts",
     ]);
+  });
+
+  it("the money-out reader added to that list neither writes nor re-derives a deduction", () => {
+    // Restated here because the allowlist grew: the pin exists to protect the
+    // engine's exclusivity, so a new reader must be shown to respect it.
+    const cashOut = codeOf(read("server/services/org-cash-out.ts"));
+    for (const verb of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/]) {
+      expect(cashOut, `org-cash-out must not call ${verb}`).not.toMatch(verb);
+    }
+    expect(cashOut).not.toMatch(/SERVICE_ROLE|serviceClient/);
+    expect(cashOut, "no rate arithmetic").not.toMatch(/deduction_rate\s*[*/]/);
+    expect(cashOut, "no basis arithmetic").not.toMatch(/cis_basis/);
+    // It composes the M4 authority (via the pure lib) rather than summing itself.
+    expect(cashOut).toMatch(/computeCisHmrcDue/);
+    const lib = codeOf(read("lib/commercial/cash-out.ts"));
+    expect(lib).toMatch(/buildMonthlyReturnDataset\(snapshots, end\)/);
   });
 
   it("the actions file names cis_bill_details only as an audit label, never as a query", () => {
