@@ -7,6 +7,8 @@ import { createDiaryEntry } from "../actions";
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the entry. Try again.",
   validation: "Please check the form and try again.",
+  job_missing:
+    "That job no longer exists in this company. Pick a current job and save again.",
 };
 
 type SP = Promise<{ error?: string; job?: string; date?: string }>;
@@ -16,7 +18,7 @@ export default async function NewDiaryEntryPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const jobs = await listJobOptions(ctx.org.id);
 
@@ -43,12 +45,17 @@ export default async function NewDiaryEntryPage({
         </div>
       ) : null}
 
+      {/* CREATE is the one offline-writable operation in the product
+          (lib/offline/registry.ts). The identity handed to the form is the one the
+          SERVER just resolved for this request — newly authored work is never
+          attributed from a client-side marker on a shared tablet. */}
       <DiaryForm
         action={createDiaryEntry}
         jobs={jobs}
         defaults={{ entry_date: sp.date ?? today, job_id: sp.job ?? "" }}
         submitLabel="Save entry"
         cancelHref="/diary"
+        offline={{ userId: user.id, orgId: ctx.org.id }}
       />
     </div>
   );

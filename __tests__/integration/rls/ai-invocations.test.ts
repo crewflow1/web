@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
+import { anonClient, describeIntegration, serviceClient, ukTodayIso, userClient } from "../_harness";
 
 /**
  * AI Cost Governor ledger · tenant isolation, rollup correctness, teardown (20261062).
@@ -289,7 +289,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   // ── 3. The rollups ─────────────────────────────────────────────────────────
 
   it("the org-month rollup totals org A correctly (successes AND failures)", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(serviceClient()).rpc("ai_invocations_month_totals", {
       p_org_id: orgA,
       p_month: today,
@@ -308,7 +308,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   });
 
   it("p_org_id = null groups the estate — one row per org, HQ's view", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(serviceClient()).rpc("ai_invocations_month_totals", {
       p_org_id: null,
       p_month: today,
@@ -324,7 +324,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
     // primitive: any authenticated caller could name another tenant's id and
     // receive their spend. The function holds no privilege of its own, so RLS
     // has already decided what is visible before the aggregate runs.
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(userClient(adminA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: orgB, p_month: today },
@@ -333,7 +333,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   });
 
   it("the rollup is invoker-rights for the ESTATE query too — a null org is not a skeleton key", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(userClient(adminA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: null, p_month: today },
@@ -345,7 +345,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   });
 
   it("a plain member gets NO totals at all", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(userClient(staffA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: orgA, p_month: today },
@@ -354,7 +354,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   });
 
   it("the per-feature rollup splits the spend by capability", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ukTodayIso();
     const { data, error } = await rpc(serviceClient()).rpc("ai_invocations_month_by_feature", {
       p_month: today,
       p_org_id: orgA,

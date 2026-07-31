@@ -410,6 +410,14 @@ describe("supplier payments service — tenant client only, never service_role",
     //   - settlement is computed by `computeBillSettlements`, this domain's own
     //     authority, so no second copy of the payable rule exists.
     //
+    // `org-cash-out.ts` (H2-CASH M4) is the third, and is read-only by
+    // CONSTRUCTION rather than by convention: its `CashOutClient` type exposes
+    // only `select`/filter/`order`/`range`, so a write cannot be added without
+    // widening the type. It reads the ledger to answer "what do we still owe
+    // suppliers", composing `computeBillSettlements` — the same authority this
+    // service uses — instead of a second settlement formula. Tenant client only,
+    // never service_role. Asserted in its own tier,
+    // __tests__/security/cash-out-no-new-arithmetic.test.ts.
     // `supplier-performance.ts` joins the same two tables for the SAME reason
     // and under the same terms: it reads `supplier_payments` and
     // `supplier_payment_allocations` to date each bill's settling payment and to
@@ -426,9 +434,23 @@ describe("supplier payments service — tenant client only, never service_role",
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/aged-ledgers.ts",
       "server/services/cis-statements.ts",
+      "server/services/org-cash-out.ts",
       "server/services/supplier-payments.ts",
       "server/services/supplier-performance.ts",
     ]);
+  });
+
+  it("the money-out reader added to that list cannot write the ledger", () => {
+    // The allowlist above grew, so the property it protects is restated HERE
+    // rather than only in the new module's own tier: a reader that could write
+    // would defeat the point of naming the readers at all.
+    const cashOut = codeOf(read("server/services/org-cash-out.ts"));
+    for (const verb of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/]) {
+      expect(cashOut, `org-cash-out must not call ${verb}`).not.toMatch(verb);
+    }
+    expect(cashOut, "tenant client only — never service_role").not.toMatch(
+      /SERVICE_ROLE|serviceClient|createServiceClient/,
+    );
   });
 });
 

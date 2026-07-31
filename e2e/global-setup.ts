@@ -159,17 +159,41 @@ export default async function globalSetup(): Promise<void> {
   // --- 4. owner session (used by all authenticated journeys) ---
   await mintState(EMAIL, PASSWORD, STATE_PATH);
 
-  // --- 5. a SECOND member's session, isolated from owner. The logout-purge E2E
-  // signs THIS one out (which revokes only its own session token), so the shared
-  // owner session other specs rely on survives. Same org → can download the drawing.
-  const bEmail = "e2e-second@crewflow.test";
-  const bCreated = await svc.auth.admin.createUser({ email: bEmail, password: PASSWORD, email_confirm: true });
-  let bId = bCreated.data.user?.id;
-  if (!bId) { const list = await svc.auth.admin.listUsers(); bId = list.data.users.find((u) => u.email === bEmail)?.id; if (bId) await svc.auth.admin.updateUserById(bId, { password: PASSWORD, email_confirm: true }); }
-  if (!bId) throw new Error(`[e2e harness] could not seed second user: ${bCreated.error?.message}`);
-  await db.from("users").upsert({ id: bId, email: bEmail, full_name: "E2E Second" });
-  await db.from("memberships").upsert({ org_id: orgId, user_id: bId, role: "staff" }, { onConflict: "org_id,user_id" });
-  await mintState(bEmail, PASSWORD, STATE_PATH.replace("owner.json", "second.json"));
+  // --- 5. the SIGN-OUT sessions. ONE PER SIGN-OUT SPEC — never shared. ---------
+  //
+  // A spec that clicks "Sign out" REVOKES the session it is holding. Every state
+  // file is minted once here and then loaded fresh from disk by each spec, so the
+  // cookie a later spec presents is the SAME token an earlier spec already
+  // revoked: it authenticates as nobody, the route redirects to /login, and the
+  // spec fails somewhere far from the real cause (a page-not-found assertion
+  // rather than "your session was destroyed by an unrelated file").
+  //
+  // That is not hypothetical — `second.json` was shared by the blueprint
+  // logout-purge spec and the offline-diary logout spec, and because Playwright
+  // runs the tier with `workers: 1` in file order, blueprint-offline signed the
+  // session out ~90s before offline-diary-queue tried to use it.
+  //
+  // So each sign-out spec gets its OWN member, isolated from the owner (whose
+  // session every other authenticated journey shares and which must never be
+  // signed out) and from each other. Adding a new sign-out spec means adding a
+  // row here, NOT reusing one of these.
+  //
+  //   second.json → e2e/blueprint-offline.spec.ts   (offline drawing-cache purge)
+  //   third.json  → e2e/offline-diary-queue.spec.ts (offline write-queue purge)
+  //
+  // Both are `staff` in the seeded org, so they can download the drawing and
+  // author a diary entry.
+  async function seedMember(email: string, fullName: string, stateFile: string): Promise<void> {
+    const created = await svc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
+    let id = created.data.user?.id;
+    if (!id) { const list = await svc.auth.admin.listUsers(); id = list.data.users.find((u) => u.email === email)?.id; if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true }); }
+    if (!id) throw new Error(`[e2e harness] could not seed member ${email}: ${created.error?.message}`);
+    await db.from("users").upsert({ id, email, full_name: fullName });
+    await db.from("memberships").upsert({ org_id: orgId, user_id: id, role: "staff" }, { onConflict: "org_id,user_id" });
+    await mintState(email, PASSWORD, STATE_PATH.replace("owner.json", stateFile));
+  }
+  await seedMember("e2e-second@crewflow.test", "E2E Second", "second.json");
+  await seedMember("e2e-third@crewflow.test", "E2E Third", "third.json");
 
   // --- 6. an HQ (superadmin) session for the /admin a11y specs. Deliberately NO
   // membership row: requireOrgContext (server/auth/session.ts) redirects any
@@ -187,5 +211,5 @@ export default async function globalSetup(): Promise<void> {
   await mintState(hqEmail, PASSWORD, STATE_PATH.replace("owner.json", "hq.json"));
 
   // eslint-disable-next-line no-console
-  console.log(`[e2e harness] seeded org ${orgId} + owner + second member + hq → ${dirname(STATE_PATH)}`);
+  console.log(`[e2e harness] seeded org ${orgId} + owner + second + third member + hq → ${dirname(STATE_PATH)}`);
 }

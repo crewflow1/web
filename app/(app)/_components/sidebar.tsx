@@ -15,7 +15,9 @@ import { usePathname } from "next/navigation";
 
 const ADMIN_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/cash", label: "Get paid" },
+  // Renamed from "Get paid" when /cash gained the money-OUT side and a net
+  // position: the page now answers "where do we stand", not just "who owes us".
+  { href: "/cash", label: "Cash position" },
   { href: "/inbox", label: "Inbox" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },

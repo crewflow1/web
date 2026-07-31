@@ -46,7 +46,8 @@ test.describe("owner cash — the get-paid surface reflects the precise position
 
   test("/cash shows the overdue debt, ready-to-invoice work and the cash outlook", async ({ page }) => {
     await page.goto("/cash");
-    await expect(page.getByRole("heading", { name: /get paid/i })).toBeVisible();
+    // M4 renamed the h1 from "Get paid" when the money-OUT side landed.
+    await expect(page.getByRole("heading", { name: /cash position/i }).first()).toBeVisible();
 
     // The M3 cash outlook section is present, distinguishing certainty (static —
     // proves the section renders regardless of other orgs' data).
