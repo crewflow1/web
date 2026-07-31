@@ -3,6 +3,12 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
+import {
+  loadProgressForJobs,
+  type ProgressClient,
+} from "@/server/services/job-progress";
+import { toPortalProgress, type PortalProgress } from "@/lib/job-progress/portal";
+import { formatDateShortUK } from "@/lib/time/format";
 
 /**
  * Customer portal — Job progress.
@@ -46,6 +52,52 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: "bg-red-100 text-red-700",
 };
 
+/**
+ * The customer's view of progress: a percentage, when it was last updated, the
+ * factual movement wording, and a bar.
+ *
+ * Takes `PortalProgress` and NOTHING else — it is structurally incapable of
+ * rendering a staff note or an author, because neither is on the type. The
+ * wording comes from PORTAL_MOVEMENT_LABELS, which is deliberately factual
+ * ("No change since the last update") rather than the internal verdict
+ * ("Stalled") — see lib/job-progress/portal.ts.
+ *
+ * No planned/expected line is shown, for the same reason the staff panel shows
+ * none: the platform holds no programme, and a fabricated baseline shown to a
+ * paying client would be a commercial claim with nothing behind it.
+ */
+function JobProgress({ progress }: { progress: PortalProgress | undefined }) {
+  if (!progress || !progress.hasProgress || progress.percent === null) {
+    return null;
+  }
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+        <span className="text-xs font-semibold text-slate-900">
+          {progress.percent}% complete
+        </span>
+        <span className="text-[11px] text-slate-500">
+          {progress.updatedOn
+            ? `Updated ${formatDateShortUK(progress.updatedOn)}`
+            : null}
+        </span>
+      </div>
+      <div
+        className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100"
+        role="img"
+        aria-label={`${progress.percent}% complete`}
+      >
+        <div
+          className="h-full rounded-full bg-emerald-500"
+          style={{ width: `${progress.percent}%` }}
+        />
+      </div>
+      {/* The movement WORD, never colour alone (WCAG 1.4.1). */}
+      <p className="mt-1.5 text-[11px] text-slate-500">{progress.movement}</p>
+    </div>
+  );
+}
+
 export default async function PortalJobsPage({
   params,
 }: {
@@ -88,6 +140,32 @@ export default async function PortalJobsPage({
     assigned: { full_name: string | null } | null;
   };
   const jobs = (jobsRaw ?? []) as unknown as Row[];
+
+  /**
+   * Progress per job, narrowed to the CUSTOMER-SAFE shape before it can reach
+   * the markup below.
+   *
+   * SECURITY: `loadProgressForJobs` returns the INTERNAL summary — which
+   * carries staff notes, author ids and the originating report id — so the
+   * `toPortalProgress` narrowing on the next line is not cosmetic. It is the
+   * boundary. `PortalProgress` has no field any of those values could occupy
+   * (lib/job-progress/portal.ts), so nothing internal reaches this page's
+   * render tree or the HTML sent to an unauthenticated token holder. Proven by
+   * __tests__/security/job-progress-portal-safety.test.ts.
+   *
+   * Scoping: two batched reads (never N+1), pinned to this customer's org AND
+   * to the job ids already filtered by `customer_id` above.
+   */
+  const jobIds = jobs.map((j) => j.id);
+  const progress = await loadProgressForJobs(
+    admin as unknown as ProgressClient,
+    customer.org_id,
+    jobIds,
+  );
+  const progressByJob = new Map<string, PortalProgress>();
+  for (const [jobId, summary] of progress.byJob) {
+    progressByJob.set(jobId, toPortalProgress(summary));
+  }
 
   return (
     <PortalShell customer={customer} org={org} token={token} active="jobs">
@@ -145,6 +223,7 @@ export default async function PortalJobsPage({
                         ? "Assigned"
                         : "Not yet assigned"}
                   </p>
+                  <JobProgress progress={progressByJob.get(j.id)} />
                 </div>
               </div>
             </li>
