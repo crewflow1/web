@@ -1289,6 +1289,17 @@ export async function createVariation(jobId: string, formData: FormData) {
   // opaque "variation" line.
   const { labour, materials, subcontractors, misc } = computed.cost_breakdown;
   const totalCost = computed.total_cost;
+
+  // THE COST BASIS IS ALREADY PERSISTED, on the quote itself (cost_labour …
+  // cost_misc above, 20261073). There is deliberately NO second per-variation
+  // cost store: `quotes.cost_total` is GENERATED from those four, so parts and
+  // total cannot drift, and a job budget READS it rather than re-keying it
+  // (lib/jobs/budget.ts). Two cost bases for one variation would be two
+  // commercial truths, and the one that went stale would be invisible.
+  //
+  // THE ACCOUNTING BOUNDARY: those columns are a PLAN. They are NOT a cost and
+  // never reach `finances` — the real spend lands there when the supplier bill
+  // is recorded, and posting the estimate too would double-count it.
   type LIRow = { label: string; cost: number };
   const buckets: LIRow[] = [
     { label: "Labour", cost: labour },
