@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { effectiveStatus, PERMIT_TYPE_LABELS, type PermitStatus, type PermitType } from "@/lib/health-safety/permits";
 import { TOOLBOX_TALK_STATUS_META, toolboxStatusLabel, type ToolboxTalkStatus } from "@/lib/health-safety/toolbox-talks";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -10,6 +11,20 @@ import { formatDiaryDate } from "@/lib/site-diary/schema";
  * permits (DERIVED status so an expired permit never reads "active"), and its toolbox
  * talks (delivered briefings, current revision highlighted). Mirrors the
  * JobAssetsSection pattern; renders nothing when the job has none of the three.
+ *
+ * LOUD READS (#480 doctrine, docs/loud-read-failures.md). This section is a
+ * SAFETY control, and it HIDES ITSELF when the job has no records — so
+ * `data ?? []` on a rejected query rendered the strongest possible all-clear:
+ * the panel vanished, taking with it the "No issued RAMS is current for this
+ * job" warning and every unsigned toolbox talk. That is severity (b) — a
+ * wrong-but-plausible claim about legal compliance, asserted precisely when the
+ * database is unhealthy — on a control that must fail CLOSED.
+ *
+ * So all three reads are checked, and ANY failure renders the explicit error
+ * block: a PARTIAL safety picture is itself a false all-clear (permits load,
+ * RAMS rejects ⇒ the page silently asserts the job has no risk assessment).
+ * Panel-scoped, so it reports + renders inline rather than throwing — the rest
+ * of the job hub stays useful. Mirrors JobAssetsSection on the same page.
  */
 
 type RaRow = { id: string; reference: string | null; title: string; status: string; revision_number: number };
@@ -34,9 +49,11 @@ const PERMIT_STATUS_STYLE: Record<string, string> = {
 
 export async function JobSafetySection({ jobId }: { jobId: string }) {
   const supabase = await createClient();
+  // The read cast carries `error` too: typing these promises error-blind is what
+  // let the failure be invisible in the first place (see the module note).
   const s = supabase as unknown as {
     from: (t: string) => {
-      select: (c: string) => { eq: (k: string, v: unknown) => { order: (c: string, o: { ascending: boolean }) => { limit: (n: number) => Promise<{ data: unknown[] | null }> } } };
+      select: (c: string) => { eq: (k: string, v: unknown) => { order: (c: string, o: { ascending: boolean }) => { limit: (n: number) => Promise<{ data: unknown[] | null; error: SupabaseReadError | null }> } } };
     };
   };
   const [ramsRes, permitsRes, talksRes] = await Promise.all([
@@ -44,6 +61,23 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
     s.from("permits_to_work").select("id, reference, title, permit_type, status, valid_from, valid_until").eq("job_id", jobId).order("created_at", { ascending: false }).limit(50),
     s.from("toolbox_talks").select("id, reference, topic, status, revision_number, talk_date").eq("job_id", jobId).order("talk_date", { ascending: false }).limit(50),
   ]);
+  // Report EVERY failing read (each is its own Sentry signal), then refuse to
+  // render a safety picture built from any of them.
+  let failed = false;
+  if (ramsRes.error) { reportReadFailure("job safety: RAMS on job", ramsRes.error); failed = true; }
+  if (permitsRes.error) { reportReadFailure("job safety: permits on job", permitsRes.error); failed = true; }
+  if (talksRes.error) { reportReadFailure("job safety: toolbox talks on job", talksRes.error); failed = true; }
+  if (failed) {
+    return (
+      <section aria-labelledby="job-safety-heading" className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
+        <h2 id="job-safety-heading" className="text-base font-semibold text-red-800">Health &amp; safety</h2>
+        <p className="mt-1 text-sm text-red-700">
+          Couldn&apos;t load this job&apos;s health &amp; safety records. This is NOT an all-clear —
+          do not treat it as &ldquo;no RAMS required&rdquo;. Refresh to try again.
+        </p>
+      </section>
+    );
+  }
   const rams = (ramsRes.data ?? []) as RaRow[];
   const permits = (permitsRes.data ?? []) as PermitRow[];
   const talks = (talksRes.data ?? []) as TalkRow[];

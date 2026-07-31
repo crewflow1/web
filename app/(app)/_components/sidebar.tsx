@@ -15,7 +15,9 @@ import { usePathname } from "next/navigation";
 
 const ADMIN_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/cash", label: "Get paid" },
+  // Renamed from "Get paid" when /cash gained the money-OUT side and a net
+  // position: the page now answers "where do we stand", not just "who owes us".
+  { href: "/cash", label: "Cash position" },
   { href: "/inbox", label: "Inbox" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },
@@ -23,6 +25,10 @@ const ADMIN_LINKS = [
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
   { href: "/health-safety", label: "Health & safety" },
+  // Works quality (ITPs) sits beside H&S, not under Snagging: snags are defects
+  // FOUND after the fact, an ITP is the plan that proves the works were built
+  // right in the first place. Different question, opposite direction.
+  { href: "/quality", label: "Works quality" },
   // Weather sits with health & safety, not with the estate: the limits it
   // applies are wind/frost/rain limits from WAHR 2005, LOLER 1998 and CDM 2015,
   // and the question it answers ("can this work happen safely today") is the
@@ -73,6 +79,8 @@ const STAFF_LINKS = [
   { href: "/snags", label: "Snagging" },
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
+  // Staff need this: the person signing off a hold point on site IS site staff.
+  { href: "/quality", label: "Works quality" },
   { href: "/staff/leave", label: "Leave" },
   { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },

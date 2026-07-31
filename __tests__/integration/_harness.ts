@@ -24,6 +24,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { describe, test } from "vitest";
 import type { Database } from "@/lib/supabase/types";
 import { assertLocalDestructiveTarget } from "@/lib/testing/destructive-db-guard";
+import { formatDayKeyUK } from "@/lib/time/format";
 
 type Conn = { url: string; anonKey: string; serviceRoleKey: string };
 
@@ -92,6 +93,44 @@ export function userClient(accessToken: string): SupabaseClient<Database> {
     ...NO_PERSIST,
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   });
+}
+
+/**
+ * TODAY in **Europe/London**, as `YYYY-MM-DD` — the probe date to hand any RPC
+ * that buckets by the UK calendar.
+ *
+ * WHY THIS EXISTS, AND WHAT IT COST TO LEARN IT.
+ *
+ * Several rollups (`ai_invocations_month_totals`, `ai_reservations_month_totals`
+ * and the per-feature rollup beside them) take a date and derive the
+ * **Europe/London** month around it:
+ *
+ *     where created_at >= (date_trunc('month', p_month) at time zone 'Europe/London')
+ *       and created_at <  (… + interval '1 month'      at time zone 'Europe/London')
+ *
+ * A test that reaches for `new Date().toISOString().slice(0, 10)` passes the
+ * **UTC** calendar date instead. In GMT the two agree, so the mistake is
+ * invisible for half the year. In BST they disagree between 23:00 and 24:00 UTC
+ * — and on the LAST DAY OF A MONTH they disagree by a whole month. At 23:07 UTC
+ * on 31 July 2026 the UTC date is still `2026-07-31`, so the window resolves to
+ * `[2026-06-30 23:00Z, 2026-07-31 23:00Z)` while every row the test has just
+ * written carries `created_at = now()` = `23:07Z` — seven minutes PAST the end
+ * of the window it is being counted in. The rollup returns no rows at all, and
+ * the suite reports every figure as 0 or undefined.
+ *
+ * That is exactly how main went red: CI at 22:31 UTC was green, CI at 23:05 UTC
+ * failed 17 assertions across two files, and the six commits in between never
+ * touched the AI ledger. Deriving the probe date here, from the same UK day-key
+ * idiom the production governor uses (`ukMonthKeyOf` → `formatDayKeyUK`), makes
+ * the month a test asks for the month the SQL is actually in.
+ *
+ * NOT a substitute for pinning: a suite that asserts a SPECIFIC boundary must
+ * still write explicit `created_at` values (see the BST/GMT boundary cases in
+ * `rls/ai-invocations.test.ts`), because those must hold in every month, not
+ * only the current one.
+ */
+export function ukTodayIso(): string {
+  return formatDayKeyUK(new Date());
 }
 
 /** describe() that runs only against a live database (see file header). */

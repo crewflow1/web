@@ -38,6 +38,34 @@ export interface BriefingInput {
   /** H2-CASH M3: agreed contract value with no billing stage and no invoice. */
   unscheduled: { totalAmount: number; jobCount: number };
   /**
+   * H2-CASH M4: CIS you withheld from subcontractors and must pay HMRC, with the
+   * statutory deadline (server/services/org-cash-out.ts → loadCisHmrcSignal).
+   *
+   * OPTIONAL, and absent means "no signal" rather than "nothing due". A tenant
+   * with no subcontractors, a viewer without admin rights (the ledger is
+   * admin-only at the database), and a failed read all produce the same quiet
+   * output — the briefing can miss a line, never invent one.
+   *
+   * THE ONLY MONEY-OUT LINE, and deliberately so. The money-out surface has five
+   * other components and none of them earns a briefing row:
+   *   · unpaid supplier bills carry no due date, so there is no day on which
+   *     they "need you" — a permanent line is wallpaper;
+   *   · VAT and draft payroll are ESTIMATES, and the briefing must not spend a
+   *     row on a number it would then have to hedge;
+   *   · committed spend is not a liability at all;
+   *   · a NEGATIVE net position is the NORMAL state of a construction business
+   *     that pays suppliers on 30 days and gets paid on 60. A signal that fires
+   *     for a healthy company is noise, and noise is how people learn to ignore
+   *     the safety lines above.
+   * CIS is different on every count: a frozen ledger fact, a statutory date, an
+   * HMRC penalty for missing it, and one clear action.
+   *
+   * `dueInDays` is whole UK days to the deadline and is never negative — a
+   * passed deadline emits NOTHING, because CrewFlow holds no record of what was
+   * paid to HMRC and must not accuse a contractor of being late.
+   */
+  cisDueToHmrc?: { amount: number; dueInDays: number | null; payBy: string | null };
+  /**
    * LANE C: deterministic schedule conflicts found in the next fortnight
    * (server/services/schedule-integrity.ts). Read-only detection — the briefing
    * reports and explains them; nothing is ever moved automatically.
@@ -416,6 +444,26 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
       "/cash", { amount: input.cashDueSoon, urgencyDays: 3 },
     );
   }
+  // Money OUT — the one outflow line that earns a row (see the field's note).
+  // Capped at "high": missing the 22nd is an HMRC penalty, which is a real
+  // financial and legal exposure but not a live safety breach, and `critical` is
+  // reserved for those. Only fires while the deadline is still ahead.
+  const cis = input.cisDueToHmrc;
+  if (cis && cis.amount > 0 && cis.dueInDays != null && cis.dueInDays >= 0) {
+    const d = cis.dueInDays;
+    add(
+      "cis_due_hmrc",
+      "money",
+      d <= 7 ? "high" : "medium",
+      `${gbp(cis.amount)} CIS to pay HMRC`,
+      `${gbp(cis.amount)} of CIS you've deducted from subcontractors is due to HMRC ` +
+        `${d === 0 ? "today" : d === 1 ? "tomorrow" : `in ${d} days`}` +
+        `${cis.payBy ? ` (by ${cis.payBy})` : ""}. ` +
+        `Pay by the 22nd — the 19th if you're paying by post. CrewFlow doesn't file or pay for you.`,
+      "/cis",
+      { amount: cis.amount, urgencyDays: d },
+    );
+  }
   // Supplier-bill three-way match. ONE line, never three: over-billed, billed-
   // not-received and the unbilled accrual are the same conversation ("go through
   // the merchant's paperwork"), and splitting them would put three rows in a
@@ -569,6 +617,7 @@ export const BRIEFING_ITEM_KEYS = [
   "retention_due",
   "billing_ready",
   "cash_due_soon",
+  "cis_due_hmrc",
   "unscheduled_value",
   "supplier_bill_variance",
   "jobs_unassigned_tomorrow",

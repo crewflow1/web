@@ -12,7 +12,9 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
+import { JobQualitySection } from "./_job-quality";
 import { JobDiarySection } from "./_job-diary";
+import { JobProgressSection } from "./_job-progress";
 import { JobSnagsSection } from "./_job-snags";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
@@ -225,17 +227,38 @@ export default async function EditJobPage({
       .eq("job_id", job.id)
       .order("released_on", { ascending: false }),
     // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
+    // `id` + `subtotal` ride along beside `total`: the tile reports the EX-VAT
+    // commitment (see below), and a forgotten column is exactly how that figure
+    // silently reverts to £0. Pinned on source in the job-budgets test.
     (
       supabase.from("purchase_orders" as never) as unknown as {
         select: (c: string) => {
-          eq: (k: string, v: unknown) => Promise<{ data: Array<{ status: string; total: number | string | null }> | null }>;
+          eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; status: string; subtotal: number | string | null; total: number | string | null }> | null }>;
         };
       }
     )
-      .select("status, total")
+      .select("id, status, subtotal, total")
       .eq("job_id", job.id),
   ]);
-  const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+  // Bills already posted against each PO, so a received-and-billed order is not
+  // counted twice. One pass over the finance rows already read — no extra query.
+  // Identical to /jobs/[id]/commercial, so both surfaces report the same figure.
+  const billedByPo = new Map<string, number>();
+  for (const f of finRows) {
+    if (!f.purchase_order_id) continue;
+    billedByPo.set(
+      f.purchase_order_id,
+      Math.round(((billedByPo.get(f.purchase_order_id) ?? 0) + Number(f.amount ?? 0)) * 100) / 100,
+    );
+  }
+  const committed = computeCommittedCosts(
+    (jobPurchaseOrders.data ?? []).map((p) => ({
+      status: p.status,
+      total: p.total,
+      subtotal: p.subtotal,
+      billed: billedByPo.get(p.id) ?? 0,
+    })),
+  );
 
   // Programme D — the ledger-truthful cash position (received/outstanding from
   // real payments, not invoice status). One indexed read, empty-guarded.
@@ -374,7 +397,10 @@ export default async function EditJobPage({
         </div>
       ) : null}
 
-      {saved === "retention_rate" || saved === "retention_release" || saved === "retention_schedule" ? (
+      {saved === "retention_rate" ||
+      saved === "retention_release" ||
+      saved === "retention_schedule" ||
+      saved === "progress" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
@@ -383,7 +409,9 @@ export default async function EditJobPage({
             ? "Retention rate saved."
             : saved === "retention_schedule"
               ? "Release schedule saved."
-              : "Retention release recorded."}
+              : saved === "progress"
+                ? "Progress update recorded."
+                : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -607,15 +635,18 @@ export default async function EditJobPage({
             {hasCommittedCosts(committed) ? (
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Committed (POs)</dt>
+                {/* EX-VAT. `committed.committed` is the GROSS ordered value
+                    (purchase_orders.total = subtotal + vat_total); Profit,
+                    Margin and Gross profit beside it are all built from
+                    ex-VAT `finances.amount`. Showing the gross figure here
+                    overstated the commitment by up to 20% against its own
+                    neighbours on a job that is exactly on plan. */}
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
-                  {GBP.format(committed.committed)}
+                  {GBP.format(committed.committedNet)}
                 </dd>
                 <p className="text-xs text-slate-500">
-                  {committed.count} order{committed.count === 1 ? "" : "s"}
-                  {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
-                  {committed.partiallyReceived > 0
-                    ? ` · ${GBP.format(committed.partiallyReceived)} part-received`
-                    : ""}
+                  {committed.count} order{committed.count === 1 ? "" : "s"} · excl. VAT
+                  {committed.remaining > 0 ? ` · ${GBP.format(committed.remaining)} still to come` : ""}
                 </p>
               </div>
             ) : null}
@@ -790,6 +821,8 @@ export default async function EditJobPage({
         documents). Each panel is org_id-pinned as well as RLS-scoped and
         degrades to empty on a read failure, so none of them can break this page.
       */}
+      <JobProgressSection jobId={job.id} orgId={ctx.membership.org_id} />
+
       <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
 
       <JobSnagsSection
@@ -809,6 +842,11 @@ export default async function EditJobPage({
       <JobBlueprintsPanel jobId={job.id} />
 
       <JobSafetySection jobId={job.id} />
+
+      {/* Works quality (ITP) — sits directly after health & safety: both are
+          controlled-document registers for this job, and an open hold point is
+          the same kind of "don't proceed yet" signal. */}
+      <JobQualitySection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

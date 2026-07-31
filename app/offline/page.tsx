@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { list, remove, readOfflineIdentity, type OfflineBlueprintMeta } from "@/lib/blueprints/offline-store";
+import { countOnDevice } from "@/lib/offline/write-queue";
 // STATIC import (not next/dynamic): the viewer must ride in THIS route's own
 // prefetchable chunk so `router.prefetch("/offline")` (run when a drawing is saved
 // for offline) fetches it and the SW caches it. A per-route next/dynamic() lazy
@@ -27,6 +28,24 @@ export default function OfflinePage() {
   const [items, setItems] = useState<OfflineBlueprintMeta[] | null>(null);
   const [open, setOpen] = useState<Open>(null);
   const openBtn = useRef<HTMLButtonElement>(null);
+  /**
+   * COUNT ONLY — deliberately, and this is a security decision, not a shortcut.
+   *
+   * This route is PUBLIC (that is what makes it precacheable and renderable with no
+   * connectivity), so anything it displays is visible to whoever is holding the
+   * tablet. A foreman relaunching cold in a basement genuinely needs to know his
+   * day is not lost, so the NUMBER of unsent entries is worth that exposure. The
+   * CONTENT is not: no text, no dates, no job, no author, no org. Reading those back
+   * requires signing in, where the queue's partition and the server session apply.
+   *
+   * For the same reason there is no authoring form here. A write enqueued on a page
+   * no server session rendered would have to be attributed from the client-side
+   * identity marker, and on a shared tablet that attributes one person's words to
+   * whoever signs in next. Authoring offline therefore requires a page the server
+   * rendered while authenticated (/diary/new, loaded before signal was lost) — see
+   * docs/offline-write-queue.md for the cold-launch gap this leaves open.
+   */
+  const [unsent, setUnsent] = useState<number>(0);
   // Read ONCE, lazily. Calling readOfflineIdentity() during render returned a fresh
   // object every render, so `refresh` (useCallback dep [identity]) was new every
   // render and the useEffect([refresh]) below re-ran after every setItems — an
@@ -39,6 +58,7 @@ export default function OfflinePage() {
   }, [identity]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void countOnDevice().then(setUnsent); }, []);
   useEffect(() => {
     const set = () => setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
     set();
@@ -74,6 +94,21 @@ export default function OfflinePage() {
             {online ? "Continue to CrewFlow" : "Retry connection"}
           </a>
         </div>
+
+        {unsent > 0 ? (
+          <p
+            data-outbox-device-count={unsent}
+            role="status"
+            className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            <strong>
+              {unsent} {unsent === 1 ? "entry is" : "entries are"} saved on this
+              device and not sent yet.
+            </strong>{" "}
+            {unsent === 1 ? "It" : "They"} will sync automatically once you&apos;re
+            back in CrewFlow with a signal. Don&apos;t sign out before then.
+          </p>
+        ) : null}
       </div>
 
       <section className="mt-6" aria-label="Offline drawings">

@@ -2,11 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
+import { createDiaryEntryRecord } from "@/server/services/offline-writes";
 import {
   createDiaryEntrySchema,
   diaryIdSchema,
@@ -22,11 +22,16 @@ import {
  * so RLS scopes them; the service-role client is never used here (photos ride
  * tenant_attachments). Mutations are count-gated: an RLS no-op returns "not
  * found" rather than a false success.
+ *
+ * CREATE is delegated to `createDiaryEntryRecord`
+ * (server/services/offline-writes.ts), which is the SAME function the offline
+ * write queue replays through. That is intentional: an entry authored in a
+ * basement and synced two hours later must hit identical validation, identical
+ * RLS, identical cross-org job guard and identical audit as one typed at a desk.
+ * If the two had separate insert statements they would eventually drift, and the
+ * offline path is exactly the one nobody would notice drifting.
  */
 
-type InsertChain = {
-  insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
-};
 type UpdateChain = {
   update: (
     patch: unknown,
@@ -86,38 +91,28 @@ export async function createDiaryEntry(formData: FormData): Promise<void> {
   }
   const data = parsed.success ? parsed.data : null;
 
-  const id = randomUUID();
-  const tenant = await createClient();
-  const { error } = await (
-    tenant.from("site_diary_entries" as never) as unknown as InsertChain
-  ).insert({
-    id,
-    org_id: ctx.org.id,
-    entry_date: data?.entry_date,
-    job_id: data?.job_id ?? null,
-    weather: data?.weather ?? null,
-    labour_count: data?.labour_count ?? null,
-    work_summary: data?.work_summary ?? null,
-    delays: data?.delays ?? null,
-    notes: data?.notes ?? null,
-    created_by: user.id,
-  });
-  if (error) {
-    console.error("[diary] insert failed", error);
+  if (!data) redirect(`/diary/new?error=validation`);
+
+  // The SHARED write core — see the file header. It mints its own idempotency key
+  // for an online post (one is stored on every row, so there is one write path to
+  // reason about, not an online one and a divergent offline one) and performs the
+  // cross-org job guard + audit that the queued replay also gets.
+  const outcome = await createDiaryEntryRecord({ ctx, user, input: data });
+
+  if (outcome.status === "rejected") {
+    // A form post can realistically only hit job_missing here (a job deleted or
+    // switched away between page render and submit); the rest are shapes the Zod
+    // parse above already refused.
+    redirect(
+      `/diary/new?error=${outcome.reason === "job_missing" ? "job_missing" : "record_failed"}`,
+    );
+  }
+  if (outcome.status === "retry") {
     redirect(`/diary/new?error=record_failed`);
   }
 
-  await recordAdminActivity({
-    actorId: user.id,
-    actorEmail: user.email ?? null,
-    action: "site_diary.created",
-    targetTable: "site_diary_entries",
-    targetId: id,
-    metadata: { entry_date: data?.entry_date, job_id: data?.job_id ?? null },
-  });
-
   revalidatePath("/diary");
-  redirect(`/diary/${id}?saved=created`);
+  redirect(`/diary/${outcome.id}?saved=created`);
 }
 
 export async function updateDiaryEntry(formData: FormData): Promise<void> {

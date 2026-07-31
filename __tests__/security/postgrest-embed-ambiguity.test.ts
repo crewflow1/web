@@ -198,6 +198,23 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // must name its FK constraint.
   "goods_received_notes → users",
   "impersonation_sessions → users",
+  // Works quality ITP (20261076): inspected_by + voided_by → users. Reviewed
+  // 2026-07-30: no read of this table embeds users(...) — app/(app)/quality/
+  // _data.ts selects scalar columns only (SIGNOFF_COLUMNS) and resolves signer /
+  // voider names through a separate batched read of `users` (loadUserNames), the
+  // same shape goods_received_notes and ai_quote_drafts use. Two FKs is inherent
+  // to the row: it records who ATTESTED and who later VOIDED, and collapsing
+  // them would destroy the audit trail the record exists for. Any future embed
+  // must name its FK constraint.
+  "inspection_signoffs → users",
+  // Works quality ITP (20261076): prepared_by + issued_by + created_by → users.
+  // Reviewed 2026-07-30: ITP_COLUMNS in app/(app)/quality/_data.ts is scalar-only
+  // and app/(app)/jobs/[id]/_job-quality.tsx selects scalar columns too; names
+  // come from loadUserNames. Three FKs is the controlled-document provenance
+  // (who wrote it / who issued it / who created the row) and is the same triple
+  // risk_assessments and permits_to_work already carry. Any future embed must
+  // name its FK constraint.
+  "inspection_test_plans → users",
   "invoice_payments → invoices",
   "job_documents → users",
   // Job warranties (20261079): created_by + portal_published_by + voided_by all
