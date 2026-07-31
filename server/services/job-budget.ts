@@ -1,10 +1,16 @@
 import "server-only";
 import { readFailure } from "@/lib/supabase/read-failure";
-import type { JobBudgetRow, VariationCostEstimate } from "@/lib/jobs/budget";
+import type { JobBudgetRow } from "@/lib/jobs/budget";
 
 /**
- * Job cost baseline — the read layer for `job_budgets` and
- * `quote_cost_estimates` (20261072).
+ * Job cost baseline — the read layer for `job_budgets` (20261072).
+ *
+ * The SUPPLY side (what an approved variation adds to the plan) is NOT read
+ * here. It lives on `quotes` itself — `cost_labour / cost_materials /
+ * cost_subcontractors / cost_misc` and the GENERATED `cost_total` (20261073) —
+ * and the commercial page already selects the quotes it needs, so it maps those
+ * columns straight into the composer. There is deliberately no second
+ * per-variation cost store and no second read: one commercial source of truth.
  *
  * THE ACCOUNTING BOUNDARY: reads only, and nothing here touches the actual-cost
  * ledger. A budget is a PLAN, so a planned figure must never reach `finances` —
@@ -34,7 +40,6 @@ type Builder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => Builder;
   eq: (k: string, v: unknown) => Builder;
   is: (k: string, v: unknown) => Builder;
-  in: (k: string, v: readonly unknown[]) => Builder;
   order: (k: string, o: { ascending: boolean }) => Builder;
   limit: (n: number) => Builder;
 };
@@ -44,8 +49,6 @@ const BUDGET_COLS =
   "id, revision, total_cost, labour_cost, materials_cost, subcontractors_cost, " +
   "misc_cost, target_margin_pct, note, created_by, created_at, superseded_at";
 
-const ESTIMATE_COLS =
-  "quote_id, total_cost, labour_cost, materials_cost, subcontractors_cost, misc_cost";
 
 export type JobBudgetRevision = JobBudgetRow & {
   id: string;
@@ -95,27 +98,4 @@ export async function loadJobBudgetHistory(
     .order("revision", { ascending: false });
   if (res.error) throw readFailure("job budget: revision history", res.error);
   return (res.data ?? []) as unknown as JobBudgetRevision[];
-}
-
-/**
- * Cost estimates for the given quote ids (the caller passes ACCEPTED variations
- * only — deciding which variations are approved belongs to the contract
- * taxonomy in lib/jobs/commercial-position.ts, not here).
- *
- * ONE indexed `.in()`, empty-guarded, so an accepted-variation-free job costs no
- * query at all.
- */
-export async function loadQuoteCostEstimates(
-  client: JobBudgetClient,
-  orgId: string,
-  quoteIds: readonly string[],
-): Promise<VariationCostEstimate[]> {
-  if (quoteIds.length === 0) return [];
-  const res = await client
-    .from("quote_cost_estimates")
-    .select(ESTIMATE_COLS)
-    .eq("org_id", orgId)
-    .in("quote_id", quoteIds);
-  if (res.error) throw readFailure("job budget: variation cost estimates", res.error);
-  return (res.data ?? []) as unknown as VariationCostEstimate[];
 }

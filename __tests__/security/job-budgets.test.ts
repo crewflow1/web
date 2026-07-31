@@ -87,22 +87,41 @@ describe("the cost baseline never posts to `finances`", () => {
     expect(read(LIB)).toMatch(/D1/);
   });
 
-  it("the variation write persists a PLAN and says so, right where it does it", () => {
-    // The one place a cost estimate now becomes a row. A future edit that
-    // "helpfully" also books the expense is the whole hazard.
+  it("the variation write records a PLAN and says so, right where it does it", () => {
+    // The variation's cost basis is a PLAN. A future edit that "helpfully" also
+    // books the expense is the whole hazard.
     const src = read(QUOTES);
     const start = src.indexOf("export async function createVariation(");
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start);
     expect(body).toMatch(/ACCOUNTING BOUNDARY/);
-    expect(body).toMatch(/quote_cost_estimates/);
     const code = codeOf(body);
     expect(code, "createVariation must not post a cost").not.toMatch(
       /from\("finances"/,
     );
   });
 
-  it("no money column on either table could be mistaken for an incurred cost", () => {
+  it("keeps ONE per-variation cost store — this slice adds no second one", () => {
+    // `quotes.cost_labour … cost_misc` + the GENERATED `quotes.cost_total`
+    // (20261073) are already live in production. A parallel table here would be
+    // two cost bases for one variation, written by the same code path, and the
+    // one that went stale would be invisible — the exact "one commercial source
+    // of truth" violation this platform must not have. Neither the migration nor
+    // any surface may reintroduce it.
+    expect(sql, "the migration must define no second cost store").not.toMatch(
+      /quote_cost_estimates/,
+    );
+    for (const f of [SERVICE, ACTIONS, PAGE, QUOTES, LIB]) {
+      expect(codeOf(read(f)), `${f} references a second cost store`).not.toMatch(
+        /quote_cost_estimates/,
+      );
+    }
+    // …and the budget READS the generated total rather than re-summing the parts.
+    expect(codeOf(read(PAGE))).toMatch(/total_cost: q\.cost_total/);
+    expect(read(LIB), "the lib must name its single source").toMatch(/cost_total/);
+  });
+
+  it("no money column on the table could be mistaken for an incurred cost", () => {
     // Every money column is a PLANNED figure and named as one (`*_cost`), plus
     // the margin target. Nothing shaped like a ledger entry: no vat, no
     // paid/settled/posted flag, no supplier or invoice link.
@@ -128,25 +147,25 @@ describe("the cost baseline never posts to `finances`", () => {
 // ---------------------------------------------------------------------------
 
 describe("tenant binding", () => {
-  it("binds BOTH parents by COMPOSITE FK, not by an app-layer filter alone", () => {
-    for (const [cols, target] of [
-      ["job_id, org_id", "public\\.jobs \\(id, org_id\\)"],
-      ["quote_id, org_id", "public\\.quotes \\(id, org_id\\)"],
-    ] as const) {
-      expect(sql, `${cols} must be bound by composite FK`).toMatch(
-        new RegExp(`foreign key \\(${cols}\\)\\s*\\n?\\s*references ${target}`, "i"),
-      );
-    }
+  it("binds the parent by COMPOSITE FK, not by an app-layer filter alone", () => {
+    expect(sql, "job_id, org_id must be bound by composite FK").toMatch(
+      /foreign key \(job_id, org_id\)\s*\n?\s*references public\.jobs \(id, org_id\)/i,
+    );
   });
 
-  it("adds the candidate keys those FKs need — additive, and cannot reject a row", () => {
-    // `id` is already the PRIMARY KEY of both tables, so (id, org_id) is unique
-    // by construction: the constraint validates instantly and no existing row can
+  it("adds the candidate key that FK needs — additive, and cannot reject a row", () => {
+    // `id` is already the PRIMARY KEY of jobs, so (id, org_id) is unique by
+    // construction: the constraint validates instantly and no existing row can
     // fail it. Same step 20261046/56/59/63/64 each took for their parents.
     expect(sql).toMatch(/jobs_id_org_key unique \(id, org_id\)/i);
-    expect(sql).toMatch(/quotes_id_org_key unique \(id, org_id\)/i);
     expect(sql, "guarded so re-application is safe").toMatch(
       /if not exists \(\s*\n?\s*select 1 from pg_constraint where conname = 'jobs_id_org_key'/,
+    );
+    // …and NO key on `quotes`: its only consumer was the second cost store that
+    // this slice no longer defines. An index on a hot table with no reader is a
+    // write cost for nothing.
+    expect(sql, "no consumerless candidate key on quotes").not.toMatch(
+      /quotes_id_org_key/,
     );
   });
 
@@ -156,7 +175,6 @@ describe("tenant binding", () => {
     // exactly how the 20261052 org-teardown P1 happened.
     expect(sql).not.toMatch(/on delete restrict/i);
     expect(sql).toMatch(/references public\.jobs \(id, org_id\) on delete cascade/i);
-    expect(sql).toMatch(/references public\.quotes \(id, org_id\) on delete cascade/i);
   });
 
   it("writes NO activity on delete — the other half of the same trap", () => {
@@ -166,19 +184,18 @@ describe("tenant binding", () => {
     expect(sql).not.toMatch(/_record_activity/);
   });
 
-  it("enables RLS on both tables", () => {
+  it("enables RLS on the table", () => {
     expect(sql).toMatch(/alter table public\.job_budgets enable row level security/i);
-    expect(sql).toMatch(/alter table public\.quote_cost_estimates enable row level security/i);
   });
 
-  it("has exactly ONE foreign key to users per table (no new ambiguous embed pair)", () => {
+  it("has exactly ONE foreign key to users (no new ambiguous embed pair)", () => {
     // Two FKs to the same target makes a bare `users(...)` embed ambiguous and
     // PostgREST rejects the WHOLE query with PGRST201 — weeks of empty states,
     // the incident pinned by postgrest-embed-ambiguity.test.ts. There is
     // deliberately no `superseded_by`: the superseding revision's `created_by`
     // already records who revised it.
     const refs = sql.match(/references public\.users\(id\)/g) ?? [];
-    expect(refs.length, `${refs.length} FKs to users`).toBe(2); // one per table
+    expect(refs.length, `${refs.length} FKs to users`).toBe(1);
     expect(sql).not.toMatch(/superseded_by/);
     for (const f of [SERVICE, ACTIONS, PAGE]) {
       expect(codeOf(read(f)), `${f} embeds users`).not.toMatch(/users\s*\(/);
@@ -245,14 +262,6 @@ describe("a budget revision is immutable, and the chain is single-headed", () =>
   it("grants NO delete policy — a tenant is refused twice over", () => {
     expect(sql).toMatch(/create policy "job_budgets: members can select"/);
     expect(sql).not.toMatch(/create policy "job_budgets: [^"]*delete"/);
-    expect(sql).not.toMatch(/create policy "quote_cost_estimates: [^"]*delete"/);
-  });
-
-  it("makes a quote cost estimate write-once, one per quote", () => {
-    expect(sql).toMatch(/create trigger quote_cost_estimates_immutable\s*\n?\s*before update/i);
-    expect(sql).toMatch(/cannot be changed/);
-    expect(sql).toMatch(/constraint quote_cost_estimates_one_per_quote unique \(quote_id\)/);
-    expect(sql).not.toMatch(/create policy "quote_cost_estimates: [^"]*update"/);
   });
 
   it("cannot hold a partial breakdown, or one that does not add up", () => {
@@ -260,7 +269,6 @@ describe("a budget revision is immutable, and the chain is single-headed", () =>
       /num_nulls\(labour_cost, materials_cost, subcontractors_cost, misc_cost\) in \(0, 4\)/,
     );
     expect(sql).toMatch(/constraint job_budgets_detail_sums_to_total check/);
-    expect(sql).toMatch(/constraint quote_cost_estimates_sums_to_total check/);
     expect(sql, "and a baseline of nothing is not a baseline").toMatch(
       /constraint job_budgets_not_empty check/,
     );
@@ -375,20 +383,27 @@ describe("the baseline surfaces pin the ACTIVE org, not just RLS", () => {
     expect(all.length).toBe(pinned.length);
   });
 
-  it("the page pins the active org on both new reads", () => {
+  it("the page pins the active org on its ONE new read", () => {
     const page = codeOf(read(PAGE));
     expect(page).toMatch(
-      /loadCurrentJobBudget\(supabase as unknown as JobBudgetClient, ctx\.org\.id, id\)/,
-    );
-    expect(page).toMatch(
-      /loadQuoteCostEstimates\(supabase as unknown as JobBudgetClient, ctx\.org\.id, acceptedVariationIds\)/,
+      /loadCurrentJobBudget\(\s*\n?\s*supabase as unknown as JobBudgetClient,\s*\n?\s*ctx\.org\.id,\s*\n?\s*id,?\s*\n?\s*\)/,
     );
   });
 
-  it("the variation write stamps the ACTIVE org on the estimate", () => {
-    const src = read(QUOTES);
-    const start = src.indexOf('.insert({\n    org_id: ctx.org.id,\n    quote_id: variation.id,');
-    expect(start, "the estimate insert must stamp ctx.org.id").toBeGreaterThan(-1);
+  it("takes the variation cost basis from the job's OWN quotes, adding no read", () => {
+    // The quotes are already loaded `.eq("job_id", id)` through the tenant client
+    // and the job itself came through loadJobForOrg, so the cost side inherits
+    // the same scoping as the value side — one filter, one set, no way for the
+    // two to disagree about which variations count.
+    const page = codeOf(read(PAGE));
+    expect(page).toMatch(
+      /\.filter\(\(q\) => q\.variation_number != null && q\.status === "accepted"\)/,
+    );
+    expect(page).toMatch(/labour_cost: q\.cost_labour/);
+    expect(page).toMatch(/misc_cost: q\.cost_misc/);
+    expect(page, "the cost columns must actually be selected").toMatch(
+      /cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total/,
+    );
   });
 
   it("never reaches for the service-role admin client on this surface", () => {
@@ -422,13 +437,15 @@ describe("baseline reads fail loudly", () => {
     }
   });
 
-  it("the variation cost estimate insert is CHECKED, not fire-and-forget", () => {
-    // A silently-missing estimate under-states the revised budget and makes the
+  it("the variation cost basis rides the quote insert, which is already CHECKED", () => {
+    // A silently-missing cost basis under-states the revised budget and makes the
     // job look more profitable than it is — the exact defect class this closes.
+    // It cannot go missing independently now: the four columns are written by the
+    // SAME insert that creates the variation, whose error already aborts.
     const src = codeOf(read(QUOTES));
-    expect(src).toMatch(/const \{ error: estErr \}/);
-    expect(src).toMatch(/if \(estErr\) \{/);
-    expect(src).toMatch(/variation_cost_estimate_failed/);
+    expect(src).toMatch(/cost_labour: computed\.cost_breakdown\.labour/);
+    expect(src).toMatch(/cost_misc: computed\.cost_breakdown\.misc/);
+    expect(src).toMatch(/if \(qErr \|\| !variation\)/);
   });
 });
 

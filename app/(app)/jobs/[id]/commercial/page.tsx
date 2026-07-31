@@ -20,12 +20,9 @@ import {
   hasBudgetPosition,
   varianceTone,
   type JobBudgetPosition,
+  type VariationCostEstimate,
 } from "@/lib/jobs/budget";
-import {
-  loadCurrentJobBudget,
-  loadQuoteCostEstimates,
-  type JobBudgetClient,
-} from "@/server/services/job-budget";
+import { loadCurrentJobBudget, type JobBudgetClient } from "@/server/services/job-budget";
 import { CommercialTimeline } from "./_commercial-timeline";
 import { BudgetForm, type CurrentBudget } from "./_budget-form";
 
@@ -62,7 +59,14 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
       // `subtotal` is the EX-VAT contract value. Cost is ex-VAT everywhere in
       // this product, so the cost-value reconciliation must divide by the net
       // contract or every margin it reports is ~20 % out.
-      .select("id, number, variation_number, status, subtotal, total, accepted_at, declined_at, created_at, public_token")
+      // `cost_*` is the variation's PRICED COST BASIS (20261073) — the cost side
+      // of an approved scope change, and the ONLY per-variation cost store there
+      // is. `cost_total` is GENERATED from the four parts, so the budget reads it
+      // rather than re-keying or re-summing it.
+      .select(
+        "id, number, variation_number, status, subtotal, total, accepted_at, declined_at, created_at, public_token, " +
+          "cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total",
+      )
       .eq("job_id", id),
     supabase
       .from("invoices")
@@ -82,6 +86,9 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     subtotal: number | string | null;
     total: number | string | null; accepted_at: string | null; declined_at: string | null;
     created_at: string | null; public_token: string | null;
+    cost_labour: number | string | null; cost_materials: number | string | null;
+    cost_subcontractors: number | string | null; cost_misc: number | string | null;
+    cost_total: number | string | null;
   };
   type InvRow = {
     id: string; number: string | null; status: string; amount: number | string | null;
@@ -175,15 +182,28 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     })),
     invoices: invoices.map((i) => ({ status: i.status, total: i.total })),
   });
-  const acceptedVariationIds = quotes
+  // The cost side of the ACCEPTED variations, straight off the quotes already
+  // read — no second table, no second query. Deciding WHICH variations are
+  // approved is the contract taxonomy's rule (accepted + has a variation_number),
+  // the same predicate `revisedNet` uses above, so value and cost always agree on
+  // the same set. A variation with no priced basis has `cost_total` NULL and
+  // contributes 0, which is honest: nothing was budgeted for it.
+  const variationEstimates: VariationCostEstimate[] = quotes
     .filter((q) => q.variation_number != null && q.status === "accepted")
-    .map((q) => q.id);
-  const [currentBudget, variationEstimates] = await Promise.all([
-    // Cast: neither table is in the generated types yet (the job-page idiom).
-    // TypeScript-only — the runtime client is still the RLS-scoped tenant one.
-    loadCurrentJobBudget(supabase as unknown as JobBudgetClient, ctx.org.id, id),
-    loadQuoteCostEstimates(supabase as unknown as JobBudgetClient, ctx.org.id, acceptedVariationIds),
-  ]);
+    .map((q) => ({
+      total_cost: q.cost_total,
+      labour_cost: q.cost_labour,
+      materials_cost: q.cost_materials,
+      subcontractors_cost: q.cost_subcontractors,
+      misc_cost: q.cost_misc,
+    }));
+  // Cast: job_budgets is not in the generated types yet (the job-page idiom).
+  // TypeScript-only — the runtime client is still the RLS-scoped tenant one.
+  const currentBudget = await loadCurrentJobBudget(
+    supabase as unknown as JobBudgetClient,
+    ctx.org.id,
+    id,
+  );
   const budget = computeJobBudgetPosition({
     budget: currentBudget,
     approvedVariationEstimates: variationEstimates,

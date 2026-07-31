@@ -10,29 +10,31 @@
 -- `marginBand()`'s 30 %/15 % thresholds are hardcoded universals because there
 -- was nothing per-job to compare against.
 --
--- Worse, the ONE place a cost estimate is already computed throws it away:
--- `computeVariation()` (lib/variations/schema.ts) derives `total_cost` and a
--- four-bucket breakdown from the operator's own figures, uses them only to
--- apportion revenue across `quote_line_items.unit_price`, and persists neither.
--- The operator types their cost plan into the product every time they raise a
--- variation and the product forgets it.
+-- The SUPPLY side of that plan — what an approved variation adds to the cost
+-- baseline — is NOT defined here. It is `quotes.cost_labour / cost_materials /
+-- cost_subcontractors / cost_misc` and the GENERATED `quotes.cost_total`
+-- (20261073). This migration deliberately adds NO second per-variation cost
+-- store: two cost bases for one variation is the "one commercial source of
+-- truth" violation this platform must not have, and theirs is the better shape
+-- (a generated total cannot drift from its parts, and there is no second write
+-- to fail). lib/jobs/budget.ts READS `cost_total`; it never re-keys it.
 --
 -- ── THE ACCOUNTING BOUNDARY ─────────────────────────────────────────────────
--- NEITHER TABLE HERE POSTS TO `finances`, AND NEITHER MAY EVER.
+-- THIS TABLE DOES NOT POST TO `finances`, AND MAY NEVER.
 --
 -- A budget is a PLAN, not a transaction. `finances` is the actual-cost ledger
--- that job profitability, VAT and CIS all read. If a baseline (or a variation's
--- cost estimate) ever landed there it would be double-counted the moment the
--- real supplier bill arrived — the estimate once when it was planned, the spend
--- again when it was incurred — and every affected job's cost would be silently
--- inflated with no way to tell the plan from the money. That is the same
--- double-count hazard the operational-stock milestone was allowed to ship on
--- (CEO decision D1 is still undecided there, and stock still posts nothing);
--- the rule is identical here and the reason is stronger, because a plan is not
--- even a claim that money moved.
+-- that job profitability, VAT and CIS all read. If a baseline ever landed there
+-- it would be double-counted the moment the real supplier bill arrived — the
+-- estimate once when it was planned, the spend again when it was incurred — and
+-- every affected job's cost would be silently inflated with no way to tell the
+-- plan from the money. That is the same double-count hazard the
+-- operational-stock milestone was allowed to ship on (CEO decision D1 is still
+-- undecided there, and stock still posts nothing); the rule is identical here
+-- and the reason is stronger, because a plan is not even a claim that money
+-- moved.
 --
 -- Structurally, not just by convention: there is no trigger on `finances`, no
--- writer of it, and no money column on either table that any process could
+-- writer of it, and no money column on this table that any process could
 -- mistake for an incurred cost. The boundary is swept by
 -- __tests__/security/job-budgets.test.ts (an extension of the D1 sweep in
 -- __tests__/security/operational-stock.test.ts).
@@ -97,16 +99,15 @@
 -- One FK to users, so no new reviewed pair.
 --
 -- ── TENANCY IS STRUCTURAL ───────────────────────────────────────────────────
--- Both tables bind their parent by COMPOSITE FK — (job_id, org_id) →
--- jobs (id, org_id) and (quote_id, org_id) → quotes (id, org_id) — so a forged
--- parent id cannot cross tenants even for service_role, and even if an app-layer
--- active-org filter is ever forgotten. Neither parent had an (id, org_id)
--- candidate key, so this migration adds them, which is the same additive step
--- 20261056 (assets), 20261059 (purchase_orders), 20261063/64 (stock, sites,
--- goods_received_lines) and 20261046 (suppliers) each took. It can never reject
--- a row: `id` is already the PRIMARY KEY of both tables, so (id, org_id) is
--- unique by construction and the constraint validates instantly against
--- existing data.
+-- The table binds its parent by COMPOSITE FK — (job_id, org_id) →
+-- jobs (id, org_id) — so a forged job id cannot cross tenants even for
+-- service_role, and even if an app-layer active-org filter is ever forgotten.
+-- `jobs` had no (id, org_id) candidate key, so this migration adds one, which is
+-- the same additive step 20261056 (assets), 20261059 (purchase_orders),
+-- 20261063/64 (stock, sites, goods_received_lines) and 20261046 (suppliers) each
+-- took. It can never reject a row: `id` is already the PRIMARY KEY, so
+-- (id, org_id) is unique by construction and the constraint validates instantly
+-- against existing data.
 --
 -- NOTE 20261039 chose a SECURITY DEFINER guard trigger for exactly this job↔org
 -- binding, and said why: "jobs has no (id, org_id) candidate key, so a composite
@@ -114,36 +115,30 @@
 -- Its trigger is left alone (behaviour-preserving); new tables get the stronger
 -- form.
 --
--- ON DELETE CASCADE is correct on both, and is what makes them teardown-safe.
--- A plan for a job that no longer exists is not history, it is litter; and
--- unlike stock_movements (a ledger that must outlive its job) there is nothing
--- here to preserve. CASCADE also cannot block `delete from organizations` the
--- way `RESTRICT` would — RESTRICT can never be deferred, which is precisely how
--- the 20261052 org-teardown P1 happened. There is NO `ON DELETE RESTRICT` and
--- NO `AFTER DELETE` activity trigger anywhere in this file.
+-- ON DELETE CASCADE is correct, and is what makes the table teardown-safe. A
+-- plan for a job that no longer exists is not history, it is litter; and unlike
+-- stock_movements (a ledger that must outlive its job) there is nothing here to
+-- preserve. CASCADE also cannot block `delete from organizations` the way
+-- `RESTRICT` would — RESTRICT can never be deferred, which is precisely how the
+-- 20261052 org-teardown P1 happened. There is NO `ON DELETE RESTRICT` and NO
+-- `AFTER DELETE` activity trigger anywhere in this file.
 --
 -- Additive and reversible. To roll back:
---   drop table public.quote_cost_estimates;
 --   drop table public.job_budgets;
 --   drop function public.tg_job_budget_immutable();
 --   drop function public.tg_job_budget_no_targeted_delete();
---   drop function public.tg_quote_cost_estimate_immutable();
---   alter table public.jobs   drop constraint jobs_id_org_key;
---   alter table public.quotes drop constraint quotes_id_org_key;
--- Migrate-first safe: the app reads both tables best-effort; absent → no
+--   drop function public.set_job_budget(uuid, uuid, numeric, numeric, numeric,
+--                                       numeric, numeric, numeric, text);
+--   alter table public.jobs drop constraint jobs_id_org_key;
+-- Migrate-first safe: the app reads this table best-effort; absent → no
 -- baseline, and every surface degrades to exactly today's behaviour.
 
--- ── 1. candidate keys the composite FKs need (additive; cannot reject a row) ──
+-- ── 1. the candidate key the composite FK needs (additive; cannot reject a row) ──
 do $$ begin
   if not exists (
     select 1 from pg_constraint where conname = 'jobs_id_org_key'
   ) then
     alter table public.jobs add constraint jobs_id_org_key unique (id, org_id);
-  end if;
-  if not exists (
-    select 1 from pg_constraint where conname = 'quotes_id_org_key'
-  ) then
-    alter table public.quotes add constraint quotes_id_org_key unique (id, org_id);
   end if;
 end $$;
 
@@ -390,72 +385,3 @@ grant execute on function public.set_job_budget(
   uuid, uuid, numeric, numeric, numeric, numeric, numeric, numeric, text
 ) to authenticated;
 
--- ── 7. quote_cost_estimates — stop discarding computeVariation()'s figures ───
--- One row per quote, holding the four-bucket cost estimate the operator entered
--- and the margin they asked for. This is the SUPPLY side of the cost baseline:
--- an ACCEPTED variation's estimate is a committed addition to the plan, exactly
--- as its `total` is a committed addition to the contract value
--- (lib/jobs/commercial-position.ts). Without this row the product could add
--- scope to the revenue side and had nothing to add to the cost side, so a
--- variation always improved the apparent margin.
---
--- WRITE-ONCE. It records what was estimated AT THE TIME the variation was
--- raised, which is the only thing a later variance can be measured against, and
--- the product has no path that re-prices a variation's cost breakdown (the
--- form is create-only). No update policy, and a trigger refuses one anyway.
--- STATED RESIDUAL: editing the quote's line items afterwards can move its
--- `total` without moving this estimate. That is the honest failure mode — the
--- estimate goes stale and visibly so, rather than being silently rewritten to
--- match a number it did not produce.
-create table if not exists public.quote_cost_estimates (
-  id                  uuid primary key default gen_random_uuid(),
-  org_id              uuid not null references public.organizations(id) on delete cascade,
-  quote_id            uuid not null,
-  -- Ex-VAT, and the same four buckets. NOT NULL here (unlike job_budgets):
-  -- computeVariation() always produces all four, so an absent bucket would mean
-  -- a lossy write, not an operator choice.
-  labour_cost         numeric(12,2) not null default 0 check (labour_cost >= 0),
-  materials_cost      numeric(12,2) not null default 0 check (materials_cost >= 0),
-  subcontractors_cost numeric(12,2) not null default 0 check (subcontractors_cost >= 0),
-  misc_cost           numeric(12,2) not null default 0 check (misc_cost >= 0),
-  total_cost          numeric(12,2) not null check (total_cost >= 0),
-  -- The margin the operator asked for, for the record. -50..95 mirrors
-  -- variationFormSchema exactly.
-  margin_pct          numeric(5,2) check (
-                        margin_pct is null or (margin_pct >= -50 and margin_pct <= 95)
-                      ),
-  created_by          uuid references public.users(id) on delete set null,
-  created_at          timestamptz not null default now(),
-  constraint quote_cost_estimates_quote_fk
-    foreign key (quote_id, org_id) references public.quotes (id, org_id) on delete cascade,
-  constraint quote_cost_estimates_sums_to_total check (
-    round(labour_cost + materials_cost + subcontractors_cost + misc_cost, 2)
-      = round(total_cost, 2)
-  ),
-  constraint quote_cost_estimates_one_per_quote unique (quote_id)
-);
-create index if not exists quote_cost_estimates_org_idx
-  on public.quote_cost_estimates (org_id);
-
-create or replace function public.tg_quote_cost_estimate_immutable()
-returns trigger language plpgsql set search_path = public as $$
-begin
-  raise exception 'a quote cost estimate records what was estimated at the time and cannot be changed'
-    using errcode = 'check_violation';
-end $$;
-drop trigger if exists quote_cost_estimates_immutable on public.quote_cost_estimates;
-create trigger quote_cost_estimates_immutable before update on public.quote_cost_estimates
-  for each row execute function public.tg_quote_cost_estimate_immutable();
-
-alter table public.quote_cost_estimates enable row level security;
-
-drop policy if exists "quote_cost_estimates: members can select" on public.quote_cost_estimates;
-create policy "quote_cost_estimates: members can select" on public.quote_cost_estimates
-  for select to authenticated using (org_id in (select public.current_org_ids()));
--- Written by whoever may raise the variation, which is any member (the quotes
--- insert policy). Narrower than job_budgets on purpose: this is a byproduct of
--- creating the variation, not a management decision about the job's plan.
-drop policy if exists "quote_cost_estimates: members can insert" on public.quote_cost_estimates;
-create policy "quote_cost_estimates: members can insert" on public.quote_cost_estimates
-  for insert to authenticated with check (org_id in (select public.current_org_ids()));
--- No update policy, no delete policy. It goes when its quote goes (CASCADE).

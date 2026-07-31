@@ -65,8 +65,15 @@ export type JobBudgetRow = {
 };
 
 /**
- * A `quote_cost_estimates` row for an ACCEPTED variation — the cost side of an
- * approved scope change, mirroring how its `total` joins the revised value.
+ * The priced cost basis of an ACCEPTED variation — the cost side of an approved
+ * scope change, mirroring how its `total` joins the revised contract value.
+ *
+ * Shaped to be filled straight from `quotes.cost_labour / cost_materials /
+ * cost_subcontractors / cost_misc` and the GENERATED `quotes.cost_total`
+ * (20261073). That is the ONLY per-variation cost store and this module READS
+ * it — it is never re-keyed, re-summed or mirrored anywhere. `cost_total` is
+ * NULL when no basis was priced, which coerces to 0 here: nothing was budgeted
+ * for that variation, and pretending otherwise would invent a plan.
  */
 export type VariationCostEstimate = {
   total_cost: number | string | null;

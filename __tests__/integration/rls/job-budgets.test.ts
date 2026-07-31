@@ -122,6 +122,8 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
     expect(cust.error, cust.error?.message).toBeNull();
     customerA = String(cust.data?.id ?? "");
 
+    // An ACCEPTED variation carrying a PRICED COST BASIS (20261073). This is the
+    // only per-variation cost store; the budget reads its GENERATED cost_total.
     const q = await svc()
       .from("quotes")
       .insert({
@@ -133,12 +135,18 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
         status: "accepted",
         subtotal: 5000,
         vat_total: 1000,
+        cost_labour: 2000,
+        cost_materials: 1500,
+        cost_subcontractors: 400,
+        cost_misc: 100,
       })
       .select("id")
       .single();
     expect(q.error, q.error?.message).toBeNull();
     quoteA = String(q.data?.id ?? "");
 
+    // An accepted variation with NO cost basis — cost_total stays NULL, so the
+    // plan must treat it as nothing budgeted rather than inventing a figure.
     const q2 = await svc()
       .from("quotes")
       .insert({
@@ -190,10 +198,8 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
       if (!id) continue;
       const del = await svc().from("organizations").delete().eq("id", id);
       expect(del.error, `org teardown failed: ${JSON.stringify(del.error)}`).toBeNull();
-      for (const table of ["job_budgets", "quote_cost_estimates"]) {
-        const residue = await svc().from(table).select("id").eq("org_id", id);
-        expect(residue.data ?? [], `${table} leaked past org teardown`).toHaveLength(0);
-      }
+      const residue = await svc().from("job_budgets").select("id").eq("org_id", id);
+      expect(residue.data ?? [], "job_budgets leaked past org teardown").toHaveLength(0);
     }
     for (const id of [dualId, staffId]) {
       if (id) await serviceClient().auth.admin.deleteUser(id);
@@ -207,7 +213,8 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
     expect(before.error, before.error?.message).toBeNull();
     const countBefore = (before.data ?? []).length;
 
-    // set → revise → variation estimate, all through the real authorities.
+    // set → revise, through the real authority. (The variation cost basis was
+    // written with the quote itself in the fixture — same insert, one store.)
     const set = await rpc(userClient(dualToken)).rpc("set_job_budget", {
       p_job_id: jobA,
       p_org_id: orgA,
@@ -233,23 +240,6 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
       p_note: "ground conditions worse than surveyed",
     });
     expect(revise.error, JSON.stringify(revise.error)).toBeNull();
-
-    const est = await db(userClient(dualToken))
-      .from("quote_cost_estimates")
-      .insert({
-        org_id: orgA,
-        quote_id: quoteA,
-        labour_cost: 2000,
-        materials_cost: 1500,
-        subcontractors_cost: 400,
-        misc_cost: 100,
-        total_cost: 4000,
-        margin_pct: 20,
-        created_by: dualId,
-      })
-      .select("id")
-      .single();
-    expect(est.error, JSON.stringify(est.error)).toBeNull();
 
     const after = await svc().from("finances").select("id").eq("org_id", orgA);
     expect(after.error, after.error?.message).toBeNull();
@@ -301,16 +291,28 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
     expect(bad.error?.message ?? "").toMatch(/job_budgets_job_fk|foreign key/i);
   });
 
-  it("REFUSES a variation estimate whose org differs from its quote's org", async () => {
-    // Uses the estimate-FREE variation, so the refusal is provably the composite
-    // FK and not the one-per-quote index shadowing it.
-    const bad = await svc()
-      .from("quote_cost_estimates")
-      .insert({ org_id: orgB, quote_id: quoteA2, total_cost: 0 })
-      .select("id")
-      .single();
-    expect(bad.error).not.toBeNull();
-    expect(bad.error?.message ?? "").toMatch(/quote_cost_estimates_quote_fk|foreign key/i);
+  it("keeps the variation cost basis on the QUOTE — one store, generated total", async () => {
+    // The cost side needs no tenancy machinery of its own: it is columns on a row
+    // that is already org-scoped, so it cannot be addressed, forged or leaked
+    // independently of its quote. `cost_total` is GENERATED, so parts and total
+    // are incapable of disagreeing.
+    const priced = await svc()
+      .from("quotes")
+      .select("org_id, cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total")
+      .eq("id", quoteA);
+    expect(priced.error, priced.error?.message).toBeNull();
+    const row = (priced.data ?? [])[0]!;
+    expect(String(row.org_id)).toBe(orgA);
+    expect(Number(row.cost_total)).toBe(4000); // 2000 + 1500 + 400 + 100
+    // …and it is NOT writable to a value of its own.
+    const forced = await svc().from("quotes").update({ cost_total: 1 }).eq("id", quoteA);
+    expect(forced.error, "cost_total is GENERATED and cannot be set").not.toBeNull();
+
+    // A variation with nothing priced reports NULL, not 0 — "not budgeted" and
+    // "budgeted at zero" are different facts and the plan must not conflate them.
+    const unpriced = await svc().from("quotes").select("cost_total").eq("id", quoteA2);
+    expect(unpriced.error, unpriced.error?.message).toBeNull();
+    expect((unpriced.data ?? [])[0]!.cost_total).toBeNull();
   });
 
   it("the dual-org admin sees BOTH companies' baselines through RLS alone", async () => {
@@ -481,23 +483,6 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
     expect(bad.error?.message ?? "").toMatch(/revision_needs_reason|check constraint/i);
   });
 
-  it("a variation cost estimate is WRITE-ONCE, one per quote", async () => {
-    const edit = await svc()
-      .from("quote_cost_estimates")
-      .update({ total_cost: 1 })
-      .eq("quote_id", quoteA);
-    expect(edit.error).not.toBeNull();
-    expect(edit.error?.message ?? "").toMatch(/cannot be changed/i);
-
-    const second = await svc()
-      .from("quote_cost_estimates")
-      .insert({ org_id: orgA, quote_id: quoteA, total_cost: 0 })
-      .select("id")
-      .single();
-    expect(second.error).not.toBeNull();
-    expect(second.error?.message ?? "").toMatch(/one_per_quote|duplicate key/i);
-  });
-
   it("REFUSES a partial breakdown and one that does not add up", async () => {
     const partial = await svc().from("job_budgets").insert({
       org_id: orgA,
@@ -571,10 +556,12 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
 
   // ── 5. cascades ───────────────────────────────────────────────────────────
 
-  it("deleting the QUOTE takes its cost estimate with it", async () => {
+  it("deleting the QUOTE takes its cost basis with it — nothing is orphaned", async () => {
+    // Free, because the basis IS the quote. A separate store would have needed a
+    // cascade of its own, and a cascade is a thing that can be got wrong.
     const del = await svc().from("quotes").delete().eq("id", quoteA);
     expect(del.error, JSON.stringify(del.error)).toBeNull();
-    const left = await svc().from("quote_cost_estimates").select("id").eq("quote_id", quoteA);
+    const left = await svc().from("quotes").select("id").eq("id", quoteA);
     expect(left.data ?? []).toHaveLength(0);
   });
 
