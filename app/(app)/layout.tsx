@@ -4,6 +4,7 @@ import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
 import { SignOutButton } from "./_components/sign-out-button";
 import { SwRegister } from "./_components/sw-register";
 import { OfflineIdentityMarker } from "./_components/offline-identity-marker";
+import { OfflineOutbox } from "./_components/offline-outbox";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
@@ -96,6 +97,13 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
+
+      {/* Unsynced offline writes are a WHOLE-APP concern, not a diary-page one: a
+          foreman must see that his day is still only on the device wherever he
+          navigates, and must not sign out while it is. Renders nothing when the
+          outbox is empty. Identity is the server-resolved session, so this session
+          can only ever see and flush its own queued work. */}
+      <OfflineOutbox userId={user.id} orgId={ctx.org.id} />
 
       <div className="flex">
         <Sidebar role={ctx.membership.role} />
