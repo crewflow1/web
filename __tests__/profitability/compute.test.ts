@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   mapToCostBucket,
   marginBand,
+  UNIVERSAL_TARGET_MARGIN_PCT,
   computeJobProfitability,
   computeAllJobsProfitability,
   topProfitableJobs,
@@ -41,6 +42,52 @@ describe("marginBand", () => {
     expect(marginBand(0)).toBe("red");
     expect(marginBand(-10)).toBe("red");
     expect(marginBand(null)).toBe("neutral");
+  });
+
+  // ── per-job target (20261072) ─────────────────────────────────────────────
+  // `marginBand` now PREFERS a per-job target when the job's cost baseline
+  // carries one. The universal 30/15 stays the fallback, and the fallback path
+  // must be byte-for-byte what it always was.
+
+  it("BEHAVIOUR IS UNCHANGED for a job with no budget — the fallback IS the old function", () => {
+    // Every margin the old test pinned, plus the boundaries, asserted two ways:
+    // omitting the argument and passing null must both give the published bands.
+    for (const m of [100, 50, 31, 30.01, 30, 29.99, 20, 15, 14.99, 0, -10, -100]) {
+      expect(marginBand(m, null), `null target at ${m}%`).toBe(marginBand(m));
+      expect(marginBand(m, undefined), `undefined target at ${m}%`).toBe(marginBand(m));
+      // …and the universal target is literally 30, so passing it changes nothing.
+      expect(marginBand(m, UNIVERSAL_TARGET_MARGIN_PCT), `explicit 30 at ${m}%`).toBe(
+        marginBand(m),
+      );
+    }
+    expect(marginBand(null, 12)).toBe("neutral"); // no margin ⇒ nothing to band
+  });
+
+  it("bands against the job's OWN target when one is set", () => {
+    // A 12% target: 12 is the green line, 6 (half) the amber floor. Under the
+    // universal bands every one of these would be red, which is the defect —
+    // an on-plan job painted as a failure.
+    expect(marginBand(20, 12)).toBe("green");
+    expect(marginBand(12.5, 12)).toBe("green");
+    expect(marginBand(12, 12)).toBe("amber"); // not > target, same rule as 30
+    expect(marginBand(6, 12)).toBe("amber");
+    expect(marginBand(5.99, 12)).toBe("red");
+
+    // A demanding 50% target: 25 is the amber floor, so a 40% margin — green
+    // under the universal bands — is amber against this job's own plan.
+    expect(marginBand(40, 50)).toBe("amber");
+    expect(marginBand(51, 50)).toBe("green");
+    expect(marginBand(24, 50)).toBe("red");
+  });
+
+  it("honours a ZERO target (break-even is fine) but ignores a nonsense one", () => {
+    expect(marginBand(0.1, 0)).toBe("green");
+    expect(marginBand(0, 0)).toBe("amber");
+    expect(marginBand(-0.1, 0)).toBe("red");
+    // Negative / non-finite targets fall back rather than inverting the bands.
+    expect(marginBand(20, -5)).toBe(marginBand(20));
+    expect(marginBand(20, Number.NaN)).toBe(marginBand(20));
+    expect(marginBand(10, Number.POSITIVE_INFINITY)).toBe(marginBand(10));
   });
 });
 

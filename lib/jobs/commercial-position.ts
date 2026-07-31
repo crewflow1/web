@@ -17,6 +17,17 @@ export type PositionQuote = {
   status: string;
   total: number | string | null;
   variation_number: number | null;
+  /**
+   * Ex-VAT value (`quotes.subtotal`). OPTIONAL: callers that only need the cash
+   * (gross) taxonomy may omit it, and the `*Net` figures below then read 0.
+   *
+   * It exists because COST is ex-VAT everywhere in this codebase
+   * (`finances.amount`, and the whole profitability feed), so reconciling cost
+   * against `revised` — which is GROSS, because cash is what moves through the
+   * bank — would report a ~20 % gap on a job that is exactly on plan. Any
+   * cost-vs-value comparison must use `revisedNet`.
+   */
+  subtotal?: number | string | null;
 };
 
 export type PositionInvoice = {
@@ -31,6 +42,16 @@ export type JobCommercialPosition = {
   approvedVariations: number;
   /** original + approvedVariations. */
   revised: number;
+  /** `original`, ex-VAT (0 unless the caller selected `subtotal`). */
+  originalNet: number;
+  /** `approvedVariations`, ex-VAT (0 unless the caller selected `subtotal`). */
+  approvedVariationsNet: number;
+  /**
+   * originalNet + approvedVariationsNet — the revised contract value on the SAME
+   * VAT basis as cost. This is the figure a cost baseline, a forecast final cost
+   * and a margin must be reconciled against; `revised` (gross) is the cash one.
+   */
+  revisedNet: number;
   /** Variations sent/viewed but not yet decided (shown, never in `revised`). */
   pendingVariations: number;
   /** Sum of non-draft invoices raised against the job. */
@@ -62,6 +83,10 @@ export function computeJobCommercialPosition(input: {
   const revised = round2(original + approvedVariations);
   const pendingVariations = sumMoney(pendingVars.map((q) => q.total));
 
+  // The same taxonomy on the ex-VAT basis, for cost reconciliation.
+  const originalNet = sumMoney(base.map((q) => q.subtotal));
+  const approvedVariationsNet = sumMoney(acceptedVars.map((q) => q.subtotal));
+
   const invoiced = sumMoney(
     input.invoices.filter((i) => INVOICE_RAISED.has(i.status)).map((i) => i.total),
   );
@@ -73,6 +98,9 @@ export function computeJobCommercialPosition(input: {
     original,
     approvedVariations,
     revised,
+    originalNet,
+    approvedVariationsNet,
+    revisedNet: round2(originalNet + approvedVariationsNet),
     pendingVariations,
     invoiced,
     paid,

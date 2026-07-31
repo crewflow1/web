@@ -8,8 +8,26 @@ import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
 import { computeCommittedCosts } from "@/lib/purchase-orders/committed";
-import { computeJobProfitability, marginPillClass } from "@/lib/profitability/compute";
+import {
+  computeJobProfitability,
+  marginBand,
+  marginPillClass,
+  type CostBucket,
+} from "@/lib/profitability/compute";
+import { computeJobCommercialPosition } from "@/lib/jobs/commercial-position";
+import {
+  computeJobBudgetPosition,
+  hasBudgetPosition,
+  varianceTone,
+  type JobBudgetPosition,
+} from "@/lib/jobs/budget";
+import {
+  loadCurrentJobBudget,
+  loadQuoteCostEstimates,
+  type JobBudgetClient,
+} from "@/server/services/job-budget";
 import { CommercialTimeline } from "./_commercial-timeline";
+import { BudgetForm, type CurrentBudget } from "./_budget-form";
 
 /**
  * Unified commercial lifecycle (Programme D) — one authoritative, cash-first
@@ -41,17 +59,27 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   const [quotesRes, invoicesRes, financesRes] = await Promise.all([
     supabase
       .from("quotes")
-      .select("id, number, variation_number, status, total, accepted_at, declined_at, created_at, public_token")
+      // `subtotal` is the EX-VAT contract value. Cost is ex-VAT everywhere in
+      // this product, so the cost-value reconciliation must divide by the net
+      // contract or every margin it reports is ~20 % out.
+      .select("id, number, variation_number, status, subtotal, total, accepted_at, declined_at, created_at, public_token")
       .eq("job_id", id),
     supabase
       .from("invoices")
       .select("id, number, status, amount, total, due_date, created_at, sent_at, job_id")
       .eq("job_id", id),
-    supabase.from("finances").select("id, amount, category, created_at, job_id").eq("job_id", id),
+    // `purchase_order_id` is what links a cost back to the commitment it
+    // discharges (20261009). Without it a received-and-billed PO is counted
+    // twice — once as committed, once as actual — in the forecast final cost.
+    supabase
+      .from("finances")
+      .select("id, amount, category, created_at, job_id, purchase_order_id")
+      .eq("job_id", id),
   ]);
 
   type QuoteRow = {
     id: string; number: string | null; variation_number: number | null; status: string;
+    subtotal: number | string | null;
     total: number | string | null; accepted_at: string | null; declined_at: string | null;
     created_at: string | null; public_token: string | null;
   };
@@ -60,7 +88,10 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     total: number | string | null; due_date: string | null; created_at: string | null;
     sent_at: string | null; job_id: string | null;
   };
-  type FinRow = { id: string; amount: number | string | null; category: string | null; created_at: string | null; job_id: string | null };
+  type FinRow = {
+    id: string; amount: number | string | null; category: string | null;
+    created_at: string | null; job_id: string | null; purchase_order_id: string | null;
+  };
 
   const quotes = (quotesRes.data ?? []) as unknown as QuoteRow[];
   const invoices = (invoicesRes.data ?? []) as unknown as InvRow[];
@@ -83,9 +114,11 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     (supabase.from("retention_releases" as never) as unknown as {
       select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string | null }> | null }> };
     }).select("id, amount, released_on").eq("job_id", id),
+    // `subtotal` (ex-VAT) rides along beside `total` (gross): the existing
+    // committed tile stays gross, the forecast needs net. See committed.ts.
     (supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; number: string | null; total: number | string | null; status: string; created_at: string | null; supplier: { name: string } | null }> | null }> };
-    }).select("id, number, total, status, created_at, supplier:suppliers ( name )").eq("job_id", id),
+      select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; number: string | null; subtotal: number | string | null; total: number | string | null; status: string; created_at: string | null; supplier: { name: string } | null }> | null }> };
+    }).select("id, number, subtotal, total, status, created_at, supplier:suppliers ( name )").eq("job_id", id),
   ]);
   const retentionReleases = retReleases.data ?? [];
   const purchaseOrders = pos.data ?? [];
@@ -101,7 +134,25 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     invoices: invoices.map((i) => ({ status: i.status, amount: i.amount })),
     releases: retentionReleases.map((r) => ({ amount: r.amount })),
   });
-  const committed = computeCommittedCosts(purchaseOrders.map((p) => ({ status: p.status, total: p.total })));
+  // Bills already posted against each PO, so a received-and-billed order is not
+  // counted twice by the forecast. One pass over the finance rows already read —
+  // no extra query, and no second read of the ledger.
+  const billedByPo = new Map<string, number>();
+  for (const f of finances) {
+    if (!f.purchase_order_id) continue;
+    billedByPo.set(
+      f.purchase_order_id,
+      Math.round(((billedByPo.get(f.purchase_order_id) ?? 0) + Number(f.amount ?? 0)) * 100) / 100,
+    );
+  }
+  const committed = computeCommittedCosts(
+    purchaseOrders.map((p) => ({
+      status: p.status,
+      total: p.total,
+      subtotal: p.subtotal,
+      billed: billedByPo.get(p.id) ?? 0,
+    })),
+  );
   const profit = computeJobProfitability(
     id,
     invoices.map((i) => ({ job_id: i.job_id, amount: i.amount })),
@@ -110,7 +161,59 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   const costsTotal = profit?.costs_total ?? 0;
   const grossProfit = profit?.gross_profit ?? 0;
   const marginPct = profit?.margin_pct ?? null;
-  const marginBandValue = profit?.band ?? "neutral";
+
+  // ---- The cost baseline (20261072) --------------------------------------
+  // The ex-VAT contract taxonomy, for the cost-value reconciliation. `cash`
+  // above is the GROSS answer (what moves through the bank); this is the net one
+  // (what a cost can be compared with).
+  const contract = computeJobCommercialPosition({
+    quotes: quotes.map((q) => ({
+      status: q.status,
+      total: q.total,
+      subtotal: q.subtotal,
+      variation_number: q.variation_number,
+    })),
+    invoices: invoices.map((i) => ({ status: i.status, total: i.total })),
+  });
+  const acceptedVariationIds = quotes
+    .filter((q) => q.variation_number != null && q.status === "accepted")
+    .map((q) => q.id);
+  const [currentBudget, variationEstimates] = await Promise.all([
+    // Cast: neither table is in the generated types yet (the job-page idiom).
+    // TypeScript-only — the runtime client is still the RLS-scoped tenant one.
+    loadCurrentJobBudget(supabase as unknown as JobBudgetClient, ctx.org.id, id),
+    loadQuoteCostEstimates(supabase as unknown as JobBudgetClient, ctx.org.id, acceptedVariationIds),
+  ]);
+  const budget = computeJobBudgetPosition({
+    budget: currentBudget,
+    approvedVariationEstimates: variationEstimates,
+    actualTotal: costsTotal,
+    actualByBucket: profit?.costs_by_bucket ?? { labour: 0, materials: 0, subcontractors: 0, misc: 0 },
+    remainingCommitted: committed.remaining,
+    revisedValueNet: contract.revisedNet,
+  });
+
+  // THE marginBand FALLBACK. A per-job target replaces the universal 30/15 bands
+  // ONLY when the job's baseline carries one; otherwise `targetMarginPct` is null
+  // and marginBand() behaves exactly as it always has.
+  const marginBandValue =
+    marginPct == null ? "neutral" : marginBand(marginPct, budget.targetMarginPct);
+
+  const canSetBudget =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const currentForForm: CurrentBudget | null = currentBudget
+    ? {
+        revision: Number(currentBudget.revision ?? 1),
+        total: Number(currentBudget.total_cost ?? 0),
+        labour: currentBudget.labour_cost == null ? null : Number(currentBudget.labour_cost),
+        materials: currentBudget.materials_cost == null ? null : Number(currentBudget.materials_cost),
+        subcontractors:
+          currentBudget.subcontractors_cost == null ? null : Number(currentBudget.subcontractors_cost),
+        misc: currentBudget.misc_cost == null ? null : Number(currentBudget.misc_cost),
+        targetMarginPct:
+          currentBudget.target_margin_pct == null ? null : Number(currentBudget.target_margin_pct),
+      }
+    : null;
 
   const timeline = buildCommercialTimeline({
     quotes,
@@ -208,9 +311,23 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
           />
           <Tile label="Actual cost" value={formatGbp(costsTotal)} />
           <Tile label="Gross profit" value={formatGbp(grossProfit)} />
-          <Tile label="Margin" value={marginPct == null ? "—" : `${marginPct.toFixed(1)}%`} pill={marginPillClass(marginBandValue)} />
+          <Tile
+            label="Margin"
+            value={marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}
+            pill={marginPillClass(marginBandValue)}
+            sub={
+              budget.targetMarginPct != null
+                ? `vs ${budget.targetMarginPct}% target`
+                : undefined
+            }
+          />
         </dl>
       </section>
+
+      {/* Budget vs actual — the baseline every other cost figure is measured
+          against. Absent a baseline this still answers "where does this land?",
+          because a forecast needs no plan. */}
+      <BudgetPanel jobId={id} budget={budget} canSet={canSetBudget} current={currentForForm} />
 
       {/* The commercial lifecycle timeline. */}
       <CommercialTimeline events={timeline} />
@@ -221,15 +338,215 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
 function Tile({
   label, value, sub, strong, tone, pill,
 }: {
-  label: string; value: string; sub?: string; strong?: boolean; tone?: "amber"; pill?: string;
+  label: string; value: string; sub?: string; strong?: boolean;
+  tone?: "amber" | "good" | "bad" | "neutral"; pill?: string;
 }) {
+  const toneClass =
+    tone === "amber" ? "text-amber-700"
+    : tone === "good" ? "text-green-700"
+    : tone === "bad" ? "text-red-700"
+    : "text-slate-900";
   return (
     <div className="rounded-lg bg-slate-50 px-3 py-2.5">
       <dt className="text-[11px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 ${strong ? "text-lg font-bold" : "text-base font-semibold"} ${tone === "amber" ? "text-amber-700" : "text-slate-900"}`}>
+      <dd className={`mt-0.5 ${strong ? "text-lg font-bold" : "text-base font-semibold"} ${toneClass}`}>
         {pill ? <span className={`inline-block rounded-full px-2 py-0.5 text-sm font-semibold ${pill}`}>{value}</span> : value}
       </dd>
       {sub ? <dd className="mt-0.5 text-[11px] text-slate-600">{sub}</dd> : null}
     </div>
+  );
+}
+
+const BUCKET_LABELS: Record<CostBucket, string> = {
+  labour: "Labour",
+  materials: "Materials",
+  subcontractors: "Subcontractors",
+  misc: "Other",
+};
+
+/** Signed money, so "£1,200 over" and "£1,200 left" are never confusable. */
+function signedGbp(v: number): string {
+  if (v === 0) return formatGbp(0);
+  return `${v > 0 ? "" : "−"}${formatGbp(Math.abs(v))}`;
+}
+
+/**
+ * Budget vs actual, forecast final cost, and the cost-value reconciliation.
+ *
+ * MOBILE FIRST (375px): the tiles are a 2-up grid and the per-bucket breakdown is
+ * a definition list rather than a table, so nothing scrolls sideways on a phone.
+ *
+ * Rendered for EVERY job, including one with no baseline: the forecast and the
+ * reconciliation need no plan, and an explicit "no budget set" is the prompt that
+ * gets one set. The variance figures stay absent rather than zero — "£0 budget,
+ * 100% over" is the lie a default would tell.
+ */
+function BudgetPanel({
+  jobId, budget, canSet, current,
+}: {
+  jobId: string;
+  budget: JobBudgetPosition;
+  canSet: boolean;
+  current: CurrentBudget | null;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-semibold text-slate-900">Budget &amp; forecast</h2>
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">
+          internal · excl. VAT
+        </span>
+      </div>
+
+      {budget.hasBudget ? (
+        <>
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Tile
+              label="Budget"
+              value={formatGbp(budget.revisedBudget)}
+              strong
+              sub={
+                budget.approvedVariationCost > 0
+                  ? `incl. ${formatGbp(budget.approvedVariationCost)} approved variations`
+                  : `revision ${budget.revision}`
+              }
+            />
+            <Tile label="Spent" value={formatGbp(budget.actual)} />
+            <Tile
+              label={budget.variance >= 0 ? "Left" : "Over"}
+              value={signedGbp(budget.variance)}
+              tone={varianceTone(budget.variance)}
+              sub={
+                budget.variancePct == null ? undefined : `${Math.abs(budget.variancePct).toFixed(1)}% of budget`
+              }
+            />
+            <Tile
+              label="Forecast final cost"
+              value={formatGbp(budget.forecastFinalCost)}
+              tone={budget.forecastOverBudget ? "bad" : undefined}
+              sub={
+                budget.remainingCommitted > 0
+                  ? `spent + ${formatGbp(budget.remainingCommitted)} still on order`
+                  : "nothing further on order"
+              }
+            />
+          </dl>
+
+          <p
+            className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+              budget.forecastOverBudget
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            {budget.forecastOverBudget
+              ? `On current commitments this job lands ${formatGbp(Math.abs(budget.forecastVariance))} OVER budget`
+              : `On current commitments this job lands ${formatGbp(budget.forecastVariance)} under budget`}
+            {budget.forecastVariancePct == null
+              ? ""
+              : ` (${Math.abs(budget.forecastVariancePct).toFixed(1)}%)`}
+            . Money already spent plus orders placed and not yet billed — labour still
+            to work and materials not yet ordered are in neither, so treat it as a floor.
+          </p>
+
+          {budget.hasBucketDetail ? (
+            <div className="mt-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                By cost type
+              </h3>
+              <dl className="mt-2 divide-y divide-slate-100">
+                {budget.buckets.map((b) => (
+                  <div key={b.bucket} className="flex flex-wrap items-baseline justify-between gap-x-3 py-2">
+                    <dt className="text-sm font-medium text-slate-900">{BUCKET_LABELS[b.bucket]}</dt>
+                    <dd className="text-xs text-slate-600">
+                      {formatGbp(b.actual)} of {formatGbp(b.budget ?? 0)}
+                    </dd>
+                    <dd
+                      className={`w-full text-xs font-semibold sm:w-auto ${
+                        (b.variance ?? 0) < 0 ? "text-red-700" : "text-slate-700"
+                      }`}
+                    >
+                      {b.variance == null
+                        ? "—"
+                        : `${signedGbp(b.variance)}${
+                            b.variancePct == null ? "" : ` · ${Math.abs(b.variancePct).toFixed(0)}%`
+                          }`}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : (
+            <p className="mt-3 text-[11px] text-slate-500">
+              No cost-type breakdown on this budget — revise it with a breakdown to see
+              labour, materials, subcontractors and other separately.
+            </p>
+          )}
+
+          {/* Cost vs value: what the plan promised, what the forecast implies. */}
+          <div className="mt-4 border-t border-slate-100 pt-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Against the contract
+            </h3>
+            <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Tile label="Contract (net)" value={formatGbp(budget.revisedValue)} />
+              <Tile
+                label="Planned profit"
+                value={formatGbp(budget.plannedProfit)}
+                sub={
+                  budget.plannedMarginPct == null
+                    ? undefined
+                    : `${budget.plannedMarginPct.toFixed(1)}% planned margin`
+                }
+              />
+              <Tile
+                label="Forecast profit"
+                value={formatGbp(budget.forecastProfit)}
+                tone={budget.forecastProfit < budget.plannedProfit ? "bad" : "good"}
+                sub={
+                  budget.forecastMarginPct == null
+                    ? undefined
+                    : `${budget.forecastMarginPct.toFixed(1)}% forecast margin`
+                }
+              />
+            </dl>
+          </div>
+
+          {budget.note ? (
+            <p className="mt-3 text-[11px] text-slate-500">
+              Revision {budget.revision}: {budget.note}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-slate-600">
+            No budget set. Actual cost and margin are measured against revenue only, so
+            there is nothing to tell you whether this job is running over.
+          </p>
+          {hasBudgetPosition(budget) ? (
+            <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Tile label="Spent" value={formatGbp(budget.actual)} />
+              <Tile
+                label="Forecast final cost"
+                value={formatGbp(budget.forecastFinalCost)}
+                sub={
+                  budget.remainingCommitted > 0
+                    ? `incl. ${formatGbp(budget.remainingCommitted)} still on order`
+                    : undefined
+                }
+              />
+              <Tile label="Contract (net)" value={formatGbp(budget.revisedValue)} />
+            </dl>
+          ) : null}
+        </>
+      )}
+
+      {canSet ? (
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <BudgetForm jobId={jobId} current={current} />
+        </div>
+      ) : null}
+    </section>
   );
 }

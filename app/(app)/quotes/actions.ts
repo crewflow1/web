@@ -1289,6 +1289,42 @@ export async function createVariation(jobId: string, formData: FormData) {
   // opaque "variation" line.
   const { labour, materials, subcontractors, misc } = computed.cost_breakdown;
   const totalCost = computed.total_cost;
+
+  // PERSIST THE COST ESTIMATE (20261072). Until now these four figures — typed
+  // in by the operator, on every variation ever raised — were used only to
+  // apportion revenue across `unit_price` above and then discarded. That made
+  // the variation flow one-sided: accepting a variation added its value to the
+  // job's revised CONTRACT (lib/jobs/commercial-position.ts) and nothing to the
+  // job's cost plan, so every approved variation silently improved the apparent
+  // margin. The row below is the cost side of the same scope change.
+  //
+  // THE ACCOUNTING BOUNDARY: this is a PLAN, written to `quote_cost_estimates`.
+  // It is NOT a cost and never reaches `finances` — the real spend lands there
+  // when the supplier bill is recorded, and posting the estimate too would
+  // double-count it against the job.
+  //
+  // Treated as load-bearing, exactly like the line-items insert below: a
+  // silently-missing estimate would under-state the revised budget and make the
+  // job look more profitable than it is, which is the defect class this closes.
+  const { error: estErr } = await (
+    supabase.from("quote_cost_estimates" as never) as unknown as {
+      insert: (r: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    }
+  ).insert({
+    org_id: ctx.org.id,
+    quote_id: variation.id,
+    labour_cost: labour,
+    materials_cost: materials,
+    subcontractors_cost: subcontractors,
+    misc_cost: misc,
+    total_cost: totalCost,
+    margin_pct: parsed.data.margin_pct,
+    created_by: user.id,
+  });
+  if (estErr) {
+    console.error("[variations] cost estimate insert failed", estErr);
+    redirect(`/jobs/${jobId}?error=variation_cost_estimate_failed`);
+  }
   type LIRow = { label: string; cost: number };
   const buckets: LIRow[] = [
     { label: "Labour", cost: labour },
