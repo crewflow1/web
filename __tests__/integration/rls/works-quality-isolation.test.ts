@@ -111,8 +111,7 @@ async function buildOrg(label: string, userId: string): Promise<Fixture> {
       { org_id: orgId, inspection_test_plan_id: planId, item_number: 2, title: "Pipe laid", acceptance_criteria: "Falls 1:80", control_point: "witness", is_hold_point: true, required: true },
       { org_id: orgId, inspection_test_plan_id: planId, item_number: 3, title: "Air test", acceptance_criteria: "BS EN 1610", control_point: "inspect", is_hold_point: false, required: true },
       { org_id: orgId, inspection_test_plan_id: planId, item_number: 4, title: "Backfill", acceptance_criteria: "150mm layers", control_point: "approve", is_hold_point: true, required: true },
-    ])
-    .select("id");
+    ]);
   expect(items.error, items.error?.message).toBeNull();
 
   const issued = await svc.rpc("issue_inspection_plan", { p_id: planId });
