@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, describe } from "vitest";
-import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
+import { anonClient, describeIntegration, serviceClient, ukTodayIso, userClient } from "../_harness";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -158,7 +158,7 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
   async function committed(orgId: string): Promise<number> {
     const res = await db(serviceClient()).rpc("ai_invocations_month_totals", {
       p_org_id: orgId,
-      p_month: new Date().toISOString().slice(0, 10),
+      p_month: ukTodayIso(),
     });
     expect(res.error, res.error?.message).toBeNull();
     const rows = (Array.isArray(res.data) ? (res.data as Row[]) : []) ?? [];
@@ -169,7 +169,7 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
   async function claims(orgId: string) {
     const res = await db(serviceClient()).rpc("ai_reservations_month_totals", {
       p_org_id: orgId,
-      p_month: new Date().toISOString().slice(0, 10),
+      p_month: ukTodayIso(),
     });
     expect(res.error, res.error?.message).toBeNull();
     const rows = (Array.isArray(res.data) ? (res.data as Row[]) : []) ?? [];
@@ -769,7 +769,7 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
       await reserve(orgA, 100);
       const res = await db(userClient(adminB.token)).rpc("ai_reservations_month_totals", {
         p_org_id: orgA,
-        p_month: new Date().toISOString().slice(0, 10),
+        p_month: ukTodayIso(),
       });
       // A SECURITY DEFINER rollup would have handed over another tenant's
       // totals. Invoker-rights means RLS has already decided.
@@ -814,11 +814,11 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
       await settle(String(held.row.reservation_id), true, 777);
       const led = await db(serviceClient()).rpc("ai_invocations_month_totals", {
         p_org_id: orgA,
-        p_month: new Date().toISOString().slice(0, 10),
+        p_month: ukTodayIso(),
       });
       const res = await db(serviceClient()).rpc("ai_reservations_month_totals", {
         p_org_id: orgA,
-        p_month: new Date().toISOString().slice(0, 10),
+        p_month: ukTodayIso(),
       });
       const ledRow = (Array.isArray(led.data) ? (led.data[0] as Row) : {}) ?? {};
       const resRow = (Array.isArray(res.data) ? (res.data[0] as Row) : {}) ?? {};
