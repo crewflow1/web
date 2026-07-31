@@ -394,10 +394,24 @@ describe("supplier payments service — tenant client only, never service_role",
     // job of the RPCs this service pins — and it runs on the tenant client, so
     // admin-only RLS still applies. Asserted in its own tier,
     // __tests__/security/cis-statements.test.ts.
+    //
+    // `supplier-performance.ts` joins the same two tables for the SAME reason
+    // and under the same terms: it reads `supplier_payments` and
+    // `supplier_payment_allocations` to date each bill's settling payment and to
+    // exclude VOIDED payments from the settlement-speed measure. It is READ-ONLY
+    // — no insert, update, delete or rpc anywhere in the module — it takes the
+    // TENANT client as an argument so admin-only RLS applies to every call, and
+    // it re-derives no settlement arithmetic (it composes
+    // `computeBillSettlements` from lib/suppliers/payments.ts, the authority this
+    // service also uses). All three properties are asserted in their own tier,
+    // __tests__/security/supplier-performance-readonly.test.ts, and the org
+    // pinning is proven against real Postgres in
+    // __tests__/integration/rls/supplier-performance-active-org.test.ts.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/cis-statements.ts",
       "server/services/supplier-payments.ts",
+      "server/services/supplier-performance.ts",
     ]);
   });
 });
