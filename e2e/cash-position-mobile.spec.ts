@@ -126,18 +126,29 @@ test.describe("cash position on a phone — money out and the net position at 37
     // ── The net position ───────────────────────────────────────────────────
     const position = page.locator('section[aria-labelledby="position-heading"]');
     await expect(position).toBeVisible();
-    await expect(position.getByText(/Collectable now/i)).toBeVisible();
-    await expect(position.getByText(/Owed out now/i)).toBeVisible();
-    await expect(position.getByText(/Net position/i)).toBeVisible();
+    // Each tile is a <dt> in the position's definition list. Scoped to `dt`
+    // because the section's own <h2> is also called "Net position" — a bare
+    // getByText matches the heading AND the tile. Naming the term keeps the
+    // assertion on the FIGURE's label, which is what must not regress.
+    const tile = (label: RegExp) => position.locator("dt").filter({ hasText: label });
+    await expect(tile(/Collectable now/i)).toBeVisible();
+    await expect(tile(/Owed out now/i)).toBeVisible();
+    await expect(tile(/Net position/i)).toBeVisible();
     // The honesty line is not optional furniture.
     await expect(position.getByText(/not your cash at bank/i)).toBeVisible();
 
     // ── The money-out breakdown ────────────────────────────────────────────
     const outflow = page.locator('section[aria-labelledby="outflow-heading"]');
     await expect(outflow).toBeVisible();
-    await expect(outflow.getByText(/Unpaid supplier bills/i)).toBeVisible();
-    await expect(outflow.getByText(/Ordered, not yet invoiced/i)).toBeVisible();
-    await expect(outflow.getByText(/Draft payroll/i)).toBeVisible();
+    // Each component is a tappable row ("Tap a row for the records behind it"),
+    // so assert the ROW, not loose text: the section's footer prose also reads
+    // "…VAT + draft payroll", which a bare getByText(/Draft payroll/i) matches
+    // as well as the row. Naming the link proves the row exists AND is a real
+    // link through to its records.
+    const row = (label: RegExp) => outflow.getByRole("link", { name: label });
+    await expect(row(/Unpaid supplier bills/i)).toBeVisible();
+    await expect(row(/Ordered, not yet invoiced/i)).toBeVisible();
+    await expect(row(/Draft payroll/i)).toBeVisible();
     // An estimate says so, in words, on the row itself.
     await expect(outflow.getByText("Estimate", { exact: true }).first()).toBeVisible();
     // Committed spend is visibly OUTSIDE the position.
