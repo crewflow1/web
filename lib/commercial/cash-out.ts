@@ -70,10 +70,15 @@ import { cisPaymentDueDate, cisTaxMonthLabel } from "@/lib/cis/tax-month";
  *     `computeVatQuarter().net_payable`. Those pull in OPPOSITE directions, so
  *     adding both understates nothing and double-counts nothing.
  *
- *  4. PAYROLL NET PAY AND PAYE/NI ARE DIFFERENT PAYEES. `net_pay` is what
- *     reaches the employee; PAYE + employee NI go to HMRC and are NOT in this
- *     total (see the honesty note below). gross = net + PAYE + NI, so the two
- *     never overlap.
+ *  4. PAYROLL IS NET PAY ONLY, AND THAT IS THE CORRECT CASH FIGURE — not a gap.
+ *     `net_pay` is the wages leaving on payday. PAYE + employee NI go to HMRC by
+ *     the 22nd of the FOLLOWING month, employer NI likewise, and pension reaches
+ *     the provider on its own date. Those are employment COST — an accrual on a
+ *     different clock — and folding them into a cash position would claim money
+ *     leaves the bank on a day it does not. gross = net + PAYE + NI, so nothing
+ *     overlaps either. This matches the payroll lane's own `payrollDueThisWeek`,
+ *     which stays net-pay-only for exactly this reason; the two surfaces must not
+ *     drift apart on what "payroll due" means.
  *
  * ── HONEST CERTAINTY (the existing forecast convention, applied to outflows) ─
  * `lib/commercial/cash-forecast.ts` distinguishes OVERDUE / DUE / PLANNED /
@@ -531,7 +536,7 @@ export function buildCashOutComponents(s: OrgCashOutSummary): CashOutComponent[]
       isEstimate: true,
       inPosition: true,
       basis:
-        "Net pay on payroll runs you haven't finalised yet. An estimate, and an INCOMPLETE one: it excludes employer NI, pension contributions, and the PAYE/NI you owe HMRC. Your real payroll cost is higher.",
+        "Net pay on payroll runs you haven't finalised yet — the wages themselves, which is the cash leaving on payday. Employer NI and the PAYE/NI you owe HMRC are due by the 22nd of the following month, and pension goes to the provider on its own date, so they are NOT in this figure: employment cost is an accrual, this is a cash position. The net-pay figure is itself an estimate until the run is finalised.",
       href: "/payroll",
       count: s.payrollDraftRunCount,
       dueOn: null,

@@ -162,7 +162,19 @@ describe("nothing is counted twice, and the precedence is stated where it is enf
     expect(libSrc).toMatch(/A SUPPLIER BILL BEATS A PURCHASE ORDER/);
     expect(libSrc).toMatch(/CIS WITHHELD AND UNPAID BILLS ARE ALREADY DISJOINT/);
     expect(libSrc).toMatch(/VAT IS AN OFFSET, NOT AN OVERLAP/);
-    expect(libSrc).toMatch(/PAYROLL NET PAY AND PAYE\/NI ARE DIFFERENT PAYEES/);
+    expect(libSrc).toMatch(/PAYROLL IS NET PAY ONLY, AND THAT IS THE CORRECT CASH FIGURE/);
+  });
+
+  it("states WHY employer costs are excluded, so the rule survives the next reader", () => {
+    // Net pay is the correct cash figure. Employer NI and PAYE/NI reach HMRC by
+    // the 22nd of the following month and pension goes on its own date, so they
+    // are an accrual on a different clock. The payroll lane's own
+    // `payrollDueThisWeek` is net-pay-only for the same reason — if a future
+    // change folds employment cost into either surface, the two definitions of
+    // "payroll due" drift apart and one of them starts lying about cash.
+    expect(libSrc).toMatch(/accrual on a\s*\n?\s*\*?\s*different clock/);
+    expect(libSrc).toMatch(/payrollDueThisWeek/);
+    expect(libCode, "the outflow must sum net_pay, never gross_pay").not.toMatch(/gross_pay/);
   });
 
   it("committed spend is the PO remainder after bills, never the raw PO total", () => {

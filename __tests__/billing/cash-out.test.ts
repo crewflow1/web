@@ -302,14 +302,29 @@ describe("computeOrgCashOut — payroll", () => {
     expect(out.payrollDraftRunCount).toBe(1);
   });
 
-  it("is labelled an ESTIMATE and says what it leaves out", () => {
+  it("is labelled an ESTIMATE and explains why employer costs are OUT by design", () => {
+    // Net pay is the CORRECT cash figure, not a deficient one: employer NI and
+    // PAYE/NI reach HMRC by the 22nd of the following month and pension goes to
+    // the provider on its own date, so they are an accrual on a different clock.
+    // The payroll lane's `payrollDueThisWeek` is net-pay-only for the same
+    // reason; the wording here must not imply the number is short.
     const out = computeOrgCashOut({ ...base, payrollRuns: runs, payrollLines: lines });
     const row = buildCashOutComponents(out).find((r) => r.key === "payroll_draft");
     expect(row?.isEstimate).toBe(true);
     expect(row?.basis).toMatch(/employer NI/i);
     expect(row?.basis).toMatch(/pension/i);
     expect(row?.basis).toMatch(/PAYE\/NI/i);
+    expect(row?.basis, "must not read as 'your figure is wrong'").not.toMatch(/INCOMPLETE/);
+    expect(row?.basis, "must say why they are excluded").toMatch(/accrual/i);
     expect(out.outflowEstimated).toBe(out.payrollDraft);
+  });
+
+  it("never folds employer NI or pension into the cash-out total", () => {
+    // A regression guard on the doctrine, not just the wording: the outflow is
+    // net pay and nothing else from the payroll domain.
+    const out = computeOrgCashOut({ ...base, payrollRuns: runs, payrollLines: lines });
+    expect(out.payrollDraft).toBe(1467.45); // Σ net_pay, not Σ gross_pay
+    expect(out.outflowDueNow).toBe(1467.45);
   });
 
   it("a line whose run we never read contributes nothing (no orphan liability)", () => {
