@@ -80,13 +80,13 @@ describe("a job with NO baseline", () => {
 
   it("is worth rendering only once there is something to say", () => {
     const empty = {
-      budget: null,
-      approvedVariationEstimates: [],
+      budget: null as JobBudgetRow | null,
+      approvedVariationEstimates: [] as VariationCostEstimate[],
       actualTotal: 0,
       actualByBucket: NO_ACTUALS,
       remainingCommitted: 0,
       revisedValueNet: 0,
-    } as const;
+    };
     expect(hasBudgetPosition(p)).toBe(true); // spend AND orders
     // Each clause on its own is enough…
     expect(hasBudgetPosition(computeJobBudgetPosition({ ...empty, actualTotal: 1 }))).toBe(true);
