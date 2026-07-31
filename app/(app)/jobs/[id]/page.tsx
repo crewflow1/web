@@ -12,6 +12,7 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
+import { JobQualitySection } from "./_job-quality";
 import { JobDiarySection } from "./_job-diary";
 import { JobSnagsSection } from "./_job-snags";
 import { JobMaterialsSection } from "./_job-materials";
@@ -809,6 +810,11 @@ export default async function EditJobPage({
       <JobBlueprintsPanel jobId={job.id} />
 
       <JobSafetySection jobId={job.id} />
+
+      {/* Works quality (ITP) — sits directly after health & safety: both are
+          controlled-document registers for this job, and an open hold point is
+          the same kind of "don't proceed yet" signal. */}
+      <JobQualitySection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 
