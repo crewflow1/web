@@ -303,10 +303,19 @@ test.describe("offline diary queue — author with no signal, sync exactly once"
 });
 
 test.describe("offline diary queue — shared-device gate (isolated session)", () => {
-  // A SEPARATE seeded member, exactly as the blueprint logout-purge spec does:
-  // signing THIS session out revokes only its own token, so the shared owner
-  // session the other specs depend on survives.
-  test.use({ storageState: "e2e/.auth/second.json" });
+  /**
+   * This spec's OWN seeded member — not `owner.json` (whose session every other
+   * authenticated journey shares) and not `second.json` (which the blueprint
+   * logout-purge spec signs out).
+   *
+   * Clicking "Sign out" REVOKES the session in the state file. Two specs sharing
+   * one file therefore means the second one to run presents an already-revoked
+   * cookie, gets redirected to /login, and fails on whatever it asserted first.
+   * `workers: 1` runs the tier in file order, so blueprint-offline.spec.ts always
+   * destroyed this session before this file opened — one session per sign-out
+   * spec is the invariant (see e2e/global-setup.ts §5).
+   */
+  test.use({ storageState: "e2e/.auth/third.json" });
 
   test("Sign out WARNS about unsent work, then purges it from the device", async ({
     page,
