@@ -225,17 +225,38 @@ export default async function EditJobPage({
       .eq("job_id", job.id)
       .order("released_on", { ascending: false }),
     // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
+    // `id` + `subtotal` ride along beside `total`: the tile reports the EX-VAT
+    // commitment (see below), and a forgotten column is exactly how that figure
+    // silently reverts to £0. Pinned on source in the job-budgets test.
     (
       supabase.from("purchase_orders" as never) as unknown as {
         select: (c: string) => {
-          eq: (k: string, v: unknown) => Promise<{ data: Array<{ status: string; total: number | string | null }> | null }>;
+          eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; status: string; subtotal: number | string | null; total: number | string | null }> | null }>;
         };
       }
     )
-      .select("status, total")
+      .select("id, status, subtotal, total")
       .eq("job_id", job.id),
   ]);
-  const committed = computeCommittedCosts(jobPurchaseOrders.data ?? []);
+  // Bills already posted against each PO, so a received-and-billed order is not
+  // counted twice. One pass over the finance rows already read — no extra query.
+  // Identical to /jobs/[id]/commercial, so both surfaces report the same figure.
+  const billedByPo = new Map<string, number>();
+  for (const f of finRows) {
+    if (!f.purchase_order_id) continue;
+    billedByPo.set(
+      f.purchase_order_id,
+      Math.round(((billedByPo.get(f.purchase_order_id) ?? 0) + Number(f.amount ?? 0)) * 100) / 100,
+    );
+  }
+  const committed = computeCommittedCosts(
+    (jobPurchaseOrders.data ?? []).map((p) => ({
+      status: p.status,
+      total: p.total,
+      subtotal: p.subtotal,
+      billed: billedByPo.get(p.id) ?? 0,
+    })),
+  );
 
   // Programme D — the ledger-truthful cash position (received/outstanding from
   // real payments, not invoice status). One indexed read, empty-guarded.
@@ -607,15 +628,18 @@ export default async function EditJobPage({
             {hasCommittedCosts(committed) ? (
               <div>
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Committed (POs)</dt>
+                {/* EX-VAT. `committed.committed` is the GROSS ordered value
+                    (purchase_orders.total = subtotal + vat_total); Profit,
+                    Margin and Gross profit beside it are all built from
+                    ex-VAT `finances.amount`. Showing the gross figure here
+                    overstated the commitment by up to 20% against its own
+                    neighbours on a job that is exactly on plan. */}
                 <dd className="mt-0.5 text-lg font-semibold text-slate-900">
-                  {GBP.format(committed.committed)}
+                  {GBP.format(committed.committedNet)}
                 </dd>
                 <p className="text-xs text-slate-500">
-                  {committed.count} order{committed.count === 1 ? "" : "s"}
-                  {committed.received > 0 ? ` · ${GBP.format(committed.received)} received` : ""}
-                  {committed.partiallyReceived > 0
-                    ? ` · ${GBP.format(committed.partiallyReceived)} part-received`
-                    : ""}
+                  {committed.count} order{committed.count === 1 ? "" : "s"} · excl. VAT
+                  {committed.remaining > 0 ? ` · ${GBP.format(committed.remaining)} still to come` : ""}
                 </p>
               </div>
             ) : null}

@@ -503,6 +503,68 @@ describe("marginBand prefers a per-job target and falls back to the universal ba
 });
 
 // ---------------------------------------------------------------------------
+// 7b. The COMMITTED tile is ex-VAT — it sits beside ex-VAT cost
+// ---------------------------------------------------------------------------
+
+/**
+ * `purchase_orders.total` is subtotal + vat_total. Both job surfaces rendered
+ * that GROSS figure as "Committed (POs)" directly beside a NET "Actual cost" —
+ * on /jobs/[id]/commercial under a header that literally reads
+ * "internal · excl. VAT". A job exactly on plan therefore showed up to 20% more
+ * committed than it had cost, and the overstatement grew with the order book.
+ *
+ * `committedNet` (ex-VAT, per-PO netted) already existed in committed.ts, so the
+ * fix was to point the tiles at it. These pins go red the moment either tile
+ * reverts to the gross member.
+ */
+const HUB = "app/(app)/jobs/[id]/page.tsx";
+
+describe("committed cost is reported ex-VAT wherever it sits beside a net figure", () => {
+  it("the /commercial tile reads committedNet, never the gross total", () => {
+    const page = codeOf(read(PAGE));
+    expect(page).toMatch(/value=\{formatGbp\(committed\.committedNet\)\}/);
+    expect(page, "the gross ordered value must not render under `excl. VAT`").not.toMatch(
+      /formatGbp\(committed\.committed\)/,
+    );
+    // The sub-line composition is net too — the gross delivery buckets
+    // (onOrder / partiallyReceived) are VAT-inclusive and cannot appear here.
+    expect(page).not.toMatch(/formatGbp\(committed\.onOrder\)/);
+    expect(page).not.toMatch(/formatGbp\(committed\.partiallyReceived\)/);
+  });
+
+  it("the job hub tile reads committedNet, never the gross total", () => {
+    const hub = codeOf(read(HUB));
+    expect(hub).toMatch(/GBP\.format\(committed\.committedNet\)/);
+    expect(hub, "gross committed beside net profit/margin overstates by up to 20%").not.toMatch(
+      /GBP\.format\(committed\.committed\)/,
+    );
+    expect(hub).not.toMatch(/GBP\.format\(committed\.received\)/);
+    expect(hub).not.toMatch(/GBP\.format\(committed\.partiallyReceived\)/);
+  });
+
+  it("the hub SELECTS the columns the net figure needs — else it silently reads £0", () => {
+    // committedNet sums only POs that supplied a `subtotal`. The hub used to
+    // select `status, total`, so pointing the tile at the net member without
+    // widening the read would have rendered a confident £0 commitment.
+    const hub = codeOf(read(HUB));
+    expect(hub).toMatch(/\.select\("id, status, subtotal, total"\)/);
+    expect(hub).toMatch(/subtotal: p\.subtotal/);
+    expect(hub).toMatch(/billed: billedByPo\.get\(p\.id\) \?\? 0/);
+  });
+
+  it("both surfaces net off bills the same way, so they cannot disagree", () => {
+    // Same one-pass map over finance rows already read on each page — a PO that
+    // is received AND billed must not be counted once as committed and again as
+    // actual on either surface.
+    for (const f of [PAGE, HUB]) {
+      expect(codeOf(read(f)), `${f} must net bills per PO`).toMatch(
+        /billedByPo\.set\(/,
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 8. Navigation — the deep-swap commit race
 // ---------------------------------------------------------------------------
 

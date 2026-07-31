@@ -121,8 +121,8 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
     (supabase.from("retention_releases" as never) as unknown as {
       select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string | null }> | null }> };
     }).select("id, amount, released_on").eq("job_id", id),
-    // `subtotal` (ex-VAT) rides along beside `total` (gross): the existing
-    // committed tile stays gross, the forecast needs net. See committed.ts.
+    // `subtotal` (ex-VAT) rides along beside `total` (gross): the committed
+    // tile AND the forecast both report net. See committed.ts.
     (supabase.from("purchase_orders" as never) as unknown as {
       select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; number: string | null; subtotal: number | string | null; total: number | string | null; status: string; created_at: string | null; supplier: { name: string } | null }> | null }> };
     }).select("id, number, subtotal, total, status, created_at, supplier:suppliers ( name )").eq("job_id", id),
@@ -314,16 +314,21 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile
             label="Committed (POs)"
-            value={formatGbp(committed.committed)}
-            // Warehouse M1 split part-deliveries out of "on order": an order
-            // half of which is already on site is neither purely awaited nor
-            // received, and telling the owner it is either would be a lie.
+            // EX-VAT, because this section says so on the tin ("internal ·
+            // excl. VAT") and "Actual cost" next door is ex-VAT `finances`.
+            // `committed.committed` is the GROSS ordered value
+            // (purchase_orders.total = subtotal + vat_total): rendering it here
+            // overstated the commitment by up to 20% against the very figure it
+            // invites comparison with.
+            value={formatGbp(committed.committedNet)}
+            // The composition that matters beside "Actual cost" is how much of
+            // the commitment is ALREADY in it. The gross delivery split
+            // (on-order / part-received) cannot be shown under this header —
+            // both buckets are VAT-inclusive — and it lives on the PO list.
             sub={
               [
-                committed.onOrder > 0 ? `${formatGbp(committed.onOrder)} on order` : null,
-                committed.partiallyReceived > 0
-                  ? `${formatGbp(committed.partiallyReceived)} part-received`
-                  : null,
+                committed.billedAgainst > 0 ? `${formatGbp(committed.billedAgainst)} billed` : null,
+                committed.remaining > 0 ? `${formatGbp(committed.remaining)} still to come` : null,
               ]
                 .filter(Boolean)
                 .join(" · ") || undefined

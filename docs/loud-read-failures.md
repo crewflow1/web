@@ -182,3 +182,62 @@ Each lane carried its own loud-error discipline on its critical paths (GRN
 posting, RPCs); the counted shapes are secondary reads. They are queued for
 the next loud-reads slice — the `===` baselines were raised once, here, and
 any further movement fails the build.
+
+## Conversion — 2026-07-31: the job hub's H&S panel (SEV-A)
+
+`app/(app)/jobs/[id]/_job-safety.tsx` held three reads — the job's RAMS, its
+permits, its toolbox talks — on the `data ?? []` shape, with `error` bound
+nowhere. Found while auditing a different lane; left unfixed there as
+out-of-remit.
+
+This is the worst variant of severity (b) in the model above, for one reason:
+**the panel hides itself when the job has no records** (`return null`). So a
+rejected query did not render a suspicious empty list — the entire Health &
+safety section *vanished*, taking with it the "No issued RAMS is current for
+this job. Issue one before work starts." warning and every unsigned toolbox
+talk. The page then read as "this job has no H&S obligations", which is the
+strongest all-clear the product can give, asserted precisely when the database
+is unhealthy. A safety control must fail CLOSED.
+
+Treatment — panel doctrine (the page stays useful), matching `_job-assets.tsx`
+on the same route:
+
+- The hand-rolled cast typed the promise `Promise<{ data: unknown[] | null }>`
+  — error-blind by construction, the root cause. Widened with
+  `SupabaseReadError`, as the sweep did elsewhere.
+- All three errors are reported individually (`job safety: RAMS on job`,
+  `… permits on job`, `… toolbox talks on job`) so each is its own Sentry
+  signal.
+- **ANY** failure blocks the whole render. A partial safety picture is itself a
+  false all-clear: permits loading while RAMS is rejected would silently assert
+  the job has no risk assessment.
+- The failure state is explicit red markup that names the trap — "This is NOT
+  an all-clear; do not treat it as 'no RAMS required'".
+
+Ledger movement: `app/(app)` softData **52 → 49** (−3, the three reads now sit
+behind a real `.error` check). `discard` and `countOnly` unchanged; the other
+two scopes unchanged. Baseline lowered in the same commit, per the DOWN rule.
+
+Pinned by the `SEV-A: the job safety panel fails CLOSED` block in
+`__tests__/security/loud-read-failures.test.ts`: the three named reports, the
+visible error block, the three-way `failed` latch, the non-error-blind cast,
+and a structural sweep asserting no `<res>.data ??` in the file lacks a
+matching `<res>.error`. Reverting any single read to the bare shape turns it
+red.
+
+### Correction to the referring report
+
+The lane that found this named `lib/health-safety/toolbox-talks.ts` as the
+second offender. It is not: that module is pure domain logic (lifecycle,
+labels, reference parsing) with no DB access at all. The toolbox-talks read
+that was failing open is the third read *inside* `_job-safety.tsx`, fixed here.
+The other H&S read layers were checked and are already loud —
+`server/services/health-safety-snapshot.ts` (every read throws; its header
+states the reasoning) and `app/(app)/health-safety/_signoff-data.ts`
+(`listAcknowledgements`, `countOrgMembers`, `requiredOperatives`).
+
+Still soft, noted not fixed: `priorRevisionSignoff` in `_signoff-data.ts`
+discards `error` on both of its reads. Its failure mode is a *missed prompt* to
+re-acknowledge a superseded revision rather than a false compliance claim, and
+it is counted in the frozen `discard` baseline — a candidate for the next
+slice.
