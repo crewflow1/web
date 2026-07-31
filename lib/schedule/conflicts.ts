@@ -262,9 +262,17 @@ const UK_HHMM = new Intl.DateTimeFormat("en-GB", {
   hourCycle: "h23",
 });
 
-function hhmm(ms: number): string {
+/**
+ * Exported because lib/schedule/recommendations.ts renders the SAME slots back
+ * to the same reader: a conflict that says "09:00–18:00" and a proposal that
+ * says "10:00–19:00" for one interval would be a bug nobody could see. One
+ * formatter, one answer.
+ */
+export function formatConflictTime(ms: number): string {
   return UK_HHMM.format(new Date(ms));
 }
+
+const hhmm = formatConflictTime;
 
 /** "Mon 20 Jul" — enough to place a day without a full date. */
 const UK_DAY_LABEL = new Intl.DateTimeFormat("en-GB", {

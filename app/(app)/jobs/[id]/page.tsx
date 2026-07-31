@@ -12,7 +12,9 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
+import { JobQualitySection } from "./_job-quality";
 import { JobDiarySection } from "./_job-diary";
+import { JobProgressSection } from "./_job-progress";
 import { JobSnagsSection } from "./_job-snags";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
@@ -374,7 +376,10 @@ export default async function EditJobPage({
         </div>
       ) : null}
 
-      {saved === "retention_rate" || saved === "retention_release" || saved === "retention_schedule" ? (
+      {saved === "retention_rate" ||
+      saved === "retention_release" ||
+      saved === "retention_schedule" ||
+      saved === "progress" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
@@ -383,7 +388,9 @@ export default async function EditJobPage({
             ? "Retention rate saved."
             : saved === "retention_schedule"
               ? "Release schedule saved."
-              : "Retention release recorded."}
+              : saved === "progress"
+                ? "Progress update recorded."
+                : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -790,6 +797,8 @@ export default async function EditJobPage({
         documents). Each panel is org_id-pinned as well as RLS-scoped and
         degrades to empty on a read failure, so none of them can break this page.
       */}
+      <JobProgressSection jobId={job.id} orgId={ctx.membership.org_id} />
+
       <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
 
       <JobSnagsSection
@@ -809,6 +818,11 @@ export default async function EditJobPage({
       <JobBlueprintsPanel jobId={job.id} />
 
       <JobSafetySection jobId={job.id} />
+
+      {/* Works quality (ITP) — sits directly after health & safety: both are
+          controlled-document registers for this job, and an open hold point is
+          the same kind of "don't proceed yet" signal. */}
+      <JobQualitySection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

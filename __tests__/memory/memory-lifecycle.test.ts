@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 /**
  * Unit proof for the lifecycle worker (CEO Directive 009 Module 1, PR5d). Mocks
@@ -103,6 +103,16 @@ describe("memory-lifecycle worker", () => {
     rpcMock.mockReset();
     getTextProviderMock.mockReset();
     generateMock.mockReset();
+    // Summarisation is now a GOVERNED call, and a governed call must name the
+    // organisation whose £100/month ceiling it spends from. HQ has no tenant, so
+    // it bills CrewFlow's own org row (lib/ai/governor/attribution.ts). Unset ⇒
+    // the worker FAILS CLOSED and skips summarisation — proven in its own test
+    // below — so the summarisation suite has to supply one.
+    vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "00000000-0000-4000-8000-00000000hq01");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   // --- Dark short-circuit ----------------------------------------------------
@@ -119,6 +129,32 @@ describe("memory-lifecycle worker", () => {
     expect(callsTo("hq_memory_dedupe_pairs")).toHaveLength(0);
     expect(callsTo("hq_memory_supersede")).toHaveLength(0);
     expect(callsTo("hq_memory_summary_candidates")).toHaveLength(0);
+  });
+
+  it("FAILS CLOSED with no budget org: summarisation is skipped, every other reducer still runs", async () => {
+    // A governed call has to name the org whose ceiling it spends from, and HQ
+    // has no tenant. Rather than spend unattributed — an invocation nobody is
+    // billed for is an invocation outside the ceiling — summarisation is skipped
+    // exactly as it is with no provider. Expiry, decay and dedupe are unaffected,
+    // which is the property that makes fail-closed acceptable here.
+    vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "");
+    routeRpc({
+      enabled: true,
+      expire: { ttl_expired: 3, decayed_archived: 1 },
+      pairs: [pair("k1", "d1")],
+      candidates: [candidate("m1")],
+    });
+    setProvider();
+    generateMock.mockResolvedValue(SHORT);
+
+    const res = await runMemoryLifecycleWorker();
+
+    expect(res).toMatchObject({ ok: true, enabled: true, ttlExpired: 3, superseded: 1, summarised: 0 });
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(callsTo("hq_memory_summary_candidates")).toHaveLength(0);
+    expect(callsTo("hq_memory_set_summary")).toHaveLength(0);
+    // The reducers that need no model are untouched by the refusal.
+    expect(callsTo("hq_memory_expire_sweep")).toHaveLength(1);
   });
 
   // --- Happy path ------------------------------------------------------------

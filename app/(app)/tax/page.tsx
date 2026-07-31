@@ -77,7 +77,11 @@ export default async function TaxDashboardPage() {
         .gte("created_at", yearStartIso),
       supabase
         .from("payroll_lines")
-        .select("paye_estimate, ni_estimate, run:payroll_runs ( period_start, status, cycle )")
+        // `gross_pay` is required by computePayeMonth — employer NI is derived from
+        // it, and employer NI is part of the monthly PAYE bill.
+        .select(
+          "paye_estimate, ni_estimate, gross_pay, run:payroll_runs ( period_start, status, cycle )",
+        )
         .eq("org_id", ctx.org.id)
         .gte("created_at", `${monthKey}-01T00:00:00Z`),
     ]);
@@ -104,6 +108,7 @@ export default async function TaxDashboardPage() {
   const payrollLines = (payrollRaw ?? []).map((l) => ({
     paye_estimate: l.paye_estimate,
     ni_estimate: l.ni_estimate,
+    gross_pay: l.gross_pay,
     run: l.run
       ? {
           period_start: l.run.period_start as string,

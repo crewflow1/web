@@ -1761,12 +1761,21 @@ export type Database = {
           approval_comment: string | null
           approved_at: string | null
           approved_by: string | null
+          cost_labour: number | null
+          cost_materials: number | null
+          cost_misc: number | null
+          cost_subcontractors: number | null
+          cost_total: number | null
           created_at: string
           created_by: string | null
           currency: string
           customer_comment: string | null
           customer_id: string
           declined_at: string | null
+          eot_agreed_at: string | null
+          eot_agreed_by: string | null
+          eot_agreed_completion_date: string | null
+          eot_requested_completion_date: string | null
           followup_sent_at: string | null
           id: string
           job_id: string | null
@@ -1793,12 +1802,21 @@ export type Database = {
           approval_comment?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          cost_labour?: number | null
+          cost_materials?: number | null
+          cost_misc?: number | null
+          cost_subcontractors?: number | null
+          cost_total?: never
           created_at?: string
           created_by?: string | null
           currency?: string
           customer_comment?: string | null
           customer_id: string
           declined_at?: string | null
+          eot_agreed_at?: string | null
+          eot_agreed_by?: string | null
+          eot_agreed_completion_date?: string | null
+          eot_requested_completion_date?: string | null
           followup_sent_at?: string | null
           id?: string
           job_id?: string | null
@@ -1825,12 +1843,21 @@ export type Database = {
           approval_comment?: string | null
           approved_at?: string | null
           approved_by?: string | null
+          cost_labour?: number | null
+          cost_materials?: number | null
+          cost_misc?: number | null
+          cost_subcontractors?: number | null
+          cost_total?: never
           created_at?: string
           created_by?: string | null
           currency?: string
           customer_comment?: string | null
           customer_id?: string
           declined_at?: string | null
+          eot_agreed_at?: string | null
+          eot_agreed_by?: string | null
+          eot_agreed_completion_date?: string | null
+          eot_requested_completion_date?: string | null
           followup_sent_at?: string | null
           id?: string
           job_id?: string | null
@@ -1871,6 +1898,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_eot_agreed_by_fkey"
+            columns: ["eot_agreed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
           {

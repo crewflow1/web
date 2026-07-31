@@ -7,7 +7,7 @@ import {
   type RotaClient,
 } from "@/server/services/rota";
 import { createRotaEntry, deleteRotaEntry } from "../actions";
-import { CreateRotaForm } from "./_create-form";
+import { CreateRotaForm, type RotaPrefill } from "./_create-form";
 import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
@@ -25,7 +25,39 @@ type SP = Promise<{
   view?: "week" | "month";
   error?: string;
   saved?: string;
+  /** Pre-fill, arriving from a schedule recommendation (/staff/rota/conflicts). */
+  assign_user?: string;
+  assign_start?: string;
+  assign_end?: string;
+  assign_job?: string;
 }>;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATETIME_LOCAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+/**
+ * Read the pre-fill off the URL, shape-checked.
+ *
+ * These params only ever populate form FIELDS an admin could type by hand — the
+ * shift itself is still written by `createRotaEntry`, which re-validates every
+ * value, re-checks the overlap and re-applies the admin gate against the ACTIVE
+ * org. A hand-crafted URL therefore grants nothing; the shape check is here so
+ * a junk value renders as an empty field rather than as junk in an input.
+ */
+function readPrefill(sp: {
+  assign_user?: string;
+  assign_start?: string;
+  assign_end?: string;
+  assign_job?: string;
+}): RotaPrefill | undefined {
+  const user_id = sp.assign_user && UUID.test(sp.assign_user) ? sp.assign_user : undefined;
+  const starts_at =
+    sp.assign_start && DATETIME_LOCAL.test(sp.assign_start) ? sp.assign_start : undefined;
+  const ends_at = sp.assign_end && DATETIME_LOCAL.test(sp.assign_end) ? sp.assign_end : undefined;
+  const job_id = sp.assign_job && UUID.test(sp.assign_job) ? sp.assign_job : undefined;
+  if (!user_id && !starts_at && !ends_at && !job_id) return undefined;
+  return { user_id, starts_at, ends_at, job_id };
+}
 
 type RotaRow = {
   id: string;
@@ -117,6 +149,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
   const prevHref = `/staff/rota?week=${isoDate(shiftWeek(monday, -1))}`;
   const nextHref = `/staff/rota?week=${isoDate(shiftWeek(monday, 1))}`;
 
+  const prefill = readPrefill(sp);
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
   const savedMessage = sp.saved
     ? sp.saved === "created"
@@ -168,8 +201,23 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">Assign shift</h2>
+          {prefill ? (
+            <p
+              role="status"
+              className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900"
+            >
+              Filled in from a schedule recommendation. Nothing has been saved —
+              check it and press <strong>Assign</strong>, or change anything you
+              disagree with first.{" "}
+              <Link href="/staff/rota/conflicts" className="underline">
+                Back to the schedule check
+              </Link>
+              .
+            </p>
+          ) : null}
           <CreateRotaForm
             action={createRotaEntry}
+            prefill={prefill}
             members={(members ?? []).map((m) => ({
               user_id: m.user_id,
               user: m.user

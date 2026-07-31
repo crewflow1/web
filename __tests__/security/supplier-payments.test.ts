@@ -395,6 +395,21 @@ describe("supplier payments service — tenant client only, never service_role",
     // admin-only RLS still applies. Asserted in its own tier,
     // __tests__/security/cis-statements.test.ts.
     //
+    // `aged-ledgers.ts` (the aged-creditors half of /reports/ageing) is another
+    // READ-ONLY consumer, admitted on the same terms:
+    //   - tenant client only (`createClient` from lib/supabase/server), so the
+    //     admin-only RLS on both tables remains the real boundary;
+    //   - no insert/update/delete/upsert/rpc anywhere in the file — pinned by
+    //     __tests__/security/aged-ledgers-org-scope.test.ts, which also proves
+    //     it never even ISSUES these reads for a non-admin role, because an
+    //     empty-without-error ledger read would overstate payables by
+    //     everything already paid;
+    //   - it reads `id, voided_at` and the allocation triple ONLY. It does not
+    //     read `gross_amount`, `cis_withheld` or `net_paid`: an aged listing has
+    //     no business carrying withholding figures it never displays;
+    //   - settlement is computed by `computeBillSettlements`, this domain's own
+    //     authority, so no second copy of the payable rule exists.
+    //
     // `supplier-performance.ts` joins the same two tables for the SAME reason
     // and under the same terms: it reads `supplier_payments` and
     // `supplier_payment_allocations` to date each bill's settling payment and to
@@ -409,6 +424,7 @@ describe("supplier payments service — tenant client only, never service_role",
     // __tests__/integration/rls/supplier-performance-active-org.test.ts.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
+      "server/services/aged-ledgers.ts",
       "server/services/cis-statements.ts",
       "server/services/supplier-payments.ts",
       "server/services/supplier-performance.ts",

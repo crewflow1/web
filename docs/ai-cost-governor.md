@@ -384,12 +384,49 @@ the lock, which is the right shape for a mutation proof.
 
 ---
 
+## THE CLOSURE (a later wave) — WHY WRAPPING WAS NOT ENOUGH
+
+This document described three governed paths. An audit found five more that
+reached a provider without the governor; sweeping for **provider-SDK
+constructions** rather than for `isAiConfigured()` **gates** found two beyond
+that, for seven — three of them tenant-facing (`/insights` prose, the `/insights`
+answer box, lead summaries).
+
+The non-obvious part: **wrapping them would have closed nothing.** The dark
+short-circuit above runs the caller's function immediately when no tier is bound,
+so a credential with no binding produced real, unmetered spend through the
+*already-governed* paths too. The gate had to change, not just the wiring:
+
+- Both provider doors — `lib/ai/text` and the new `lib/ai/vision` — require
+  `isGovernorActivated()`, i.e. a **bound cost tier**, not merely a key.
+- `isAiConfigured()` now has **zero callers**; it survives as an env probe only.
+- The two OCR paths (`lib/imports/ocr.ts`, `server/services/expense-drafts.ts`)
+  converged on `lib/ai/vision`; each previously built its own SDK client, and
+  their hard-coded models had already drifted apart.
+- `ungovernedCredentialRisk` is derived from
+  `AI_UNGOVERNED_INFERENCE_ENTRY_POINTS` (0), which
+  `__tests__/security/ai-governance-closure.test.ts` recomputes from source text.
+
 ## WHAT REMAINS BEFORE ACTIVATION IS SAFE
 
 1. **Calibrate the reservation envelope** against the chosen model's real token
    distribution, in the same diff that binds it. `overrun_count` is the alarm; it
    should be zero in steady state.
 2. **CEO authorisation + a credential**, neither of which this wave touches.
+2b. **EMBEDDINGS ARE STILL UNGOVERNED, and this needs a migration.**
+   `lib/ai/embeddings` spends real money and cannot enter this registry: the
+   ledger's `task_class` CHECK admits only classification / drafting / complex,
+   and an embedding is none of the three. Its exposure is bounded differently —
+   the embedding worker is gated on `memory_embedding.worker_enabled`, so a
+   credential alone does not start it — but HQ recall embeds a query on demand.
+2c. **Decide HQ's ceiling.** `hq.draft`, `memory.summarise` and `research.*` have
+   no tenant, so they bill CrewFlow's own org via `CREWFLOW_INTERNAL_ORG_ID`
+   (fail-closed when unset). £100/month was chosen for a *customer's* unit
+   economics; whether HQ deserves its own limit is a product decision.
+2d. **Move the last three SDK constructions behind the doors.**
+   `lead-summary.ts`, `receptionist.ts` and `research-llm.ts` are governed and
+   activation-gated but still build their own clients. Not a hole — a duplication
+   the ratchet allowlists by name and count.
 3. **Decide the duplicate UX** — the seam returns `in_flight` vs `recent_success`;
    no surface distinguishes them yet (all callers currently degrade identically,
    which is correct but not maximally helpful).

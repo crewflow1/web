@@ -1,3 +1,4 @@
+import { round2 } from "@/lib/money";
 import type { BriefingCategory, BriefingItem, BriefingSeverity } from "./types";
 
 /**
@@ -90,6 +91,40 @@ export interface BriefingInput {
    * materials are already expensed when the supplier's bill is recorded.
    */
   lowStock?: { low: number; out: number; worstName: string | null };
+  /**
+   * H2-COMMERCIAL THREE-WAY MATCH: purchase orders where ORDERED, DELIVERED and
+   * INVOICED disagree (server/services/po-matching.ts →
+   * loadSupplierBillVarianceSignal). All figures gross £, exact to the penny.
+   *
+   * THE FIRST MONEY-OUT SIGNAL IN THIS BRIEF, and it duplicates nothing. Every
+   * money line above is money COMING IN or waiting to be billed — overdue
+   * invoices, retention due back, ready-to-invoice, cash due this week,
+   * unscheduled contract value. None of them can tell an owner that a supplier
+   * has invoiced more than was ordered, or that a delivery has been sitting
+   * unbilled and the job's cost is understated. That is a different pocket.
+   *
+   * OPTIONAL, and absent means "no signal" rather than "zero": a company with no
+   * purchase orders and a build where the read failed produce the same quiet
+   * output. The briefing can miss a line, never invent one.
+   *
+   * DETECTION ONLY — no bill is credited, no cost is posted, no supplier is
+   * contacted. The line links to the queue and a human rings the merchant.
+   */
+  supplierBillVariance?: {
+    count: number;
+    /**
+     * Money the suppliers are asking for that the orders do not justify —
+     * Σ per-order (billed − min(committed, received)). Already double-count-free:
+     * over-billed and billed-not-received are often the SAME pounds seen from
+     * two angles, so this must never be reconstructed by adding the two
+     * per-kind figures below (see lib/purchase-orders/matching.ts).
+     */
+    moneyOutAtRisk: number;
+    overBilled: number;
+    billedNotReceived: number;
+    /** The accrual. NEVER added to the money at risk: nothing has been overpaid. */
+    receivedNotBilled: number;
+  };
   /** Item keys the caller dismissed today — excluded from the output. */
   dismissedKeys: ReadonlySet<string>;
 }
@@ -160,6 +195,26 @@ function gbp(n: number): string {
     currency: "GBP",
     maximumFractionDigits: 0,
   }).format(n);
+}
+
+/**
+ * Money for the supplier-bill variance line, EXACT to the penny.
+ *
+ * `gbp` above rounds to whole pounds, which is right for a £14k receivables
+ * headline and WRONG here. The three-way match's promise is that no variance is
+ * hidden and no threshold is applied, so a one-penny over-billing rendered as
+ * "£0" would break that promise in the one place the number matters most.
+ * Whole amounts still read as whole pounds, so the common case is unchanged.
+ */
+function gbpExact(n: number): string {
+  const v = round2(n);
+  const dp = Number.isInteger(v) ? 0 : 2;
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  }).format(v);
 }
 
 /**
@@ -361,6 +416,41 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
       "/cash", { amount: input.cashDueSoon, urgencyDays: 3 },
     );
   }
+  // Supplier-bill three-way match. ONE line, never three: over-billed, billed-
+  // not-received and the unbilled accrual are the same conversation ("go through
+  // the merchant's paperwork"), and splitting them would put three rows in a
+  // five-row brief. Capped at "high" — being over-billed is money leaving that
+  // shouldn't, but `critical` stays reserved for live safety and legal exposure.
+  //
+  // The headline number is `moneyOutAtRisk` — the money the company is being
+  // asked to pay and may not owe — and it is taken AS GIVEN, never rebuilt by
+  // adding overBilled + billedNotReceived: those two are usually the same pounds
+  // seen from two angles, and summing them would overstate the exposure (a £120
+  // over-billing on a fully delivered order is £120, not £240). The accrual is
+  // excluded for a different reason: nothing has been overpaid there, the cost is
+  // simply missing from the job.
+  const variance = input.supplierBillVariance;
+  if (variance && variance.count > 0) {
+    const atRisk = round2(variance.moneyOutAtRisk);
+    const n = variance.count;
+    const wrongWay = atRisk > 0;
+    add(
+      "supplier_bill_variance",
+      "money",
+      wrongWay ? "high" : "medium",
+      wrongWay
+        ? `${gbpExact(atRisk)} billed above what was ordered or delivered`
+        : `${gbpExact(variance.receivedNotBilled)} delivered and not yet billed`,
+      wrongWay
+        ? `${n} purchase ${plural(n, "order")} where the supplier has invoiced more than the order commits ` +
+          `or more than has arrived on site — ${gbpExact(atRisk)} in total. Check the paperwork before paying.`
+        : `${gbpExact(variance.receivedNotBilled)} of goods across ${n} ${plural(n, "order")} has been delivered with ` +
+          `no supplier bill against it, so ${n === 1 ? "that job's" : "those jobs'"} cost is understated until the invoice arrives.`,
+      "/purchase-orders/matching",
+      { amount: wrongWay ? atRisk : variance.receivedNotBilled, count: n },
+    );
+  }
+
   if (input.unscheduled.totalAmount > 0 && input.unscheduled.jobCount > 0) {
     const n = input.unscheduled.jobCount;
     add(
@@ -480,6 +570,7 @@ export const BRIEFING_ITEM_KEYS = [
   "billing_ready",
   "cash_due_soon",
   "unscheduled_value",
+  "supplier_bill_variance",
   "jobs_unassigned_tomorrow",
   "stock_low",
   "schedule_double_booked",

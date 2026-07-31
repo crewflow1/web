@@ -4,8 +4,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
-import { isAiConfigured } from "@/lib/ai/safety";
-import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
+import { invokeWithGovernor, isGovernorActivated, type GovernedCall } from "@/lib/ai/governor";
 import {
   evaluateReply,
   isAutoSendable,
@@ -2294,7 +2293,12 @@ export async function processInboundEnquiry(
         org_id: input.org_id,
         channel: input.channel,
         confidence: extraction.confidence,
-        ai_used: isAiConfigured(),
+        // Whether a model COULD have run, which is the same question
+        // `extractFields` asked above — so the audit trail agrees with the code
+        // path taken. It used to read `isAiConfigured()`, which would have
+        // recorded `ai_used: true` on a deploy that merely had a key while the
+        // deterministic extraction was what actually ran.
+        ai_used: isGovernorActivated(),
       },
     });
 
@@ -2486,10 +2490,17 @@ export async function recordWhatsAppDeliveryReceipt(
  * (lib/ai/governor.ts) so the £100/month/org ceiling, the recent-duplicate
  * refusal and the invocation ledger are already in the path on activation day.
  *
- * DARK TODAY: no tier is bound and no credential is set, so `isAiConfigured()`
- * is false and the deterministic extraction (keyword urgency + postcode regex)
- * is the live behaviour — unchanged, and reached without the governor touching
- * the database.
+ * DARK TODAY: no tier is bound, so `isGovernorActivated()` is false and the
+ * deterministic extraction (keyword urgency + postcode regex) is the live
+ * behaviour — unchanged, and reached without the governor touching the database.
+ *
+ * THE GATE IS ACTIVATION, NOT A KEY. It used to be `isAiConfigured()`, a bare
+ * credential check, which meant `ANTHROPIC_API_KEY` on a deploy would have run
+ * this extraction on every inbound message while every cost tier still mapped to
+ * NO model — real spend that the governor, being a deliberate pass-through until
+ * a tier is bound, would have waved straight through with no ledger row.
+ * `isGovernorActivated()` requires the MODEL BINDING as well as the credential,
+ * so the key alone changes nothing.
  *
  * SYSTEM JOB: an inbound webhook has no signed-in user, so the ledger records
  * `user_id: null`. That is exactly the case the column is nullable for.
@@ -2497,9 +2508,9 @@ export async function recordWhatsAppDeliveryReceipt(
  * EVENT-DRIVEN: this runs when a message ARRIVES. It is never on a render path.
  */
 async function extractFields(rawText: string, orgId: string): Promise<InboundExtraction> {
-  // No AI key → deterministic fallback (keyword urgency + postcode
+  // Not activated → deterministic fallback (keyword urgency + postcode
   // regex). Always returns SOMETHING so the lead still creates.
-  if (!isAiConfigured() || !rawText.trim()) {
+  if (!isGovernorActivated() || !rawText.trim()) {
     return deterministicExtract(rawText);
   }
   try {

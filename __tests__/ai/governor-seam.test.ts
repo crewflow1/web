@@ -12,6 +12,7 @@ import {
   tierFor,
 } from "@/lib/ai/governor/registry";
 import {
+  AI_UNGOVERNED_INFERENCE_ENTRY_POINTS,
   composeTierReadiness,
   getAiGovernorReadiness,
   isGovernorActivated,
@@ -295,11 +296,39 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
     expect(isGovernorActivated()).toBe(false);
   });
 
-  it("names the drift explicitly: a credential with no binding is UNGOVERNED SPEND risk", () => {
+  it("still REPORTS the drift — a credential with no binding is named, not hidden", () => {
+    // The credential's presence is a fact an operator must see either way: it is
+    // either an activation half-done or a key that should be removed. What
+    // changed with the governance closure is what it IMPLIES, asserted below.
     vi.stubEnv("ANTHROPIC_API_KEY", "present");
     const r = getAiGovernorReadiness();
-    expect(r.ungovernedCredentialRisk).toBe(true);
     expect(r.credentialsPresent).toContain("ANTHROPIC_API_KEY");
+    expect(r.activated).toBe(false);
+    expect(r.blockers.length).toBeGreaterThan(0);
+  });
+
+  it("a credential with no binding is NO LONGER an ungoverned-spend risk", () => {
+    // THE readiness change. This used to be `true`, because seven call sites
+    // gated on a bare key check and would have reached a provider on the
+    // strength of the credential alone — spend with no ceiling and no ledger
+    // row, while `invokeWithGovernor` waved it through as a dark pass-through.
+    //
+    // Every provider door now requires `isGovernorActivated()`, so the
+    // credential switches nothing on. The flag is DERIVED from
+    // `AI_UNGOVERNED_INFERENCE_ENTRY_POINTS`, which the security ratchet
+    // recomputes from source text — so if a bare-credential path ever returns,
+    // this goes amber again on its own rather than staying green by assertion.
+    vi.stubEnv("ANTHROPIC_API_KEY", "present");
+    expect(AI_UNGOVERNED_INFERENCE_ENTRY_POINTS).toBe(0);
+    expect(getAiGovernorReadiness().ungovernedCredentialRisk).toBe(false);
+
+    // And with BOTH vendor credentials present, which is the worst case an
+    // operator can create without touching the build.
+    for (const v of KNOWN_VENDOR_CREDENTIALS) vi.stubEnv(v, "present");
+    const both = getAiGovernorReadiness();
+    expect(both.credentialsPresent.length).toBe(KNOWN_VENDOR_CREDENTIALS.length);
+    expect(both.ungovernedCredentialRisk).toBe(false);
+    expect(both.activated).toBe(false);
   });
 
   it("no credentials ⇒ no drift risk", () => {

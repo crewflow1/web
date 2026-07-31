@@ -2,6 +2,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider } from "@/lib/ai/text";
 import { textCostUsd } from "@/lib/ai/text/cost";
+import { invokeWithGovernor } from "@/lib/ai/governor";
+import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { DEDUPE_COSINE_THRESHOLD, SUMMARY_MAX_RATIO } from "@/lib/memory/lifecycle";
 
 /**
@@ -221,6 +223,11 @@ export async function runMemoryLifecycleWorker(
     // simply won't run; everything else still does).
     const provider = getTextProvider();
     const textProvider = provider ? `${provider.info.provider}:${provider.info.model}` : null;
+    // WHOSE BUDGET. The lifecycle worker curates HQ's own memory, so there is no
+    // tenant to bill and the ledger's `org_id` is NOT NULL — see
+    // lib/ai/governor/attribution.ts. Unset ⇒ summarisation is skipped exactly
+    // as it is with no provider, rather than spending unattributed.
+    const budgetOrgId = hqBudgetOrgId();
 
     let ttlExpired = 0;
     let decayedArchived = 0;
@@ -277,9 +284,10 @@ export async function runMemoryLifecycleWorker(
 
     // (4) Summarisation: detect long bodies with no usable summary, then have
     //     the text provider compress each. Skipped entirely when no provider is
-    //     configured (graceful — the deterministic state stays in place), or when
-    //     a prior phase already exhausted the run's wall-clock budget.
-    if (provider && maxSummaries > 0 && stopped === "ok") {
+    //     configured (graceful — the deterministic state stays in place), when no
+    //     budget org is configured to bill the governed calls to, or when a prior
+    //     phase already exhausted the run's wall-clock budget.
+    if (provider && budgetOrgId && maxSummaries > 0 && stopped === "ok") {
       const { data, error } = await call("hq_memory_summary_candidates", { p_limit: maxSummaries });
       if (error) {
         console.error("[memory-lifecycle] summary detector failed:", error.message);
@@ -305,10 +313,55 @@ export async function runMemoryLifecycleWorker(
         let text = "";
         try {
           const signal = opts.callTimeoutMs ? AbortSignal.timeout(opts.callTimeoutMs) : undefined;
-          const res = await provider.generate(buildSummaryPrompt(c.title, c.body), {
-            system: SUMMARY_SYSTEM,
-            ...(signal ? { signal } : {}),
-          });
+          const userPrompt = buildSummaryPrompt(c.title, c.body);
+          // GOVERNED, per candidate. This loop is the one place in the codebase
+          // that calls a model N TIMES IN A ROW, so it is the one place where a
+          // per-run `maxCostUsd` cap was never enough: the cap is advisory, local
+          // to one tick, and knows nothing about the org's month. The governor's
+          // reservation is what makes the £100 ceiling hold across ticks and
+          // across concurrent workers — and it is re-asked on EVERY iteration, so
+          // a run that crosses the ceiling mid-batch stops there rather than
+          // finishing the batch it had already started.
+          const outcome = await invokeWithGovernor(
+            "memory.summarise",
+            "classification",
+            async () => {
+              const generated = await provider.generate(userPrompt, {
+                system: SUMMARY_SYSTEM,
+                ...(signal ? { signal } : {}),
+              });
+              return {
+                value: generated,
+                usage: {
+                  provider: provider.info.provider,
+                  model: generated.model,
+                  inputTokens: generated.inputTokens,
+                  outputTokens: generated.outputTokens,
+                },
+              };
+            },
+            {
+              orgId: budgetOrgId,
+              userId: null,
+              // The memory's own body is the dedupe identity: re-summarising a
+              // body that has not changed buys the identical summary. Only the
+              // SHA-256 reaches the ledger — never the memory's contents.
+              dedupeContent: `${c.id} ${userPrompt}`,
+            },
+          );
+          if (outcome.status === "blocked") {
+            // Over the org's monthly ceiling. Summarisation stops for this run;
+            // every candidate stays a candidate and is retried when the month
+            // rolls or headroom returns. Expiry, decay and dedupe already ran.
+            stopped = "budget_blocked";
+            break;
+          }
+          if (outcome.status === "duplicate") {
+            // An identical summarisation is already in flight. Skip this one; it
+            // stays a candidate, exactly as a failed generation does.
+            continue;
+          }
+          const res = outcome.value;
           text = res.text;
           costUsd += textCostUsd(provider.info, res) ?? 0;
         } catch {

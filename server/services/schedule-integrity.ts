@@ -18,6 +18,14 @@ import {
   SCHEDULE_WINDOW_DAYS,
   type ScheduleWindow,
 } from "@/lib/schedule/window";
+import {
+  recommendForConflicts,
+  summariseRecommendations,
+  type RecommendationInput,
+  type RecommendationSummary,
+  type RosterMember,
+  type ScheduleRecommendation,
+} from "@/lib/schedule/recommendations";
 
 /**
  * Schedule Integrity — the read layer behind the conflict detector.
@@ -28,6 +36,12 @@ import {
  * read verbs, so a write cannot be added here without also widening the type. A
  * scheduling problem is surfaced and explained; moving the shift stays a human's
  * decision on the rota page.
+ *
+ * That holds with RECOMMENDATIONS attached (lib/schedule/recommendations.ts).
+ * A recommendation is a sentence and a pre-filled link, computed in a pure
+ * module from the rows below; applying one is a human pressing Assign, which
+ * runs `createRotaEntry` with its own admin gate. Nothing in this file's read
+ * path gained the ability to move a shift, and nothing here calls a model.
  *
  * SCOPING — belt and braces, deliberately:
  *   1. RLS: reads run on the caller's client (the user's JWT in the app).
@@ -116,6 +130,16 @@ export interface ScheduleFacts {
   custody: AssetCustodyRow[];
   people: Map<string, string>;
   assets: Map<string, string>;
+  /**
+   * EVERY member of the active org, name-resolved and ordered.
+   *
+   * Detection only ever needed the handful of people a conflict already names.
+   * Recommendation needs the OPPOSITE set — the colleague who appears in no
+   * conflict at all is exactly the person who is free — so the membership read
+   * became the roster rather than a name filter. It stays the same single
+   * org-pinned read, so the widened set cannot widen the tenant.
+   */
+  roster: RosterMember[];
 }
 
 /**
@@ -175,7 +199,18 @@ export async function gatherScheduleFacts(
       (b) => b.gte("assigned_at", custodyFromIso).lt("assigned_at", winEndIso),
       pageSize,
     ),
-    pagedRows<{ user_id: string }>(db, "memberships", "id, user_id", orgId, (b) => b, pageSize),
+    // `role` rides along for display only. It is memberships.role — owner /
+    // admin / staff, an AUTHORISATION role — and the recommender is explicitly
+    // forbidden from scoring it, because CrewFlow stores no competency data and
+    // a role is not a proxy for one.
+    pagedRows<{ user_id: string; role: string | null }>(
+      db,
+      "memberships",
+      "id, user_id, role",
+      orgId,
+      (b) => b,
+      pageSize,
+    ),
   ]);
 
   // `jobs` carries no title, so the customer name IS the label. PostgREST returns
@@ -194,17 +229,16 @@ export async function gatherScheduleFacts(
 
   // THE ORG PIN ON NAMES. `users` RLS lets a viewer read the profile of anyone
   // sharing ANY of their orgs, so resolving names straight from the ids in hand
-  // would name an org-B colleague on org A's page. Intersecting with THIS org's
-  // memberships is what prevents that.
-  const memberIds = new Set(members.map((m) => m.user_id));
-  const referenced = new Set<string>();
-  for (const r of rota) if (memberIds.has(r.user_id)) referenced.add(r.user_id);
-  for (const l of leave) if (memberIds.has(l.user_id)) referenced.add(l.user_id);
-  for (const j of jobs) if (j.assigned_to && memberIds.has(j.assigned_to)) referenced.add(j.assigned_to);
+  // would name an org-B colleague on org A's page. THIS org's membership list is
+  // the only id set names are ever resolved for — which is also, exactly, the
+  // roster the recommender is allowed to propose from. Both guarantees come from
+  // the one pin: nobody outside this org can be named, and nobody outside this
+  // org can be suggested.
+  const memberIds = [...new Set(members.map((m) => m.user_id))].sort();
   const assetIds = [...new Set(custody.map((c) => c.asset_id).filter(Boolean))];
 
   const [userRows, assetRows] = await Promise.all([
-    referenced.size === 0
+    memberIds.length === 0
       ? Promise.resolve([] as Array<{ id: string; full_name: string | null; email: string | null }>)
       : (async () => {
           const { data } = await fetchAllRows<Row>(
@@ -212,7 +246,7 @@ export async function gatherScheduleFacts(
               db
                 .from("users")
                 .select("id, full_name, email")
-                .in("id", [...referenced])
+                .in("id", memberIds)
                 .order("id", { ascending: true })
                 .range(from, to),
             pageSize,
@@ -239,7 +273,25 @@ export async function gatherScheduleFacts(
   const assets = new Map<string, string>();
   for (const a of assetRows) if (a.name) assets.set(a.id, a.name);
 
-  return { window, rota, jobs, leave, custody, people, assets };
+  // One row per member, deduped (a corrupt double-membership must not double a
+  // person's odds of being proposed) and ordered by NAME so the roster — and
+  // therefore every tie-broken candidate list built from it — is reproducible.
+  const seen = new Set<string>();
+  const roster: RosterMember[] = [];
+  for (const m of members) {
+    if (seen.has(m.user_id)) continue;
+    seen.add(m.user_id);
+    roster.push({
+      userId: m.user_id,
+      name: people.get(m.user_id) ?? "A team member",
+      role: (m.role ?? "").trim() || "staff",
+    });
+  }
+  roster.sort((a, b) =>
+    a.name !== b.name ? (a.name < b.name ? -1 : 1) : a.userId < b.userId ? -1 : 1,
+  );
+
+  return { window, rota, jobs, leave, custody, people, assets, roster };
 }
 
 export interface ScheduleIntegrityReport {
@@ -249,15 +301,30 @@ export interface ScheduleIntegrityReport {
   /** Total found BEFORE the display cap — drives "showing N of M". */
   total: number;
   summary: ScheduleIntegritySummary;
+  /**
+   * Resolutions for the DISPLAYED conflicts, keyed by `ScheduleConflict.key`.
+   *
+   * Computed for the capped list only: the uncapped list can run to hundreds,
+   * every one of which would walk the roster, and a proposal nobody will see is
+   * work nobody asked for. A key that is absent means the class carries no
+   * staffing question at all (`asset_double_booked`), which is NOT the same as
+   * "we looked and found nobody" — that case is a present entry with an empty
+   * `candidates` and a populated `impossible`.
+   */
+  recommendations: Map<string, ScheduleRecommendation>;
+  recommendationSummary: RecommendationSummary;
   generatedAt: string;
 }
 
 function emptyReport(window: ScheduleWindow, generatedAt: string): ScheduleIntegrityReport {
+  const recommendations = new Map<string, ScheduleRecommendation>();
   return {
     window,
     conflicts: [],
     total: 0,
     summary: summariseScheduleConflicts([]),
+    recommendations,
+    recommendationSummary: summariseRecommendations(recommendations),
     generatedAt,
   };
 }
@@ -283,11 +350,17 @@ export async function buildScheduleIntegrity(
     const facts = await gatherScheduleFacts(supabase as unknown as ScheduleClient, orgId, window);
     const input: ScheduleConflictInput = facts;
     const all = detectScheduleConflicts(input);
+    const shown = all.slice(0, limit);
+    // PURE, and passed the SAME facts the detection ran on — so a proposal can
+    // never cite a row the finding above it did not see.
+    const recommendations = recommendForConflicts(shown, facts satisfies RecommendationInput);
     return {
       window,
-      conflicts: all.slice(0, limit),
+      conflicts: shown,
       total: all.length,
       summary: summariseScheduleConflicts(all),
+      recommendations,
+      recommendationSummary: summariseRecommendations(recommendations),
       generatedAt,
     };
   } catch (err) {
