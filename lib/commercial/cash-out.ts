@@ -265,7 +265,11 @@ export const EMPTY_CASH_OUT: OrgCashOutSummary = {
   payrollDraftRunCount: 0,
   committedNotBilled: 0,
   committedPoCount: 0,
-  committed: { committed: 0, onOrder: 0, partiallyReceived: 0, received: 0, count: 0 },
+  // Derived, not hand-listed. The job-budgets lane widened CommittedCostPosition
+  // with committedNet/billedAgainst/remaining/netUnknown, and a literal zero
+  // object silently went stale against it. computeCommittedCosts([]) IS the
+  // empty position by definition, so this can never drift from the type again.
+  committed: computeCommittedCosts([]),
   outflowDueNow: 0,
   outflowEstimated: 0,
 };
