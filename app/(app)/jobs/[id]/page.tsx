@@ -876,6 +876,14 @@ export default async function EditJobPage({
             >
               Completion certificate
             </Link>
+            {/* The warranty clock runs off the certificate above, so the two
+                live side by side — see app/(app)/jobs/[id]/warranties/page.tsx. */}
+            <Link
+              href={`/jobs/${job.id}/warranties`}
+              className="inline-block rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50"
+            >
+              Warranties &amp; servicing
+            </Link>
           </div>
         </section>
       ) : null}

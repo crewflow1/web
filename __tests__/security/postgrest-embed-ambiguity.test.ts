@@ -217,6 +217,15 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "inspection_test_plans → users",
   "invoice_payments → invoices",
   "job_documents → users",
+  // Job warranties (20261079): created_by + portal_published_by + voided_by all
+  // → users. Reviewed 2026-07-31: no read of this table embeds users(...) — the
+  // operator page and actions select scalar columns only, and the customer
+  // portal loader (app/customer-portal/_warranties.ts) never selects an
+  // identity column at all, so there is nothing to embed. Three FKs is inherent
+  // to the row: who RECORDED the warranty, who PUBLISHED it to the customer and
+  // who WITHDREW it are three separate accountable acts on a contractual
+  // promise. Any future embed must name its FK constraint; test 2 enforces it.
+  "job_warranties → users",
   "leave_requests → users",
   // Material requests (20261066, M4): requested_by + decided_by + created_by
   // all → users. Reviewed 2026-07-29: the ONE embed of this pair
