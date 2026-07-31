@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   jobsPerWeek,
   revenuePerMonth,
@@ -79,6 +80,35 @@ export default async function ReportsPage() {
           Export CSV
         </a>
       </header>
+
+      {/* Ledger reports ------------------------------------------------
+          The four cards below are time-series aggregates. These two are
+          ledger listings — the documents an accountant or a client meeting
+          asks for by name — so they get their own routes rather than being
+          squeezed into a bar chart. */}
+      <nav aria-label="Ledger reports" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {[
+          {
+            href: "/reports/retention",
+            title: "Retention register",
+            body: "Every retention holdback across every job, with the completion and defects dates that entitle release.",
+          },
+          {
+            href: "/reports/ageing",
+            title: "Aged debtors & creditors",
+            body: "Who owes you and who you owe, in current / 30 / 60 / 90+ day columns.",
+          },
+        ].map((r) => (
+          <Link
+            key={r.href}
+            href={r.href}
+            className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+          >
+            <p className="text-sm font-semibold text-slate-900">{r.title}</p>
+            <p className="mt-1 text-xs text-slate-600">{r.body}</p>
+          </Link>
+        ))}
+      </nav>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Jobs per week ----------------------------------------------- */}

@@ -4,6 +4,7 @@ import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   INITIAL_FORM_STATE,
+  isPristine,
   type FormState,
 } from "@/lib/forms/state";
 import {
@@ -28,18 +29,39 @@ type JobOpt = {
 };
 
 /**
+ * Values a schedule recommendation can PRE-FILL. Every field is one the admin
+ * could type by hand; nothing here grants authority, and the write still runs
+ * the full `createRotaEntry` gate.
+ */
+export type RotaPrefill = {
+  user_id?: string;
+  starts_at?: string;
+  ends_at?: string;
+  job_id?: string;
+};
+
+/**
  * Assign-shift form. Drives `createRotaEntry` via React 19
  * useActionState so validation errors + conflict messages surface
  * inline and form input is preserved on failure.
+ *
+ * PRE-FILL, NEVER AUTO-SUBMIT. `prefill` seeds the fields when a manager
+ * arrives from a schedule recommendation, and that is the whole of it: there is
+ * no effect that submits, no `requestSubmit`, and the shift does not exist
+ * until a human presses Assign. It applies only while the form is PRISTINE, so
+ * a real submission's echoed values always win and a failed attempt is never
+ * silently reverted to the suggestion.
  */
 export function CreateRotaForm({
   action,
   members,
   jobs,
+  prefill,
 }: {
   action: RotaAction;
   members: Member[];
   jobs: JobOpt[];
+  prefill?: RotaPrefill;
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -54,9 +76,12 @@ export function CreateRotaForm({
 
   const v = (state.values ?? {}) as Record<string, unknown>;
   const fe = state.fieldErrors ?? {};
+  const seed = (isPristine(state) ? prefill : undefined) ?? {};
   const pick = (k: string): string => {
     const x = v[k];
-    return typeof x === "string" ? x : "";
+    if (typeof x === "string") return x;
+    const s = (seed as Record<string, unknown>)[k];
+    return typeof s === "string" ? s : "";
   };
 
   return (
@@ -68,6 +93,11 @@ export function CreateRotaForm({
       <form
         action={formAction}
         noValidate
+        // The fields are uncontrolled, so `defaultValue` only lands on mount.
+        // Keying by the seed remounts them when a manager clicks a SECOND
+        // recommendation without leaving the page — otherwise the form would
+        // still be showing the first one's person and times.
+        key={`${seed.user_id ?? ""}|${seed.starts_at ?? ""}|${seed.ends_at ?? ""}|${seed.job_id ?? ""}`}
         className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-6 sm:items-end"
       >
         <label className="block text-xs text-slate-600 sm:col-span-2">

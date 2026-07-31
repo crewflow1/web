@@ -51,6 +51,36 @@ describe("computeJobCommercialPosition", () => {
     expect(hasCommercialPosition(p)).toBe(false);
   });
 
+  // ── the EX-VAT trio (20261072) ───────────────────────────────────────────
+  // `revised` is GROSS because cash is what moves through the bank. Cost is
+  // ex-VAT everywhere in this product, so a cost-vs-value comparison must use
+  // `revisedNet` or it reports a ~20% gap on a job that is exactly on plan.
+
+  it("derives the NET contract value from `subtotal`, on the same taxonomy", () => {
+    const p = computeJobCommercialPosition({
+      quotes: [
+        { status: "accepted", subtotal: 10000, total: 12000, variation_number: null },
+        { status: "accepted", subtotal: 2000, total: 2400, variation_number: 1 },
+        { status: "sent", subtotal: 1250, total: 1500, variation_number: 2 }, // pending
+        { status: "declined", subtotal: 800, total: 960, variation_number: 3 },
+      ],
+      invoices: [],
+    });
+    expect(p.revised).toBe(14400); // gross, unchanged
+    expect(p.originalNet).toBe(10000);
+    expect(p.approvedVariationsNet).toBe(2000);
+    expect(p.revisedNet).toBe(12000); // pending + declined excluded, same as gross
+  });
+
+  it("reads 0 when the caller did not select `subtotal`, leaving `revised` untouched", () => {
+    const p = computeJobCommercialPosition({
+      quotes: [{ status: "accepted", total: 12000, variation_number: null }],
+      invoices: [],
+    });
+    expect(p.revised).toBe(12000);
+    expect(p.revisedNet).toBe(0);
+  });
+
   it("surfaces the panel once anything commercial exists", () => {
     const p = computeJobCommercialPosition({
       quotes: [{ status: "accepted", total: 8000, variation_number: null }],

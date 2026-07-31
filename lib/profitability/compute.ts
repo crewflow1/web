@@ -42,10 +42,45 @@ export function mapToCostBucket(category: string | null | undefined): CostBucket
  */
 export type MarginBand = "green" | "amber" | "red" | "neutral";
 
-export function marginBand(marginPct: number | null): MarginBand {
+/**
+ * The org-wide fallback target. 30 % was always a UNIVERSAL assumption — the
+ * only one available while no job carried a cost baseline to compare against
+ * (see supabase/migrations/20261072000000_job_cost_baseline.sql). A
+ * groundworks job and a bathroom refit do not share a target margin, and
+ * telling both of them "red" at 14 % is the same as telling neither anything.
+ */
+export const UNIVERSAL_TARGET_MARGIN_PCT = 30;
+
+/**
+ * Band a margin, PREFERRING a per-job target when the job has one.
+ *
+ * With target T the bands generalise the published spec exactly:
+ *   green   margin >  T
+ *   amber   margin >= T / 2
+ *   red     below that
+ *
+ * At T = 30 that is 30 / 15 — byte-for-byte today's behaviour, which is why
+ * `marginBand(m)` and `marginBand(m, 30)` are the same function and a job with
+ * NO budget is unaffected (both paths are pinned in
+ * __tests__/profitability/compute.test.ts). T/2 rather than a fixed 15 because
+ * the amber floor has to move with the target: a 12 % target with a 15 % amber
+ * floor would paint an ON-PLAN job red.
+ *
+ * A negative or non-finite target is ignored (fallback). Zero is honoured — "we
+ * are happy to break even on this one" is a real instruction, and it makes any
+ * profit green.
+ */
+export function marginBand(
+  marginPct: number | null,
+  targetPct?: number | null,
+): MarginBand {
   if (marginPct === null || !Number.isFinite(marginPct)) return "neutral";
-  if (marginPct > 30) return "green";
-  if (marginPct >= 15) return "amber";
+  const target =
+    targetPct == null || !Number.isFinite(targetPct) || targetPct < 0
+      ? UNIVERSAL_TARGET_MARGIN_PCT
+      : targetPct;
+  if (marginPct > target) return "green";
+  if (marginPct >= target / 2) return "amber";
   return "red";
 }
 

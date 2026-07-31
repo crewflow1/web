@@ -36,7 +36,10 @@ import {
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
-import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  computePayrollLine,
+  employerOnCostsFromTimeEntries,
+} from "@/lib/payroll/compute";
 
 /**
  * Owner dashboard.
@@ -477,38 +480,65 @@ export default async function DashboardPage() {
     hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
   }
 
-  // Sum org-wide labour cost this month + week.
+  // Hours per user per window. Employer NI is BANDED on the person's whole-period
+  // earnings, so labour cost has to be summed per worker and not per time entry —
+  // per-entry accumulation would hand each entry its own secondary threshold.
+  const hoursByUserThisWeek = new Map<string, number>();
+  const hoursByUserThisMonth = new Map<string, number>();
+  for (const e of timeEntries) {
+    const weekHrs = hoursInWindow([e], weekStartDate, weekEndDate);
+    if (weekHrs > 0) {
+      hoursByUserThisWeek.set(
+        e.user_id,
+        (hoursByUserThisWeek.get(e.user_id) ?? 0) + weekHrs,
+      );
+    }
+    const monthHrs = hoursInWindow([e], monthStartDate, monthEndDate);
+    if (monthHrs > 0) {
+      hoursByUserThisMonth.set(
+        e.user_id,
+        (hoursByUserThisMonth.get(e.user_id) ?? 0) + monthHrs,
+      );
+    }
+  }
+
+  // Org-wide labour cost — the TRUE cost of employment (gross + employer NI +
+  // employer pension), not gross alone. Gross-only understated what staff actually
+  // cost and made every margin built on it look better than it is.
   let labourCostWeek = 0;
   let labourCostMonth = 0;
-  for (const e of timeEntries) {
-    const rate = hourlyByUser.get(e.user_id) ?? 0;
+  for (const [uid, hours] of hoursByUserThisWeek) {
+    const rate = hourlyByUser.get(uid) ?? 0;
     if (rate <= 0) continue;
-    // Approximate: use entry's full hours and check which window it overlaps.
-    const weekHrs = hoursInWindow([e], weekStartDate, weekEndDate);
-    const monthHrs = hoursInWindow([e], monthStartDate, monthEndDate);
-    labourCostWeek += weekHrs * rate;
-    labourCostMonth += monthHrs * rate;
+    labourCostWeek += computePayrollLine(
+      hours,
+      rate,
+      "weekly",
+      weekStartIsoDate,
+    ).employment_cost_estimate;
+  }
+  for (const [uid, hours] of hoursByUserThisMonth) {
+    const rate = hourlyByUser.get(uid) ?? 0;
+    if (rate <= 0) continue;
+    labourCostMonth += computePayrollLine(
+      hours,
+      rate,
+      "monthly",
+      monthStart.slice(0, 10),
+    ).employment_cost_estimate;
   }
   labourCostWeek = Math.round(labourCostWeek * 100) / 100;
   labourCostMonth = Math.round(labourCostMonth * 100) / 100;
 
-  // Estimated payroll-due for the current week (sum across users of the
-  // weekly computePayrollLine net pay) — what's actually owed if a run
-  // is generated right now.
+  // Estimated payroll-due for the current week — NET pay only. This is what leaves
+  // the bank TO THE WORKERS, so employer NI (payable to HMRC by the 22nd of the
+  // following month) and employer pension (payable to the provider) are correctly
+  // NOT in this figure. They are separate cash movements on separate dates.
   let payrollDueThisWeek = 0;
-  const hoursByUserThisWeek = new Map<string, number>();
-  for (const e of timeEntries) {
-    const h = hoursInWindow([e], weekStartDate, weekEndDate);
-    if (h === 0) continue;
-    hoursByUserThisWeek.set(
-      e.user_id,
-      (hoursByUserThisWeek.get(e.user_id) ?? 0) + h,
-    );
-  }
   for (const [uid, hours] of hoursByUserThisWeek) {
     const rate = hourlyByUser.get(uid) ?? 0;
     if (rate <= 0) continue;
-    const c = computePayrollLine(hours, rate, "weekly");
+    const c = computePayrollLine(hours, rate, "weekly", weekStartIsoDate);
     payrollDueThisWeek += c.net_pay;
   }
   payrollDueThisWeek = Math.round(payrollDueThisWeek * 100) / 100;
@@ -532,27 +562,38 @@ export default async function DashboardPage() {
   // Wave 4 — labour cost from time entries is treated as a virtual
   // finance row tagged 'labour', so the existing profitability code
   // picks it up under the labour bucket without bespoke wiring.
-  const labourRows = labourCostsFromTimeEntries(
-    Array.from(hoursPerJob.entries()).flatMap(([jobId]) => {
-      const entriesForJob = timeEntries.filter((te) => te.job_id === jobId);
-      // Aggregate hours per (user, job) for fair cost attribution.
-      const byUser = new Map<string, number>();
-      for (const te of entriesForJob) {
-        const h = hoursInWindow([te], monthStartDate, monthEndDate);
-        if (h > 0) byUser.set(te.user_id, (byUser.get(te.user_id) ?? 0) + h);
-      }
-      return Array.from(byUser.entries()).map(([userId, hours]) => ({
-        job_id: jobId,
-        user_id: userId,
-        hours,
-      }));
-    }),
+  const labourSlices = Array.from(hoursPerJob.entries()).flatMap(([jobId]) => {
+    const entriesForJob = timeEntries.filter((te) => te.job_id === jobId);
+    // Aggregate hours per (user, job) for fair cost attribution.
+    const byUser = new Map<string, number>();
+    for (const te of entriesForJob) {
+      const h = hoursInWindow([te], monthStartDate, monthEndDate);
+      if (h > 0) byUser.set(te.user_id, (byUser.get(te.user_id) ?? 0) + h);
+    }
+    return Array.from(byUser.entries()).map(([userId, hours]) => ({
+      job_id: jobId,
+      user_id: userId,
+      hours,
+    }));
+  });
+  const labourRows = labourCostsFromTimeEntries(labourSlices, hourlyByUser);
+  // Employer NI + employer pension on those same hours, as additional `labour`
+  // rows. Without these the labour bucket held GROSS pay only, so gross profit and
+  // margin were overstated on every job with direct labour — the platform told
+  // owners they were more profitable than they are. Employer NI is banded on the
+  // worker's whole-period earnings, so it is computed per person and apportioned
+  // across their jobs by hours (see `employerOnCostsFromTimeEntries`) rather than
+  // computed per job, which would give each job its own secondary threshold.
+  const employerOnCostRows = employerOnCostsFromTimeEntries(
+    labourSlices,
     hourlyByUser,
+    "monthly",
+    monthStart.slice(0, 10),
   );
   const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
     jobs,
     invoices,
-    [...finances, ...labourRows],
+    [...finances, ...labourRows, ...employerOnCostRows],
   );
   const topProfitable = topProfitableJobs(profitabilityRows, 5);
   const worstMarginJobs = worstJobs(profitabilityRows, 5);
@@ -834,7 +875,7 @@ export default async function DashboardPage() {
           label="Labour cost (week)"
           value={GBP.format(labourCostWeek)}
           href="/payroll"
-          sub={`${GBP.format(labourCostMonth)} this month`}
+          sub={`${GBP.format(labourCostMonth)} this month · est. incl. employer NI + pension`}
         />
         <Kpi
           label="Payroll due (week)"

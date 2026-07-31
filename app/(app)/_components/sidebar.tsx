@@ -25,6 +25,12 @@ const ADMIN_LINKS = [
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
   { href: "/health-safety", label: "Health & safety" },
+  // Weather sits with health & safety, not with the estate: the limits it
+  // applies are wind/frost/rain limits from WAHR 2005, LOLER 1998 and CDM 2015,
+  // and the question it answers ("can this work happen safely today") is the
+  // same question the surfaces above it answer. Ships DARK — no provider is
+  // connected, and the page says so rather than showing a forecast it has not got.
+  { href: "/weather", label: "Weather" },
   { href: "/site-reports", label: "Site reports" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },

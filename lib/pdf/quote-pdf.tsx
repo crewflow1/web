@@ -141,6 +141,15 @@ export type QuotePdfInput = {
   vat_total: number;
   total: number;
   valid_until: string | null;
+  /**
+   * Extension of time on a variation — the completion date requested, and the
+   * one agreed if it has been. A DIFFERENT fact from `valid_until` (when the
+   * offer lapses); until 20261073 the requested completion date was written into
+   * valid_until, so this document printed it under "Valid until". Always null on
+   * a plain quote — the DB CHECK confines EoT to variations.
+   */
+  eot_requested_completion_date: string | null;
+  eot_agreed_completion_date: string | null;
   notes: string | null;
   terms: string | null;
   customer_name: string | null;
@@ -214,6 +223,17 @@ export function QuotePdf({ q }: { q: QuotePdfInput }) {
               <Text>
                 <Text style={styles.metaLabel}>Valid until: </Text>
                 <Text style={styles.metaValue}>{q.valid_until}</Text>
+              </Text>
+            ) : null}
+            {q.eot_agreed_completion_date ? (
+              <Text>
+                <Text style={styles.metaLabel}>Completion date agreed: </Text>
+                <Text style={styles.metaValue}>{q.eot_agreed_completion_date}</Text>
+              </Text>
+            ) : q.eot_requested_completion_date ? (
+              <Text>
+                <Text style={styles.metaLabel}>Completion date requested: </Text>
+                <Text style={styles.metaValue}>{q.eot_requested_completion_date}</Text>
               </Text>
             ) : null}
           </View>

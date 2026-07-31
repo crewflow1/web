@@ -10,6 +10,17 @@
  * vat_total / total columns, and store the cost breakdown as line items
  * (one row per non-zero cost bucket) so the existing PDF + portal flow
  * renders without changes.
+ *
+ * The cost breakdown is ALSO persisted as-is on the variation row
+ * (quotes.cost_labour / cost_materials / cost_subcontractors / cost_misc,
+ * migration 20261073) because the apportioned line items only preserve the
+ * cost RATIOS — the absolute cost, and therefore the margin the business
+ * priced the variation at, used to be thrown away the moment it was created.
+ *
+ * The completion date this form captures is an EXTENSION OF TIME REQUEST. It
+ * is stored in quotes.eot_requested_completion_date, never in
+ * quotes.valid_until (the quote-expiry column it used to be written into —
+ * see 20261073 for what that cost).
  */
 
 import { z } from "zod";
@@ -53,10 +64,35 @@ export const variationFormSchema = z.object({
     { message: "VAT must be 0, 5, or 20" },
   ),
   note: optionalString(2000),
-  target_completion_date: optionalDate,
+  /**
+   * Extension-of-time REQUEST: the completion date this variation asks for.
+   *
+   * Deliberately NOT validated as "must be in the future". EoT claims are
+   * routinely made retrospectively in construction (you claim the extension
+   * after the delay has happened), so a past date is legitimate data, not a
+   * typo. It is also NOT a quote expiry — see the module docblock.
+   */
+  eot_requested_completion_date: optionalDate,
 });
 
 export type VariationFormInput = z.infer<typeof variationFormSchema>;
+
+/**
+ * Recording the AGREED extension of time — a separate, later, contractual act.
+ *
+ * A variation is accepted (money agreed) before an extension is determined, so
+ * this is its own action rather than part of the create form. It records ONLY
+ * the agreed date; it never moves the job's programme. Whether an agreed EoT
+ * re-dates a job is a product decision that has not been made, and guessing it
+ * would silently re-date live jobs.
+ */
+export const variationEotAgreementSchema = z.object({
+  eot_agreed_completion_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+});
+
+export type VariationEotAgreementInput = z.infer<typeof variationEotAgreementSchema>;
 
 /**
  * Live-preview math. Given costs + margin %, derive revenue +VAT.

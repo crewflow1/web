@@ -77,12 +77,25 @@ export default async function PurchaseOrdersPage({
           <h1 className="text-2xl font-bold text-slate-900">Purchase orders</h1>
           <p className="mt-0.5 text-sm text-slate-500">Committed spend with your suppliers.</p>
         </div>
-        <Link
-          href="/purchase-orders/new"
-          className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + New PO
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The register says where each order is up to; matching says where the
+              order, the deliveries and the supplier's invoices disagree. No count
+              badge here on purpose: the badge would cost this page the whole
+              matching read, and a count that failed to load would be worse than
+              no count — the dashboard briefing carries the proactive number. */}
+          <Link
+            href="/purchase-orders/matching"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Bill matching
+          </Link>
+          <Link
+            href="/purchase-orders/new"
+            className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + New PO
+          </Link>
+        </div>
       </div>
 
       {saved === "deleted" ? (

@@ -62,32 +62,83 @@ describe("computePayeMonth", () => {
     expect(r.note).toMatch(/payroll/i);
   });
 
-  it("sums PAYE + NI from this month's payroll runs — the computed path the tax page consumes", () => {
+  it("sums PAYE + employee NI + EMPLOYER NI from this month's payroll runs — the computed path the tax page consumes", () => {
     const now = new Date("2026-05-19T00:00:00Z");
     const r = computePayeMonth(
       [
         {
           paye_estimate: 120,
           ni_estimate: 30,
+          gross_pay: 3_000,
           run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
         },
         {
           paye_estimate: 80,
           ni_estimate: 20,
+          gross_pay: 600,
           run: { period_start: "2026-05-12", status: "draft", cycle: "weekly" },
         },
         {
-          // Previous month — excluded from this month's liability.
+          // Previous month — excluded from this month's liability, gross and all.
           paye_estimate: 999,
           ni_estimate: 999,
+          gross_pay: 99_999,
           run: { period_start: "2026-04-01", status: "finalised", cycle: "monthly" },
         },
       ],
       now,
     );
     expect(r.confidence).toBe("computed");
-    expect(r.estimate).toBe(250); // (120 + 30) + (80 + 20)
+    expect(r.paye_estimate).toBe(200); // 120 + 80
+    expect(r.employee_ni_estimate).toBe(50); // 30 + 20
+    // Employer NI, 2026-27 rates (15% above a £5,000 secondary threshold):
+    //   monthly £3,000  → annualised 36,000 → (36,000 − 5,000) × 15% = 4,650 /12 = 387.50
+    //   weekly  £600    → annualised 31,200 → (31,200 − 5,000) × 15% = 3,930 /52 =  75.58
+    expect(r.employer_ni_estimate).toBe(463.08);
+    // The HMRC bill is PAYE + employee NI + employer NI.
+    expect(r.estimate).toBe(713.08);
     expect(r.note).toMatch(/22nd/); // due date the liabilities row surfaces
+    expect(r.note).toMatch(/employer NI/);
+    // It is an ESTIMATE, and the Employment Allowance caveat must travel with it.
+    expect(r.note).toMatch(/Estimate/);
+    expect(r.note).toMatch(/Employment Allowance/);
+  });
+
+  it("EXCLUDES employer pension from the HMRC liability (it is paid to the provider, not HMRC)", () => {
+    const now = new Date("2026-05-19T00:00:00Z");
+    const r = computePayeMonth(
+      [
+        {
+          paye_estimate: 0,
+          ni_estimate: 0,
+          gross_pay: 3_000,
+          run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
+        },
+      ],
+      now,
+    );
+    // Employer pension on this gross is 3% × (36,000 − 6,240) / 12 = £74.40. If it
+    // had leaked into the HMRC figure the estimate would be 461.90, not 387.50.
+    expect(r.employer_ni_estimate).toBe(387.5);
+    expect(r.estimate).toBe(387.5);
+  });
+
+  it("prices each run at the rates in force for ITS OWN period, not today's", () => {
+    // A 2024-25 period (13.8% above £9,100) must not be re-priced at 2026-27 rates
+    // (15% above £5,000) just because it is being read now.
+    const r = computePayeMonth(
+      [
+        {
+          paye_estimate: 0,
+          ni_estimate: 0,
+          gross_pay: 3_000,
+          run: { period_start: "2024-06-01", status: "finalised", cycle: "monthly" },
+        },
+      ],
+      new Date("2024-06-15T00:00:00Z"),
+    );
+    // (36,000 − 9,100) × 13.8% = 3,712.20 / 12 = £309.35 — the 2024-25 answer.
+    expect(r.employer_ni_estimate).toBe(309.35);
   });
 });
 

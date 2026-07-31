@@ -30,6 +30,10 @@ type QuoteJoined = {
   vat_total: number | string | null;
   total: number | string | null;
   valid_until: string | null;
+  // EoT on a variation — a completion date, NOT the offer's expiry. Carried
+  // through so the emailed PDF labels it correctly (20261073).
+  eot_requested_completion_date: string | null;
+  eot_agreed_completion_date: string | null;
   notes: string | null;
   terms: string | null;
   public_token: string | null;
@@ -72,7 +76,8 @@ export async function sendQuoteEmail(
     .from("quotes")
     .select(
       `
-        id, number, status, subtotal, vat_total, total, valid_until, notes, terms, public_token,
+        id, number, status, subtotal, vat_total, total, valid_until,
+        eot_requested_completion_date, eot_agreed_completion_date, notes, terms, public_token,
         customer:customers ( name, email ),
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
@@ -140,6 +145,8 @@ export async function sendQuoteEmail(
     vat_total: Number(quote.vat_total ?? 0),
     total: Number(quote.total ?? 0),
     valid_until: quote.valid_until,
+    eot_requested_completion_date: quote.eot_requested_completion_date,
+    eot_agreed_completion_date: quote.eot_agreed_completion_date,
     notes: quote.notes,
     terms: quote.terms,
     customer_name: quote.customer?.name ?? null,

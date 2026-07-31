@@ -96,9 +96,10 @@ export function VariationForm({
 
         <Field label="Internal note (optional)" name="note" textarea rows={2} />
         <Field
-          label="Target completion date (optional)"
-          name="target_completion_date"
+          label="Requested completion date — extension of time (optional)"
+          name="eot_requested_completion_date"
           type="date"
+          help="The completion date this variation asks for. Stored as an extension-of-time request on the variation — it is not a quote expiry, and it does not move this job's programme."
         />
       </div>
 
@@ -139,6 +140,7 @@ function Field({
   textarea = false,
   rows = 3,
   placeholder,
+  help,
 }: {
   label: string;
   name: string;
@@ -147,6 +149,7 @@ function Field({
   textarea?: boolean;
   rows?: number;
   placeholder?: string;
+  help?: string;
 }) {
   return (
     <label className="block text-xs text-slate-600">
@@ -168,6 +171,7 @@ function Field({
           className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
         />
       )}
+      {help ? <span className="mt-1 block text-[11px] text-slate-500">{help}</span> : null}
     </label>
   );
 }

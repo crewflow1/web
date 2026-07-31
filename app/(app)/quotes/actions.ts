@@ -1161,6 +1161,13 @@ export async function declineQuoteByToken(
  * exactly as for a normal quote — and because we carry the job_id
  * through, the new invoice automatically rolls up under the same job
  * on the profitability dashboard.
+ *
+ * Two things this deliberately does NOT do (20261073):
+ *   - it never writes the requested completion date into `valid_until`. That
+ *     column means "this offer lapses on", and the accept gate acts on it.
+ *   - it never touches the job's dates. An extension of time is recorded as
+ *     requested/agreed and surfaced; whether it moves the programme is a
+ *     product decision nobody has made, so nothing is proposed automatically.
  */
 export async function createVariation(jobId: string, formData: FormData) {
   const { user, ctx } = await requireOrgContext();
@@ -1180,7 +1187,8 @@ export async function createVariation(jobId: string, formData: FormData) {
     margin_pct: formData.get("margin_pct") ?? 0,
     vat_rate: formData.get("vat_rate") ?? 20,
     note: formData.get("note") ?? "",
-    target_completion_date: formData.get("target_completion_date") ?? "",
+    eot_requested_completion_date:
+      formData.get("eot_requested_completion_date") ?? "",
   });
 
   if (!parsed.success) {
@@ -1241,7 +1249,29 @@ export async function createVariation(jobId: string, formData: FormData) {
         ? `${parsed.data.title}\n\n${parsed.data.description}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim()
         : `${parsed.data.title}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim(),
       terms: null,
-      valid_until: parsed.data.target_completion_date ?? null,
+      // valid_until is the QUOTE EXPIRY and nothing else.
+      //
+      // This used to be `parsed.data.target_completion_date` — the extension-of-
+      // time date the form asks for. Two unrelated commercial meanings shared one
+      // column, and the expiry meaning is the one the system acts on:
+      // acceptQuoteByToken force-writes status='expired' once valid_until is
+      // past, so a variation asking "please let us finish by 30 Sept" became
+      // un-acceptable on 1 Oct with no operator action; meanwhile the PDF and the
+      // customer portal printed that date as "Valid until". The EoT request now
+      // lives in eot_requested_completion_date (20261073) and a variation carries
+      // no expiry unless an operator sets a real one on the quote.
+      valid_until: null,
+      eot_requested_completion_date:
+        parsed.data.eot_requested_completion_date ?? null,
+      // The priced cost basis. computeVariation() derived revenue from these and
+      // then only used them to apportion line-item unit_price, so the margin the
+      // business priced this variation at was unrecoverable the instant it was
+      // saved (subtotal alone cannot yield it). cost_total is GENERATED from
+      // these four, and margin stays derived — one number per fact.
+      cost_labour: computed.cost_breakdown.labour,
+      cost_materials: computed.cost_breakdown.materials,
+      cost_subcontractors: computed.cost_breakdown.subcontractors,
+      cost_misc: computed.cost_breakdown.misc,
       public_token: publicToken,
       created_by: user.id,
     })
@@ -1259,6 +1289,17 @@ export async function createVariation(jobId: string, formData: FormData) {
   // opaque "variation" line.
   const { labour, materials, subcontractors, misc } = computed.cost_breakdown;
   const totalCost = computed.total_cost;
+
+  // THE COST BASIS IS ALREADY PERSISTED, on the quote itself (cost_labour …
+  // cost_misc above, 20261073). There is deliberately NO second per-variation
+  // cost store: `quotes.cost_total` is GENERATED from those four, so parts and
+  // total cannot drift, and a job budget READS it rather than re-keying it
+  // (lib/jobs/budget.ts). Two cost bases for one variation would be two
+  // commercial truths, and the one that went stale would be invisible.
+  //
+  // THE ACCOUNTING BOUNDARY: those columns are a PLAN. They are NOT a cost and
+  // never reach `finances` — the real spend lands there when the supplier bill
+  // is recorded, and posting the estimate too would double-count it.
   type LIRow = { label: string; cost: number };
   const buckets: LIRow[] = [
     { label: "Labour", cost: labour },
@@ -1318,4 +1359,155 @@ export async function createVariation(jobId: string, formData: FormData) {
   revalidatePath(`/jobs/${jobId}`);
   revalidatePath(`/quotes/${variation.id}`);
   redirect(`/quotes/${variation.id}?saved=variation_created`);
+}
+
+/**
+ * Load a variation (a quote with a variation_number) inside the ACTIVE org.
+ *
+ * Same chokepoint discipline as loadJobForOrg: a variation belonging to another
+ * org the viewer also happens to be a member of must be INDISTINGUISHABLE from
+ * one that does not exist, so `.eq("id", …)` alone is never enough. Both EoT
+ * writers below go through this, and both re-assert the org on the UPDATE too —
+ * the read proves ownership, the write predicate is what actually scopes it.
+ */
+async function loadVariationForOrg(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  quoteId: string,
+  orgId: string,
+): Promise<
+  | {
+      id: string;
+      job_id: string | null;
+      variation_number: number | null;
+      valid_until: string | null;
+      eot_requested_completion_date: string | null;
+    }
+  | null
+> {
+  const { data, error } = await supabase
+    .from("quotes")
+    .select(
+      "id, job_id, variation_number, valid_until, eot_requested_completion_date",
+    )
+    .eq("id", quoteId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  // A failed read must never be silently treated as "not a variation" — that
+  // would show the caller a generic not-found for what is really an outage.
+  if (error) throw readFailure("variations: load for EoT write", error);
+  if (!data || data.variation_number == null) return null;
+  return data;
+}
+
+/**
+ * Record the AGREED extension of time on a variation.
+ *
+ * An EoT is agreed AFTER the variation's money is accepted, which is why this
+ * is its own action rather than a field on the create form, and why the
+ * accepted-document freeze (20261073) deliberately leaves the agreed columns
+ * writable while freezing the requested one.
+ *
+ * IT DOES NOT MOVE THE JOB. Nothing here writes to `jobs`. Under JCT/NEC an
+ * agreed extension changes the completion date for damages purposes without
+ * necessarily re-baselining the works programme, so auto-applying it would
+ * silently re-date live jobs on a guess. The agreed date is stored and shown;
+ * re-planning stays a human act.
+ */
+export async function recordVariationEotAgreement(
+  quoteId: string,
+  formData: FormData,
+) {
+  const { user, ctx } = await requireOrgContext();
+  if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
+
+  // Recording an agreed contractual date is an owner/admin act, matching how
+  // quote approval and deletion are gated.
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
+    redirect(`/quotes/${quoteId}?error=eot_forbidden`);
+  }
+
+  const { variationEotAgreementSchema } = await import("@/lib/variations/schema");
+  const parsed = variationEotAgreementSchema.safeParse({
+    eot_agreed_completion_date:
+      formData.get("eot_agreed_completion_date") ?? "",
+  });
+  if (!parsed.success) {
+    redirect(`/quotes/${quoteId}?error=eot_bad_date`);
+  }
+
+  const supabase = await createClient();
+  const variation = await loadVariationForOrg(supabase, quoteId, ctx.org.id);
+  if (!variation) redirect("/quotes?error=not_found");
+
+  const { error } = await supabase
+    .from("quotes")
+    .update({
+      eot_agreed_completion_date: parsed.data.eot_agreed_completion_date,
+      eot_agreed_at: new Date().toISOString(),
+      eot_agreed_by: user.id,
+    })
+    .eq("id", quoteId)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[variations] EoT agreement write failed", error);
+    redirect(`/quotes/${quoteId}?error=eot_failed`);
+  }
+
+  if (variation.job_id) revalidatePath(`/jobs/${variation.job_id}`);
+  revalidatePath(`/quotes/${quoteId}`);
+  redirect(`/quotes/${quoteId}?saved=eot_agreed`);
+}
+
+/**
+ * Per-row remediation for the pre-20261073 defect.
+ *
+ * Variations created before this fix stored their requested completion date in
+ * `valid_until`. Those rows cannot be told apart from a variation where an
+ * operator later set a GENUINE expiry — there is no column-level history, and
+ * the builder pre-fills its "Valid until" input from the same column, so an
+ * operator editing anything else re-submitted the misfiled date unchanged. A
+ * bulk UPDATE would therefore relabel some real expiries, so the migration
+ * refuses to guess and this action lets the person who raised the variation
+ * decide, one row at a time.
+ *
+ * Legal on an accepted variation: the write-once clause permits NULL→value on
+ * the requested date, and `valid_until` has never been a frozen column.
+ */
+export async function reclassifyVariationValidUntilAsEot(quoteId: string) {
+  const { ctx } = await requireOrgContext();
+  if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
+
+  const role = ctx.membership.role;
+  if (role !== "owner" && role !== "admin") {
+    redirect(`/quotes/${quoteId}?error=eot_forbidden`);
+  }
+
+  const supabase = await createClient();
+  const variation = await loadVariationForOrg(supabase, quoteId, ctx.org.id);
+  if (!variation) redirect("/quotes?error=not_found");
+
+  // Only the exact legacy signature is reclassifiable: a date in valid_until
+  // and nothing yet recorded as an EoT request. Anything else and we would be
+  // overwriting a date somebody deliberately put somewhere.
+  if (!variation.valid_until || variation.eot_requested_completion_date) {
+    redirect(`/quotes/${quoteId}?error=eot_not_reclassifiable`);
+  }
+
+  const { error } = await supabase
+    .from("quotes")
+    .update({
+      eot_requested_completion_date: variation.valid_until,
+      valid_until: null,
+    })
+    .eq("id", quoteId)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[variations] EoT reclassify failed", error);
+    redirect(`/quotes/${quoteId}?error=eot_failed`);
+  }
+
+  if (variation.job_id) revalidatePath(`/jobs/${variation.job_id}`);
+  revalidatePath(`/quotes/${quoteId}`);
+  redirect(`/quotes/${quoteId}?saved=eot_reclassified`);
 }

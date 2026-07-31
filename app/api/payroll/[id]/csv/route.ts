@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { payrollCsv } from "@/lib/payroll/compute";
+import { employerCostsForStoredLine, payrollCsv } from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
 import { readFailure } from "@/lib/supabase/read-failure";
 import * as Sentry from "@sentry/nextjs";
@@ -62,6 +62,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   }
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  const cycle = run.cycle === "weekly" ? "weekly" : "monthly";
   const csv = payrollCsv(
     (lines ?? []).map((l) => ({
       full_name: l.user?.full_name ?? "—",
@@ -72,6 +73,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       paye_estimate: Number(l.paye_estimate ?? 0),
       ni_estimate: Number(l.ni_estimate ?? 0),
       net_pay: Number(l.net_pay ?? 0),
+      // Employer NI + pension, DERIVED from the stored gross at the rates in force
+      // for this run's own period (never today's), through the one shared helper.
+      ...employerCostsForStoredLine(l.gross_pay, cycle, run.period_start),
     })),
     { period_start: run.period_start, period_end: run.period_end, cycle: run.cycle },
   );
