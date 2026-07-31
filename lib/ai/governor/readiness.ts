@@ -26,6 +26,14 @@
  * environment configuration can manufacture a capability that this build does
  * not contain.
  *
+ * AND THE RULE IS NOW ENFORCED, NOT MERELY REPORTED. `isGovernorActivated()`
+ * below is the gate on BOTH provider doors in the build — the text factory
+ * (lib/ai/text) and the vision factory (lib/ai/vision) — so a vendor key with no
+ * bound tier hands back no provider anywhere. Before that, this module answered
+ * "not activated" perfectly correctly while seven call sites went ahead on the
+ * strength of the key alone; a readiness surface that is right about a fact
+ * nothing consults is the same false green in a different costume.
+ *
  * Reads `process.env` DIRECTLY, imports no SDK and no `server-only` module, and
  * CAN NEVER THROW — a readiness probe must always answer.
  */
@@ -75,20 +83,64 @@ export type AiGovernorReadiness = {
   /** Vendor credentials present in this environment, by variable name. */
   credentialsPresent: ReadonlyArray<string>;
   /**
-   * A vendor credential is set while NO tier is bound — the drift case, and the
-   * one honest warning this module owes an operator.
+   * A vendor credential is set AND some inference path could reach a provider
+   * without passing through the governor.
    *
-   * The governor cannot govern what does not pass through it. Several call
-   * sites predate this seam and gate themselves on `isAiConfigured()` (a bare
-   * key check), so a credential appearing on a deploy could let one of those
-   * legacy paths reach a provider while every tier here is still `null` and the
-   * governor is a pass-through. That is spend with no ceiling and no ledger
-   * entry — the AI analogue of the false-green this module was modelled on.
-   * It is reported rather than "fixed" silently, because the fix is a decision:
-   * either bind the tier (activate properly) or remove the credential.
+   * THIS IS NOW FALSE BY CONSTRUCTION, and the construction is the point.
+   *
+   * It used to be `credentialsPresent && !anyTierBound`, because several call
+   * sites predated the seam and gated themselves on a bare key check
+   * (`isAiConfigured()`, or `getTextProvider()` — which was the same question
+   * asked in a nicer voice). A credential appearing on a deploy would let those
+   * paths reach a provider while every tier here was still `null` and the
+   * governor was a pass-through: spend with no ceiling and no ledger entry.
+   *
+   * That is closed. Every provider door in the build — the text factory
+   * (lib/ai/text) and the vision factory (lib/ai/vision) — now requires
+   * `isGovernorActivated()`, which requires a MODEL BINDING and not merely a
+   * key. A credential on its own therefore yields no provider at any door, so
+   * there is no ungoverned path left for it to switch on, and
+   * `AI_UNGOVERNED_INFERENCE_ENTRY_POINTS` records that as a number the security
+   * suite pins at zero rather than as a claim in a comment.
+   *
+   * IT IS DERIVED, NOT HARD-CODED. If the count is ever raised — the only
+   * honest way to add a path that gates on a bare key again — this goes amber
+   * again on its own, and the ratchet
+   * (__tests__/security/ai-governance-closure.test.ts) fails first.
+   *
+   * WHAT THIS FIELD DOES NOT COVER, because a green light must be narrow to be
+   * worth anything: EMBEDDINGS. `lib/ai/embeddings` is a different modality and
+   * `OPENAI_API_KEY` alone still selects its provider. It is not in this
+   * governor's registry and structurally cannot be: the ledger's `task_class`
+   * CHECK admits only classification / drafting / complex, and an embedding is
+   * none of the three, so governing it needs a migration this lane did not have.
+   * Its blast radius is bounded differently — the embedding WORKER is gated on a
+   * database flag (`memory_embedding.worker_enabled`), so a credential alone
+   * does not start it — but HQ recall does embed a query on demand. Stated here
+   * so nobody reads `false` as "no AI spend is possible".
    */
   ungovernedCredentialRisk: boolean;
 };
+
+/**
+ * How many inference entry points in this build reach a provider WITHOUT going
+ * through `invokeWithGovernor`, or gate themselves on a bare vendor credential
+ * instead of on governor activation.
+ *
+ * ZERO. It was seven: the /insights narrative and question box, HQ drafts,
+ * memory summarisation, import OCR, the lead summary, and HQ research. (The
+ * audit found five; sweeping for provider-SDK constructions rather than for
+ * `isAiConfigured()` gates found the other two.)
+ *
+ * A NUMBER, not a boolean, and exported rather than inlined, for one reason:
+ * `__tests__/security/ai-governance-closure.test.ts` derives the same figure
+ * from the SOURCE TEXT — every provider-SDK construction and every bare
+ * credential gate outside the governor's own doors — and asserts the two agree.
+ * So this constant cannot drift from reality without a test failing, and raising
+ * it is a visible, deliberate act in a diff rather than an emergent property of
+ * someone adding a file.
+ */
+export const AI_UNGOVERNED_INFERENCE_ENTRY_POINTS = 0;
 
 /** Every vendor credential this build knows about, present or not. */
 export const KNOWN_VENDOR_CREDENTIALS: ReadonlyArray<string> =
@@ -150,7 +202,12 @@ export function getAiGovernorReadiness(): AiGovernorReadiness {
     tiers,
     blockers,
     credentialsPresent,
-    ungovernedCredentialRisk: credentialsPresent.length > 0 && !anyTierBound,
+    // A credential can only be a RISK if something would act on it outside the
+    // governor. Nothing does — see the field's own note and the pinned count.
+    ungovernedCredentialRisk:
+      credentialsPresent.length > 0 &&
+      !anyTierBound &&
+      AI_UNGOVERNED_INFERENCE_ENTRY_POINTS > 0,
   };
 }
 

@@ -20,10 +20,22 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => createAdminClientMock(),
 }));
 
+/**
+ * The AI gate. It used to be `isAiConfigured()` — "a vendor key is present" —
+ * which meant a credential on a deploy sent this TENANT-FACING summary to a model
+ * with no £100/org/month ceiling and no ledger row. It is now
+ * `isGovernorActivated()`: the cost tier must be BOUND in the build too. The mock
+ * keeps its old name here so every assertion below still reads as "AI on / AI
+ * off", which is exactly what the flag still means to this test.
+ */
 const isAiConfiguredMock = vi.fn();
-vi.mock("@/lib/ai/safety", () => ({
-  isAiConfigured: () => isAiConfiguredMock(),
-}));
+vi.mock("@/lib/ai/governor", async (importOriginal) => {
+  // Keep the real governor seam — `invokeWithGovernor`'s dark pass-through is
+  // what lets the provider leg run under this mock, and mocking it away would
+  // make the test prove less than it does now.
+  const actual = await importOriginal<typeof import("@/lib/ai/governor")>();
+  return { ...actual, isGovernorActivated: () => isAiConfiguredMock() };
+});
 
 // If summariseLead ever reaches the LLM, this spy records it. The whole point
 // of the foreign-org test is that it stays UNCALLED (no cross-tenant PII out).

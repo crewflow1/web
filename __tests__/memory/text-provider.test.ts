@@ -16,14 +16,36 @@ import { createOpenAiTextProvider } from "@/lib/ai/text/openai";
  *   - the PROVIDER throws on a vendor failure (so the worker, not the provider,
  *     owns skip / retry / backoff).
  * Plus the pure cost helper that makes every AI action measurable.
+ *
+ * THE FACTORY NOW ANSWERS TWO QUESTIONS, NOT ONE (AI governance closure).
+ * Configuration still selects the VENDOR; the AI Cost Governor now AUTHORISES
+ * the call. A vendor key used to be sufficient to hand back a live provider,
+ * which meant `ANTHROPIC_API_KEY` on a deploy switched on every caller of this
+ * door — the /insights narrative and question box, HQ drafts, memory
+ * summarisation, the receptionist's conversation engine — while every cost tier
+ * still mapped to NO model, so the spend never met the £100/org/month ceiling or
+ * the ledger. `getTextProvider()` therefore requires `isGovernorActivated()`
+ * first.
+ *
+ * That is mocked below rather than left to the real (dark) build, because the
+ * vendor-SELECTION rules this file exists to pin are only observable once the
+ * call is authorised. The unmocked case — a key with no bound tier — is its own
+ * test, and it is the one the closure was written for.
  */
 
 // Both SDKs are dynamically imported by the providers; mock them so generate()
 // is deterministic and never touches the network.
-const { anthropicCreate, openaiCreate } = vi.hoisted(() => ({
+const { anthropicCreate, openaiCreate, isGovernorActivatedMock } = vi.hoisted(() => ({
   anthropicCreate: vi.fn(),
   openaiCreate: vi.fn(),
+  isGovernorActivatedMock: vi.fn(),
 }));
+vi.mock("@/lib/ai/governor/readiness", async (importOriginal) => {
+  // Keep the real readiness surface (other suites assert on it); control ONLY
+  // the activation predicate the factory gates on.
+  const actual = await importOriginal<typeof import("@/lib/ai/governor/readiness")>();
+  return { ...actual, isGovernorActivated: () => isGovernorActivatedMock() };
+});
 vi.mock("@anthropic-ai/sdk", () => ({
   default: vi.fn().mockImplementation(() => ({
     messages: { create: anthropicCreate },
@@ -85,6 +107,8 @@ describe("getTextProvider — null when unconfigured, provider when configured",
       saved[k] = process.env[k];
       delete process.env[k];
     }
+    // Vendor selection is only reachable once the governor authorises the call.
+    isGovernorActivatedMock.mockReturnValue(true);
   });
   afterEach(() => {
     for (const k of ENV) {
@@ -97,6 +121,35 @@ describe("getTextProvider — null when unconfigured, provider when configured",
   it("returns null when no provider key is set (graceful degradation)", () => {
     expect(getTextProvider()).toBeNull();
     expect(isTextConfigured()).toBe(false);
+  });
+
+  it("returns null for a KEY WITH NO BOUND COST TIER — the closure's whole point", () => {
+    // THE regression this door was changed for. Every vendor key an operator can
+    // set is present and MEMORY_TEXT_PROVIDER names a real vendor, so the old
+    // factory would have handed back a live Anthropic provider and every caller
+    // would have started spending — outside the £100/org/month ceiling and
+    // absent from the invocation ledger, because `invokeWithGovernor` is a
+    // deliberate pass-through until a tier is bound. Activation, not a
+    // credential, is now the gate.
+    isGovernorActivatedMock.mockReturnValue(false);
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.OPENAI_API_KEY = "sk-test";
+    expect(getTextProvider()).toBeNull();
+    expect(isTextConfigured()).toBe(false);
+  });
+
+  it("asks the governor BEFORE it reads any vendor key", () => {
+    // Ordering matters: a provider object that exists for a call which must
+    // never happen is a provider object someone will eventually use. With
+    // activation false the vendor branches must not be reached at all, which is
+    // observable because the unknown-name warning never fires.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    isGovernorActivatedMock.mockReturnValue(false);
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.MEMORY_TEXT_PROVIDER = "totally-made-up";
+    expect(getTextProvider()).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("auto-prefers Anthropic when its key is present", () => {

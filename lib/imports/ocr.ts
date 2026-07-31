@@ -1,12 +1,12 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
-import { env } from "@/lib/env";
+import { getVisionProvider } from "@/lib/ai/vision";
+import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
 import type { ParsedSheet, Cell } from "./parsers";
 
 /**
  * Migration OS v2 — OCR import for PDFs and photos/screenshots.
  *
- * Takes a PDF or image file (JPEG/PNG/HEIC/WEBP) and asks Claude to
+ * Takes a PDF or image file (JPEG/PNG/HEIC/WEBP) and asks a vision model to
  * extract its structured contents: customer, invoice/quote number, date,
  * line items, VAT, total. Returns the same `ParsedSheet[]` shape that
  * CSV/Excel produce so the rest of the import pipeline (detect → map →
@@ -19,13 +19,30 @@ import type { ParsedSheet, Cell } from "./parsers";
  *      The pipeline's existing "review before commit" gate means the
  *      operator sees every row before it lands.
  *
- *   2. We ask Claude for a strict JSON shape and parse it ourselves —
- *      no tool-use round-trips. If the model breaks the schema, we
- *      treat the file as unparseable and let the operator know.
+ *   2. We ask for a strict JSON shape and parse it ourselves — no
+ *      tool-use round-trips. If the model breaks the schema, we treat
+ *      the file as unparseable and let the operator know.
  *
- *   3. If ANTHROPIC_API_KEY is not configured (preview / dev / a hosted
+ *   3. If no vision provider is available (preview / dev / a hosted
  *      tier that doesn't pay for OCR), we throw a tagged error so the
  *      upload action can surface a friendly message instead of 500ing.
+ *
+ * TWO THINGS CHANGED HERE, AND BOTH WERE THE SAME DEFECT
+ * -----------------------------------------------------
+ * This module used to import `@anthropic-ai/sdk` AT MODULE SCOPE, construct the
+ * client itself from `env.ANTHROPIC_API_KEY`, and hard-code a dated model — the
+ * only vision path in the build that did not pass through the AI Cost Governor.
+ * The practical consequence: setting `ANTHROPIC_API_KEY` on a deploy switched
+ * paid OCR on for every operator upload with NO £100/org/month ceiling and NO
+ * ledger row. Meanwhile server/services/expense-drafts.ts did receipt OCR
+ * through the governor, with its own copy of the SDK construction and the
+ * PDF-vs-image block shape.
+ *
+ * So the transport is now SHARED (lib/ai/vision — one factory, one SDK
+ * construction, one model choice, activation-gated) and the call is GOVERNED.
+ * The prompts and parsers stay here, because an import document and a receipt
+ * are different documents extracted into different schemas — sharing those would
+ * be a coincidence of shape, not a shared concern.
  */
 
 export const OCR_SUPPORTED_MIME = new Set([
@@ -55,8 +72,13 @@ export function isOcrFile(file: { type?: string; name?: string }): boolean {
 
 export class OcrUnavailableError extends Error {
   constructor() {
+    // The wording no longer names an environment variable. It used to say "ask
+    // CrewFlow to enable ANTHROPIC_API_KEY", which stopped being true when the
+    // vision door started requiring a BOUND cost tier as well as a credential —
+    // and telling an operator that a key is all it takes is how a credential
+    // ends up on a deploy without the model binding that governs it.
     super(
-      "PDF / photo import isn't configured on this server. Ask CrewFlow to enable ANTHROPIC_API_KEY, or upload the same data as CSV / Excel.",
+      "PDF / photo import isn't switched on for this server yet. Ask CrewFlow to enable AI document reading, or upload the same data as CSV / Excel.",
     );
     this.name = "OcrUnavailableError";
   }
@@ -115,78 +137,78 @@ nothing else:
   ]
 }`;
 
+/** Output cap. An invoice with many line items needs room; this bounds cost. */
+const OCR_MAX_TOKENS = 2048;
+
 /**
- * Run a single PDF/image through Claude vision and return ParsedSheet
+ * Run a single PDF/image through a vision model and return ParsedSheet
  * rows ready for the existing detect/map/commit pipeline.
  *
  * One ParsedSheet per document — header columns are the canonical
  * field names so the existing entity detector recognises them.
+ *
+ * `actor` is REQUIRED: a governed call must name the organisation whose ceiling
+ * it spends from. The upload action already has it (`ctx.org.id`), and an
+ * optional org id would be a way to spend money nobody is accountable for.
+ *
+ * THROWS `OcrUnavailableError` when no vision provider is available — byte-identical
+ * to the previous no-key behaviour, including the message and the
+ * `error=ocr_unavailable` redirect the upload action performs on it.
+ *
+ * EVENT-DRIVEN: this runs when a FILE ARRIVES, once per file. Never on a render.
  */
 export async function ocrFileToSheet(input: {
   filename: string;
   mimeType: string;
   bytes: Uint8Array;
+  actor: { orgId: string; userId?: string | null };
 }): Promise<ParsedSheet> {
-  if (!env.ANTHROPIC_API_KEY) {
+  // The ONE vision door. It yields null unless a cost tier is BOUND as well as
+  // the vendor credential being set, so a stray key can no longer switch paid
+  // OCR on for every upload. Same thrown error as before, so the action's
+  // friendly message is unchanged.
+  const vision = getVisionProvider();
+  if (!vision) {
     throw new OcrUnavailableError();
   }
 
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const base64 = Buffer.from(input.bytes).toString("base64");
+  const isPdf = input.mimeType === "application/pdf";
 
-  // PDF "document" content blocks landed in the Anthropic API after the
-  // currently-installed SDK was released (^0.32.0). The API supports
-  // them; the local TS types don't yet. Cast the request body through
-  // `unknown` so we keep type safety on the parts the SDK does know
-  // about while letting PDFs through. Images use the SDK's typed
-  // ImageBlockParam shape directly.
-  const pdfDocBlock = {
-    type: "document",
-    source: {
-      type: "base64",
-      media_type: "application/pdf",
-      data: base64,
+  // NOT WRAPPED IN A try/catch, on purpose. A provider failure was always thrown
+  // to the upload action, which redirects with `error=parse_failed`. The governor
+  // RECORDS the failure and RETHROWS, so letting it propagate preserves that
+  // behaviour exactly; catching and rethrowing would only look like handling.
+  const outcome = await invokeWithGovernor(
+    "imports.ocr",
+    "classification",
+    () =>
+      readDocumentWithProvider(vision, {
+        kind: isPdf ? "pdf" : "image",
+        mediaType: input.mimeType,
+        base64,
+        filename: input.filename,
+      }),
+    {
+      orgId: input.actor.orgId,
+      userId: input.actor.userId ?? null,
+      // The document's own bytes are the dedupe identity: the same file
+      // re-uploaded (a double-submit, a retried form, a ZIP containing a
+      // duplicate) must not be read twice. Only the SHA-256 reaches the ledger.
+      dedupeContent: base64,
     },
-  };
-  const imageBlock = {
-    type: "image" as const,
-    source: {
-      type: "base64" as const,
-      media_type: input.mimeType as
-        | "image/jpeg"
-        | "image/png"
-        | "image/gif"
-        | "image/webp",
-      data: base64,
-    },
-  };
-  const contentBlock =
-    input.mimeType === "application/pdf" ? pdfDocBlock : imageBlock;
-
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 2048,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          contentBlock,
-          {
-            type: "text",
-            text: `${RESPONSE_INSTRUCTION}\n\nDocument filename: ${input.filename}`,
-          },
-        ] as never,
-      },
-    ],
-  });
-
-  // The SDK union'd ContentBlock includes TextBlock + ToolUseBlock.
-  // Narrow by `.type === "text"` so the .text access is type-safe across
-  // SDK versions without importing a named TextBlock type.
-  const text = message.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("");
+  );
+  // OVER THE CEILING, or an identical document already in flight. Degrade the
+  // way this function ALREADY degrades on an unparseable response: an empty
+  // sheet, which the pipeline shows the operator as an import with no rows to
+  // review. Deliberately NOT `OcrUnavailableError` — that error's message tells
+  // the operator to get a credential enabled, which would be a lie about a
+  // budget refusal.
+  if (outcome.status !== "ran") {
+    console.warn(`[ocr] refused by the governor (${outcome.status}) — empty sheet`);
+    return emptySheet(input.filename);
+  }
+  const text = outcome.value;
 
   let extracted: OcrExtraction;
   try {
@@ -197,6 +219,35 @@ export async function ocrFileToSheet(input: {
   }
 
   return extractionToSheet(input.filename, extracted);
+}
+
+/**
+ * The provider leg, isolated so the governor can time it and account for it.
+ * Returns the raw text plus the `usage` the vendor says it billed — the ledger
+ * records provider truth, never an estimate. Throws on any provider failure; the
+ * caller owns the degraded path.
+ */
+async function readDocumentWithProvider(
+  vision: NonNullable<ReturnType<typeof getVisionProvider>>,
+  doc: { kind: "pdf" | "image"; mediaType: string; base64: string; filename: string },
+): Promise<GovernedCall<string>> {
+  const result = await vision.extract(
+    { kind: doc.kind, mediaType: doc.mediaType, base64: doc.base64 },
+    {
+      system: SYSTEM_PROMPT,
+      instruction: `${RESPONSE_INSTRUCTION}\n\nDocument filename: ${doc.filename}`,
+      maxTokens: OCR_MAX_TOKENS,
+    },
+  );
+  return {
+    value: result.text,
+    usage: {
+      provider: vision.info.provider,
+      model: result.model,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+    },
+  };
 }
 
 function stripCodeFence(text: string): string {

@@ -213,9 +213,31 @@ describe("research-ai — the model layer degrades gracefully (no key ⇒ determ
     expect(raw).toMatch(/^import "server-only";/m);
   });
 
-  it("returns null when no provider key is configured (the runner then goes deterministic)", () => {
-    expect(code).toMatch(/if\s*\(!anthropicKey\s*&&\s*!openaiKey\)\s*return null;/);
+  it("returns null when no model can be reached (the runner then goes deterministic)", () => {
+    // The gate is now ACTIVATION, checked before any key is read. The old
+    // `if (!anthropicKey && !openaiKey) return null` was satisfied by a
+    // credential alone, so a key on a deploy ran both research calls — 2,800 and
+    // 3,200 output tokens on the `complex` class — with no £100/month ceiling and
+    // no ledger row. The key check survives one layer down, inside the governed
+    // provider leg, where it can no longer be the only thing standing between a
+    // credential and a bill.
+    expect(code).toMatch(/if\s*\(!isGovernorActivated\(\)\)\s*return null;/);
+    expect(code).toMatch(/if\s*\(!budgetOrgId\)\s*return null;/);
+    expect(code).toMatch(/if\s*\(!anthropicKey\s*&&\s*!openaiKey\)/);
     expect(code).toMatch(/export function researchAiEnabled/);
+  });
+
+  it("both research calls are GOVERNED, under SEPARATE feature keys", () => {
+    // Separate keys so the HQ per-feature cost rollup can tell the analysis pass
+    // from the sales-prep pass; they are distinct prompts with distinct spend.
+    expect(code).toMatch(/invokeWithGovernor\(/);
+    expect(code).toMatch(/callJson\(\s*"research\.analysis"/);
+    expect(code).toMatch(/callJson\(\s*"research\.sales_prep"/);
+    // The vendor FALLBACK stays INSIDE one governed call: an Anthropic attempt
+    // that fails and an OpenAI attempt that succeeds are one unit of work against
+    // the budget, and reserving twice would double-count the claim.
+    const governed = code.slice(code.indexOf("async function callJson("));
+    expect((governed.match(/invokeWithGovernor\(/g) ?? []).length).toBe(1);
   });
 });
 

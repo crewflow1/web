@@ -107,9 +107,15 @@ describe("Phase 5 — askAi handler", () => {
     expect(HANDLER).toMatch(/"sources":/);
   });
 
-  it("falls back to deterministic answer when AI is not configured", () => {
-    expect(HANDLER).toMatch(/if \(!isAiConfigured\(\)\)/);
+  it("falls back to deterministic answer when no model door is open", () => {
+    // The gate USED to be `if (!isAiConfigured())` — a bare vendor-key check.
+    // It is now the model door itself (`getTextProvider()`, which requires the
+    // governor to be activated), because a key with no bound cost tier is not
+    // permission to spend. The fallback it degrades to is unchanged.
+    expect(HANDLER).toMatch(/const provider = getTextProvider\(\)/);
+    expect(HANDLER).toMatch(/if \(!provider \|\| !isSupportedProvider/);
     expect(HANDLER).toMatch(/deterministicAnswer/);
+    expect(HANDLER).not.toMatch(/if \(!isAiConfigured\(\)\)/);
   });
 
   it("deterministic fallback handles 'overdue' + 'focus' + generic queries", () => {
@@ -202,14 +208,19 @@ describe("Phase 5 — QuestionBox client component", () => {
 // =====================================================================
 
 describe("Phase 5 — /insights wires the QuestionBox", () => {
-  it("imports QuestionBox + isAiConfigured", () => {
+  it("imports QuestionBox + the activation predicate", () => {
     expect(INSIGHTS).toMatch(/QuestionBox/);
-    expect(INSIGHTS).toMatch(/isAiConfigured/);
+    expect(INSIGHTS).toMatch(/isGovernorActivated/);
   });
 
-  it("renders <QuestionBox/> with the aiConfigured prop", () => {
+  it("renders <QuestionBox/> with the aiConfigured prop, driven by ACTIVATION", () => {
+    // The badge must state what the answer box will actually do. It used to read
+    // `isAiConfigured()` — "a vendor key exists" — which is a different question
+    // from the one `askAi` decides on, so a deploy with a key and no bound cost
+    // tier promised an AI answer and returned the deterministic one.
     expect(INSIGHTS).toMatch(
-      /<QuestionBox aiConfigured=\{isAiConfigured\(\)\}/,
+      /<QuestionBox aiConfigured=\{isGovernorActivated\(\)\}/,
     );
+    expect(INSIGHTS).not.toMatch(/aiConfigured=\{isAiConfigured\(\)\}/);
   });
 });

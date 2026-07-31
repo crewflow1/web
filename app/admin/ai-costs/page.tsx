@@ -77,12 +77,32 @@ export default async function AiCostsPage() {
             : "No cost tier maps to a model in this build, so no governed call can reach a provider and the ledger is empty by construction. Setting a vendor credential alone cannot change this."}
         </p>
 
+        {/*
+          This warning existed because seven call sites gated on a bare vendor
+          key, so a credential on a deploy could reach a provider while no tier
+          was bound — spend with no ceiling and no ledger row. Every provider
+          door now requires governor ACTIVATION, so the flag is derived from
+          `AI_UNGOVERNED_INFERENCE_ENTRY_POINTS` (zero, and pinned there by the
+          security ratchet) and no longer fires on a credential alone. It is kept
+          rather than deleted so that raising that count — the only honest way to
+          add such a path again — turns the warning back on by itself.
+        */}
         {readiness.ungovernedCredentialRisk ? (
           <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs font-medium text-amber-900">
             A vendor credential is present ({readiness.credentialsPresent.join(", ")}) while no
-            tier is bound. Legacy call sites that gate on a bare key check could reach a provider
-            without passing the ceiling or the ledger. Either bind the tier or remove the
-            credential.
+            tier is bound, AND this build contains an inference path that gates on a bare key
+            check rather than on governor activation. That path could reach a provider without
+            passing the ceiling or the ledger. Either bind the tier or remove the credential.
+          </p>
+        ) : null}
+        {readiness.credentialsPresent.length > 0 && !readiness.anyTierBound ? (
+          <p className="mt-3 rounded-md border border-slate-300 bg-white p-3 text-xs text-slate-700">
+            A vendor credential is present ({readiness.credentialsPresent.join(", ")}) while no
+            tier is bound. This is <strong>not</strong> ungoverned spend — every provider door
+            (lib/ai/text, lib/ai/vision) requires a bound cost tier, so the credential switches
+            nothing on. It is reported because it is an activation half-done: either bind a tier
+            deliberately, or remove the credential. Embeddings are the one exception and are
+            governed separately.
           </p>
         ) : null}
 

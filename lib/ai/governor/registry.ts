@@ -197,13 +197,16 @@ export type AiFeatureDefinition = {
  * Every entry below is BUILT AND DARK today: the code paths exist and, with no
  * bound tier, they behave exactly as they did before this file existed.
  *
- * NOTE THE ONE ASYMMETRY, because it is the honest part. The first three
- * capabilities degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a
- * fixed acknowledgement — so a user cannot tell whether AI ran. `quote.writer_draft`
- * cannot: a scope of works is not computable from a customer's description, so
- * there is no fallback to degrade to. Dark means it produces NOTHING and says
- * so. A registry entry claiming otherwise would be the false-green this
- * codebase has already been bitten by once (#433).
+ * NOTE THE ONE ASYMMETRY, because it is the honest part. Most capabilities
+ * degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a fixed
+ * acknowledgement — so a user cannot tell whether AI ran. Three cannot:
+ * `quote.writer_draft` (a scope of works is not computable from a customer's
+ * description), `imports.ocr` (a scanned invoice cannot be parsed without
+ * vision), and the two `research.*` keys (there is nothing to interpret without
+ * a model). Dark means those produce NOTHING and say so. A registry entry
+ * claiming otherwise would be the false-green this codebase has already been
+ * bitten by once (#433) — so each `degradesTo` below states what the caller
+ * ACTUALLY returns, not what would be reassuring.
  */
 export const AI_FEATURES = {
   "expense.receipt_extraction": {
@@ -240,6 +243,137 @@ export const AI_FEATURES = {
     taskClass: "drafting",
     degradesTo:
       "NOTHING — a scope of works cannot be computed, so there is no deterministic leg. The surface reports honestly that AI drafting is off and the operator writes the quote in the existing builder, exactly as today.",
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The closure wave. Every entry below names a provider call that EXISTED
+  // BEFORE the governor and reached a model without passing through it — the
+  // gap that made "a credential alone cannot spend money" untrue. Each is now
+  // wrapped, keyed, and classed here, so the registry is once again the
+  // complete list of everything in this build that may spend on inference.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The prose blurb above the deterministic cards on /insights.
+   *
+   * `drafting`, not `classification`: it is TENANT-FACING PROSE, which is that
+   * class's definition, and the class carries the cost tier appropriate to text
+   * a paying customer reads. It is not `complex` — the model is handed FINISHED
+   * aggregates and may only describe them, so there is no multi-step reasoning
+   * to pay the high tier for. (lib/ai/insight-narrative.ts.)
+   */
+  "insights.narrative": {
+    key: "insights.narrative",
+    label: "Insights narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /insights page renders its deterministic cards alone, with no prose blurb. A tenant cannot tell the difference beyond the missing paragraph.",
+  },
+  /**
+   * The tenant "Ask CrewFlow Insights" answer box on /insights.
+   *
+   * `drafting` for the same reason as the narrative: a customer reads the
+   * prose. Deliberately NOT `complex` — the model's only ground truth is one
+   * slim, fixed snapshot at temperature 0; paying the high tier would buy
+   * reasoning the prompt forbids. (server/services/ai-question.ts.)
+   */
+  "insights.question": {
+    key: "insights.question",
+    label: "Insights question answer",
+    taskClass: "drafting",
+    degradesTo:
+      "The deterministic keyword-routed answer built from the same snapshot (deterministicAnswer), labelled `generated_by: \"deterministic\"` so the UI can say so.",
+  },
+  /**
+   * HQ's shared Draft Engine — the outreach/comms drafts every AI employee
+   * inherits.
+   *
+   * `drafting` is the textbook case: prose that goes to a customer only after a
+   * human approves it. (server/services/hq-drafts.ts.)
+   */
+  "hq.draft": {
+    key: "hq.draft",
+    label: "HQ draft generation",
+    taskClass: "drafting",
+    degradesTo:
+      "The deterministic draft (deterministicDraft) persisted with status 'fallback' and provenance 'deterministic'. Generation stays TOTAL — a draft always exists.",
+  },
+  /**
+   * Shared-Memory summarisation in the lifecycle worker.
+   *
+   * `classification`, and this is the one judgement call worth stating. It is
+   * NOT `drafting` because nothing it writes is customer-facing and no human
+   * reviews it: it compresses an HQ memory body for HQ's own recall. The mid
+   * tier's premium exists for prose a customer will read, so spending it here
+   * would buy quality nobody sees. Short, bounded, internal, low-stakes — the
+   * cheap tier is the honest tier. (server/services/memory-lifecycle.ts.)
+   */
+  "memory.summarise": {
+    key: "memory.summarise",
+    label: "Memory summarisation",
+    taskClass: "classification",
+    degradesTo:
+      "The memory keeps its existing summary / the deterministic SQL digest. Every other lifecycle reducer (expiry, decay, dedupe, eviction) is unaffected.",
+  },
+  /**
+   * PDF / photo OCR on the Migration OS import path.
+   *
+   * `classification` — structured extraction of a fixed JSON schema from a
+   * document, which is exactly what `expense.receipt_extraction` already is.
+   * The same kind of work must carry the same class, or the tier table stops
+   * meaning anything. (lib/imports/ocr.ts.)
+   */
+  "imports.ocr": {
+    key: "imports.ocr",
+    label: "Import OCR (PDF / photo)",
+    taskClass: "classification",
+    degradesTo:
+      "OcrUnavailableError — the upload action redirects with `error=ocr_unavailable` and tells the operator to upload CSV / Excel instead. Byte-identical to the no-key path today.",
+  },
+  /**
+   * The inbound-lead summary on the leads screen.
+   *
+   * `drafting`: operator-facing prose about a real customer, in the same shape
+   * as `insights.narrative`. NOT in the audit's list of five — found by sweeping
+   * for provider-SDK constructions rather than for `isAiConfigured()` gates.
+   * (server/services/lead-summary.ts.)
+   */
+  "lead.summary": {
+    key: "lead.summary",
+    label: "Lead summary",
+    taskClass: "drafting",
+    degradesTo:
+      "The deterministic summary assembled from the lead's own structured fields (deterministicSummary). Same return shape, so no UI branches on it.",
+  },
+  /**
+   * HQ research: interpreting fetched evidence into intelligence.
+   *
+   * `complex` — genuinely multi-step reasoning over substantial context (a
+   * fetched evidence corpus, ~2,800 output tokens), which is what that class is
+   * for and the only entry in this registry that earns the high tier.
+   * (server/services/research-llm.ts.)
+   */
+  "research.analysis": {
+    key: "research.analysis",
+    label: "HQ research analysis",
+    taskClass: "complex",
+    degradesTo:
+      "null — the runner falls back to its deterministic report assembly, exactly as it does with no key.",
+  },
+  /**
+   * HQ research: the sales-prep pack built from the same evidence.
+   *
+   * `complex`, for the same reason and over a slightly larger output cap. Kept
+   * as its OWN key rather than folded into `research.analysis` so the HQ
+   * per-feature cost rollup can tell the two apart — they are separate calls
+   * with separate prompts and separate spend.
+   */
+  "research.sales_prep": {
+    key: "research.sales_prep",
+    label: "HQ research sales prep",
+    taskClass: "complex",
+    degradesTo:
+      "null — the runner falls back to its deterministic prep assembly, exactly as it does with no key.",
   },
 } as const satisfies Record<string, AiFeatureDefinition>;
 

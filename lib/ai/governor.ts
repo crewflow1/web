@@ -153,7 +153,12 @@ export {
 } from "./governor/policy";
 export { AI_FEATURES, AI_FEATURE_KEYS, AI_TIERS, TIER_MODEL } from "./governor/registry";
 export type { AiFeature, AiTaskClass, AiTier } from "./governor/registry";
-export { getAiGovernorReadiness, isGovernorActivated } from "./governor/readiness";
+export {
+  AI_UNGOVERNED_INFERENCE_ENTRY_POINTS,
+  getAiGovernorReadiness,
+  isGovernorActivated,
+} from "./governor/readiness";
+export { hqBudgetOrgId } from "./governor/attribution";
 
 const LEDGER = "ai_invocations";
 const RESERVE_FN = "ai_reserve_invocation";

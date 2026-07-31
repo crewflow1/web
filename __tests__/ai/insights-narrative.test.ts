@@ -59,6 +59,15 @@ const PAYLOAD = {
   key_metrics: { total_events: 42, quote_funnel: { sent: 5, accepted: 3 } },
 };
 
+/**
+ * The budget-attribution actor the generator now requires.
+ *
+ * Deliberately the SAME org id the payload carries, so the org-isolation test
+ * below proves BOTH things at once: the identifier is stripped from the payload
+ * AND the one passed for attribution does not leak into the prompt either.
+ */
+const ACTOR = { orgId: "ORG-SECRET-8f2c", userId: null } as const;
+
 beforeEach(() => {
   getTextProviderMock.mockReset();
   generateMock.mockReset();
@@ -73,14 +82,14 @@ beforeEach(() => {
 describe("generateInsightNarrative — narrate-only generation via the abstraction", () => {
   it("returns null when no provider is configured (feature off → deterministic-only)", async () => {
     getTextProviderMock.mockReturnValue(null);
-    const out = await generateInsightNarrative("activity", PAYLOAD);
+    const out = await generateInsightNarrative("activity", PAYLOAD, ACTOR);
     expect(out).toBeNull();
     expect(generateMock).not.toHaveBeenCalled();
   });
 
   it("returns null for an unsupported provider vendor (never narrates from an unknown model)", async () => {
     getTextProviderMock.mockReturnValue(fakeProvider("acme", "mystery-llm"));
-    const out = await generateInsightNarrative("activity", PAYLOAD);
+    const out = await generateInsightNarrative("activity", PAYLOAD, ACTOR);
     expect(out).toBeNull();
     expect(generateMock).not.toHaveBeenCalled();
   });
@@ -88,7 +97,7 @@ describe("generateInsightNarrative — narrate-only generation via the abstracti
   it("returns null when the provider throws (graceful degradation, never throws)", async () => {
     getTextProviderMock.mockReturnValue(fakeProvider());
     generateMock.mockRejectedValue(new Error("rate limited"));
-    await expect(generateInsightNarrative("activity", PAYLOAD)).resolves.toBeNull();
+    await expect(generateInsightNarrative("activity", PAYLOAD, ACTOR)).resolves.toBeNull();
   });
 
   it("returns null on an empty or whitespace-only generation", async () => {
@@ -99,7 +108,7 @@ describe("generateInsightNarrative — narrate-only generation via the abstracti
       inputTokens: 100,
       outputTokens: 0,
     });
-    await expect(generateInsightNarrative("activity", PAYLOAD)).resolves.toBeNull();
+    await expect(generateInsightNarrative("activity", PAYLOAD, ACTOR)).resolves.toBeNull();
   });
 
   it("happy path — returns trimmed prose, provider-truth tokens, and cost via textCostUsd", async () => {
@@ -110,7 +119,7 @@ describe("generateInsightNarrative — narrate-only generation via the abstracti
       inputTokens: 320,
       outputTokens: 48,
     });
-    const out = await generateInsightNarrative("activity", PAYLOAD);
+    const out = await generateInsightNarrative("activity", PAYLOAD, ACTOR);
     expect(out).not.toBeNull();
     expect(out!.text).toBe("Your quote pipeline is converting well this month.");
     expect(out!.provider).toBe("anthropic");
@@ -134,7 +143,7 @@ describe("generateInsightNarrative — narrate-only generation via the abstracti
       inputTokens: 10,
       outputTokens: 4,
     });
-    await generateInsightNarrative("activity", PAYLOAD);
+    await generateInsightNarrative("activity", PAYLOAD, ACTOR);
     const [, opts] = generateMock.mock.calls[0]!;
     expect(opts.system).toBe(INSIGHT_NARRATIVE_SYSTEM);
     expect(opts.temperature).toBe(0);
@@ -149,7 +158,7 @@ describe("generateInsightNarrative — narrate-only generation via the abstracti
       inputTokens: 10,
       outputTokens: 4,
     });
-    await generateInsightNarrative("activity", PAYLOAD);
+    await generateInsightNarrative("activity", PAYLOAD, ACTOR);
     const [prompt] = generateMock.mock.calls[0]!;
     expect(prompt).not.toContain("ORG-SECRET-8f2c");
     expect(prompt).not.toContain("org_id");
