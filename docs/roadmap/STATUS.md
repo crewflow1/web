@@ -4,25 +4,36 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-30 (Continuation 12 — control-plane truth pass; stranded-work recovery)
-**Production `main`:** `106fd9b` (+ this docs train)
-**Production migration tip:** `20261069` — read from `supabase_migrations.schema_migrations`, NOT inferred
-**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC **dark**. **AI providers DARK** — but see the
-AI-governance warning below: a key alone would switch on **5 UNGOVERNED** generative paths outside the
-£100 ceiling. AI is a provider state and belongs on this line.
+**Last reconciled:** 2026-07-31 (Continuation 13 — roadmap reduction wave; 13 lanes)
+**Production `main`:** `f2a9c93` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261076` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.**
+The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
 
-## ⚠️ AI GOVERNANCE — 5 UNGOVERNED CALL SITES (audited 2026-07-30)
+## ✅ AI GOVERNANCE — CLOSED 2026-07-31 (was: 5 ungoverned call sites)
 
-The governor covers **3** paths (`ai-quote-writer`, `expense-drafts` receipt OCR, `receptionist-generation`).
-An audit found **5 more that bypass it entirely**, gating only on a bare `isAiConfigured()`:
-`lib/ai/insight-narrative.ts:112` · `server/services/ai-question.ts:82` · `server/services/hq-drafts.ts:233` ·
-`server/services/memory-lifecycle.ts:222` · `lib/imports/ocr.ts:134` (this one instantiates the Anthropic
-SDK directly). **Two are tenant-facing** (`/insights` narrative and its QuestionBox).
+Shipped in **#502**. Two things the original audit got wrong, both corrected by the closing lane:
 
-**Consequence: setting `ANTHROPIC_API_KEY` today would switch on 5 generative/vision paths OUTSIDE the
-£100/org ceiling** — precisely the failure `lib/ai/quote-writer-readiness.ts` exists to prevent. Earlier
-notes said "4 legacy call sites"; it is 5. Governing them is small, zero-migration, and must land BEFORE
-any key is ever set.
+**It was 7 sites, not 5.** Sweeping for provider-SDK *constructions* rather than `isAiConfigured()` *gates*
+also found `server/services/lead-summary.ts` (**tenant-facing**, own SDK) and `server/services/research-llm.ts`
+(the most expensive path in the tree, 2 × ~3k output tokens). The gate expression varied too: only
+`ai-question.ts` called `isAiConfigured()`; three used `getTextProvider()` and `imports/ocr.ts` read
+`env.ANTHROPIC_API_KEY` directly.
+
+**Wrapping alone would have closed nothing.** `invokeWithGovernor` runs the caller's function immediately
+when no cost tier is bound (the dark short-circuit, by design) — so a credential set *without* a tier binding
+produced unmetered spend through the **three already-governed paths too**. The fix moved the GATE: both
+provider doors (`lib/ai/text`, new `lib/ai/vision`) now require `isGovernorActivated()` — a **bound cost tier,
+not a key**. `isAiConfigured()` now has **zero callers**.
+
+A **ratchet** (`__tests__/security/ai-governance-closure.test.ts`, 8 source-derived tests, mutation-verified)
+fails the build if a new direct SDK construction or bare `isAiConfigured()` gate appears outside the governor.
+
+**STILL OPEN — embeddings are ungoverned.** Named in the readiness flag's docstring so the green light stays
+narrow. Not closable without a migration: the ledger's `task_class` CHECK admits only
+classification/drafting/complex. The HQ ceiling is also a product decision — `hq.draft` / `memory.summarise` /
+`research.*` bill CrewFlow's own org via `CREWFLOW_INTERNAL_ORG_ID` (fail-closed when unset), and £100 was
+priced for a *customer's* unit economics, not ours.
 
 ## Status vocabulary
 
@@ -42,6 +53,7 @@ any key is ever set.
 
 | Train | Date | Migrations | Contents | Result |
 |---|---|---|---|---|
+| **C13** | 2026-07-31 | `20261072`–`20261074`, `20261076` | **Roadmap reduction wave — 13 parallel lanes.** #501 notifications dead code + BST day-bucket defect · **#502 AI governance CLOSED** (7 sites not 5; the GATE moved to `isGovernorActivated()` because wrapping alone left the 3 already-governed paths spending) · **#503 variations** (`valid_until` carried an EoT date, so `acceptQuoteByToken` force-expired variations — customers could not accept them) · **#504 payroll employer NI + pension** (margins were overstated: 36%→26% on a worked example) · #505 retention register + aged ledgers · #507 works-quality ITP with DB-modelled hold points · #508 weather DARK · #509 three-way PO/GRN/bill matching · #513 scheduler recommendations · #514 job cost baseline. **A duplicate cost store was caught before merge** — job-budgets had built `quote_cost_estimates` mirroring `20261073`'s columns on `quotes`; both were additive so CI would have gone green on both. Removed, repointed at the GENERATED `quotes.cost_total`. | `0355ec1` → `f2a9c93`, tip `20261071` → `20261076`, verified |
 | **1** | 2026-07-26 | `20261038`, `20261039` | H2-CASH M1 billing plans (#426) + M2 cash visibility (#427) + M3 precise cash/forecast (#428 cumulative) + Daily Briefing (#425); dashboard retention pagination (#429) | `ed748b5` → `82cb5b7`, verified |
 | **2** | 2026-07-27 | `20261040` | Customer/staff import correctness (#121, launch blocker) + org_id perf indexes (#128) | `82cb5b7` → `aa8b810`, verified |
 | **4** | 2026-07-27 | `20261043`–`20261045` | **Train 4 — WhatsApp consolidated, ships DARK** (#433, supersedes #360/#361/#362): 3 version-colliding migrations renumbered · honest readiness (`outboundReady` can't be true without `senderImplemented`) · kill-switch gap closed at `getWhatsAppProvider()` | `dffd68a` → `9a633cd`, verified dark |
@@ -81,7 +93,7 @@ any key is ever set.
 |---|---|---|
 | Blueprint Centre (viewer, pins, markup, compare, offline, PWA) | **PRODUCTION** | shipped via release train `#421`; `app/(app)/blueprints/**`, migrations `20261014`–`20261017` |
 | Variation management (request → approve → quote/invoice → audit) | **PRODUCTION** | `quotes.variation_number`; `20260520180000_variation_orders.sql`; accepted-quote immutability `20261004` |
-| Offline mode / PWA | **PARTIAL — READ-ONLY** (was PRODUCTION; corrected 2026-07-30) | The offline shell + IndexedDB drawing cache are real and good (`public/sw.js`, `lib/blueprints/offline-store.ts`, `/offline` renders the real viewer from local bytes). But audited tree-wide: **no sync queue, no outbox, no retry, no idempotency key, no conflict detection anywhere**. A foreman with no signal can READ a pre-downloaded drawing and nothing else — no offline diary, snag or photo. 'Offline mode' in a construction product means work without signal; that is gap #10 below |
+| Offline mode / PWA | **WRITE QUEUE BUILT — in flight (#506, `20261077`)**; was READ-ONLY | The offline shell + IndexedDB drawing cache are real and good (`public/sw.js`, `lib/blueprints/offline-store.ts`, `/offline` renders the real viewer from local bytes). But audited tree-wide: **no sync queue, no outbox, no retry, no idempotency key, no conflict detection anywhere**. A foreman with no signal can READ a pre-downloaded drawing and nothing else — no offline diary, snag or photo. 'Offline mode' in a construction product means work without signal; that is gap #10 below |
 | AI WhatsApp Assistant | **BUILT-DARK (inbound + outbound + receipts)** | consolidated in #433 (prod `9a633cd`); webhook returns 404 and `/api/health` reports `whatsapp:false` with the flag off — verified post-deploy. Activation needs `NEXT_PUBLIC_FEATURE_WHATSAPP=true` + `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` (+ `WHATSAPP_APP_SECRET`/`WHATSAPP_VERIFY_TOKEN` inbound) + per-org DB state |
 | Native mobile apps (iOS/Android) | **NOT BUILT** | PWA is the current mobile strategy |
 
@@ -92,7 +104,7 @@ any key is ever set.
 | Daily Briefing | **PRODUCTION** (deterministic, 21 signals) | `lib/briefing/compose.ts`, `server/services/briefing.ts`, `20261038_briefing_dismissals`; ranked money + safety signals, non-dismissible live breaches |
 | AI Voice Receptionist | **BUILT-DARK — but it is a TEXT engine; there is NO VOICE** | 22,361 LOC across 81 files is a genuinely strong inbound-**enquiry text** engine (intent, slot extraction, gap-filling, governed generation, human claim/release worklist). Audited 2026-07-30: **zero** hits tree-wide for vapi/twiml/telephony/call_sid/audio/transcription/speech/tts/stt, and **no `phone_numbers` table exists in the repo** — so phone→org routing has no schema either. Voice needs: telephony provider, routing migration, audio streaming, STT/TTS, barge-in, real-time turn loop. 'Vapi telephony NOT BUILT' read like the last mile; it is the whole road |
 | AI Quote Writer | **BUILT-DARK** (see Train 30) | **This row said NOT BUILT until 2026-07-30 — it was wrong and 44 lines from the train that shipped it.** `lib/ai/{quote-context,quote-prompt,quote-draft-schema,quote-draft-pipeline,quote-writer-readiness}.ts`, `server/services/ai-quote-writer.ts`, `20261068`, live panel in the quote builder. Remaining before activation: model binding (a CEO/cost decision — all `TIER_MODEL` tiers are null), the atomic governor reservation, and `checkBudget`'s fail-open |
-| AI Scheduler | **PARTIAL** (deterministic detection) | Train 16 (#460): `lib/schedule-integrity` + `/staff/rota/conflicts` + briefing signals — double-bookings, assignee-without-shift, leave clashes, unassigned imminent jobs, custody anomalies. Observe→explain only; recommendation/auto-move NOT built |
+| AI Scheduler | **PRODUCTION (detection + recommendations)** — C13 #513 added deterministic resolution candidates with visible, record-traceable reasoning; propose-only, never auto-move. No skills model exists in the schema, so ranking answers who is FREE, never who is BEST | Train 16 (#460): `lib/schedule-integrity` + `/staff/rota/conflicts` + briefing signals — double-bookings, assignee-without-shift, leave clashes, unassigned imminent jobs, custody anomalies. Observe→explain only; recommendation/auto-move NOT built |
 | AI Cashflow | **PARTIAL** | deterministic forecast shipped in H2-CASH M3 (`lib/commercial/cash-forecast.ts`): overdue / due / planned / unscheduled, honest certainty labels, no fake probability |
 
 ## PHASE 4 — SITE MANAGEMENT
@@ -106,9 +118,10 @@ any key is ever set.
 | H&S evidence PDFs + integrity | **PRODUCTION** | SHA-256 `content_hash`, write-once immutability, storage byte lockdown (`20261031`–`20261037`) |
 | Snagging | **PRODUCTION** | `20260919000000_snags.sql` + full vertical: `app/(app)/snags/{page,new,[id],actions.ts}` (`createSnag`/`updateSnagStatus`/`reassignSnag`/`setSnagPriority`/`deleteSnag`), lifecycle open→in_progress→fixed→verified/wont_fix, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: no job-page embed, no e2e spec |
 | Daily site diary | **PRODUCTION** | `20260920000000_site_diary.sql` + full CRUD: `app/(app)/diary/{page,[id],[id]/edit,actions.ts,_form}`, `lib/site-diary/schema.ts`, photos via `tenant_attachments`, RLS isolation test, sidebar. **Verified 2026-07-27 — was wrongly marked PARTIAL; do NOT rebuild.** Gap: not surfaced on the job page; weather is free text (no provider) |
+| Works quality (ITP, hold points, sign-off) | **PRODUCTION** — C13 #507, `20261076`. Hold points modelled in the DB; the gate is a WARN that STAMPS `hold_point_breach` rather than refusing (refusing would not stop the pour, only destroy the evidence). M2+: revision lineage with hold-point carry-forward, portal witness invitations, NCR workflow, template library, PDF pack |
 | Asset/plant inspections + templates | **PRODUCTION** (mis-filed here until 2026-07-30 — these are **asset** inspections, not site QA) | Migrations `20260927`–`20261001` are all `asset_inspection*`; routes are `/assets/[id]/inspections/**`. **There is NO site/works quality inspection: no ITP, no hold points, no witness/approval regime, no per-job inspection register.** Under a Site-Management heading the old label read as site QA — it never was |
-| Progress tracking | **PARTIAL** | `progress_percent` DOES ship inside `site_reports.content` (validated 0–100) and is surfaced to the customer portal. True gap: no job-level progress log / time series / S-curve |
-| Weather intelligence + Extension-of-Time letters | **NOT BUILT** | needs a weather provider (free tiers exist) |
+| Progress tracking | **TIME SERIES BUILT — in flight (#512, `20261078`)**. Actual progress only: four candidate baselines were checked and CrewFlow holds NO programme, so no planned line is drawn and the panel says so on screen | `progress_percent` DOES ship inside `site_reports.content` (validated 0–100) and is surfaced to the customer portal. True gap: no job-level progress log / time series / S-curve |
+| Weather intelligence | **BUILT-DARK — PRODUCTION (dark)** — C13 #508, `20261074`. Global district-keyed cache (`weather_readings` has NO `org_id`; `weather_watches` is org-scoped), 25 thresholds across 7 activities with 10 sourced and 15 marked as defaults, 64-test no-egress proof. `/api/health` reports `weather:{available:false,providerImplemented:false}`. **Activation blockers:** provider choice + licence (Met Office redistribution terms unpublished; Open-Meteo free tier is non-commercial and works WITHOUT a key, so readiness demands one anyway), and district→coordinate resolution — every provider takes lat/lon and CrewFlow has none. EoT letters remain NOT BUILT |
 | Site timeline | **PRODUCTION** | `lib/site-ops/timeline.ts` (#442) — pure, total order, Europe/London day buckets; composes diary+snags+inspections+toolbox+RAMS/permits+docs+photos onto the job page |
 | ~~Site timeline (old)~~ | superseded | `lib/commercial/timeline.ts` is commercial-only; `server/services/spine-timeline.ts` is HQ-internal (service_role); asset timeline is asset-scoped. No unified operational timeline over diary+snags+inspections+toolbox+photos — all source tables exist, so this is a pure read/compose |
 
@@ -119,11 +132,11 @@ any key is ever set.
 | Quotes → invoices → payments → allocation | **PRODUCTION** | `allocate_payment` RPC, per-invoice caps, idempotency |
 | Retention (accrual, release schedule, moieties) | **PRODUCTION** | `lib/retentions/**`, `20261005`/`20261012`/`20261013` |
 | Billing plans (deposit / staged / milestone) | **PRODUCTION** | `20261039_job_billing_plans` + `generate_stage_invoice` RPC |
-| Precise cash position + forecast + portal payment schedule | **PRODUCTION** | H2-CASH M3: per-invoice retention attribution, `collectableNow`, org=Σjobs reconciliation |
+| Precise cash position + forecast + portal payment schedule | **PRODUCTION (money-in)**; money-out + net position in flight (#511) — supplier bills, VAT, CIS, draft payroll, committed spend, all composed from existing authorities with a documented double-count precedence | H2-CASH M3: per-invoice retention attribution, `collectableNow`, org=Σjobs reconciliation |
 | Purchase orders | **PRODUCTION** | Programme C slice 2 |
 | Supplier invoices / committed costs | **PRODUCTION** | Programme C slice 3 |
 | Profitability + VAT summary reporting | **PRODUCTION** | `lib/profitability/compute.ts`, dashboard/reports |
-| Payroll (timesheets → PAYE lines) | **PARTIAL — ESTIMATES ONLY** (corrected 2026-07-30) | `lib/payroll/compute.ts` line 1 says so itself: annualise → flat bands → divide. **No employer NI, no pension/auto-enrolment**, no tax codes, no cumulative basis, no RTI/FPS, no P60/P45. Materially: employer NI + pension are real job costs, so **every margin figure is understated** |
+| Payroll (timesheets → PAYE lines) | **PRODUCTION (estimates, now including employer on-costs)** — C13 #504. Employer NI + pension now enter the `labour` bucket, so margins are no longer overstated (worked example: 36% → 26%, band green → amber). Dated rate tables in `lib/payroll/rates.ts` (2024-25 / 2025-26 / 2026-27); **the brief's 13.8% was 2024-25 — current is 15% above £5,000**. Still NOT modelled, each with its error direction, in `NOT_MODELLED`. No RTI/FPS, no P60/P45 | `lib/payroll/compute.ts` line 1 says so itself: annualise → flat bands → divide. **No employer NI, no pension/auto-enrolment**, no tax codes, no cumulative basis, no RTI/FPS, no P60/P45. Materially: employer NI + pension are real job costs, so **every margin figure is understated** |
 | **CIS — subcontractor domain + HMRC verification (M1)** | **PRODUCTION** | `20261046_cis_subcontractors` (#434): 1:1 extension on `suppliers` keyed `(org_id, supplier_id)`; real HMRC statuses (gross/20/30, `failed`→30); status↔rate CHECK using `is not distinct from`; admin-only RLS + masked UTR; manual verification + unimplemented `CisVerificationProvider` seam |
 | CIS M2 — money-out ledger | **PRODUCTION** | `20261047_supplier_payments` (#438). `supplier_payments` (gross/cis_withheld/net_paid with a DB CHECK enforcing `net_paid = gross − withheld`) + `supplier_payment_allocations` against `finances` bills. Composite FKs `(id, org_id, supplier_id)` enforce cross-org + cross-supplier + not-a-bill for **every role incl. service_role**; allocation guard locks payment-then-bill (deadlock-free) capping Σ at both payment gross and bill gross; **write-once + void** (never edit — `cis_withheld` is filed with HMRC and printed on statements); admin-only RLS. **Invariant proven 3 ways: CIS withholding does NOT reduce commercial cost** (£10k gross − £2k CIS = £8k cash, job still cost £10k) |
 | CIS M3 — deduction calc + reverse-charge VAT | **PRODUCTION** | `20261051_cis_deduction` (#443, Train 8): HMRC-verified rules (20/30/gross, exclusions, CITB, 6th–5th tax month), server-derived rate, cumulative partial-payment maths, reverse charge as a real treatment; splits labour vs qualifying materials (CIS never applies to materials or VAT). Hardened by `20261053`/`20261054` (#452, Train 11): basis freeze incl. INSERT-after-part-payment door, settlement floor, enforced trigger firing order |
@@ -164,11 +177,11 @@ any key is ever set.
 | Email | **PRODUCTION** (`RESEND_API_KEY` set) |
 | SMS | **BUILT-DARK** (needs `TWILIO_ACCOUNT_SID`+`AUTH_TOKEN`+`SMS_FROM`) |
 | WhatsApp inbound | **BUILT-DARK** (needs `NEXT_PUBLIC_FEATURE_WHATSAPP=true` + Meta creds) |
-| WhatsApp outbound + read receipts | **BUILT/READY in #362 stack** (needs migration renumber + rebase) |
+| WhatsApp outbound + read receipts | **BUILT-DARK — shipped, not pending.** `lib/comms/providers/meta-whatsapp-sender.ts` is on `main` and `SENDER_IMPLEMENTED.whatsapp = true`. The old "#362 stack, needs renumber" note was stale by several trains |
 | Missed-call text-back | **BUILT-DARK** (needs flag + Twilio) |
 | Voice (Vapi) | **NOT BUILT** (#113 superseded — design preserved, branch stale) |
 
-> ⚠️ **Known trap:** `lib/comms/readiness.ts` probes `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID`, but **no outbound sender exists on main**. Setting those vars today would flip `/api/health` to `whatsapp:true` while sending is still impossible. Do not set them before the #362 stack lands.
+> ✅ **That trap is FIXED — this warning was itself stale and was blocking a legitimate activation.** `lib/comms/readiness.ts` no longer derives `configured` from credentials alone; it decomposes into `credentialsPresent` / `senderImplemented` / `selectionUsable` / `providerResolvable`, and `SENDER_IMPLEMENTED.whatsapp` is `true` because the sender exists. Corrected 2026-07-31 after the control plane was found telling the CEO not to activate WhatsApp for a reason that had already been engineered away.
 
 ## PHASE 9 — INTELLIGENCE
 
@@ -186,7 +199,7 @@ any key is ever set.
 
 ## MIGRATION SLOT ALLOCATION (read before authoring any migration)
 
-**Production migration tip is `20261069` (stock correction transfer guard, applied).** Slots BELOW
+**Production migration tip is `20261076` (works-quality ITP, applied 2026-07-31).** Slots BELOW
 that are closed forever — Supabase keys identity on the numeric prefix, so a
 lower-numbered file added later replays out of order from scratch. We have hit this
 twice (#128 `20260711`, #136 `20260706`).
@@ -229,9 +242,25 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261066`–`20261067` | M4 material requests | **APPLIED** — Train 29, #490 |
 | `20261068` | AI quote drafts | **APPLIED** — Train 30, #491 |
 | `20261069` | stock correction transfer guard | **APPLIED (prod tip)** — Train 31, #493 |
-| `20261070` | AI budget reservation | **CLAIMED — in flight** `feat/ai-budget-reservation` (C12) |
-| `20261071` | stock residual hardening (deferred FKs et al) | **CLAIMED — in flight** `fix/stock-residual-hardening` (C12) |
-| `20261072+` | **NEXT FREE** | unallocated |
+| `20261070` | AI budget reservation | **APPLIED** — C12, #497 |
+| `20261071` | stock residual hardening (deferred FKs et al) | **APPLIED** — C12, #496 |
+| `20261072` | job cost baseline (`job_budgets`) | **APPLIED** — C13, #514. Needed `--include-all`: `20261073` reached prod first while this PR was still open |
+| `20261073` | variation EoT + cost basis on `quotes` | **APPLIED** — C13, #503 |
+| `20261074` | weather intelligence (dark) | **APPLIED** — C13, #508 |
+| `20261075` | — | **ALLOCATED AND DECLINED.** The payroll lane (#504) was given this slot and correctly did not use it: employer NI/pension are a pure function of `(gross_pay, cycle, period_start)`, all already persisted. **Do not recycle this number** — it appeared in a brief |
+| `20261076` | works quality ITP | **APPLIED (prod tip)** — C13, #507 |
+| `20261077` | offline write queue idempotency key | **CLAIMED — in flight** `feat/offline-write-queue` (#506) |
+| `20261078` | job progress observations | **CLAIMED — in flight** `feat/job-progress-tracking` (#512) |
+| `20261079` | portal warranties | **CLAIMED — in flight** `feat/portal-warranties-and-variations` |
+| `20261080+` | **NEXT FREE** | unallocated |
+
+> **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
+> PRs open at once, production can hold a migration that `main` does not yet contain. A branch
+> cut before those landed has a local migrations directory missing versions the remote has, and
+> `supabase db push` **correctly refuses** it. Do not force it. Stage instead from `origin/main`
+> plus the specific new migration file(s) — `git checkout <branch> -- supabase/migrations/<file>`
+> — which yields a tree containing every applied version, then push. Verify the catalogue after
+> every apply, never just the version row.
 
 > ### ⚠️ THIS TABLE WAS A LIVE TRAP UNTIL 2026-07-30
 > A read-only audit found this file simultaneously claiming tip `20261062` (here),
