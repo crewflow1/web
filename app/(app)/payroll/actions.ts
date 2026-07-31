@@ -167,7 +167,12 @@ export async function createPayrollRun(
     const hours = hoursByU.get(uid) ?? 0;
     if (hours === 0) continue; // skip unpaid rows
     const hourlyPay = Number(u?.hourly_pay ?? 0);
-    const c = computePayrollLine(hours, hourlyPay, cycle);
+    // `period_start` (not today) picks the employer rate table, so the run is
+    // priced at the rates in force for the period it covers — and stays that way
+    // when rates change next 6 April. Employer NI/pension are DERIVED on read from
+    // the stored gross via `employerCostsForStoredLine`, so there is nothing extra
+    // to persist here and no second copy of the rate table.
+    const c = computePayrollLine(hours, hourlyPay, cycle, period_start);
     lines.push({
       org_id: ctx.org.id,
       payroll_run_id: run.id,
