@@ -3,6 +3,9 @@ import { publicAcceptQuote, publicDeclineQuote } from "./actions";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { VariationSummary } from "./_variation-summary";
+import { buildPortalVariationView, type PortalVariationView } from "@/lib/variations/portal";
+import type { CashQuote } from "@/lib/commercial/cash";
 
 /**
  * Public customer-facing quote view.
@@ -155,6 +158,71 @@ export default async function PublicQuotePage({
     : null;
   const completionAgreed = isVariation && !!eot.eot_agreed_completion_date;
 
+  // ── Variation approval surface ──────────────────────────────────────────────
+  // A customer approving a variation is agreeing to a change in VALUE and,
+  // usually, a change in the PROGRAMME. Both need the job's other quotes for
+  // context, so this read happens only for variations.
+  //
+  // SCOPING: org_id + customer_id + job_id, all taken from THIS quote — the row
+  // the token already authorised. The portal has no JWT, so this is the same
+  // "scope in code on the admin client" discipline the customer portal uses.
+  //
+  // The select carries NO cost_* column. Those five (20261073) are the margin
+  // this variation was priced at; they live on these very rows and must never be
+  // read on a customer-facing route. A security test pins them out of this
+  // query, not merely out of the JSX.
+  let variationView: PortalVariationView | null = null;
+  if (isVariation && quote.job_id && quote.customer?.id) {
+    const { data: siblings, error: siblingsError } = await admin
+      .from("quotes")
+      .select("id, status, total, variation_number, eot_agreed_completion_date")
+      .eq("org_id", quote.org_id)
+      .eq("customer_id", quote.customer.id)
+      .eq("job_id", quote.job_id)
+      .neq("id", quote.id)
+      .limit(500);
+    // Loud: a failed read here would silently show a contract total that leaves
+    // out already-approved variations — an understated figure on a document the
+    // customer signs.
+    if (siblingsError) throw readFailure("public quote: variation context", siblingsError);
+
+    const siblingRows = (siblings ?? []) as Array<{
+      status: string;
+      total: number | string | null;
+      variation_number: number | null;
+      eot_agreed_completion_date: string | null;
+    }>;
+    const siblingQuotes: CashQuote[] = siblingRows.map((s) => ({
+      status: s.status,
+      total: s.total,
+      variation_number: s.variation_number,
+    }));
+    // Only EARLIER variations can have set the programme date this one moves.
+    const priorAgreedCompletionDates = siblingRows
+      .filter(
+        (s) =>
+          s.variation_number !== null &&
+          s.variation_number < variationNumber! &&
+          s.status === "accepted" &&
+          s.eot_agreed_completion_date !== null,
+      )
+      .map((s) => s.eot_agreed_completion_date as string);
+
+    variationView = buildPortalVariationView({
+      variationNumber: variationNumber!,
+      status: quote.status,
+      subtotal: quote.subtotal,
+      vatTotal: quote.vat_total,
+      total: quote.total,
+      eotRequestedCompletionDate: eot.eot_requested_completion_date,
+      eotAgreedCompletionDate: eot.eot_agreed_completion_date,
+      acceptedAt: quote.accepted_at,
+      declinedAt: quote.declined_at,
+      siblingQuotes,
+      priorAgreedCompletionDates,
+    });
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
@@ -207,11 +275,19 @@ export default async function PublicQuotePage({
                 {quote.customer?.name ?? "—"}
               </dd>
             </div>
-            <div>
-              <dt className="text-xs text-slate-500">Valid until</dt>
-              <dd className="text-slate-700">{quote.valid_until ?? "—"}</dd>
-            </div>
-            {completionDate ? (
+            {/* Only when there IS an expiry. A variation normally has none, and
+                an empty "Valid until" on the document whose completion date used
+                to be printed under exactly that label is noise at best. */}
+            {quote.valid_until ? (
+              <div>
+                <dt className="text-xs text-slate-500">Valid until</dt>
+                <dd className="text-slate-700">{quote.valid_until}</dd>
+              </div>
+            ) : null}
+            {/* Stated ONCE. When the variation summary renders it owns this
+                fact in full (with the baseline and the days added), so showing
+                it here too would be two places to drift apart. */}
+            {completionDate && !variationView ? (
               <div>
                 <dt className="text-xs text-slate-500">
                   {completionAgreed ? "Completion date agreed" : "Completion date requested"}
@@ -259,6 +335,9 @@ export default async function PublicQuotePage({
             Quote declined.
           </div>
         ) : null}
+
+        {/* What a variation actually changes — value + programme, before signing */}
+        {variationView ? <VariationSummary view={variationView} /> : null}
 
         {/* Line items */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

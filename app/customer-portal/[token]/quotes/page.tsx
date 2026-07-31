@@ -4,6 +4,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { formatVariationLabel } from "@/lib/variations/schema";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 
 /**
@@ -13,6 +14,14 @@ import { InvalidLinkPage } from "@/app/_components/invalid-link";
  * /q/<public_token>, which is where accept/decline + PDF live. No
  * duplication of that flow here — the portal is the hub, /q/[token]
  * is the single source of truth for the per-quote action.
+ *
+ * VARIATIONS ARE NOT QUOTES, even though they share the table. A variation
+ * changes work already agreed; a quote offers work not yet agreed. This list
+ * used to render them identically — same title, same "Valid until" line — so a
+ * customer could not tell a £4,000 offer from a £4,000 change to a contract they
+ * had already signed. Variations now carry their own label and show the
+ * completion date they ask for (20261073) instead of an offer expiry, which is
+ * the fact that decides them.
  *
  * Filter via search params: ?status=<one of QUOTE_STATUSES>.
  */
@@ -56,7 +65,9 @@ export default async function PortalQuotesPage({
   let q = admin
     .from("quotes")
     .select(
-      "id, number, status, total, subtotal, vat_total, valid_until, sent_at, accepted_at, declined_at, public_token, created_at",
+      // No cost_* column, ever: 20261073 put the priced cost basis (the margin)
+      // on these same rows, and this is a customer-facing read.
+      "id, number, status, total, subtotal, vat_total, valid_until, sent_at, accepted_at, declined_at, public_token, created_at, variation_number, eot_requested_completion_date, eot_agreed_completion_date",
     )
     .eq("org_id", customer.org_id)
     .eq("customer_id", customer.id)
@@ -124,6 +135,16 @@ export default async function PortalQuotesPage({
           {rows.map((q) => {
             const status = (q.status as QuoteStatus) ?? "draft";
             const canAct = status === "draft" || status === "sent" || status === "viewed";
+            const row = q as typeof q & {
+              variation_number: number | null;
+              eot_requested_completion_date: string | null;
+              eot_agreed_completion_date: string | null;
+            };
+            const isVariation = row.variation_number !== null;
+            // For a variation the deciding date is the completion date it asks
+            // for — NOT the offer expiry, which is what this line used to show.
+            const completionDate =
+              row.eot_agreed_completion_date ?? row.eot_requested_completion_date;
             return (
               <li
                 key={q.id}
@@ -135,11 +156,22 @@ export default async function PortalQuotesPage({
                       href={`/q/${q.public_token}`}
                       className="block text-base font-semibold text-slate-900 hover:text-slate-700"
                     >
-                      {q.number}
+                      {isVariation ? formatVariationLabel(row.variation_number!) : q.number}
                     </Link>
+                    {isVariation ? (
+                      <p className="mt-0.5 text-xs font-medium text-indigo-700">
+                        Change to work already agreed
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs text-slate-500">
                       Sent {q.sent_at?.slice(0, 10) ?? "—"}
-                      {q.valid_until ? ` · Valid until ${q.valid_until}` : ""}
+                      {isVariation
+                        ? completionDate
+                          ? ` · ${row.eot_agreed_completion_date ? "Completion agreed" : "Completion requested"} ${completionDate}`
+                          : ""
+                        : q.valid_until
+                          ? ` · Valid until ${q.valid_until}`
+                          : ""}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -160,7 +192,7 @@ export default async function PortalQuotesPage({
                       href={`/q/${q.public_token}`}
                       className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
                     >
-                      View &amp; respond
+                      {isVariation ? "Review & approve" : "View & respond"}
                     </Link>
                   ) : (
                     <Link
