@@ -119,6 +119,30 @@ const envSchema = z.object({
   // Free string (not an enum) so a new provider needs zero env-schema edits.
   COMMS_WHATSAPP_PROVIDER: z.string().optional(),
 
+  // -- Weather intelligence (20261074) ------------------------------------
+  // Names the active weather provider. There is NO DEFAULT and no "auto": unset
+  // ⇒ getWeatherProvider() returns null ⇒ CrewFlow holds no weather data and
+  // checks nothing. Unset is the posture in prod, CI and dev.
+  //
+  // Deliberately NOT defaulted to "auto" like the comms seams. Auto-selection is
+  // right when every candidate is equivalent and free to try; it is wrong here,
+  // because the vendors differ in LICENCE (Open-Meteo's keyless tier is
+  // non-commercial only) and in COST, and a seam that silently picked one could
+  // put the product in breach of a licence or on a bill nobody approved. Binding
+  // a provider must be an explicit, named act.
+  //
+  // Setting this is NOT sufficient to activate anything: no provider adapter
+  // exists in this build, and none of these keys is read by any code that could
+  // make a request. See lib/weather/readiness.ts for the full activation
+  // checklist and docs/weather/provider-options.md for the licence and cost
+  // homework behind the choice.
+  WEATHER_PROVIDER: z.string().optional(),
+  // Met Office Weather DataHub (Site Specific / Global Spot) subscription key.
+  MET_OFFICE_API_KEY: z.string().optional(),
+  // Open-Meteo COMMERCIAL subscription key. The keyless open-access tier is
+  // licensed for non-commercial use only and must not be used by CrewFlow.
+  OPEN_METEO_API_KEY: z.string().optional(),
+
   // -- Stripe -------------------------------------------------------------
   // Optional at boot — the app starts without Stripe configured. The
   // webhook + checkout routes return 503 with a clear error when these

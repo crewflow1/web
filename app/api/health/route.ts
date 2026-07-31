@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCommsReadiness } from "@/lib/comms/readiness";
+import { getWeatherReadiness } from "@/lib/weather/readiness";
 
 /**
  * Health check endpoint.
@@ -26,6 +27,17 @@ export async function GET() {
   // now only be true when the sender exists, the credentials are present, the provider selection
   // is usable, and the channel's feature flag is on.
   const comms = getCommsReadiness();
+
+  // Weather intelligence readiness (20261074). `available` — "this runtime can
+  // actually obtain weather for a site" — never the weaker "a key is set". It is
+  // `false` in every environment today because no provider adapter exists in the
+  // build, and it can never go true on a credential alone. Reported here for the
+  // same reason comms is: so a deploy that BELIEVES it has weather but cannot
+  // fetch any is visible to the smoke test rather than being discovered by a site
+  // manager who saw no warning and assumed there was nothing to warn about.
+  // Boolean only — this endpoint is public and must not name env vars.
+  const weather = getWeatherReadiness();
+
   return NextResponse.json(
     {
       ok: true,
@@ -38,6 +50,12 @@ export async function GET() {
         sms: comms.sms.outboundReady,
         whatsapp: comms.whatsapp.outboundReady,
         missedCallTextbackReady: comms.missedCallTextback.ready,
+      },
+      weather: {
+        available: weather.available,
+        // The build-time half, so a false `available` is diagnosable without
+        // shell access: "no adapter" and "no key" need different actions.
+        providerImplemented: weather.providerImplemented,
       },
       timestamp: new Date().toISOString(),
     },
