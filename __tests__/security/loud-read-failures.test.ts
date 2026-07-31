@@ -194,6 +194,76 @@ describe("highest-blast-radius loaders", () => {
   });
 });
 
+/**
+ * SEV-A — a safety control that failed OPEN.
+ *
+ * The job hub's H&S panel reads RAMS, permits and toolbox talks, and it HIDES
+ * ITSELF when all three come back empty. With `data ?? []` and no `error`
+ * binding, a rejected query produced the single most reassuring output the
+ * product can render: the section vanished, and with it the "No issued RAMS is
+ * current for this job" warning and every unsigned toolbox talk. Severity (b)
+ * in the model above — a false claim about legal compliance, made exactly when
+ * the database is unhealthy.
+ *
+ * This block is the red-if-reverted proof. Restoring the bare `?? []` shape
+ * drops the `<res>.error` bindings, and BOTH the named pins and the structural
+ * sweep below go red.
+ */
+describe("SEV-A: the job safety panel fails CLOSED", () => {
+  const FILE = "app/(app)/jobs/[id]/_job-safety.tsx";
+
+  it("reports every one of the three safety reads by name", () => {
+    const s = src(FILE);
+    expect(s).toMatch(/reportReadFailure\("job safety: RAMS on job", ramsRes\.error\)/);
+    expect(s).toMatch(/reportReadFailure\("job safety: permits on job", permitsRes\.error\)/);
+    expect(s).toMatch(
+      /reportReadFailure\("job safety: toolbox talks on job", talksRes\.error\)/,
+    );
+  });
+
+  it("renders an explicit error block instead of hiding the section", () => {
+    const s = src(FILE);
+    // The panel's healthy empty path is `return null` (it hides). On failure it
+    // must return VISIBLE markup that denies the all-clear reading.
+    expect(s).toMatch(/if \(failed\) \{/);
+    expect(s).toMatch(/border-red-200 bg-red-50/);
+    expect(s, "the error state must say it is not an all-clear").toMatch(
+      /This is NOT an all-clear/,
+    );
+  });
+
+  it("ANY failing read blocks the render — a partial safety picture is a false all-clear", () => {
+    const s = src(FILE);
+    // Three separate reports, one shared `failed` latch: permits loading while
+    // RAMS is rejected must not render "this job has no risk assessment".
+    expect((s.match(/failed = true/g) ?? []).length).toBe(3);
+  });
+
+  it("the read cast carries `error` — typing a read error-blind is the root cause", () => {
+    const s = src(FILE);
+    expect(s).toMatch(/data: unknown\[\] \| null; error: SupabaseReadError \| null/);
+    expect(s, "an error-blind promise type makes the bug uncatchable").not.toMatch(
+      /Promise<\{ data: unknown\[\] \| null \}>/,
+    );
+  });
+
+  it("no result is coalesced to empty without its error being inspected", () => {
+    // The generalisation: for every `<name>Res.data ??` in the file there must
+    // be a matching `<name>Res.error`. Catches a PARTIAL revert that the named
+    // pins above would miss (e.g. one read quietly restored to `?? []`).
+    const s = src(FILE);
+    const unchecked = [...s.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*)\.data\s*\?\?/g)]
+      .map((m) => m[1]!)
+      .filter((v) => !new RegExp(`\\b${v}\\.error\\b`).test(s));
+    expect(
+      [...new Set(unchecked)],
+      `${FILE} coalesces a read straight to empty without checking its error. ` +
+        `On a SAFETY surface that renders as "no outstanding RAMS / no missing ` +
+        `sign-offs" — the false all-clear this programme exists to kill.`,
+    ).toEqual([]);
+  });
+});
+
 // ── 2. a destructured `error` must be USED ───────────────────────────────────
 
 /**
@@ -283,7 +353,17 @@ const RATCHET: Array<{
   softData: number;
   countOnly: number;
 }> = [
-  { scope: "app/(app)", dirs: ["app/(app)"], discard: 60 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */, softData: 52, countOnly: 5 },
+  {
+    scope: "app/(app)",
+    dirs: ["app/(app)"],
+    discard: 60 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
+    // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
+    // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
+    // sits behind a real check and stops counting as debt. A SAFETY control
+    // that hid itself on read failure — see the marquee pin above.
+    softData: 49,
+    countOnly: 5,
+  },
   {
     scope: "app outside (app) — admin/api/portal/q/onboarding",
     dirs: ["app/admin", "app/api", "app/customer-portal", "app/q", "app/onboarding"],
