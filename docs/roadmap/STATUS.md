@@ -35,6 +35,41 @@ classification/drafting/complex. The HQ ceiling is also a product decision — `
 `research.*` bill CrewFlow's own org via `CREWFLOW_INTERNAL_ORG_ID` (fail-closed when unset), and £100 was
 priced for a *customer's* unit economics, not ours.
 
+## 🕐 INCIDENT — BST month-end red main (2026-07-31/08-01), root cause CORRECTED
+
+**What was first concluded, and was WRONG:** that six feature merges between `f2a9c93` (green,
+22:31Z) and `8daa416` (red, 23:05Z) introduced a regression in the AI reservation ledger. The bisect
+boundary was real; the causal inference was not. **That 34-minute window is elapsed wall clock, not
+code.**
+
+**Actual root cause — test harness only, never the product.** `ai_invocations_month_totals` and
+`ai_reservations_month_totals` bucket rows by the **Europe/London** month:
+`created_at >= (date_trunc('month', p_month) at time zone 'Europe/London')`. Both integration suites
+passed the **UTC** calendar date (`new Date().toISOString().slice(0,10)`). For `p_month='2026-07-31'`
+that yields the window `[2026-06-30 23:00Z, 2026-07-31 23:00Z)`. **CI ran at 23:07:48Z** — past the
+window's end — so rows written at `now()` fell outside it and both rollups returned **no rows**. Every
+assertion then read `0` or `undefined` (`expected +0 to be 3000`, `no totals row for org A`).
+
+Signature: 2 files (`ai/budget-reservation`, `rls/ai-invocations`), **17 failed / 47 passed**.
+
+**Proof it was not the merges:** the exact signature was reproduced on a database that does **not**
+have migrations `20261075`–`20261078` applied, and the files fail **in isolation** — killing the
+cross-file fixture-destruction hypothesis too. It would have fired at 23:00Z on any BST month-end, on
+any commit.
+
+**Production was unaffected and no rollback was needed.** `lib/ai/governor.ts` derives `p_month` via
+`ukMonthWindow`, correctly London-pinned. The defect existed only in `__tests__/integration/_harness.ts`.
+
+**Fix (#518):** `ukTodayIso()` built on production's own `formatDayKeyUK`; 11 call sites; plus two
+deterministic pins that **freeze the instant main died**, so a regression fails at any hour instead of
+only in a one-hour window on the last day of a BST month. **No assertion was weakened, skipped or
+removed** — the atomic-ceiling, per-org isolation, dedupe, settlement and monthly-total proofs all
+still run. Red→green measured *inside* the failure window (23:24–23:29Z): 17 failed → **184 files /
+1923 tests, 0 failed**.
+
+**Standing lesson:** a date handed to London-pinned SQL must be a London day. Any test that computes
+"today" with `toISOString()` is a time bomb with a monthly fuse.
+
 ## Status vocabulary
 
 | Status | Meaning |
