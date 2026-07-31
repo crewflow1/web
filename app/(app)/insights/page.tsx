@@ -7,7 +7,7 @@ import {
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
 import { InsightsSection } from "../dashboard/_insights";
 import { QuestionBox } from "./_question-box";
-import { isAiConfigured } from "@/lib/ai/safety";
+import { isGovernorActivated } from "@/lib/ai/governor/readiness";
 
 /**
  * /insights — AI Analysis (tenant-side).
@@ -86,7 +86,15 @@ export default async function InsightsPage() {
         </p>
       </section>
 
-      <QuestionBox aiConfigured={isAiConfigured()} />
+      {/*
+        The badge must state what the ANSWER BOX will actually do. It used to
+        read `isAiConfigured()` — "a vendor key exists" — which was a different
+        question from the one `askAi` decides on, so a deploy with a key and no
+        bound cost tier would promise an AI answer and return the deterministic
+        one. `isGovernorActivated()` is the same predicate the handler's model
+        door uses, so the badge and the behaviour cannot disagree.
+      */}
+      <QuestionBox aiConfigured={isGovernorActivated()} />
 
       <InsightsSection activity={activityWithNarrative} leads={leads} />
 

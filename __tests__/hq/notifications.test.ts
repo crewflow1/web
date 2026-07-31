@@ -241,6 +241,48 @@ describe("groupByDate", () => {
   });
 });
 
+/**
+ * Day buckets are Europe/London days, not UTC days.
+ *
+ * Regression: `groupByDate` used to floor both `now` and each row to UTC
+ * midnight, so during BST every notification created in the 00:00–01:00 hour
+ * rendered its own London time ("00:15") under a "Yesterday" heading. These
+ * cases go red against UTC-floored bucketing.
+ */
+describe("groupByDate — Europe/London day boundaries", () => {
+  it("00:15 BST is Today, even though it is 23:15 UTC the day before", () => {
+    // 2026-07-30T23:15Z === 2026-07-31 00:15 BST.
+    const rows = [notif({ id: "just-after-midnight", created_at: "2026-07-30T23:15:00Z" })];
+    const now = new Date("2026-07-31T09:00:00Z"); // 10:00 BST on the 31st
+    expect(groupByDate(rows, now).map((g) => g.label)).toEqual(["Today"]);
+  });
+
+  it("23:15 GMT in winter stays Yesterday (no shift applies)", () => {
+    const rows = [notif({ id: "winter", created_at: "2026-01-15T23:15:00Z" })];
+    const now = new Date("2026-01-16T09:00:00Z");
+    expect(groupByDate(rows, now).map((g) => g.label)).toEqual(["Yesterday"]);
+  });
+
+  it("Yesterday stays exactly one day wide across the 23-hour BST-start day", () => {
+    // BST 2026 begins Sunday 29 March. That London day is only 23 hours long,
+    // which is why day ORDINALS are differenced rather than millisecond spans.
+    const rows = [
+      notif({ id: "short-day", created_at: "2026-03-29T12:00:00Z" }),
+      notif({ id: "day-before", created_at: "2026-03-28T12:00:00Z" }),
+    ];
+    const now = new Date("2026-03-30T11:00:00Z"); // 12:00 BST on the 30th
+    const groups = groupByDate(rows, now);
+    expect(groups.map((g) => g.label)).toEqual(["Yesterday", "Earlier this week"]);
+    expect(groups[0]?.rows[0]?.id).toBe("short-day");
+  });
+
+  it("an unparseable created_at falls to Older, never Today", () => {
+    const rows = [notif({ id: "junk", created_at: "not-a-date" })];
+    const now = new Date("2026-07-31T09:00:00Z");
+    expect(groupByDate(rows, now).map((g) => g.label)).toEqual(["Older"]);
+  });
+});
+
 describe("badgeText", () => {
   it("0 → null", () => expect(badgeText(0)).toBeNull());
   it("1..99 → str", () => expect(badgeText(42)).toBe("42"));

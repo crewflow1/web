@@ -467,15 +467,25 @@ describe("B. the existing dark provider paths now route through the governor", (
   it("expense receipt extraction is governed and STILL degrades to an empty draft", () => {
     const code = codeOf(read("server/services/expense-drafts.ts"));
     expect(code).toMatch(/invokeWithGovernor\(\s*\n?\s*"expense\.receipt_extraction"/);
-    // The pre-existing gate is untouched: no key ⇒ the governor is never reached.
-    expect(code).toMatch(/if\s*\(\s*!isAiConfigured\(\)/);
+    // The gate is now the SHARED VISION DOOR rather than `isAiConfigured()`. The
+    // old bare key check was satisfied by a credential alone, so it let this path
+    // reach a provider while no cost tier was bound — real spend that the
+    // governor's dark pass-through could only wave through. `getVisionProvider()`
+    // requires governor ACTIVATION, and the degraded value is unchanged.
+    expect(code).toMatch(/const vision = getVisionProvider\(\)/);
+    expect(code).toMatch(/if\s*\(\s*!vision/);
+    expect(code).not.toMatch(/if\s*\(\s*!isAiConfigured\(\)/);
     expect(code).toMatch(/return\s+zeroExtraction\(\)/);
+    // …and it no longer constructs a vendor SDK of its own.
+    expect(code).not.toMatch(/@anthropic-ai\/sdk|new\s+Anthropic/);
   });
 
   it("receptionist inbound extraction is governed and STILL degrades deterministically", () => {
     const code = codeOf(read("server/services/receptionist.ts"));
     expect(code).toMatch(/invokeWithGovernor\(\s*\n?\s*"receptionist\.inbound_extraction"/);
-    expect(code).toMatch(/if\s*\(\s*!isAiConfigured\(\)\s*\|\|\s*!rawText\.trim\(\)\s*\)/);
+    // Same substitution, same reason: activation, not a credential.
+    expect(code).toMatch(/if\s*\(\s*!isGovernorActivated\(\)\s*\|\|\s*!rawText\.trim\(\)\s*\)/);
+    expect(code).not.toMatch(/if\s*\(\s*!isAiConfigured\(\)/);
     expect(code).toMatch(/return\s+deterministicExtract\(rawText\)/);
   });
 

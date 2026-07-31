@@ -91,7 +91,9 @@ export async function createImport(
  * the session status to 'detected' once parsing is complete.
  */
 export async function uploadImportFiles(importId: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
+  // `user` is read for AI budget attribution on the OCR path below — a governed
+  // invocation records WHO triggered the spend, not just which org paid for it.
+  const { ctx, user } = await requireOrgContext();
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -166,6 +168,10 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
           filename: file.name,
           mimeType: file.type || "application/pdf",
           bytes: new Uint8Array(buffer),
+          // The ACTIVE org pays for it. Same id every write below is scoped to,
+          // so the AI ledger attributes the spend to the same tenant the import
+          // belongs to — never to whichever org a multi-org admin last used.
+          actor: { orgId: ctx.org.id, userId: user.id },
         });
         sheets = [sheet];
       } else {

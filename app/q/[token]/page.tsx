@@ -42,6 +42,7 @@ export default async function PublicQuotePage({
         notes, terms, valid_until, public_token,
         sent_at, viewed_at, accepted_at, declined_at, accept_signature,
         job_id, variation_number,
+        eot_requested_completion_date, eot_agreed_completion_date,
         customer:customers ( id, name, email ),
         org:organizations ( id, name, logo_path, logo_url, vat_number, address, bank_details, phone, default_terms )
       `,
@@ -140,6 +141,20 @@ export default async function PublicQuotePage({
     ? `Variation #${String(variationNumber).padStart(3, "0")}`
     : null;
 
+  // Extension of time. This is part of what the customer is being asked to
+  // agree, so it belongs on the document they accept from — and it is a
+  // DIFFERENT fact from "Valid until", which is when the offer lapses. Until
+  // 20261073 the requested completion date was written into valid_until, so this
+  // page printed a completion date under the label "Valid until".
+  const eot = quote as unknown as {
+    eot_requested_completion_date: string | null;
+    eot_agreed_completion_date: string | null;
+  };
+  const completionDate = isVariation
+    ? eot.eot_agreed_completion_date ?? eot.eot_requested_completion_date
+    : null;
+  const completionAgreed = isVariation && !!eot.eot_agreed_completion_date;
+
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8">
       <div className="mx-auto max-w-3xl space-y-6">
@@ -196,6 +211,14 @@ export default async function PublicQuotePage({
               <dt className="text-xs text-slate-500">Valid until</dt>
               <dd className="text-slate-700">{quote.valid_until ?? "—"}</dd>
             </div>
+            {completionDate ? (
+              <div>
+                <dt className="text-xs text-slate-500">
+                  {completionAgreed ? "Completion date agreed" : "Completion date requested"}
+                </dt>
+                <dd className="text-slate-700">{completionDate}</dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-xs text-slate-500">Status</dt>
               <dd className="text-slate-700">{quote.status}</dd>

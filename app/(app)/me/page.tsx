@@ -149,7 +149,10 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const onBreak = open ? isOnBreak(open) : false;
   const clockedIn = open ? isOpen(open) : false;
 
-  const expected = computePayrollLine(hoursWeek, hourlyPay, "weekly");
+  // The worker's OWN view: gross, PAYE, employee NI, net. Employer NI and employer
+  // pension are deliberately NOT surfaced here and never touch net pay — they are
+  // the employer's cost, not a deduction from this person's wages.
+  const expected = computePayrollLine(hoursWeek, hourlyPay, "weekly", weekStartIso);
 
   const errorKey = sp.error ?? "";
   const savedKey = sp.saved ?? "";

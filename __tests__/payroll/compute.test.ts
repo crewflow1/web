@@ -129,6 +129,9 @@ describe("payrollCsv", () => {
           paye_estimate: 71.65,
           ni_estimate: 28.66,
           net_pay: 499.69,
+          employer_ni_estimate: 75.58,
+          employer_pension_estimate: 28.83,
+          employment_cost_estimate: 704.41,
         },
       ],
       { period_start: "2026-05-19", period_end: "2026-05-25", cycle: "weekly" },
@@ -153,6 +156,9 @@ describe("payrollCsv", () => {
           paye_estimate: 0,
           ni_estimate: 0,
           net_pay: 100,
+          employer_ni_estimate: 0,
+          employer_pension_estimate: 0,
+          employment_cost_estimate: 100,
         },
       ],
       { period_start: "2026-05-19", period_end: "2026-05-25", cycle: "weekly" },
@@ -172,6 +178,9 @@ describe("payrollCsv", () => {
           paye_estimate: 0,
           ni_estimate: 0,
           net_pay: 60,
+          employer_ni_estimate: 0,
+          employer_pension_estimate: 0,
+          employment_cost_estimate: 60,
         },
       ],
       { period_start: "2026-05-19", period_end: "2026-05-25", cycle: "weekly" },
@@ -191,6 +200,9 @@ describe("computePayeMonth (tax integration)", () => {
     expect(r.estimate).toBe(0);
   });
 
+  // `gross_pay: 0` in these two cases isolates the EMPLOYEE-side summing and the
+  // month filter (zero gross ⇒ zero employer NI). The employer-NI contribution to
+  // this liability is covered to the penny in __tests__/tax/compute.test.ts.
   it("sums PAYE + NI for runs in the current month", () => {
     const now = new Date("2026-05-19T00:00:00Z");
     const r = computePayeMonth(
@@ -198,16 +210,19 @@ describe("computePayeMonth (tax integration)", () => {
         {
           paye_estimate: 100,
           ni_estimate: 30,
+          gross_pay: 0,
           run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
         },
         {
           paye_estimate: 75,
           ni_estimate: 20,
+          gross_pay: 0,
           run: { period_start: "2026-05-12", status: "draft", cycle: "weekly" },
         },
         {
           paye_estimate: 999,
           ni_estimate: 999,
+          gross_pay: 0,
           // Previous month — excluded
           run: { period_start: "2026-04-01", status: "finalised", cycle: "monthly" },
         },
@@ -225,6 +240,9 @@ describe("computePayeMonth (tax integration)", () => {
         {
           paye_estimate: "100.50" as unknown as number,
           ni_estimate: "30.50" as unknown as number,
+          // Supabase hands back `numeric` as a string — employer NI must be derived
+          // from the string form just as reliably as from a number.
+          gross_pay: "0" as unknown as number,
           run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
         },
       ],

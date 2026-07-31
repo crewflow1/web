@@ -4,6 +4,7 @@
  * No I/O. Imported by both the customer page and the HQ page.
  */
 
+import { formatDayKeyUK } from "@/lib/time/format";
 import {
   NOTIFICATION_PRIORITY_RANK,
   type NotificationCategory,
@@ -72,6 +73,11 @@ export function filterNotifications<T extends NotificationRow>(
 /**
  * Group by "today / yesterday / this week / older" buckets for the
  * UI list. Pure: caller passes `now` for deterministic tests.
+ *
+ * Day boundaries are Europe/London, not UTC. Under UTC boundaries a
+ * notification created at 00:15 BST (23:15 UTC the previous day) rendered its
+ * own time as "00:15" while sitting under a "Yesterday" heading — the exact
+ * class of bug `formatDayKeyUK` was written to prevent.
  */
 export type NotificationGroup<T> = {
   label: "Today" | "Yesterday" | "Earlier this week" | "Older";
@@ -88,14 +94,14 @@ export function groupByDate<T extends NotificationRow>(
     "Earlier this week": [],
     Older: [],
   };
-  const today = startOfDayUtc(now);
-  const yesterday = today - 86_400_000;
-  const weekAgo = today - 7 * 86_400_000;
+  const today = londonDayOrdinal(now);
   for (const r of rows) {
-    const t = startOfDayUtc(new Date(r.created_at));
-    if (t >= today) buckets.Today.push(r);
-    else if (t >= yesterday) buckets.Yesterday.push(r);
-    else if (t >= weekAgo) buckets["Earlier this week"].push(r);
+    const t = londonDayOrdinal(r.created_at);
+    // Unparseable timestamps sort to Older rather than silently becoming Today.
+    if (t === null || today === null) buckets.Older.push(r);
+    else if (t >= today) buckets.Today.push(r);
+    else if (t >= today - 1) buckets.Yesterday.push(r);
+    else if (t >= today - 7) buckets["Earlier this week"].push(r);
     else buckets.Older.push(r);
   }
   // Return in fixed order, dropping empty buckets.
@@ -104,8 +110,16 @@ export function groupByDate<T extends NotificationRow>(
     .filter((g) => g.rows.length > 0);
 }
 
-function startOfDayUtc(d: Date): number {
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+/**
+ * Whole days since the epoch for the Europe/London calendar day an instant
+ * falls on. Differencing ordinals (not millisecond timestamps) is what keeps
+ * "yesterday" exactly one day wide across the 23h and 25h DST-switch days.
+ */
+function londonDayOrdinal(input: string | Date): number | null {
+  const key = formatDayKeyUK(input);
+  if (!key) return null;
+  const [y, m, d] = key.split("-").map(Number) as [number, number, number];
+  return Date.UTC(y, m - 1, d) / 86_400_000;
 }
 
 /**
