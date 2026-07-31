@@ -419,7 +419,7 @@ describe("small samples cannot be rendered as rates", () => {
       expect(body, `${component} takes or forwards a tone`).not.toMatch(/\btone\b/);
     }
     // Tone survives only on the per-record verdict badge and the sample caveat.
-    const toned = [...code.matchAll(/tone=\{?["']?(\w+)/g)].map((m) => m[1]);
+    const toned = [...code.matchAll(/tone=\{?["']?(\w+)/g)].map((m) => m[1]!);
     expect(toned.length, "no tones found — the guard would pass vacuously").toBeGreaterThan(0);
     for (const t of toned) {
       expect(
