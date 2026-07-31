@@ -22,9 +22,11 @@ import type { LineItem } from "@/lib/quotes/schema";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import { formatVariationLabel } from "@/lib/variations/schema";
 import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { SendQuote } from "./_send-quote";
+import { VariationPanel, type VariationPanelQuote } from "./_variation-panel";
 import { env } from "@/lib/env";
 import { getQuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 
@@ -73,6 +75,12 @@ const ERROR_MAP: Record<string, string> = {
   review_failed: "Couldn't record the review. Try again.",
   not_found: "Quote not found.",
   invalid_action: "Invalid action.",
+  eot_forbidden:
+    "Only owners and admins can record an agreed extension of time.",
+  eot_bad_date: "Enter the agreed completion date as a valid date.",
+  eot_failed: "Couldn't save the extension of time. Try again.",
+  eot_not_reclassifiable:
+    "Nothing to move — this variation either has no expiry date or already has a requested completion date recorded.",
 };
 
 const SAVED_MAP: Record<string, string> = {
@@ -84,6 +92,11 @@ const SAVED_MAP: Record<string, string> = {
   sent: "Marked as sent. Share the customer link below.",
   accepted: "Accepted. Draft invoice created.",
   declined: "Marked as declined.",
+  variation_created: "Variation created.",
+  eot_agreed:
+    "Agreed completion date recorded. This job's dates were not changed — update them yourself if the programme is moving.",
+  eot_reclassified:
+    "Moved to the requested completion date and cleared the expiry. This variation no longer lapses on that date.",
 };
 
 type SP = Promise<{ error?: string; saved?: string; warn?: string }>;
@@ -108,9 +121,13 @@ export default async function EditQuotePage({
         id, number, status, currency, subtotal, vat_total, total,
         customer_id, property_id, lead_id, valid_until, notes, terms,
         public_token, sent_at, viewed_at, accepted_at, declined_at,
-        accept_signature, created_at, created_by, job_id,
+        accept_signature, created_at, created_by, job_id, variation_number,
         approved_by, approved_at, approval_comment,
+        eot_requested_completion_date, eot_agreed_completion_date,
+        eot_agreed_at, eot_agreed_by,
+        cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total,
         approver:users!quotes_approved_by_fkey ( id, full_name, email ),
+        eot_agreer:users!quotes_eot_agreed_by_fkey ( id, full_name, email ),
         customer:customers ( name, email )
       `,
     )
@@ -221,6 +238,10 @@ export default async function EditQuotePage({
   // Bind the quote id into the update action for the builder's form prop.
   const updateAction = updateQuote.bind(null, id);
 
+  // A variation is a quote with a per-job variation_number (20260520180000).
+  const variationNumber =
+    typeof quote.variation_number === "number" ? quote.variation_number : null;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -241,6 +262,11 @@ export default async function EditQuotePage({
           </Link>
           <h1 className="text-2xl font-bold text-slate-900">{quote.number}</h1>
           <p className="mt-1 text-sm text-slate-600">
+            {/* A variation is a quote row; without this the page gave no hint
+                which of the two you were looking at. */}
+            {variationNumber === null
+              ? null
+              : `${formatVariationLabel(variationNumber)} · `}
             {GBP.format(Number(quote.total ?? 0))} ·{" "}
             {QUOTE_STATUSES.includes(status) ? status : "unknown status"}
           </p>
@@ -276,6 +302,32 @@ export default async function EditQuotePage({
           {savedMessage}
         </div>
       ) : null}
+
+      {/* Variation surface — identity, priced cost basis, extension of time.
+          Only rendered for a variation; a plain quote has none of these. */}
+      {variationNumber === null ? null : (
+        <VariationPanel
+          isAdmin={isAdmin}
+          quote={
+            {
+              id: quote.id,
+              job_id: quote.job_id,
+              variation_number: variationNumber,
+              subtotal: quote.subtotal,
+              valid_until: quote.valid_until,
+              eot_requested_completion_date: quote.eot_requested_completion_date,
+              eot_agreed_completion_date: quote.eot_agreed_completion_date,
+              eot_agreed_at: quote.eot_agreed_at,
+              cost_labour: quote.cost_labour,
+              cost_materials: quote.cost_materials,
+              cost_subcontractors: quote.cost_subcontractors,
+              cost_misc: quote.cost_misc,
+              cost_total: quote.cost_total,
+              agreedBy: quote.eot_agreer ?? null,
+            } satisfies VariationPanelQuote
+          }
+        />
+      )}
 
       {/* Lifecycle actions panel */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
