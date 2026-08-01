@@ -17,10 +17,10 @@ import {
   type MaterialRequestEmailInfo,
 } from "@/lib/email/send-material-request";
 import {
-  isStockItemInOrg,
   issueStockToRequestLine,
   type StockSeamClient,
 } from "@/server/services/material-fulfilment";
+import { createMaterialRequestDraftRecord } from "@/server/services/material-request-writes";
 import { loadMaterialRequest } from "@/server/services/material-requests";
 import { friendlyStockError } from "@/lib/stock/schema";
 import { computeTotals } from "@/lib/quotes/totals";
@@ -259,6 +259,14 @@ async function notifyRequester(
  * Raise a request. `intent=submit` (the worker's "Send request") creates it
  * and submits it in one action — 'draft' is the database's born-draft rule
  * (20261066), not a step anyone on site should have to think about.
+ *
+ * The DRAFT CREATE itself — number allocation, header, lines, the stock-item
+ * org guard — is delegated to `createMaterialRequestDraftRecord`
+ * (server/services/material-request-writes.ts), the SAME core the offline
+ * write queue replays through, so the online post and a replay from a van
+ * that found signal cannot drift. Only the SUBMIT step stays here: it is a
+ * lifecycle transition with server-pinned provenance and notification
+ * fan-out, and it is deliberately not offline-writable.
  */
 export async function createMaterialRequest(
   _prev: FormState<MaterialRequestFormInput>,
@@ -270,68 +278,28 @@ export async function createMaterialRequest(
     return formError(parsed.error.issues[0]?.message ?? "Check the request and try again.");
   }
   const submitNow = String(formData.get("intent") ?? "submit") !== "draft";
-  const supabase = await createClient();
 
-  // THE APP-LAYER HALF OF THE DEFERRED-FK DEBT. stock_item_id is a plain uuid
-  // with NO database FK (the frozen cross-lane contract), so nothing in
-  // Postgres stops a member of org A writing org B's item id. This is the
-  // check that stands in for the missing constraint. When the stock module is
-  // absent the field is never offered and the helper returns true.
-  for (const line of parsed.data.lines) {
-    if (!line.stock_item_id) continue;
-    const ok = await isStockItemInOrg(
-      supabase as unknown as StockSeamClient,
-      ctx.org.id,
-      line.stock_item_id,
-    );
-    if (!ok) return formError("One of those catalogue items isn't in this company.");
-  }
-
-  const { data: number, error: numberError } = await (
-    supabase as unknown as {
-      rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<Res<string>>;
+  const outcome = await createMaterialRequestDraftRecord({
+    ctx,
+    user,
+    input: parsed.data,
+  });
+  if (outcome.status === "rejected") {
+    if (outcome.reason === "job_missing") {
+      return formError("That job no longer exists in this company. Go back and pick a current one.");
     }
-  ).rpc("next_material_request_number", { target_org: ctx.org.id });
-  if (numberError) console.error("[material-requests] number allocation failed", numberError);
-  if (!number) return formError("Couldn't allocate a request number. Try again.");
-
-  const { data: created, error } = await tbl(supabase, "material_requests")
-    .insert({
-      org_id: ctx.org.id,
-      job_id: parsed.data.job_id ?? null,
-      number,
-      status: "draft", // born draft — the database refuses anything else
-      requested_by: user.id,
-      needed_by: parsed.data.needed_by ?? null,
-      priority: parsed.data.priority,
-      notes: parsed.data.notes ?? null,
-      created_by: user.id,
-    })
-    .select("id")
-    .single();
-  if (error || !created) {
-    console.error("[material-requests] create failed", error);
+    if (outcome.reason === "stock_item_missing") {
+      return formError("One of those catalogue items isn't in this company.");
+    }
+    return formError("Couldn't save the request. Check it and try again.");
+  }
+  if (outcome.status === "retry") {
     return formError("Couldn't save the request. Try again.");
   }
-  const requestId = created.id;
-
-  const { error: lineErr } = await tbl(supabase, "material_request_lines").insert(
-    parsed.data.lines.map((l, idx) => ({
-      org_id: ctx.org.id,
-      material_request_id: requestId,
-      description: l.description,
-      qty: l.qty,
-      unit: l.unit,
-      stock_item_id: l.stock_item_id ?? null,
-      sort_order: idx,
-    })),
-  );
-  if (lineErr) {
-    console.error("[material-requests] lines insert failed", lineErr);
-    return formError("Couldn't save what you asked for. Try again.");
-  }
+  const requestId = outcome.id;
 
   if (submitNow) {
+    const supabase = await createClient();
     const sent = await submitRequestRow(supabase, ctx, requestId);
     if (!sent.ok) return formError(sent.error);
   }

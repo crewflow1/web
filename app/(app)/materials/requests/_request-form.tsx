@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useCallback, useEffect, useState } from "react";
 import { INITIAL_FORM_STATE, type FormState } from "@/lib/forms/state";
 import { FormErrorBanner } from "@/components/forms/Field";
 import {
@@ -8,6 +8,11 @@ import {
   MATERIAL_REQUEST_PRIORITY_LABEL,
   type MaterialRequestFormInput,
 } from "@/lib/material-requests/schema";
+import {
+  enqueue,
+  isWriteQueueSupported,
+  type EnqueueError,
+} from "@/lib/offline/write-queue";
 
 /**
  * The worker's "I need this on site" form.
@@ -29,6 +34,19 @@ import {
  *
  * Lines ride as JSON in a hidden field — the established house pattern
  * (_builder.tsx for purchase orders), so the action parses one shape.
+ *
+ * ── The offline branch (`offline` prop — DRAFT only) ──────────────────────────
+ * When `offline` is supplied and the device has no connectivity, submit is
+ * intercepted and the ask is written to the local outbox
+ * (lib/offline/write-queue.ts) instead of posted — diary-form pattern, diary
+ * wording: "Saved on this device", never "Sent". Two honest differences from
+ * the online path, both said out loud in the UI:
+ *   · it syncs as a DRAFT — submission is a lifecycle transition with
+ *     server-pinned provenance and notification fan-out, deliberately not
+ *     offline-writable (lib/offline/registry.ts) — so after it syncs the
+ *     worker opens Materials and taps Send;
+ *   · the request number is allocated when it syncs, never on the device, so
+ *     the per-org sequence cannot fork.
  */
 
 type Row = { description: string; qty: string; unit: string };
@@ -38,11 +56,40 @@ const blankRow = (): Row => ({ description: "", qty: "1", unit: "ea" });
 /** Units a UK site actually asks in, in rough frequency order. */
 const UNITS = ["ea", "bag", "m", "m2", "m3", "box", "pack", "roll", "sheet", "t", "L"];
 
+/** Server-trusted identity, from the page's own `requireOrgContext()`. */
+export type MaterialRequestOfflineConfig = { userId: string; orgId: string };
+
+/** Every message is specific and actionable — never "something went wrong". */
+const ENQUEUE_ERROR: Record<EnqueueError, string> = {
+  unsupported:
+    "This browser can't save requests offline. Reconnect and send again — your list is still here.",
+  unknown_kind: "This form can't be saved offline. Reconnect and send again.",
+  invalid_payload:
+    "Check the materials and quantities above, then save again — nothing has been lost.",
+  too_large:
+    "This request is too long to hold on the device. Shorten it, or reconnect and send.",
+  queue_full:
+    "This device is already holding the maximum number of unsynced items. Get a signal and let them sync before adding more — your list is still here.",
+  store_full:
+    "There's no room left on this device for another unsynced item. Get a signal and let them sync — your list is still here.",
+  quota_exceeded:
+    "The device is out of storage, so this request was NOT saved. Free some space, or reconnect and send — your list is still here.",
+  write_failed:
+    "Couldn't save this request on the device. Don't close this page — reconnect and send again.",
+};
+
+type OfflineState =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "queued" }
+  | { kind: "error"; message: string };
+
 export function MaterialRequestForm({
   action,
   jobId,
   jobLabel,
   backHref,
+  offline,
 }: {
   action: (
     prev: FormState<MaterialRequestFormInput>,
@@ -51,10 +98,14 @@ export function MaterialRequestForm({
   jobId?: string | null;
   jobLabel?: string | null;
   backHref: string;
+  /** Present ⇒ this form may be saved offline (as a draft). Absent ⇒ online only. */
+  offline?: MaterialRequestOfflineConfig;
 }) {
   const [state, formAction, pending] = useActionState(action, INITIAL_FORM_STATE);
   const [rows, setRows] = useState<Row[]>([blankRow()]);
   const [intent, setIntent] = useState<"submit" | "draft">("submit");
+  const [online, setOnline] = useState(true);
+  const [offlineState, setOfflineState] = useState<OfflineState>({ kind: "idle" });
 
   // FULL DOCUMENT LOAD, never router.push. Next 15.5 silently drops a
   // navigation at route-swap depth ≥4 — the server work lands and the URL
@@ -63,27 +114,133 @@ export function MaterialRequestForm({
     if (state.ok && state.redirectTo) window.location.assign(state.redirectTo);
   }, [state.ok, state.redirectTo, state.submittedAt]);
 
+  // `navigator.onLine` is read ONLY to choose a path, never as proof of
+  // anything — the diary form documents the known one-bar-of-signal
+  // limitation (app/(app)/diary/_form.tsx) and it applies here unchanged.
+  useEffect(() => {
+    const set = () =>
+      setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+    set();
+    window.addEventListener("online", set);
+    window.addEventListener("offline", set);
+    return () => {
+      window.removeEventListener("online", set);
+      window.removeEventListener("offline", set);
+    };
+  }, []);
+
   const update = (i: number, patch: Partial<Row>) =>
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const addRow = () => setRows((prev) => [...prev, blankRow()]);
   const removeRow = (i: number) =>
     setRows((prev) => (prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i)));
 
-  const payload = JSON.stringify(
-    rows
-      .filter((r) => r.description.trim() !== "")
-      .map((r) => ({
-        description: r.description.trim(),
-        qty: Number(r.qty) || 0,
-        unit: r.unit.trim() || "ea",
-      })),
-  );
+  const lines = rows
+    .filter((r) => r.description.trim() !== "")
+    .map((r) => ({
+      description: r.description.trim(),
+      qty: Number(r.qty) || 0,
+      unit: r.unit.trim() || "ea",
+    }));
+  const payload = JSON.stringify(lines);
 
   const nothingToSend = rows.every((r) => r.description.trim() === "");
+  const canQueue = Boolean(offline) && isWriteQueueSupported();
+
+  const queueFrom = useCallback(
+    async (form: HTMLFormElement): Promise<void> => {
+      if (!offline) return;
+      setOfflineState({ kind: "saving" });
+      const fd = new FormData(form);
+      const res = await enqueue({
+        userId: offline.userId,
+        orgId: offline.orgId,
+        kind: "material_request.create",
+        payload: {
+          job_id: String(fd.get("job_id") ?? ""),
+          needed_by: String(fd.get("needed_by") ?? ""),
+          priority: String(fd.get("priority") ?? "normal"),
+          notes: String(fd.get("notes") ?? ""),
+          lines,
+        },
+      });
+      if (!res.ok) {
+        // LOUD failure. The rows are deliberately NOT reset, so the list the
+        // worker built is still on screen to copy or retry with.
+        setOfflineState({ kind: "error", message: ENQUEUE_ERROR[res.error] });
+        return;
+      }
+      setOfflineState({ kind: "queued" });
+      // Tell the header outbox immediately — it must not wait for a reload to
+      // start reporting work it is now responsible for.
+      window.dispatchEvent(new Event("crewflow:outbox-changed"));
+      form.reset();
+      setRows([blankRow()]);
+    },
+    [offline, lines],
+  );
+
+  const onSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      if (!offline || !isWriteQueueSupported()) return; // online-only form
+      if (online) return; // let the server action handle it
+      e.preventDefault();
+      void queueFrom(e.currentTarget);
+    },
+    [offline, online, queueFrom],
+  );
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form action={formAction} onSubmit={onSubmit} className="space-y-5">
       {state.error ? <FormErrorBanner error={state.error} /> : null}
+
+      {/* Honest, persistent connectivity state — shown BEFORE the user types. */}
+      {!online ? (
+        <div
+          role="status"
+          data-offline-notice
+          className={`rounded-md border px-3 py-2 text-sm ${
+            canQueue
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          {canQueue ? (
+            <>
+              <strong>No signal.</strong> You can still write the request — it
+              will be saved on this device, and when you get a connection it
+              will appear in Materials as a <strong>draft</strong> for you to
+              send.
+            </>
+          ) : (
+            <>
+              <strong>No signal.</strong> This browser can&apos;t hold a request
+              offline, so sending needs a connection.
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {offlineState.kind === "queued" ? (
+        <div
+          role="status"
+          data-offline-queued
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        >
+          <strong>Saved on this device.</strong> Not sent yet — when you get a
+          signal it will be saved as a draft in Materials; open it and tap Send.
+          Don&apos;t sign out until then, or it will be deleted from this device.
+        </div>
+      ) : null}
+      {offlineState.kind === "error" ? (
+        <div
+          role="alert"
+          data-offline-error
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          <strong>Not saved.</strong> {offlineState.message}
+        </div>
+      ) : null}
 
       <input type="hidden" name="lines" value={payload} />
       <input type="hidden" name="intent" value={intent} />
@@ -203,22 +360,36 @@ export function MaterialRequestForm({
       </label>
 
       <div className="flex flex-col gap-2 sm:flex-row-reverse">
-        <button
-          type="submit"
-          onClick={() => setIntent("submit")}
-          disabled={pending || nothingToSend}
-          className="min-h-12 flex-1 rounded-lg bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-        >
-          {pending ? "Sending…" : "Send request"}
-        </button>
-        <button
-          type="submit"
-          onClick={() => setIntent("draft")}
-          disabled={pending || nothingToSend}
-          className="min-h-12 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:flex-none"
-        >
-          Save as draft
-        </button>
+        {!online && canQueue ? (
+          // Offline there is ONE honest button. "Send request" would be a lie
+          // (nothing is sent), and the queued item is a draft either way.
+          <button
+            type="submit"
+            disabled={offlineState.kind === "saving" || nothingToSend}
+            className="min-h-12 flex-1 rounded-lg bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {offlineState.kind === "saving" ? "Saving…" : "Save on this device"}
+          </button>
+        ) : (
+          <>
+            <button
+              type="submit"
+              onClick={() => setIntent("submit")}
+              disabled={pending || nothingToSend || (!online && !canQueue)}
+              className="min-h-12 flex-1 rounded-lg bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              {pending ? "Sending…" : "Send request"}
+            </button>
+            <button
+              type="submit"
+              onClick={() => setIntent("draft")}
+              disabled={pending || nothingToSend || (!online && !canQueue)}
+              className="min-h-12 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:flex-none"
+            >
+              Save as draft
+            </button>
+          </>
+        )}
         <a
           href={backHref}
           className="flex min-h-12 items-center justify-center rounded-lg px-4 text-sm text-slate-500 hover:text-slate-800"
