@@ -86,10 +86,12 @@ describeIntegration("Customer portal · bulk download isolation (real Postgres)"
       amount: 50, vat_total: 10,
     });
 
-    // A1 also has a quote with NO public_token — never cleared the portal gate.
+    // A1 also has a DRAFT quote: it has a public_token (the column defaults to
+    // one, NOT NULL) but status='draft' is outside the portal-library allowlist,
+    // so it must never enter the bulk download.
     await mk("quotes", {
       org_id: orgA, customer_id: custA1, number: `${T}-QA1DRAFT`, status: "draft",
-      subtotal: 5, vat_total: 1, total: 6, public_token: null,
+      subtotal: 5, vat_total: 1, total: 6,
     });
 
     // B: one invoice + one portal quote in the OTHER org.
