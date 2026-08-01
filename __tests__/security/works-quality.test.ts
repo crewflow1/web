@@ -455,6 +455,16 @@ describe("attachment target widening — DB CHECK and TS list moved together", (
     // and the UI must not offer a Delete control on frozen evidence
     expect(itemCard).toMatch(/targetTable="inspection_signoffs" targetId=\{live\.id\} frozen/);
   });
+
+  it("NCR evidence is append-only too: the M1 sign-off freeze has a counterpart (adversarial P1)", () => {
+    // Without this, a photo/certificate on a closed, verified NCR could be
+    // deleted by any member while the NCR itself is undeletable evidence.
+    expect(migration2).toMatch(/tg_tenant_attachment_freeze_ncr/);
+    expect(migration2).toMatch(/before delete on public\.tenant_attachments/);
+    expect(migration2).toMatch(
+      /evidence attached to a non-conformance report is frozen/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -485,6 +495,589 @@ describe("this is a NEW domain — the asset-inspection engine is untouched", ()
   it("the migration says out loud what it is not, so nobody re-derives it", () => {
     expect(migration).toMatch(/asset_inspection\*/);
     expect(migration).toMatch(/PLANT\/EQUIPMENT regime/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// M2 (migration 20261081): NCRs + corrective actions, witness invitations,
+// ITP templates, revision lineage, evidence PDF.
+//
+// Same contract as above: runtime behaviour is proven against real Postgres in
+// __tests__/integration/rls/works-quality-m2.test.ts; these pin the rules AT
+// THE SOURCE so a regression is a red build.
+// ═══════════════════════════════════════════════════════════════════════════
+const migration2 = read("supabase/migrations/20261081000000_works_quality_m2.sql");
+const migration2Code = codeOnly(migration2);
+
+const ncrData = read("app/(app)/quality/ncrs/_data.ts");
+const ncrActions = read("app/(app)/quality/ncrs/actions.ts");
+const ncrRegister = read("app/(app)/quality/ncrs/page.tsx");
+const ncrDetail = read("app/(app)/quality/ncrs/[id]/page.tsx");
+const ncrNew = read("app/(app)/quality/ncrs/new/page.tsx");
+const tplData = read("app/(app)/quality/templates/_data.ts");
+const tplActions = read("app/(app)/quality/templates/actions.ts");
+const tplRegister = read("app/(app)/quality/templates/page.tsx");
+const tplDetail = read("app/(app)/quality/templates/[id]/page.tsx");
+const witnessPanel = read("app/(app)/quality/_witness-panel.tsx");
+const pdfRoute = read("app/api/quality/[id]/pdf/route.ts");
+const pdfDoc = read("lib/pdf/itp-pdf.tsx");
+const ncrDomain = read("lib/quality/ncr.ts");
+const tplDomain = read("lib/quality/templates.ts");
+
+const M2_APP_SOURCES: Array<[string, string]> = [
+  ["ncrs/_data.ts", ncrData],
+  ["ncrs/actions.ts", ncrActions],
+  ["ncrs/page.tsx", ncrRegister],
+  ["ncrs/[id]/page.tsx", ncrDetail],
+  ["ncrs/new/page.tsx", ncrNew],
+  ["templates/_data.ts", tplData],
+  ["templates/actions.ts", tplActions],
+  ["templates/page.tsx", tplRegister],
+  ["templates/[id]/page.tsx", tplDetail],
+  ["_witness-panel.tsx", witnessPanel],
+  ["api/quality/[id]/pdf/route.ts", pdfRoute],
+];
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — tenant isolation on the five new tables", () => {
+  it("RLS is enabled on all five new tables", () => {
+    for (const t of [
+      "non_conformance_reports",
+      "ncr_corrective_actions",
+      "inspection_witness_invitations",
+      "inspection_plan_templates",
+      "inspection_plan_template_items",
+    ]) {
+      expect(migration2).toMatch(
+        new RegExp(`alter table public\\.${t}\\s+enable row level security`),
+      );
+    }
+  });
+
+  it("every policy is membership-scoped; NCRs and actions have NO delete policy at all", () => {
+    expect(migration2).toMatch(/current_org_ids\(\)/);
+    expect(migration2).not.toMatch(/create policy ncr_delete/);
+    expect(migration2).not.toMatch(/create policy nca_delete/);
+    // Template hard-delete is admin + draft only, like the M1 plan rule.
+    expect(migration2).toMatch(/public\.is_org_admin\(org_id\) and status = 'draft'/);
+  });
+
+  it("every child derives org_id from its parent by trigger — never from the client", () => {
+    // NCR + witness invitation derive from the plan item; the corrective action
+    // derives from its NCR; template items derive from the template.
+    const derives = migration2.match(/new\.org_id\s*:=\s*(v_item_org|v_org|parent_org)/g) ?? [];
+    expect(derives.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("children carry composite (id, org_id) FK tenant integrity to their parents", () => {
+    expect(migration2).toMatch(/constraint ncr_id_org_key unique \(id, org_id\)/);
+    expect(migration2).toMatch(/constraint nca_id_org_key unique \(id, org_id\)/);
+    expect(migration2).toMatch(/constraint iwi_id_org_key unique \(id, org_id\)/);
+    expect(migration2).toMatch(/constraint ipt_id_org_key unique \(id, org_id\)/);
+    expect(migration2).toMatch(/references public\.non_conformance_reports \(id, org_id\)/);
+    expect(migration2).toMatch(/references public\.inspection_plan_templates \(id, org_id\)/);
+    expect(migration2).toMatch(/references public\.inspection_witness_invitations \(id, org_id\)/);
+  });
+
+  it("membership is checked BEFORE any state check can leak another org's document state", () => {
+    // The 20261020 lesson, held on every new insert authority.
+    for (const fn of ["tg_ncr_before_insert", "tg_nca_before_insert", "tg_iwi_before_insert"]) {
+      const body = migration2.slice(migration2.indexOf(`function public.${fn}`));
+      const member = body.indexOf("not a member of this organisation");
+      expect(member, `${fn} must check membership`).toBeGreaterThan(0);
+    }
+    const ncrFn = migration2.slice(
+      migration2.indexOf("function public.tg_ncr_before_insert"),
+      migration2.indexOf("trigger tg_ncr_before_insert"),
+    );
+    expect(ncrFn.indexOf("not a member of this organisation")).toBeLessThan(
+      ncrFn.indexOf("an NCR can only be raised against an issued inspection plan"),
+    );
+  });
+
+  it("every new SECURITY DEFINER function pins search_path", () => {
+    const defs = migration2.match(/security definer/g) ?? [];
+    const pins = migration2.match(/set search_path = public/g) ?? [];
+    expect(defs.length).toBeGreaterThan(0);
+    expect(pins.length).toBeGreaterThanOrEqual(defs.length);
+  });
+
+  it("every delete-block trigger lets org teardown through (the 20261052 class)", () => {
+    const escapes =
+      migration2.match(/exists \(select 1 from public\.organizations where id = old\.org_id\)/g) ??
+      [];
+    // ncr, nca, iwi, ipt, ipti — five block triggers, five escapes.
+    expect(escapes.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("teardown-path FKs are deferred no-action, never restrict; the only RESTRICTs are user accountability", () => {
+    expect(migration2).toMatch(
+      /ncr_source_signoff_org_fk[\s\S]{0,220}on delete no action deferrable initially deferred/,
+    );
+    expect(migration2).toMatch(
+      /isg_witness_invitation_org_fk[\s\S]{0,220}on delete no action deferrable initially deferred/,
+    );
+    // raised_by + responsible_user_id → public.users (not on the org cascade
+    // path — users has no org_id), the inspected_by rule from 20261076.
+    const restricts = migration2Code.match(/on delete restrict/g) ?? [];
+    expect(restricts).toHaveLength(2);
+    expect(migration2Code).toMatch(
+      /responsible_user_id\s+uuid references public\.users\(id\) on delete restrict/,
+    );
+    expect(migration2Code).toMatch(
+      /raised_by\s+uuid not null references public\.users\(id\) on delete restrict/,
+    );
+  });
+
+  it("M1's issue RPC is NOT touched — revision issue composes around it", () => {
+    expect(migration2Code).not.toMatch(/create or replace function public\.issue_inspection_plan/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — the NCR lifecycle is DB-enforced", () => {
+  it("an NCR is born open with clean provenance — a direct INSERT cannot mint a closed one", () => {
+    expect(migration2).toMatch(/an NCR is raised open, then worked through its corrective actions/);
+    const fn = migration2.slice(
+      migration2.indexOf("function public.tg_ncr_before_insert"),
+      migration2.indexOf("trigger tg_ncr_before_insert"),
+    );
+    expect(fn).toMatch(/new\.verified_by := null/);
+    expect(fn).toMatch(/new\.verified_at := null/);
+    expect(fn).toMatch(/new\.closure_comment := null/);
+  });
+
+  it("NCR-NNNN is allocated by the insert trigger — org-predicated, unique-backstopped, client value ignored", () => {
+    expect(migration2).toMatch(/'NCR-' \|\| lpad\(/);
+    expect(migration2).toMatch(/constraint ncr_org_reference_key unique \(org_id, reference\)/);
+    const alloc = migration2.slice(migration2.indexOf("'NCR-' || lpad("));
+    expect(alloc.slice(0, 400)).toMatch(/where org_id = v_item_org/);
+  });
+
+  it("an NCR can only be raised against a plan that has LEFT DRAFT", () => {
+    expect(migration2).toMatch(/an NCR can only be raised against an issued inspection plan/);
+  });
+
+  it("the source sign-off, when named, must be a FAIL against the SAME item", () => {
+    expect(migration2).toMatch(/the source sign-off must be a failed sign-off of this inspection item/);
+    expect(migration2).toMatch(/s\.inspection_plan_item_id = new\.inspection_plan_item_id/);
+    expect(migration2).toMatch(/s\.result = 'fail'/);
+  });
+
+  it("a responsible party is structurally required — member OR named subcontractor", () => {
+    expect(migration2).toMatch(
+      /constraint ncr_responsible_party_present[\s\S]{0,220}responsible_user_id is not null[\s\S]{0,220}responsible_subcontractor is not null/,
+    );
+  });
+
+  it("identity is frozen at raise; substance is frozen outside open and never rides in on a transition", () => {
+    expect(migration2).toMatch(/an NCR''s identity \(reference, item, source, raiser\) is frozen at raise/);
+    expect(migration2).toMatch(/if old\.status <> 'open' or new\.status is distinct from old\.status then/);
+    expect(migration2).toMatch(/an NCR under corrective action is frozen/);
+  });
+
+  it("the middle statuses are DERIVED: marker-gated so a raw JWT cannot PostgREST an NCR forward", () => {
+    expect(migration2).toMatch(/crewflow\.ncr_cascade/);
+    expect(migration2).toMatch(/this status is DERIVED from the corrective-action record, not set by hand/);
+    // The marker names THIS row, so one cascade cannot wave another row through.
+    expect(migration2).toMatch(/v_marker <> new\.id::text/);
+  });
+
+  it("the cascade captures FOUND BEFORE clearing the marker — the divergence guard must be live code", () => {
+    // PERFORM set_config sets FOUND itself (set_config returns a row), so a
+    // FOUND check placed after the clearing PERFORM would ALWAYS pass and a
+    // decision could silently land on an action whose NCR was cancelled.
+    const cascade = migration2.slice(
+      migration2.indexOf("function public.tg_nca_cascade"),
+      migration2.indexOf("trigger tg_nca_cascade_ins"),
+    );
+    const captures = cascade.match(/v_moved := found;/g) ?? [];
+    expect(captures).toHaveLength(4);
+    expect(cascade).not.toMatch(/if not found then/);
+    // Every capture sits between the UPDATE and the marker-clearing PERFORM.
+    for (const block of cascade.split("update public.non_conformance_reports").slice(1)) {
+      const capture = block.indexOf("v_moved := found;");
+      const clear = block.indexOf("perform set_config('crewflow.ncr_cascade', '', true)");
+      expect(capture).toBeGreaterThan(-1);
+      expect(capture).toBeLessThan(clear);
+    }
+  });
+
+  it("closing pins the verifier to the session and structurally requires the closure comment", () => {
+    expect(migration2).toMatch(/closing an NCR requires a closure comment describing the verification/);
+    expect(migration2).toMatch(/new\.verified_at := now\(\)/);
+    expect(migration2).toMatch(
+      /constraint ncr_closure_provenance[\s\S]{0,240}closure_comment is not null/,
+    );
+    expect(migration2).toMatch(/closure verification is written by the close transition, not edited by hand/);
+  });
+
+  it("cancel is raiser-or-admin pre-decision, ADMIN ONLY post-decision; terminal states are final", () => {
+    expect(migration2).toMatch(/only the raiser or an admin can cancel it/);
+    expect(migration2).toMatch(/once a corrective action is approved, only an admin can cancel it/);
+    expect(migration2).toMatch(/% is final/);
+  });
+
+  it("an NCR is never hard-deleted, by any role — cancelled is the retraction path", () => {
+    expect(migration2).toMatch(/tg_ncr_block_delete/);
+    expect(migration2).toMatch(/an NCR is quality evidence and cannot be deleted; cancel it instead/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — corrective-action decisions are write-once", () => {
+  it("a decision exists iff its timestamp does (the material_requests CHECK shape)", () => {
+    expect(migration2).toMatch(
+      /constraint nca_decision_stamped check \(\(decision is null\) = \(decided_at is null\)\)/,
+    );
+  });
+
+  it("the decision is write-once, admin-gated, and server-pinned", () => {
+    expect(migration2).toMatch(/a corrective-action decision is write-once; it cannot be changed/);
+    expect(migration2).toMatch(/only an owner or admin can accept or reject a corrective action/);
+    const guard = migration2.slice(
+      migration2.indexOf("function public.tg_nca_update_guard"),
+      migration2.indexOf("trigger tg_nca_update_guard"),
+    );
+    expect(guard).toMatch(/new\.decided_at := now\(\)/);
+  });
+
+  it("a rejection must carry its reason — as a CHECK and in the trigger", () => {
+    expect(migration2).toMatch(/constraint nca_rejection_reason_required/);
+    expect(migration2).toMatch(/rejecting a corrective action requires a reason/);
+  });
+
+  it("the proposal itself is never edited — a different fix is a NEW proposal", () => {
+    expect(migration2).toMatch(/a proposed corrective action is never edited; reject it and propose a new one/);
+  });
+
+  it("at most ONE undecided proposal per NCR (partial unique)", () => {
+    expect(migration2).toMatch(
+      /create unique index if not exists nca_one_pending_per_ncr_idx[\s\S]{0,140}where decision is null/,
+    );
+  });
+
+  it("completion is write-once, comment-required, and only on an ALREADY-accepted action", () => {
+    expect(migration2).toMatch(/corrective-action completion is write-once/);
+    expect(migration2).toMatch(/only an accepted corrective action can be completed/);
+    // old.decision, not new — completion cannot ride in with the decision.
+    expect(migration2).toMatch(/if old\.decision is distinct from 'accepted' then/);
+    expect(migration2).toMatch(/constraint nca_completion_pair/);
+    expect(migration2).toMatch(/constraint nca_completion_requires_acceptance/);
+  });
+
+  it("corrective actions are never hard-deleted (audit trail)", () => {
+    expect(migration2).toMatch(/a corrective action is part of the NCR audit trail and cannot be deleted/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — witness invitations are staff-recorded; portal writes DEFERRED", () => {
+  it("only witness/approve control points on an ISSUED plan take an invitation", () => {
+    expect(migration2).toMatch(/a witness can only be invited to a witness or approve control point/);
+    expect(migration2).toMatch(/witnesses are invited against an issued plan/);
+  });
+
+  it("every recorded outcome is terminal; attendance provenance is server-pinned", () => {
+    expect(migration2).toMatch(/a % witness invitation is final; invite them again instead/);
+    const guard = migration2.slice(
+      migration2.indexOf("function public.tg_iwi_update_guard"),
+      migration2.indexOf("trigger tg_iwi_update_guard"),
+    );
+    expect(guard).toMatch(/new\.attendance_recorded_at := now\(\)/);
+    expect(guard).toMatch(/attendance is recorded by the attended\/not-attended transition, not by hand/);
+    expect(migration2).toMatch(/constraint iwi_attendance_stamped/);
+  });
+
+  it("the portal deferral is stated plainly, and NO token-holder write path exists", () => {
+    expect(migration2).toMatch(/PORTAL WITNESS VISIBILITY IS DEFERRED, STATED PLAINLY/);
+    // No portal/token surface anywhere in this lane — deferred means absent,
+    // not half-built.
+    for (const [name, src] of M2_APP_SOURCES) {
+      expect(codeOnly(src), `${name} must carry no portal-token path`).not.toMatch(
+        /portal_access_tokens|portalToken|token_hash|\/portal\//,
+      );
+    }
+    expect(migration2Code).not.toMatch(/portal_access_tokens/);
+  });
+
+  it("a sign-off may honour an invitation — same ITEM, not cancelled, and frozen after insert", () => {
+    expect(migration2).toMatch(/the witness invitation does not belong to this inspection item \(or was cancelled\)/);
+    expect(migration2).toMatch(/w\.inspection_plan_item_id = new\.inspection_plan_item_id/);
+    // The void-only frozen tuple gained the new column.
+    const voidFn = migration2.slice(
+      migration2.indexOf("function public.tg_signoff_void_only"),
+      migration2.indexOf("4. ITP templates"),
+    );
+    expect(voidFn).toMatch(/new\.witness_invitation_id/);
+    expect(voidFn).toMatch(/old\.witness_invitation_id/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — templates are versioned controlled documents", () => {
+  it("at most one PUBLISHED version per (org, name) — a partial unique, not app discipline", () => {
+    expect(migration2).toMatch(
+      /create unique index if not exists ipt_one_published_per_name_idx[\s\S]{0,140}where status = 'published'/,
+    );
+  });
+
+  it("publish is an atomic SECURITY INVOKER RPC with the item gate", () => {
+    expect(migration2).toMatch(
+      /create or replace function public\.publish_inspection_plan_template[\s\S]{0,200}security invoker/,
+    );
+    expect(migration2).toMatch(/cannot publish: a template needs at least one inspection item/);
+    expect(migration2).toMatch(/only a draft template version can be published/);
+  });
+
+  it("published substance is immutable; items are frozen once the version leaves draft", () => {
+    expect(migration2).toMatch(/a published template version is immutable; create a new version instead/);
+    expect(migration2).toMatch(/cannot modify the items of a % template version/);
+    expect(migration2).toMatch(/tg_ipti_block_delete_when_published/);
+  });
+
+  it("a non-draft version cannot be deleted, by any role", () => {
+    expect(migration2).toMatch(/a % template version is a controlled document and cannot be deleted/);
+  });
+
+  it("template items mirror the plan item's structural hold-point rule", () => {
+    expect(migration2).toMatch(/constraint ipti_hold_point_is_required check \(not is_hold_point or required\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 migration — revision lineage (the RAMS 20261022 shape)", () => {
+  it("root_plan_id is NOT NULL after a self-rooting backfill; revisions are unique per series", () => {
+    expect(migration2).toMatch(/update public\.inspection_test_plans set root_plan_id = id/);
+    expect(migration2).toMatch(/alter table public\.inspection_test_plans alter column root_plan_id set not null/);
+    expect(migration2).toMatch(/create unique index if not exists itp_series_revision_idx/);
+  });
+
+  it("a series can never fork: one draft AND one issued per series (partial uniques)", () => {
+    expect(migration2).toMatch(
+      /itp_one_draft_per_series_idx[\s\S]{0,120}where status = 'draft'/,
+    );
+    expect(migration2).toMatch(
+      /itp_one_issued_per_series_idx[\s\S]{0,120}where status = 'issued'/,
+    );
+  });
+
+  it("lineage is identity: frozen from creation, and ALSO in the post-issue frozen tuple", () => {
+    expect(migration2).toMatch(/a plan''s revision lineage is fixed at creation/);
+    // Strict-superset tg_itp_lifecycle: the immutability tuple gained both columns.
+    const lifecycle = migration2.slice(
+      migration2.indexOf("create or replace function public.tg_itp_lifecycle"),
+      migration2.indexOf("6. RLS"),
+    );
+    expect(lifecycle).toMatch(/new\.root_plan_id, new\.revision_number/);
+    expect(lifecycle).toMatch(/old\.root_plan_id, old\.revision_number/);
+  });
+
+  it("a revision root must be a SERIES ORIGIN (self-rooted rev 1) in the SAME org", () => {
+    // Strengthened after adversarial P2: pointing root_plan_id at a mid-series
+    // revision would mint a shadow sub-series escaping the one-draft/one-issued
+    // uniques. The guard now requires root_plan_id = id AND revision_number = 1.
+    expect(migration2).toMatch(/is not a series origin in this organisation/);
+    expect(migration2).toMatch(/root_plan_id = id and revision_number = 1/);
+  });
+
+  it("the app's revision copy carries hold points forward and composes with the untouched issue RPC", () => {
+    // createPlanRevision copies EVERY item column, is_hold_point included.
+    const revision = actions.slice(actions.indexOf("export async function createPlanRevision"));
+    expect(revision).toMatch(/root_plan_id: plan\.root_plan_id/);
+    expect(revision).toMatch(/revision_number: plan\.revision_number \+ 1/);
+    expect(revision).toMatch(/is_hold_point: i\.is_hold_point/);
+    expect(revision).toMatch(/required: i\.required/);
+    // The draft is issued later through the SAME RPC as any plan — no second
+    // supersede path exists in this lane.
+    expect(revision).not.toMatch(/status:\s*"(issued|superseded)"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 attachment widening — NCR evidence, DB CHECK and TS list together", () => {
+  it("the TS list carries the new target", () => {
+    expect(ATTACHMENT_TARGET_TABLES).toContain("non_conformance_reports");
+  });
+
+  it("the re-added CHECK preserves all 18 prior targets and adds the 19th", () => {
+    expect(migration2).toMatch(/drop constraint %I/);
+    expect(migration2).toMatch(/add constraint tenant_attachments_target_table_check/);
+    const body = migration2.match(/target_table in \(([^)]+)\)/)!;
+    const values = [...body[1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(values).toContain("non_conformance_reports");
+    for (const prior of [
+      "customers", "jobs", "quotes", "invoices", "suppliers", "memberships", "leads",
+      "snags", "site_diary_entries", "toolbox_talks", "site_reports", "assets",
+      "asset_assignments", "asset_inspections", "asset_maintenance_cases",
+      "asset_fuel_logs", "goods_received_notes", "inspection_signoffs",
+    ]) {
+      expect(values, `${prior} must survive the re-add`).toContain(prior);
+    }
+    expect(new Set(values).size).toBe(19);
+  });
+
+  it("the NCR detail page offers the attachments panel on the NCR target", () => {
+    expect(ncrDetail).toMatch(/targetTable="non_conformance_reports"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 server actions — RLS-scoped, count-gated, never service-role", () => {
+  it("no M2 source reaches for the service-role client", () => {
+    for (const [name, src] of M2_APP_SOURCES) {
+      expect(src, `${name} must not reach for the service-role client`).not.toMatch(
+        /serviceClient\(|SUPABASE_SERVICE_ROLE_KEY|createServiceClient|createAdminClient/,
+      );
+    }
+  });
+
+  it("every mutation runs under requireOrgContext and pins the active org", () => {
+    for (const [name, src] of [
+      ["ncrs/actions.ts", ncrActions],
+      ["templates/actions.ts", tplActions],
+    ] as const) {
+      expect(src, name).toMatch(/requireOrgContext\(\)/);
+      expect(src, name).toMatch(/\.eq\("org_id", ctx\.org\.id\)/);
+      expect(src, name).toMatch(/count: "exact"/);
+      expect(src, name).toMatch(/if \(!count\)/);
+    }
+  });
+
+  it("the NCR actions NEVER write a derived status — the DB cascade is the one writer", () => {
+    expect(ncrActions).not.toMatch(
+      /status:\s*"(corrective_action_proposed|corrective_action_approved|completed)"/,
+    );
+    // The two hand transitions that DO exist are close and cancel, from the
+    // right predecessors only.
+    expect(ncrActions).toMatch(/status: "closed"/);
+    expect(ncrActions).toMatch(/\.eq\("status", "completed"\)/);
+    expect(ncrActions).toMatch(/status: "cancelled"/);
+  });
+
+  it("the decision write targets only a still-undecided row; completion only an accepted, uncompleted one", () => {
+    expect(ncrActions).toMatch(/\.is\("decision", null\)/);
+    expect(ncrActions).toMatch(/\.eq\("decision", "accepted"\)/);
+    expect(ncrActions).toMatch(/\.is\("completed_at", null\)/);
+  });
+
+  it("template instantiation refuses a non-published version and births a DRAFT plan", () => {
+    expect(tplActions).toMatch(/template\.status !== "published"/);
+    // The plan insert names no status at all — born draft, and the DB refuses
+    // anything else anyway.
+    const instantiate = tplActions.slice(tplActions.indexOf("export async function instantiateTemplate"));
+    expect(instantiate).not.toMatch(/status:/);
+  });
+
+  it("the publish flow goes through the atomic RPC, never a hand-rolled archive+publish", () => {
+    expect(tplActions).toMatch(/rpc\(\s*\n?\s*"publish_inspection_plan_template"/);
+    expect(tplActions).not.toMatch(/status: "published"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 active-org pinning + loud reads on every new data layer", () => {
+  it("EVERY read in ncrs/_data.ts and templates/_data.ts carries its own org pin", () => {
+    for (const [name, src] of [
+      ["ncrs/_data.ts", ncrData],
+      ["templates/_data.ts", tplData],
+    ] as const) {
+      const code = codeOnly(src);
+      const selects = code.match(/\.select\(/g) ?? [];
+      const orgPins = code.match(/\.eq\("org_id", orgId\)/g) ?? [];
+      expect(selects.length, `${name} should have reads`).toBeGreaterThan(0);
+      expect(
+        orgPins.length,
+        `${name}: a read appeared without its own .eq("org_id", orgId) pin`,
+      ).toBe(selects.length);
+    }
+  });
+
+  it("every rejected read THROWS (an empty NCR register on a failed read claims the works conform)", () => {
+    for (const [name, src] of [
+      ["ncrs/_data.ts", ncrData],
+      ["templates/_data.ts", tplData],
+    ] as const) {
+      expect(src, name).toMatch(/from "@\/lib\/supabase\/read-failure"/);
+      const throws = src.match(/throw readFailure\(/g) ?? [];
+      const selects = codeOnly(src).match(/\.select\(/g) ?? [];
+      expect(throws.length, `${name} must throw on every read`).toBeGreaterThanOrEqual(selects.length);
+    }
+  });
+
+  it("a cross-org NCR or template is INDISTINGUISHABLE from a missing one", () => {
+    expect(ncrDetail).toMatch(/if \(!loaded\) notFound\(\)/);
+    expect(tplDetail).toMatch(/if \(!loaded\) notFound\(\)/);
+  });
+
+  it("the registers and detail pages pass ctx.org.id into the data layer", () => {
+    expect(ncrRegister).toMatch(/listNcrs\(ctx\.org\.id\)/);
+    expect(ncrDetail).toMatch(/getNcr\(ctx\.org\.id, /);
+    expect(tplRegister).toMatch(/listTemplates\(ctx\.org\.id\)/);
+    expect(tplDetail).toMatch(/getTemplate\(ctx\.org\.id, /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 evidence PDF — issued-only, private, active-org letterhead", () => {
+  it("a draft returns 409 — there is no numbered, frozen record to produce", () => {
+    expect(pdfRoute).toMatch(/plan\.status === "draft"/);
+    expect(pdfRoute).toMatch(/\{ status: 409 \}/);
+  });
+
+  it("the response is private and never cached", () => {
+    expect(pdfRoute).toMatch(/"Cache-Control": "private, no-store"/);
+  });
+
+  it("every read is active-org pinned, letterhead included — the header can never name another company", () => {
+    expect(pdfRoute).toMatch(/requireOrgContext\(\)/);
+    expect(pdfRoute).toMatch(/getPlan\(ctx\.org\.id, id\)/);
+    expect(pdfRoute).toMatch(/listPlanNcrs\(ctx\.org\.id, /);
+    expect(pdfRoute).toMatch(/\.eq\("id", ctx\.org\.id\)/);
+    // A missing plan (or one in the other company) is a 404, not a leak.
+    expect(pdfRoute).toMatch(/\{ status: 404 \}/);
+  });
+
+  it("the PDF document is pure presentation — no client, no fetch, no secrets", () => {
+    expect(pdfDoc).not.toMatch(/createClient|fetch\(|process\.env/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("M2 — no money, no AI, snags untouched", () => {
+  it("the M2 migration writes nothing to finances and touches no monetary table or column", () => {
+    expect(migration2Code).not.toMatch(/insert into public\.finances/i);
+    expect(migration2Code).not.toMatch(/\bpublic\.finances\b/);
+    expect(migration2Code).not.toMatch(
+      /\bpublic\.invoices\b|\bpublic\.invoice_payments\b|\bpublic\.supplier_bills\b/,
+    );
+    expect(migration2Code).not.toMatch(/_pence\b|numeric\(\d+, ?2\)/);
+  });
+
+  it("the snags domain is not touched — an NCR is not a snag", () => {
+    // 'snags' survives only as a preserved attachment-target value.
+    expect(migration2Code).not.toMatch(/(from|join|references|into|update|alter table)\s+(public\.)?snags\b/i);
+    const hits = migration2Code.match(/\bsnags\b/g) ?? [];
+    expect(hits).toHaveLength(1);
+    expect(migration2Code).toMatch(/'snags',/);
+  });
+
+  it("no M2 source touches money or AI", () => {
+    const sources: Array<[string, string]> = [
+      ...M2_APP_SOURCES,
+      ["ncr.ts", ncrDomain],
+      ["templates.ts", tplDomain],
+      ["itp-pdf.tsx", pdfDoc],
+      ["migration2", migration2],
+    ];
+    for (const [name, src] of sources) {
+      expect(codeOnly(src), `${name} must not touch money`).not.toMatch(
+        /amount_pence|total_pence|formatGbp|\bfinances\b|posting/i,
+      );
+      expect(codeOnly(src), `${name} must contain no AI`).not.toMatch(
+        /anthropic|openai|@\/lib\/ai\/|claude-|\bllm\b|ai_invocations|governor/i,
+      );
+    }
   });
 });
 

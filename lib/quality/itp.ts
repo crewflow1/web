@@ -90,6 +90,32 @@ export const SIGNOFF_RESULT_META: Record<
   fail: { label: "Fail", tone: "bg-red-100 text-red-800", accepts: false },
 };
 
+// ---------------------------------------------------------------------------
+// Witness invitations (M2)
+// ---------------------------------------------------------------------------
+export const WITNESS_STATUSES = ["invited", "attended", "not_attended", "cancelled"] as const;
+export type WitnessStatus = (typeof WITNESS_STATUSES)[number];
+
+export const WITNESS_STATUS_META: Record<WitnessStatus, { label: string; tone: string }> = {
+  invited: { label: "Invited", tone: "bg-sky-100 text-sky-800" },
+  attended: { label: "Attended", tone: "bg-emerald-100 text-emerald-800" },
+  not_attended: { label: "Did not attend", tone: "bg-amber-100 text-amber-800" },
+  cancelled: { label: "Cancelled", tone: "bg-slate-100 text-slate-600" },
+};
+
+/**
+ * invited → attended | not_attended | cancelled; every outcome is terminal
+ * (mirrors tg_iwi_update_guard — a correction is a fresh invitation).
+ */
+export function canWitnessTransition(from: WitnessStatus, to: WitnessStatus): boolean {
+  return from === "invited" && (to === "attended" || to === "not_attended" || to === "cancelled");
+}
+
+/** Only witness/approve control points have a second party to invite. */
+export function canInviteWitness(controlPoint: ControlPoint): boolean {
+  return controlPoint === "witness" || controlPoint === "approve";
+}
+
 /** A non-pass result must be explained (mirrors the DB CHECK). */
 export function requiresComment(result: SignoffResult): boolean {
   return result !== "pass";

@@ -29,13 +29,13 @@ import type { PlanProgress } from "@/lib/quality/itp";
  */
 
 const ITP_COLUMNS =
-  "id, org_id, job_id, reference, title, work_package, location, specification_ref, prepared_by, plan_date, notes, status, issued_at, issued_by, supersedes_id, created_by, created_at, updated_at";
+  "id, org_id, job_id, reference, title, work_package, location, specification_ref, prepared_by, plan_date, notes, status, issued_at, issued_by, supersedes_id, created_by, created_at, updated_at, root_plan_id, revision_number";
 
 const ITEM_COLUMNS =
   "id, org_id, inspection_test_plan_id, item_number, title, acceptance_criteria, inspection_method, specification_ref, control_point, is_hold_point, required, created_at";
 
 const SIGNOFF_COLUMNS =
-  "id, org_id, inspection_plan_item_id, plan_version, result, comments, inspected_by, signed_name, inspected_at, recorded_at, witness_name, witness_organisation, voided_at, voided_by, void_reason, hold_point_breach, open_hold_item_number, created_at";
+  "id, org_id, inspection_plan_item_id, plan_version, result, comments, inspected_by, signed_name, inspected_at, recorded_at, witness_name, witness_organisation, voided_at, voided_by, void_reason, hold_point_breach, open_hold_item_number, created_at, witness_invitation_id";
 
 const STATUS_COLUMNS =
   "plan_id, org_id, job_id, status, total_items, hold_point_items, signed_off_items, outstanding_required_items, open_hold_points, failed_items, hold_point_breaches, open_hold_item_number";
@@ -180,6 +180,52 @@ export async function getPlan(
     jobLabel: row.job_id ? (jobLabels.get(row.job_id) ?? null) : null,
     priorReference,
   };
+}
+
+const WITNESS_COLUMNS =
+  "id, org_id, inspection_plan_item_id, witness_name, witness_organisation, witness_email, scheduled_for, status, invited_by, attendance_recorded_by, attendance_recorded_at, created_at, updated_at";
+
+const NCR_COLUMNS =
+  "id, org_id, inspection_plan_item_id, source_signoff_id, reference, title, description, severity, responsible_user_id, responsible_subcontractor, due_date, status, raised_by, verified_by, verified_at, closure_comment, created_at, updated_at";
+
+/**
+ * Witness invitations for a set of plan items, ACTIVE-org pinned. Newest first
+ * within each item; one bounded read for the whole plan.
+ */
+export async function listWitnessInvitations(
+  orgId: string,
+  itemIds: string[],
+): Promise<import("@/lib/quality/schema").WitnessInvitationRow[]> {
+  if (itemIds.length === 0) return [];
+  const supabase = await createClient();
+  const { data, error } = await tbl(supabase)("inspection_witness_invitations")
+    .select(WITNESS_COLUMNS)
+    .eq("org_id", orgId)
+    .in("inspection_plan_item_id", itemIds)
+    .order("created_at", { ascending: false });
+  // A failed read must never render as "no witnesses were invited".
+  if (error) throw readFailure("quality: witness invitations", error as SupabaseReadError);
+  return (data ?? []) as import("@/lib/quality/schema").WitnessInvitationRow[];
+}
+
+/**
+ * NCRs raised against a plan's items, ACTIVE-org pinned. Used by the plan
+ * detail page and the evidence PDF's NCR register.
+ */
+export async function listPlanNcrs(
+  orgId: string,
+  itemIds: string[],
+): Promise<import("@/lib/quality/schema").NcrRow[]> {
+  if (itemIds.length === 0) return [];
+  const supabase = await createClient();
+  const { data, error } = await tbl(supabase)("non_conformance_reports")
+    .select(NCR_COLUMNS)
+    .eq("org_id", orgId)
+    .in("inspection_plan_item_id", itemIds)
+    .order("created_at", { ascending: false });
+  // An empty NCR register on a failed read would claim the works conform.
+  if (error) throw readFailure("quality: plan NCR register", error as SupabaseReadError);
+  return (data ?? []) as import("@/lib/quality/schema").NcrRow[];
 }
 
 /** Batched job labels (customer name + scheduled date) — never one query per row. */

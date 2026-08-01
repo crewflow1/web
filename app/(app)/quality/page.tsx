@@ -106,12 +106,26 @@ export default async function QualityRegisterPage({ searchParams }: { searchPara
             hold points, then issue it before work starts.
           </p>
         </div>
-        <Link
-          href="/quality/new"
-          className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-        >
-          + New inspection plan
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/quality/ncrs"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Non-conformance
+          </Link>
+          <Link
+            href="/quality/templates"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Templates
+          </Link>
+          <Link
+            href="/quality/new"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          >
+            + New inspection plan
+          </Link>
+        </div>
       </header>
 
       {/* OPEN HOLD POINTS LEAD. This is the one thing a QS or clerk of works

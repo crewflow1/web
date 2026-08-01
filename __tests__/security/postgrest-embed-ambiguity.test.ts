@@ -198,6 +198,14 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // must name its FK constraint.
   "goods_received_notes → users",
   "impersonation_sessions → users",
+  // Works quality M2 (20261081): created_by + published_by → users. Reviewed
+  // 2026-08-01: TEMPLATE_COLUMNS in app/(app)/quality/templates/_data.ts is
+  // scalar-only and no other reader of this table exists; author/publisher
+  // names are never rendered from an embed. Two FKs is the controlled-document
+  // provenance pair (who DRAFTED the version / who PUBLISHED it), the same
+  // shape inspection_test_plans carries. Any future embed must name its FK
+  // constraint; test 2 enforces it.
+  "inspection_plan_templates → users",
   // Works quality ITP (20261076): inspected_by + voided_by → users. Reviewed
   // 2026-07-30: no read of this table embeds users(...) — app/(app)/quality/
   // _data.ts selects scalar columns only (SIGNOFF_COLUMNS) and resolves signer /
@@ -215,6 +223,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // risk_assessments and permits_to_work already carry. Any future embed must
   // name its FK constraint.
   "inspection_test_plans → users",
+  // Works quality M2 (20261081): invited_by + attendance_recorded_by → users.
+  // Reviewed 2026-08-01: WITNESS_COLUMNS in app/(app)/quality/_data.ts is
+  // scalar-only (the only reader); recorder names come from loadUserNames.
+  // Two FKs is inherent to the record: who INVITED the witness and who later
+  // RECORDED the attendance outcome are separate accountable acts. Any future
+  // embed must name its FK constraint; test 2 enforces it.
+  "inspection_witness_invitations → users",
   "invoice_payments → invoices",
   "job_documents → users",
   // Job warranties (20261079): created_by + portal_published_by + voided_by all
@@ -234,6 +249,22 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // `users!material_requests_decided_by_fkey`. Any future embed must do the
   // same; test 2 below enforces it.
   "material_requests → users",
+  // Works quality M2 (20261081): assigned_to + proposed_by + decided_by all
+  // → users. Reviewed 2026-08-01: ACTION_COLUMNS in
+  // app/(app)/quality/ncrs/_data.ts is scalar-only (the only reader); names
+  // resolve through loadUserNames. Three FKs is the corrective-action audit
+  // triple — who is DOING the fix, who PROPOSED it, who DECIDED on it — and
+  // collapsing them would destroy the write-once decision provenance. Any
+  // future embed must name its FK constraint; test 2 enforces it.
+  "ncr_corrective_actions → users",
+  // Works quality M2 (20261081): responsible_user_id + raised_by +
+  // verified_by all → users. Reviewed 2026-08-01: NCR_COLUMNS in
+  // app/(app)/quality/ncrs/_data.ts and in app/(app)/quality/_data.ts
+  // (listPlanNcrs) are both scalar-only; the PDF route and pages resolve
+  // names via loadUserNames. Three FKs is the NCR accountability triple —
+  // who must FIX it, who RAISED it, who VERIFIED the closure. Any future
+  // embed must name its FK constraint; test 2 enforces it.
+  "non_conformance_reports → users",
   "permits_to_work → users",
   "risk_assessments → users",
   "rota_entries → users",
