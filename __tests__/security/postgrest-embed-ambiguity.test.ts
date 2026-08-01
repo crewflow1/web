@@ -207,6 +207,14 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // second queries), so no bare embed can hit PGRST201 today. Any future embed
   // must name its FK constraint.
   "goods_received_notes → users",
+  // HQ Decision Centre (20261091): decided_by + delegate_to → users. Reviewed
+  // 2026-08-01: server/services/hq-decisions.ts (ROW_COLUMNS) is scalar-only and
+  // is the ONLY reader — the decision surfaces render decided_by / delegate_to as
+  // ids and resolve identities elsewhere; there is no users(...) embed anywhere on
+  // this table, so no bare embed can hit PGRST201 today. Two FKs is inherent to the
+  // row: who DECIDED it and who it was DELEGATED to are distinct accountable facts.
+  // Any future embed must name its FK constraint; test 2 enforces it.
+  "hq_decisions → users",
   "impersonation_sessions → users",
   // Works quality M2 (20261081): created_by + published_by → users. Reviewed
   // 2026-08-01: TEMPLATE_COLUMNS in app/(app)/quality/templates/_data.ts is
