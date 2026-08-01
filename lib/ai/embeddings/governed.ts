@@ -91,19 +91,26 @@ export async function governedEmbed(input: {
   }
 
   // THE DETERMINISTIC EXEMPTION — see the module note. Identified by the
-  // provider's own tag; a caller cannot opt into it.
+  // provider's own tag; a caller cannot opt into it. Same failure contract as
+  // the paid branch: a throw becomes `unavailable` with the reason, so the
+  // worker's per-row fail/retry accounting behaves identically whichever
+  // provider is configured.
   if (provider.info.provider === "deterministic") {
-    const res = await provider.embed(
-      input.texts,
-      input.signal ? { signal: input.signal } : undefined,
-    );
-    return {
-      status: "embedded",
-      vectors: res.vectors,
-      tokens: res.tokens,
-      info: provider.info,
-      governed: false,
-    };
+    try {
+      const res = await provider.embed(
+        input.texts,
+        input.signal ? { signal: input.signal } : undefined,
+      );
+      return {
+        status: "embedded",
+        vectors: res.vectors,
+        tokens: res.tokens,
+        info: provider.info,
+        governed: false,
+      };
+    } catch (e) {
+      return { status: "unavailable", reason: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   // PAID: one governed call per embed request (the worker batches upstream,
