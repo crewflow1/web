@@ -130,7 +130,7 @@ describeIntegration("expense budgets · tenant isolation + admin-write", () => {
     memberToken = member.token;
     const mm = await svc
       .from("memberships")
-      .insert({ org_id: orgA, user_id: memberId, role: "member" });
+      .insert({ org_id: orgA, user_id: memberId, role: "staff" });
     expect(mm.error, mm.error?.message).toBeNull();
 
     const outsider = await mintUser("outsider");
