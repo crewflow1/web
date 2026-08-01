@@ -94,6 +94,39 @@ export function notifyOnSupportReplyToHq(input: {
   });
 }
 
+/**
+ * A customer replied to their portal support thread — tell the TENANT ORG.
+ *
+ * The portal reply action historically emitted nothing (only audited), so a
+ * customer's reply landed silently and staff had to happen upon it. This is the
+ * org-facing peer of notifyOnSupportReplyToHq: same substrate, but audience
+ * 'customer' (Support OS: the CrewFlow customer = THIS TENANT) with user_id
+ * null, which the notifications RLS resolves to every member of the org. So
+ * org_id is the entire isolation boundary — the end-customer (no user row, no
+ * membership) can never be a recipient, and no other org can be.
+ *
+ * NO message body is carried — only the customer's name, the ticket number and
+ * a link to the tenant's own thread. In-app only (no `email` directive): staff
+ * see it in their notification feed, exactly like the inbound HQ pattern.
+ */
+export function notifyOnPortalReplyToOrg(input: {
+  org_id: string;
+  ticket_id: string;
+  ticket_number: number;
+  customer_name: string;
+}): NotificationCreate {
+  return customerOrgWide(input.org_id, "support.portal_customer_reply", {
+    category: "support",
+    priority: "high",
+    title: `${input.customer_name} replied to message #${input.ticket_number}`,
+    body: "Open the thread to read their reply and respond.",
+    action_url: `/support/${input.ticket_id}`,
+    source_module: "support",
+    source_id: input.ticket_id,
+    metadata: { ticket_number: input.ticket_number },
+  });
+}
+
 export function notifyOnSupportStatusChanged(input: {
   org_id: string;
   ticket_id: string;
@@ -536,6 +569,7 @@ export function notifyOnPaymentProofUploaded(input: {
 export const EVENT_HELPERS = [
   "notifyOnSupportReplyToCustomer",
   "notifyOnSupportReplyToHq",
+  "notifyOnPortalReplyToOrg",
   "notifyOnSupportStatusChanged",
   "notifyOnSupportPriorityUrgent",
   "notifyOnFailedPayment",

@@ -15,6 +15,10 @@ import {
   type SupportStatus,
   type SupportSort,
 } from "@/lib/hq/support";
+import {
+  countAwaitingOrgReply,
+  isAwaitingOrgReply,
+} from "@/lib/support/unread";
 
 /**
  * Customer-side support tickets list.
@@ -49,6 +53,10 @@ export default async function CustomerSupportPage({
     : "needs_attention") as SupportSort;
 
   const rows = await listMySupportTickets(ctx.org.id);
+  // Derived unread badge — portal threads where the customer spoke last and no
+  // one has replied. No read-marker column, no write on read (see lib/support/
+  // unread). Counted over the full org list, before the view filter.
+  const awaitingReply = countAwaitingOrgReply(rows);
   const filtered = filterTickets(rows, { q, status });
   const sorted = sortTickets(filtered, sort);
 
@@ -74,9 +82,19 @@ export default async function CustomerSupportPage({
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             Workspace · Support
           </p>
-          <h1 className="text-2xl font-bold text-slate-900">
-            Your support tickets
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">
+              Your support tickets
+            </h1>
+            {awaitingReply > 0 ? (
+              <span
+                className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800"
+                title="Portal messages from your customers awaiting your reply"
+              >
+                {awaitingReply} awaiting reply
+              </span>
+            ) : null}
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             Anything blocking you — billing, onboarding, a bug, a feature
             ask — raise it here and the CrewFlow team will reply.
@@ -195,6 +213,12 @@ export default async function CustomerSupportPage({
                     {t.customer_id ? (
                       <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
                         From your customer
+                      </span>
+                    ) : null}
+                    {isAwaitingOrgReply(t) ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-800">
+                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                        New reply
                       </span>
                     ) : null}
                   </p>
