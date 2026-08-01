@@ -66,6 +66,10 @@ export const LEAD_SOURCES = [
   "walk_in",
   "social",
   "repeat",
+  // Written by the customer-portal future-work action (source stamped in
+  // code, never from the form). Listed here so the staff pipeline's source
+  // filter can select portal-originated leads.
+  "portal",
   "other",
 ] as const;
 export type LeadSource = (typeof LEAD_SOURCES)[number];
