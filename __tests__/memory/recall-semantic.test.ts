@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 /**
  * Unit proof for the SEMANTIC recall seam in `recallMemory`
@@ -106,6 +106,18 @@ beforeEach(() => {
   rpcMock.mockReset();
   getProviderMock.mockReset();
   embedMock.mockReset();
+  // The query probe now travels through the governed door (embeddings
+  // governance): a PAID provider bills the HQ budget org, so one must exist
+  // for the paid seam below to be reachable at all. With the `embedding` tier
+  // unbound in this build the governor dark-short-circuits into
+  // `provider.embed()`, so every argument/degradation assertion here still
+  // observes the provider seam. The no-org refusal (semantic off, recall
+  // intact) is its own pin below.
+  vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "00000000-0000-4000-8000-0000000000cf");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // =====================================================================
@@ -263,6 +275,58 @@ describe("recallMemory — a provider failure degrades to lexical, never errors"
     const args = recallArgs();
     expect(args.p_query_embedding).toBeNull();
     expect(args.p_query_version).toBeNull();
+  });
+});
+
+// =====================================================================
+// Budget attribution — a paid probe with no HQ org degrades, deterministic
+// needs none
+// =====================================================================
+
+describe("recallMemory — the governed probe fails dark without a budget org", () => {
+  it("PAID provider + no CREWFLOW_INTERNAL_ORG_ID → semantic off, embed never called", async () => {
+    // An unattributed paid embed would be spend outside the ceiling — the
+    // defect, not the fix. Recall itself must be untouched.
+    vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "");
+    setProvider(4);
+    setRecallRows([candRow({ id: "m1" })]);
+
+    const res = await recallMemory({ query: "hello" }, { id: EMP });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.items.map((i) => i.id)).toContain("m1");
+    expect(embedMock).not.toHaveBeenCalled();
+    const args = recallArgs();
+    expect(args.p_query_embedding).toBeNull();
+    expect(args.p_query_version).toBeNull();
+  });
+
+  it("DETERMINISTIC provider + no org → the probe still runs (zero cost, nothing to bill)", async () => {
+    vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "");
+    getProviderMock.mockReturnValue({
+      info: {
+        provider: "deterministic",
+        model: "hash-v1",
+        dimension: 4,
+        version: "deterministic:hash-v1:d4:v1",
+      },
+      embed: embedMock,
+    });
+    embedMock.mockResolvedValue({
+      vectors: [vec(4, 0.5)],
+      model: "hash-v1",
+      dimension: 4,
+      tokens: 5,
+    });
+    setRecallRows([candRow({ id: "m1" })]);
+
+    const res = await recallMemory({ query: "hello" }, { id: EMP });
+
+    expect(res.ok).toBe(true);
+    expect(embedMock).toHaveBeenCalledTimes(1);
+    const args = recallArgs();
+    expect(args.p_query_embedding).toEqual(vec(4, 0.5));
+    expect(args.p_query_version).toBe("deterministic:hash-v1:d4:v1");
   });
 });
 

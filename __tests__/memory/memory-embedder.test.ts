@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 /**
  * Unit proof for the embedding worker (CEO Directive 009 Module 1, PR4c). Mocks
@@ -13,7 +13,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
  *     claim errors each resolve to the right summary WITHOUT throwing.
  *
  * The versioning helpers (checksum/cost/validation) are pure and run for real —
- * only the provider factory and the RPC surface are mocked.
+ * only the provider factory and the RPC surface are mocked. Since the
+ * embeddings-governance train the batch embed travels through the REAL
+ * `governedEmbed` door: the paid provider used below requires an HQ budget org
+ * (stubbed in beforeEach) and, with the `embedding` tier unbound in this build,
+ * `invokeWithGovernor` dark-short-circuits straight into `provider.embed()` —
+ * so every argument-mapping assertion here still observes the provider seam.
+ * The worker's own budget gates (no_budget_org / budget_refused) are proven in
+ * memory-embedder-governance.test.ts.
  */
 
 const { rpcMock, getProviderMock, embedMock } = vi.hoisted(() => ({
@@ -108,6 +115,12 @@ describe("memory-embedder worker", () => {
     rpcMock.mockReset();
     getProviderMock.mockReset();
     embedMock.mockReset();
+    // A PAID provider needs a budget org to bill (embeddings governance); the
+    // no-org refusal is its own pin in memory-embedder-governance.test.ts.
+    vi.stubEnv("CREWFLOW_INTERNAL_ORG_ID", "00000000-0000-4000-8000-0000000000cf");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   // --- Dark short-circuits ---------------------------------------------------

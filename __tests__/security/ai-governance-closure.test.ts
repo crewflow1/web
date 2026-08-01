@@ -101,22 +101,22 @@ const TRANSPORT = new Set([
 ]);
 
 /**
- * THE ONE DOCUMENTED EXCEPTION: embeddings.
+ * THE THIRD DOOR: embeddings — the former documented exception, now CLOSED.
  *
- * `lib/ai/embeddings` spends money and is NOT in this governor's registry. That
- * is not an oversight and it is not fixable in this lane: the ledger's
- * `task_class` CHECK admits only classification / drafting / complex
- * (supabase/migrations/20261062000000), and an embedding is none of the three,
- * so governing it needs a MIGRATION. Its exposure is bounded differently — the
- * embedding worker is gated on a database flag (`memory_embedding.worker_enabled`),
- * so a credential alone does not start it, though HQ recall does embed a query on
- * demand. Named here, and in the `ungovernedCredentialRisk` docstring, so the
- * green light this file produces is narrow enough to be worth having.
+ * `lib/ai/embeddings/index.ts` used to be named here as the one path allowed
+ * to select a paid provider on `OPENAI_API_KEY` alone, because the ledger's
+ * `task_class` CHECK could not admit an embedding. Migration 20261080 widened
+ * both CHECKs, and the door now mirrors the text/vision pattern exactly:
+ * `index.ts` refuses the paid branch without a bound `embedding` tier
+ * (`isEmbeddingActivated()`), `openai.ts` is transport behind it, and every
+ * call site embeds through `lib/ai/embeddings/governed.ts` →
+ * `invokeWithGovernor`. The one DELIBERATE exemption is the deterministic
+ * (zero-egress, zero-cost) provider, identified by its own `info.provider`
+ * tag inside `governed.ts` — pinned in "the embedding modality" block below.
  */
-const EMBEDDINGS = new Set([
-  "lib/ai/embeddings/index.ts",
-  "lib/ai/embeddings/openai.ts",
-]);
+const EMBEDDING_DOOR = "lib/ai/embeddings/index.ts";
+const EMBEDDING_GOVERNED_DOOR = "lib/ai/embeddings/governed.ts";
+const EMBEDDINGS = new Set([EMBEDDING_DOOR, "lib/ai/embeddings/openai.ts"]);
 
 /** Where `isAiConfigured` may be DEFINED (it may no longer be a gate anywhere). */
 const CREDENTIAL_PROBE = "lib/ai/safety.ts";
@@ -203,7 +203,7 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     // holes — but their transport still belongs behind a door, which is a stated
     // follow-up rather than a silent tolerance.
     const expected = [
-      "lib/ai/embeddings/openai.ts", // different modality — see EMBEDDINGS
+      "lib/ai/embeddings/openai.ts", // embedding-door transport — see EMBEDDINGS
       "lib/ai/text/anthropic.ts", // door transport
       "lib/ai/text/openai.ts", // door transport
       "lib/ai/vision/anthropic.ts", // door transport
@@ -217,7 +217,7 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
 
   it("pins the CREDENTIAL-READ allowlist by COUNT and by name", () => {
     const expected = [
-      "lib/ai/embeddings/index.ts", // different modality
+      "lib/ai/embeddings/index.ts", // the embedding door
       "lib/ai/safety.ts", // defines the probe; gates nothing
       "lib/ai/text/index.ts", // the text door
       "lib/ai/vision/index.ts", // the vision door
@@ -239,19 +239,25 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     expect(callers).toEqual([]);
   });
 
-  it("BOTH doors gate on governor activation, before they read any key", () => {
+  it("BOTH generative doors gate on THEIR OWN modality's activation, before any key", () => {
+    // Per-tier since the embeddings governance train: the global
+    // `isGovernorActivated()` became the wrong gate the moment a second
+    // modality joined the registry — binding an embedding model must not open
+    // a generative door on a bare key.
     for (const door of [TEXT_DOOR, VISION_DOOR]) {
       const code = CODE.get(door)!;
-      expect(code, `${door} must import the activation predicate`).toMatch(
-        /isGovernorActivated/,
+      expect(code, `${door} must import the per-modality activation predicate`).toMatch(
+        /isInferenceTierActivated/,
       );
       // Ordering is the load-bearing part: a provider object that exists for a
       // call which must never happen is a provider object someone will use.
-      const idxGate = code.indexOf("if (!isGovernorActivated())");
+      const idxGate = code.indexOf("if (!isInferenceTierActivated())");
       const idxKey = code.search(CREDENTIAL_READ);
       expect(idxGate, `${door} must refuse before it resolves a vendor`).toBeGreaterThan(-1);
       expect(idxKey).toBeGreaterThan(-1);
       expect(idxGate).toBeLessThan(idxKey);
+      // And neither door may fall back to the global predicate.
+      expect(code).not.toMatch(/\bisGovernorActivated\s*\(/);
     }
   });
 
@@ -266,6 +272,23 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     }
   });
 
+  it("the EMBEDDING door gates its paid branch on the embedding tier, before any key", () => {
+    // The same shape as the generative-door pin above, for the third door: a
+    // key is transport, a bound `embedding` tier is authorisation. The
+    // deterministic branch sits AFTER the gate check inside the `openai` case
+    // only in the sense that it is a different case entirely — it reads no key.
+    const code = CODE.get(EMBEDDING_DOOR)!;
+    expect(code, `${EMBEDDING_DOOR} must import the embedding activation predicate`).toMatch(
+      /isEmbeddingActivated/,
+    );
+    const idxGate = code.indexOf("if (!isEmbeddingActivated())");
+    const idxKey = code.search(CREDENTIAL_READ);
+    expect(idxGate, "the paid branch must refuse before it reads a key").toBeGreaterThan(-1);
+    expect(idxKey).toBeGreaterThan(-1);
+    expect(idxGate).toBeLessThan(idxKey);
+    expect(code).not.toMatch(/\bisGovernorActivated\s*\(/);
+  });
+
   it("the vision door is the ONLY vision transport — the two OCR paths converged", () => {
     // lib/imports/ocr.ts imported `@anthropic-ai/sdk` at MODULE SCOPE and
     // hard-coded a dated model while expense-drafts hard-coded an undated one —
@@ -277,6 +300,77 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
       expect(code, `${f} must use the shared vision door`).toMatch(/getVisionProvider/);
       expect(code, `${f} must be governed`).toMatch(GOVERNED);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A2. THE EMBEDDING MODALITY — the same ratchet, for the third door.
+// ---------------------------------------------------------------------------
+
+describe("the embedding modality is closed — derived from source, like the rest", () => {
+  const insideEmbeddings = (f: string) => f.startsWith("lib/ai/embeddings/");
+
+  it("NO file outside lib/ai/embeddings/** calls .embed( on a provider", () => {
+    // The transport method is reachable only through the governed door. Before
+    // this train, BOTH call sites (the memory worker and HQ recall's query
+    // embed) called provider.embed() directly — no ceiling, no ledger.
+    const callers = FILES.filter(
+      (f) => !insideEmbeddings(f) && /\.embed\s*\(/.test(CODE.get(f)!),
+    );
+    expect(callers).toEqual([]);
+  });
+
+  it("NO file outside lib/ai/embeddings/** constructs the paid provider", () => {
+    const constructors = FILES.filter(
+      (f) => !insideEmbeddings(f) && /\bcreateOpenAiEmbeddingProvider\s*\(/.test(CODE.get(f)!),
+    );
+    expect(constructors).toEqual([]);
+  });
+
+  it("getEmbeddingProvider() callers outside the module are EXACTLY the pinned allowlist", () => {
+    // Both remaining callers use the handle for information and gating only —
+    // "is there a provider", "is it the deterministic one", version strings
+    // for the SQL accounting rows. The .embed()-is-unreachable pin above is
+    // what makes "info/gate only" a derived fact rather than a comment.
+    const callers = FILES.filter(
+      (f) => !insideEmbeddings(f) && /\bgetEmbeddingProvider\s*\(/.test(CODE.get(f)!),
+    ).sort();
+    expect(callers).toEqual([
+      "server/services/hq-memory.ts",
+      "server/services/memory-embedder.ts",
+    ]);
+    for (const f of callers) {
+      // Each embeds ONLY through the governed door, and each resolves the HQ
+      // budget org rather than spending unattributed.
+      expect(CODE.get(f)!, `${f} must embed through governedEmbed`).toMatch(/\bgovernedEmbed\s*\(/);
+      expect(CODE.get(f)!, `${f} must resolve the HQ budget org`).toMatch(/hqBudgetOrgId\(\)/);
+    }
+  });
+
+  it("the governed door itself passes through invokeWithGovernor under the 'embedding' class", () => {
+    const code = CODE.get(EMBEDDING_GOVERNED_DOOR)!;
+    expect(code).toMatch(GOVERNED);
+    expect(code).toMatch(/"memory\.embedding_write"\s*\|\s*"memory\.embedding_query"/);
+    // The task class travels as the literal the registry authorises.
+    expect(code).toMatch(/invokeWithGovernor<EmbeddingResult>\(/);
+    expect(code).toMatch(/"embedding"/);
+  });
+
+  it("the deterministic exemption is keyed on the PROVIDER'S OWN TAG, and there are exactly two .embed( sites", () => {
+    const code = CODE.get(EMBEDDING_GOVERNED_DOOR)!;
+    // A caller cannot opt into the exemption — the branch tests the provider's
+    // self-declared identity, nothing from the input.
+    expect(code).toMatch(/provider\.info\.provider\s*===\s*"deterministic"/);
+    // Site count is the ratchet: one exempt direct call, one inside the
+    // governed fn. A third would be a new ungoverned path.
+    const embedCalls = code.match(/\.embed\s*\(/g) ?? [];
+    expect(embedCalls).toHaveLength(2);
+  });
+
+  it("the dedupe identity is the \\u0000 ESCAPE — no raw NUL byte in the module", () => {
+    const rawBytes = readFileSync(resolve(ROOT, EMBEDDING_GOVERNED_DOOR));
+    expect(rawBytes.includes(0)).toBe(false);
+    expect(rawBytes.toString("utf8")).toContain('.join("\\u0000")');
   });
 });
 
@@ -336,6 +430,9 @@ describe("the registry is once again the COMPLETE list of what may spend", () =>
       "imports.ocr",
       "research.analysis",
       "research.sales_prep",
+      // The embeddings-governance train's two keys.
+      "memory.embedding_write",
+      "memory.embedding_query",
     ]) {
       expect(all, `${key} is registered but never invoked`).toContain(`"${key}"`);
     }

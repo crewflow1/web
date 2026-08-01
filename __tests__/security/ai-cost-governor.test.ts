@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { AI_TIERS, TIER_MODEL, isAnyTierBound } from "@/lib/ai/governor/registry";
+import { AI_TASK_CLASSES, AI_TIERS, TIER_MODEL, isAnyTierBound } from "@/lib/ai/governor/registry";
 import {
   getAiGovernorReadiness,
   isGovernorActivated,
@@ -514,8 +514,12 @@ describe("B. the existing dark provider paths now route through the governor", (
     // This is what makes wiring the dark seams a genuine no-op, and it still
     // holds with the atomic reservation in place: the reservation sits BEHIND
     // the short-circuit, so `ai_cost_reservations` stays empty in production.
+    // PER-TIER since the embeddings governance train: the gate asks whether
+    // THIS call's tier can reach a provider — a build with one modality armed
+    // must not push the other's calls into the reservation path with a null
+    // binding.
     const code = codeOf(read(SEAM));
-    const idxDark = code.indexOf("isGovernorActivated()");
+    const idxDark = code.indexOf("!isTierActivated(tier)");
     const idxReserve = code.indexOf("await reserveBudget(");
     const idxSettle = code.indexOf("await settleReservation(");
     expect(idxDark).toBeGreaterThan(-1);
@@ -523,6 +527,8 @@ describe("B. the existing dark provider paths now route through the governor", (
     expect(idxSettle).toBeGreaterThan(-1);
     expect(idxDark).toBeLessThan(idxReserve);
     expect(idxDark).toBeLessThan(idxSettle);
+    // And the seam no longer consults the GLOBAL predicate at all.
+    expect(code).not.toMatch(/\bisGovernorActivated\s*\(\)/);
   });
 
   it("the ceiling is decided by ONE atomic RPC, never by a read-then-act in TypeScript", () => {
@@ -849,5 +855,83 @@ describe("the HQ cost view is gated and privilege-honest", () => {
   it("the page renders no secret — only presence, never a credential VALUE", () => {
     const code = codeOf(read(HQ_PAGE));
     expect(code).not.toMatch(/process\.env/);
+  });
+});
+
+// =====================================================================
+// 9. EMBEDDINGS GOVERNANCE (slot 20261080) — the widened task_class CHECKs.
+// =====================================================================
+
+describe("20261080 migration hygiene — embeddings admitted to the governed vocabulary", () => {
+  const EMBEDDINGS_MIG =
+    "supabase/migrations/20261080000000_embeddings_governance.sql";
+
+  it("exists in its slot, with no duplicate version prefix anywhere", () => {
+    const versions = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.split("_")[0]!)
+      .sort();
+    expect(existsSync(resolve(ROOT, EMBEDDINGS_MIG))).toBe(true);
+    expect(versions).toContain("20261080000000");
+    expect(new Set(versions).size, "duplicate migration version prefixes").toBe(versions.length);
+  });
+
+  it("sorts strictly AFTER the previous tip in this directory (20261079)", () => {
+    const versions = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.split("_")[0]!)
+      .sort();
+    expect(versions.indexOf("20261080000000")).toBeGreaterThan(
+      versions.indexOf("20261079000000"),
+    );
+  });
+
+  it("is a PURE WIDENING — two constraint swaps on the two governor tables, nothing else", () => {
+    const exec = execOf(read(EMBEDDINGS_MIG));
+    // Only the two governor tables are touched, and only their task_class CHECK.
+    expect(exec).not.toMatch(
+      /\balter\s+table\s+public\.(?!ai_invocations\b|ai_cost_reservations\b)/i,
+    );
+    expect(exec).not.toMatch(/\bcreate\s+table\b/i);
+    expect(exec).not.toMatch(/\bdrop\s+table\b/i);
+    expect(exec).not.toMatch(/\bcreate\s+(or\s+replace\s+)?function\b/i);
+    expect(exec).not.toMatch(/\bcreate\s+policy\b/i);
+    const drops = exec.match(/drop\s+constraint\s+\w+_task_class_check/gi) ?? [];
+    const adds = exec.match(/add\s+constraint\s+\w+_task_class_check/gi) ?? [];
+    expect(drops).toHaveLength(2);
+    expect(adds).toHaveLength(2);
+  });
+
+  it("widens BOTH CHECKs to admit 'embedding' — ledger and reservations agree", () => {
+    const exec = execOf(read(EMBEDDINGS_MIG));
+    const widened =
+      /check\s*\(\s*task_class\s+in\s*\(\s*'classification'\s*,\s*'drafting'\s*,\s*'complex'\s*,\s*'embedding'\s*\)\s*\)/gi;
+    expect(exec.match(widened) ?? []).toHaveLength(2);
+    for (const table of ["ai_invocations", "ai_cost_reservations"]) {
+      expect(exec, `${table} must get the widened CHECK`).toMatch(
+        new RegExp(
+          `alter\\s+table\\s+public\\.${table}\\s+add\\s+constraint\\s+${table}_task_class_check`,
+          "i",
+        ),
+      );
+    }
+  });
+
+  it("'deterministic' remains structurally unrepresentable in BOTH new CHECKs", () => {
+    // The database keeps refusing a ledger row or a budget claim for work that
+    // must never reach a model — for every role, including service_role.
+    const exec = execOf(read(EMBEDDINGS_MIG));
+    expect(exec).not.toMatch(/'deterministic'/i);
+  });
+
+  it("the widened vocabulary matches the registry's billable classes EXACTLY", () => {
+    // The TS side and the SQL side of one closed set: every non-deterministic
+    // task class is admitted, and nothing else is. Drift in either direction
+    // fails here rather than at INSERT time in production.
+    const exec = execOf(read(EMBEDDINGS_MIG));
+    const inList = exec.match(/task_class\s+in\s*\(([^)]*)\)/i)?.[1] ?? "";
+    const sqlClasses = [...inList.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    const billable = AI_TASK_CLASSES.filter((c) => c !== "deterministic").sort();
+    expect(sqlClasses).toEqual(billable);
   });
 });

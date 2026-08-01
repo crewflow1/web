@@ -24,27 +24,31 @@ import { createOpenAiTextProvider } from "@/lib/ai/text/openai";
  * door — the /insights narrative and question box, HQ drafts, memory
  * summarisation, the receptionist's conversation engine — while every cost tier
  * still mapped to NO model, so the spend never met the £100/org/month ceiling or
- * the ledger. `getTextProvider()` therefore requires `isGovernorActivated()`
- * first.
+ * the ledger. `getTextProvider()` therefore requires a GENERATIVE tier to be
+ * armed — `isInferenceTierActivated()`, PER-MODALITY since the embeddings
+ * governance train: a bound `embedding` tier must never open this door, so the
+ * global any-tier predicate would be the wrong gate.
  *
  * That is mocked below rather than left to the real (dark) build, because the
  * vendor-SELECTION rules this file exists to pin are only observable once the
  * call is authorised. The unmocked case — a key with no bound tier — is its own
- * test, and it is the one the closure was written for.
+ * test, and it is the one the closure was written for. The cross-modality case
+ * (ONLY the embedding tier bound) is pinned against the real readiness in
+ * __tests__/ai/governor-per-tier.test.ts.
  */
 
 // Both SDKs are dynamically imported by the providers; mock them so generate()
 // is deterministic and never touches the network.
-const { anthropicCreate, openaiCreate, isGovernorActivatedMock } = vi.hoisted(() => ({
+const { anthropicCreate, openaiCreate, inferenceActivatedMock } = vi.hoisted(() => ({
   anthropicCreate: vi.fn(),
   openaiCreate: vi.fn(),
-  isGovernorActivatedMock: vi.fn(),
+  inferenceActivatedMock: vi.fn(),
 }));
 vi.mock("@/lib/ai/governor/readiness", async (importOriginal) => {
   // Keep the real readiness surface (other suites assert on it); control ONLY
   // the activation predicate the factory gates on.
   const actual = await importOriginal<typeof import("@/lib/ai/governor/readiness")>();
-  return { ...actual, isGovernorActivated: () => isGovernorActivatedMock() };
+  return { ...actual, isInferenceTierActivated: () => inferenceActivatedMock() };
 });
 vi.mock("@anthropic-ai/sdk", () => ({
   default: vi.fn().mockImplementation(() => ({
@@ -108,7 +112,7 @@ describe("getTextProvider — null when unconfigured, provider when configured",
       delete process.env[k];
     }
     // Vendor selection is only reachable once the governor authorises the call.
-    isGovernorActivatedMock.mockReturnValue(true);
+    inferenceActivatedMock.mockReturnValue(true);
   });
   afterEach(() => {
     for (const k of ENV) {
@@ -131,7 +135,7 @@ describe("getTextProvider — null when unconfigured, provider when configured",
     // absent from the invocation ledger, because `invokeWithGovernor` is a
     // deliberate pass-through until a tier is bound. Activation, not a
     // credential, is now the gate.
-    isGovernorActivatedMock.mockReturnValue(false);
+    inferenceActivatedMock.mockReturnValue(false);
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.OPENAI_API_KEY = "sk-test";
     expect(getTextProvider()).toBeNull();
@@ -144,7 +148,7 @@ describe("getTextProvider — null when unconfigured, provider when configured",
     // activation false the vendor branches must not be reached at all, which is
     // observable because the unknown-name warning never fires.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    isGovernorActivatedMock.mockReturnValue(false);
+    inferenceActivatedMock.mockReturnValue(false);
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.MEMORY_TEXT_PROVIDER = "totally-made-up";
     expect(getTextProvider()).toBeNull();
