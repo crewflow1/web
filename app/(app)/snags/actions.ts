@@ -2,11 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
+import { createSnagRecord } from "@/server/services/offline-writes";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   createSnagSchema,
@@ -29,11 +29,16 @@ import {
  *
  * Every mutation is count-gated: an update/delete that RLS turns into a no-op
  * returns count 0 and we surface "not found" rather than a false success.
+ *
+ * CREATE is delegated to `createSnagRecord` (server/services/offline-writes.ts),
+ * the SAME function the offline write queue replays through — the diary's
+ * two-entry-point contract. A snag logged in a basement and synced two hours
+ * later must hit identical validation, identical RLS, identical cross-org
+ * job/assignee guards and identical audit as one typed at a desk; two insert
+ * statements would eventually drift, and the offline one is exactly the one
+ * nobody would notice drifting.
  */
 
-type InsertChain = {
-  insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
-};
 type SelectStatusChain = {
   select: (cols: string) => {
     eq: (k: string, v: unknown) => {
@@ -104,45 +109,30 @@ export async function createSnag(formData: FormData): Promise<void> {
     redirect(`/snags/new?error=${encodeURIComponent(firstError)}`);
   }
   const data = parsed.success ? parsed.data : null;
+  if (!data) redirect(`/snags/new?error=validation`);
 
-  const id = randomUUID();
-  const tenant = await createClient();
-  const { error } = await (
-    tenant.from("snags" as never) as unknown as InsertChain
-  ).insert({
-    id,
-    org_id: ctx.org.id,
-    title: data?.title,
-    description: data?.description ?? null,
-    location: data?.location ?? null,
-    trade: data?.trade ?? null,
-    priority: data?.priority ?? "medium",
-    status: "open",
-    job_id: data?.job_id ?? null,
-    assigned_to: data?.assigned_to ?? null,
-    reported_by: user.id,
-    due_date: data?.due_date ?? null,
-  });
-  if (error) {
-    console.error("[snags] insert failed", error);
+  // The SHARED write core — see the file header. It mints its own idempotency
+  // key for an online post (one is stored on every row, so there is one write
+  // path to reason about), pins status 'open', and performs the cross-org
+  // job + assignee guards and the audit call that the queued replay also gets.
+  const outcome = await createSnagRecord({ ctx, user, input: data });
+
+  if (outcome.status === "rejected") {
+    // A form post can realistically only hit job_missing / assignee_missing
+    // here (a job or member removed between page render and submit); the rest
+    // are shapes the Zod parse above already refused.
+    const reason =
+      outcome.reason === "job_missing" || outcome.reason === "assignee_missing"
+        ? outcome.reason
+        : "record_failed";
+    redirect(`/snags/new?error=${reason}`);
+  }
+  if (outcome.status === "retry") {
     redirect(`/snags/new?error=record_failed`);
   }
 
-  await recordAdminActivity({
-    actorId: user.id,
-    actorEmail: user.email ?? null,
-    action: "snag.created",
-    targetTable: "snags",
-    targetId: id,
-    metadata: {
-      title: data?.title,
-      priority: data?.priority ?? "medium",
-      job_id: data?.job_id ?? null,
-    },
-  });
-
   revalidatePath("/snags");
-  redirect(`/snags/${id}?saved=created`);
+  redirect(`/snags/${outcome.id}?saved=created`);
 }
 
 export async function updateSnagStatus(formData: FormData): Promise<void> {

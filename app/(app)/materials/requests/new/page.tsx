@@ -38,7 +38,7 @@ export default async function NewMaterialRequestPage({
   searchParams: Promise<{ job?: string }>;
 }) {
   const { job: jobParam } = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
   // ACTIVE-ORG PIN as well as RLS: current_org_ids() returns every org the
@@ -122,11 +122,16 @@ export default async function NewMaterialRequestPage({
         </details>
       ) : null}
 
+      {/* CREATE (draft) is offline-writable (lib/offline/registry.ts —
+          material_request.create). The identity handed to the form is the one
+          the SERVER just resolved for this request — newly authored work is
+          never attributed from a client-side marker on a shared tablet. */}
       <MaterialRequestForm
         action={createMaterialRequest}
         jobId={pinned?.id ?? null}
         jobLabel={pinned ? label(pinned) : null}
         backHref={backHref}
+        offline={{ userId: user.id, orgId: ctx.org.id }}
       />
     </div>
   );

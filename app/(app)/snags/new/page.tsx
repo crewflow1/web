@@ -2,13 +2,17 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
-import { SNAG_PRIORITIES, SNAG_PRIORITY_LABELS } from "@/lib/snags/schema";
 import { createSnag } from "../actions";
+import { SnagForm } from "../_form";
 import { readFailure } from "@/lib/supabase/read-failure";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the snag. Try again.",
   validation: "Please check the form and try again.",
+  job_missing:
+    "That job no longer exists in this company. Pick a current job and save again.",
+  assignee_missing:
+    "That person is no longer a member of this company. Pick someone else and save again.",
 };
 
 type JobOption = {
@@ -25,7 +29,7 @@ export default async function NewSnagPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -41,7 +45,13 @@ export default async function NewSnagPage({
     listStaffForOrg(ctx.org.id),
   ]);
   if (jobsError) throw readFailure("snags: job picker", jobsError);
-  const jobs = (jobsRaw ?? []) as unknown as JobOption[];
+  const jobs = ((jobsRaw ?? []) as unknown as JobOption[]).map((j) => ({
+    id: j.id,
+    label:
+      (j.customer?.name ?? "Job") +
+      (j.scheduled_date ? ` · ${j.scheduled_date}` : "") +
+      (j.status ? ` · ${j.status}` : ""),
+  }));
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -70,155 +80,17 @@ export default async function NewSnagPage({
         </div>
       ) : null}
 
-      <form
+      {/* CREATE is offline-writable (lib/offline/registry.ts — snag.create).
+          The identity handed to the form is the one the SERVER just resolved
+          for this request — newly authored work is never attributed from a
+          client-side marker on a shared tablet. */}
+      <SnagForm
         action={createSnag}
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div>
-          <label htmlFor="title" className="block text-sm font-medium text-slate-800">
-            What&rsquo;s the defect?<span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <input
-            id="title"
-            name="title"
-            type="text"
-            required
-            autoFocus
-            placeholder="Cracked tile in the ensuite"
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          />
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label htmlFor="priority" className="block text-sm font-medium text-slate-800">
-              Priority
-            </label>
-            <select
-              id="priority"
-              name="priority"
-              defaultValue="medium"
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            >
-              {SNAG_PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {SNAG_PRIORITY_LABELS[p]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="due_date" className="block text-sm font-medium text-slate-800">
-              Target fix date
-            </label>
-            <input
-              id="due_date"
-              name="due_date"
-              type="date"
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label htmlFor="job_id" className="block text-sm font-medium text-slate-800">
-              Job / site
-            </label>
-            <select
-              id="job_id"
-              name="job_id"
-              defaultValue={presetJob}
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            >
-              <option value="">No job (general)</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {(j.customer?.name ?? "Job") +
-                    (j.scheduled_date ? ` · ${j.scheduled_date}` : "") +
-                    (j.status ? ` · ${j.status}` : "")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="assigned_to" className="block text-sm font-medium text-slate-800">
-              Assign to
-            </label>
-            <select
-              id="assigned_to"
-              name="assigned_to"
-              defaultValue=""
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            >
-              <option value="">Unassigned</option>
-              {staff.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.full_name || s.email}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label htmlFor="location" className="block text-sm font-medium text-slate-800">
-              Location on site
-            </label>
-            <input
-              id="location"
-              name="location"
-              type="text"
-              placeholder="Kitchen, north wall"
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </div>
-          <div>
-            <label htmlFor="trade" className="block text-sm font-medium text-slate-800">
-              Trade responsible
-            </label>
-            <input
-              id="trade"
-              name="trade"
-              type="text"
-              placeholder="Plumbing"
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="description" className="block text-sm font-medium text-slate-800">
-            Details
-          </label>
-          <textarea
-            id="description"
-            name="description"
-            rows={3}
-            placeholder="Anything the trade needs to know to put it right."
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            You can add photos once the snag is saved.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Log snag
-          </button>
-          <Link
-            href="/snags"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+        jobs={jobs}
+        staff={staff.map((s) => ({ id: s.id, label: s.full_name || s.email || "—" }))}
+        presetJob={presetJob}
+        offline={{ userId: user.id, orgId: ctx.org.id }}
+      />
     </div>
   );
 }

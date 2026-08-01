@@ -48,6 +48,9 @@ const MY_SQL = `${MIG_66}\n${MIG_67}`;
 const ACTIONS = read("app/(app)/materials/requests/actions.ts");
 const SERVICE = read("server/services/material-requests.ts");
 const SEAM = read("server/services/material-fulfilment.ts");
+// Train 5: the draft create moved into a shared core so the offline write
+// queue and the online form use ONE write path (offline-write-expansion).
+const WRITE_CORE = read("server/services/material-request-writes.ts");
 const QUEUE_PAGE = read("app/(app)/materials/requests/page.tsx");
 const DETAIL_PAGE = read("app/(app)/materials/requests/[id]/page.tsx");
 const NEW_PAGE = read("app/(app)/materials/requests/new/page.tsx");
@@ -139,6 +142,7 @@ describe("fulfilment is DERIVED — no application code sets it", () => {
     ["actions.ts", ACTIONS],
     ["material-requests.ts", SERVICE],
     ["material-fulfilment.ts", SEAM],
+    ["material-request-writes.ts", WRITE_CORE],
     ["queue page", QUEUE_PAGE],
     ["detail page", DETAIL_PAGE],
     ["new page", NEW_PAGE],
@@ -171,19 +175,36 @@ describe("fulfilment is DERIVED — no application code sets it", () => {
       written.add(m[1]!);
     }
     // 'decision' is a variable, not a literal — approve/reject go through it.
+    // Train 5 moved the request's own `status: "draft"` into the shared write
+    // core (asserted just below); the "draft" remaining HERE is the PO handoff
+    // creating a draft purchase order.
     expect([...written].sort()).toEqual(["cancelled", "draft", "submitted"]);
     for (const derived of MATERIAL_REQUEST_DERIVED_STATUSES) {
       expect(written.has(derived), `actions.ts must never write ${derived}`).toBe(false);
     }
   });
 
+  it("the shared write core writes 'draft' and nothing else (offline replay included)", () => {
+    const OUTCOMES = ["accepted", "duplicate", "rejected", "retry"];
+    const written = [...tsCode(WRITE_CORE).matchAll(/status:\s*["'`]([a-z_]+)["'`]/g)]
+      .map((m) => m[1]!)
+      .filter((s) => !OUTCOMES.includes(s)); // the outcome envelope, not row values
+    expect(written).toEqual(["draft"]);
+  });
+
   it("the advance RPC is the single writer, and it lives in SQL", () => {
     expect(MY_SQL_CODE).toMatch(/function public\.advance_material_request_fulfilment/);
     expect(SEAM).toMatch(/advance_material_request_fulfilment/);
     // Exactly one call site in the whole app.
-    const callSites = [ACTIONS, SERVICE, SEAM, QUEUE_PAGE, DETAIL_PAGE, PANEL].filter((s) =>
-      /rpc\(\s*["'`]advance_material_request_fulfilment/.test(s),
-    );
+    const callSites = [
+      ACTIONS,
+      SERVICE,
+      SEAM,
+      WRITE_CORE,
+      QUEUE_PAGE,
+      DETAIL_PAGE,
+      PANEL,
+    ].filter((s) => /rpc\(\s*["'`]advance_material_request_fulfilment/.test(s));
     expect(callSites.length, "one blessed writer, one call site").toBe(1);
   });
 

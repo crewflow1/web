@@ -241,6 +241,10 @@ const REJECT_REASON: Record<string, string> = {
     "The server wouldn't accept these values (check the date). Copy the text below and re-enter it.",
   job_missing:
     "The job this was filed against no longer exists in this company. Copy the text below and re-enter it against a current job.",
+  assignee_missing:
+    "The person this was assigned to is no longer a member of this company. Copy the text below and re-enter it unassigned or with someone else.",
+  stock_item_missing:
+    "A catalogue item on this request isn't in this company. Copy the text below and re-enter it.",
   org_mismatch:
     "This was written for a different company. It has NOT been filed anywhere. Copy the text below and re-enter it in the right company.",
   not_permitted:
@@ -266,7 +270,11 @@ function OutboxItem({
   const text = entity.recoverFields
     .map((f) => {
       const v = item.payload[f];
-      return v === undefined || v === null || v === "" ? null : `${f}: ${String(v)}`;
+      if (v === undefined || v === null || v === "") return null;
+      // A structured field (a material request's lines) renders through the
+      // registry's own formatter — String() on an array of objects would show
+      // "[object Object]" where the only copy of the ask should be.
+      return entity.formatRecoverField?.(f, v) ?? `${f}: ${String(v)}`;
     })
     .filter(Boolean)
     .join("\n");

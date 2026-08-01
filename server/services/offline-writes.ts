@@ -9,6 +9,9 @@ import {
   type OfflineWriteKind,
 } from "@/lib/offline/registry";
 import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
+import { createSnagSchema } from "@/lib/snags/schema";
+import { materialRequestFormSchema } from "@/lib/material-requests/schema";
+import { createMaterialRequestDraftRecord } from "@/server/services/material-request-writes";
 
 /**
  * OFFLINE WRITE — the server side. ONE write path per entity, shared by the
@@ -28,6 +31,15 @@ import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
  * The only difference between them is where `clientKey` comes from (the browser's
  * queue vs freshly minted here) and whether `offlineAuthoredAt` is set. If a future
  * change hardens one path it hardens both; they cannot drift.
+ *
+ * Train 5 added `createSnagRecord` on exactly the same two-entry-point contract
+ * (app/(app)/snags/actions.ts → createSnag, and the dispatch below), and
+ * `createMaterialRequestDraftRecord`, which lives in its OWN module
+ * (server/services/material-request-writes.ts) because a material request's
+ * write path legitimately includes the pre-existing per-org number allocator —
+ * a read-only helper the ONLINE action has always invoked under the caller's
+ * JWT — while THIS file stays free of any remote-procedure surface so the
+ * security suite can keep pinning that absence verbatim.
  *
  * The one service-role touch in this file is `recordAdminActivity`, the
  * pre-existing audit chokepoint, which writes ONLY to admin_activity_log and never
@@ -56,6 +68,8 @@ export type OfflineRejectReason =
   | "invalid_payload" // failed the entity's own Zod schema
   | "org_mismatch" // authored in a different org — refused, never re-homed
   | "job_missing" // the parent job is gone, or belongs to another org
+  | "assignee_missing" // the named assignee is not a member of the active org
+  | "stock_item_missing" // a line's catalogue item is not in the active org
   | "not_permitted" // RLS refused the insert
   | "malformed_item"; // the queued envelope itself is not a queued write
 
@@ -67,6 +81,18 @@ const PERMANENT_CODES: Record<string, OfflineRejectReason> = {
   "42501": "not_permitted", // RLS / insufficient privilege
 };
 const UNIQUE_VIOLATION = "23505";
+
+/**
+ * Shared with the sibling write core (material-request-writes.ts) so the
+ * permanent-error ALLOWLIST cannot fork per entity. 23503 reads as
+ * "job_missing" for every enabled entity because on each of them the only FK a
+ * validated payload can still violate at insert time is a parent deleted (or
+ * re-orged) since the guard ran: snags.job_id/assigned_to, diary job_id, and a
+ * material request's job — all "the thing you filed this against is gone".
+ */
+export const OFFLINE_PERMANENT_CODES: Readonly<Record<string, OfflineRejectReason>> =
+  PERMANENT_CODES;
+export const OFFLINE_UNIQUE_VIOLATION = UNIQUE_VIOLATION;
 
 type PgError = { message: string; code?: string } | null;
 
@@ -99,6 +125,21 @@ type JobLookupChain = {
         k: string,
         v: unknown,
       ) => { maybeSingle: () => Promise<{ data: { id: string } | null; error: PgError }> };
+    };
+  };
+};
+type MembershipLookupChain = {
+  select: (cols: string) => {
+    eq: (
+      k: string,
+      v: unknown,
+    ) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        maybeSingle: () => Promise<{ data: { user_id: string } | null; error: PgError }>;
+      };
     };
   };
 };
@@ -231,6 +272,144 @@ export async function createDiaryEntryRecord(args: {
   return { status: "accepted", id };
 }
 
+export type SnagWriteInput = {
+  title: string;
+  description?: string;
+  location?: string;
+  trade?: string;
+  priority?: "low" | "medium" | "high";
+  job_id?: string;
+  assigned_to?: string;
+  due_date?: string;
+};
+
+/**
+ * Create one snag. THE snag write — online and offline alike, on exactly the
+ * contract `createDiaryEntryRecord` established:
+ *   - app/(app)/snags/actions.ts → createSnag (online form post), and
+ *   - dispatchOfflineWrite below (queued replay)
+ * both land here, so validation, org pinning, guards and audit cannot drift
+ * between the path everyone watches and the path nobody would notice drifting.
+ *
+ * The row is born 'open' and the payload cannot say otherwise: a queued snag
+ * replays no lifecycle state — the lifecycle STARTS when the row lands.
+ */
+export async function createSnagRecord(args: {
+  ctx: OrgContext;
+  user: { id: string; email?: string | null };
+  input: SnagWriteInput;
+  /** Omit on the online path — one is minted so every row carries a key. */
+  clientKey?: string;
+  /** Device-clock authoring time; set only for a queued (offline-authored) write. */
+  offlineAuthoredAt?: string | null;
+}): Promise<OfflineWriteOutcome> {
+  const orgId = args.ctx.org.id;
+  const clientKey = args.clientKey ?? randomUUID();
+  const tenant = await createClient();
+
+  /**
+   * CROSS-ORG JOB GUARD — the diary's reason verbatim: `snags.job_id` has a
+   * plain FK with NO database-level org guard (20260919), and RLS admits every
+   * org a multi-org member belongs to, so the FK alone would accept another
+   * company's job. The picker is org-scoped, but a form post — or a queued item
+   * authored before an org switch — is not the picker. Checking here covers
+   * BOTH write paths at once. Pinned to the ACTIVE org, not left to RLS.
+   */
+  if (args.input.job_id) {
+    const { data: job, error: jobErr } = await (
+      tenant.from("jobs" as never) as unknown as JobLookupChain
+    )
+      .select("id")
+      .eq("id", args.input.job_id)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (jobErr) return { status: "retry", reason: jobErr.code ?? "job_lookup_failed" };
+    if (!job) return { status: "rejected", reason: "job_missing" };
+  }
+
+  /**
+   * ASSIGNEE GUARD. `snags.assigned_to` references users with NO membership
+   * check anywhere (unlike material_requests, whose trigger guards
+   * requested_by), so without this a crafted payload — queued or posted — could
+   * put a stranger's name on this org's defect list. Members may read their own
+   * org's memberships under RLS; the read is org-pinned (the #468 seam).
+   */
+  if (args.input.assigned_to) {
+    const { data: member, error: memberErr } = await (
+      tenant.from("memberships" as never) as unknown as MembershipLookupChain
+    )
+      .select("user_id")
+      .eq("user_id", args.input.assigned_to)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (memberErr) {
+      return { status: "retry", reason: memberErr.code ?? "assignee_lookup_failed" };
+    }
+    if (!member) return { status: "rejected", reason: "assignee_missing" };
+  }
+
+  const id = randomUUID();
+  const { error } = await (
+    tenant.from("snags" as never) as unknown as InsertChain
+  ).insert({
+    id,
+    org_id: orgId,
+    title: args.input.title,
+    description: args.input.description ?? null,
+    location: args.input.location ?? null,
+    trade: args.input.trade ?? null,
+    priority: args.input.priority ?? "medium",
+    status: "open", // born open — never taken from the payload
+    job_id: args.input.job_id ?? null,
+    assigned_to: args.input.assigned_to ?? null,
+    reported_by: args.user.id,
+    due_date: args.input.due_date ?? null,
+    client_write_key: clientKey,
+    offline_authored_at: args.offlineAuthoredAt ?? null,
+  });
+
+  if (error) {
+    // THE IDEMPOTENCY BRANCH — the partial unique index on
+    // (org_id, client_write_key), migration 20261083000000, mirrored from the
+    // diary branch above including the bound-and-classified lookup error.
+    if (error.code === UNIQUE_VIOLATION) {
+      const { data: existing, error: lookupErr } = await (
+        tenant.from("snags" as never) as unknown as FindByKeyChain
+      )
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("client_write_key", clientKey)
+        .maybeSingle();
+      if (lookupErr) {
+        return { status: "retry", reason: lookupErr.code ?? "duplicate_lookup_failed" };
+      }
+      if (existing?.id) return { status: "duplicate", id: existing.id };
+      return { status: "rejected", reason: "not_permitted" };
+    }
+    const permanent = error.code ? PERMANENT_CODES[error.code] : undefined;
+    if (permanent) return { status: "rejected", reason: permanent };
+    console.error("[offline-write] snag insert failed", error);
+    return { status: "retry", reason: error.code ?? "insert_failed" };
+  }
+
+  await recordAdminActivity({
+    actorId: args.user.id,
+    actorEmail: args.user.email ?? null,
+    action: "snag.created",
+    targetTable: "snags",
+    targetId: id,
+    metadata: {
+      title: args.input.title,
+      priority: args.input.priority ?? "medium",
+      job_id: args.input.job_id ?? null,
+      // Provenance in the audit trail: was this authored with no signal?
+      offline: Boolean(args.offlineAuthoredAt),
+    },
+  });
+
+  return { status: "accepted", id };
+}
+
 /** The envelope a client hands to the sync action. Untrusted; validated below. */
 export type QueuedWriteEnvelope = {
   clientKey: string;
@@ -265,11 +444,18 @@ export async function dispatchOfflineWrite(args: {
 }): Promise<OfflineWriteOutcome> {
   const { item } = args;
 
-  // 1. envelope
+  // 1. envelope. clientKey must be UUID-SHAPED, not merely non-empty: the
+  // column is uuid, so a malformed key 22P02s — on the snag INSERT that
+  // surfaces as a permanent rejection, but on the material-request key
+  // LOOKUP it surfaced as a transient, and a permanently-transient item at
+  // the head of a seq-ordered outbox wedges everything behind it (the
+  // adversarial review's liveness P2). Refuse the shape here, uniformly.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (
     !item ||
     typeof item.clientKey !== "string" ||
-    item.clientKey.length === 0 ||
+    !UUID_RE.test(item.clientKey) ||
     typeof item.orgId !== "string" ||
     item.orgId.length === 0
   ) {
@@ -297,6 +483,28 @@ export async function dispatchOfflineWrite(args: {
     case "site_diary.create": {
       const input = createDiaryEntrySchema.parse(parsed.data);
       return createDiaryEntryRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "snag.create": {
+      const input = createSnagSchema.parse(parsed.data);
+      return createSnagRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "material_request.create": {
+      const input = materialRequestFormSchema.parse(parsed.data);
+      return createMaterialRequestDraftRecord({
         ctx: args.ctx,
         user: args.user,
         input,

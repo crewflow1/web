@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
+import { createSnagSchema } from "@/lib/snags/schema";
+import { materialRequestFormSchema } from "@/lib/material-requests/schema";
 
 /**
  * OFFLINE WRITE REGISTRY — the one place that decides what CrewFlow will accept
@@ -14,41 +16,59 @@ import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
  * (server/services/offline-writes.ts), so a hand-crafted payload naming an
  * unregistered kind is refused at the trust boundary, not merely absent from the UI.
  *
- * Enabling a second entity takes THREE deliberate acts, by design:
- *   1. a migration adding `client_write_key` + a partial unique index to that table
- *      (the database-level idempotency gate — see 20261077000000);
+ * Enabling an entity takes THREE deliberate acts, by design:
+ *   1. a migration adding the database-level idempotency gate to that table
+ *      (20261077000000 for the diary, 20261083000000 for snags + material
+ *      requests);
  *   2. a row here;
- *   3. a server handler in server/services/offline-writes.ts.
+ *   3. a server handler reachable from dispatchOfflineWrite
+ *      (server/services/offline-writes.ts).
  * A no-drift test asserts (2) and (3) stay in lockstep, and (1) cannot be faked in
  * code at all. Nothing becomes offline-writable by accident.
  *
  * ── ENABLED ───────────────────────────────────────────────────────────────────
- * `site_diary.create` only. A diary entry is the one write in the product that can
- * be replayed hours later with no merge policy and no lie:
- *   - APPEND-ONLY. It creates a new row; it never mutates a row someone else may
- *     have changed while the tablet was in a basement.
- *   - SINGLE-AUTHOR. One person records their own day. There is no realistic
- *     concurrent editor, so "last write wins" versus "merge" never arises.
- *   - NO FINANCIAL CONSEQUENCE. Nothing prices, invoices, allocates stock, pays
- *     anyone, or moves a lifecycle state. A late arrival changes no number.
- *   - NO SEQUENCING. It does not depend on, or invalidate, any other queued write.
- * So the queue can be proven end-to-end without this milestone having to settle a
- * conflict-resolution policy it cannot honestly settle.
+ * Three CREATEs, all sharing the properties that make a replay honest:
+ * APPEND-ONLY (a new row, never a mutation of one somebody else may have edited),
+ * SINGLE-AUTHOR (no realistic concurrent editor, so no merge policy to invent),
+ * NO FINANCIAL CONSEQUENCE and NO SEQUENCING.
+ *
+ *   site_diary.create        The original vertical — see 20261077000000.
+ *
+ *   snag.create              A defect spotted where there is no signal is the
+ *                            diary's exact shape. It is born 'open' (the core
+ *                            pins the status; the payload cannot carry one), so
+ *                            no lifecycle state is replayed — the lifecycle
+ *                            STARTS when the row lands. Photos are excluded
+ *                            offline exactly as the diary excludes them (the
+ *                            queue carries JSON, never binary) and the form says
+ *                            so honestly. The earlier "a snag with no photo is a
+ *                            worse record than no snag" stance was reversed by
+ *                            Train 5: a titled, located, traded defect record
+ *                            with photos to follow beats a defect that lives in
+ *                            someone's head until the van finds signal.
+ *
+ *   material_request.create  The site→office ask, as a DRAFT ONLY. The number
+ *                            (MR-0007) is allocated at SYNC time by the existing
+ *                            per-org allocator — never minted offline, so the
+ *                            sequence cannot fork. Submission is deliberately
+ *                            NOT captured offline: submitted_at is provenance
+ *                            the database pins server-side (20261066) and
+ *                            submitting fans out notifications; replaying it
+ *                            hours later would forge the one timestamp the
+ *                            trigger protects. After sync the worker opens
+ *                            Materials and taps Send — stated in the form
+ *                            wording, not hidden.
  *
  * ── DELIBERATELY NOT ENABLED (and why) ────────────────────────────────────────
  * Everything else in the product stays READ-ONLY offline. The reasons are not
  * uniform, and that is the point — each needs its own product decision:
  *
- *   site_diary.update / delete  A diary entry may have been edited or deleted by an
+ *   site_diary/snag update/delete  A row may have been edited or deleted by an
  *                               admin while the device was offline. Replaying an
  *                               update silently reverts their change; there is no
  *                               conflict UI in this milestone to ask with.
- *   snags                       Append-only and tempting, BUT a snag carries a
- *                               lifecycle (open → closed) and assignment, and it is
- *                               usually raised WITH photos. Photos are binary
- *                               uploads to Storage, which this queue does not carry
- *                               (see write-queue.ts). A snag with no photo is a
- *                               worse record than no snag.
+ *   material_request.submit     Lifecycle transition with server-pinned
+ *                               provenance + notification fan-out (see above).
  *   timesheets / time entries   PAYROLL. A replayed or duplicated time entry becomes
  *                               money paid. Deserves its own approval design.
  *   expenses / receipts         Money out, plus a receipt image (binary).
@@ -61,16 +81,30 @@ import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
  *   H&S sign-offs / permits     A signature has legal force at the moment it is
  *                               given. "Signed at 14:00, recorded at 19:00, under a
  *                               RAMS that changed at 16:00" is not a signature.
- *   toolbox talks               Same: attendance is evidence with a provenance chain
- *                               (20261031-37) that a replay would weaken.
+ *   toolbox talks (acks)        Considered for this train and REJECTED on the same
+ *                               ground, with the evidence read first: the ack engine
+ *                               (tg_safety_ack_validate, 20261020/26) server-pins
+ *                               acknowledged_at := now() — "the single most
+ *                               load-bearing fact" — binds the signer to auth.uid(),
+ *                               and requires the version anchor to match a talk that
+ *                               is ISSUED at write time. An ack captured offline and
+ *                               replayed later would carry a signing time that is not
+ *                               the attestation moment, possibly against a revision
+ *                               superseded in between. The engine's natural key would
+ *                               make the replay idempotent, but idempotent capture of
+ *                               dishonest evidence is still dishonest evidence.
  *
  * Nothing here is a technical blocker. Each is a decision about what a builder is
  * allowed to promise a client, an insurer, or HMRC about a record created with no
- * signal — see docs/offline-write-queue.md for what the CEO must decide.
+ * signal — see docs/offline-write-queue.md.
  */
 
 /** Every kind the queue understands. Adding one here is step 2 of 3 (see header). */
-export const OFFLINE_WRITE_KINDS = ["site_diary.create"] as const;
+export const OFFLINE_WRITE_KINDS = [
+  "site_diary.create",
+  "snag.create",
+  "material_request.create",
+] as const;
 export type OfflineWriteKind = (typeof OFFLINE_WRITE_KINDS)[number];
 
 export type OfflineWriteEntity = {
@@ -91,6 +125,13 @@ export type OfflineWriteEntity = {
    * recover the words they wrote. Ordered for reading, not for storage.
    */
   readonly recoverFields: readonly string[];
+  /**
+   * Optional per-field renderer for recovery text. Returns null to fall back to
+   * the default `field: value` line. Exists because a material request's `lines`
+   * is an array — String() would show "[object Object]" where the one copy of
+   * what the site asked for should be.
+   */
+  readonly formatRecoverField?: (field: string, value: unknown) => string | null;
 };
 
 export const OFFLINE_WRITE_REGISTRY: Readonly<
@@ -109,6 +150,38 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
       "delays",
       "notes",
     ],
+  },
+  "snag.create": {
+    label: "snag",
+    labelPlural: "snags",
+    viewHref: "/snags",
+    schema: createSnagSchema,
+    recoverFields: [
+      "title",
+      "description",
+      "location",
+      "trade",
+      "priority",
+      "due_date",
+    ],
+  },
+  "material_request.create": {
+    label: "materials request",
+    labelPlural: "materials requests",
+    viewHref: "/materials/requests",
+    schema: materialRequestFormSchema,
+    recoverFields: ["lines", "needed_by", "priority", "notes"],
+    formatRecoverField: (field, value) => {
+      if (field !== "lines" || !Array.isArray(value)) return null;
+      // "3 bag — Cement 25kg" per line: what was asked for, readable enough to
+      // re-type. This text may be the only copy in existence.
+      return value
+        .map((l) => {
+          const line = l as { description?: unknown; qty?: unknown; unit?: unknown };
+          return `${String(line.qty ?? "")} ${String(line.unit ?? "")} — ${String(line.description ?? "")}`;
+        })
+        .join("\n");
+    },
   },
 };
 

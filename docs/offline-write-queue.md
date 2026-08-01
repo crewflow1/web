@@ -45,13 +45,38 @@ product that can be replayed hours later without anybody having to invent a poli
 A diary entry is also exactly what a foreman loses today. It is the record that settles
 progress disputes, and it is written on site, at the end of the day, where the signal is.
 
+**Train 5 (migration 20261083) widened the set to three, by the three-act process below:**
+
+- **`snag.create`** — the diary's exact shape (append-only, single-author, no money, no
+  sequencing). Born `'open'` server-side; the payload cannot carry a status. Photos stay
+  excluded offline, exactly like the diary, and the form says so. This reverses the
+  original "a snag with no photo is a worse record than no snag" stance: a titled,
+  located, traded defect with photos to follow beats a defect that lives in someone's
+  head until the van finds signal.
+- **`material_request.create` — DRAFT ONLY.** The number is allocated **at sync time** by
+  the existing per-org allocator (never minted offline, so the sequence cannot fork), and
+  submission is deliberately not captured offline — `submitted_at` is provenance the
+  database pins server-side (20261066) and submitting fans out notifications. After sync
+  the worker opens Materials and taps **Send**; the form wording says exactly that.
+  Because a request is a header **plus lines** (two statements), the replay protocol is
+  key-first with line recovery, and a unique `(material_request_id, sort_order)` index
+  closes the concurrent-recovery race — see the 20261083 migration header and
+  `server/services/material-request-writes.ts`.
+- **Toolbox-talk acknowledgements were considered for Train 5 and REJECTED.** The ack
+  engine (`tg_safety_ack_validate`, 20261020/26) server-pins `acknowledged_at := now()`,
+  binds the signer to `auth.uid()`, and requires the version anchor to match a talk that
+  is ISSUED at write time. An ack captured offline and replayed later would carry a
+  signing time that is not the attestation moment, possibly against a superseded
+  revision. The engine's natural key would make a replay idempotent — but idempotent
+  capture of dishonest evidence is still dishonest evidence, so the vertical was swapped
+  for the material-request draft rather than weakened to fit.
+
 **Everything else stays read-only offline**, with per-entity reasons recorded in the
-registry: snags (lifecycle + photos are binary), timesheets (payroll — a duplicate is
-money paid), expenses (money out + receipt image), quotes/invoices/POs (the number *is*
-identity; offline numbering forks the sequence), stock movements (the ledger is
-order-dependent by design — 20261069/71), H&S sign-offs and permits (a signature has
-force at the moment it is given), toolbox talks (attendance evidence with a provenance
-chain from 20261031-37).
+registry: timesheets (payroll — a duplicate is money paid), expenses (money out + receipt
+image), quotes/invoices/POs (the number *is* identity; offline numbering forks the
+sequence), stock movements (the ledger is order-dependent by design — 20261069/71), H&S
+sign-offs and permits (a signature has force at the moment it is given), toolbox talks
+(above), and every UPDATE/DELETE (no conflict UI to ask with).
 
 ### Enabling a second entity takes three deliberate acts
 
