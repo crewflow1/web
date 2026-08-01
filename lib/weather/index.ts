@@ -51,8 +51,19 @@ export type {
   WeatherReadingKind,
   WeatherWindow,
   PostcodeDistrict,
+  DistrictCoordinates,
 } from "./types";
 export { WEATHER_READING_KINDS } from "./types";
+
+export {
+  resolveDistrictCoordinates,
+  datasetInfo,
+  DISTRICT_CENTROID_COUNT,
+  DISTRICT_CENTROID_SOURCE,
+  DISTRICT_CENTROID_VERSION,
+  DISTRICT_CENTROID_ATTRIBUTION,
+} from "./geo";
+export type { DistrictDatasetInfo, DistrictCentroidRow } from "./geo";
 
 export {
   toPostcodeDistrict,
@@ -118,9 +129,10 @@ export function getWeatherProvider(): WeatherProvider | null {
       // Met Office Weather DataHub, Site Specific (Global Spot).
       // NO ADAPTER IN THIS BUILD. Activation needs, in order:
       //   1. a DataHub subscription and MET_OFFICE_API_KEY;
-      //   2. a postcode-district → coordinate source (the API takes lat/lon);
-      //   3. ./providers/met-office.ts implementing WeatherProvider;
-      //   4. `metoffice: true` in PROVIDER_IMPLEMENTED (./readiness).
+      //   2. ./providers/met-office.ts implementing WeatherProvider;
+      //   3. `metoffice: true` in PROVIDER_IMPLEMENTED (./readiness).
+      // (The district → coordinate prerequisite is CLOSED: ./geo resolves the
+      // lat/lon the API takes, from the checked-in ONSPD centroid dataset.)
       return null;
     }
 

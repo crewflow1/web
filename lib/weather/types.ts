@@ -41,6 +41,30 @@
  */
 export type PostcodeDistrict = string & { readonly __brand: "PostcodeDistrict" };
 
+/**
+ * A district resolved to the WGS84 coordinate a vendor would be asked about.
+ *
+ * Produced by ONE place only — `resolveDistrictCoordinates` in ./geo — from
+ * the checked-in ONSPD-derived centroid dataset. `quality` is always
+ * "centroid" today and exists so no caller can mistake this for a geocoded
+ * site address: a centroid can sit tens of kilometres from the job in a large
+ * rural district (the IV27 case), and that caveat travels with the value.
+ *
+ * This is also the value the future fetch path must write into
+ * `weather_readings.resolved_lat` / `resolved_lon` — the provenance columns
+ * that record what coordinate was ACTUALLY asked about, which is what makes a
+ * cached verdict auditable after the fact. Nothing writes those columns today;
+ * when something does, the numbers come from here and nowhere else.
+ */
+export type DistrictCoordinates = {
+  readonly lat: number;
+  readonly lon: number;
+  /** The dataset that produced the coordinate. */
+  readonly source: "ons_onspd" | "os_codepoint";
+  /** Always "centroid" — a district-level approximation, never a site fix. */
+  readonly quality: "centroid";
+};
+
 /** Forecast (a prediction, expires) vs observation (a record of the past). */
 export const WEATHER_READING_KINDS = ["forecast", "observation"] as const;
 export type WeatherReadingKind = (typeof WEATHER_READING_KINDS)[number];
@@ -139,9 +163,18 @@ export interface WeatherProvider {
    * Resolves with the readings the provider returned (possibly empty, if the
    * provider genuinely has no data for the window), or THROWS on any provider
    * failure so the caller can distinguish "no weather" from "no answer".
+   *
+   * `coordinates` is REQUIRED and comes from `resolveDistrictCoordinates` in
+   * ./geo — the caller resolves BEFORE calling, and a district that resolves
+   * to null is never fetched at all (report "cannot resolve", don't guess).
+   * Threading it through the seam is deliberate: every vendor is queried by
+   * lat/lon, and the future writer records exactly this value into the
+   * `resolved_lat` / `resolved_lon` provenance columns, so what was asked and
+   * what was stored can never drift apart.
    */
   fetchWindow(input: {
     readonly district: PostcodeDistrict;
+    readonly coordinates: DistrictCoordinates;
     readonly kind: WeatherReadingKind;
     readonly fromInclusive: Date;
     readonly toExclusive: Date;

@@ -130,33 +130,58 @@ before activation. That is the CEO decision this document most needs to surface.
 
 ---
 
-## The hidden prerequisite: district → coordinate
+## ~~The hidden prerequisite~~ district → coordinate — **CLOSED**
 
-**Every candidate above is queried by latitude and longitude. CrewFlow has none.**
+**Every candidate above is queried by latitude and longitude — and the build can now
+produce one.** `districtResolutionAvailable` is `true`, and it is *derived* from the
+shipped dataset's size (floor: 2,500 districts) rather than hard-coded, so a
+truncated or deleted dataset flips it back to `false` by itself.
 
-There is no lat/lon column anywhere in the schema, no PostGIS, and no geocoder. Job
-locations exist only as free-text addresses (`jobs.site_address_*`, resolved through
-`resolveJobAddress()`). This is tracked as its own readiness field —
-`districtResolutionAvailable`, currently `false` — precisely because it is *not* a
-credential and *not* a subscription, so it would otherwise hide behind a green
-"key is set" and surprise whoever flips the switch.
+What shipped (Train 3, `feat/weather-district-coordinates`):
 
-Two free sources close it:
+- **Dataset** — `lib/weather/geo/district-centroids.ts`: 2,943 UK postcode-district
+  (outward code) centroids, WGS84 at 5 dp, **including Northern Ireland** (80+ BT
+  districts). Derived from the **ONS Postcode Directory (May 2026)** downloaded from
+  the ONS Open Geography Portal (portal item `6fff67d204fd4f339591ed667a6e3642`,
+  `ONSPD_MAY_2026.zip`): live postcodes only (`doterm` empty), grouped by outward
+  code, unweighted mean of each unit's ONSPD `lat`/`long`. 2,726,476 rows read;
+  1,796,277 live coordinated units contributed. Rows carrying the ONSPD
+  no-grid-reference sentinel (lat 99.999999 — Channel Islands, Isle of Man, GIR)
+  are excluded, so GY/JE/IM districts deliberately do **not** resolve.
+- **Derivation script** — `scripts/derive-district-centroids.ts`, checked in and
+  runnable offline against a downloaded ONSPD release. It never runs at runtime and
+  performs no network I/O; regeneration on a new ONSPD release is one command plus a
+  reviewed diff (the dataset-integrity tests are the gate).
+- **Resolution** — `resolveDistrictCoordinates(district)` in `lib/weather/geo`:
+  pure, O(1) in-memory lookup, no geocoding service, no per-request cost, and
+  **null for anything unknown** — callers surface "cannot resolve", they never
+  guess a neighbouring district. `datasetInfo()` exposes source, version, count and
+  the licence attribution for any displaying surface.
+- **Provider seam plumbing** — `WeatherProvider.fetchWindow` now takes the resolved
+  `coordinates`, and the future writer records them into
+  `weather_readings.resolved_lat` / `resolved_lon`, so what was asked and what was
+  stored cannot drift. (Nothing writes `weather_readings` yet; that is unchanged.)
 
-| Source | Licence | Cost | Coverage |
-|---|---|---|---|
-| **OS Code-Point Open** | Open Government Licence | Free | ~1.7M postcode units, **Great Britain only — no Northern Ireland** |
-| **ONS Postcode Directory** | Open Government Licence | Free | UK-wide, including Northern Ireland |
+**Licence** — Open Government Licence v3.0. Required attribution (carried by
+`datasetInfo()` and rendered on the readiness panel):
+`Contains OS data © Crown copyright and database right 2026` ·
+`Contains Royal Mail data © Royal Mail copyright and database right 2026` ·
+`Contains GeoPlace data © Local Government Information House Limited copyright and
+database right 2026` · `Source: Office for National Statistics licensed under the
+Open Government Licence v.3.0`.
 
-Both require an attribution line (`Contains OS data © Crown copyright and database
-right`). Note the NI gap in Code-Point Open — for UK-wide coverage the ONS directory
-is the safer base.
+> **NI licensing caveat, flagged for legal review:** Northern Ireland postcodes
+> inside the ONSPD carry additional Ordnance Survey of Northern Ireland / LPS terms
+> (see the ONSPD User Guide). The shipped BT rows are heavily aggregated district
+> centroids used for in-product display; confirm the licence position before any
+> surface *redistributes* BT-derived coordinates.
 
-**The work is small.** Only ~2,900 district centroids are needed, not 1.7M unit
-postcodes: average the unit centroids within each outward code and ship a static
-lookup of a few tens of kilobytes. No runtime geocoding service, no per-request cost,
-no extra vendor. This is an afternoon of data preparation, but it is *blocking*, and
-it must not be discovered on activation day.
+**Accuracy caveat (the IV27 case).** A district centroid is not a site coordinate:
+fine in LS1, potentially tens of kilometres out in IV27 (Sutherland). The seam
+carries `WeatherWindow.resolvedDistanceKm` so the verdict layer can show the
+caveat rather than hide it. (OS Code-Point Open was the fallback source — GB-only,
+OSGB36, would have needed a documented Helmert transform to WGS84 and would have
+lost NI. Not used.)
 
 ---
 
@@ -208,12 +233,15 @@ decision: hourly refresh (24/day) multiplies every row by six.
 
 1. Choose a provider; confirm its licence covers the intended display surface.
 2. Obtain the key; set `WEATHER_PROVIDER` and the vendor's credential.
-3. Ingest district centroids from the ONS Postcode Directory (or Code-Point Open);
-   flip `DISTRICT_RESOLUTION_AVAILABLE` in `lib/weather/readiness.ts`.
-4. Write `lib/weather/providers/<vendor>.ts` implementing `WeatherProvider`.
+3. ~~Ingest district centroids~~ **DONE** — shipped in `lib/weather/geo`;
+   `districtResolutionAvailable` is now derived from the dataset (see above).
+4. Write `lib/weather/providers/<vendor>.ts` implementing `WeatherProvider`
+   (its `fetchWindow` already receives the resolved coordinates).
 5. Flip that vendor's entry in `PROVIDER_IMPLEMENTED` — **this trips the security
    suite deliberately**, so activation is a reviewed diff, never a config change.
 6. Add the writer (service-role only — the cache has no INSERT policy) and a
-   scheduled refresh over `weather_watches`.
-7. Render the vendor's required attribution wherever data appears.
+   scheduled refresh over `weather_watches`; it must write the resolved
+   coordinates into `resolved_lat` / `resolved_lon`.
+7. Render the vendor's required attribution wherever data appears (the ONSPD
+   attribution is already rendered by the readiness panel).
 8. If PAYG: add the watch ceiling *first*.
