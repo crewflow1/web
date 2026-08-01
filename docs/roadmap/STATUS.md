@@ -4,11 +4,51 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-07-31 (Continuation 13 — roadmap reduction wave; 13 lanes)
-**Production `main`:** `f2a9c93` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261076` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Last reconciled:** 2026-08-01 (Continuation 15 — embeddings governance + weather coordinates shipped; 4 trains interrupted at the API spend limit, salvaged as WIP branches)
+**Production `main`:** `acb24c1` at reconciliation time (#520 weather coordinates; #521 embeddings governance merging behind it — see train history) — verified against `/api/health`, not inferred
+**Production migration tip:** read it from the database (single source; the C15 train applies `20261080`)
+
+> **⚠️ C15 INTERRUPTION NOTE (2026-08-01).** Four implementation lanes were killed mid-work by the
+> API monthly spend limit and their work is committed as clearly-marked **WIP — DO NOT MERGE**
+> branches: `feat/works-quality-m2` (slot `20261081` claimed, impl typecheck-clean, tests partial),
+> `feat/portal-evolution` (slot `20261082`; base commit `c99a1b8` is COMPLETE and verified — photos
+> consumer, future-work→leads, preferences, bottom nav — the WIP tip adds the photo-selection
+> producer, mid-build), `feat/offline-expansion` (slot `20261083` claimed, mid-security-suite), and
+> `feat/deterministic-intelligence` (zero-migration, mid-wiring). **Slots 20261081–83 are CLAIMED by
+> these branches** — the next free slot is `20261084+`, and re-verify against the DB before claiming.
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.**
 The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
+
+## ✅ EMBEDDINGS GOVERNANCE — CLOSED 2026-08-01 (C15, #521, migration `20261080`)
+
+The "STILL OPEN — embeddings are ungoverned" paragraph below is now HISTORY. Migration `20261080`
+widened both `task_class` CHECKs to admit `'embedding'`; the registry carries an `embedding` task
+class on its OWN tier (dark — `TIER_MODEL.embedding = null`) with features `memory.embedding_write`
+and `memory.embedding_query` billed fail-closed to `CREWFLOW_INTERNAL_ORG_ID`; the paid provider
+door refuses on a bare `OPENAI_API_KEY`; both call sites (worker batch, HQ recall query probe) run
+through `governedEmbed` → `invokeWithGovernor`; the deterministic CI provider is the one pinned
+exemption (zero egress, zero cost). **The dark short-circuit is now PER-TIER** — and the adversarial
+review of this train found the P0 that change exposed: the three self-SDK services
+(`research-llm`, `lead-summary`, `receptionist`) gated on the GLOBAL predicate, so an
+embedding-only activation would have run them ungoverned. All three now gate on their own class's
+tier, the ratchet's `ACTIVATION_GATE` no longer accepts `isGovernorActivated` for SDK-constructing
+files, and `governedEmbed` + the worker enforce the reservation envelope per batch (chunking; an
+over-envelope single memory fails to DLQ instead of wedging the queue). Proofs: from-scratch replay
+to `20261080`; 20-concurrent-embedding-claims exact-at-ceiling; cross-org isolation; dedupe;
+settlement/release — all in `__tests__/integration/ai/embedding-budget-reservation.test.ts`.
+Activation remains a CEO decision: bind the tier + calibrate the envelope for worst-case batches.
+
+## ✅ WEATHER DISTRICT→COORDINATE BLOCKER — CLOSED 2026-08-01 (C15, #520, zero migrations)
+
+`DISTRICT_RESOLUTION_AVAILABLE` is now TRUE and **derived from the dataset, not asserted**:
+`lib/weather/geo/district-centroids.ts` carries 2,943 ONSPD-May-2026-derived outward-code centroids
+(WGS84, incl. 80 BT districts; GY/JE/IM/GIR deliberately unresolved — ONSPD carries no grid for
+them), with full OGL attribution rendered on `/weather` and a checked-in offline derivation script.
+Weather remains BUILT-DARK with zero egress (the 64-test proof grew to 68 and now sweeps the geo
+directory recursively). Remaining activation blockers are exactly the commercial ones: provider
+selection + adapter + credential. Escalation for legal: ONSPD NI postcodes carry OSNI/LPS terms —
+confirm before any surface REDISTRIBUTES BT-derived coordinates (in-product display is standard
+OGL practice).
 
 ## ✅ AI GOVERNANCE — CLOSED 2026-07-31 (was: 5 ungoverned call sites)
 
