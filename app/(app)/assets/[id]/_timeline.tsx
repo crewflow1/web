@@ -1,22 +1,21 @@
 /**
- * Unified asset history (integration slice) — custody, inspections, overrides
- * and maintenance interleaved chronologically. Composed server-side from data
- * the detail page already loads plus one bounded custody-history read; capped
- * so the page never grows unbounded (full per-domain history stays in each
- * section).
+ * Unified asset history (integration slice) — custody, inspections, overrides,
+ * maintenance and QR-identity lifecycle interleaved chronologically. Composed
+ * server-side by `composeAssetTimeline` from data the detail page already loads
+ * plus two bounded reads (custody history + QR history); capped so the page
+ * never grows unbounded (full per-domain history stays in each section).
  */
 
-export type TimelineEvent = {
-  at: string;
-  kind: "custody" | "inspection" | "override" | "maintenance";
-  label: string;
-};
+import type { TimelineEvent } from "@/lib/assets/timeline";
+
+export type { TimelineEvent };
 
 const KIND_STYLES: Record<TimelineEvent["kind"], string> = {
   custody: "bg-blue-50 text-blue-700",
   inspection: "bg-purple-50 text-purple-700",
   override: "bg-amber-50 text-amber-700",
   maintenance: "bg-slate-100 text-slate-600",
+  qr: "bg-teal-50 text-teal-700",
 };
 
 const CAP = 30;

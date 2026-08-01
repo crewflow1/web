@@ -10,6 +10,7 @@ import type { SiteOption } from "@/server/services/sites";
 import { checkOutAsset, returnAsset, transferAsset } from "../assignment-actions";
 import { StateForm } from "@/components/forms/StateForm";
 import type { FormState } from "@/lib/forms/state";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
 /**
  * Custody section on the asset detail page. Shows the current open assignment
@@ -125,6 +126,14 @@ export function CustodySection({
               title="Transfer"
               submit="Transfer"
             />
+          </div>
+
+          {/* Handover / return evidence bound to THIS custody record — issue &
+              return-condition photos, signed handover sheets. Universal pipeline,
+              targeting the assignment row so the evidence travels with the
+              custody it documents (target already in the CHECK). */}
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <AttachmentsPanel targetTable="asset_assignments" targetId={current.id} />
           </div>
         </>
       ) : assetActive ? (
