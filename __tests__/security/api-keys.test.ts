@@ -296,11 +296,19 @@ describe("GET /api/v1/me — the substrate's living proof", () => {
     expect(route).not.toMatch(/keyId(?!,\s*\n?\s*DEFAULT_LIMITS)/); // key id only feeds the limiter
   });
 
-  it("is the ONLY route under /api/v1 (substrate only — a product surface is a CEO decision)", () => {
+  it("is one of exactly THREE /api/v1 routes: the probe + the Train K jobs read pair (dark behind a flag)", () => {
+    // The jobs read pair (Train K) activates the read:jobs scope, but ships
+    // DARK behind FEATURE_PUBLIC_API_JOBS — the routes 404 until the CEO
+    // enables them (see lib/public-api/flag.ts). Exposing them is that
+    // decision; this pin makes any FURTHER /api/v1 surface a conscious diff.
     const routes = [...walk(resolve(ROOT, "app/api/v1"))].filter((f) =>
       /route\.tsx?$/.test(f),
     );
-    expect(routes.map((f) => f.replace(`${ROOT}/`, ""))).toEqual(["app/api/v1/me/route.ts"]);
+    expect(routes.map((f) => f.replace(`${ROOT}/`, "")).sort()).toEqual([
+      "app/api/v1/jobs/[id]/route.ts",
+      "app/api/v1/jobs/route.ts",
+      "app/api/v1/me/route.ts",
+    ]);
   });
 });
 
