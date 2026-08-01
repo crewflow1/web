@@ -191,6 +191,16 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "cis_statements → users",
   "cis_subcontractors → users",
   "completion_certificates → users",
+  // Delay events (20261084, Train 8): created_by + recorded_by + withdrawn_by
+  // all → users. Reviewed 2026-08-01: no read of this table embeds users(...) —
+  // app/(app)/delays/_data.ts and server/services/eot-pack.ts select scalar
+  // columns only (DELAY_COLS / DELAY_EVENT_COLS), and the pack/PDF render ids,
+  // never joined names. Three FKs is inherent to the row: who WROTE UP the
+  // stoppage, who formally RECORDED it as evidence and who later WITHDREW it
+  // are three separate accountable acts on a record built for disputes, and
+  // collapsing them would destroy exactly the provenance an EoT assessor
+  // tests. Any future embed must name its FK constraint; test 2 enforces it.
+  "delay_events → users",
   // GRNs (20261059, Train 24): received_by + created_by + voided_by all → users.
   // Reviewed 2026-07-29: no PostgREST embed of users(...) exists on any
   // goods_received_notes read (all GRN surfaces resolve names via explicit
