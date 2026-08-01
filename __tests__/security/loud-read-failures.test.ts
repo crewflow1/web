@@ -374,9 +374,17 @@ const RATCHET: Array<{
   {
     scope: "server + lib + components",
     dirs: ["server", "lib", "components"],
-    discard: 35,
+    // 35 → 36: server/services/hq-outreach.ts (the Outreach AI task-engine runner,
+    // Directive 010 Phase 4) reuses the sibling runners' decorative `loadCompanyNames`
+    // read verbatim — a missing company NAME renders as null on the recent-runs feed,
+    // never as a healthy empty state, so the error is deliberately discarded (identical
+    // to hq-research.ts / hq-qualification.ts). See docs/loud-read-failures.md.
+    discard: 36,
     softData: 61,
-    countOnly: 4,
+    // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
+    // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
+    // zero when nothing has run yet is the correct reassuring answer here.
+    countOnly: 5,
   },
 ];
 

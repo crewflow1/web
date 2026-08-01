@@ -46,6 +46,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/outreach-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/spine-partitions",
       "schedule": "15 4 * * *"
     },

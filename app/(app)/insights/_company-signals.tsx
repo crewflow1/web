@@ -15,6 +15,12 @@ import {
   concentrationSharesMetric,
 } from "@/lib/intelligence/concentration";
 import { regressingMetric, stalledMetric } from "@/lib/intelligence/progress-rollup";
+import {
+  behindBaselineMetric,
+  eotExposureMetric,
+  noBaselineGapMetric,
+  overdueMilestonesMetric,
+} from "@/lib/intelligence/programme-variance";
 import { agedDebtMetric, retentionExposureMetric } from "@/lib/intelligence/exposure";
 import { cvrBandsMetric, cvrTotalMetric } from "@/lib/intelligence/cvr-rollup";
 import { materialDemandMetric } from "@/lib/intelligence/material-demand";
@@ -179,6 +185,7 @@ export function CompanySignals({ view }: { view: CompanySignalsView }) {
         <UtilisationCard view={view} />
         <ConcentrationCard view={view} />
         <ProgressCard view={view} />
+        <ProgrammeVarianceCard view={view} />
         <ExposureCard view={view} />
         <CvrCard view={view} />
         <MaterialsCard view={view} />
@@ -368,6 +375,105 @@ function ProgressCard({ view }: { view: CompanySignalsView }) {
               <p className="mt-1 text-xs text-slate-500">{regressing.provenance.basis}</p>
             </div>
           ) : null}
+        </>
+      )}
+    </SignalCard>
+  );
+}
+
+function ProgrammeVarianceCard({ view }: { view: CompanySignalsView }) {
+  if (view.programmeVariance.failed) return <GroupError what="programme variance" />;
+  const { rollup, capped } = view.programmeVariance.data;
+  const behind = behindBaselineMetric(rollup);
+  const milestones = overdueMilestonesMetric(rollup);
+  const exposure = eotExposureMetric(rollup);
+  const gap = noBaselineGapMetric(rollup);
+
+  const nothing =
+    rollup.jobsConsidered === 0 && rollup.recordedDelayEventCount === 0;
+
+  return (
+    <SignalCard
+      title="Programme variance & delay exposure"
+      kind={behind.provenance.kind}
+      provenance={behind.provenance}
+    >
+      {nothing ? (
+        <EmptyNote>No live jobs and no recorded delays.</EmptyNote>
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat
+              label="Behind baseline"
+              value={String(rollup.behindBaseline.length)}
+              sub={`${rollup.jobsWithBaseline} live jobs planned`}
+            />
+            <Stat label="Overdue milestones" value={String(rollup.overdueMilestoneCount)} />
+            <Stat
+              label="Open EoT exposure"
+              value={`${rollup.openEotWorkingDaysLost} working days`}
+              sub={
+                rollup.openEotEventCount > 0
+                  ? `across ${rollup.openEotEventCount} event${rollup.openEotEventCount === 1 ? "" : "s"}${rollup.openEotUnquantifiedCount > 0 ? ` (${rollup.openEotUnquantifiedCount} unquantified)` : ""}`
+                  : null
+              }
+            />
+            <Stat
+              label="No baseline"
+              value={String(rollup.jobsWithoutBaseline)}
+              sub={rollup.jobsWithoutBaseline > 0 ? "live jobs with no plan" : null}
+            />
+          </dl>
+          {capped ? (
+            <p className="mt-2 text-xs text-amber-700">
+              Showing the first 200 live jobs — the rest are not assessed on this card. Delay
+              exposure still covers every recorded event.
+            </p>
+          ) : null}
+          {rollup.behindBaseline.length > 0 ? (
+            <ul className="mt-3 space-y-1">
+              {rollup.behindBaseline.slice(0, 5).map((j) => (
+                <li key={j.jobId} className="flex items-baseline justify-between gap-2 text-sm">
+                  <Link href={j.href} className="truncate text-slate-700 hover:underline">
+                    {j.label ?? "Job"}
+                  </Link>
+                  <span className="shrink-0 tabular-nums text-slate-500">
+                    {j.daysOverdue} day{j.daysOverdue === 1 ? "" : "s"} past plan
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {rollup.jobsWithoutBaseline > 0 ? (
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-slate-700">
+                  {rollup.jobsWithoutBaseline} live job
+                  {rollup.jobsWithoutBaseline === 1 ? " has" : "s have"} no programme baseline — they
+                  can&apos;t be measured against plan yet.
+                </p>
+                <KindBadge kind={gap.provenance.kind} />
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{gap.provenance.basis}</p>
+            </div>
+          ) : null}
+          {rollup.overdueMilestoneCount > 0 ? (
+            <p className="mt-3 text-xs text-slate-500">
+              <span className="mr-1 font-medium uppercase tracking-wide text-slate-400">
+                [{SIGNAL_KIND_LABEL[milestones.provenance.kind]}]
+              </span>
+              {rollup.overdueMilestoneCount} milestone
+              {rollup.overdueMilestoneCount === 1 ? "" : "s"} across{" "}
+              {rollup.jobsWithOverdueMilestones} job
+              {rollup.jobsWithOverdueMilestones === 1 ? "" : "s"} past their planned date.
+            </p>
+          ) : null}
+          <p className="mt-2 text-xs text-slate-500">
+            <span className="mr-1 font-medium uppercase tracking-wide text-slate-400">
+              [{SIGNAL_KIND_LABEL[exposure.provenance.kind]}]
+            </span>
+            {exposure.provenance.basis}
+          </p>
         </>
       )}
     </SignalCard>
