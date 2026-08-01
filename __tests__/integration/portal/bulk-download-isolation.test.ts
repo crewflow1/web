@@ -77,13 +77,13 @@ describeIntegration("Customer portal · bulk download isolation (real Postgres)"
     });
     await mk("invoices", {
       org_id: orgA, customer_id: custA1, number: `${T}-IA1`, status: "sent",
-      amount: 100, vat_total: 20, total: 120,
+      amount: 100, vat_total: 20,
     });
 
     // A2: one invoice only.
     await mk("invoices", {
       org_id: orgA, customer_id: custA2, number: `${T}-IA2`, status: "sent",
-      amount: 50, vat_total: 10, total: 60,
+      amount: 50, vat_total: 10,
     });
 
     // A1 also has a quote with NO public_token — never cleared the portal gate.
@@ -95,7 +95,7 @@ describeIntegration("Customer portal · bulk download isolation (real Postgres)"
     // B: one invoice + one portal quote in the OTHER org.
     await mk("invoices", {
       org_id: orgB, customer_id: custB, number: `${T}-IB`, status: "sent",
-      amount: 999, vat_total: 0, total: 999,
+      amount: 999, vat_total: 0,
     });
     await mk("quotes", {
       org_id: orgB, customer_id: custB, number: `${T}-QB`, status: "accepted",
