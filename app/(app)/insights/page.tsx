@@ -5,7 +5,9 @@ import {
   computeLeadInsights,
 } from "@/lib/ai/aggregates";
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
+import { loadCompanySignals } from "@/server/services/intelligence";
 import { InsightsSection } from "../dashboard/_insights";
+import { CompanySignals } from "./_company-signals";
 import { QuestionBox } from "./_question-box";
 import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 
@@ -37,9 +39,13 @@ export const dynamic = "force-dynamic";
 export default async function InsightsPage() {
   const { ctx } = await requireOrgContext();
 
-  const [activity, leads] = await Promise.all([
+  const [activity, leads, companySignals] = await Promise.all([
     computeActivitySummary(ctx.org.id, 30),
     computeLeadInsights(ctx.org.id, 90),
+    // Deterministic company signals — no model anywhere in this section.
+    // Group failures are isolated inside the loader: a failed read renders an
+    // explicit error card, never an empty metric.
+    loadCompanySignals(ctx.org.id),
   ]);
 
   // Overlay the LLM narrative on the ACTIVITY payload. The deterministic
@@ -99,6 +105,15 @@ export default async function InsightsPage() {
       <QuestionBox aiConfigured={isInferenceTierActivated()} />
 
       <InsightsSection activity={activityWithNarrative} leads={leads} />
+
+      {/*
+        COMPANY SIGNALS — the deterministic intelligence layer (Train 6).
+        Composes existing authorities only (rota/time, invoices, the progress
+        series, the retention register, aged debtors, job budgets, material
+        fulfilment, snags). Every card labels itself FACT/DERIVED/HEURISTIC
+        with a plain-English basis; nothing generative touches this section.
+      */}
+      <CompanySignals view={companySignals} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
