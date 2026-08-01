@@ -5,6 +5,7 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   ACTIVE_STATES,
+  TERMINAL_STATES,
   isActive,
   isTerminal,
   type ApprovalState,
@@ -31,7 +32,8 @@ import {
  *     permissions", enforced through architecture.
  *   • The engine NEVER sends, generates, or automates. approve() only marks an
  *     item approved; a separate, later phase reads `approved` rows and acts. expiry
- *     is a callable primitive, deliberately NOT wired to any cron here.
+ *     is a callable primitive — this module wires no scheduler of its own; the
+ *     deliberately-decided sweep lives at app/api/cron/approvals-expire (Train 11).
  *
  * Every function returns a discriminated result; none throw on a business outcome.
  * Idempotency mirrors expense-drafts: re-deciding a row already in the target
@@ -333,7 +335,8 @@ export async function rejectApproval(input: {
 
 // ---------------------------------------------------------------------
 // 6. Expire — the deadline passed (→ expired). A SYSTEM act: no reviewer gate.
-//    A primitive only — deliberately NOT wired to any cron in Phase 2.
+//    A primitive only — the scheduled sweep that drives it is the Bearer-gated
+//    /api/cron/approvals-expire route (Train 11), never this module.
 // ---------------------------------------------------------------------
 
 export async function expireApproval(id: string): Promise<ApprovalResult> {
@@ -349,8 +352,8 @@ export type ExpireDueResult = { ok: boolean; expired: number };
 
 /**
  * Expire every active approval whose deadline has passed. A callable housekeeping
- * primitive (e.g. for a future, deliberately-decided cron) — it is NOT auto-wired
- * here. Bounded per call. Returns how many it expired.
+ * primitive, driven by the deliberately-decided /api/cron/approvals-expire sweep
+ * (Train 11) — never auto-wired here. Bounded per call. Returns how many it expired.
  */
 export async function expireDueApprovals(nowIso?: string, limit = 50): Promise<ExpireDueResult> {
   const admin = createAdminClient();
@@ -436,6 +439,24 @@ export async function listPendingApprovals(limit = 50): Promise<ApprovalRow[]> {
     .order("requested_at", { ascending: true })
     .limit(Math.min(Math.max(limit, 1), 200));
   if (error) throw readFailure("hq-approvals: pending approvals", error);
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * The permanent record: decided/expired items (terminal states), newest decision
+ * first. The read model behind the console's history tab — terminal rows are
+ * immutable (DB trigger), so this is an archive read, never a work queue.
+ * Ordered by updated_at because `expired` rows carry no decided_at (expiry is a
+ * system act, not a reviewer decision).
+ */
+export async function listDecidedApprovals(limit = 50): Promise<ApprovalRow[]> {
+  const admin = createAdminClient();
+  const { data, error } = await approvals<ApprovalRow>(admin)
+    .select(ROW_COLUMNS)
+    .in("state", TERMINAL_STATES as unknown as string[])
+    .order("updated_at", { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 200));
+  if (error) throw readFailure("hq-approvals: decided approvals", error);
   return Array.isArray(data) ? data : [];
 }
 
