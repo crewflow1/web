@@ -23,10 +23,12 @@ export type ApiKeysReadiness = {
    */
   implemented: boolean;
   /**
-   * How many /api/v1 endpoints this build serves. Exactly 1 — the /api/v1/me
-   * probe, the substrate's living proof. A product API surface raising this
-   * number is a CEO decision, and the drift-guard test makes the raise a
-   * conscious diff line.
+   * How many /api/v1 route files this build ships. Currently 3 — the
+   * /api/v1/me probe plus the Train K jobs read pair (/api/v1/jobs and
+   * /api/v1/jobs/[id]). The jobs routes ship DARK behind FEATURE_PUBLIC_API_JOBS
+   * (they 404 until the CEO enables them), so this count is the built surface,
+   * not the live one. The drift-guard test ties it to the real file count so a
+   * route cannot be added or removed without a conscious diff here.
    */
   endpoints: number;
 };
@@ -39,8 +41,9 @@ export type IntegrationsReadiness = {
 export function getApiKeysReadiness(): ApiKeysReadiness {
   return {
     // lib/api-auth/{keygen,resolve,scopes}.ts + app/api/v1/me/route.ts
+    // + the Train K jobs read pair (dark behind FEATURE_PUBLIC_API_JOBS).
     implemented: true,
-    endpoints: 1,
+    endpoints: 3,
   };
 }
 
