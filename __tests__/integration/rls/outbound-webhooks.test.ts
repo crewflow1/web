@@ -241,7 +241,9 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
     expect(emit.error).toBeNull();
     const eventId = Number(emit.data);
 
-    const before = await svc().from("hq_event_consumers").select("last_event_id").eq("consumer", "outbound_webhooks").maybeSingle();
+    // The offset lives in the feature's PRIVATE store, NOT hq_event_consumers —
+    // the webhook train never registers a spine consumer.
+    const before = await svc().from("webhook_dispatch_state").select("last_event_id").eq("id", "singleton").maybeSingle();
     expect(before.error).toBeNull();
 
     // Drain twice.
@@ -256,8 +258,8 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
     expect((dels.data ?? []).length).toBe(1);
     expect(dels.data![0]!.verb).toBe("org.created");
 
-    // Offset advanced to at least our event.
-    const after = await svc().from("hq_event_consumers").select("last_event_id").eq("consumer", "outbound_webhooks").maybeSingle();
+    // Offset advanced to at least our event (private store).
+    const after = await svc().from("webhook_dispatch_state").select("last_event_id").eq("id", "singleton").maybeSingle();
     expect(Number(after.data?.last_event_id)).toBeGreaterThanOrEqual(eventId);
   });
 

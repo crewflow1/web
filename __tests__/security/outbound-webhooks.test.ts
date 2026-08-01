@@ -183,17 +183,24 @@ describe("migration — org pinning + integrity", () => {
   });
 });
 
-describe("migration — spine consumer wiring", () => {
+describe("migration — INDEPENDENT spine consumption (no timeline coupling)", () => {
   const sql = sqlOnly(read(MIGRATION));
 
-  it("registers the outbound_webhooks consumer at the current head (no history replay)", () => {
-    expect(sql).toMatch(/hq_consumer_register\('outbound_webhooks',\s*coalesce\(\(select max\(id\) from public\.hq_events\), 0\)\)/i);
+  it("owns a PRIVATE single-row offset, seeded at the current head (no history replay)", () => {
+    expect(sql).toMatch(/create table if not exists public\.webhook_dispatch_state/i);
+    expect(sql).toMatch(/insert into public\.webhook_dispatch_state \(id, last_event_id\)\s+values \('singleton', coalesce\(\(select max\(id\) from public\.hq_events\), 0\)\)/i);
+    // the drain reads + advances THAT row, not hq_event_consumers
+    expect(sql).toMatch(/from public\.webhook_dispatch_state\s+where id = 'singleton'\s+for update skip locked/i);
+    expect(sql).toMatch(/update public\.webhook_dispatch_state\s+set last_event_id = v_offset/i);
   });
 
-  it("adds the fan-out WHEN branch to the generic drainer's static dispatch", () => {
-    expect(sql).toMatch(/when 'outbound_webhooks' then\s+perform public\.webhook_fan_out_event\(p_event\)/i);
-    // the selftest branch is preserved (reproduced verbatim)
-    expect(sql).toMatch(/when '__spine_selftest__' then/i);
+  it("REGRESSION GUARD: never redefines hq_consumer_apply nor registers in hq_event_consumers", () => {
+    // The break this fixes: reproducing hq_consumer_apply dropped the timeline
+    // projection's WHEN branch and drained the Pulse to empty. This train must
+    // leave the generic drainer and every other consumer completely untouched.
+    expect(sql).not.toMatch(/function public\.hq_consumer_apply/i);
+    expect(sql).not.toMatch(/hq_consumer_register/i);
+    expect(sql).not.toMatch(/hq_event_consumers/i);
   });
 
   it("all new functions are SECURITY DEFINER with a pinned search_path, service_role-only", () => {

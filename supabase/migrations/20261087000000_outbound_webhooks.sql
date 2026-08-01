@@ -44,18 +44,25 @@
 -- and cannot fire during a delete cascade.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4. THE SPINE IS THE SOURCE (20260720000000)
+-- 4. THE SPINE IS THE SOURCE — CONSUMED INDEPENDENTLY (20260720000000)
 -- ─────────────────────────────────────────────────────────────────────────────
--- Fan-out consumes hq_events through the offset-consumer contract: a registered
--- `outbound_webhooks` consumer in hq_event_consumers, drained in strict id-order
--- with the offset advanced transactionally. hq_events carries no org_id, so the
--- fan-out resolves the owning org per event from the event's object (curated,
--- exception-safe resolver below) and inserts one delivery per matching ACTIVE
--- endpoint, idempotent via unique(endpoint_id, event_id). The fan-out is also
--- wired into the generic drainer's static-dispatch apply (one new WHEN branch,
--- the documented seam) so it stays correct if the global spine consumer is ever
--- enabled — but the feature owns its own gate via its own drain function, not the
--- global spine kill-switch.
+-- Fan-out reads hq_events in strict id-order behind a PRIVATE, single-row offset
+-- (webhook_dispatch_state, §8), advanced transactionally by this train's OWN
+-- drain (webhook_dispatch_drain), driven ONLY by the webhook-dispatch cron.
+--
+-- IT DELIBERATELY DOES NOT register a consumer in hq_event_consumers and DOES NOT
+-- touch hq_consumer_apply / the generic spine drainer. An earlier version wired a
+-- WHEN branch into hq_consumer_apply; because this migration applies AFTER the
+-- timeline-projection migration (20260720040000) had added its own `timeline`
+-- branch, reproducing hq_consumer_apply here silently DROPPED that branch and
+-- drained the Pulse timeline to empty. Owning a private offset keeps the webhook
+-- feature entirely independent of the timeline projection and the global spine
+-- kill-switch, and cannot regress any other consumer.
+--
+-- hq_events carries no org_id, so fan-out resolves the owning org per event from
+-- the event's object (curated, exception-safe resolver below) and inserts one
+-- delivery per matching ACTIVE endpoint, idempotent via unique(endpoint_id,
+-- event_id).
 
 -- Fresh CREATE only; no ALTER on a hot table, so no lock_timeout needed.
 
@@ -459,14 +466,36 @@ end $$;
 revoke all on function public.webhook_fan_out_event(public.hq_events) from public, anon, authenticated;
 grant execute on function public.webhook_fan_out_event(public.hq_events) to service_role;
 
--- ── 8. webhook_dispatch_drain — the feature's own offset drainer ─────────────
--- Mirrors hq_drain_consumer's offset discipline for the `outbound_webhooks`
--- consumer, but is NOT gated by hq_spine_consumer_enabled: the feature owns its
--- gate through its own cron (which 204-no-ops when the flag is off). One
--- transaction: lock the consumer row (SKIP LOCKED — an overlapping cron run is a
--- clean no-op), read a bounded id-ordered batch, fan each out idempotently,
--- advance the offset. Fan-out is conflict-safe and the resolver is
--- exception-safe, so a crash simply re-runs idempotent work on resume.
+-- ── 8. webhook_dispatch_state — the feature's OWN, PRIVATE offset ────────────
+-- DELIBERATELY NOT a row in hq_event_consumers, and this migration DELIBERATELY
+-- does NOT touch hq_consumer_apply. The generic spine drainer iterates every
+-- hq_event_consumers row and applies via static dispatch; putting our consumer
+-- there (or editing that apply) would (a) risk the generic drainer advancing our
+-- offset via its no-op `else` and stealing events from our fan-out when the
+-- global spine gate is on, and (b) — the regression this fixes — require
+-- reproducing hq_consumer_apply, which silently dropped the `timeline` projection
+-- branch a later migration had added, draining the Pulse timeline to empty.
+-- So outbound webhooks own a private single-row offset, read+advanced ONLY by
+-- webhook_dispatch_drain (§8b), completely independent of the timeline path.
+create table if not exists public.webhook_dispatch_state (
+  id            text primary key default 'singleton' check (id = 'singleton'),
+  last_event_id bigint not null default 0,
+  updated_at    timestamptz not null default now()
+);
+comment on table public.webhook_dispatch_state is
+  'Single-row (singleton) offset for the outbound-webhook fan-out. Deliberately separate from the shared spine consumer registry so the generic spine drainer never touches it — the webhook feature owns its offset entirely. Service-role only (RLS on, zero policies).';
+-- Service-role only: RLS enabled with NO policies (the hq-spine internal-table
+-- posture); anon/authenticated grants revoked.
+alter table public.webhook_dispatch_state enable row level security;
+revoke all on table public.webhook_dispatch_state from anon, authenticated;
+
+-- ── 8b. webhook_dispatch_drain — the feature's own offset drainer ────────────
+-- NOT gated by hq_spine_consumer_enabled and NOT part of the generic drainer: the
+-- feature owns its gate through its own cron (which 204-no-ops when the flag is
+-- off). One transaction: lock the singleton offset row (SKIP LOCKED — an
+-- overlapping cron run is a clean no-op), read a bounded id-ordered batch, fan
+-- each out idempotently, advance the offset. Fan-out is conflict-safe and the
+-- resolver is exception-safe, so a crash simply re-runs idempotent work on resume.
 create or replace function public.webhook_dispatch_drain(p_max_events integer default 500)
 returns jsonb
 language plpgsql
@@ -478,18 +507,13 @@ declare
   v_ev        public.hq_events%rowtype;
   v_processed integer := 0;
 begin
-  -- Require the consumer to be registered (hq_event_consumers is the registry).
-  perform 1 from public.hq_event_consumers where consumer = 'outbound_webhooks';
-  if not found then
-    return jsonb_build_object('consumer', 'outbound_webhooks', 'skipped', 'unregistered');
-  end if;
-
   select last_event_id into v_offset
-    from public.hq_event_consumers
-   where consumer = 'outbound_webhooks'
+    from public.webhook_dispatch_state
+   where id = 'singleton'
    for update skip locked;
   if not found then
-    return jsonb_build_object('consumer', 'outbound_webhooks', 'skipped', 'locked');
+    -- Absent (never seeded) or already locked by a concurrent run: clean no-op.
+    return jsonb_build_object('skipped', 'locked_or_unseeded');
   end if;
 
   for v_ev in
@@ -504,12 +528,11 @@ begin
     v_processed := v_processed + 1;
   end loop;
 
-  update public.hq_event_consumers
+  update public.webhook_dispatch_state
      set last_event_id = v_offset, updated_at = now()
-   where consumer = 'outbound_webhooks';
+   where id = 'singleton';
 
   return jsonb_build_object(
-    'consumer',   'outbound_webhooks',
     'processed',  v_processed,
     'new_offset', v_offset,
     'lag',        greatest((select coalesce(max(id), 0) from public.hq_events) - v_offset, 0)
@@ -518,44 +541,6 @@ end $$;
 
 revoke all on function public.webhook_dispatch_drain(integer) from public, anon, authenticated;
 grant execute on function public.webhook_dispatch_drain(integer) to service_role;
-
--- ── 9. Wire fan-out into the generic spine drainer (the documented seam) ──────
--- hq_consumer_apply (20260720020000) is static-dispatch by design. Reproduced
--- VERBATIM with ONE added WHEN branch, so if an operator ever enables the global
--- spine consumer, its drainer fans webhooks out correctly instead of advancing
--- our offset past events via the no-op `else`. Idempotent either way; the
--- feature's own drain (§8) remains the primary, flag-owned path.
-create or replace function public.hq_consumer_apply(
-  p_consumer text,
-  p_event    public.hq_events
-)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  case p_consumer
-    when '__spine_selftest__' then
-      if coalesce(p_event.payload ? '__poison__', false) then
-        raise exception 'spine selftest poison event %', p_event.id
-          using errcode = 'raise_exception';
-      end if;
-      insert into public.hq_consumer_selftest (consumer, event_id, verb)
-      values (p_consumer, p_event.id, p_event.verb)
-      on conflict (consumer, event_id) do nothing;
-    when 'outbound_webhooks' then
-      -- Train A: fan the event out to matching active endpoints (idempotent).
-      perform public.webhook_fan_out_event(p_event);
-    else
-      -- Forward-compatible no-op: consume (advance the offset) without projecting.
-      null;
-  end case;
-end;
-$$;
-
-revoke all on function public.hq_consumer_apply(text, public.hq_events) from public, anon, authenticated;
-grant execute on function public.hq_consumer_apply(text, public.hq_events) to service_role;
 
 -- ── 10. webhook_claim_deliveries — atomic claim for the delivery pass ────────
 -- Marks a bounded batch of DUE deliveries 'delivering' and returns them with the
@@ -763,9 +748,12 @@ end $$;
 revoke all on function public.webhook_enqueue_ping(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.webhook_enqueue_ping(uuid, uuid) to service_role;
 
--- ── 13. Register the spine consumer (new events only) ────────────────────────
--- Start at the current head so registering does NOT replay all history into
--- freshly-created webhooks. Idempotent (hq_consumer_register does nothing if the
--- row exists), so re-applying this migration never rewinds a live offset.
-select public.hq_consumer_register('outbound_webhooks',
-  coalesce((select max(id) from public.hq_events), 0));
+-- ── 13. Seed the private offset at the current head (new events only) ────────
+-- Start at the current head so a fresh install does NOT replay all history into
+-- freshly-created webhooks. ON CONFLICT DO NOTHING keeps a re-apply from rewinding
+-- a live offset. This is the ONLY consumer-offset state this train creates — it
+-- registers NOTHING in hq_event_consumers and edits NO spine function, so the
+-- generic drainer and the timeline projection are wholly unaffected.
+insert into public.webhook_dispatch_state (id, last_event_id)
+values ('singleton', coalesce((select max(id) from public.hq_events), 0))
+on conflict (id) do nothing;
