@@ -12,6 +12,7 @@ import {
 import { isOutcomeStatus, type CisStatus, type CisSubcontractor } from "@/lib/cis/types";
 import type { CisProfileInput, CisVerificationInput } from "@/lib/cis/schema";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * CIS subcontractor service (M1).
@@ -87,6 +88,67 @@ export async function getCisProfile(
   // a query failure must not silently join that set.
   if (error) throw readFailure("cis: subcontractor profile", error);
   return data ?? null;
+}
+
+/**
+ * The org's CIS subcontractor ROSTER — supplier id + display name ONLY, never
+ * the UTR or any other tax identifier.
+ *
+ * Exists so downstream DETERMINISTIC surfaces (the subcontractor scoreboard in
+ * server/services/company-health.ts) can scope supplier performance to CIS
+ * subcontractors WITHOUT any other module touching this tax table directly —
+ * `cis_subcontractors` is a single reader chokepoint pinned by
+ * __tests__/security/cis-subcontractors.test.ts, and this keeps it that way while
+ * exposing only the two non-sensitive identity columns.
+ *
+ * ADMIN-GATED AT RLS, like every read here: a non-admin caller reads an EMPTY
+ * roster WITHOUT an error (the getCisProfile asymmetry), so the scoreboard reads
+ * "nothing to show" rather than a false clean sheet.
+ *
+ * The client is an ARGUMENT (not created here) so the org pin can be proven
+ * against real Postgres in the integration suite, exactly like
+ * server/services/supplier-performance.ts.
+ */
+export type CisRosterEntry = { supplierId: string; name: string };
+
+type Row = Record<string, unknown>;
+
+export type CisRosterClient = {
+  from: (t: string) => {
+    select: (c: string) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        order: (
+          k: string,
+          o: { ascending: boolean },
+        ) => { range: (f: number, t: number) => PromiseLike<PageResult<Row>> };
+      };
+    };
+  };
+};
+
+export async function loadCisSubcontractorRoster(
+  db: CisRosterClient,
+  orgId: string,
+): Promise<CisRosterEntry[]> {
+  const { data, error } = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("cis_subcontractors")
+      // supplier_id + names ONLY — no utr, no company_number, no verification state.
+      .select("supplier_id, legal_name, trading_name")
+      .eq("org_id", orgId)
+      .order("supplier_id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) {
+    throw readFailure("cis: subcontractor roster", error as { message?: string | null; code?: string | null });
+  }
+  return data.map((r) => ({
+    supplierId: String(r.supplier_id),
+    name: String(r.trading_name ?? r.legal_name ?? ""),
+  }));
 }
 
 // ---------------------------------------------------------------------------

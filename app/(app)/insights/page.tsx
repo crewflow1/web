@@ -6,8 +6,10 @@ import {
 } from "@/lib/ai/aggregates";
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
 import { loadCompanySignals } from "@/server/services/intelligence";
+import { loadCompanyHealth } from "@/server/services/company-health";
 import { InsightsSection } from "../dashboard/_insights";
 import { CompanySignals } from "./_company-signals";
+import { CompanyHealthSection } from "./_company-health";
 import { QuestionBox } from "./_question-box";
 import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 
@@ -60,6 +62,13 @@ export default async function InsightsPage() {
     payload: activity,
   });
   const activityWithNarrative = { ...activity, summary };
+
+  // COMPANY HEALTH — the deterministic per-dimension RAG suite plus customer
+  // lifetime value and the CIS subcontractor scoreboard. Reuses the intelligence
+  // view already loaded above (passed in) so the heavy read runs once, then
+  // composes the H&S snapshot, the profitability authority and the supplier
+  // measurement on top. No model anywhere.
+  const companyHealth = await loadCompanyHealth(ctx.org.id, new Date(), companySignals);
 
   return (
     <div className="space-y-6">
@@ -114,6 +123,14 @@ export default async function InsightsPage() {
         with a plain-English basis; nothing generative touches this section.
       */}
       <CompanySignals view={companySignals} />
+
+      {/*
+        COMPANY HEALTH — the deterministic health suite (per-dimension RAG,
+        customer lifetime value, CIS subcontractor scoreboard). Composes the same
+        authorities as the signals above; no overall score, no model. Absence of
+        data bands as "Not enough data", never green.
+      */}
+      <CompanyHealthSection view={companyHealth} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
