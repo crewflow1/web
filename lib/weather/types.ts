@@ -134,6 +134,55 @@ export type WeatherWindow = {
 // The provider seam.
 // ---------------------------------------------------------------------------
 
+/**
+ * The typed failure a provider adapter throws from `fetchWindow`.
+ *
+ * Lives in the seam, not in a vendor file, so the fetch service can classify a
+ * failure WITHOUT importing any adapter — the service depends on the interface,
+ * the interface owns the failure vocabulary. Still pure: a class declaration
+ * performs no I/O and reads no environment.
+ *
+ * `retryable` is the adapter's own classification of the failure, made where
+ * the vendor knowledge lives:
+ *
+ *   retryable: true   — transient by the vendor's own contract: a network
+ *                       failure, a 429 (rate-limit) or a 5xx. Asking again is
+ *                       reasonable; the FETCH SERVICE decides how many times
+ *                       and how fast (backoff and the breaker live there, not
+ *                       here — an adapter that slept would serialise its own
+ *                       hidden policy into every caller).
+ *   retryable: false  — deterministic: a 4xx we caused (bad parameter, bad
+ *                       key), a malformed response body, a vendor error
+ *                       payload. Retrying would burn call budget to get the
+ *                       same answer.
+ *
+ * NOTE the contract this class does NOT change: an EMPTY window is returned,
+ * not thrown. Empty means "the vendor has no data there"; a throw means "the
+ * vendor gave no answer". Collapsing them would let a rate-limited provider
+ * read as fine weather (see the header of this file).
+ */
+export class WeatherProviderError extends Error {
+  /** Vendor id, lowercase — matches `WeatherProviderInfo.provider`. */
+  readonly provider: string;
+  /** True when the failure is transient by the vendor's own semantics. */
+  readonly retryable: boolean;
+  /** HTTP status when the failure had one; null for network/parse failures. */
+  readonly status: number | null;
+
+  constructor(input: {
+    readonly provider: string;
+    readonly message: string;
+    readonly retryable: boolean;
+    readonly status?: number | null;
+  }) {
+    super(`[weather:${input.provider}] ${input.message}`);
+    this.name = "WeatherProviderError";
+    this.provider = input.provider;
+    this.retryable = input.retryable;
+    this.status = input.status ?? null;
+  }
+}
+
 /** The stable identity of a weather provider. Recorded on every cached row. */
 export type WeatherProviderInfo = {
   /** Vendor id, lowercase — e.g. "metoffice", "open-meteo". */

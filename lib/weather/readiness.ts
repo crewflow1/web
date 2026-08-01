@@ -19,8 +19,9 @@
  *
  *   decisionLayerImplemented — the thresholds and the decision layer EXIST in
  *                              this build.            (build-time fact — TRUE)
- *   providerImplemented      — an adapter that can talk to a vendor exists.
- *                                                     (build-time fact — FALSE)
+ *   providerImplemented      — an adapter that can talk to THE SELECTED vendor
+ *                              exists. (build-time fact, per vendor: TRUE for
+ *                              open-meteo since Train 7, FALSE for metoffice)
  *   districtResolutionAvailable — we can turn a postcode district into the
  *                              coordinate every vendor's API requires.
  *                              (build-time fact — TRUE since the ONSPD-derived
@@ -31,7 +32,10 @@
  *   selectionUsable          — WEATHER_PROVIDER names a provider we could build.
  *                                                              (configuration)
  *   credentialsPresent       — the named vendor's secret is set. (configuration)
- *   available                — all of the above. FALSE today.
+ *   available                — all of the above. FALSE today in every
+ *                              environment: the open-meteo adapter exists, but
+ *                              no credential does, and the credential is the
+ *                              commercial-licence gate a human must open.
  *
  * THE LOAD-BEARING RULE, inherited verbatim:
  * **`available` can NEVER be true without `providerImplemented`.** No
@@ -44,7 +48,8 @@
  * district centroids, so this clause is SATISFIED — and it stays a separate
  * clause (derived from the dataset, not hard-coded true) because the dataset
  * is a build artefact that could regress, and a regression must flip the light
- * off by itself. The remaining blockers are the adapter and the credential.
+ * off by itself. The remaining blockers: the credential (for open-meteo, whose
+ * adapter shipped in Train 7) or the adapter AND credential (for metoffice).
  *
  * Reads `process.env` DIRECTLY (not the validated `env` object), imports no
  * vendor SDK and no `server-only`, so it is edge-safe, dependency-free, and CAN
@@ -74,15 +79,18 @@ export type KnownWeatherProvider = (typeof KNOWN_WEATHER_PROVIDERS)[number];
  * of the factory arms in ./index, in exactly the spirit of `SENDER_IMPLEMENTED`
  * in lib/comms/readiness.ts.
  *
- * EVERY ENTRY IS FALSE, and that is the whole point of this wave: the shape is
- * built, the provider is unbound, and the decision to bind one is a commercial
- * decision about licence and cost that belongs to a human. The security suite
- * pins these to false, so activating a provider is a VISIBLE diff that trips a
- * test — never a quiet configuration change.
+ * DELIBERATE FLIP (Train 7): `open-meteo` is TRUE because
+ * lib/weather/providers/open-meteo.ts now exists — a real adapter for both
+ * kinds, on the security suite's transport allowlist. This is exactly the
+ * visible, test-tripping diff the design demanded: the suite's pins were
+ * updated in the SAME commit to the new truth, which is that implementation
+ * alone still lights nothing — `available` also requires the selection AND
+ * `OPEN_METEO_API_KEY` (the commercial-licence gate), and no credential
+ * exists in any environment. `metoffice` remains false: no adapter file.
  */
 const PROVIDER_IMPLEMENTED: Readonly<Record<KnownWeatherProvider, boolean>> = {
   metoffice: false,
-  "open-meteo": false,
+  "open-meteo": true,
 };
 
 /**
@@ -90,8 +98,10 @@ const PROVIDER_IMPLEMENTED: Readonly<Record<KnownWeatherProvider, boolean>> = {
  *
  * Declaring the NAME is not introducing a secret: it is what lets this module
  * tell an operator precisely what is missing instead of "not configured".
- * Nothing in this build READS these for any purpose other than reporting, and
- * nothing could use one if it were set, because no adapter exists.
+ * Exactly TWO places read these values: this module (which reports presence)
+ * and the factory in ./index (which injects `OPEN_METEO_API_KEY` into the
+ * adapter it constructs — the adapter itself reads no environment). The
+ * security suite pins that pair as the only mentions.
  *
  * `open-meteo` maps to a key even though its open-access tier needs none: that
  * tier is licensed for NON-COMMERCIAL use only, and CrewFlow is a commercial
@@ -156,7 +166,11 @@ export type WeatherReadiness = {
   available: boolean;
   /** The thresholds and decision layer exist in this build. TRUE. */
   decisionLayerImplemented: boolean;
-  /** A provider adapter exists in this build for the selected vendor. FALSE. */
+  /**
+   * A provider adapter exists in this build for the SELECTED vendor. True only
+   * when WEATHER_PROVIDER="open-meteo" (Train 7); false for metoffice and for
+   * no selection — an unselected capability is not a usable one.
+   */
   providerImplemented: boolean;
   /**
    * A district can be turned into a coordinate. TRUE in this build — derived
@@ -174,7 +188,8 @@ export type WeatherReadiness = {
   provider: string | null;
   /**
    * `getWeatherProvider()` would hand back a provider — i.e. adapter exists AND
-   * selection usable AND credential present. FALSE.
+   * selection usable AND credential present. False in every environment today,
+   * because no weather credential is set anywhere.
    */
   providerResolvable: boolean;
   /** EVERYTHING standing between this runtime and `available`. Empty ⇒ available. */
@@ -182,8 +197,11 @@ export type WeatherReadiness = {
   /** Weather credentials present in this environment, by variable name. */
   credentialsFound: ReadonlyArray<string>;
   /**
-   * A vendor credential is set while NO adapter exists — the drift case, and the
-   * one honest warning this module owes an operator.
+   * A vendor credential is set while THAT VENDOR'S adapter does not exist —
+   * the drift case, and the one honest warning this module owes an operator.
+   * Scoped per vendor since Train 7: a MET_OFFICE_API_KEY sitting in an
+   * environment is stranded (no metoffice adapter), while OPEN_METEO_API_KEY
+   * now has exactly one governed reader — the factory arm in ./index.
    *
    * It is reported rather than "fixed", because the fix is a decision: either
    * finish the adapter (activate properly) or remove the credential. A key
@@ -282,7 +300,11 @@ export function getWeatherReadiness(
   }
 
   const credentialsFound = KNOWN_WEATHER_CREDENTIALS.filter((v) => present(process.env[v]));
-  const anyAdapterImplemented = Object.values(PROVIDER_IMPLEMENTED).some(Boolean);
+  // Per-vendor: a credential is stranded when ITS OWN vendor has no adapter to
+  // read it — the standing invitation for a future call site to bypass the seam.
+  const strandedCredentialRisk = KNOWN_WEATHER_PROVIDERS.some(
+    (v) => !PROVIDER_IMPLEMENTED[v] && present(process.env[VENDOR_CREDENTIAL[v]]),
+  );
 
   return {
     available,
@@ -296,7 +318,7 @@ export function getWeatherReadiness(
     providerResolvable,
     blockers,
     credentialsFound,
-    strandedCredentialRisk: credentialsFound.length > 0 && !anyAdapterImplemented,
+    strandedCredentialRisk,
   };
 }
 

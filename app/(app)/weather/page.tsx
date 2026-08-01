@@ -183,10 +183,10 @@ function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeather
 
       {readiness.strandedCredentialRisk ? (
         <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">
-          A weather provider credential is set in this environment, but no provider adapter
-          exists in this build so nothing can use it. Either finish the integration or remove
-          the credential — a key that nothing reads is an invitation for some future call site
-          to read it directly and bypass this seam.
+          A weather provider credential is set in this environment for a vendor whose adapter
+          does not exist in this build, so nothing can use it. Either finish that vendor&apos;s
+          integration or remove the credential — a key that nothing reads is an invitation for
+          some future call site to read it directly and bypass this seam.
         </p>
       ) : null}
 

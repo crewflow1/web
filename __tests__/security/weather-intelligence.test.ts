@@ -14,21 +14,35 @@ import type { PostcodeDistrict } from "@/lib/weather/types";
 /**
  * Weather intelligence — trust-boundary invariants (slot 20261074).
  *
- * This wave lands a whole domain BEFORE the provider that feeds it, so two
+ * This wave landed a whole domain BEFORE the provider that feeds it, so two
  * classes of claim have to be proven against SOURCE TEXT rather than against
  * behaviour, because the behaviour is (deliberately) "nothing happens":
  *
- *   A. THE DARKNESS IS REAL — AND NO NETWORK EGRESS IS POSSIBLE. No provider
- *      adapter exists, no credential can activate anything, and no file in the
- *      feature can open a socket. This is the strongest claim in the file and it
- *      is enforced by scanning the DIRECTORY rather than a hard-coded file list,
- *      so it survives someone adding a file later.
+ *   A. THE DARKNESS IS REAL — AND EGRESS IS CONFINED TO A DECLARED TRANSPORT.
+ *      DELIBERATE PIN UPDATE (Train 7): the original truth here was "no
+ *      provider adapter exists and no file can open a socket". The new truth,
+ *      updated in the same diff that shipped the adapter — exactly as this
+ *      suite was designed to force — is:
+ *        - exactly ONE adapter exists (lib/weather/providers/open-meteo.ts),
+ *          named on an explicit TRANSPORT allowlist, the analogue of the AI
+ *          ratchet's TRANSPORT set in ai-governance-closure.test.ts;
+ *        - every OTHER file in the feature is still swept for every egress
+ *          primitive and every vendor host, recursively;
+ *        - the transport is reachable ONLY through the factory's credential-
+ *          gated arm, and the credential (OPEN_METEO_API_KEY) exists in NO
+ *          environment — so `available` stays false, the factory returns
+ *          null, and CI still exercises zero egress: the adapter is tested
+ *          exclusively against checked-in fixture JSON.
+ *      The doors are pinned: the factory + the credential gate are what stand
+ *      between source-level capability and a byte on the wire.
  *
  *   B. THE CACHE'S BOUNDARY HOLDS. `weather_readings` is deliberately GLOBAL —
  *      no org_id — which makes its read policy the whole trust boundary. An
  *      unrestricted SELECT there would be a cross-tenant inference channel
  *      (which districts is the platform working in?), the same defect class the
- *      20261031–37 storage wave was written to eliminate.
+ *      20261031–37 storage wave was written to eliminate. The WRITE side is
+ *      service-role only (no INSERT policy), and the fetch pipeline that now
+ *      exercises it is pinned in section 9.
  *
  * SQL checks run over `exec` (-- comments stripped); TS checks over `code` (//
  * and block comments stripped) — so the prose that DOCUMENTS a contract can
@@ -57,6 +71,8 @@ const MIGRATION = "supabase/migrations/20261074000000_weather_intelligence.sql";
 
 const WEATHER_LIB_DIR = "lib/weather";
 const SERVICE = "server/services/weather.ts";
+const FETCH_SERVICE = "server/services/weather-fetch.ts";
+const CRON_ROUTE = "app/api/cron/weather-fetch/route.ts";
 const PAGE = "app/(app)/weather/page.tsx";
 const SEAM = "lib/weather/index.ts";
 const READINESS = "lib/weather/readiness.ts";
@@ -66,6 +82,19 @@ const POSTCODE = "lib/weather/postcode.ts";
 const TYPES = "lib/weather/types.ts";
 const GEO_INDEX = "lib/weather/geo/index.ts";
 const GEO_DATASET = "lib/weather/geo/district-centroids.ts";
+
+/**
+ * THE TRANSPORT ALLOWLIST (Train 7) — the exhaustive roster of files in this
+ * feature permitted to contain a network transport primitive in SOURCE. The
+ * direct analogue of the AI ratchet's TRANSPORT set: these files do not decide
+ * WHETHER to call a vendor — they are constructed by the factory, which has
+ * already checked selection + credential + district resolution — so a
+ * transport primitive here is capability behind a governed door, not an entry
+ * point. Every file NOT on this roster is swept for every egress pattern.
+ * Adding a vendor adapter means adding it HERE, visibly.
+ */
+const WEATHER_TRANSPORT = new Set(["lib/weather/providers/open-meteo.ts"]);
+const PROVIDERS_DIR = "lib/weather/providers";
 
 /** The PURE core: no I/O, no env, no clock. The geo resolver and its dataset
  * belong here — resolution is a Map lookup over a checked-in literal. */
@@ -87,9 +116,10 @@ function weatherLibFiles(dir: string = WEATHER_LIB_DIR): string[] {
   return out;
 }
 
-/** Every file this wave adds — the sweep for the egress and credential pins. */
+/** Every file the feature owns — the sweep for the egress and credential pins.
+ * Train 7 added the fetch pipeline and its cron seam to the boundary. */
 function allWaveFiles(): string[] {
-  return [...weatherLibFiles(), SERVICE, PAGE];
+  return [...weatherLibFiles(), SERVICE, FETCH_SERVICE, PAGE, CRON_ROUTE];
 }
 
 // =====================================================================
@@ -442,14 +472,24 @@ describe("purge_weather_readings — explicit, service-role only, unprivileged",
 });
 
 // =====================================================================
-// 4. A. THE DARKNESS IS REAL — AND NO NETWORK EGRESS IS POSSIBLE.
+// 4. A. THE DARKNESS IS REAL — AND EGRESS IS CONFINED TO THE TRANSPORT.
 //    The most important section in this file.
+//
+//    DELIBERATE PIN UPDATE (Train 7). The previous truth was "zero egress
+//    is POSSIBLE from this build" — no adapter, no fetch(, providers dir
+//    absent. The adapter now exists, so the pins state the NEW truth:
+//    egress primitives exist in EXACTLY the allowlisted transport files,
+//    the transport is constructible only through the factory's
+//    credential-gated arm, and with no credential in any environment the
+//    runtime behaviour is unchanged: dark, and nothing on any wire in CI.
+//    Every replaced pin below has an equivalent-or-stronger successor.
 // =====================================================================
 
-describe("A. zero network egress is possible from this build", () => {
+describe("A. egress exists only in the declared transport, behind credential-gated doors", () => {
   /** Anything that could put a byte on the wire. */
   const EGRESS_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
     [/\bfetch\s*\(/, "fetch("],
+    [/\bglobalThis\.fetch\b/, "globalThis.fetch"],
     [/\bXMLHttpRequest\b/, "XMLHttpRequest"],
     [/\bWebSocket\b/, "WebSocket"],
     [/\bnew\s+EventSource\b/, "EventSource"],
@@ -458,6 +498,15 @@ describe("A. zero network egress is possible from this build", () => {
     [/require\s*\(\s*["'](node:)?(http|https|net|axios|undici|node-fetch)["']/, "http client require"],
     [/navigator\.sendBeacon/, "sendBeacon"],
   ];
+
+  /**
+   * The transport may use the PLATFORM fetch and nothing else — no SDK, no
+   * http client library, no raw sockets. One sanctioned primitive keeps the
+   * egress surface auditable by eye.
+   */
+  const TRANSPORT_FORBIDDEN: ReadonlyArray<readonly [RegExp, string]> = EGRESS_PATTERNS.filter(
+    ([, label]) => label !== "fetch(" && label !== "globalThis.fetch",
+  );
 
   /** Any weather vendor host. A URL is the other half of an egress capability. */
   const VENDOR_HOSTS = [
@@ -473,21 +522,37 @@ describe("A. zero network egress is possible from this build", () => {
     /weatherkit\.apple/i,
   ];
 
+  /** The one vendor the transport is allowed to name. */
+  const TRANSPORT_HOST = /open-meteo\.com/i;
+
   it("scans the DIRECTORY, recursively, so a new file cannot slip past", () => {
     // The guard's own guard: if this ever reads zero files, every assertion below
-    // passes vacuously — and it must reach INTO lib/weather/geo, where the
-    // centroid dataset lives, or the dataset would sit outside the boundary.
+    // passes vacuously — and it must reach INTO lib/weather/geo and
+    // lib/weather/providers, or transport files would sit outside the boundary.
     const files = weatherLibFiles();
-    expect(files.length).toBeGreaterThanOrEqual(8);
+    expect(files.length).toBeGreaterThanOrEqual(9);
     expect(files).toContain(SEAM);
     expect(files).toContain(READINESS);
     expect(files).toContain(DECISION);
     expect(files).toContain(GEO_INDEX);
     expect(files).toContain(GEO_DATASET);
+    for (const t of WEATHER_TRANSPORT) {
+      expect(files, "the transport must be inside the swept boundary").toContain(t);
+    }
   });
 
-  it("NO file in the feature can open a network connection", () => {
+  it("the providers directory contains EXACTLY the allowlisted transport — no stowaway adapter", () => {
+    // Successor to the old "NO provider adapter directory exists" pin,
+    // strictly stronger than silence: the directory's whole contents are
+    // pinned, so a second adapter (or a helper that quietly grows a fetch)
+    // must be added to the roster in a visible diff.
+    const providerFiles = weatherLibFiles().filter((f) => f.startsWith(`${PROVIDERS_DIR}/`));
+    expect([...providerFiles].sort()).toEqual([...WEATHER_TRANSPORT].sort());
+  });
+
+  it("NO file OUTSIDE the transport allowlist can open a network connection", () => {
     for (const file of allWaveFiles()) {
+      if (WEATHER_TRANSPORT.has(file)) continue;
       const code = codeOf(read(file));
       for (const [pattern, label] of EGRESS_PATTERNS) {
         expect(code, `${file} must not contain ${label}`).not.toMatch(pattern);
@@ -495,8 +560,21 @@ describe("A. zero network egress is possible from this build", () => {
     }
   });
 
-  it("NO file in the feature contains a weather vendor URL", () => {
+  it("the transport uses the platform fetch ONLY — no SDK, no http client, no sockets", () => {
+    for (const file of WEATHER_TRANSPORT) {
+      const code = codeOf(read(file));
+      // Positive: it really is the transport (the pin is not vacuous)…
+      expect(code, `${file} should reference the platform fetch`).toMatch(/globalThis\.fetch/);
+      // …and negative: nothing beyond that one primitive.
+      for (const [pattern, label] of TRANSPORT_FORBIDDEN) {
+        expect(code, `${file} must not contain ${label}`).not.toMatch(pattern);
+      }
+    }
+  });
+
+  it("NO file outside the transport contains a weather vendor URL", () => {
     for (const file of allWaveFiles()) {
+      if (WEATHER_TRANSPORT.has(file)) continue;
       const code = codeOf(read(file));
       for (const host of VENDOR_HOSTS) {
         expect(code, `${file} must not reference ${host}`).not.toMatch(host);
@@ -504,34 +582,111 @@ describe("A. zero network egress is possible from this build", () => {
     }
   });
 
-  it("NO provider adapter directory exists", () => {
-    // The one place an adapter would live. Its absence is the structural fact
-    // behind `providerImplemented: false`.
-    expect(existsSync(resolve(ROOT, "lib/weather/providers"))).toBe(false);
-  });
-
-  it("the seam's every arm returns null — the switch is literally dark", () => {
-    const code = codeOf(read(SEAM));
-    const body = code.match(/export\s+function\s+getWeatherProvider[\s\S]*?\n\}/)![0];
-    // No construction of anything.
-    expect(body).not.toMatch(/\bnew\s+[A-Z]/);
-    expect(body).not.toMatch(/create\w*Provider\s*\(/);
-    // Every case resolves to null.
-    const returns = body.match(/return\s+[^;]+;/g) ?? [];
-    expect(returns.length).toBeGreaterThan(2);
-    for (const r of returns) {
-      expect(r, "every arm of the weather seam must return null").toMatch(/return\s+null;/);
+  it("the transport names ITS vendor only — and ONLY the commercial hosts (the licence pin)", () => {
+    for (const file of WEATHER_TRANSPORT) {
+      const code = codeOf(read(file));
+      for (const host of VENDOR_HOSTS) {
+        if (host.source === TRANSPORT_HOST.source) continue;
+        expect(code, `${file} must not reference another vendor: ${host}`).not.toMatch(host);
+      }
+      // THE LICENCE PIN. Open-Meteo's keyless open-access endpoints are
+      // non-commercial-only. The adapter must speak to the commercial
+      // `customer-` hosts and must NOT carry the free hosts at all — so there
+      // is no code path that could quietly run on the wrong licence.
+      expect(code).toMatch(/customer-api\.open-meteo\.com/);
+      expect(code).toMatch(/customer-archive-api\.open-meteo\.com/);
+      expect(code, "the non-commercial open-access host must not appear").not.toMatch(
+        /https:\/\/api\.open-meteo\.com/,
+      );
+      expect(code, "the non-commercial archive host must not appear").not.toMatch(
+        /https:\/\/archive-api\.open-meteo\.com/,
+      );
     }
   });
 
-  it("`PROVIDER_IMPLEMENTED` is false for EVERY known vendor, in the source", () => {
-    // Flipping one is a visible diff that trips this test — activation can never
-    // be a quiet configuration change.
+  it("the transport reads NO environment and NO credential — the key arrives injected", () => {
+    // The comms/AI pattern: transport is handed a key by the factory, which
+    // has already consulted readiness. An adapter that read the environment
+    // itself would be a door with its own lock, invisible to the readiness
+    // surface — exactly the strandedCredentialRisk drift class.
+    for (const file of WEATHER_TRANSPORT) {
+      const code = codeOf(read(file));
+      expect(code, `${file} must not read process.env`).not.toMatch(/process\.env/);
+      expect(code, `${file} must not import the validated env object`).not.toMatch(
+        /from\s+["']@\/lib\/env["']/,
+      );
+      for (const cred of KNOWN_WEATHER_CREDENTIALS) {
+        expect(code, `${file} must not name ${cred}`).not.toContain(cred);
+      }
+    }
+  });
+
+  it("the transport is imported by the SEAM alone — no side door into a vendor", () => {
+    // The factory arm is the ONLY sanctioned constructor path in runtime code.
+    // (Tests may import the adapter to feed it fixtures; runtime must not.)
+    const importsProviders = (code: string): boolean =>
+      /from\s+["'][^"']*weather\/providers\//.test(code) ||
+      /from\s+["']\.\/providers\//.test(code) ||
+      /from\s+["']\.\.\/providers\//.test(code);
+    for (const file of allWaveFiles()) {
+      if (file === SEAM || WEATHER_TRANSPORT.has(file)) continue;
+      expect(
+        importsProviders(codeOf(read(file))),
+        `${file} must not import a provider adapter directly — only the factory may`,
+      ).toBe(false);
+    }
+    expect(importsProviders(codeOf(read(SEAM))), "the seam is the one importer").toBe(true);
+  });
+
+  it("the seam's open-meteo arm is credential-gated; every other arm still returns null", () => {
+    // DELIBERATE PIN UPDATE (Train 7): successor to "every arm returns null".
+    // What is pinned now is the DOOR: construction happens in exactly one arm,
+    // AFTER a key-presence guard and a district-resolution guard, and the
+    // metoffice / off / default arms are unchanged — null, no construction.
+    const code = codeOf(read(SEAM));
+    const body = code.match(/export\s+function\s+getWeatherProvider[\s\S]*?\n\}/)![0];
+
+    // Exactly ONE construction site in the whole factory.
+    const constructions = body.match(/createOpenMeteoProvider\s*\(/g) ?? [];
+    expect(constructions, "exactly one adapter construction").toHaveLength(1);
+    expect(body).not.toMatch(/\bnew\s+[A-Z]/);
+
+    // The metoffice arm: everything between its case label and the open-meteo
+    // label returns null and constructs nothing.
+    const metofficeArm = body.match(/case\s+"metoffice":([\s\S]*?)case\s+"open-meteo":/)![1]!;
+    expect(metofficeArm).toMatch(/return\s+null;/);
+    expect(metofficeArm).not.toMatch(/createOpenMeteoProvider|new\s+[A-Z]/);
+
+    // The open-meteo arm: key read from the validated env, a null return
+    // GUARDING construction (order pinned by index), then the resolver check.
+    const openMeteoArm = body.match(/case\s+"open-meteo":([\s\S]*?)case\s+"":/)![1]!;
+    expect(openMeteoArm).toMatch(/env\.OPEN_METEO_API_KEY/);
+    expect(openMeteoArm).toMatch(/districtResolutionAvailable/);
+    const guardAt = openMeteoArm.search(/return\s+null;/);
+    const constructAt = openMeteoArm.search(/createOpenMeteoProvider\s*\(/);
+    expect(guardAt, "the missing-key gate exists").toBeGreaterThan(-1);
+    expect(constructAt).toBeGreaterThan(guardAt);
+
+    // The off/unknown arms after the switch's vendor cases: null, always.
+    const tail = body.slice(body.indexOf('case ""'));
+    const tailReturns = tail.match(/return\s+[^;]+;/g) ?? [];
+    expect(tailReturns.length).toBeGreaterThanOrEqual(2);
+    for (const r of tailReturns) {
+      expect(r, "off/default arms must return null").toMatch(/return\s+null;/);
+    }
+  });
+
+  it("`PROVIDER_IMPLEMENTED` is true for open-meteo ALONE — metoffice stays false", () => {
+    // DELIBERATE PIN UPDATE (Train 7): the flip this suite existed to make
+    // visible has happened, in the same diff as the adapter and this pin.
+    // What is pinned now: exactly ONE implemented vendor, and it is the one
+    // whose adapter file the transport roster names. A second `true` without
+    // a second adapter on the roster cannot land quietly.
     const code = codeOf(read(READINESS));
     const map = code.match(/PROVIDER_IMPLEMENTED[\s\S]*?=\s*\{([\s\S]*?)\}/)![1]!;
     expect(map).toMatch(/metoffice:\s*false/);
-    expect(map).toMatch(/"open-meteo":\s*false/);
-    expect(map).not.toMatch(/:\s*true/);
+    expect(map).toMatch(/"open-meteo":\s*true/);
+    expect(map.match(/:\s*true/g), "exactly one implemented vendor").toHaveLength(1);
   });
 
   it("district resolution is DERIVED from the dataset — never a hard-coded true", () => {
@@ -598,28 +753,45 @@ describe("A. zero network egress is possible from this build", () => {
     expect(script).not.toMatch(/from\s+["']node:(http|https|net|tls|dgram)["']/);
   });
 
-  it("the DARK READINESS SURFACES still report unavailable at RUNTIME — district resolution alone lights nothing", () => {
+  it("the DARK READINESS SURFACES still report unavailable at RUNTIME — an adapter in the build lights nothing", () => {
+    // Train 7 note: `providerImplemented` is still false HERE because nothing
+    // in this environment selects a vendor (WEATHER_PROVIDER unset ⇒ there is
+    // no vendor whose implementation could count). The adapter existing as a
+    // file changes no runtime answer without selection + credential.
     const r = getWeatherReadiness();
     expect(r.available).toBe(false);
     expect(isWeatherAvailable()).toBe(false);
     expect(r.providerImplemented).toBe(false);
     expect(r.providerResolvable).toBe(false);
-    // THE PIN UPDATE: this is the one field that flipped, and it flipped
-    // because the dataset shipped — not because anything can now egress.
     expect(r.districtResolutionAvailable).toBe(true);
     expect(r.blockers.length).toBeGreaterThan(0);
     // The blocker list no longer names the coordinate dataset…
     expect(r.blockers.join(" ")).not.toMatch(/coordinate dataset is missing/i);
-    // …and what remains is exactly the provider decision (selection/adapter/key).
+    // …and what remains is exactly the provider decision (selection/key).
   });
 
   it("COMPOSITE INVARIANT: dataset + credential can NEVER make weather available without an adapter", () => {
-    // The clause that keeps the feature dark after this wave: `available`
-    // still requires providerResolvable, which no dataset and no env var can
-    // manufacture. Injected, so it holds regardless of today's configuration.
+    // Still the metoffice truth, verbatim: `available` requires
+    // providerResolvable, which no dataset and no env var can manufacture.
+    // Injected, so it holds regardless of today's configuration.
     const r = getWeatherReadiness({
       providerImplemented: false,
       credentialPresent: true,
+      districtResolutionAvailable: true,
+      decisionLayerImplemented: true,
+    });
+    expect(r.available).toBe(false);
+    expect(r.providerResolvable).toBe(false);
+  });
+
+  it("COMPOSITE INVARIANT (Train 7): a BUILT adapter without its credential is still dark", () => {
+    // The new door's other half, injected: even granting the build-time fact
+    // (adapter implemented) and every other capability, a missing credential
+    // alone keeps `available` false. This is the commercial-licence gate as a
+    // testable invariant — the state of every real environment today.
+    const r = getWeatherReadiness({
+      providerImplemented: true,
+      credentialPresent: false,
       districtResolutionAvailable: true,
       decisionLayerImplemented: true,
     });
@@ -673,16 +845,29 @@ describe("A. zero network egress is possible from this build", () => {
     }
   });
 
-  it("no weather credential is read by anything that could make a request", () => {
-    // Only the readiness module (which reports) and lib/env (which declares) may
-    // mention these names. The seam reads WEATHER_PROVIDER only.
+  it("weather credentials are read by the two governed doors ONLY — readiness and the factory", () => {
+    // DELIBERATE PIN UPDATE (Train 7): the readiness module reports presence;
+    // the SEAM's factory arm now also reads OPEN_METEO_API_KEY — that is the
+    // credential-gated door itself, and it INJECTS the key into the adapter.
+    // Everything else — the adapter, both services, the cron route, the page —
+    // must not so much as name a credential. Same shape as the AI ratchet:
+    // the door may hold the key, the transport may not.
+    const mayMentionCredentials = new Set([READINESS, SEAM]);
     for (const file of allWaveFiles()) {
-      if (file === READINESS) continue;
+      if (mayMentionCredentials.has(file)) continue;
       const code = codeOf(read(file));
       for (const cred of KNOWN_WEATHER_CREDENTIALS) {
         expect(code, `${file} must not read ${cred}`).not.toContain(cred);
       }
     }
+    // And the factory's read is via the VALIDATED env object, never process.env
+    // (the process.env sweep above already enforces the raw-read half).
+    const seam = codeOf(read(SEAM));
+    expect(seam).toMatch(/env\.OPEN_METEO_API_KEY/);
+    expect(seam).not.toMatch(/process\.env\.OPEN_METEO_API_KEY/);
+    // The metoffice credential still has NO reader outside readiness — there
+    // is no metoffice adapter to hand it to.
+    expect(seam).not.toContain("MET_OFFICE_API_KEY");
   });
 });
 
@@ -860,5 +1045,121 @@ describe("readiness is observable", () => {
   it("the health endpoint reports `available`, never the weaker 'a key is set'", () => {
     const code = codeOf(read("app/api/health/route.ts"));
     expect(code).not.toMatch(/weather\.credentialsPresent/);
+  });
+});
+
+// =====================================================================
+// 9. The fetch pipeline (Train 7) — the service-role writer.
+//    `weather_readings` has NO insert policy, so this service is the only
+//    code that can fill the cache — which makes its discipline part of the
+//    trust boundary, not an implementation detail.
+// =====================================================================
+
+describe("the fetch pipeline writes with service role, honestly, and dark-first", () => {
+  const code = () => codeOf(read(FETCH_SERVICE));
+
+  it("checks readiness BEFORE resolving a provider or constructing the admin client", () => {
+    // The same source-order pin as the read service's short-circuit: on a dark
+    // build this runs ZERO queries and constructs ZERO clients.
+    const c = code();
+    const readinessAt = c.search(/getWeatherReadiness\s*\(/);
+    const guardAt = c.search(/if\s*\(\s*!\s*readiness\.available\s*\)/);
+    const providerAt = c.search(/getWeatherProvider\s*\(/);
+    const adminAt = c.search(/createAdminClient\s*\(/);
+    expect(readinessAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeGreaterThan(readinessAt);
+    expect(providerAt).toBeGreaterThan(guardAt);
+    expect(adminAt).toBeGreaterThan(providerAt);
+  });
+
+  it("writes through the SERVICE-ROLE client and never the tenant client", () => {
+    // The inverse of the read service's pin, and just as deliberate: the read
+    // side must go through RLS, the write side cannot (no INSERT policy).
+    const c = code();
+    expect(c).toMatch(/createAdminClient/);
+    expect(c).not.toMatch(/@\/lib\/supabase\/server/);
+  });
+
+  it("upserts onto EXACTLY the migration's identity index", () => {
+    expect(code()).toMatch(/onConflict:\s*"provider,postcode_district,kind,valid_at"/);
+  });
+
+  it("records the resolver's coordinates as provenance and NEVER guesses a district", () => {
+    const c = code();
+    expect(c).toMatch(/resolveDistrictCoordinates\s*\(/);
+    expect(c).toMatch(/resolved_lat:\s*coordinates\.lat/);
+    expect(c).toMatch(/resolved_lon:\s*coordinates\.lon/);
+    // An unresolvable district is a RECORDED outcome, not a silent skip and
+    // never a substituted coordinate.
+    expect(c).toMatch(/"unresolvable_district"/);
+  });
+
+  it("derives expires_at from kind in exactly the CHECK's shape — forecast expires, observation never", () => {
+    expect(code()).toMatch(
+      /expires_at:\s*kind\s*===\s*"forecast"\s*\?[\s\S]{0,160}?:\s*null/,
+    );
+  });
+
+  it("reads are LOUD — a failed watch or freshness read aborts rather than refetching blind", () => {
+    const c = code();
+    expect(c).toMatch(/import\s*\{\s*reportReadFailure\s*\}\s*from\s*"@\/lib\/supabase\/read-failure"/);
+    expect((c.match(/reportReadFailure\s*\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("retry is bounded, backoff is jittered-injectable, and the breaker exists", () => {
+    const c = code();
+    expect(c).toMatch(/MAX_ATTEMPTS\s*=\s*3/);
+    expect(c).toMatch(/BREAKER_TRIP_AFTER\s*=\s*3/);
+    expect(c).toMatch(/BACKOFF_CAP_MS/);
+    // Injectable time: no hidden real sleep in tests, no un-mockable clock.
+    expect(c).toMatch(/options\.sleep/);
+    expect(c).toMatch(/options\.random/);
+    expect(c).toMatch(/options\.now\s*\?\?\s*new Date\(\)/);
+  });
+
+  it("bounds one run — a runaway watch list cannot eat a call budget", () => {
+    expect(code()).toMatch(/MAX_DISTRICTS_PER_RUN\s*=\s*200/);
+  });
+
+  it("retries ONLY what the adapter classified retryable — via the seam's typed error", () => {
+    const c = code();
+    expect(c).toMatch(/WeatherProviderError/);
+    expect(c).toMatch(/e\s+instanceof\s+WeatherProviderError\s*&&\s*e\.retryable/);
+  });
+});
+
+// =====================================================================
+// 10. The cron seam — authorised, dark-safe, and DELIBERATELY unscheduled.
+// =====================================================================
+
+describe("the weather-fetch cron route is gated, dark-safe and unscheduled", () => {
+  const code = () => codeOf(read(CRON_ROUTE));
+
+  it("auth first, readiness second, telemetry only after BOTH — dark is a 204 with zero DB access", () => {
+    // Telemetry writes a cron_runs row through the admin client, so the dark
+    // no-op must return BEFORE it — a scheduled-but-dark tick touches nothing.
+    const c = code();
+    const authAt = c.search(/isCronAuthorised\s*\(/);
+    const readyAt = c.search(/isWeatherAvailable\s*\(/);
+    const noopAt = c.search(/status:\s*204/);
+    const telemetryAt = c.search(/withCronTelemetry\s*\(/);
+    expect(authAt).toBeGreaterThan(-1);
+    expect(readyAt).toBeGreaterThan(authAt);
+    expect(noopAt).toBeGreaterThan(readyAt);
+    expect(telemetryAt).toBeGreaterThan(noopAt);
+  });
+
+  it("touches no database client of its own — the service owns every read and write", () => {
+    const c = code();
+    expect(c).not.toMatch(/@\/lib\/supabase/);
+    expect(c).not.toMatch(/createAdminClient|createClient/);
+  });
+
+  it("is ABSENT from vercel.json — scheduling it is an activation step, not an engineering one", () => {
+    // The pin that keeps 'built' and 'running' as two different decisions:
+    // adding the schedule is a visible diff against this test's expectation
+    // of silence, to be updated in the activation change itself.
+    const vercel = read("vercel.json");
+    expect(vercel).not.toContain("weather-fetch");
   });
 });

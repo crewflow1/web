@@ -1,0 +1,33 @@
+{
+  "__fixture_note": "HAND-DERIVED from Open-Meteo's documented historical/archive (ERA5) response shape (https://open-meteo.com/ docs, July 2026) — same parallel-array contract as the forecast API, WITHOUT precipitation_probability or visibility (the archive publishes neither). The trailing all-null hours model the archive's ~5-day publication lag; the adapter must drop them rather than cache rows of nothing. NOT a captured live response; no network request was made to produce it.",
+  "latitude": 53.8,
+  "longitude": -1.5625,
+  "generationtime_ms": 1.104,
+  "utc_offset_seconds": 0,
+  "timezone": "UTC",
+  "timezone_abbreviation": "UTC",
+  "elevation": 47.0,
+  "hourly_units": {
+    "time": "iso8601",
+    "temperature_2m": "°C",
+    "relative_humidity_2m": "%",
+    "precipitation": "mm",
+    "wind_speed_10m": "m/s",
+    "wind_gusts_10m": "m/s"
+  },
+  "hourly": {
+    "time": [
+      "2026-11-09T00:00",
+      "2026-11-09T01:00",
+      "2026-11-09T02:00",
+      "2026-11-09T03:00",
+      "2026-11-09T04:00",
+      "2026-11-09T05:00"
+    ],
+    "temperature_2m": [6.2, 6.0, 5.7, 5.5, null, null],
+    "relative_humidity_2m": [88, 89, 90, 91, null, null],
+    "precipitation": [1.2, 2.4, 0.6, 0.0, null, null],
+    "wind_speed_10m": [4.8, 5.1, 5.5, 5.2, null, null],
+    "wind_gusts_10m": [8.9, 9.6, 10.4, 9.8, null, null]
+  }
+}
