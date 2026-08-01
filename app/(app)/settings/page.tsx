@@ -6,6 +6,7 @@ import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
 import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -233,6 +234,24 @@ export default async function SettingsPage() {
               className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
             >
               Manage API keys
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {/* Webhooks ------------------------------------------------------ */}
+      {isAdmin && outboundWebhooksEnabled() ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Webhooks</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Receive signed HTTPS notifications when CrewFlow events happen.
+          </p>
+          <div className="mt-4">
+            <Link
+              href="/settings/webhooks"
+              className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              Manage webhooks
             </Link>
           </div>
         </section>
