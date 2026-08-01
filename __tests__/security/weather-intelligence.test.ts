@@ -6,6 +6,7 @@ import {
   isWeatherAvailable,
   KNOWN_WEATHER_CREDENTIALS,
 } from "@/lib/weather/readiness";
+import { DISTRICT_CENTROID_COUNT } from "@/lib/weather/geo/district-centroids";
 import { assessWorkability } from "@/lib/weather/decision";
 import { WORK_TYPES } from "@/lib/weather/thresholds";
 import type { PostcodeDistrict } from "@/lib/weather/types";
@@ -63,15 +64,27 @@ const DECISION = "lib/weather/decision.ts";
 const THRESHOLDS = "lib/weather/thresholds.ts";
 const POSTCODE = "lib/weather/postcode.ts";
 const TYPES = "lib/weather/types.ts";
+const GEO_INDEX = "lib/weather/geo/index.ts";
+const GEO_DATASET = "lib/weather/geo/district-centroids.ts";
 
-/** The PURE core: no I/O, no env, no clock. */
-const PURE_CORE = [TYPES, POSTCODE, THRESHOLDS, DECISION] as const;
+/** The PURE core: no I/O, no env, no clock. The geo resolver and its dataset
+ * belong here — resolution is a Map lookup over a checked-in literal. */
+const PURE_CORE = [TYPES, POSTCODE, THRESHOLDS, DECISION, GEO_INDEX, GEO_DATASET] as const;
 
-/** Every TypeScript file in lib/weather, read from disk so a new file is caught. */
-function weatherLibFiles(): string[] {
-  return readdirSync(resolve(ROOT, WEATHER_LIB_DIR))
-    .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
-    .map((f) => `${WEATHER_LIB_DIR}/${f}`);
+/**
+ * Every TypeScript file under lib/weather — RECURSIVE, so lib/weather/geo/**
+ * (the district-centroid dataset and its resolver) sits inside the same
+ * zero-egress boundary as the rest of the feature, and any future subdirectory
+ * is swept automatically rather than remembered manually.
+ */
+function weatherLibFiles(dir: string = WEATHER_LIB_DIR): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...weatherLibFiles(rel));
+    else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) out.push(rel);
+  }
+  return out;
 }
 
 /** Every file this wave adds — the sweep for the egress and credential pins. */
@@ -460,14 +473,17 @@ describe("A. zero network egress is possible from this build", () => {
     /weatherkit\.apple/i,
   ];
 
-  it("scans the DIRECTORY, not a fixed list, so a new file cannot slip past", () => {
+  it("scans the DIRECTORY, recursively, so a new file cannot slip past", () => {
     // The guard's own guard: if this ever reads zero files, every assertion below
-    // passes vacuously.
+    // passes vacuously — and it must reach INTO lib/weather/geo, where the
+    // centroid dataset lives, or the dataset would sit outside the boundary.
     const files = weatherLibFiles();
-    expect(files.length).toBeGreaterThanOrEqual(6);
+    expect(files.length).toBeGreaterThanOrEqual(8);
     expect(files).toContain(SEAM);
     expect(files).toContain(READINESS);
     expect(files).toContain(DECISION);
+    expect(files).toContain(GEO_INDEX);
+    expect(files).toContain(GEO_DATASET);
   });
 
   it("NO file in the feature can open a network connection", () => {
@@ -518,19 +534,97 @@ describe("A. zero network egress is possible from this build", () => {
     expect(map).not.toMatch(/:\s*true/);
   });
 
-  it("district resolution is false — the activation blocker that is not a credential", () => {
+  it("district resolution is DERIVED from the dataset — never a hard-coded true", () => {
+    // DELIBERATE PIN UPDATE (Train 3): this blocker is now CLOSED — the build
+    // carries the ONSPD-derived centroid dataset — and the previous pin
+    // (`DISTRICT_RESOLUTION_AVAILABLE = false`) was updated in the same diff
+    // that shipped the data, exactly as designed: activation is a visible,
+    // test-tripping change. What is pinned now is HOW it is true: computed
+    // from the dataset's size, so a deleted or truncated dataset flips the
+    // capability off by itself. A literal `= true` (or `= false`) here would
+    // be the flag outliving the data — the false-green one layer down.
     const code = codeOf(read(READINESS));
-    expect(code).toMatch(/DISTRICT_RESOLUTION_AVAILABLE\s*=\s*false/);
+    expect(code).toMatch(
+      /DISTRICT_RESOLUTION_AVAILABLE\s*=\s*DISTRICT_CENTROID_COUNT\s*>\s*MINIMUM_DISTRICT_COVERAGE/,
+    );
+    expect(code).not.toMatch(/DISTRICT_RESOLUTION_AVAILABLE\s*=\s*(true|false)\b/);
+    // The floor is meaningful: the UK has ~2,900 districts.
+    expect(code).toMatch(/MINIMUM_DISTRICT_COVERAGE\s*=\s*2500/);
   });
 
-  it("the DARK READINESS SURFACES report false at RUNTIME, not just in source", () => {
+  it("the centroid dataset is real, checked in, and big enough to mean UK coverage", () => {
+    expect(existsSync(resolve(ROOT, GEO_DATASET))).toBe(true);
+    expect(DISTRICT_CENTROID_COUNT).toBeGreaterThan(2500);
+    // And it declares its provenance and licence obligations in-band.
+    const raw = read(GEO_DATASET);
+    expect(raw).toMatch(/ONS Postcode Directory/);
+    expect(raw).toMatch(/Open Government Licence/);
+    expect(raw).toMatch(/Contains OS data © Crown copyright/);
+    expect(raw).toMatch(/Contains Royal Mail data © Royal Mail copyright/);
+  });
+
+  it("the dataset ships in the repo — resolution NEVER fetches, reads disk, or geocodes", () => {
+    // The dataset and resolver are inside the recursive egress sweep above;
+    // this adds the runtime-shape pins: pure data + a Map lookup, nothing else.
+    for (const file of [GEO_INDEX, GEO_DATASET]) {
+      const code = codeOf(read(file));
+      expect(code, `${file} must not read process.env`).not.toMatch(/process\.env/);
+      expect(code, `${file} must not read the filesystem`).not.toMatch(
+        /node:fs|from\s+["']fs["']/,
+      );
+      expect(code, `${file} must not import server-only`).not.toMatch(/server-only/);
+      expect(code, `${file} must not import from scripts/`).not.toMatch(
+        /from\s+["'][^"']*scripts\//,
+      );
+    }
+  });
+
+  it("the derivation script stays OUT of the runtime — scripts/ is tooling, not a dependency", () => {
+    // The script that BUILT the dataset may use node:fs against a downloaded
+    // ONSPD; nothing in the feature may reach it at runtime.
+    // Import/require ONLY — the readiness blocker string may NAME the script
+    // as the remedy for a regressed dataset; naming a tool is not depending
+    // on one.
+    for (const file of allWaveFiles()) {
+      const code = codeOf(read(file));
+      expect(code, `${file} must not import the derivation script`).not.toMatch(
+        /(from\s+["']|require\s*\(\s*["'])[^"']*(scripts\/|derive-district-centroids)/,
+      );
+    }
+    // And the script itself performs no network I/O — it derives from a file a
+    // human downloaded, it does not download.
+    const script = codeOf(read("scripts/derive-district-centroids.ts"));
+    expect(script).not.toMatch(/\bfetch\s*\(/);
+    expect(script).not.toMatch(/from\s+["']node:(http|https|net|tls|dgram)["']/);
+  });
+
+  it("the DARK READINESS SURFACES still report unavailable at RUNTIME — district resolution alone lights nothing", () => {
     const r = getWeatherReadiness();
     expect(r.available).toBe(false);
     expect(isWeatherAvailable()).toBe(false);
     expect(r.providerImplemented).toBe(false);
     expect(r.providerResolvable).toBe(false);
-    expect(r.districtResolutionAvailable).toBe(false);
+    // THE PIN UPDATE: this is the one field that flipped, and it flipped
+    // because the dataset shipped — not because anything can now egress.
+    expect(r.districtResolutionAvailable).toBe(true);
     expect(r.blockers.length).toBeGreaterThan(0);
+    // The blocker list no longer names the coordinate dataset…
+    expect(r.blockers.join(" ")).not.toMatch(/coordinate dataset is missing/i);
+    // …and what remains is exactly the provider decision (selection/adapter/key).
+  });
+
+  it("COMPOSITE INVARIANT: dataset + credential can NEVER make weather available without an adapter", () => {
+    // The clause that keeps the feature dark after this wave: `available`
+    // still requires providerResolvable, which no dataset and no env var can
+    // manufacture. Injected, so it holds regardless of today's configuration.
+    const r = getWeatherReadiness({
+      providerImplemented: false,
+      credentialPresent: true,
+      districtResolutionAvailable: true,
+      decisionLayerImplemented: true,
+    });
+    expect(r.available).toBe(false);
+    expect(r.providerResolvable).toBe(false);
   });
 
   it("readiness mirrors the comms precedent's decomposition — not one ambiguous boolean", () => {

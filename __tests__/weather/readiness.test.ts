@@ -42,7 +42,9 @@ describe("the DARK default posture", () => {
     expect(r.available).toBe(false);
     expect(isWeatherAvailable()).toBe(false);
     expect(r.providerImplemented).toBe(false);
-    expect(r.districtResolutionAvailable).toBe(false);
+    // TRUE since Train 3: the ONSPD centroid dataset ships in-build. It does
+    // not light anything up on its own — `available` stays false above.
+    expect(r.districtResolutionAvailable).toBe(true);
     expect(r.provider).toBeNull();
     expect(r.providerResolvable).toBe(false);
     expect(r.blockers.length).toBeGreaterThan(0);
@@ -59,12 +61,20 @@ describe("the DARK default posture", () => {
     expect(getWeatherReadiness().blockers.join(" ")).toMatch(/WEATHER_PROVIDER must name/);
   });
 
-  it("always names the missing coordinate source — the blocker most likely to be missed", () => {
+  it("no longer lists the coordinate dataset — that blocker is CLOSED by the in-build centroids", () => {
     for (const k of ENV_KEYS) delete process.env[k];
-    const blockers = getWeatherReadiness().blockers.join(" ");
-    expect(blockers).toMatch(/coordinate source/i);
-    // And it points at the actual remedy, with its licence.
-    expect(blockers).toMatch(/Code-Point Open|ONS Postcode Directory/);
+    const r = getWeatherReadiness();
+    expect(r.districtResolutionAvailable).toBe(true);
+    expect(r.blockers.join(" ")).not.toMatch(/coordinate/i);
+  });
+
+  it("if the dataset ever regressed, the blocker would name the dataset AND the remedy", () => {
+    // Injected — the honest wording is part of the contract, not decoration.
+    for (const k of ENV_KEYS) delete process.env[k];
+    const blockers = getWeatherReadiness({ districtResolutionAvailable: false }).blockers.join(" ");
+    expect(blockers).toMatch(/dataset is missing or incomplete/i);
+    expect(blockers).toMatch(/ONS Postcode Directory/);
+    expect(blockers).toMatch(/derive-district-centroids/);
     expect(blockers).toMatch(/Open Government Licence/i);
   });
 });
@@ -216,9 +226,10 @@ describe("stranded credential risk", () => {
     const blockers = getWeatherReadiness().blockers;
     expect(blockers.join(" ")).toMatch(/no 'metoffice' provider adapter/);
     expect(blockers).toContain("MET_OFFICE_API_KEY");
-    expect(blockers.join(" ")).toMatch(/coordinate source/i);
-    // Three distinct, independently actionable items.
-    expect(blockers.length).toBeGreaterThanOrEqual(3);
+    // Two distinct, independently actionable items. (The coordinate dataset
+    // used to be the third; Train 3 closed it, so it must NOT reappear here.)
+    expect(blockers.length).toBeGreaterThanOrEqual(2);
+    expect(blockers.join(" ")).not.toMatch(/coordinate/i);
   });
 
   it("requires a key for open-meteo even though its free tier needs none", () => {

@@ -4,6 +4,7 @@ import { readWeatherWatches } from "@/server/services/weather";
 import {
   getWeatherReadiness,
   weatherStatusLine,
+  datasetInfo,
   WORK_TYPES,
   WORK_TYPE_LABELS,
   WORK_TYPE_THRESHOLDS,
@@ -128,6 +129,7 @@ export default async function WeatherPage() {
  */
 function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeatherReadiness> }) {
   const built = readiness.decisionLayerImplemented;
+  const geo = datasetInfo();
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -150,8 +152,10 @@ function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeather
           </Fact>
           <Fact label="Location lookup" ok={readiness.districtResolutionAvailable}>
             {readiness.districtResolutionAvailable
-              ? "Available"
-              : "No postcode-to-coordinate source yet"}
+              ? `Built in — ${geo.districtCount.toLocaleString("en-GB")} UK postcode ` +
+                `districts resolve to a coordinate (${geo.version}). District-level ` +
+                `accuracy: in a rural district the point can sit well away from the site.`
+              : "No postcode-to-coordinate source in this build"}
           </Fact>
           <Fact label="Weather data held" ok={false}>
             None. Nothing is being fetched or stored.
@@ -183,6 +187,16 @@ function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeather
           exists in this build so nothing can use it. Either finish the integration or remove
           the credential — a key that nothing reads is an invitation for some future call site
           to read it directly and bypass this seam.
+        </p>
+      ) : null}
+
+      {readiness.districtResolutionAvailable ? (
+        // The Open Government Licence requires these lines wherever ONSPD-derived
+        // data is used, and the location-lookup capability shown above is exactly
+        // that. datasetInfo() carries them so the wording lives with the dataset.
+        <p className="mt-3 text-[11px] leading-4 text-slate-400">
+          Location lookup derived from the ONS Postcode Directory.{" "}
+          {geo.attribution.join(". ")}.
         </p>
       ) : null}
     </section>

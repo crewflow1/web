@@ -23,7 +23,11 @@
  *                                                     (build-time fact — FALSE)
  *   districtResolutionAvailable — we can turn a postcode district into the
  *                              coordinate every vendor's API requires.
- *                                                     (build-time fact — FALSE)
+ *                              (build-time fact — TRUE since the ONSPD-derived
+ *                              centroid dataset landed in lib/weather/geo, and
+ *                              DERIVED from that dataset's size rather than
+ *                              asserted, so deleting or truncating the dataset
+ *                              flips this back to false by itself)
  *   selectionUsable          — WEATHER_PROVIDER names a provider we could build.
  *                                                              (configuration)
  *   credentialsPresent       — the named vendor's secret is set. (configuration)
@@ -35,16 +39,21 @@
  *
  * AND A SECOND ONE THAT IS SPECIFIC TO THIS FEATURE:
  * **`available` can never be true without `districtResolutionAvailable`.**
- * Every realistic UK vendor is queried by latitude and longitude. This schema
- * holds no coordinates and this build has no geocoder, so even a fully paid-up
- * API key leaves the feature unable to ask a question. Splitting this out is the
- * point of the file — it is the activation blocker most likely to be missed,
- * because it is not a secret and not a subscription, it is a dataset.
+ * Every realistic UK vendor is queried by latitude and longitude. That
+ * capability now ships in-build: lib/weather/geo carries ~2,900 ONSPD-derived
+ * district centroids, so this clause is SATISFIED — and it stays a separate
+ * clause (derived from the dataset, not hard-coded true) because the dataset
+ * is a build artefact that could regress, and a regression must flip the light
+ * off by itself. The remaining blockers are the adapter and the credential.
  *
  * Reads `process.env` DIRECTLY (not the validated `env` object), imports no
  * vendor SDK and no `server-only`, so it is edge-safe, dependency-free, and CAN
- * NEVER THROW — a readiness probe must always answer.
+ * NEVER THROW — a readiness probe must always answer. Its one import is the
+ * static centroid dataset (pure data, no I/O), which is what lets
+ * `districtResolutionAvailable` be measured rather than asserted.
  */
+
+import { DISTRICT_CENTROID_COUNT } from "./geo/district-centroids";
 
 // ---------------------------------------------------------------------------
 // Build-time capability registry.
@@ -113,15 +122,21 @@ const DECISION_LAYER_IMPLEMENTED = true;
  * BUILD-TIME FACT: can this build turn a postcode district into the coordinate
  * a vendor API needs?
  *
- * FALSE. There is no latitude/longitude column anywhere in the schema, no
- * PostGIS, and no geocoder. Closing this needs a district→centroid dataset —
- * OS Code-Point Open or the ONS Postcode Directory, both Open Government
- * Licence and free, both requiring an attribution line. That is a data-ingest
- * task, not a credential, which is exactly why it gets its own field: it would
- * otherwise hide behind a green "key is set" and surprise whoever flips the
- * switch.
+ * TRUE — and DERIVED, not declared. lib/weather/geo/district-centroids.ts is a
+ * checked-in static dataset of WGS84 centroids for every live UK postcode
+ * district (~2,900, including Northern Ireland), derived offline from the ONS
+ * Postcode Directory by scripts/derive-district-centroids.ts under the Open
+ * Government Licence v3.0. Resolution is a pure in-memory lookup in ./geo —
+ * no geocoding service, no network, no per-request cost.
+ *
+ * The truth is computed from the dataset's size against a floor of 2,500 (the
+ * UK has ~2,900 districts; a build carrying materially fewer has a truncated
+ * or corrupted dataset and must NOT claim the capability). Hard-coding `true`
+ * here would recreate the exact false-green this file exists to prevent, one
+ * layer down: the flag would outlive the data it describes.
  */
-const DISTRICT_RESOLUTION_AVAILABLE = false;
+const MINIMUM_DISTRICT_COVERAGE = 2500;
+const DISTRICT_RESOLUTION_AVAILABLE = DISTRICT_CENTROID_COUNT > MINIMUM_DISTRICT_COVERAGE;
 
 const present = (v: string | undefined | null): boolean =>
   typeof v === "string" && v.trim().length > 0;
@@ -143,7 +158,11 @@ export type WeatherReadiness = {
   decisionLayerImplemented: boolean;
   /** A provider adapter exists in this build for the selected vendor. FALSE. */
   providerImplemented: boolean;
-  /** A district can be turned into a coordinate. FALSE. */
+  /**
+   * A district can be turned into a coordinate. TRUE in this build — derived
+   * from the checked-in ONSPD centroid dataset in lib/weather/geo, so it
+   * reverts to false by itself if the dataset is removed or truncated.
+   */
   districtResolutionAvailable: boolean;
   /** `WEATHER_PROVIDER` names a vendor this build knows (unset ⇒ nothing selected). */
   selectionUsable: boolean;
@@ -252,10 +271,13 @@ export function getWeatherReadiness(
     }
   }
   if (!districtResolutionAvailable) {
+    // Reachable only if the checked-in dataset regresses (or via a test
+    // override): the build normally carries ~2,900 ONSPD-derived centroids.
     blockers.push(
-      "no postcode-district → coordinate source in this build (OS Code-Point Open " +
-        "or the ONS Postcode Directory would close this; both are Open Government " +
-        "Licence and free, and both require an attribution line)",
+      `district → coordinate dataset is missing or incomplete (this build carries ` +
+        `${DISTRICT_CENTROID_COUNT} districts, needs more than ${MINIMUM_DISTRICT_COVERAGE}) — ` +
+        "regenerate lib/weather/geo/district-centroids.ts from the ONS Postcode " +
+        "Directory with scripts/derive-district-centroids.ts (Open Government Licence v3.0)",
     );
   }
 
