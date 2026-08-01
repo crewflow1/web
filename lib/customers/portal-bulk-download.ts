@@ -102,19 +102,18 @@ type QuoteRow = {
   public_token: string | null;
 };
 
+/** Letterhead source — mirrors the columns the individual invoice/quote PDF
+ *  routes read from `organizations`. `address` is the single jsonb blob
+ *  ({ line1?, city?, postcode? }); there are NO flat address columns on this
+ *  table, so the letterhead is derived from the jsonb. */
 type OrgRow = {
   name: string | null;
   phone: string | null;
   vat_number: string | null;
   logo_path: string | null;
   logo_url: string | null;
-  address: unknown;
+  address: { line1?: string; city?: string; postcode?: string } | null;
   bank_details: unknown;
-  address_line1: string | null;
-  address_line2: string | null;
-  city: string | null;
-  county: string | null;
-  postcode: string | null;
 };
 
 function isoDate(v: string | null | undefined): string {
@@ -138,9 +137,7 @@ export async function collectPortalDocumentPdfs(args: {
   // Shared org details (logo signed ONCE, not per document).
   const { data: orgRow, error: orgError } = await admin
     .from("organizations")
-    .select(
-      "name, phone, vat_number, logo_path, logo_url, address, bank_details, address_line1, address_line2, city, county, postcode",
-    )
+    .select("name, phone, vat_number, logo_path, logo_url, address, bank_details")
     .eq("id", customer.org_id)
     .maybeSingle();
   if (orgError) throw readFailure("portal bulk: org", orgError);
@@ -409,10 +406,13 @@ async function renderCertificate(id: string, ctx: RenderCtx): Promise<Uint8Array
   const cert = await loadPortalCertificate(ctx.customer.id, ctx.org.id, id);
   if (!cert || !cert.snapshot) return null;
   const orgName = ctx.orgData.name ?? ctx.org.name ?? "Contractor";
+  // The org address is a single jsonb blob ({ line1?, city?, postcode? }) — the
+  // same shape the invoice/quote PDFs consume. There are no flat address columns
+  // on `organizations`, so the certificate letterhead is derived from the jsonb.
+  const addr = ctx.orgData.address ?? ctx.org.address ?? null;
   const orgBlockLines = [
-    ctx.orgData.address_line1,
-    ctx.orgData.address_line2,
-    [ctx.orgData.city, ctx.orgData.postcode].filter(Boolean).join(" "),
+    addr?.line1,
+    [addr?.city, addr?.postcode].filter(Boolean).join(" "),
   ].filter((l): l is string => Boolean(l && l.trim()));
   return new Uint8Array(
     await renderToBuffer(
