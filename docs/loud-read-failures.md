@@ -241,3 +241,27 @@ discards `error` on both of its reads. Its failure mode is a *missed prompt* to
 re-acknowledge a superseded revision rather than a false compliance claim, and
 it is counted in the frozen `discard` baseline — a candidate for the next
 slice.
+
+## Baseline raise — 2026-08-01: Outreach AI on the task engine
+
+Train B (migrate AI employees onto the shared Task Engine) added
+`server/services/hq-outreach.ts` — the Outreach AI runner that drains the
+reserved `generate_email` task type through the canonical runner SDK. It is a
+verbatim structural sibling of `hq-research.ts` and `hq-qualification.ts`
+(already on the engine) and inherits their two REVIEWED best-effort reads, so
+the frozen `server + lib + components` ledger moves by exactly +1 discard and +1
+count-only:
+
+- **discard 35 → 36** — `loadCompanyNames` does `const { data } = await …` and
+  discards `error`. It decorates the recent-runs feed with company NAMES; a
+  missing name renders as `null` beside a task that is otherwise fully present,
+  never as a healthy empty state. Identical to the sibling runners' helper of
+  the same name. The primary reads in the file (run state, recent runs, metrics
+  aggregate, draft-id read) are all loud — they bind `error` and throw
+  `readFailure(...)`.
+- **count-only 4 → 5** — `countOutreach` is a `head:true` count read feeding the
+  CEO metrics tile; an honest zero when nothing has run yet is the correct
+  answer, mirroring `countResearch` / `countQualification`.
+
+No soft-data change (this file adds none). Baseline raised in the same commit,
+per the UP rule.

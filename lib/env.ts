@@ -212,6 +212,11 @@ const envSchema = z.object({
   // LIVE BOOKING EXECUTION. DEFAULTS OFF — until explicitly armed, every prepared booking is `blocked_by_org`.
   // Even when armed, a booking never executes autonomously: the strongest eligibility is `requires_human_review`.
   NEXT_PUBLIC_FEATURE_BOOKING_EXECUTION: z.enum(["true", "false"]).default("false"),
+  // Train A — org-configurable outbound webhooks. DEFAULTS OFF. While off the
+  // webhook-dispatch cron 204-no-ops before any DB work (zero egress) and the
+  // settings UI is read-only. The SECOND flip is per-org: an org must configure
+  // AND verify (signed ping) an endpoint before any real event fans out to it.
+  NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS: z.enum(["true", "false"]).default("false"),
 
   // -- Capability authority source (Directive #015 / D-05) ---------------
   // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The

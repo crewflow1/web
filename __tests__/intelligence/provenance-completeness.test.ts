@@ -24,6 +24,18 @@ import {
   materialDemandMetric,
 } from "@/lib/intelligence/material-demand";
 import { computeSnagPatterns, snagPatternsMetric } from "@/lib/intelligence/snag-patterns";
+import {
+  computeSupplierPerformanceRollup,
+  supplierReliabilityMetric,
+  supplierRiskFlagsMetric,
+} from "@/lib/intelligence/supplier-performance";
+import {
+  behindBaselineMetric,
+  computeProgrammeVariance,
+  eotExposureMetric,
+  noBaselineGapMetric,
+  overdueMilestonesMetric,
+} from "@/lib/intelligence/programme-variance";
 
 /**
  * PROVENANCE COMPLETENESS — the doctrine, swept.
@@ -81,6 +93,8 @@ function allMetrics(): Array<[string, LabelledMetric<unknown>]> {
     todayIso: "2026-08-01",
   });
   const snags = computeSnagPatterns({ snags: [], jobLabel: new Map(), todayIso: "2026-08-01" });
+  const supplierRollup = computeSupplierPerformanceRollup([]);
+  const variance = computeProgrammeVariance({ jobs: [], delayEvents: [], todayKey: "2026-08-01" });
 
   return [
     ["utilisation", utilisationMetric(utilisation)],
@@ -88,12 +102,18 @@ function allMetrics(): Array<[string, LabelledMetric<unknown>]> {
     ["concentration flag", concentrationFlagMetric(concentration)],
     ["stalled jobs", stalledMetric(rollup)],
     ["regressing jobs", regressingMetric(rollup)],
+    ["behind baseline", behindBaselineMetric(variance)],
+    ["overdue milestones", overdueMilestonesMetric(variance)],
+    ["open eot exposure", eotExposureMetric(variance)],
+    ["no baseline gap", noBaselineGapMetric(variance)],
     ["retention exposure", retentionExposureMetric(exposure)],
     ["aged debt", agedDebtMetric(agedDebt)],
     ["cvr total", cvrTotalMetric(cvr)],
     ["cvr bands", cvrBandsMetric(cvr)],
     ["material demand", materialDemandMetric(demand)],
     ["snag patterns", snagPatternsMetric(snags)],
+    ["supplier reliability", supplierReliabilityMetric(supplierRollup)],
+    ["supplier risk flags", supplierRiskFlagsMetric(supplierRollup)],
   ];
 }
 
@@ -117,10 +137,19 @@ describe("the kind split holds", () => {
     expect(kinds.get("concentration flag")).toBe("heuristic");
     expect(kinds.get("stalled jobs")).toBe("heuristic");
     expect(kinds.get("cvr bands")).toBe("heuristic");
+    expect(kinds.get("supplier risk flags")).toBe("heuristic");
+    expect(kinds.get("no baseline gap")).toBe("heuristic");
     // Everything else is derived (this train ships no bare facts and nothing
     // generative — see provenance.ts's header).
+    const heuristics = [
+      "concentration flag",
+      "stalled jobs",
+      "cvr bands",
+      "supplier risk flags",
+      "no baseline gap",
+    ];
     for (const [name, kind] of kinds) {
-      if (!["concentration flag", "stalled jobs", "cvr bands"].includes(name)) {
+      if (!heuristics.includes(name)) {
         expect(kind, name).toBe("derived");
       }
     }

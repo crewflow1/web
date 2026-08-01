@@ -1,5 +1,10 @@
 import { requireHqPage } from "@/server/auth/hq";
-import { buildAiCostSnapshot, type AiCostOrgRow } from "@/server/services/ai-cost-snapshot";
+import {
+  buildAiCostSnapshot,
+  buildAiCostTrend,
+  type AiCostOrgRow,
+  type AiCostTrend,
+} from "@/server/services/ai-cost-snapshot";
 import { formatPence } from "@/lib/ai/governor";
 import { AI_FEATURE_KEYS, AI_FEATURES, AI_TIERS, TIER_MODEL } from "@/lib/ai/governor/registry";
 import type { BudgetStatus } from "@/lib/ai/governor/policy";
@@ -43,6 +48,7 @@ export default async function AiCostsPage() {
   await requireHqPage();
 
   const snap = await buildAiCostSnapshot();
+  const trend = await buildAiCostTrend();
   const { readiness } = snap;
 
   return (
@@ -184,6 +190,9 @@ export default async function AiCostsPage() {
         ) : null}
       </section>
 
+      {/* 2b. The trend — month over month, so a slow creep is visible before a spike is. */}
+      <TrendSection trend={trend} activated={readiness.activated} />
+
       {/* 3. By org. */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <header className="flex items-baseline justify-between">
@@ -287,6 +296,136 @@ export default async function AiCostsPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+/** Integer pence as a SIGNED delta, e.g. `+£1.20`, `−£0.30`, `£0.00`. Display only. */
+function formatDeltaPence(pence: number): string {
+  if (!Number.isFinite(pence) || pence === 0) return "£0.00";
+  const sign = pence > 0 ? "+" : "−"; // real minus sign, not a hyphen
+  return `${sign}${formatPence(Math.abs(pence))}`;
+}
+
+function TrendSection({ trend, activated }: { trend: AiCostTrend; activated: boolean }) {
+  // The bar is scaled to the window's PEAK so the tallest month fills the track;
+  // it is decorative (aria-hidden) because every figure is also stated as text,
+  // so the view never depends on colour or length to be read.
+  const scale = trend.peakPence > 0 ? trend.peakPence : 1;
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-base font-semibold text-slate-900">
+          Spend trend — last {trend.windowMonths} months
+        </h2>
+        <p className="text-[11px] text-slate-500">
+          Europe/London budget months · committed spend only · as of{" "}
+          {new Date(trend.generatedAt).toLocaleString("en-GB")}
+        </p>
+      </header>
+
+      {/* THE HONEST EMPTY STATE. While the governor is dark every month below is
+          £0.00 by construction, so the trend says so plainly and points back at
+          the activation block rather than drawing a flat line that looks like a
+          reading. The zero series is still rendered beneath it: the measurement
+          surface exists BEFORE the spend does, which is the whole point. */}
+      {!trend.hasAnySpend ? (
+        <p
+          className="mt-4 rounded-md border border-slate-300 bg-slate-100 p-3 text-xs text-slate-700"
+          role="status"
+        >
+          No spend yet — AI is dark{activated ? "" : " (no tier bound)"}. Every month below is{" "}
+          {formatPence(0)} by construction, because no governed call can reach a provider until a
+          cost tier is bound to a model. See <strong>Provider activation</strong> above.
+        </p>
+      ) : (
+        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Kpi label={`${trend.windowMonths}-month total`} value={formatPence(trend.totalPence)} />
+          <Kpi label="Peak month" value={formatPence(trend.peakPence)} />
+          <Kpi label="Months with spend" value={`${trend.monthsWithSpend}/${trend.windowMonths}`} />
+          <Kpi
+            label="This month"
+            value={formatPence(trend.months[trend.months.length - 1]?.totalPence ?? 0)}
+          />
+        </dl>
+      )}
+
+      {/* The series. An ordered list, oldest → newest, one row per month. Each
+          row states its month, its committed spend and its month-over-month
+          change as TEXT; the bar merely echoes the number. Readable at 375px. */}
+      <ol
+        className="mt-5 space-y-2"
+        aria-label={`Monthly AI committed spend, ${trend.months[0]?.label ?? ""} to ${
+          trend.months[trend.months.length - 1]?.label ?? ""
+        }`}
+      >
+        {trend.months.map((m) => {
+          const widthPct = m.totalPence > 0 ? Math.max(2, (m.totalPence / scale) * 100) : 0;
+          return (
+            <li key={m.month} className="text-sm">
+              <div className="flex items-baseline justify-between gap-2">
+                <span
+                  className={`font-medium ${m.isCurrent ? "text-slate-900" : "text-slate-700"}`}
+                >
+                  {m.label}
+                  {m.isCurrent ? (
+                    <span className="ml-1 text-[10px] font-normal uppercase tracking-wide text-slate-500">
+                      current
+                    </span>
+                  ) : null}
+                </span>
+                <span className="flex items-baseline gap-2">
+                  <span className="font-mono text-slate-800">{formatPence(m.totalPence)}</span>
+                  {m.deltaPence !== null && m.deltaPence !== 0 ? (
+                    <span
+                      className={`font-mono text-[11px] ${
+                        m.deltaPence > 0 ? "text-amber-700" : "text-emerald-700"
+                      }`}
+                    >
+                      {formatDeltaPence(m.deltaPence)}
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[11px] text-slate-400">—</span>
+                  )}
+                </span>
+              </div>
+              <div
+                aria-hidden
+                className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
+              >
+                <div
+                  className={`h-full rounded-full ${m.isCurrent ? "bg-slate-700" : "bg-slate-400"}`}
+                  style={{ width: `${widthPct}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Per-capability contribution over the SAME window — surfaced only when
+          something actually spent, so the dark build shows no empty table. */}
+      {trend.byFeature.some((f) => f.spentPence > 0) ? (
+        <div className="mt-6">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+            By capability, over the window
+          </h3>
+          <ul className="mt-2 space-y-1 text-sm">
+            {trend.byFeature
+              .filter((f) => f.spentPence > 0)
+              .map((f) => (
+                <li key={f.feature} className="flex items-baseline justify-between gap-2">
+                  <span className="text-slate-700">
+                    {f.label}
+                    <span className="ml-1 font-mono text-[10px] text-slate-400">{f.feature}</span>
+                  </span>
+                  <span className="font-mono text-slate-800">{formatPence(f.spentPence)}</span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

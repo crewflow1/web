@@ -46,6 +46,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/outreach-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/spine-partitions",
       "schedule": "15 4 * * *"
     },
@@ -80,6 +84,10 @@
     {
       "path": "/api/cron/approvals-expire",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/webhook-dispatch",
+      "schedule": "* * * * *"
     }
   ]
 }

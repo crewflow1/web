@@ -8,6 +8,8 @@ import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { emitNotifications } from "@/server/services/notifications-service";
+import { notifyOnPortalReplyToOrg } from "@/lib/notifications/events";
 
 /**
  * Phase 3 — Portal reply to an existing support thread.
@@ -17,8 +19,10 @@ import { readFailure } from "@/lib/supabase/read-failure";
  * the portal peer of the tenant `replyToSupportTicket`, but deliberately
  * mirrors `sendPortalMessage` (this repo's other portal write) rather than the
  * tenant action: the portal has no Supabase JWT, and the audience here is the
- * customer↔org conversation, NOT CrewFlow HQ — so we audit + revalidate the
- * inboxes exactly like sendPortalMessage and do not emit an HQ notification.
+ * customer↔org conversation, NOT CrewFlow HQ — so we never emit an HQ
+ * notification. We DO emit a TENANT-ORG notification (org-wide, audience
+ * 'customer') so staff learn a customer replied instead of having to happen
+ * upon it.
  *
  * Flow:
  *   1. Validate token + ticket_id + body.
@@ -30,6 +34,9 @@ import { readFailure } from "@/lib/supabase/read-failure";
  *      reply telemetry and nudges its status — that deterministic state stays
  *      owned by the DB; we never write those columns here.
  *   5. Audit-log so HQ + tenant timelines see the reply.
+ *   6. Emit ONE org-scoped notification (notifyOnPortalReplyToOrg) so the
+ *      tenant's staff see the reply in-app. org_id is the whole isolation
+ *      boundary; no message body is carried.
  */
 
 const schema = z.object({
@@ -142,6 +149,19 @@ export async function replyToPortalThread(formData: FormData): Promise<void> {
       source: "customer_portal",
     },
   });
+
+  // Tell the tenant's staff, in-app, that their customer replied — the portal
+  // reply was previously silent. Org-scoped (audience 'customer', user_id null →
+  // every org member); no body carried. emitNotifications is best-effort and
+  // swallows its own errors, so a notification failure never fails the reply.
+  await emitNotifications(
+    notifyOnPortalReplyToOrg({
+      org_id: customer.org_id,
+      ticket_id: ticket.id,
+      ticket_number: ticket.ticket_number,
+      customer_name: customer.name,
+    }),
+  );
 
   revalidatePath(`/customer-portal/${token}/messages/${ticket_id}`);
   revalidatePath(`/customer-portal/${token}/messages`);

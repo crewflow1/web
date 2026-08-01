@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatGbp } from "@/lib/money";
 import { formatDateShortUK } from "@/lib/time/format";
-import { formatRate, sampleCaveat, type Ratio } from "@/lib/suppliers/performance";
+import { formatRate, formatRateCompact, sampleCaveat, type Ratio } from "@/lib/suppliers/performance";
 import {
   SIGNAL_KIND_DESCRIPTION,
   SIGNAL_KIND_LABEL,
@@ -15,11 +15,21 @@ import {
   concentrationSharesMetric,
 } from "@/lib/intelligence/concentration";
 import { regressingMetric, stalledMetric } from "@/lib/intelligence/progress-rollup";
+import {
+  behindBaselineMetric,
+  eotExposureMetric,
+  noBaselineGapMetric,
+  overdueMilestonesMetric,
+} from "@/lib/intelligence/programme-variance";
 import { agedDebtMetric, retentionExposureMetric } from "@/lib/intelligence/exposure";
 import { cvrBandsMetric, cvrTotalMetric } from "@/lib/intelligence/cvr-rollup";
 import { materialDemandMetric } from "@/lib/intelligence/material-demand";
 import { formatMaterialQty } from "@/lib/material-requests/fulfilment";
 import { snagPatternsMetric } from "@/lib/intelligence/snag-patterns";
+import {
+  supplierReliabilityMetric,
+  supplierRiskFlagsMetric,
+} from "@/lib/intelligence/supplier-performance";
 import type { CompanySignalsView } from "@/server/services/intelligence";
 
 /**
@@ -175,10 +185,12 @@ export function CompanySignals({ view }: { view: CompanySignalsView }) {
         <UtilisationCard view={view} />
         <ConcentrationCard view={view} />
         <ProgressCard view={view} />
+        <ProgrammeVarianceCard view={view} />
         <ExposureCard view={view} />
         <CvrCard view={view} />
         <MaterialsCard view={view} />
         <SnagsCard view={view} />
+        <SupplierPerformanceCard view={view} />
       </div>
     </section>
   );
@@ -363,6 +375,105 @@ function ProgressCard({ view }: { view: CompanySignalsView }) {
               <p className="mt-1 text-xs text-slate-500">{regressing.provenance.basis}</p>
             </div>
           ) : null}
+        </>
+      )}
+    </SignalCard>
+  );
+}
+
+function ProgrammeVarianceCard({ view }: { view: CompanySignalsView }) {
+  if (view.programmeVariance.failed) return <GroupError what="programme variance" />;
+  const { rollup, capped } = view.programmeVariance.data;
+  const behind = behindBaselineMetric(rollup);
+  const milestones = overdueMilestonesMetric(rollup);
+  const exposure = eotExposureMetric(rollup);
+  const gap = noBaselineGapMetric(rollup);
+
+  const nothing =
+    rollup.jobsConsidered === 0 && rollup.recordedDelayEventCount === 0;
+
+  return (
+    <SignalCard
+      title="Programme variance & delay exposure"
+      kind={behind.provenance.kind}
+      provenance={behind.provenance}
+    >
+      {nothing ? (
+        <EmptyNote>No live jobs and no recorded delays.</EmptyNote>
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat
+              label="Behind baseline"
+              value={String(rollup.behindBaseline.length)}
+              sub={`${rollup.jobsWithBaseline} live jobs planned`}
+            />
+            <Stat label="Overdue milestones" value={String(rollup.overdueMilestoneCount)} />
+            <Stat
+              label="Open EoT exposure"
+              value={`${rollup.openEotWorkingDaysLost} working days`}
+              sub={
+                rollup.openEotEventCount > 0
+                  ? `across ${rollup.openEotEventCount} event${rollup.openEotEventCount === 1 ? "" : "s"}${rollup.openEotUnquantifiedCount > 0 ? ` (${rollup.openEotUnquantifiedCount} unquantified)` : ""}`
+                  : null
+              }
+            />
+            <Stat
+              label="No baseline"
+              value={String(rollup.jobsWithoutBaseline)}
+              sub={rollup.jobsWithoutBaseline > 0 ? "live jobs with no plan" : null}
+            />
+          </dl>
+          {capped ? (
+            <p className="mt-2 text-xs text-amber-700">
+              Showing the first 200 live jobs — the rest are not assessed on this card. Delay
+              exposure still covers every recorded event.
+            </p>
+          ) : null}
+          {rollup.behindBaseline.length > 0 ? (
+            <ul className="mt-3 space-y-1">
+              {rollup.behindBaseline.slice(0, 5).map((j) => (
+                <li key={j.jobId} className="flex items-baseline justify-between gap-2 text-sm">
+                  <Link href={j.href} className="truncate text-slate-700 hover:underline">
+                    {j.label ?? "Job"}
+                  </Link>
+                  <span className="shrink-0 tabular-nums text-slate-500">
+                    {j.daysOverdue} day{j.daysOverdue === 1 ? "" : "s"} past plan
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {rollup.jobsWithoutBaseline > 0 ? (
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-slate-700">
+                  {rollup.jobsWithoutBaseline} live job
+                  {rollup.jobsWithoutBaseline === 1 ? " has" : "s have"} no programme baseline — they
+                  can&apos;t be measured against plan yet.
+                </p>
+                <KindBadge kind={gap.provenance.kind} />
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{gap.provenance.basis}</p>
+            </div>
+          ) : null}
+          {rollup.overdueMilestoneCount > 0 ? (
+            <p className="mt-3 text-xs text-slate-500">
+              <span className="mr-1 font-medium uppercase tracking-wide text-slate-400">
+                [{SIGNAL_KIND_LABEL[milestones.provenance.kind]}]
+              </span>
+              {rollup.overdueMilestoneCount} milestone
+              {rollup.overdueMilestoneCount === 1 ? "" : "s"} across{" "}
+              {rollup.jobsWithOverdueMilestones} job
+              {rollup.jobsWithOverdueMilestones === 1 ? "" : "s"} past their planned date.
+            </p>
+          ) : null}
+          <p className="mt-2 text-xs text-slate-500">
+            <span className="mr-1 font-medium uppercase tracking-wide text-slate-400">
+              [{SIGNAL_KIND_LABEL[exposure.provenance.kind]}]
+            </span>
+            {exposure.provenance.basis}
+          </p>
         </>
       )}
     </SignalCard>
@@ -567,6 +678,171 @@ function SnagsCard({ view }: { view: CompanySignalsView }) {
                 ))}
               </ul>
             </div>
+          </div>
+        </>
+      )}
+    </SignalCard>
+  );
+}
+
+function SupplierPerformanceCard({ view }: { view: CompanySignalsView }) {
+  if (view.supplierPerformance.failed) return <GroupError what="supplier performance" />;
+  const r = view.supplierPerformance.data;
+  const reliability = supplierReliabilityMetric(r);
+  const flags = supplierRiskFlagsMetric(r);
+  const anyFlag = r.overBillingFlags.length > 0 || r.slowSettlementFlags.length > 0;
+
+  return (
+    <SignalCard
+      title="Supplier performance"
+      kind={reliability.provenance.kind}
+      provenance={reliability.provenance}
+    >
+      {r.suppliersWithRecord === 0 ? (
+        <EmptyNote>
+          {r.suppliersConsidered === 0
+            ? "No suppliers on the books yet."
+            : `No trading history for any of your ${r.suppliersConsidered} suppliers yet — a record appears once an order is delivered or a bill is linked.`}
+        </EmptyNote>
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat
+              label="With a record"
+              value={String(r.suppliersWithRecord)}
+              sub={r.suppliersEmpty > 0 ? `${r.suppliersEmpty} not yet traded` : null}
+            />
+            <div className="min-w-0 col-span-2 sm:col-span-1">
+              <dt className="text-xs text-slate-500">Org on-time delivery</dt>
+              <dd className="text-sm text-slate-700">
+                {/* Org late rate inverted to on-time for the label; the Ratio
+                    itself is the late/judgeable count from the authority. */}
+                <RatioLine r={r.orgPunctuality} />
+              </dd>
+            </div>
+            <Stat
+              label="Over-invoiced excess"
+              value={formatGbp(r.overBilledExcessTotal)}
+              sub={r.withheldPriceRating > 0 ? `${r.withheldPriceRating} too few to rate` : null}
+            />
+            <Stat
+              label="Rating withheld"
+              value={String(r.withheldDeliveryRating + r.withheldSettlementRating)}
+              sub="too few records"
+            />
+          </dl>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Most reliable (fewest late)
+              </p>
+              {r.mostReliable.length > 0 ? (
+                <ul className="mt-1 space-y-1">
+                  {r.mostReliable.map((s) => (
+                    <li
+                      key={s.supplierId}
+                      className="flex items-baseline justify-between gap-2 text-sm"
+                    >
+                      <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                        {s.supplierName || "Unnamed supplier"}
+                      </Link>
+                      <span className="shrink-0 tabular-nums text-slate-500">
+                        {formatRateCompact(s.punctuality)} late
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-slate-400">
+                  No supplier has {`≥`} 5 judgeable deliveries yet.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                Least reliable (most late)
+              </p>
+              {r.leastReliable.length > 0 ? (
+                <ul className="mt-1 space-y-1">
+                  {r.leastReliable.map((s) => (
+                    <li
+                      key={s.supplierId}
+                      className="flex items-baseline justify-between gap-2 text-sm"
+                    >
+                      <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                        {s.supplierName || "Unnamed supplier"}
+                      </Link>
+                      <span className="shrink-0 tabular-nums text-slate-500">
+                        {formatRateCompact(s.punctuality)} late
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-xs text-slate-400">
+                  No supplier has {`≥`} 5 judgeable deliveries yet.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-800">Flags to look at</p>
+              <KindBadge kind={flags.provenance.kind} />
+            </div>
+            {anyFlag ? (
+              <ul className="mt-1 space-y-1">
+                {r.overBillingFlags.map((s) => (
+                  <li
+                    key={`ob-${s.supplierId}`}
+                    className="flex items-baseline justify-between gap-2 text-sm"
+                  >
+                    <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                      <span className="mr-1 font-medium uppercase text-slate-500">
+                        [Over-invoiced]
+                      </span>
+                      {s.supplierName || "Unnamed supplier"}
+                    </Link>
+                    <span className="shrink-0 tabular-nums text-slate-500">
+                      {formatRateCompact(s.overBilled)} · {formatGbp(s.overBilledExcess)}
+                    </span>
+                  </li>
+                ))}
+                {r.slowSettlementFlags.map((s) => (
+                  <li
+                    key={`ss-${s.supplierId}`}
+                    className="flex items-baseline justify-between gap-2 text-sm"
+                  >
+                    <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                      <span className="mr-1 font-medium uppercase text-slate-500">
+                        [We settle slowly]
+                      </span>
+                      {s.supplierName || "Unnamed supplier"}
+                    </Link>
+                    <span className="shrink-0 tabular-nums text-slate-500">
+                      {formatRateCompact(s.slowShare)} over 60 days
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-sm text-slate-700">
+                No supplier crosses the stated over-invoicing or slow-settlement thresholds.
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-500">{flags.provenance.basis}</p>
+            <p className="mt-2 text-xs text-slate-400">
+              Compare all suppliers side by side on the{" "}
+              <Link
+                href="/suppliers/compare"
+                className="underline decoration-slate-300 hover:text-slate-600"
+              >
+                comparison page
+              </Link>
+              .
+            </p>
           </div>
         </>
       )}
