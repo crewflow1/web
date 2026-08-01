@@ -11,6 +11,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import {
   notifyOnSupportReplyToHq,
 } from "@/lib/notifications/events";
+import { sendPortalReplyNotificationEmail } from "@/lib/email/send-portal-reply";
 import {
   SUPPORT_CATEGORIES,
   SUPPORT_PRIORITIES,
@@ -213,6 +214,33 @@ export async function replyToSupportTicket(
         body_preview: parsed.data.body.slice(0, 200),
       }),
     );
+  } else if (tInfo.customer_id) {
+    // Tenant → customer: the org just replied to its own customer's portal
+    // thread. The customer has no in-app feed, so email them a notification +
+    // a scoped portal link (never the body — see send-portal-reply). Recipient
+    // and link are both derived from the ticket's OWN customer, org-pinned.
+    // Best-effort: an email failure must never break the staff reply that has
+    // already been persisted above.
+    try {
+      const emailed = await sendPortalReplyNotificationEmail({
+        orgId: ctx.membership.org_id,
+        customerId: tInfo.customer_id,
+        ticketId: parsed.data.ticket_id,
+        ticketNumber: tInfo.ticket_number ?? 0,
+      });
+      if (!emailed.sent) {
+        console.info(
+          "[support] portal reply email not sent",
+          emailed.reason,
+          emailed.detail ?? "",
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[support] portal reply email threw",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   revalidatePath(`/support/${parsed.data.ticket_id}`);

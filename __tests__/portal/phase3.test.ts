@@ -292,15 +292,19 @@ describe("Phase 3 — message thread detail + reply", () => {
     expect(REPLY_ACTION).not.toMatch(/status:/);
   });
 
-  it("mirrors sendPortalMessage's audience model: audit + revalidate, no HQ notification", () => {
+  it("audits + revalidates, and notifies the TENANT ORG (not CrewFlow HQ)", () => {
     expect(REPLY_ACTION).toMatch(/action: "portal\.message\.reply"/);
     expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/admin\/support`\)/);
     expect(REPLY_ACTION).toMatch(/revalidatePath\(`\/support`\)/);
     // notifyOnSupportReplyToHq targets CrewFlow HQ — the wrong audience for a
-    // customer↔org portal reply; sendPortalMessage omits it and so do we.
-    expect(REPLY_ACTION).not.toMatch(
-      /notifyOnSupportReplyToHq|emitNotifications/,
-    );
+    // customer↔org portal reply; we still never fire it here.
+    expect(REPLY_ACTION).not.toMatch(/notifyOnSupportReplyToHq/);
+    // Train F: the portal reply is no longer silent to the tenant. It emits ONE
+    // org-scoped notification (audience 'customer' = the org's own staff) so
+    // staff learn of the reply. See __tests__/security/portal-reply-notifications.
+    expect(REPLY_ACTION).toMatch(/notifyOnPortalReplyToOrg/);
+    const emits = REPLY_ACTION.match(/emitNotifications\(/g) ?? [];
+    expect(emits).toHaveLength(1);
   });
 });
 
