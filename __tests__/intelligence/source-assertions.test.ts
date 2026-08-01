@@ -247,6 +247,21 @@ function seedTwoOrgs() {
     { id: "sn-b1", org_id: ORG_B, job_id: "job-b1", trade: "Electrical", status: "open", priority: "medium", due_date: null },
     { id: "sn-b2", org_id: ORG_B, job_id: "job-b1", trade: "Plumbing", status: "open", priority: "high", due_date: null },
   ];
+  // Programme variance: current baselines whose planned end is in the past, one
+  // overdue milestone each, and a recorded delay in each org. Org B's 100-day
+  // claim must never surface in org A's exposure.
+  h.tables.job_programme_baselines = [
+    { id: "bl-a1", org_id: ORG_A, job_id: "job-a1", revision: 1, planned_start: "2026-01-01", planned_end: "2026-07-01", superseded_at: null },
+    { id: "bl-b1", org_id: ORG_B, job_id: "job-b1", revision: 1, planned_start: "2026-01-01", planned_end: "2026-07-01", superseded_at: null },
+  ];
+  h.tables.job_milestones = [
+    { id: "ms-a1", org_id: ORG_A, baseline_id: "bl-a1", planned_end: "2026-07-15" },
+    { id: "ms-b1", org_id: ORG_B, baseline_id: "bl-b1", planned_end: "2026-07-15" },
+  ];
+  h.tables.delay_events = [
+    { id: "de-a1", org_id: ORG_A, job_id: "job-a1", status: "recorded", working_days_lost: 3, variation_quote_id: null },
+    { id: "de-b1", org_id: ORG_B, job_id: "job-b1", status: "recorded", working_days_lost: 100, variation_quote_id: null },
+  ];
 }
 
 beforeEach(() => {
@@ -315,6 +330,19 @@ describe("dual-org: every table read is pinned to the active org", () => {
     expect(view.progress.data!.rollup.activeJobs).toBe(1);
   });
 
+  it("programme variance sees org A's live baseline and delay only — org B's 100-day claim never leaks", async () => {
+    const view = await loadCompanySignals(ORG_A, NOW);
+    expect(view.programmeVariance.failed).toBe(false);
+    const r = view.programmeVariance.data!.rollup;
+    expect(r.jobsConsidered).toBe(1); // job-a1 only (in-progress = live)
+    expect(r.jobsWithBaseline).toBe(1);
+    expect(r.behindBaseline.map((j) => j.jobId)).toEqual(["job-a1"]);
+    expect(r.overdueMilestoneCount).toBe(1);
+    // Org A's single recorded 3-day claim — never the blended 103.
+    expect(r.recordedDelayEventCount).toBe(1);
+    expect(r.openEotWorkingDaysLost).toBe(3);
+  });
+
   it("the CVR rollup budgets org A's job only", async () => {
     const view = await loadCompanySignals(ORG_A, NOW);
     expect(view.cvr.failed).toBe(false);
@@ -378,6 +406,7 @@ describe("loud reads — a failed group fails WHOLE and says so; the rest stand"
     const view = await loadCompanySignals(ORG_A, NOW);
     expect(view.concentration.failed).toBe(true);
     expect(view.progress.failed).toBe(true);
+    expect(view.programmeVariance.failed).toBe(true);
     expect(view.cvr.failed).toBe(true);
     expect(view.snags.failed).toBe(true);
     // These do not depend on the jobs read and must still stand.
@@ -462,7 +491,7 @@ describe("source pins — the read layer is read-only and pinned", () => {
 
   it("group failures are caught per group, never page-wide", () => {
     const groups = (SERVICE.match(/group\("intelligence: /g) ?? []).length;
-    expect(groups).toBe(7);
+    expect(groups).toBe(8);
   });
 });
 
