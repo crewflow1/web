@@ -13,6 +13,7 @@ import {
 import { reportMaintenanceCase, transitionMaintenanceCase, upsertCaseCosts } from "../maintenance-actions";
 import { StateForm } from "@/components/forms/StateForm";
 import { startReinspection } from "../inspection-actions";
+import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 
 export type MaintenanceCaseRow = {
   id: string;
@@ -227,6 +228,19 @@ function CaseRow({ assetId, c, isAdmin }: { assetId: string; c: MaintenanceCaseR
           </StateForm>
         </details>
       ) : null}
+
+      {/* Repair evidence bound to THIS case — fault photos, the parts invoice,
+          the completion photo. Universal attachments pipeline targeting the
+          maintenance-case row (target already in the CHECK). Collapsed so a
+          long case list stays scannable on a 375px screen. */}
+      <details className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+        <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">
+          Photos &amp; documents
+        </summary>
+        <div className="mt-2">
+          <AttachmentsPanel targetTable="asset_maintenance_cases" targetId={c.id} />
+        </div>
+      </details>
     </div>
   );
 }
