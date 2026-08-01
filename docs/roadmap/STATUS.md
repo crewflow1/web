@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-08-01 (Continuation 16 — the C15 interrupted lanes resumed + finished, plus five new trains; 9 PRs merged, migration tip `20261080`→`20261086`)
+**Last reconciled:** 2026-08-01 (Continuations 17–19 — 11 more trains shipped: outbound webhooks, supplier terms + overdue payables, three intelligence rollups, AI-employee task engine, portal notifications + bulk downloads, AI-cost trend, EOT/job-programme surfacing, QR timeline, public API-jobs, expenses budgets. Migration tip `20261086`→`20261089`.)
 **Production `main`:** `19bf4ab` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261086` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Production migration tip:** `20261089` — read from `supabase_migrations.schema_migrations`, NOT inferred
 
 > **✅ C15 INTERRUPTION FULLY RECOVERED (Continuation 16, 2026-08-01).** The four spend-limit-killed
 > lanes were **resumed from their worktrees (never rebuilt)** and shipped, alongside five new trains.
@@ -26,6 +26,28 @@
 > | #524 | Deterministic intelligence (FACT/DERIVED/HEURISTIC signals) | — | SHIP — 2 P2s fixed |
 > | #526 | HQ approval console + executor-shadow observability | — | SHIP clean |
 > | #528 | Weather fetch pipeline + Open-Meteo adapter (BUILT-DARK) | — | SHIP clean |
+
+> ### C17–19 TRAIN HISTORY (2026-08-01, 11 trains, all merged + deployed + production-verified)
+> Every train ran the full gate: fresh adversarial review → fix → CI → migrate-first → merge → deploy → verify.
+> | PR | Train | Slot | Adversarial outcome |
+> |---|---|---|---|
+> | #531 | Outreach AI onto the HQ task engine (execution stays LOCKED) | — | SHIP |
+> | #532 | AI-cost spend trend on /admin/ai-costs | — | SHIP |
+> | #533 | Programme-variance + delay-exposure intelligence rollup | — | SHIP |
+> | #534 | Outbound webhooks (SSRF+DNS-rebind, HMAC, BUILT-DARK) | `20261087` | SHIP-with-fixes — P1 INSERT verify-bypass + **P0-class spine-projection clobber** fixed pre-merge |
+> | #535 | Supplier payment terms + true overdue-payables ageing | `20261088` | SHIP |
+> | #536 | Portal reply notifications (both directions) + unread badge | — | SHIP |
+> | #537 | Supplier-performance intelligence rollup | — | SHIP |
+> | #538 | Expenses budget tracking (org/category vs actual) | `20261089` | SHIP |
+> | #539 | Portal bulk/zip document download | — | SHIP — real org-column + React-runtime bugs fixed; scoped to bulk-download only |
+> | #540 | QR identity lifecycle on asset timeline + maintenance/custody attachments | — | SHIP |
+> | #541 | Public `/api/v1/jobs` read — flag-gated dark (`FEATURE_PUBLIC_API_JOBS`) | — | SHIP |
+>
+> **Notable defends:** #534's migration silently clobbered the live Pulse-timeline projection consumer (would have broken HQ in prod) — caught by adversarial review + local isolation, fully decoupled. A hidden-red-main integration test (`eot-delay-events`, broken since #529, invisible because integration is not a required check) was root-caused across three latent bugs and repaired. A certificate-PDF blank-org-address defect surfaced by #539's loud reads was spun off to its own session.
+>
+> **STALE ROWS CORRECTED (verified on `8ac0fc8`):** snags job-page embed = SHIPPED (`_job-snags.tsx`); diary job-page surfacing = SHIPPED (`_job-diary.tsx`); job progress time-series/S-curve = SHIPPED (#512 + intelligence rollup); portal variation UX = SHIPPED (#517/#522). Do NOT rebuild these.
+>
+> **Remaining roadmap is now CEO/provider/product-gated, not implementation-gated:** bind an AI cost tier (activates the governed-but-dark embeddings/HQ/quote-writer/receptionist paths); activate providers (SMS/WhatsApp/voice/Stripe/HMRC/weather); choose which webhook verbs are externally exposable; flip `FEATURE_PUBLIC_API_JOBS` to expose the read API; AI-employee evaluations (product decision — zero foundation); appointments/booking; activities/CPM programme model. The safe net-new implementation backlog is substantially exhausted.
 
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.** Weather now has a real Open-Meteo adapter + fetch pipeline **built-dark** (activation = provider licence + credential + cron schedule); embeddings + all HQ AI paths governed but tier-unbound (dark).
 The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
@@ -344,8 +366,11 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261083` | offline write expansion (snags + material-request drafts) | **APPLIED** — C16, #523 |
 | `20261084` | EOT `delay_events` | **APPLIED** — C16, #529 |
 | `20261085` | job programme baseline (`job_programme_baselines` + `job_milestones`) | **APPLIED** — C16, #530 |
-| `20261086` | public API keys (`api_keys`) | **APPLIED (prod tip)** — C16, #527 |
-| `20261087+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| `20261086` | public API keys (`api_keys`) | **APPLIED** — C16, #527 |
+| `20261087` | outbound webhooks (`webhook_endpoints`, `webhook_deliveries`) | **APPLIED** — C17, #534 |
+| `20261088` | supplier payment terms (`suppliers.payment_terms_days`) | **APPLIED** — C17, #535 |
+| `20261089` | expense budgets (`expense_budgets`) | **APPLIED (prod tip)** — C18, #538 |
+| `20261090+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
