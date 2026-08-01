@@ -218,6 +218,17 @@ const envSchema = z.object({
   // AND verify (signed ping) an endpoint before any real event fans out to it.
   NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS: z.enum(["true", "false"]).default("false"),
 
+  // -- Public API jobs read surface (Train K / Mission 9) ----------------
+  // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): whether the public read API
+  // /api/v1/jobs is EXPOSED. DEFAULTS OFF — the routes ship dark. Exposing
+  // tenant data (jobs) through a public, key-authenticated API is a CEO /
+  // product decision, not this train's to make (see app/api/v1/me/route.ts).
+  // The code path — auth, scope check, org-pinning, DTO, rate limit — is built
+  // and tested BEHIND this flag; flipping it to "true" is the whole decision.
+  // While off, /api/v1/jobs* returns 404: the surface does not exist yet.
+  // Server-only so the flag itself never leaks into a client bundle.
+  FEATURE_PUBLIC_API_JOBS: z.enum(["true", "false"]).default("false"),
+
   // -- Capability authority source (Directive #015 / D-05) ---------------
   // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The
   // CAPABILITY_AUTHORITY_SOURCE rollback lever is gone: the Capability Registry is
