@@ -139,7 +139,7 @@ describe("offline sync — active-org pin: refused, never re-homed", () => {
     }) as OrgContext;
   const user = { id: "user-1", email: "a@b.test" };
   const item = {
-    clientKey: "k-1",
+    clientKey: "55555555-5555-4555-8555-555555555555",
     kind: "site_diary.create",
     orgId: "org-A",
     payload: { entry_date: "2026-07-30", work_summary: "basement pour" },
@@ -208,7 +208,7 @@ describe("offline sync — the registry gate runs on the SERVER", () => {
       } as OrgContext,
       user: { id: "u", email: null },
       item: {
-        clientKey: "k",
+        clientKey: "44444444-4444-4444-8444-444444444444",
         kind: "invoices.create", // never enabled
         orgId: "org-A",
         payload: { total: 999999 },
@@ -235,7 +235,7 @@ describe("offline sync — the registry gate runs on the SERVER", () => {
     const user = { id: "u", email: null };
     for (const bad of [
       { clientKey: "", kind: "site_diary.create", orgId: "org-A", payload: {}, authoredAt: "" },
-      { clientKey: "k", kind: "site_diary.create", orgId: "", payload: {}, authoredAt: "" },
+      { clientKey: "44444444-4444-4444-8444-444444444444", kind: "site_diary.create", orgId: "", payload: {}, authoredAt: "" },
     ]) {
       const out = await dispatchOfflineWrite({ ctx, user, item: bad });
       expect(out).toEqual({ status: "rejected", reason: "malformed_item" });

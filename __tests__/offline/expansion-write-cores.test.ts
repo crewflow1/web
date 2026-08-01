@@ -233,7 +233,7 @@ describe("dispatch — the new kinds are refused exactly like the diary", () => 
         ctx: ctx("org-B"),
         user,
         item: {
-          clientKey: "k-1",
+          clientKey: "11111111-1111-4111-8111-111111111111",
           kind,
           orgId: "org-A",
           payload:
@@ -254,7 +254,7 @@ describe("dispatch — the new kinds are refused exactly like the diary", () => 
       ctx: ctx("org-A"),
       user,
       item: {
-        clientKey: "k-1",
+        clientKey: "11111111-1111-4111-8111-111111111111",
         kind: "material_request.create",
         orgId: "org-A",
         payload: { lines: [] }, // at least one line
@@ -274,7 +274,7 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "Cracked tile", trade: "Tiling", priority: "high" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
       offlineAuthoredAt: "2026-07-31T16:02:00.000Z",
     });
     expect(out.status).toBe("accepted");
@@ -283,7 +283,7 @@ describe("createSnagRecord — the shared snag write core", () => {
     expect(row.org_id).toBe("org-A"); // session org, never the payload's
     expect(row.reported_by).toBe("user-1"); // session user
     expect(row.status).toBe("open"); // born open — never from the payload
-    expect(row.client_write_key).toBe("key-1"); // the queue's key, verbatim
+    expect(row.client_write_key).toBe("22222222-2222-4222-8222-222222222222"); // the queue's key, verbatim
     expect(row.offline_authored_at).toBe("2026-07-31T16:02:00.000Z");
     expect(auditCalls.calls).toHaveLength(1);
     expect(auditCalls.calls[0]!.action).toBe("snag.created");
@@ -297,13 +297,13 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "Cracked tile" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "duplicate", id: "snag-1" });
     // the lookup was pinned to the active org AND the key
     const lookup = h.state.reads.find((r) => r.table === "snags");
     expect(lookup!.eqs).toContainEqual(["org_id", "org-A"]);
-    expect(lookup!.eqs).toContainEqual(["client_write_key", "key-1"]);
+    expect(lookup!.eqs).toContainEqual(["client_write_key", "22222222-2222-4222-8222-222222222222"]);
     expect(auditCalls.calls).toHaveLength(0); // a duplicate is not re-audited
   });
 
@@ -314,7 +314,7 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "t" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out.status).toBe("retry");
   });
@@ -325,7 +325,7 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "t", job_id: "11111111-1111-4111-8111-111111111111" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "rejected", reason: "job_missing" });
     expect(h.state.inserts).toHaveLength(0);
@@ -337,7 +337,7 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "t", assigned_to: "22222222-2222-4222-8222-222222222222" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "rejected", reason: "assignee_missing" });
     expect(h.state.inserts).toHaveLength(0);
@@ -351,7 +351,7 @@ describe("createSnagRecord — the shared snag write core", () => {
       ctx: ctx("org-A"),
       user,
       input: { title: "t" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out.status).toBe("retry");
   });
@@ -377,7 +377,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
       offlineAuthoredAt: "2026-07-31T16:02:00.000Z",
     });
     expect(out.status).toBe("accepted");
@@ -392,7 +392,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
     expect(header.number).toBe("MR-0007");
     expect(header.requested_by).toBe("user-1");
     expect(header.created_by).toBe("user-1");
-    expect(header.client_write_key).toBe("key-1");
+    expect(header.client_write_key).toBe("22222222-2222-4222-8222-222222222222");
     expect(header.offline_authored_at).toBe("2026-07-31T16:02:00.000Z");
     // no forged provenance fields
     expect(header).not.toHaveProperty("submitted_at");
@@ -411,7 +411,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "duplicate", id: "mr-1" });
     expect(h.state.inserts).toHaveLength(0);
@@ -429,7 +429,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "accepted", id: "mr-1" });
     const lines = h.state.inserts.find((i) => i.table === "material_request_lines")!
@@ -448,7 +448,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out.status).toBe("retry");
     expect(h.state.inserts).toHaveLength(0);
@@ -467,7 +467,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "duplicate", id: "mr-9" });
   });
@@ -484,7 +484,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "retry", reason: "number_conflict" });
   });
@@ -499,7 +499,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "duplicate", id: "mr-1" });
   });
@@ -511,7 +511,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: { ...MR_INPUT, job_id: "33333333-3333-4333-8333-333333333333" },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "rejected", reason: "job_missing" });
     expect(h.state.rpcs).toHaveLength(0);
@@ -535,7 +535,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
           },
         ],
       },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "rejected", reason: "stock_item_missing" });
 
@@ -556,7 +556,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
           },
         ],
       },
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(blip.status).toBe("retry");
   });
@@ -568,7 +568,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       ctx: ctx("org-A"),
       user,
       input: MR_INPUT,
-      clientKey: "key-1",
+      clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out.status).toBe("retry");
     expect(h.state.inserts).toHaveLength(0);
