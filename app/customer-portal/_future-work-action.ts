@@ -50,14 +50,17 @@ export async function submitFutureWorkRequest(
 ): Promise<void> {
   const token = String(formData.get("token") ?? "");
   if (!TOKEN_RE.test(token)) {
-    redirect(`/customer-portal/${token}/requests?error=invalid_token`);
+    // The token FAILED validation — encode it before it re-enters a path.
+    redirect(`/customer-portal/${encodeURIComponent(token)}/requests?error=invalid_token`);
   }
 
   // Throttle portal writes per token — same budget as messages + uploads.
   const rl = await consume("portal_write", token, DEFAULT_LIMITS.portal_write);
   if (!rl.allowed) {
     backTo(token, {
-      error: "Too many requests. Please wait a moment and try again.",
+      // A CODE, not prose — the page renders codes through an allowlist so
+      // forged query text can never appear on a branded page.
+      error: "rate_limited",
     });
   }
 
@@ -68,7 +71,7 @@ export async function submitFutureWorkRequest(
   });
   if (!parsed.success) {
     backTo(token, {
-      error: parsed.error.issues[0]?.message ?? "invalid_input",
+      error: "invalid_input",
     });
   }
 

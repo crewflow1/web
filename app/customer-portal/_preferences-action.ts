@@ -43,7 +43,8 @@ function backTo(token: string, outcome: { saved?: string; error?: string }): nev
 export async function savePortalPreferences(formData: FormData): Promise<void> {
   const token = String(formData.get("token") ?? "");
   if (!TOKEN_RE.test(token)) {
-    redirect(`/customer-portal/${token}/profile?error=invalid_token`);
+    // The token FAILED validation — encode it before it re-enters a path.
+    redirect(`/customer-portal/${encodeURIComponent(token)}/profile?error=invalid_token`);
   }
 
   const rl = await consume("portal_write", token, DEFAULT_LIMITS.portal_write);
@@ -113,13 +114,16 @@ export async function savePortalPreferences(formData: FormData): Promise<void> {
 export async function requestProfileUpdate(formData: FormData): Promise<void> {
   const token = String(formData.get("token") ?? "");
   if (!TOKEN_RE.test(token)) {
-    redirect(`/customer-portal/${token}/profile?error=invalid_token`);
+    // The token FAILED validation — encode it before it re-enters a path.
+    redirect(`/customer-portal/${encodeURIComponent(token)}/profile?error=invalid_token`);
   }
 
   const rl = await consume("portal_write", token, DEFAULT_LIMITS.portal_write);
   if (!rl.allowed) {
     backTo(token, {
-      error: "Too many requests. Please wait a moment and try again.",
+      // A CODE, not prose — the page renders codes through an allowlist so
+      // forged query text can never appear on a branded page.
+      error: "rate_limited",
     });
   }
 

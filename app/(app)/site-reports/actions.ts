@@ -350,8 +350,14 @@ export async function updateReportPhotos(formData: FormData): Promise<void> {
   }
 
   // Replace ONLY the photo selection; the diary/snag/toolbox curation is
-  // edited elsewhere and must survive this write untouched.
-  const existingSources = reportSourcesSchema.parse(report.content?.sources ?? {});
+  // edited elsewhere and must survive this write untouched. safeParse: a
+  // malformed legacy sources blob must become a friendly redirect, not a 500
+  // (the reviewer's P2; the sibling parse in issueReport predates this train).
+  const sourcesParsed = reportSourcesSchema.safeParse(report.content?.sources ?? {});
+  if (!sourcesParsed.success) {
+    redirect(`/site-reports/${id}?error=report_content_invalid`);
+  }
+  const existingSources = sourcesParsed.data;
   const merged: ReportContent = {
     ...(report.content ?? {}),
     sources: { ...existingSources, photo_attachment_ids: verified },

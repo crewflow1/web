@@ -54,7 +54,19 @@ export default async function PortalRequestsPage({
         tone: "ok" as const,
         msg: `Request sent. ${org.name} will be in touch about it.`,
       };
-    if (sp.error) return { tone: "err" as const, msg: `Error: ${sp.error}` };
+    // Error CODES only — an allowlist, so arbitrary query text can never
+    // render on a branded page (mirrors the saved branch's exact-match style).
+    const requestErrors: Record<string, string> = {
+      invalid_token: "This link is not valid.",
+      rate_limited: "Too many requests — please wait a minute and try again.",
+      invalid_input: "Please check the form and try again.",
+      could_not_submit: "Something went wrong sending your request. Please try again.",
+    };
+    if (sp.error)
+      return {
+        tone: "err" as const,
+        msg: requestErrors[sp.error] ?? "Something went wrong. Please try again.",
+      };
     return null;
   })();
 

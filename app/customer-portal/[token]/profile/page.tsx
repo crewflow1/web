@@ -51,7 +51,19 @@ export default async function PortalProfilePage({
         tone: "ok" as const,
         msg: `Change requested. ${org.name} will update your details and confirm.`,
       };
-    if (sp.error) return { tone: "err" as const, msg: `Error: ${sp.error}` };
+    // Error CODES only — an allowlist, so arbitrary query text can never
+    // render on a branded page (mirrors the saved branch's exact-match style).
+    const profileErrors: Record<string, string> = {
+      invalid_token: "This link is not valid.",
+      rate_limited: "Too many requests — please wait a minute and try again.",
+      invalid_input: "Please check the form and try again.",
+      could_not_save: "Something went wrong saving. Please try again.",
+    };
+    if (sp.error)
+      return {
+        tone: "err" as const,
+        msg: profileErrors[sp.error] ?? "Something went wrong. Please try again.",
+      };
     return null;
   })();
 
