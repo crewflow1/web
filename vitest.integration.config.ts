@@ -14,6 +14,13 @@ import path from "node:path";
  * in CI — see __tests__/integration/_harness.ts → describeIntegration.
  */
 export default defineConfig({
+  // Use the automatic JSX runtime (matches Next AND vitest.config.ts) so
+  // react-pdf templates render in-process without a manual React import — the
+  // classic runtime would throw "React is not defined" inside the .tsx PDF
+  // components (they import no React, exactly like in prod). Needed here because
+  // integration tests can drive real render paths (e.g. the portal bulk
+  // download) end to end against Postgres.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     include: ["__tests__/integration/**/*.test.ts"],
