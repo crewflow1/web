@@ -4,19 +4,30 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-08-01 (Continuation 15 — embeddings governance + weather coordinates shipped; 4 trains interrupted at the API spend limit, salvaged as WIP branches)
-**Production `main`:** `acb24c1` at reconciliation time (#520 weather coordinates; #521 embeddings governance merging behind it — see train history) — verified against `/api/health`, not inferred
-**Production migration tip:** read it from the database (single source; the C15 train applies `20261080`)
+**Last reconciled:** 2026-08-01 (Continuation 16 — the C15 interrupted lanes resumed + finished, plus five new trains; 9 PRs merged, migration tip `20261080`→`20261086`)
+**Production `main`:** `19bf4ab` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261086` — read from `supabase_migrations.schema_migrations`, NOT inferred
 
-> **⚠️ C15 INTERRUPTION NOTE (2026-08-01).** Four implementation lanes were killed mid-work by the
-> API monthly spend limit and their work is committed as clearly-marked **WIP — DO NOT MERGE**
-> branches: `feat/works-quality-m2` (slot `20261081` claimed, impl typecheck-clean, tests partial),
-> `feat/portal-evolution` (slot `20261082`; base commit `c99a1b8` is COMPLETE and verified — photos
-> consumer, future-work→leads, preferences, bottom nav — the WIP tip adds the photo-selection
-> producer, mid-build), `feat/offline-expansion` (slot `20261083` claimed, mid-security-suite), and
-> `feat/deterministic-intelligence` (zero-migration, mid-wiring). **Slots 20261081–83 are CLAIMED by
-> these branches** — the next free slot is `20261084+`, and re-verify against the DB before claiming.
-**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.**
+> **✅ C15 INTERRUPTION FULLY RECOVERED (Continuation 16, 2026-08-01).** The four spend-limit-killed
+> lanes were **resumed from their worktrees (never rebuilt)** and shipped, alongside five new trains.
+> Nine PRs merged in strict slot order with migrate-first discipline; every train got a fresh
+> adversarial review before merge, and two real P1s were caught+fixed pre-merge (EOT withdrawn-event
+> teardown-abort; NCR evidence deletability). Migration slots `20261080`–`20261086` are now ALL
+> APPLIED (see the train table). Next free slot: `20261087+` — re-verify against the DB before claiming.
+>
+> | PR | Train | Slot | Adversarial |
+> |---|---|---|---|
+> | #525 | Works Quality M2 (NCRs, corrective actions, witness invitations, ITP templates, revision lineage, PDF) | `20261081` | SHIP — P1 NCR-evidence-freeze + P2 series-root fixed |
+> | #522 | Portal evolution (photos consumer+producer, future-work→leads, preferences, mobile nav) | `20261082` | SHIP — 3 P2s fixed |
+> | #523 | Offline expansion (snags + material-request drafts) | `20261083` | SHIP — UUID-envelope P2 fixed |
+> | #529 | EOT delay-event evidence foundation (human-driven, weather-seam dormant) | `20261084` | SHIP — P1 teardown escape fixed |
+> | #530 | Job programme baseline (write-once revisions, milestones, derived planned line) | `20261085` | SHIP clean |
+> | #527 | Public API-key foundation (hashed keys, resolver, probe) | `20261086` | SHIP clean |
+> | #524 | Deterministic intelligence (FACT/DERIVED/HEURISTIC signals) | — | SHIP — 2 P2s fixed |
+> | #526 | HQ approval console + executor-shadow observability | — | SHIP clean |
+> | #528 | Weather fetch pipeline + Open-Meteo adapter (BUILT-DARK) | — | SHIP clean |
+
+**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.** Weather now has a real Open-Meteo adapter + fetch pipeline **built-dark** (activation = provider licence + credential + cron schedule); embeddings + all HQ AI paths governed but tier-unbound (dark).
 The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
 
 ## ✅ EMBEDDINGS GOVERNANCE — CLOSED 2026-08-01 (C15, #521, migration `20261080`)
@@ -324,10 +335,17 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261074` | weather intelligence (dark) | **APPLIED** — C13, #508 |
 | `20261075` | — | **ALLOCATED AND DECLINED.** The payroll lane (#504) was given this slot and correctly did not use it: employer NI/pension are a pure function of `(gross_pay, cycle, period_start)`, all already persisted. **Do not recycle this number** — it appeared in a brief |
 | `20261076` | works quality ITP | **APPLIED (prod tip)** — C13, #507 |
-| `20261077` | offline write queue idempotency key | **CLAIMED — in flight** `feat/offline-write-queue` (#506) |
-| `20261078` | job progress observations | **CLAIMED — in flight** `feat/job-progress-tracking` (#512) |
-| `20261079` | portal warranties | **CLAIMED — in flight** `feat/portal-warranties-and-variations` |
-| `20261080+` | **NEXT FREE** | unallocated |
+| `20261077` | offline write queue idempotency key | **APPLIED** — #506 |
+| `20261078` | job progress observations | **APPLIED** — #512 |
+| `20261079` | portal warranties | **APPLIED** — #517 |
+| `20261080` | embeddings governance (task_class widen) | **APPLIED** — C15, #521 |
+| `20261081` | works quality M2 (NCRs, corrective actions, witness, templates, lineage) | **APPLIED** — C16, #525 |
+| `20261082` | portal evolution (`customer_portal_preferences`) | **APPLIED** — C16, #522 |
+| `20261083` | offline write expansion (snags + material-request drafts) | **APPLIED** — C16, #523 |
+| `20261084` | EOT `delay_events` | **APPLIED** — C16, #529 |
+| `20261085` | job programme baseline (`job_programme_baselines` + `job_milestones`) | **APPLIED** — C16, #530 |
+| `20261086` | public API keys (`api_keys`) | **APPLIED (prod tip)** — C16, #527 |
+| `20261087+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
