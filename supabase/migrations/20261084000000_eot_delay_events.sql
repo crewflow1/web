@@ -423,8 +423,37 @@ begin
     end if;
 
     if old.status = 'withdrawn' then
-      raise exception 'delay event %: a withdrawn event is frozen', old.id
-        using errcode = 'check_violation';
+      -- Frozen — with the SAME value→NULL escape the recorded branch has, and
+      -- for the same reason: a withdrawn event RETAINS its evidence links, so
+      -- when a linked diary entry / variation is deleted (or the org is torn
+      -- down) the FK's column-list `on delete set null` fires this trigger on
+      -- the surviving withdrawn row. Without this escape that SET-NULL raises
+      -- and ABORTS the delete/cascade — the exact 20261052 teardown-abort
+      -- class this migration claims to have closed (adversarial P1). Only a
+      -- link going value→NULL is permitted; any other field change still
+      -- raises.
+      if new.job_id is distinct from old.job_id
+         or new.org_id is distinct from old.org_id
+         or new.category is distinct from old.category
+         or new.started_on is distinct from old.started_on
+         or new.ended_on is distinct from old.ended_on
+         or new.working_days_lost is distinct from old.working_days_lost
+         or new.description is distinct from old.description
+         or new.created_by is distinct from old.created_by
+         or new.recorded_at is distinct from old.recorded_at
+         or new.recorded_by is distinct from old.recorded_by
+         or new.withdrawn_at is distinct from old.withdrawn_at
+         or new.withdrawn_by is distinct from old.withdrawn_by
+         or (new.diary_entry_id is distinct from old.diary_entry_id
+             and new.diary_entry_id is not null)
+         or (new.variation_quote_id is distinct from old.variation_quote_id
+             and new.variation_quote_id is not null)
+         or (new.weather_district is distinct from old.weather_district
+             and new.weather_district is not null) then
+        raise exception 'delay event %: a withdrawn event is frozen', old.id
+          using errcode = 'check_violation';
+      end if;
+      return new;
     end if;
 
     -- RECORDED: frozen, except —

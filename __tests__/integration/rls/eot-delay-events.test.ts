@@ -357,6 +357,45 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
     expect(after.data?.[0]?.description).toBe(BASE.description);
   });
 
+  it("deleting a linked diary entry SET-NULLs the link on a WITHDRAWN event, never blocks (adversarial P1)", async () => {
+    // A withdrawn event RETAINS its links, so the FK's SET-NULL fires this
+    // trigger on it during a link delete / org teardown. Before the fix the
+    // withdrawn branch raised unconditionally and aborted the delete.
+    const diary = await mkDiary(orgA, jobA);
+    const d = await insertA({ diary_entry_id: diary });
+    const id = String(d.data?.id);
+    await svc().from("delay_events").update({ status: "recorded" }).eq("id", id);
+    const w = await svc().from("delay_events").update({ status: "withdrawn" }).eq("id", id);
+    expect(w.error, "record→withdrawn must succeed with the link intact").toBeNull();
+
+    const del = await svc().from("site_diary_entries").delete().eq("id", diary);
+    expect(del.error, "diary delete must not be blocked by the withdrawn event").toBeNull();
+
+    const after = await svc()
+      .from("delay_events")
+      .select("diary_entry_id, status")
+      .eq("id", id);
+    expect(after.data?.[0]?.diary_entry_id).toBeNull();
+    expect(after.data?.[0]?.status).toBe("withdrawn"); // survives, still frozen
+  });
+
+  it("org teardown succeeds with a WITHDRAWN linked event present (no cascade abort)", async () => {
+    const org = await mkOrg("EOT Teardown");
+    const job = await mkJob(org);
+    const diary = await mkDiary(org, job);
+    const d = await svc()
+      .from("delay_events")
+      .insert({ ...BASE, org_id: org, job_id: job, diary_entry_id: diary })
+      .select("id")
+      .single();
+    const id = String(d.data?.id);
+    await svc().from("delay_events").update({ status: "recorded" }).eq("id", id);
+    await svc().from("delay_events").update({ status: "withdrawn" }).eq("id", id);
+
+    const del = await svc().from("organizations").delete().eq("id", org);
+    expect(del.error, "org teardown must not be aborted by a withdrawn linked event").toBeNull();
+  });
+
   it("deleting the JOB takes its delay events with it", async () => {
     const job = await mkJob(orgA);
     const d = await svc()
