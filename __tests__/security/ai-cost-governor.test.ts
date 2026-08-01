@@ -484,7 +484,7 @@ describe("B. the existing dark provider paths now route through the governor", (
     const code = codeOf(read("server/services/receptionist.ts"));
     expect(code).toMatch(/invokeWithGovernor\(\s*\n?\s*"receptionist\.inbound_extraction"/);
     // Same substitution, same reason: activation, not a credential.
-    expect(code).toMatch(/if\s*\(\s*!isGovernorActivated\(\)\s*\|\|\s*!rawText\.trim\(\)\s*\)/);
+    expect(code).toMatch(/if\s*\(\s*!isTierActivated\(\"cheap\"\)\s*\|\|\s*!rawText\.trim\(\)\s*\)/);
     expect(code).not.toMatch(/if\s*\(\s*!isAiConfigured\(\)/);
     expect(code).toMatch(/return\s+deterministicExtract\(rawText\)/);
   });

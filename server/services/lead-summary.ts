@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   invokeWithGovernor,
-  isGovernorActivated,
+  isTierActivated,
   type GovernedCall,
 } from "@/lib/ai/governor";
 
@@ -108,8 +108,12 @@ export async function summariseLead(
     .eq("target_id", leadId)
     .eq("org_id", orgId);
 
-  // Not activated (no bound cost tier, or no credential) → deterministic.
-  if (!isGovernorActivated()) {
+  // Not activated (no bound MID tier, or no credential) → deterministic.
+  // PER-TIER on purpose: this service constructs its own SDK, so the global
+  // any-tier predicate would let an embedding-only activation switch it on
+  // while its own tier is dark — ungoverned spend through the per-tier
+  // short-circuit. Its own class's tier is the only honest gate.
+  if (!isTierActivated("mid")) {
     return deterministicSummary(lead, photoCount ?? 0);
   }
 
@@ -184,7 +188,12 @@ async function summariseWithProvider(
   leadFacts: string,
 ): Promise<GovernedCall<Record<string, unknown> | null>> {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  // Safe non-null: `isGovernorActivated()` above requires the bound vendor's
+  // NOTE: the mid tier being armed does not guarantee THIS vendor's key —
+  // the binding may name another vendor. A missing key here throws, the
+  // governor settles the claim as a failure and rethrows, and the caller
+  // degrades deterministically: bounded and governed, but routing this
+  // service through the text door would be cleaner. Recorded as debt.
+  // (Previously claimed safe on the old gate, which required the bound vendor's
   // credential to be present, so this is not a bare-key assumption.
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   const model = "claude-haiku-4-5";

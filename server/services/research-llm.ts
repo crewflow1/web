@@ -27,7 +27,8 @@ import "server-only";
  * credential on a deploy would have run them with no £100/month ceiling and no
  * ledger row. Now:
  *
- *   • the gate is `isGovernorActivated()` — the MODEL BINDING, not a key;
+ *   • the gate is `isTierActivated("high")` — this class's OWN bound tier, not a key
+ *     and not any-tier-somewhere;
  *   • each call passes through `invokeWithGovernor` under its own feature key
  *     (`research.analysis` / `research.sales_prep`) so the HQ per-feature cost
  *     view can tell the two apart;
@@ -42,7 +43,7 @@ import "server-only";
 
 import {
   invokeWithGovernor,
-  isGovernorActivated,
+  isTierActivated,
   type AiFeature,
   type GovernedCall,
 } from "@/lib/ai/governor";
@@ -88,7 +89,12 @@ async function callJson(
   // Not activated → null, and the runner proceeds deterministically. This is the
   // gate that makes a stray credential inert; the key reads below are only ever
   // reached once a cost tier is bound.
-  if (!isGovernorActivated()) return null;
+  // PER-TIER, not global: this service runs 'complex' work on the HIGH tier
+  // and constructs its own SDK client, so the global any-tier predicate is the
+  // wrong gate — an embedding-only activation (which necessarily ships an
+  // OPENAI_API_KEY) would flip it true and this fn would spend ungoverned
+  // through the per-tier dark short-circuit. Its OWN tier must be armed.
+  if (!isTierActivated("high")) return null;
 
   const budgetOrgId = hqBudgetOrgId();
   // FAIL CLOSED. No org to bill ⇒ no governed call. Spending unattributed would
@@ -220,12 +226,12 @@ async function callJsonWithProvider(
  *
  * It used to be `isAiConfigured()` — "a key is present" — which is a different
  * and weaker claim: with a key set and no cost tier bound, the runner would take
- * its AI branch and every call inside it would return null. `isGovernorActivated()`
+ * its AI branch and every call inside it would return null. `isTierActivated("high")`
  * is the honest predicate and it is the SAME one `callJson` gates on, so the
  * runner's branch and the calls inside it can no longer disagree.
  */
 export function researchAiEnabled(): boolean {
-  return isGovernorActivated();
+  return isTierActivated("high");
 }
 
 export type AnalysisOutcome = {

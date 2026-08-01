@@ -129,7 +129,18 @@ const SDK_CONSTRUCTION =
   /@anthropic-ai\/sdk|\bnew\s+Anthropic\b|\bnew\s+OpenAI\b|import\(\s*["']openai["']\s*\)|from\s+["']openai["']/;
 const CREDENTIAL_READ = /process\.env\.(?:ANTHROPIC_API_KEY|OPENAI_API_KEY)\b/;
 const GOVERNED = /invokeWithGovernor/;
-const ACTIVATION_GATE = /isGovernorActivated|getTextProvider|getVisionProvider/;
+/**
+ * What counts as an activation gate for an SDK-constructing file. The GLOBAL
+ * predicate (`isGovernorActivated`) is deliberately NOT in this set: it answers
+ * "could ANY tier spend", which became the wrong gate the moment a second
+ * modality entered the registry — an embedding-only activation flips it true
+ * while every generative tier is still dark, and the per-tier short-circuit
+ * then runs the caller's own-SDK fn ungoverned. A self-SDK file must gate on
+ * its OWN class's tier (`isTierActivated("...")`), its modality
+ * (`isInferenceTierActivated`), or reach the model through a door.
+ */
+const ACTIVATION_GATE =
+  /isTierActivated\s*\(|isInferenceTierActivated\s*\(|isEmbeddingActivated\s*\(|getTextProvider|getVisionProvider/;
 const OPENS_A_DOOR = /\bgetTextProvider\s*\(|\bgetVisionProvider\s*\(/;
 
 const sdkFiles = FILES.filter((f) => SDK_CONSTRUCTION.test(CODE.get(f)!));
@@ -168,6 +179,28 @@ function ungovernedEntryPoints(): string[] {
 
   return [...out].sort();
 }
+
+describe("self-SDK services gate on their OWN tier, never the global predicate", () => {
+  // The P0 from the embeddings train's adversarial review: these three files
+  // construct their own SDK clients, so `isGovernorActivated()` (any tier,
+  // any modality) let an embedding-only activation switch them on while their
+  // own tiers were dark — the per-tier dark short-circuit then ran their fns
+  // with no reservation and no ledger row. Each is pinned to the tier of its
+  // registered class, and the bare global predicate is banned in all three.
+  const SELF_SDK_TIER: ReadonlyArray<[string, string]> = [
+    ["server/services/research-llm.ts", 'isTierActivated("high")'],
+    ["server/services/lead-summary.ts", 'isTierActivated("mid")'],
+    ["server/services/receptionist.ts", 'isTierActivated("cheap")'],
+  ];
+  for (const [file, gate] of SELF_SDK_TIER) {
+    it(`${file} gates on ${gate} and never on the global predicate`, () => {
+      const code = CODE.get(file);
+      expect(code, `${file} missing from sweep`).toBeTruthy();
+      expect(code!).toContain(gate);
+      expect(code!).not.toMatch(/\bisGovernorActivated\s*\(/);
+    });
+  }
+});
 
 describe("THE RATCHET — no ungoverned inference path may return", () => {
   it("derives ZERO ungoverned inference entry points from source", () => {

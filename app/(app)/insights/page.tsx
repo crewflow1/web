@@ -7,7 +7,7 @@ import {
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
 import { InsightsSection } from "../dashboard/_insights";
 import { QuestionBox } from "./_question-box";
-import { isGovernorActivated } from "@/lib/ai/governor/readiness";
+import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 
 /**
  * /insights — AI Analysis (tenant-side).
@@ -91,10 +91,12 @@ export default async function InsightsPage() {
         read `isAiConfigured()` — "a vendor key exists" — which was a different
         question from the one `askAi` decides on, so a deploy with a key and no
         bound cost tier would promise an AI answer and return the deterministic
-        one. `isGovernorActivated()` is the same predicate the handler's model
-        door uses, so the badge and the behaviour cannot disagree.
+        one. `isInferenceTierActivated()` is the same predicate the handler's
+        model door (getTextProvider) uses, so the badge and the behaviour
+        cannot disagree — including on an embedding-only activation, where the
+        global any-tier predicate would falsely promise an AI answer.
       */}
-      <QuestionBox aiConfigured={isGovernorActivated()} />
+      <QuestionBox aiConfigured={isInferenceTierActivated()} />
 
       <InsightsSection activity={activityWithNarrative} leads={leads} />
 

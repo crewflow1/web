@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getEmbeddingProvider } from "@/lib/ai/embeddings";
 import { governedEmbed } from "@/lib/ai/embeddings/governed";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
+import { resolveModel } from "@/lib/ai/governor/registry";
 import {
   assertValidEmbedding,
   embeddingChecksum,
@@ -247,98 +248,131 @@ export async function runEmbeddingWorker(
       batches++;
       claimed += rows.length;
 
-      // (5) Embed the batch — through the GOVERNED DOOR, the only external
-      //     call, OUTSIDE any SQL transaction. One batch = one governed call =
-      //     one reservation + one ledger row (vendors bill per request). A
-      //     batch-level provider failure fails every row in it (each gets its
-      //     own retry/backoff/DLQ accounting in SQL); a BUDGET refusal fails
-      //     nobody — see below.
-      const inputs = rows.map((r) => r.embed_input);
-      const startedAt = Date.now();
-      let vectors: number[][] | null = null;
-      let batchTokens = 0;
-      let failReason: string | null = null;
-      let budgetRefused: string | null = null;
-      {
-        const signal = opts.callTimeoutMs
-          ? AbortSignal.timeout(opts.callTimeoutMs)
-          : undefined;
-        const res = await governedEmbed({
-          texts: inputs,
-          feature: "memory.embedding_write",
-          // Checked at (2b) for every paid provider; the deterministic
-          // provider never reads it.
-          orgId: budgetOrgId ?? "",
-          userId: null,
-          ...(signal ? { signal } : {}),
-        });
-        if (res.status === "embedded") {
-          vectors = res.vectors;
-          batchTokens = res.tokens;
-        } else if (res.status === "refused") {
-          budgetRefused = res.reason;
-        } else {
-          failReason = res.reason ?? "embed failed";
-        }
-      }
-      const latencyMs = Date.now() - startedAt;
-
-      if (budgetRefused) {
-        // The governor said no — ceiling reached, reservation store down, or
-        // an identical batch in flight. NOT the rows' fault: failing them
-        // would burn retry attempts toward the dead-letter queue for a
-        // condition that clears by itself. Leave the batch leased —
-        // hq_embedding_reclaim_stale frees it for the next run — and stop
-        // claiming more work.
-        stopped = `budget_refused:${budgetRefused}`;
-        break;
-      }
-
-      if (!vectors) {
-        // Whole batch failed: record a failed attempt per claimed row.
+      // (5) Embed — through the GOVERNED DOOR, the only external call,
+      //     OUTSIDE any SQL transaction, CHUNKED TO THE BOUND ENVELOPE. The
+      //     reservation claims one worst-case envelope per governed call, so
+      //     a chunk's estimated tokens must fit inside it or the ceiling
+      //     could be passed by the shortfall (adversarial P1: a 256-row
+      //     bench batch against a 32-row-calibrated envelope). With no
+      //     binding (dark / deterministic) there is nothing to fit: one
+      //     chunk, exactly the old behaviour.
+      const bound = resolveModel("embedding");
+      const chunks: ClaimRow[][] = [];
+      if (bound) {
+        let cur: ClaimRow[] = [];
+        let curTokens = 0;
         for (const row of rows) {
-          const f = await failOne(call, row.id, workerId, info, failReason ?? "embed failed", maxAttempts);
-          if (f) failed++;
+          const t = estimateTokens(row.embed_input);
+          if (cur.length > 0 && curTokens + t > bound.reserveInputTokens) {
+            chunks.push(cur);
+            cur = [];
+            curTokens = 0;
+          }
+          cur.push(row);
+          curTokens += t;
         }
-        continue;
+        if (cur.length > 0) chunks.push(cur);
+      } else {
+        chunks.push(rows);
       }
 
-      // (6) Attribute the provider's authoritative batch tokens across rows
-      //     (vendors bill per-request, not per-input), then store each.
-      const estPerRow = inputs.map(estimateTokens);
-      const estTotal = estPerRow.reduce((a, c) => a + c, 0) || 1;
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const vec = vectors[i];
-        if (!row) continue;
-        const est = estPerRow[i] ?? 0;
-        const rowTokens = Math.round(batchTokens * (est / estTotal));
-        const rowCost = embeddingCostUsd(info, rowTokens);
-
-        try {
-          // Defensive corruption guard before we trust the vector (PR4b also checks).
-          assertValidEmbedding(vec, info.dimension);
-          const ok = await completeOne(call, row.id, workerId, vec as number[], info, {
-            checksum: embeddingChecksum(row.embed_input),
-            tokens: rowTokens,
-            cost: rowCost,
-            latencyMs,
+      let stopClaiming: string | null = null;
+      for (const chunk of chunks) {
+        const inputs = chunk.map((r) => r.embed_input);
+        const startedAt = Date.now();
+        let vectors: number[][] | null = null;
+        let batchTokens = 0;
+        let failReason: string | null = null;
+        {
+          const signal = opts.callTimeoutMs
+            ? AbortSignal.timeout(opts.callTimeoutMs)
+            : undefined;
+          const res = await governedEmbed({
+            texts: inputs,
+            feature: "memory.embedding_write",
+            // Checked at (2b) for every paid provider; the deterministic
+            // provider never reads it.
+            orgId: budgetOrgId ?? "",
+            userId: null,
+            ...(signal ? { signal } : {}),
           });
-          if (ok) {
-            embedded++;
-            costUsd += rowCost ?? 0;
+          if (res.status === "embedded") {
+            vectors = res.vectors;
+            batchTokens = res.tokens;
+          } else if (res.status === "refused") {
+            if (res.reason === "batch_exceeds_envelope" && chunk.length === 1) {
+              // A single memory larger than the bound model's whole envelope
+              // can NEVER embed under this binding. That IS the row's fault:
+              // fail it so retry/backoff/DLQ accounting engages, instead of
+              // wedging the queue behind it forever.
+              failReason = "embed input exceeds the bound model's reservation envelope";
+            } else {
+              // Ceiling reached, reservation store down, or duplicate in
+              // flight. NOT the rows' fault: failing them would burn retry
+              // attempts toward the dead-letter queue for a condition that
+              // clears by itself. Leave everything still leased —
+              // hq_embedding_reclaim_stale frees it for the next run — and
+              // stop claiming more work.
+              stopClaiming = res.reason;
+              break;
+            }
           } else {
-            // Lease lost / already embedded elsewhere — not an error, not a duplicate.
+            failReason = res.reason ?? "embed failed";
           }
-        } catch (e) {
-          // A corrupt vector (e.g. dimension mismatch) → fail this row so it
-          // retries / dead-letters; never poison the ANN index.
-          const reason =
-            e instanceof EmbeddingDimensionError ? `corrupt vector: ${e.message}` : String(e);
-          const f = await failOne(call, row.id, workerId, info, reason, maxAttempts);
-          if (f) failed++;
         }
+        const latencyMs = Date.now() - startedAt;
+
+        if (!vectors) {
+          // Whole chunk failed: record a failed attempt per claimed row.
+          for (const row of chunk) {
+            const f = await failOne(call, row.id, workerId, info, failReason ?? "embed failed", maxAttempts);
+            if (f) failed++;
+          }
+          continue;
+        }
+
+        // (6) Attribute the provider's authoritative chunk tokens across rows
+        //     (vendors bill per-request, not per-input), then store each.
+        const estPerRow = inputs.map(estimateTokens);
+        const estTotal = estPerRow.reduce((a, c) => a + c, 0) || 1;
+
+        for (let i = 0; i < chunk.length; i++) {
+          const row = chunk[i];
+          const vec = vectors[i];
+          if (!row) continue;
+          const est = estPerRow[i] ?? 0;
+          const rowTokens = Math.round(batchTokens * (est / estTotal));
+          const rowCost = embeddingCostUsd(info, rowTokens);
+
+          try {
+            // Defensive corruption guard before we trust the vector (PR4b also checks).
+            assertValidEmbedding(vec, info.dimension);
+            const ok = await completeOne(call, row.id, workerId, vec as number[], info, {
+              checksum: embeddingChecksum(row.embed_input),
+              tokens: rowTokens,
+              cost: rowCost,
+              latencyMs,
+            });
+            if (ok) {
+              embedded++;
+              costUsd += rowCost ?? 0;
+            } else {
+              // Lease lost / already embedded elsewhere — not an error, not a duplicate.
+            }
+          } catch (e) {
+            // A corrupt vector (e.g. dimension mismatch) → fail this row so it
+            // retries / dead-letters; never poison the ANN index.
+            const reason =
+              e instanceof EmbeddingDimensionError ? `corrupt vector: ${e.message}` : String(e);
+            const f = await failOne(call, row.id, workerId, info, reason, maxAttempts);
+            if (f) failed++;
+          }
+        }
+      }
+
+      if (stopClaiming) {
+        stopped = `budget_refused:${stopClaiming}`;
+        break;
       }
 
       if (rows.length < batchSize) {

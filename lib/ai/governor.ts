@@ -156,7 +156,10 @@ export type { AiFeature, AiTaskClass, AiTier } from "./governor/registry";
 export {
   AI_UNGOVERNED_INFERENCE_ENTRY_POINTS,
   getAiGovernorReadiness,
+  isEmbeddingActivated,
   isGovernorActivated,
+  isInferenceTierActivated,
+  isTierActivated,
 } from "./governor/readiness";
 export { hqBudgetOrgId } from "./governor/attribution";
 

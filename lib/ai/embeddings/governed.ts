@@ -40,6 +40,8 @@ import {
   type AiFeature,
   type GovernorOutcome,
 } from "@/lib/ai/governor";
+import { resolveModel } from "@/lib/ai/governor/registry";
+import { estimateTokens } from "./versioning";
 import { getEmbeddingProvider } from "./index";
 import type { EmbeddingModelInfo, EmbeddingResult } from "./types";
 
@@ -110,6 +112,21 @@ export async function governedEmbed(input: {
       };
     } catch (e) {
       return { status: "unavailable", reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // THE ENVELOPE BACKSTOP. The reservation claims the binding's worst-case
+  // token envelope ONCE per call, whatever `texts.length` is — so a batch
+  // whose estimated tokens exceed the envelope would be admitted on a claim
+  // smaller than its own worst case, and committed spend could pass the
+  // ceiling by the shortfall (the adversarial review's P1: the bench runs
+  // batches of 256 against a worker-calibrated envelope). Refuse instead;
+  // callers chunk to fit (the worker does) or shrink their batch.
+  const bound = resolveModel("embedding");
+  if (bound) {
+    const estimated = input.texts.reduce((a, t) => a + estimateTokens(t), 0);
+    if (estimated > bound.reserveInputTokens) {
+      return { status: "refused", reason: "batch_exceeds_envelope" };
     }
   }
 

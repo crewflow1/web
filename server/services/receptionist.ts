@@ -4,7 +4,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
-import { invokeWithGovernor, isGovernorActivated, type GovernedCall } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
 import {
   evaluateReply,
   isAutoSendable,
@@ -2298,7 +2298,10 @@ export async function processInboundEnquiry(
         // path taken. It used to read `isAiConfigured()`, which would have
         // recorded `ai_used: true` on a deploy that merely had a key while the
         // deterministic extraction was what actually ran.
-        ai_used: isGovernorActivated(),
+        // Per-tier: extraction runs on the CHEAP tier; the global predicate
+        // would record ai_used:true on an embedding-only activation where the
+        // deterministic extraction was what actually ran.
+        ai_used: isTierActivated("cheap"),
       },
     });
 
@@ -2510,7 +2513,9 @@ export async function recordWhatsAppDeliveryReceipt(
 async function extractFields(rawText: string, orgId: string): Promise<InboundExtraction> {
   // Not activated → deterministic fallback (keyword urgency + postcode
   // regex). Always returns SOMETHING so the lead still creates.
-  if (!isGovernorActivated() || !rawText.trim()) {
+  // PER-TIER (own SDK below): the global predicate is not a valid gate for
+  // an SDK-constructing file — see the governance-closure ratchet.
+  if (!isTierActivated("cheap") || !rawText.trim()) {
     return deterministicExtract(rawText);
   }
   try {

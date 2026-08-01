@@ -221,7 +221,7 @@ describe("research-ai — the model layer degrades gracefully (no key ⇒ determ
     // no ledger row. The key check survives one layer down, inside the governed
     // provider leg, where it can no longer be the only thing standing between a
     // credential and a bill.
-    expect(code).toMatch(/if\s*\(!isGovernorActivated\(\)\)\s*return null;/);
+    expect(code).toMatch(/if\s*\(!isTierActivated\(\"high\"\)\)\s*return null;/);
     expect(code).toMatch(/if\s*\(!budgetOrgId\)\s*return null;/);
     expect(code).toMatch(/if\s*\(!anthropicKey\s*&&\s*!openaiKey\)/);
     expect(code).toMatch(/export function researchAiEnabled/);
