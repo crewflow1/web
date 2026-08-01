@@ -723,7 +723,11 @@ export async function loadCompanySignals(
         if (!jobs) throw new Error("jobs read failed");
         return gatherCvrRollup(db, orgId, jobs);
       }),
-      group("intelligence: material demand", () => gatherMaterialDemand(db, orgId, asAtIso)),
+      // LONDON day, not the UTC invoice-day convention: /materials/requests
+      // computes overdue with formatDayKeyUK, and this count must never
+      // disagree with its own drill-through page (adversarial P2 — they
+      // diverged 23:00–00:00 UK every BST night).
+      group("intelligence: material demand", () => gatherMaterialDemand(db, orgId, todayKey)),
       group("intelligence: snag patterns", async () => {
         if (!jobs) throw new Error("jobs read failed");
         return gatherSnagPatterns(db, orgId, jobs, asAtIso);

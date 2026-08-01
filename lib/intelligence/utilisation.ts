@@ -129,6 +129,16 @@ export type OrgUtilisation = {
     labourCost: number;
     /** Members with recorded time but NO hourly rate — excluded from the £. */
     membersWithoutRate: number;
+    /**
+     * Hours by people whose org-pinned rota/time rows survive their
+     * membership — offboarded mid-window. INCLUDED in the org totals above
+     * (dropping them understated recorded hours after every offboarding —
+     * an adversarial-review finding) and disclosed here so the card can say
+     * so. Their labour cost is unknowable (no membership ⇒ no rate) and is
+     * NOT in `labourCost`.
+     */
+    formerMemberRosteredHours: number;
+    formerMemberRecordedHours: number;
   };
 };
 
@@ -204,8 +214,18 @@ export function computeUtilisation(input: {
       a.userId.localeCompare(b.userId),
   );
 
-  const rosteredTotal = round2(members.reduce((s, m) => s + m.rosteredHours, 0));
-  const recordedTotal = round2(members.reduce((s, m) => s + m.recordedHours, 0));
+  const memberRostered = round2(members.reduce((s, m) => s + m.rosteredHours, 0));
+  const memberRecorded = round2(members.reduce((s, m) => s + m.recordedHours, 0));
+  // Org totals sum EVERY org-pinned row in the window, not just current
+  // members' — rows outlive memberships when someone is offboarded.
+  let rosteredAllMs = 0;
+  for (const ms of rosteredByUser.values()) rosteredAllMs += ms;
+  let recordedAll = 0;
+  for (const h of recordedByUser.values()) recordedAll += h;
+  const rosteredTotal = round2(rosteredAllMs / 3_600_000);
+  const recordedTotal = round2(recordedAll);
+  const formerMemberRosteredHours = round2(Math.max(0, rosteredTotal - memberRostered));
+  const formerMemberRecordedHours = round2(Math.max(0, recordedTotal - memberRecorded));
   const withCost = members.filter((m) => m.labourCost != null);
 
   return {
@@ -218,6 +238,8 @@ export function computeUtilisation(input: {
       membersWithRoster: members.filter((m) => m.rosteredHours > 0).length,
       membersWithTime: members.filter((m) => m.recordedHours > 0).length,
       labourCost: round2(withCost.reduce((s, m) => s + (m.labourCost ?? 0), 0)),
+      formerMemberRosteredHours,
+      formerMemberRecordedHours,
       membersWithoutRate: members.filter((m) => m.recordedHours > 0 && m.labourCost == null)
         .length,
     },

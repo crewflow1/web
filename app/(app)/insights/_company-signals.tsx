@@ -219,6 +219,16 @@ function UtilisationCard({ view }: { view: CompanySignalsView }) {
               }
             />
           </dl>
+          {t.formerMemberRecordedHours > 0 || t.formerMemberRosteredHours > 0 ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Totals include {t.formerMemberRecordedHours}h recorded
+              {t.formerMemberRosteredHours > 0
+                ? ` and ${t.formerMemberRosteredHours}h rostered`
+                : ""}{" "}
+              by people no longer in the team — their labour cost is unknown
+              and not priced.
+            </p>
+          ) : null}
           <ul className="mt-3 space-y-1">
             {u.members
               .filter((m) => m.rosteredHours > 0 || m.recordedHours > 0)

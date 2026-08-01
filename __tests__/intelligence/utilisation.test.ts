@@ -155,6 +155,34 @@ describe("the BST window edge (London midnight = 23:00Z)", () => {
   });
 });
 
+describe("former members — offboarded mid-window (adversarial P2)", () => {
+  it("their org-pinned hours stay in the totals and are disclosed, never dropped", () => {
+    const out = computeUtilisation({
+      members: [{ userId: "u-current", name: "Current", hourlyPay: 20 }],
+      rota: [
+        { user_id: "u-current", job_id: "job-1", starts_at: "2026-07-10T08:00:00Z", ends_at: "2026-07-10T16:00:00Z" },
+        // Offboarded: org-pinned rows survive the membership.
+        { user_id: "u-gone", job_id: null, starts_at: "2026-07-11T08:00:00Z", ends_at: "2026-07-11T12:00:00Z" },
+      ],
+      timeEntries: [
+        entry({ id: "t-c", user_id: "u-current", started_at: "2026-07-10T08:00:00Z", ended_at: "2026-07-10T14:00:00Z" }),
+        entry({ id: "t-g", user_id: "u-gone", started_at: "2026-07-11T08:00:00Z", ended_at: "2026-07-11T11:00:00Z" }),
+      ],
+      window: WINDOW,
+      nowMs: NOW.getTime(),
+    });
+    // Per-member list stays current members only…
+    expect(out.members.map((m) => m.userId)).toEqual(["u-current"]);
+    // …but org totals count every org-pinned hour in the window.
+    expect(out.totals.recordedHours).toBe(9); // 6 current + 3 former
+    expect(out.totals.rosteredHours).toBe(12); // 8 current + 4 former
+    expect(out.totals.formerMemberRecordedHours).toBe(3);
+    expect(out.totals.formerMemberRosteredHours).toBe(4);
+    // Unknown rate ⇒ not priced: labour cost is the current member's only (6h × 20).
+    expect(out.totals.labourCost).toBe(120);
+  });
+});
+
 describe("hoursRatio", () => {
   it("floor boundary: rated exactly at the floor", () => {
     expect(hoursRatio(4, MIN_RATED_ROSTERED_HOURS).pct).toBe(50);

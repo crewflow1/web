@@ -339,10 +339,13 @@ describe("dual-org: every table read is pinned to the active org", () => {
     const view = await loadCompanySignals(ORG_A, NOW);
     // 23:30Z on 31 July is already 1 August in London — the display day.
     expect(view.todayKey).toBe("2026-08-01");
-    // asAtIso deliberately reuses invoiceBusinessToday (UTC ISO day), the ONE
-    // convention every `date`-column comparison in the repo already follows —
-    // a second "today" for the same columns would disagree with the overdue
-    // authority for an hour a night.
+    // asAtIso reuses invoiceBusinessToday (UTC ISO day) for INVOICE/snag date
+    // columns — matching each surface's own convention is the rule, not one
+    // global "today": snag pages compare with the UTC slice, so snags use
+    // asAtIso; /materials/requests compares with formatDayKeyUK, so material
+    // demand is fed todayKey (the London day) — see the gather call. Feeding
+    // materials the UTC day made this count disagree with its own
+    // drill-through page for an hour every BST night (adversarial P2).
     expect(view.asAtIso).toBe("2026-07-31");
   });
 });
