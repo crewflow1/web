@@ -1400,9 +1400,15 @@ begin
       if new.revision_number < 2 then
         raise exception 'a revision of an existing series is numbered 2 or higher';
       end if;
+      -- The root must itself be a SERIES ROOT (self-rooted revision 1), not an
+      -- arbitrary mid-series revision. Without the self-root clause a same-org
+      -- PostgREST insert could point root_plan_id at revision 2 of a real
+      -- series and mint a shadow sub-series that escapes the one-draft /
+      -- one-issued partial uniques (adversarial P2). Same-org still required.
       if not exists (select 1 from public.inspection_test_plans
-                     where id = new.root_plan_id and org_id = new.org_id) then
-        raise exception 'revision series root % is not an inspection plan in this organisation', new.root_plan_id;
+                     where id = new.root_plan_id and org_id = new.org_id
+                       and root_plan_id = id and revision_number = 1) then
+        raise exception 'revision series root % is not a series origin in this organisation', new.root_plan_id;
       end if;
     end if;
     return new;
@@ -1589,3 +1595,33 @@ alter table public.tenant_attachments
                           'asset_maintenance_cases', 'asset_fuel_logs',
                           'goods_received_notes', 'inspection_signoffs',
                           'non_conformance_reports'));
+
+-- ---------------------------------------------------------------------------
+-- NCR EVIDENCE IS APPEND-ONLY — the missing counterpart to M1's sign-off
+-- freeze (20261076 tg_tenant_attachment_freeze_signoff). An NCR and its
+-- corrective actions are undeletable quality evidence; the photographs and
+-- certificates attached to them must be too, or the record survives while the
+-- proof behind it can be quietly removed from a closed, verified NCR. Adding
+-- files is always fine (this is a DELETE guard); removing one is refused for
+-- every role incl. service_role, for the NCR's whole life. Same escapes as the
+-- sign-off trigger: the org-teardown cascade and a vanished NCR both pass.
+-- ---------------------------------------------------------------------------
+create or replace function public.tg_tenant_attachment_freeze_ncr()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.target_table <> 'non_conformance_reports' then
+    return old;
+  end if;
+  if not exists (select 1 from public.organizations where id = old.org_id) then
+    return old;
+  end if;
+  if not exists (select 1 from public.non_conformance_reports where id = old.target_id) then
+    return old;
+  end if;
+  raise exception 'evidence attached to a non-conformance report is frozen — add new files, never remove or replace one';
+end $$;
+
+drop trigger if exists tenant_attachments_freeze_ncr on public.tenant_attachments;
+create trigger tenant_attachments_freeze_ncr
+  before delete on public.tenant_attachments
+  for each row execute function public.tg_tenant_attachment_freeze_ncr();
