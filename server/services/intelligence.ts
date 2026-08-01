@@ -845,6 +845,11 @@ export async function gatherSupplierPerformance(
 export type SignalGroup<T> = { data: T; failed: false } | { data: null; failed: true };
 
 export interface CompanySignalsView {
+  /** The org this view was computed for — lets a consumer that receives a
+   *  pre-loaded view assert it belongs to the org it is rendering (guards a
+   *  future caller from blending a dual-org member's two companies). Optional so
+   *  existing constructors/fixtures need no change. */
+  orgId?: string;
   /** The as-at business day for date-column comparisons (invoice authority). */
   asAtIso: string;
   /** The London day the page rendered for. */
@@ -971,6 +976,7 @@ export async function loadCompanySignals(
     ]);
 
   return {
+    orgId,
     asAtIso,
     todayKey,
     utilisation,
