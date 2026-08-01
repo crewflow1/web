@@ -61,6 +61,23 @@ export const DEFAULT_LIMITS = {
   /** Public quote accept/decline — keyed by token+IP. Blocks token-guessing
    *  and state-change spam while allowing a customer's normal retries. */
   quote_action: { limit: 20, windowSeconds: 600 } as RateLimitConfig,
+  /**
+   * Public API v1 (Bearer api-key routes, Train 9) — identifier is the KEY ID,
+   * not the IP, so one tenant's integration cannot starve another's behind a
+   * shared NAT, and one key cannot dodge its budget by rotating IPs.
+   *
+   * DELIBERATE, REVIEWED v1 CHOICE — THE LIMITER FAILS OPEN. This module's
+   * design (see the header) is that a fault in the limiter can never take a
+   * route down: `check`/`checkPersistent` both return `allowed: true` on any
+   * internal error. api_v1 INHERITS that: a broken limiter means an
+   * over-budget key gets through, never that a paying integration goes dark.
+   * That trade is correct for a 120 req/min read substrate with zero product
+   * endpoints; a future write-capable API surface must revisit it EXPLICITLY
+   * (fail-closed or a durable dedicated store) rather than inherit this
+   * comment. Pinned by __tests__/security/api-keys.test.ts so the choice
+   * stays flagged, not silent.
+   */
+  api_v1: { limit: 120, windowSeconds: 60 } as RateLimitConfig,
 } as const;
 
 /**
@@ -258,6 +275,22 @@ export async function enforcePersistent(
   cfg: RateLimitConfig,
 ): Promise<Response | null> {
   const result = await consume(route, identifyRequest(req), cfg);
+  if (result.allowed) return null;
+  return rateLimitedResponse(result);
+}
+
+/**
+ * Sibling of {@link enforcePersistent} for routes whose caller identity is NOT
+ * the IP — e.g. the public API v1, where the identifier is the resolved API
+ * key's id (see DEFAULT_LIMITS.api_v1). Uses the durable store in production.
+ * Returns a 429 Response when limited, else null.
+ */
+export async function enforceIdentified(
+  route: string,
+  identifier: string,
+  cfg: RateLimitConfig,
+): Promise<Response | null> {
+  const result = await consume(route, identifier, cfg);
   if (result.allowed) return null;
   return rateLimitedResponse(result);
 }
