@@ -455,6 +455,16 @@ describe("attachment target widening — DB CHECK and TS list moved together", (
     // and the UI must not offer a Delete control on frozen evidence
     expect(itemCard).toMatch(/targetTable="inspection_signoffs" targetId=\{live\.id\} frozen/);
   });
+
+  it("NCR evidence is append-only too: the M1 sign-off freeze has a counterpart (adversarial P1)", () => {
+    // Without this, a photo/certificate on a closed, verified NCR could be
+    // deleted by any member while the NCR itself is undeletable evidence.
+    expect(migration2).toMatch(/tg_tenant_attachment_freeze_ncr/);
+    expect(migration2).toMatch(/before delete on public\.tenant_attachments/);
+    expect(migration2).toMatch(
+      /evidence attached to a non-conformance report is frozen/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -863,8 +873,12 @@ describe("M2 migration — revision lineage (the RAMS 20261022 shape)", () => {
     expect(lifecycle).toMatch(/old\.root_plan_id, old\.revision_number/);
   });
 
-  it("a revision root must be a plan in the SAME org", () => {
-    expect(migration2).toMatch(/is not an inspection plan in this organisation/);
+  it("a revision root must be a SERIES ORIGIN (self-rooted rev 1) in the SAME org", () => {
+    // Strengthened after adversarial P2: pointing root_plan_id at a mid-series
+    // revision would mint a shadow sub-series escaping the one-draft/one-issued
+    // uniques. The guard now requires root_plan_id = id AND revision_number = 1.
+    expect(migration2).toMatch(/is not a series origin in this organisation/);
+    expect(migration2).toMatch(/root_plan_id = id and revision_number = 1/);
   });
 
   it("the app's revision copy carries hold points forward and composes with the untouched issue RPC", () => {
