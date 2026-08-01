@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCommsReadiness } from "@/lib/comms/readiness";
 import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
 import { getWeatherReadiness } from "@/lib/weather/readiness";
+import { probeDatabase } from "@/lib/health/db-probe";
 
 /**
  * Health check endpoint.
@@ -46,9 +47,18 @@ export async function GET() {
   // /api/v1/me probe — the substrate's living proof, not a product surface.
   const integrations = getIntegrationsReadiness();
 
+  // Live database reachability. This is the ONLY signal that gates `ok`/`status`: an unreachable
+  // Postgres means the app cannot serve requests, so the endpoint must go non-green. The comms,
+  // weather and integrations booleans above are READINESS signals (can-this-channel-send, etc.)
+  // and deliberately do NOT gate `ok` — a dark-but-healthy provider is not an outage. The probe
+  // never throws and the endpoint always returns HTTP 200 so the JSON body is the source of truth.
+  const db = await probeDatabase();
+
   return NextResponse.json(
     {
-      ok: true,
+      ok: db.ok,
+      status: db.ok ? "healthy" : "degraded",
+      db: db.ok ? "ok" : "degraded",
       service: "crewflow-web",
       env: process.env.APP_ENV ?? process.env.VERCEL_ENV ?? "development",
       sha: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
