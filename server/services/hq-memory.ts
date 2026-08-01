@@ -27,6 +27,8 @@ import {
   type RecallCandidate,
 } from "@/lib/memory/retrieval";
 import { getEmbeddingProvider } from "@/lib/ai/embeddings";
+import { governedEmbed } from "@/lib/ai/embeddings/governed";
+import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 
 /**
  * CrewFlow HQ — Shared Memory Engine data access (CEO Directive 002).
@@ -997,16 +999,30 @@ async function resolveQueryProbe(
   const text = query?.trim();
   if (!text) return none;
 
-  const provider = getEmbeddingProvider();
-  if (!provider) return none;
+  // Through the GOVERNED DOOR: a paid query embed is reserved, deduped and
+  // ledgered like every other AI call (feature `memory.embedding_query`,
+  // billed to CrewFlow's own org — HQ recall has no tenant). Every refusal —
+  // dark tier, no attribution org, ceiling reached, duplicate in flight,
+  // provider failure, timeout — degrades identically: semantic off, lexical +
+  // structural recall carry on, and the caller cannot tell. The dedupe is a
+  // feature here, not a tax: the same query re-asked inside the window was
+  // going to produce the same vector, so refusing the second paid call is
+  // pure saving (that recall serves lexically).
+  const orgId = hqBudgetOrgId();
+  if (!orgId && getEmbeddingProvider()?.info.provider !== "deterministic") return none;
 
   try {
-    const { vectors } = await provider.embed([text], {
+    const res = await governedEmbed({
+      texts: [text],
+      feature: "memory.embedding_query",
+      orgId: orgId ?? "",
+      userId: null,
       signal: AbortSignal.timeout(QUERY_EMBED_TIMEOUT_MS),
     });
-    const vector = vectors[0];
-    if (!vector || vector.length !== provider.info.dimension) return none;
-    return { embedding: vector, version: provider.info.version };
+    if (res.status !== "embedded") return none;
+    const vector = res.vectors[0];
+    if (!vector || vector.length !== res.info.dimension) return none;
+    return { embedding: vector, version: res.info.version };
   } catch (err) {
     // A provider failure must NEVER fail the recall the caller asked for.
     console.warn("[hq-memory] query embedding failed; semantic recall off", err);

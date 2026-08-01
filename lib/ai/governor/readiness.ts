@@ -38,7 +38,13 @@
  * CAN NEVER THROW — a readiness probe must always answer.
  */
 
-import { AI_TIERS, TIER_MODEL, isAnyTierBound, type AiTier } from "./registry";
+import {
+  AI_TIERS,
+  INFERENCE_TIERS,
+  TIER_MODEL,
+  isAnyTierBound,
+  type AiTier,
+} from "./registry";
 
 const present = (v: string | undefined | null): boolean =>
   typeof v === "string" && v.trim().length > 0;
@@ -108,16 +114,16 @@ export type AiGovernorReadiness = {
    * again on its own, and the ratchet
    * (__tests__/security/ai-governance-closure.test.ts) fails first.
    *
-   * WHAT THIS FIELD DOES NOT COVER, because a green light must be narrow to be
-   * worth anything: EMBEDDINGS. `lib/ai/embeddings` is a different modality and
-   * `OPENAI_API_KEY` alone still selects its provider. It is not in this
-   * governor's registry and structurally cannot be: the ledger's `task_class`
-   * CHECK admits only classification / drafting / complex, and an embedding is
-   * none of the three, so governing it needs a migration this lane did not have.
-   * Its blast radius is bounded differently — the embedding WORKER is gated on a
-   * database flag (`memory_embedding.worker_enabled`), so a credential alone
-   * does not start it — but HQ recall does embed a query on demand. Stated here
-   * so nobody reads `false` as "no AI spend is possible".
+   * EMBEDDINGS ARE NOW INSIDE THIS BOUNDARY (they were the stated exception
+   * here until migration 20261080). `lib/ai/embeddings` no longer hands back a
+   * paid provider on `OPENAI_API_KEY` alone: its door requires
+   * `isEmbeddingActivated()` — a bound `embedding` tier, not a key — and both
+   * embedding call sites (the memory worker and HQ recall's query embed) run
+   * through `invokeWithGovernor` under the `embedding` task class, which the
+   * ledger's CHECK now admits. The one deliberate exemption is the
+   * DETERMINISTIC embedding provider (CI/dev): zero egress, zero cost, no
+   * vendor — there is nothing to govern, and the ratchet pins that it is the
+   * only path that may bypass the door.
    */
   ungovernedCredentialRisk: boolean;
 };
@@ -213,11 +219,42 @@ export function getAiGovernorReadiness(): AiGovernorReadiness {
 
 /**
  * Cheap predicate for the hot path: is ANY governed call able to reach a
- * provider? `invokeWithGovernor` calls this first and, when false, runs the
- * caller's existing degraded path without a single database read — which is why
- * wiring the governor into a dark seam changes nothing that a user or a bill
- * can observe.
+ * provider? `invokeWithGovernor` consults per-tier readiness (below) and, when
+ * the call's own tier is dark, runs the caller's existing degraded path without
+ * a single database read — which is why wiring the governor into a dark seam
+ * changes nothing that a user or a bill can observe.
  */
 export function isGovernorActivated(): boolean {
   return getAiGovernorReadiness().activated;
+}
+
+/**
+ * Is ONE specific tier able to reach a provider — binding AND credential?
+ *
+ * The per-modality question the door gates actually need. The global
+ * `isGovernorActivated()` answers "could this build spend at all", which is
+ * the wrong gate for a door: with more than one modality in the registry,
+ * "some tier somewhere is bound" must not open a door whose own tier is dark.
+ * (Concretely: binding an embedding model must not let `getTextProvider()`
+ * hand out a text provider on a bare ANTHROPIC_API_KEY, and vice versa.)
+ */
+export function isTierActivated(tier: AiTier): boolean {
+  return composeTierReadiness({ tier, binding: TIER_MODEL[tier] }).providerResolvable;
+}
+
+/**
+ * Can any GENERATIVE tier (cheap/mid/high) reach a provider? The gate for the
+ * text and vision doors — the modality those doors serve.
+ */
+export function isInferenceTierActivated(): boolean {
+  return INFERENCE_TIERS.some((t) => isTierActivated(t));
+}
+
+/**
+ * Can the embedding tier reach a provider? The gate for the PAID branch of the
+ * embedding door (lib/ai/embeddings). The deterministic provider is exempt —
+ * zero egress, zero cost — and that exemption is pinned by the ratchet suite.
+ */
+export function isEmbeddingActivated(): boolean {
+  return isTierActivated("embedding");
 }

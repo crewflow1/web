@@ -24,7 +24,7 @@ vi.mock("@/lib/supabase/admin", () => ({
  * The AI gate. It used to be `isAiConfigured()` — "a vendor key is present" —
  * which meant a credential on a deploy sent this TENANT-FACING summary to a model
  * with no £100/org/month ceiling and no ledger row. It is now
- * `isGovernorActivated()`: the cost tier must be BOUND in the build too. The mock
+ * `isTierActivated("mid")`: the service's OWN tier must be bound. The mock
  * keeps its old name here so every assertion below still reads as "AI on / AI
  * off", which is exactly what the flag still means to this test.
  */
@@ -34,7 +34,7 @@ vi.mock("@/lib/ai/governor", async (importOriginal) => {
   // what lets the provider leg run under this mock, and mocking it away would
   // make the test prove less than it does now.
   const actual = await importOriginal<typeof import("@/lib/ai/governor")>();
-  return { ...actual, isGovernorActivated: () => isAiConfiguredMock() };
+  return { ...actual, isTierActivated: (tier: string) => tier === "mid" && isAiConfiguredMock() };
 });
 
 // If summariseLead ever reaches the LLM, this spy records it. The whole point

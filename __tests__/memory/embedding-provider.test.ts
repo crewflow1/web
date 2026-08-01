@@ -25,16 +25,38 @@ import { createDeterministicEmbeddingProvider } from "@/lib/ai/embeddings/determ
  *     provider, owns retry / backoff / dead-letter).
  * Plus the pure versioning/cost/validation helpers that make embeddings
  * versioned, deduplicated, cost-accounted assets.
+ *
+ * THE FACTORY NOW ANSWERS TWO QUESTIONS, NOT ONE (embeddings governance,
+ * migration 20261080). Configuration still selects the VENDOR; the AI Cost
+ * Governor now AUTHORISES the paid branch. `OPENAI_API_KEY` used to be
+ * sufficient to hand back a live PAID provider here — the last key-only
+ * activation in the build — so the `openai` case now requires
+ * `isEmbeddingActivated()` (a bound `embedding` tier) before it reads the key.
+ * The DETERMINISTIC provider is deliberately outside that gate: zero egress,
+ * zero cost, and CI depends on it.
+ *
+ * Activation is mocked below (as the text door's suite mocks its own gate)
+ * because the vendor-selection rules this file pins are only observable once
+ * the call is authorised. The unmocked bare-key case is its own regression pin.
  */
 
 // The `openai` SDK is dynamically imported by the provider; mock it so embed()
 // is deterministic and never touches the network.
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
+const { mockCreate, embeddingActivatedMock } = vi.hoisted(() => ({
+  mockCreate: vi.fn(),
+  embeddingActivatedMock: vi.fn(),
+}));
 vi.mock("openai", () => ({
   default: vi.fn().mockImplementation(() => ({
     embeddings: { create: mockCreate },
   })),
 }));
+vi.mock("@/lib/ai/governor/readiness", async (importOriginal) => {
+  // Keep the real readiness surface; control ONLY the predicate the paid
+  // branch of the embedding door gates on.
+  const actual = await importOriginal<typeof import("@/lib/ai/governor/readiness")>();
+  return { ...actual, isEmbeddingActivated: () => embeddingActivatedMock() };
+});
 
 /** A structurally-valid 1536-d vector whose first element marks its identity. */
 function vec(mark: number): number[] {
@@ -173,7 +195,7 @@ describe("isValidEmbedding / assertValidEmbedding — corruption guard", () => {
 // 6. Factory — the graceful-degradation seam (configuration only)
 // =====================================================================
 
-describe("getEmbeddingProvider — null when unconfigured, provider when configured", () => {
+describe("getEmbeddingProvider — null when unconfigured, provider when AUTHORISED and configured", () => {
   const ENV = ["MEMORY_EMBEDDING_PROVIDER", "OPENAI_API_KEY"] as const;
   let saved: Record<string, string | undefined>;
 
@@ -183,6 +205,9 @@ describe("getEmbeddingProvider — null when unconfigured, provider when configu
       saved[k] = process.env[k];
       delete process.env[k];
     }
+    // Vendor selection on the paid branch is only reachable once the embedding
+    // tier is armed; the bare-key regression pins below turn this off again.
+    embeddingActivatedMock.mockReturnValue(true);
   });
   afterEach(() => {
     for (const k of ENV) {
@@ -197,7 +222,22 @@ describe("getEmbeddingProvider — null when unconfigured, provider when configu
     expect(isEmbeddingConfigured()).toBe(false);
   });
 
-  it("defaults to OpenAI when a key is present and no provider is named", () => {
+  it("a bare OPENAI_API_KEY must NOT produce a paid embedding provider", () => {
+    // THE regression pin this door was changed for — the exact INVERSE of the
+    // expectation that held before migration 20261080. A key on a deploy used
+    // to select the paid provider here with no ceiling and no ledger row;
+    // a key is a TRANSPORT credential, never an authorisation to spend.
+    embeddingActivatedMock.mockReturnValue(false);
+    process.env.OPENAI_API_KEY = "sk-test";
+    expect(getEmbeddingProvider()).toBeNull();
+    expect(isEmbeddingConfigured()).toBe(false);
+    // Naming the vendor explicitly changes nothing — configuration is not
+    // authorisation either.
+    process.env.MEMORY_EMBEDDING_PROVIDER = "openai";
+    expect(getEmbeddingProvider()).toBeNull();
+  });
+
+  it("defaults to OpenAI when the embedding tier is armed and a key is present", () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const p = getEmbeddingProvider();
     expect(p).not.toBeNull();
@@ -229,7 +269,7 @@ describe("getEmbeddingProvider — null when unconfigured, provider when configu
     }
   });
 
-  it("returns null for openai when its key is missing (named but unconfigured)", () => {
+  it("returns null for openai when its key is missing — even ARMED (both are necessary)", () => {
     process.env.MEMORY_EMBEDDING_PROVIDER = "openai";
     expect(getEmbeddingProvider()).toBeNull();
   });
@@ -330,7 +370,10 @@ describe("getEmbeddingProvider — the deterministic offline provider (config sw
   it("selects the deterministic provider by name — WITHOUT any API key", () => {
     // The whole point: it runs offline, so it is configured even though no
     // OPENAI_API_KEY (or any other key) is present. Proves "a new provider is a
-    // configuration swap, not a Memory-Engine change".
+    // configuration swap, not a Memory-Engine change". Since the governance
+    // closure it is ALSO deliberately outside the activation gate — zero
+    // egress, zero cost, nothing to govern — so the gate is pinned OFF here.
+    embeddingActivatedMock.mockReturnValue(false);
     process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
     const p = getEmbeddingProvider();
     expect(p).not.toBeNull();

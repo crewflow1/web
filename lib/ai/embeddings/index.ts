@@ -21,6 +21,8 @@ import "server-only";
  */
 
 import type { EmbeddingProvider } from "./types";
+import { isEmbeddingActivated } from "@/lib/ai/governor/readiness";
+import { TIER_MODEL } from "@/lib/ai/governor/registry";
 import { createOpenAiEmbeddingProvider } from "./openai";
 import { createDeterministicEmbeddingProvider } from "./deterministic";
 
@@ -48,9 +50,29 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
 
   switch (name) {
     case "openai": {
+      // THE AUTHORISATION — a key is not permission to spend; a bound
+      // `embedding` tier is (lib/ai/governor/registry.ts TIER_MODEL). This is
+      // the same closure the text and vision doors already have: before it,
+      // OPENAI_API_KEY alone selected a PAID provider here, which made
+      // embeddings the last key-only activation in the build. The
+      // deterministic branch below is deliberately NOT behind this gate — it
+      // is zero-egress, zero-cost compute, and CI depends on it.
+      if (!isEmbeddingActivated()) return null;
       const key = process.env.OPENAI_API_KEY;
       if (!key) return null;
-      return createOpenAiEmbeddingProvider(key);
+      // The binding is the model authority. This provider embeds a fixed
+      // model; if the bound model ever disagrees, refuse rather than bill a
+      // model the registry did not authorise.
+      const bound = TIER_MODEL.embedding;
+      const provider = createOpenAiEmbeddingProvider(key);
+      if (bound && bound.model !== provider.info.model) {
+        console.error(
+          `[ai/embeddings] bound model "${bound.model}" ≠ provider model ` +
+            `"${provider.info.model}" — refusing (fix the binding or the provider)`,
+        );
+        return null;
+      }
+      return provider;
     }
 
     // A DETERMINISTIC, offline, network-free provider for local dev, CI, and
@@ -84,8 +106,12 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
 }
 
 /**
- * Cheap presence check, mirroring `isAiConfigured()` in `lib/ai/safety.ts`.
- * True iff a usable embedding provider is configured right now.
+ * Cheap presence check. True iff a usable embedding provider is configured
+ * right now — which, since the embeddings-governance closure, means
+ * AUTHORISED as well as configured: a vendor key with no bound `embedding`
+ * tier answers false, because the paid branch can produce no provider. Only
+ * the deterministic (zero-cost, zero-egress) provider answers true without a
+ * binding.
  */
 export function isEmbeddingConfigured(): boolean {
   return getEmbeddingProvider() !== null;

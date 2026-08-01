@@ -4,6 +4,7 @@ import {
   AI_FEATURE_KEYS,
   AI_TASK_CLASSES,
   AI_TIERS,
+  INFERENCE_TIERS,
   TASK_CLASS_TIER,
   TIER_MODEL,
   featureDefinition,
@@ -78,12 +79,13 @@ const ORG = "00000000-0000-0000-0000-0000000000aa";
 // =====================================================================
 
 describe("the task-class routing table is DATA, with models in exactly one place", () => {
-  it("names the four task classes", () => {
+  it("names the five task classes — 'embedding' admitted by migration 20261080", () => {
     expect([...AI_TASK_CLASSES]).toEqual([
       "deterministic",
       "classification",
       "drafting",
       "complex",
+      "embedding",
     ]);
   });
 
@@ -92,7 +94,11 @@ describe("the task-class routing table is DATA, with models in exactly one place
     expect(TASK_CLASS_TIER.classification).toBe("cheap");
     expect(TASK_CLASS_TIER.drafting).toBe("mid");
     expect(TASK_CLASS_TIER.complex).toBe("high");
+    // The modality IS the class: embedding routes to its OWN tier, never to a
+    // generative price band, so the two arming switches stay separable.
+    expect(TASK_CLASS_TIER.embedding).toBe("embedding");
     expect(tierFor("deterministic")).toBeNull();
+    expect(tierFor("embedding")).toBe("embedding");
   });
 
   it("tiers are ABSTRACT — no vendor or model name appears among them", () => {
@@ -105,6 +111,9 @@ describe("the task-class routing table is DATA, with models in exactly one place
     for (const tier of AI_TIERS) {
       expect(TIER_MODEL[tier], `${tier} must be unbound`).toBeNull();
     }
+    // The dark pin for the NEW modality, by name: admitting 'embedding' to the
+    // registry must not have armed it. Binding it is a deliberate future diff.
+    expect(TIER_MODEL.embedding).toBeNull();
     expect(isAnyTierBound()).toBe(false);
     for (const cls of AI_TASK_CLASSES) {
       expect(resolveModel(cls), `${cls} must resolve to no model`).toBeNull();
@@ -126,6 +135,41 @@ describe("the task-class routing table is DATA, with models in exactly one place
 
   it("the registry is CLOSED — an unknown key resolves to nothing", () => {
     expect(featureDefinition("something.invented")).toBeNull();
+  });
+});
+
+// =====================================================================
+// 1b. The embedding modality — registered, SEPARABLE, and dark.
+// =====================================================================
+
+describe("the 'embedding' modality is its own tier, never a generative price band", () => {
+  it("'embedding' is a task class AND a tier — the modality is the class", () => {
+    expect(AI_TASK_CLASSES).toContain("embedding");
+    expect(AI_TIERS).toContain("embedding");
+  });
+
+  it("INFERENCE_TIERS is exactly the generative set — 'embedding' is EXCLUDED", () => {
+    // The separability pin: the text/vision doors gate on INFERENCE_TIERS, so
+    // admitting 'embedding' here would let an embedding binding open a
+    // generative door on a bare key — the cross-activation defect the
+    // governance closure exists to prevent.
+    expect([...INFERENCE_TIERS]).toEqual(["cheap", "mid", "high"]);
+    expect(INFERENCE_TIERS).not.toContain("embedding");
+    // And every inference tier is a real tier.
+    for (const t of INFERENCE_TIERS) expect(AI_TIERS).toContain(t);
+  });
+
+  it("both memory.embedding_* features are registered under the 'embedding' class", () => {
+    for (const key of ["memory.embedding_write", "memory.embedding_query"]) {
+      const def = featureDefinition(key);
+      expect(def, `${key} must be registered`).not.toBeNull();
+      expect(def!.taskClass, `${key} task class`).toBe("embedding");
+      expect(def!.degradesTo.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("TIER_MODEL.embedding === null — the modality ships DARK", () => {
+    expect(TIER_MODEL.embedding).toBeNull();
   });
 });
 

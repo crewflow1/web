@@ -32,7 +32,7 @@
 // ---------------------------------------------------------------------------
 
 /**
- * The four kinds of work the governor recognises.
+ * The five kinds of work the governor recognises.
  *
  * `deterministic` is in this list ON PURPOSE even though it names work that
  * must never reach a model. Naming it is what lets a call site declare "this
@@ -40,18 +40,43 @@
  * the claim and quietly sending a regex problem to an LLM. The refusal lives in
  * `invokeWithGovernor`; the database states the same rule structurally by
  * omitting 'deterministic' from the ledger's task_class CHECK.
+ *
+ * `embedding` is a DIFFERENT MODALITY, not a price band of the same one: a
+ * vector, not prose, billed on input tokens only, typically ~100× cheaper per
+ * token than generation. It was the last ungoverned AI path in the build (the
+ * readiness surface said so explicitly) — admitted here, and to the ledger's
+ * CHECK, by migration 20261080.
  */
 export const AI_TASK_CLASSES = [
   "deterministic",
   "classification",
   "drafting",
   "complex",
+  "embedding",
 ] as const;
 export type AiTaskClass = (typeof AI_TASK_CLASSES)[number];
 
-/** Abstract cost tiers. Names describe PRICE BAND, never a vendor or a model. */
-export const AI_TIERS = ["cheap", "mid", "high"] as const;
+/**
+ * Abstract cost tiers. Names describe PRICE BAND, never a vendor or a model.
+ *
+ * `embedding` is its own tier rather than a reuse of `cheap` because the two
+ * must be independently armable: binding a cheap TEXT model must not authorise
+ * embedding spend, and binding an embedding model must not open any text door.
+ * The per-modality door gates in lib/ai/{text,vision,embeddings} depend on the
+ * tiers being separable — see isInferenceTierActivated / isEmbeddingActivated
+ * in ./readiness.ts.
+ */
+export const AI_TIERS = ["cheap", "mid", "high", "embedding"] as const;
 export type AiTier = (typeof AI_TIERS)[number];
+
+/**
+ * The tiers that arm GENERATIVE inference (the text and vision doors), as
+ * distinct from the embedding modality. The doors gate on "is any tier of MY
+ * modality bound", never on the global any-tier answer — otherwise binding an
+ * embedding model would open the text door on a bare key, recreating the exact
+ * cross-activation defect the governance closure fixed.
+ */
+export const INFERENCE_TIERS = ["cheap", "mid", "high"] as const satisfies readonly AiTier[];
 
 /**
  * Task class → cost tier. `null` means "no model is appropriate for this class,
@@ -67,6 +92,9 @@ export const TASK_CLASS_TIER: Readonly<Record<AiTaskClass, AiTier | null>> = {
   drafting: "mid",
   // Multi-step reasoning over substantial context.
   complex: "high",
+  // Vector generation. Its own tier — see the AI_TIERS note for why it must
+  // never share an arming switch with a generative tier.
+  embedding: "embedding",
 };
 
 // ---------------------------------------------------------------------------
@@ -130,6 +158,11 @@ export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
   cheap: null,
   mid: null,
   high: null,
+  // The embedding modality's own switch. For an embedding model,
+  // `usdPerMTokOut` and `reserveOutputTokens` are 0 — embeddings bill input
+  // only — and `reserveInputTokens` is the worst-case BATCH size the worker
+  // may submit in one call, not one document's tokens.
+  embedding: null,
 };
 
 /** The concrete model for a task class, or `null` when the tier is dark or the class reaches no model. */
@@ -360,6 +393,38 @@ export const AI_FEATURES = {
     degradesTo:
       "null — the runner falls back to its deterministic report assembly, exactly as it does with no key.",
   },
+  /**
+   * The Shared-Memory embedding WORKER: turning queued memory bodies into
+   * searchable vectors, in batches, on a cron.
+   *
+   * `embedding` — the modality IS the class. Billed to CrewFlow's own org
+   * (hqBudgetOrgId): memories are HQ-internal, no tenant asked for this spend.
+   * The worker keeps its own independent gates (the `worker_enabled` DB flag,
+   * a per-run USD cost cap, a wall-clock deadline); the governor's ceiling and
+   * ledger sit UNDER those, not instead of them.
+   */
+  "memory.embedding_write": {
+    key: "memory.embedding_write",
+    label: "Memory embedding (worker)",
+    taskClass: "embedding",
+    degradesTo:
+      "The batch is not embedded this run; queued memories stay 'pending' and recall keeps serving lexical/structural results. Nothing is failed or dead-lettered — a budget refusal is not the row's fault.",
+  },
+  /**
+   * HQ recall's query-time embed: one short human query vectorised on demand
+   * so semantic search can rank against the stored vectors.
+   *
+   * Same class, same HQ attribution, separate key — the HQ cost view must be
+   * able to tell a worker backfill burst from interactive recall traffic.
+   */
+  "memory.embedding_query": {
+    key: "memory.embedding_query",
+    label: "Memory recall query embedding",
+    taskClass: "embedding",
+    degradesTo:
+      "Semantic ranking is skipped for this query; lexical + structural recall answer alone, exactly as they do with no provider configured.",
+  },
+
   /**
    * HQ research: the sales-prep pack built from the same evidence.
    *

@@ -210,7 +210,7 @@ describe("Phase 5 — QuestionBox client component", () => {
 describe("Phase 5 — /insights wires the QuestionBox", () => {
   it("imports QuestionBox + the activation predicate", () => {
     expect(INSIGHTS).toMatch(/QuestionBox/);
-    expect(INSIGHTS).toMatch(/isGovernorActivated/);
+    expect(INSIGHTS).toMatch(/isInferenceTierActivated/);
   });
 
   it("renders <QuestionBox/> with the aiConfigured prop, driven by ACTIVATION", () => {
@@ -219,7 +219,7 @@ describe("Phase 5 — /insights wires the QuestionBox", () => {
     // from the one `askAi` decides on, so a deploy with a key and no bound cost
     // tier promised an AI answer and returned the deterministic one.
     expect(INSIGHTS).toMatch(
-      /<QuestionBox aiConfigured=\{isGovernorActivated\(\)\}/,
+      /<QuestionBox aiConfigured=\{isInferenceTierActivated\(\)\}/,
     );
     expect(INSIGHTS).not.toMatch(/aiConfigured=\{isAiConfigured\(\)\}/);
   });

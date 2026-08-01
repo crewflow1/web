@@ -44,7 +44,7 @@ import "server-only";
  */
 
 import type { VisionProvider } from "./types";
-import { isGovernorActivated } from "@/lib/ai/governor/readiness";
+import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 import { createAnthropicVisionProvider } from "./anthropic";
 
 export type {
@@ -64,7 +64,10 @@ export type {
  */
 export function getVisionProvider(): VisionProvider | null {
   // THE AUTHORISATION. A vendor key is not permission to spend.
-  if (!isGovernorActivated()) return null;
+  // PER-MODALITY: a generative (cheap/mid/high) tier must be bound — the
+  // global any-tier answer would let an embedding-only activation open this
+  // door on a bare key, recreating the exact defect the closure wave fixed.
+  if (!isInferenceTierActivated()) return null;
 
   const name = (process.env.AI_VISION_PROVIDER ?? "anthropic").trim().toLowerCase();
 
