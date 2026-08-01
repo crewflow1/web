@@ -5,6 +5,7 @@ import {
   detectScheduleConflicts,
   summariseScheduleConflicts,
   type AssetCustodyRow,
+  type JobProgrammeRow,
   type LeaveRow,
   type RotaShiftRow,
   type ScheduleConflict,
@@ -82,6 +83,7 @@ type ScheduleBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => ScheduleBuilder;
   eq: (k: string, v: unknown) => ScheduleBuilder;
   in: (k: string, v: readonly unknown[]) => ScheduleBuilder;
+  is: (k: string, v: unknown) => ScheduleBuilder;
   gte: (k: string, v: unknown) => ScheduleBuilder;
   lt: (k: string, v: unknown) => ScheduleBuilder;
   lte: (k: string, v: unknown) => ScheduleBuilder;
@@ -128,6 +130,14 @@ export interface ScheduleFacts {
   jobs: ScheduledJobRow[];
   leave: LeaveRow[];
   custody: AssetCustodyRow[];
+  /** CURRENT programme baselines (superseded_at IS NULL), one per baselined job. */
+  programmes: JobProgrammeRow[];
+  /**
+   * The jobs those baselines point at — a SEPARATE, id-pinned read, because
+   * the windowed `jobs` read above only covers scheduled_date inside the
+   * fortnight and an overrunning job may have no booking in the window at all.
+   */
+  programmeJobs: ScheduledJobRow[];
   people: Map<string, string>;
   assets: Map<string, string>;
   /**
@@ -164,7 +174,7 @@ export async function gatherScheduleFacts(
     window.interval.start - CUSTODY_LOOKBACK_DAYS * 86_400_000,
   ).toISOString();
 
-  const [rota, jobRows, leave, custody, members] = await Promise.all([
+  const [rota, jobRows, leave, custody, members, programmes] = await Promise.all([
     pagedRows<RotaShiftRow>(
       db,
       "rota_entries",
@@ -211,6 +221,18 @@ export async function gatherScheduleFacts(
       (b) => b,
       pageSize,
     ),
+    // CURRENT programme baselines (20261085). Not date-windowed, deliberately:
+    // the partial unique index caps this at one row per baselined job, and an
+    // OVERRUN is precisely a baseline whose dates are already behind us — a
+    // windowed read would hide the exact rows the rule exists to see.
+    pagedRows<JobProgrammeRow>(
+      db,
+      "job_programme_baselines",
+      "id, job_id, planned_start, planned_end",
+      orgId,
+      (b) => b.is("superseded_at", null),
+      pageSize,
+    ),
   ]);
 
   // `jobs` carries no title, so the customer name IS the label. PostgREST returns
@@ -236,8 +258,9 @@ export async function gatherScheduleFacts(
   // org can be suggested.
   const memberIds = [...new Set(members.map((m) => m.user_id))].sort();
   const assetIds = [...new Set(custody.map((c) => c.asset_id).filter(Boolean))];
+  const programmeJobIds = [...new Set(programmes.map((p) => p.job_id).filter(Boolean))];
 
-  const [userRows, assetRows] = await Promise.all([
+  const [userRows, assetRows, programmeJobRows] = await Promise.all([
     memberIds.length === 0
       ? Promise.resolve([] as Array<{ id: string; full_name: string | null; email: string | null }>)
       : (async () => {
@@ -263,7 +286,46 @@ export async function gatherScheduleFacts(
           (b) => b.in("id", assetIds),
           pageSize,
         ),
+    // The jobs the baselines point at — id-pinned AND org-pinned, same shape
+    // as the windowed jobs read above (see ScheduleFacts.programmeJobs for why
+    // the windowed read cannot serve).
+    programmeJobIds.length === 0
+      ? Promise.resolve(
+          [] as Array<{
+            id: string;
+            assigned_to: string | null;
+            scheduled_date: string | null;
+            status: string | null;
+            customers: { name: string | null } | { name: string | null }[] | null;
+          }>,
+        )
+      : pagedRows<{
+          id: string;
+          assigned_to: string | null;
+          scheduled_date: string | null;
+          status: string | null;
+          customers: { name: string | null } | { name: string | null }[] | null;
+        }>(
+          db,
+          "jobs",
+          "id, assigned_to, scheduled_date, status, customers(name)",
+          orgId,
+          (b) => b.in("id", programmeJobIds),
+          pageSize,
+        ),
   ]);
+
+  // Same to-one embed normalisation as the windowed jobs read.
+  const programmeJobs: ScheduledJobRow[] = programmeJobRows.map((j) => {
+    const c = Array.isArray(j.customers) ? j.customers[0] : j.customers;
+    return {
+      id: j.id,
+      assigned_to: j.assigned_to,
+      scheduled_date: j.scheduled_date,
+      status: j.status,
+      customer_name: c?.name ?? null,
+    };
+  });
 
   const people = new Map<string, string>();
   for (const u of userRows) {
@@ -291,7 +353,18 @@ export async function gatherScheduleFacts(
     a.name !== b.name ? (a.name < b.name ? -1 : 1) : a.userId < b.userId ? -1 : 1,
   );
 
-  return { window, rota, jobs, leave, custody, people, assets, roster };
+  return {
+    window,
+    rota,
+    jobs,
+    leave,
+    custody,
+    programmes,
+    programmeJobs,
+    people,
+    assets,
+    roster,
+  };
 }
 
 export interface ScheduleIntegrityReport {

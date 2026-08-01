@@ -16,6 +16,7 @@ import { JobQualitySection } from "./_job-quality";
 import { JobDelaysSection } from "./_job-delays";
 import { JobDiarySection } from "./_job-diary";
 import { JobProgressSection } from "./_job-progress";
+import { JobProgrammeSection } from "./_job-programme";
 import { JobSnagsSection } from "./_job-snags";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
@@ -401,7 +402,8 @@ export default async function EditJobPage({
       {saved === "retention_rate" ||
       saved === "retention_release" ||
       saved === "retention_schedule" ||
-      saved === "progress" ? (
+      saved === "progress" ||
+      saved === "programme" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
@@ -412,7 +414,9 @@ export default async function EditJobPage({
               ? "Release schedule saved."
               : saved === "progress"
                 ? "Progress update recorded."
-                : "Retention release recorded."}
+                : saved === "programme"
+                  ? "Programme baseline recorded."
+                  : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -823,6 +827,10 @@ export default async function EditJobPage({
         degrades to empty on a read failure, so none of them can break this page.
       */}
       <JobProgressSection jobId={job.id} orgId={ctx.membership.org_id} />
+
+      {/* Programme baseline — sits directly under progress: the planned line
+          on the chart above is earned by the weighted milestones set here. */}
+      <JobProgrammeSection jobId={job.id} />
 
       <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
 

@@ -27,14 +27,16 @@ import { daysBetween } from "@/lib/schedule/window";
  * stale and no reconciliation job to forget to run.
  *
  * ── NO PLANNED BASELINE ────────────────────────────────────────────────────
- * This module models ACTUAL progress only. CrewFlow holds no programme: `jobs`
- * has one `scheduled_date` (a calendar booking, with no matching end date) and
- * a `practical_completion_date` that is the ACTUAL completion recorded after
- * the fact. Drawing a straight 0→100 line between invented endpoints and
- * calling it "planned" would make every variance figure a fabrication, so no
- * function here emits one. `buildProgressCurve` returns the actual line and
- * nothing else; when a real baseline table exists it becomes a second input,
- * not a change to this one.
+ * This module models ACTUAL progress only. As predicted below, the real
+ * baseline table (job_programme_baselines, 20261085) became a SECOND input in
+ * a second module — lib/job-programme/planned.ts — not a change to this one:
+ * no function here emits a planned point, and `buildProgressCurve` still
+ * returns the actual line and nothing else. The only touch was additive: an
+ * optional `CurveOptions.domain` override so both lines can share one x-axis.
+ * Drawing a straight 0→100 line between invented endpoints and calling it
+ * "planned" would make every variance figure a fabrication; that rule now
+ * lives on in planned.ts, which refuses to emit a curve for an unweighted
+ * programme.
  *
  * ── NOT A VALUATION ────────────────────────────────────────────────────────
  * Nothing here touches money. There is no amount type, no currency, no import
@@ -365,6 +367,18 @@ export interface CurveOptions {
   width?: number;
   height?: number;
   padding?: { top?: number; right?: number; bottom?: number; left?: number };
+  /**
+   * Optional x-domain override (`YYYY-MM-DD` day keys, inclusive).
+   *
+   * ADDITIVE, for one caller: when a programme baseline exists
+   * (lib/job-programme/planned.ts) the actual and planned lines share one
+   * chart, so both must be laid out against the UNION of their day spans —
+   * otherwise the same date would sit at two different x positions. Absent,
+   * behaviour is exactly as before: the domain is the observed day span. This
+   * changes NOTHING about what the curve claims — it stretches the axis, it
+   * never adds a point.
+   */
+  domain?: { from: string; to: string };
 }
 
 /**
@@ -422,13 +436,15 @@ export function buildProgressCurve(
 
   const first = points[0]!;
   const last = points[points.length - 1]!;
-  const span = daysBetween(first.day, last.day);
+  const domainFrom = options.domain?.from ?? first.day;
+  const domainTo = options.domain?.to ?? last.day;
+  const span = daysBetween(domainFrom, domainTo);
 
   const curvePoints: CurvePoint[] = points.map((p) => {
     const x =
       span <= 0
         ? padLeft + innerW / 2
-        : padLeft + innerW * (daysBetween(first.day, p.day) / span);
+        : padLeft + innerW * (daysBetween(domainFrom, p.day) / span);
     return { ...p, x: round(x), y: round(yFor(p.percent)) };
   });
 
@@ -448,6 +464,6 @@ export function buildProgressCurve(
     width,
     height,
     gridlines,
-    domain: { from: first.day, to: last.day },
+    domain: { from: domainFrom, to: domainTo },
   };
 }

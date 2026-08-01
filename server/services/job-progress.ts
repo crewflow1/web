@@ -11,6 +11,15 @@ import {
   type ProgressSummary,
   type SiteReportProgressRow,
 } from "@/lib/job-progress/series";
+import {
+  buildPlannedCurve,
+  buildPlannedProgress,
+  plannedDomain,
+  unionDomain,
+  type PlannedCurve,
+  type ProgrammeBaselineRow,
+  type ProgrammeMilestoneRow,
+} from "@/lib/job-programme/planned";
 
 /**
  * Job progress — the read layer behind the progress panel.
@@ -51,6 +60,7 @@ type ProgressBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => ProgressBuilder;
   eq: (k: string, v: unknown) => ProgressBuilder;
   in: (k: string, v: readonly unknown[]) => ProgressBuilder;
+  is: (k: string, v: unknown) => ProgressBuilder;
   order: (k: string, o: { ascending: boolean }) => ProgressBuilder;
   range: (f: number, t: number) => PromiseLike<PageResult<Row>>;
 };
@@ -63,6 +73,22 @@ const OBSERVATION_COLS = "id, job_id, observed_on, percent, note, recorded_by";
  * the customer-facing DTO cannot represent any of it.
  */
 const REPORT_COLS = "id, job_id, status, period_end, report_number, content";
+/** Current programme baseline (20261085). Internal read — note rides along for
+ *  the staff panel path only; the portal path never selects it (see below). */
+const BASELINE_COLS = "id, job_id, revision, planned_start, planned_end";
+const MILESTONE_COLS =
+  "id, baseline_id, title, planned_start, planned_end, weight, customer_visible, sort";
+/**
+ * The PORTAL milestone read — deliberately narrower than MILESTONE_COLS. The
+ * portal page runs on the service-role client for an unauthenticated token, so
+ * the discipline is the jobs-page one: never SELECT what must not reach a
+ * customer, don't just avoid rendering it. `weight` (the org's commercial model
+ * of the job's effort) never crosses the wire on this path at all;
+ * lib/job-programme/portal.ts then structurally drops everything but title +
+ * planned_end.
+ */
+const PORTAL_MILESTONE_COLS =
+  "id, baseline_id, title, planned_end, customer_visible, sort";
 
 export interface ProgressRead<T> {
   rows: T[];
@@ -119,9 +145,79 @@ export async function gatherProgressReports(
   return { rows: data as unknown as SiteReportProgressRow[], error };
 }
 
+/**
+ * The current programme baseline and its milestones, in one BEST-EFFORT gather.
+ *
+ * Best-effort is a deliberate, narrower contract than the two loud gathers
+ * above, and the difference is what each read is FOR. A failed observation
+ * read makes the panel's whole claim wrong ("no readings yet" vs "the query
+ * was rejected" must not look identical), so it is surfaced loudly. The
+ * programme is an OPTIONAL second line on that same panel: when this read
+ * fails, `planned` is null and the panel renders exactly what it rendered
+ * before 20261085 existed — actual progress, honestly labelled as having no
+ * planned line. Absent table, absent baseline and failed read all degrade to
+ * byte-identical today's-behaviour output. (The programme PANEL, which makes
+ * claims about the programme itself, does its own loud read —
+ * app/(app)/jobs/[id]/_job-programme.tsx.)
+ */
+export async function gatherProgrammeBaseline(
+  db: ProgressClient,
+  orgId: string,
+  jobId: string,
+  pageSize?: number,
+): Promise<{
+  baseline: ProgrammeBaselineRow | null;
+  milestones: ProgrammeMilestoneRow[];
+}> {
+  const baselines = await fetchAllRows<Row>(
+    (from, to) =>
+      db
+        .from("job_programme_baselines")
+        .select(BASELINE_COLS)
+        .eq("org_id", orgId)
+        .eq("job_id", jobId)
+        .is("superseded_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    pageSize,
+  );
+  if (baselines.error) return { baseline: null, milestones: [] };
+  // The one-current partial unique index makes >1 row unrepresentable; a lone
+  // defensive [0] is not a `.single()` (nothing throws on 0).
+  const baseline =
+    ((baselines.data ?? [])[0] as unknown as ProgrammeBaselineRow | undefined) ?? null;
+  if (!baseline) return { baseline: null, milestones: [] };
+
+  const milestones = await fetchAllRows<Row>(
+    (from, to) =>
+      db
+        .from("job_milestones")
+        .select(MILESTONE_COLS)
+        .eq("org_id", orgId)
+        .eq("baseline_id", baseline.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    pageSize,
+  );
+  if (milestones.error) return { baseline: null, milestones: [] };
+  return {
+    baseline,
+    milestones: milestones.data as unknown as ProgrammeMilestoneRow[],
+  };
+}
+
 export interface JobProgressView {
   summary: ProgressSummary;
   curve: ProgressCurve;
+  /**
+   * The planned line, in the SAME viewBox and x-domain as `curve` — or null
+   * whenever there is no honest one (no current baseline, unweighted or
+   * partially weighted milestones, Σ ≠ 100, or the programme read failed).
+   * Null means "draw nothing and say nothing", never an error state.
+   */
+  planned: PlannedCurve | null;
+  /** Baseline revision behind `planned`, for the panel's provenance line. */
+  plannedRevision: number | null;
   /** True when EITHER read failed — render the error state, never an empty curve. */
   failed: boolean;
 }
@@ -142,9 +238,10 @@ export async function loadJobProgress(
   now: Date = new Date(),
 ): Promise<JobProgressView> {
   const supabase = (await createClient()) as unknown as ProgressClient;
-  const [observations, reports] = await Promise.all([
+  const [observations, reports, programme] = await Promise.all([
     gatherProgressObservations(supabase, orgId, jobId),
     gatherProgressReports(supabase, orgId, jobId),
+    gatherProgrammeBaseline(supabase, orgId, jobId),
   ]);
 
   const points = buildProgressSeries({
@@ -152,12 +249,34 @@ export async function loadJobProgress(
     reports: reports.rows,
   });
 
+  // The planned line, ONLY when the pure lib says one honestly exists. When it
+  // does, both lines are laid out against the UNION of their day spans so a
+  // date sits at one x position on the shared chart; when it does not, the
+  // curve call below is byte-identical to what shipped with 20261078.
+  const plannedPoints = buildPlannedProgress(programme.baseline, programme.milestones);
+  const size = { width: PROGRESS_CURVE_WIDTH, height: PROGRESS_CURVE_HEIGHT };
+
+  if (plannedPoints === null) {
+    return {
+      summary: summariseProgress(points, now),
+      curve: buildProgressCurve(points, size),
+      planned: null,
+      plannedRevision: null,
+      failed: Boolean(observations.error) || Boolean(reports.error),
+    };
+  }
+
+  const actualDomain =
+    points.length > 0
+      ? { from: points[0]!.day, to: points[points.length - 1]!.day }
+      : null;
+  const domain = unionDomain(actualDomain, plannedDomain(plannedPoints));
+
   return {
     summary: summariseProgress(points, now),
-    curve: buildProgressCurve(points, {
-      width: PROGRESS_CURVE_WIDTH,
-      height: PROGRESS_CURVE_HEIGHT,
-    }),
+    curve: buildProgressCurve(points, { ...size, domain: domain ?? undefined }),
+    planned: buildPlannedCurve(plannedPoints, { ...size, domain: domain ?? undefined }),
+    plannedRevision: programme.baseline?.revision ?? null,
     failed: Boolean(observations.error) || Boolean(reports.error),
   };
 }
@@ -237,4 +356,73 @@ export async function loadProgressForJobs(
     byJob,
     failed: Boolean(observations.error) || Boolean(reports.error),
   };
+}
+
+/**
+ * Customer-visible programme milestones for MANY jobs in two reads, for the
+ * customer portal's job list — the loadProgressForJobs shape exactly.
+ *
+ * Scoping: the caller supplies job ids it has ALREADY scoped to one customer +
+ * one org; both reads are pinned on `org_id` plus derived id sets, and the
+ * baseline read takes only CURRENT revisions (superseded_at IS NULL) — a
+ * superseded plan is the org's history, not the customer's schedule.
+ *
+ * The milestone read uses PORTAL_MILESTONE_COLS (no weight — see the constant)
+ * and filters `customer_visible` IN THE QUERY as well as in the pure lib, so a
+ * staff-only milestone title never crosses the wire to a page served on an
+ * unauthenticated token. Returns internal rows; narrowing to the customer-safe
+ * `PortalMilestone` shape is lib/job-programme/portal.ts's job and MUST happen
+ * before rendering.
+ *
+ * Best-effort like every other portal add-on: a failed read yields an empty
+ * map (the portal shows no plan, never an error page for an optional section).
+ */
+export async function loadProgrammeMilestonesForJobs(
+  db: ProgressClient,
+  orgId: string,
+  jobIds: readonly string[],
+): Promise<{ byJob: Map<string, ProgrammeMilestoneRow[]>; failed: boolean }> {
+  const byJob = new Map<string, ProgrammeMilestoneRow[]>();
+  if (jobIds.length === 0) return { byJob, failed: false };
+
+  const baselines = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("job_programme_baselines")
+      .select("id, job_id")
+      .eq("org_id", orgId)
+      .in("job_id", jobIds)
+      .is("superseded_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (baselines.error) return { byJob, failed: true };
+  const baselineRows = (baselines.data ?? []) as unknown as Array<{
+    id: string;
+    job_id: string;
+  }>;
+  if (baselineRows.length === 0) return { byJob, failed: false };
+  const jobByBaseline = new Map(baselineRows.map((b) => [b.id, b.job_id]));
+
+  const milestones = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("job_milestones")
+      .select(PORTAL_MILESTONE_COLS)
+      .eq("org_id", orgId)
+      .in("baseline_id", [...jobByBaseline.keys()])
+      .eq("customer_visible", true)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (milestones.error) return { byJob, failed: true };
+
+  for (const row of (milestones.data ?? []) as unknown as Array<
+    ProgrammeMilestoneRow & { baseline_id: string }
+  >) {
+    const jobId = jobByBaseline.get(row.baseline_id);
+    if (!jobId) continue;
+    const list = byJob.get(jobId) ?? [];
+    list.push(row);
+    byJob.set(jobId, list);
+  }
+  return { byJob, failed: false };
 }
