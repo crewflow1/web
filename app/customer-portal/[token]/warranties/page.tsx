@@ -7,6 +7,7 @@ import {
   WARRANTY_STATUS_STYLES,
   type WarrantyStatus,
 } from "@/lib/warranties/schedule";
+import { maintenanceRemindersSending } from "@/lib/maintenance/readiness";
 
 /**
  * Customer-side warranties + servicing (Phase 7).
@@ -49,11 +50,19 @@ export default async function PortalWarrantiesPage({
           Cover {org.name} has given you after completion, and any servicing that
           keeps it valid.
         </p>
-        <p className="mt-2 text-xs text-slate-500">
-          These dates are shown here for you to check — we don&apos;t send
-          warranty or service reminders, so please diarise anything you need to
-          act on.
-        </p>
+        {maintenanceRemindersSending() ? (
+          <p className="mt-2 text-xs text-slate-500">
+            We&apos;ll email you a reminder before each service is due and before
+            your cover ends — but please still check these dates and keep your
+            own note of anything you need to act on.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">
+            These dates are shown here for you to check — we don&apos;t send
+            warranty or service reminders, so please diarise anything you need to
+            act on.
+          </p>
+        )}
       </section>
 
       {warranties.length === 0 ? (
