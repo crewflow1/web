@@ -91,9 +91,25 @@ export default async function PortalDocumentsPage({
 
   return (
     <PortalShell customer={customer} org={org} token={token} active="documents">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-slate-900">Documents</h2>
-        <span className="text-xs text-slate-500">{documents.length} total</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">{documents.length} total</span>
+          {shown.length > 0 ? (
+            <a
+              href={
+                filter
+                  ? `/customer-portal/${token}/documents/download-all?type=${filter}`
+                  : `/customer-portal/${token}/documents/download-all`
+              }
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            >
+              {filter
+                ? `Download all ${PORTAL_DOC_TYPE_LABELS[filter].toLowerCase()}s (zip)`
+                : "Download all (zip)"}
+            </a>
+          ) : null}
+        </div>
       </div>
 
       <nav aria-label="Filter documents" className="flex flex-wrap gap-2 text-xs">
