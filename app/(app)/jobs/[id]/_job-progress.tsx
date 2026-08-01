@@ -7,22 +7,26 @@ import {
   type ProgressSummary,
   type ProgressTrend,
 } from "@/lib/job-progress/series";
+import type { PlannedCurve } from "@/lib/job-programme/planned";
 import { loadJobProgress } from "@/server/services/job-progress";
 import { recordJobProgress } from "./progress-actions";
 
 /**
  * Job progress over time — the curve, the trend, and the way to add a reading.
  *
- * WHAT THIS PANEL DELIBERATELY DOES NOT DRAW
+ * THE PLANNED LINE IS EARNED, NEVER INVENTED
  * ------------------------------------------
- * A PLANNED LINE. An S-curve earns its name by showing actual against planned,
- * and the honest answer is that CrewFlow holds no programme to plan against:
- * `jobs` has one `scheduled_date` (a calendar booking with no matching end
- * date) and a `practical_completion_date` that is recorded AFTER completion.
- * Drawing a straight 0→100% line between invented endpoints would make every
- * variance figure a fabrication that looks like evidence — worse than showing
- * no variance at all. So the panel shows ACTUAL progress and says plainly, on
- * screen, what is missing and why. See the migration header (20261078).
+ * This panel long refused to draw a planned line, because CrewFlow held no
+ * programme and a straight 0→100% line between invented endpoints would make
+ * every variance figure a fabrication that looks like evidence. A programme
+ * now exists (job_programme_baselines, 20261085) — and the refusal survives it
+ * in sharper form: the dashed planned line renders ONLY when
+ * lib/job-programme/planned.ts emits one, which it does only for a CURRENT
+ * baseline whose milestones are ALL weighted and sum to 100. A dateless job,
+ * an unweighted programme or a failed programme read all render exactly what
+ * this panel rendered before — the actual line, with the honest on-screen
+ * sentence about what is missing. See the migration headers (20261078,
+ * 20261085).
  *
  * NO CHARTING DEPENDENCY. package.json carries no chart library (no recharts /
  * chart.js / d3 / visx / nivo / echarts / plotly), and the geometry is ~30
@@ -48,8 +52,14 @@ const SOURCE_LABELS = {
   site_report: "From report",
 } as const;
 
-/** The actual-progress line. Pure geometry in, SVG out. */
-function ProgressChart({ curve }: { curve: ProgressCurve }) {
+/** The actual-progress line (and, when one honestly exists, the planned line). */
+function ProgressChart({
+  curve,
+  planned,
+}: {
+  curve: ProgressCurve;
+  planned: PlannedCurve | null;
+}) {
   if (curve.points.length === 0) return null;
   const single = curve.points.length === 1;
 
@@ -61,7 +71,8 @@ function ProgressChart({ curve }: { curve: ProgressCurve }) {
       aria-label={
         curve.domain
           ? `Progress from ${formatDateShortUK(curve.domain.from)} to ${formatDateShortUK(curve.domain.to)}, ` +
-            `${curve.points.map((p) => `${p.percent}% on ${formatDateShortUK(p.day)}`).join("; ")}`
+            `${curve.points.map((p) => `${p.percent}% on ${formatDateShortUK(p.day)}`).join("; ")}` +
+            (planned ? ". A dashed planned line from the job programme is shown for comparison." : "")
           : "Progress chart"
       }
     >
@@ -84,6 +95,21 @@ function ProgressChart({ curve }: { curve: ProgressCurve }) {
 
       {curve.areaPath ? (
         <path d={curve.areaPath} className="fill-emerald-500/10" />
+      ) : null}
+
+      {/* PLANNED, under the actual line: dashed and muted so the record of
+          what happened always reads above the statement of what was meant to. */}
+      {planned && planned.points.length >= 2 ? (
+        <polyline
+          points={planned.polyline}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeDasharray="4 3"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          className="text-slate-400"
+        />
       ) : null}
 
       {!single ? (
@@ -136,7 +162,8 @@ export async function JobProgressSection({
   orgId: string;
 }) {
   const now = new Date();
-  const { summary, curve, failed } = await loadJobProgress(orgId, jobId, now);
+  const { summary, curve, planned, plannedRevision, failed } =
+    await loadJobProgress(orgId, jobId, now);
   const today = formatDayKeyUK(now);
 
   if (failed) {
@@ -203,20 +230,30 @@ export async function JobProgressSection({
             </p>
           ) : null}
 
-          <ProgressChart curve={curve} />
+          <ProgressChart curve={curve} planned={planned} />
 
           {/*
-            The honest gap, stated on screen rather than buried in a commit
-            message. Without this line a reader would reasonably assume the
-            single plotted line had a plan behind it.
+            The honest sentence under the chart. Swapped ONLY when a planned
+            line is actually drawn — anything less than a fully-weighted
+            current baseline keeps the old copy, because without the dashed
+            line a reader would reasonably assume the single plotted line had
+            a plan behind it.
           */}
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-            Actual progress only. There is no planned line because CrewFlow
-            holds no programme for this job — a baseline needs planned start and
-            completion dates, which aren&apos;t recorded anywhere yet. A
-            straight line from 0% to 100% would look like a plan and measure
-            nothing.
-          </p>
+          {planned ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              The dashed line is the planned programme (baseline revision{" "}
+              {plannedRevision ?? 1}, from the weighted milestones below in the
+              programme panel). The solid line is what was actually recorded —
+              the chart compares them; it draws no verdict.
+            </p>
+          ) : (
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Actual progress only. A planned line appears once this job has a
+              programme baseline with every milestone weighted — set one in the
+              programme panel below. A straight line from 0% to 100% would look
+              like a plan and measure nothing, so none is drawn.
+            </p>
+          )}
 
           {recent.length > 0 ? (
             <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">

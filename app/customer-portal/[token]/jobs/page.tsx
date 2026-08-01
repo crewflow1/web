@@ -4,10 +4,12 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import {
+  loadProgrammeMilestonesForJobs,
   loadProgressForJobs,
   type ProgressClient,
 } from "@/server/services/job-progress";
 import { toPortalProgress, type PortalProgress } from "@/lib/job-progress/portal";
+import { toPortalMilestones, type PortalMilestone } from "@/lib/job-programme/portal";
 import { formatDateShortUK } from "@/lib/time/format";
 
 /**
@@ -98,6 +100,36 @@ function JobProgress({ progress }: { progress: PortalProgress | undefined }) {
   );
 }
 
+/**
+ * The customer's view of the plan: milestone titles and planned dates from the
+ * CURRENT programme baseline — only rows staff explicitly marked
+ * customer-visible.
+ *
+ * Takes `PortalMilestone[]` and NOTHING else — structurally incapable of
+ * rendering a weight, a revision number or a baseline note, because none is on
+ * the type (lib/job-programme/portal.ts). No variance wording either: dates
+ * are shown, verdicts are not — the same rule as the movement labels above.
+ */
+function JobMilestones({ milestones }: { milestones: PortalMilestone[] | undefined }) {
+  if (!milestones || milestones.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <p className="text-xs font-semibold text-slate-900">Planned milestones</p>
+      <ul className="mt-1.5 space-y-1">
+        {milestones.map((m) => (
+          <li
+            key={`${m.plannedEnd}:${m.title}`}
+            className="flex flex-wrap items-baseline justify-between gap-x-2 text-[11px]"
+          >
+            <span className="min-w-0 flex-1 truncate text-slate-700">{m.title}</span>
+            <span className="text-slate-500">by {formatDateShortUK(m.plannedEnd)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default async function PortalJobsPage({
   params,
 }: {
@@ -167,6 +199,23 @@ export default async function PortalJobsPage({
     progressByJob.set(jobId, toPortalProgress(summary));
   }
 
+  /**
+   * Programme milestones, narrowed the SAME way: the service read already
+   * selects no weight and only customer-visible rows of the CURRENT baseline,
+   * and `toPortalMilestones` rebuilds each row as `{ title, plannedEnd }` so
+   * nothing internal can reach the markup. Proven by
+   * __tests__/security/job-programme-portal-safety.test.ts.
+   */
+  const programme = await loadProgrammeMilestonesForJobs(
+    admin as unknown as ProgressClient,
+    customer.org_id,
+    jobIds,
+  );
+  const milestonesByJob = new Map<string, PortalMilestone[]>();
+  for (const [jobId, rows] of programme.byJob) {
+    milestonesByJob.set(jobId, toPortalMilestones(rows));
+  }
+
   return (
     <PortalShell customer={customer} org={org} token={token} active="jobs">
       <header className="space-y-1">
@@ -224,6 +273,7 @@ export default async function PortalJobsPage({
                         : "Not yet assigned"}
                   </p>
                   <JobProgress progress={progressByJob.get(j.id)} />
+                  <JobMilestones milestones={milestonesByJob.get(j.id)} />
                 </div>
               </div>
             </li>

@@ -59,6 +59,10 @@ export const SCHEDULE_CONFLICT_KINDS = [
   "job_unassigned",
   /** One asset, two overlapping custody windows. */
   "asset_double_booked",
+  /** The job's booked date falls outside its baselined programme window. */
+  "job_outside_programme",
+  /** The baselined completion has passed and the job is still live. */
+  "programme_overrun",
 ] as const;
 
 export type ScheduleConflictKind = (typeof SCHEDULE_CONFLICT_KINDS)[number];
@@ -96,6 +100,16 @@ export const SCHEDULE_CONFLICT_META: Record<
     tone: "bg-slate-100 text-slate-700",
     blurb: "One asset shows two custody records covering the same period.",
   },
+  job_outside_programme: {
+    label: "Outside the programme",
+    tone: "bg-amber-100 text-amber-900",
+    blurb: "The job is booked for a day outside its baselined programme window.",
+  },
+  programme_overrun: {
+    label: "Programme overrun",
+    tone: "bg-slate-100 text-slate-700",
+    blurb: "The baselined completion date has passed and the job is still open.",
+  },
 };
 
 /**
@@ -108,6 +122,13 @@ const KIND_RANK: Record<ScheduleConflictKind, number> = {
   job_unassigned: 2,
   assignment_off_rota: 3,
   asset_double_booked: 4,
+  // Programme facts rank below every operational clash: a plan mismatch is a
+  // decision to make, not a person standing in two places. Their kind bonus
+  // (4 - rank) goes slightly negative, which is fine — the compose invariant
+  // only needs |proximity + kind| to stay far under the 1000 severity bands,
+  // and 150 - 2 does.
+  job_outside_programme: 5,
+  programme_overrun: 6,
 };
 
 export interface ScheduleConflict {
@@ -173,12 +194,31 @@ export interface AssetCustodyRow {
   actual_return_at: string | null;
 }
 
+/** A CURRENT programme baseline (superseded_at IS NULL — the caller's query). */
+export interface JobProgrammeRow {
+  /** Baseline row id — evidence, and half of the finding's identity. */
+  id: string;
+  job_id: string;
+  /** `YYYY-MM-DD` planned window, inclusive both ends. */
+  planned_start: string;
+  planned_end: string;
+}
+
 export interface ScheduleConflictInput {
   window: ScheduleWindow;
   rota?: readonly RotaShiftRow[];
   jobs?: readonly ScheduledJobRow[];
   leave?: readonly LeaveRow[];
   custody?: readonly AssetCustodyRow[];
+  /** Current programme baselines for the org (one per baselined job). */
+  programmes?: readonly JobProgrammeRow[];
+  /**
+   * The jobs the programmes point at, resolved by the caller in a SEPARATE
+   * read from `jobs` above: the windowed jobs read only covers scheduled_date
+   * inside the fortnight, but a programme-overrun job may have no
+   * scheduled_date in the window at all (that can be exactly what is wrong).
+   */
+  programmeJobs?: readonly ScheduledJobRow[];
   /** user_id → display name, resolved by the caller from THIS org's memberships. */
   people?: ReadonlyMap<string, string>;
   /** asset_id → display name. */
@@ -316,12 +356,23 @@ function makeConflict(
     subjectName?: string | null;
     sourceIds: string[];
     href: string;
+    /**
+     * Optional CEILING on the proximity-derived severity. Programme facts use
+     * it (capped at `medium`): a plan mismatch is a decision an owner makes
+     * this week, not a person standing in two places today, and letting it
+     * reach `high` would let paperwork outrank a real double-booking in the
+     * briefing. Never raises severity — only lowers it.
+     */
+    severityCap?: BriefingSeverity;
   },
 ): ScheduleConflict {
   const at = new Date(clash.start).toISOString();
   const day = ukDayKeyOf(at) || at.slice(0, 10);
   const daysAway = daysBetween(win.fromDay, day);
-  const severity = conflictSeverity(daysAway);
+  let severity = conflictSeverity(daysAway);
+  if (fields.severityCap && SEVERITY_BASE[severity] > SEVERITY_BASE[fields.severityCap]) {
+    severity = fields.severityCap;
+  }
   return {
     key: conflictKey(kind, fields.sourceIds),
     kind,
@@ -625,6 +676,101 @@ function detectAssetClashes(input: ScheduleConflictInput): ScheduleConflict[] {
   return out;
 }
 
+// ── Rules 6 & 7 · the schedule vs the programme baseline ─────────────────────
+
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Two findings from one pass over the org's CURRENT programme baselines
+ * (job_programme_baselines, 20261085 — one current revision per job by
+ * partial unique index, so `input.programmes` carries at most one row per job).
+ *
+ * `job_outside_programme` — `jobs.scheduled_date` (the one real booking the
+ * product holds) falls outside the baselined window. Both dates are the org's
+ * own stated facts; when they disagree, one of them is not what will actually
+ * happen. Reported on the scheduled day, only when that day is inside the
+ * detection window (the existing horizon rule — a mismatch 40 days out is
+ * flagged when the rolling window reaches it).
+ *
+ * `programme_overrun` — the baselined completion has passed and the job is
+ * still live. Reported on the window's first day, because it is true TODAY and
+ * every day until someone acts. The recommendation is in the detail: record
+ * the truth (re-baseline with a note, or complete the job) — this detector
+ * moves nothing, exactly like every rule above it.
+ *
+ * SEVERITY IS CAPPED AT `medium` for both (see makeConflict.severityCap): a
+ * plan mismatch is a decision, not an operational emergency, and it must never
+ * outrank a genuine double-booking in the briefing. NO variance percentage is
+ * computed anywhere here — "outside the window" and "past the date" are facts;
+ * "X% behind programme" would be a verdict.
+ */
+function detectProgrammeMismatch(input: ScheduleConflictInput): ScheduleConflict[] {
+  const win = input.window;
+  const out: ScheduleConflict[] = [];
+  const jobsById = new Map((input.programmeJobs ?? []).map((j) => [j.id, j]));
+
+  for (const p of input.programmes ?? []) {
+    if (!DAY_KEY_RE.test(p.planned_start ?? "") || !DAY_KEY_RE.test(p.planned_end ?? "")) {
+      continue; // unusable window: assert nothing rather than invent a clash
+    }
+    const job = jobsById.get(p.job_id);
+    if (!job) continue;
+    // A completed/cancelled job's programme is history — flagging it is noise.
+    if (!LIVE_JOB_STATUSES.has(String(job.status ?? ""))) continue;
+
+    const scheduled = job.scheduled_date;
+    if (
+      scheduled &&
+      DAY_KEY_RE.test(scheduled) &&
+      (scheduled < p.planned_start || scheduled > p.planned_end)
+    ) {
+      const dayIv: Interval = { start: ukDayStartMs(scheduled), end: ukDayEndMs(scheduled) };
+      const inWindow =
+        Number.isFinite(dayIv.start) && Number.isFinite(dayIv.end)
+          ? intersection(dayIv, win.interval)
+          : null;
+      if (inWindow) {
+        out.push(
+          makeConflict(win, "job_outside_programme", inWindow, {
+            title: `${jobLabel(job)} is booked outside its programme`,
+            detail:
+              `${jobLabel(job)} is scheduled for ${formatConflictDay(scheduled)}, but its baselined ` +
+              `programme runs ${formatConflictDay(p.planned_start)} to ${formatConflictDay(p.planned_end)}. ` +
+              `One of them is not what will happen — move the booking or re-baseline the programme.`,
+            subjectId: null,
+            subjectName: null,
+            sourceIds: [p.id, job.id],
+            href: `/jobs/${job.id}`,
+            severityCap: "medium",
+          }),
+        );
+      }
+    }
+
+    if (p.planned_end < win.fromDay) {
+      const todayIv: Interval = {
+        start: ukDayStartMs(win.fromDay),
+        end: ukDayEndMs(win.fromDay),
+      };
+      if (!Number.isFinite(todayIv.start) || !Number.isFinite(todayIv.end)) continue;
+      out.push(
+        makeConflict(win, "programme_overrun", todayIv, {
+          title: `${jobLabel(job)} has passed its baselined completion`,
+          detail:
+            `${jobLabel(job)} was baselined to complete by ${formatConflictDay(p.planned_end)} and is ` +
+            `still open. Record the truth: re-baseline the programme with a note, or complete the job.`,
+          subjectId: null,
+          subjectName: null,
+          sourceIds: [p.id, job.id],
+          href: `/jobs/${job.id}`,
+          severityCap: "medium",
+        }),
+      );
+    }
+  }
+  return out;
+}
+
 // ── The detector ─────────────────────────────────────────────────────────────
 
 /**
@@ -641,6 +787,7 @@ export function detectScheduleConflicts(input: ScheduleConflictInput): ScheduleC
     ...detectLeaveClashes(input),
     ...detectJobAssignmentGaps(input),
     ...detectAssetClashes(input),
+    ...detectProgrammeMismatch(input),
   ];
 
   const byKey = new Map<string, ScheduleConflict>();
