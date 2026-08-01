@@ -937,7 +937,10 @@ describeIntegration("works quality M2 · NCRs, corrective actions, witnesses, te
       root_plan_id: a.planId, // org A's series, claimed from org B
       revision_number: 2,
     });
-    expect(crossOrg.error?.message ?? "").toMatch(/not an inspection plan in this organisation/);
+    // Strengthened guard (adversarial P2): the root must be a SERIES ORIGIN
+    // (self-rooted revision 1) in this org. Org A's plan is neither an org-B
+    // plan nor reachable, so the cross-org claim is refused with this message.
+    expect(crossOrg.error?.message ?? "").toMatch(/not a series origin in this organisation/);
 
     const revision = await db(userClient(dualToken))
       .from("inspection_test_plans")
