@@ -64,6 +64,14 @@ import {
   type SnagPatterns,
   type SnagRow,
 } from "@/lib/intelligence/snag-patterns";
+import {
+  computeSupplierPerformanceRollup,
+  type SupplierPerformanceRollup,
+} from "@/lib/intelligence/supplier-performance";
+import {
+  listSupplierPerformance,
+  type PerformanceClient,
+} from "@/server/services/supplier-performance";
 
 /**
  * COMPANY SIGNALS — the read layer for the deterministic intelligence layer.
@@ -620,6 +628,55 @@ export async function gatherSnagPatterns(
 }
 
 // ---------------------------------------------------------------------------
+// Group: supplier performance (composes the shipped measurement, org-wide)
+// ---------------------------------------------------------------------------
+
+/**
+ * Org-wide supplier/subcontractor performance.
+ *
+ * COMPOSE, DON'T RE-DETECT — and DON'T RE-READ THE LEDGER. This gather does NOT
+ * touch `purchase_orders`, `finances`, `supplier_payments` or the GRN tables
+ * itself: reading those is the exclusive job of
+ * server/services/supplier-performance.ts (the ledger-table allowlist in
+ * __tests__/security/supplier-payments.test.ts pins that exclusivity). Instead
+ * it reads only the ACTIVE-ORG suppliers roster, hands it to the SHIPPED
+ * `listSupplierPerformance` — which loads every supplier's history under the
+ * same org pin, loud-read and no-re-derivation discipline the compare page uses
+ * — and rolls the resulting `SupplierPerformance[]` up with the pure
+ * `computeSupplierPerformanceRollup`. Every metric is therefore the shipped
+ * measurement's own output, summed and ratio'd, never a second definition.
+ *
+ * `listSupplierPerformance` throws `readFailure` on any read error, so a failed
+ * ledger read fails this group WHOLE via the `group(...)` catch — a partial
+ * supplier record is a wrong one. `supplier_payments` is admin-only at RLS, so
+ * a non-admin's settlement figures come back empty WITHOUT an error (the
+ * getSupplierLedger asymmetry); on this roster card that reads as "no settlement
+ * data", never a false "we always pay fast".
+ */
+export async function gatherSupplierPerformance(
+  db: IntelligenceClient,
+  orgId: string,
+): Promise<SupplierPerformanceRollup> {
+  const suppliers = await allRows("intelligence: suppliers", (from, to) =>
+    db
+      .from("suppliers")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (suppliers.length === 0) return computeSupplierPerformanceRollup([]);
+
+  const performances = await listSupplierPerformance(
+    db as unknown as PerformanceClient,
+    orgId,
+    suppliers.map((s) => ({ id: String(s.id), name: String(s.name ?? "") })),
+  );
+
+  return computeSupplierPerformanceRollup(performances);
+}
+
+// ---------------------------------------------------------------------------
 // The assembled view
 // ---------------------------------------------------------------------------
 
@@ -641,6 +698,7 @@ export interface CompanySignalsView {
   cvr: SignalGroup<CvrRollup>;
   materials: SignalGroup<MaterialDemand>;
   snags: SignalGroup<SnagPatterns>;
+  supplierPerformance: SignalGroup<SupplierPerformanceRollup>;
 }
 
 /** How far back utilisation looks (London days, inclusive of today). */
@@ -688,8 +746,16 @@ export async function loadCompanySignals(
     });
   }
 
-  const [utilisation, concentration, progress, exposure, cvr, materials, snags] =
-    await Promise.all([
+  const [
+    utilisation,
+    concentration,
+    progress,
+    exposure,
+    cvr,
+    materials,
+    snags,
+    supplierPerformance,
+  ] = await Promise.all([
       group("intelligence: utilisation", () =>
         gatherUtilisation(db, orgId, window30, now.getTime()),
       ),
@@ -732,6 +798,9 @@ export async function loadCompanySignals(
         if (!jobs) throw new Error("jobs read failed");
         return gatherSnagPatterns(db, orgId, jobs, asAtIso);
       }),
+      // Whole-history like the per-supplier surface it composes — no job/date
+      // window; depends on the suppliers roster, not the shared jobs read.
+      group("intelligence: supplier performance", () => gatherSupplierPerformance(db, orgId)),
     ]);
 
   return {
@@ -744,5 +813,6 @@ export async function loadCompanySignals(
     cvr,
     materials,
     snags,
+    supplierPerformance,
   };
 }
