@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-08-01 (Continuations 17–19 — 11 more trains shipped: outbound webhooks, supplier terms + overdue payables, three intelligence rollups, AI-employee task engine, portal notifications + bulk downloads, AI-cost trend, EOT/job-programme surfacing, QR timeline, public API-jobs, expenses budgets. Migration tip `20261086`→`20261089`.)
-**Production `main`:** `19bf4ab` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261089` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Last reconciled:** 2026-08-01 (Continuation 20 — hardening/reduction wave. 6-agent recon confirmed the safe net-new backlog is drained; 3 safe trains shipped: `/api/health` live DB probe (risk #3), pwa-offline SW-race flake fix (risk #1), and the quotes-approval gate enforced at the DB layer (risk #4, migration `20261090`). Everything else remaining is CEO/provider/legal/product-gated. Migration tip `20261089`→`20261090`.)
+**Production `main`:** `dd74f7d` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261090` — read from `supabase_migrations.schema_migrations`, NOT inferred
 
 > **✅ C15 INTERRUPTION FULLY RECOVERED (Continuation 16, 2026-08-01).** The four spend-limit-killed
 > lanes were **resumed from their worktrees (never rebuilt)** and shipped, alongside five new trains.
@@ -48,6 +48,18 @@
 > **STALE ROWS CORRECTED (verified on `8ac0fc8`):** snags job-page embed = SHIPPED (`_job-snags.tsx`); diary job-page surfacing = SHIPPED (`_job-diary.tsx`); job progress time-series/S-curve = SHIPPED (#512 + intelligence rollup); portal variation UX = SHIPPED (#517/#522). Do NOT rebuild these.
 >
 > **Remaining roadmap is now CEO/provider/product-gated, not implementation-gated:** bind an AI cost tier (activates the governed-but-dark embeddings/HQ/quote-writer/receptionist paths); activate providers (SMS/WhatsApp/voice/Stripe/HMRC/weather); choose which webhook verbs are externally exposable; flip `FEATURE_PUBLIC_API_JOBS` to expose the read API; AI-employee evaluations (product decision — zero foundation); appointments/booking; activities/CPM programme model. The safe net-new implementation backlog is substantially exhausted.
+
+> ### C20 TRAIN HISTORY (2026-08-01, 3 hardening trains, all merged + deployed + production-verified)
+> A 6-agent read-only recon first re-confirmed the safe backlog is drained (the active-org write-slice was **already shipped** in `9c5b995`; company-health score, EoT letters, maintenance-reminder sends, stock valuation, all providers are gated). Then three genuinely-safe hardening trains ran the full gate (adversarial + security review → CI → migrate-first where needed → merge → deploy → verify):
+> | PR | Train | Slot | Adversarial outcome |
+> |---|---|---|---|
+> | #542 | `/api/health` live DB reachability probe (risk #3) — edge-safe, never-throws, no new credential, no tenant data; `ok`/`status`/`db` now reflect Postgres | — | SHIP — took the 401/403 "auth-degraded, not healthy" refinement pre-merge |
+> | #543 | pwa-offline service-worker control-wait made deterministic (risk #1 flake) — event-driven `controllerchange` + bounded safety cap; `sw.js`/allowlist untouched | — | SHIP-WITH-FIXES — applied the uncapped-`ready`-await P2 |
+> | #544 | Quotes-approval gate enforced at the DB layer (risk #4, quotes arm) — `BEFORE INSERT OR UPDATE` trigger; service_role + admins exempt; 13/13 dual-org integration proof | `20261090` | SHIP-WITH-FIXES — adversarial probe found an **INSERT-path bypass** (staff could CREATE a quote already approved/sent); fixed `BEFORE UPDATE`→`BEFORE INSERT OR UPDATE` + 4 INSERT regression tests pre-merge |
+>
+> **Recon-corrected stale rows (do NOT rebuild):** the "Active-org remainder" write-slice below is DONE (`9c5b995`, ancestor of main) — `deleteBlueprint`, `markNotificationsRead`, and the 8 action files are all pinned or documented false-positives (`me/actions.ts` is user-scoped BY DESIGN). Offline diary vertical, EoT evidence-pack PDF, and portal maintenance-reminder display are all SHIPPED.
+>
+> **Known P2 follow-up (flagged, NOT closed — product decision):** quote transitions INTO `'accepted'` are unguarded, and `acceptQuoteAsOwner` carries no approver gate — closing this safely requires deciding whether staff may record acceptances at all. The object-authz `material_requests` decide/raise-PO arm is likewise a transition-guard follow-up. Neither has live blast radius (prod has 1 user, 0 multi-org).
 
 **Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers DARK.** Weather now has a real Open-Meteo adapter + fetch pipeline **built-dark** (activation = provider licence + credential + cron schedule); embeddings + all HQ AI paths governed but tier-unbound (dark).
 The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
@@ -369,8 +381,9 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261086` | public API keys (`api_keys`) | **APPLIED** — C16, #527 |
 | `20261087` | outbound webhooks (`webhook_endpoints`, `webhook_deliveries`) | **APPLIED** — C17, #534 |
 | `20261088` | supplier payment terms (`suppliers.payment_terms_days`) | **APPLIED** — C17, #535 |
-| `20261089` | expense budgets (`expense_budgets`) | **APPLIED (prod tip)** — C18, #538 |
-| `20261090+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| `20261089` | expense budgets (`expense_budgets`) | **APPLIED** — C18, #538 |
+| `20261090` | quote-approval authz trigger (`enforce_quote_approval_authz` on `quotes`) | **APPLIED (prod tip)** — C20, #544 |
+| `20261091+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
@@ -492,10 +505,10 @@ Note: the Observe→Draft→Approve→Execute substrate ALREADY EXISTS but is HQ
 
 ## Known risks / debt
 
-1. **`e2e/pwa-offline.spec.ts:61` is flaky** (service-worker timing). Failed on #429 and #121, passed on retry both times with no code change. Retries were used only to *diagnose*, never as the definition of correctness — but the root cause must be fixed rather than tolerated (§23).
-2. **Generated types are stale** (`lib/supabase/types.ts` lacks the newest ~6 tables). Mitigated by deliberate loose-cast seams. If regenerated, do it against the current tip with a narrow, justified scan exclusion.
-3. **Observability gap** — Sentry has no DSN; `/api/health` reports `ok:true` without probing dependencies. A true launch blocker for founder-led launch.
-4. **Object-level authz** — RLS is member-level; the manager gate is app-only for some commercial writes, so a staff JWT could direct-PostgREST write where the UI forbids it. H1-TRUST wave.
+1. ~~**`e2e/pwa-offline.spec.ts` is flaky**~~ — **CLOSED, C20 (#543).** Root cause was the offline-download warm path gating `data-offline-shell-ready` on a fixed-timeout SW-control check that lost the race against first-install `clients.claim()` under CI load. Fixed deterministically (event-driven `controllerchange` wait + one bounded safety cap); `public/sw.js` and the SW allowlist untouched, no assertion weakened. e2e passed green post-fix.
+2. **Generated types are stale** (`lib/supabase/types.ts` declares ~40 of ~145 tables). Deliberately mitigated by ~575 loose-cast seams across 167 files, so the app is correct today. **Assessed C20: a bare regen is high-churn, zero-behavioural-value, and could turn green main red — left alone on purpose.** If pursued it must be human-owned: regen at the tip, review existing-table diffs, add the `gen types + git diff --exit-code` CI gate, then remove seams incrementally.
+3. **Observability gap — PARTIALLY CLOSED, C20 (#542).** `/api/health` no longer reports `ok:true` blindly — it probes live DB reachability (edge-safe, never-throws, no new credential, no tenant data) and `ok`/`status`/`db` now reflect Postgres, verified live in prod. **Still open:** `SENTRY_DSN` is unset (the Sentry wiring is fully built and dark only for lack of that credential) — a provisioning/CEO decision, not an implementation gap.
+4. **Object-level authz — quotes arm CLOSED, C20 (#544, migration `20261090`).** The owner/admin quote-approval gate is now enforced at the DB layer (`BEFORE INSERT OR UPDATE` trigger), so a staff JWT can no longer self-approve or send an un-approved quote via raw PostgREST; 13/13 dual-org integration proof. **Recon finding:** most other sensitive financial tables (billing plans, budgets, supplier payments, payroll, CIS, expense budgets, api_keys) were ALREADY `is_org_admin`-enforced by the H1-TRUST waves. **Still open (P2, product-gated):** the `quotes → accepted` provenance / `acceptQuoteAsOwner` gate, and the `material_requests` decide/raise-PO transition — both are transition-guards whose correctness intersects a product decision (may staff record acceptances?); prod has 0 multi-org users so zero live blast radius.
 5. **GDPR / org teardown** — storage bytes orphan on org delete. Legal decision pending.
 6. **Self-serve billing / trial expiry** — `orgHasActiveAccess` ignores `trial_ends_at`. Only blocks self-serve, not founder-led.
 
