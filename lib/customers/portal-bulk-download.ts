@@ -178,6 +178,11 @@ export async function collectPortalDocumentPdfs(args: {
     .eq("org_id", customer.org_id)
     .eq("customer_id", customer.id)
     .not("public_token", "is", null)
+    // Match the documents-library page's visibility exactly: a draft quote
+    // must not appear in the bulk zip when it is hidden from the on-screen
+    // list (adversarial P2 — surface consistency; it is still the customer's
+    // own quote, individually reachable via /q/<token>/pdf).
+    .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
     .order("created_at", { ascending: false })
     .limit(200);
   if (quoteError) throw readFailure("portal bulk: quotes", quoteError);
