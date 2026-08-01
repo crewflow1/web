@@ -13,6 +13,7 @@ import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { JobAssetsSection } from "./_job-assets";
 import { JobSafetySection } from "./_job-safety";
 import { JobQualitySection } from "./_job-quality";
+import { JobDelaysSection } from "./_job-delays";
 import { JobDiarySection } from "./_job-diary";
 import { JobProgressSection } from "./_job-progress";
 import { JobSnagsSection } from "./_job-snags";
@@ -847,6 +848,11 @@ export default async function EditJobPage({
           controlled-document registers for this job, and an open hold point is
           the same kind of "don't proceed yet" signal. */}
       <JobQualitySection jobId={job.id} />
+
+      {/* Delays & EOT — after quality, before documents: the evidence log for
+          any future extension-of-time claim, composed from delay events plus
+          the diary/variation/progress records the panels above already own. */}
+      <JobDelaysSection jobId={job.id} />
 
       <JobDocumentsPanel jobId={job.id} canViewPrivate={canViewPrivate} />
 

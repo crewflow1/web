@@ -29,6 +29,10 @@ const ADMIN_LINKS = [
   // FOUND after the fact, an ITP is the plan that proves the works were built
   // right in the first place. Different question, opposite direction.
   { href: "/quality", label: "Works quality" },
+  // Delays & EOT sits beside quality: both are contemporaneous-record
+  // registers — one proves the works were built right, the other proves what
+  // stopped them. The evidence log behind any extension-of-time claim.
+  { href: "/delays", label: "Delays & EOT" },
   // Weather sits with health & safety, not with the estate: the limits it
   // applies are wind/frost/rain limits from WAHR 2005, LOLER 1998 and CDM 2015,
   // and the question it answers ("can this work happen safely today") is the
@@ -81,6 +85,9 @@ const STAFF_LINKS = [
   { href: "/toolbox", label: "Toolbox talks" },
   // Staff need this: the person signing off a hold point on site IS site staff.
   { href: "/quality", label: "Works quality" },
+  // ...and the person standing in the rain when work stops is the one who
+  // should log it the same day. Recording delays is site work.
+  { href: "/delays", label: "Delays & EOT" },
   { href: "/staff/leave", label: "Leave" },
   { href: "/notifications", label: "Notifications" },
   { href: "/support", label: "Support" },
