@@ -56,7 +56,7 @@ describeIntegration("public API v1 · jobs read · isolation, scope, oracle", ()
   async function makeJob(org: string): Promise<string> {
     const r = await svc()
       .from("jobs")
-      .insert({ org_id: org, status: "scheduled", site_postcode: "SW1A 1AA" })
+      .insert({ org_id: org, status: "in-progress", site_postcode: "SW1A 1AA" })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();
