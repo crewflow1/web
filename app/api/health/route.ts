@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCommsReadiness } from "@/lib/comms/readiness";
+import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
 import { getWeatherReadiness } from "@/lib/weather/readiness";
 
 /**
@@ -38,6 +39,13 @@ export async function GET() {
   // Boolean only — this endpoint is public and must not name env vars.
   const weather = getWeatherReadiness();
 
+  // API-key substrate readiness (Train 9). Build-time facts only — the
+  // substrate needs no credentials and has no flag, so unlike comms there is
+  // no configured/ready split to get wrong. Booleans (+ a count) only; this
+  // endpoint is public and must not name env vars. `endpoints: 1` is the
+  // /api/v1/me probe — the substrate's living proof, not a product surface.
+  const integrations = getIntegrationsReadiness();
+
   return NextResponse.json(
     {
       ok: true,
@@ -50,6 +58,12 @@ export async function GET() {
         sms: comms.sms.outboundReady,
         whatsapp: comms.whatsapp.outboundReady,
         missedCallTextbackReady: comms.missedCallTextback.ready,
+      },
+      integrations: {
+        apiKeys: {
+          implemented: integrations.apiKeys.implemented,
+          endpoints: integrations.apiKeys.endpoints,
+        },
       },
       weather: {
         available: weather.available,

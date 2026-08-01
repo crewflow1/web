@@ -219,6 +219,25 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      {/* API keys ------------------------------------------------------ */}
+      {isAdmin ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">API keys</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Create and revoke keys for the CrewFlow API. Keys are shown once at
+            creation and can be revoked at any time.
+          </p>
+          <div className="mt-4">
+            <Link
+              href="/settings/api-keys"
+              className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              Manage API keys
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
       {/* Plan & billing ----------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
