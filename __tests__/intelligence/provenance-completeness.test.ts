@@ -25,6 +25,11 @@ import {
 } from "@/lib/intelligence/material-demand";
 import { computeSnagPatterns, snagPatternsMetric } from "@/lib/intelligence/snag-patterns";
 import {
+  computeSupplierPerformanceRollup,
+  supplierReliabilityMetric,
+  supplierRiskFlagsMetric,
+} from "@/lib/intelligence/supplier-performance";
+import {
   behindBaselineMetric,
   computeProgrammeVariance,
   eotExposureMetric,
@@ -88,6 +93,7 @@ function allMetrics(): Array<[string, LabelledMetric<unknown>]> {
     todayIso: "2026-08-01",
   });
   const snags = computeSnagPatterns({ snags: [], jobLabel: new Map(), todayIso: "2026-08-01" });
+  const supplierRollup = computeSupplierPerformanceRollup([]);
   const variance = computeProgrammeVariance({ jobs: [], delayEvents: [], todayKey: "2026-08-01" });
 
   return [
@@ -106,6 +112,8 @@ function allMetrics(): Array<[string, LabelledMetric<unknown>]> {
     ["cvr bands", cvrBandsMetric(cvr)],
     ["material demand", materialDemandMetric(demand)],
     ["snag patterns", snagPatternsMetric(snags)],
+    ["supplier reliability", supplierReliabilityMetric(supplierRollup)],
+    ["supplier risk flags", supplierRiskFlagsMetric(supplierRollup)],
   ];
 }
 
@@ -129,10 +137,17 @@ describe("the kind split holds", () => {
     expect(kinds.get("concentration flag")).toBe("heuristic");
     expect(kinds.get("stalled jobs")).toBe("heuristic");
     expect(kinds.get("cvr bands")).toBe("heuristic");
+    expect(kinds.get("supplier risk flags")).toBe("heuristic");
     expect(kinds.get("no baseline gap")).toBe("heuristic");
     // Everything else is derived (this train ships no bare facts and nothing
     // generative — see provenance.ts's header).
-    const heuristics = ["concentration flag", "stalled jobs", "cvr bands", "no baseline gap"];
+    const heuristics = [
+      "concentration flag",
+      "stalled jobs",
+      "cvr bands",
+      "supplier risk flags",
+      "no baseline gap",
+    ];
     for (const [name, kind] of kinds) {
       if (!heuristics.includes(name)) {
         expect(kind, name).toBe("derived");
