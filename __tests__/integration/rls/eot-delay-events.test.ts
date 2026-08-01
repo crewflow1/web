@@ -167,6 +167,15 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
     });
     expect(created.error, created.error?.message).toBeNull();
     userAId = created.data.user?.id ?? "";
+    // No auth.users → public.users trigger in this schema, so mirror the row
+    // ourselves (memberships.user_id FKs public.users) — the active-org-scoping
+    // integration precedent. Without this the membership insert 23503s.
+    const mirrored = await svc()
+      .from("users")
+      .insert({ id: userAId, email, full_name: `EOT ${TOKEN}` })
+      .select("id")
+      .single();
+    expect(mirrored.error, mirrored.error?.message).toBeNull();
     const m = await svc()
       .from("memberships")
       .insert({ org_id: orgA, user_id: userAId, role: "staff" })
@@ -242,18 +251,35 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
     expect(r.error?.message ?? "").toMatch(/not a legal transition/i);
   });
 
-  it("JWT record pins provenance: a forged recorded_by cannot survive", async () => {
-    const d = await insertA({});
-    const id = String(d.data?.id);
+  it("JWT record pins provenance to auth.uid(), and a forged non-member recorded_by cannot survive", async () => {
+    // A legitimate JWT record: the lifecycle trigger overwrites recorded_by
+    // with auth.uid() and stamps recorded_at server-side — provenance cannot
+    // be back-dated or reassigned.
+    const legit = await insertA({});
+    const legitId = String(legit.data?.id);
     const me = db(userClient(userAToken));
-    const r = await me
+    const ok = await me
+      .from("delay_events")
+      .update({ status: "recorded" })
+      .eq("id", legitId);
+    expect(ok.error, ok.error?.message).toBeNull();
+    const after = await svc()
+      .from("delay_events")
+      .select("recorded_by, recorded_at")
+      .eq("id", legitId);
+    expect(after.data?.[0]?.recorded_by).toBe(userAId); // pinned to the caller
+    expect(after.data?.[0]?.recorded_at).toBeTruthy();
+
+    // Forging recorded_by to a NON-MEMBER cannot survive: the membership guard
+    // refuses it outright (it fires before the pin), so an arbitrary id can
+    // never be injected as the recorder.
+    const forge = await insertA({});
+    const forgeId = String(forge.data?.id);
+    const bad = await me
       .from("delay_events")
       .update({ status: "recorded", recorded_by: "00000000-0000-0000-0000-000000000000" })
-      .eq("id", id);
-    expect(r.error, r.error?.message).toBeNull();
-    const after = await svc().from("delay_events").select("recorded_by, recorded_at").eq("id", id);
-    expect(after.data?.[0]?.recorded_by).toBe(userAId);
-    expect(after.data?.[0]?.recorded_at).toBeTruthy();
+      .eq("id", forgeId);
+    expect(bad.error?.message ?? "").toMatch(/not a member of this org/i);
   });
 
   it("a recorded event is frozen: description, dates, category, links all refused", async () => {
