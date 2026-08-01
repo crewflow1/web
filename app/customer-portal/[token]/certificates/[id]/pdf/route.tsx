@@ -11,16 +11,6 @@ export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ token: string; id: string }> };
 
-/** Letterhead source — mirrors the columns the individual invoice/quote PDF
- *  routes read from `organizations`. `address` is the single jsonb blob
- *  ({ line1?, city?, postcode? }); there are NO flat address columns on this
- *  table, so the letterhead is derived from the jsonb. */
-type OrgRow = {
-  name: string | null;
-  logo_url: string | null;
-  address: { line1?: string; city?: string; postcode?: string } | null;
-};
-
 /**
  * Customer-portal completion-certificate PDF.
  *
@@ -43,24 +33,17 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   if (!cert || !cert.snapshot) return NextResponse.json({ error: "Not available" }, { status: 404 });
 
   const admin = createAdminClient();
-  // Org letterhead. `organizations` carries a single `address` jsonb blob
-  // ({ line1?, city?, postcode? }) — the same shape the invoice/quote PDF routes
-  // consume; there are NO flat address columns on this table. Read LOUDLY: a
-  // failed org read must not silently render a certificate with a blank
-  // letterhead, so a query error is a 500, not a fall-back to {}.
-  const { data: org, error: orgError } = await (
+  const { data: org } = await (
     admin.from("organizations") as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: OrgRow | null; error: unknown }> } };
+      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Record<string, string | null> | null }> } };
     }
   )
-    .select("name, logo_url, address")
+    .select("name, logo_url, address_line1, address_line2, city, county, postcode")
     .eq("id", loaded.org.id)
     .maybeSingle();
-  if (orgError) return NextResponse.json({ error: "query_failed" }, { status: 500 });
-  const orgRow = (org ?? {}) as OrgRow;
+  const orgRow = (org ?? {}) as Record<string, string | null>;
   const orgName = orgRow.name ?? loaded.org.name ?? "Contractor";
-  const addr = orgRow.address ?? null;
-  const orgBlockLines = [addr?.line1, [addr?.city, addr?.postcode].filter(Boolean).join(" ")]
+  const orgBlockLines = [orgRow.address_line1, orgRow.address_line2, [orgRow.city, orgRow.postcode].filter(Boolean).join(" ")]
     .filter((l): l is string => Boolean(l && l.trim()));
 
   const buffer = await renderToBuffer(

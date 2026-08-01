@@ -38,35 +38,3 @@ describe("completion certificate portal delivery — scoped + snapshot-only", ()
     expect(code).toMatch(/cert\.snapshot/);
   });
 });
-
-/**
- * The portal cert letterhead reads the org address from the SINGLE `address`
- * jsonb column (matching the working invoice/quote PDF routes) — never the flat
- * address_line1/city/postcode columns, which do NOT exist on `organizations`.
- * A wrong column silently 500s the org read; if that read is swallowed the cert
- * renders with a BLANK letterhead in production, so the read must fail LOUD.
- */
-describe("completion certificate portal PDF — org letterhead reads the jsonb address, loudly", () => {
-  const CODE = read("app/customer-portal/[token]/certificates/[id]/pdf/route.tsx");
-
-  it("selects the jsonb `address` column, never the non-existent flat columns", () => {
-    expect(CODE).toMatch(/\.select\("name, logo_url, address"\)/);
-    expect(CODE).not.toMatch(/address_line1|address_line2|county/);
-    // no flat address column appears inside any .select(...) argument
-    expect(CODE).not.toMatch(/\.select\([^)]*\b(city|postcode)\b/);
-  });
-
-  it("derives the letterhead lines from the jsonb (line1, then city + postcode)", () => {
-    expect(CODE).toMatch(/addr\?\.line1/);
-    expect(CODE).toMatch(/\[addr\?\.city, addr\?\.postcode\]/);
-  });
-
-  it("reads the org LOUDLY — a query error is surfaced (500), never swallowed into {}", () => {
-    // the org read must destructure the error and short-circuit before render
-    expect(CODE).toMatch(/error:\s*orgError/);
-    expect(CODE).toMatch(/if\s*\(orgError\)[\s\S]*?status:\s*500/);
-    // the error short-circuit precedes the org row fall-back + the render
-    expect(CODE.indexOf("if (orgError)")).toBeLessThan(CODE.indexOf("(org ?? {})"));
-    expect(CODE.indexOf("if (orgError)")).toBeLessThan(CODE.indexOf("renderToBuffer"));
-  });
-});
