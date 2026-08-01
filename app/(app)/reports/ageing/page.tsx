@@ -25,11 +25,11 @@ export const metadata = { title: "Aged debtors & creditors · CrewFlow" };
  * server/services/aged-ledgers.ts for the reconciliation identities that tie the
  * debtors total to the /cash figure).
  *
- * The BASIS of each side differs and the page says so on the face of it rather
- * than in a footnote: debtors age from the invoice DUE DATE (a missed deadline),
- * creditors from the supplier's BILL DATE (there is no stored deadline to miss).
- * Presenting both under one unlabelled "overdue" heading would be the kind of
- * quiet elision that gets a supplier chased for money that isn't late.
+ * Both sides now age from a DUE DATE, and the page says so on the face of it:
+ * debtors from the invoice due date, creditors from the bill date plus the
+ * supplier's payment terms (migration 20261088). Where a supplier has no recorded
+ * terms the page DISCLOSES the 30-day assumption in words rather than presenting
+ * it as an agreed deadline — the honesty rule aged creditors was built around.
  *
  * Read-only. Staff are redirected — this is the company's whole debtor and
  * creditor book.
@@ -243,7 +243,7 @@ export default async function AgeingReportPage() {
           label="Supplier debt 90+ days"
           value={creditorsVisible ? formatGbp(creditors.totals.buckets.d91_plus) : "—"}
           tone={creditorsVisible && creditors.totals.buckets.d91_plus > 0 ? "amber" : "slate"}
-          hint="since the bill date, not overdue"
+          hint="more than 90 days past due"
         />
       </section>
 
@@ -309,11 +309,12 @@ export default async function AgeingReportPage() {
             Aged creditors by supplier
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Aged from the <strong>date on the supplier&rsquo;s bill</strong>. CrewFlow doesn&rsquo;t
-            record supplier payment terms, so these columns are days since the bill was raised —
-            <em> not</em> days overdue. Amounts are VAT-inclusive (that is what a supplier is paid)
-            and net off every payment allocated to the bill; voided payments settle nothing. Bills
-            not linked to a supplier are excluded — they can&rsquo;t be aged against an account.
+            Aged from each bill&rsquo;s <strong>due date</strong> — the bill date plus the
+            supplier&rsquo;s payment terms. Where a supplier has no terms recorded, these columns{" "}
+            <strong>assume 30 days</strong>; set a supplier&rsquo;s terms on their page to age
+            their bills exactly. Amounts are VAT-inclusive (that is what a supplier is paid) and net
+            off every payment allocated to the bill; voided payments settle nothing. Bills not
+            linked to a supplier are excluded — they can&rsquo;t be aged against an account.
           </p>
         </div>
         {!creditorsVisible ? (
@@ -335,7 +336,7 @@ export default async function AgeingReportPage() {
             />
           </div>
         ) : (
-          <AgeingTable ledger={creditors} partyLabel="Supplier" dateLabel="supplier bill date" />
+          <AgeingTable ledger={creditors} partyLabel="Supplier" dateLabel="bill due date" />
         )}
       </section>
 
@@ -350,7 +351,7 @@ export default async function AgeingReportPage() {
           >
             Oldest unpaid bills
           </h2>
-          <OldestList ledger={creditors} emptyText="Every unpaid bill was raised today." />
+          <OldestList ledger={creditors} emptyText="No unpaid bill is past its due date." />
         </section>
       ) : null}
     </div>

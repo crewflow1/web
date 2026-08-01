@@ -52,6 +52,10 @@ export async function createSupplier(
       email: result.data.email ?? null,
       category: result.data.category ?? null,
       notes: result.data.notes ?? null,
+      // undefined (blank) → NULL: "terms not recorded". The DB CHECK (0..365)
+      // and the schema both bound it; the read path applies the disclosed
+      // 30-day default when it is null.
+      payment_terms_days: result.data.payment_terms_days ?? null,
     })
     .select("id")
     .single();
@@ -111,6 +115,7 @@ export async function updateSupplier(
         email: result.data.email ?? null,
         category: result.data.category ?? null,
         notes: result.data.notes ?? null,
+        payment_terms_days: result.data.payment_terms_days ?? null,
         updated_at: new Date().toISOString(),
       },
       { count: "exact" },

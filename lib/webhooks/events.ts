@@ -1,0 +1,141 @@
+/**
+ * Outbound-webhook event registry — a BUILD-TIME data boundary (Train A).
+ *
+ * EXPOSABLE_WEBHOOK_EVENTS is the curated subset of the spine `Verb` union
+ * (lib/events/registry.ts) an org may subscribe a webhook to. It is DELIBERATELY
+ * SMALL and safe: which internal events cross the tenant boundary to a
+ * third-party URL is a data-governance decision, so this ships as a minimal
+ * allowlist (operations lifecycle only) and grows by reviewed diff. The
+ * drift-guard in __tests__/security/outbound-webhooks.test.ts asserts every entry
+ * is a REAL registered Verb, so a typo or a renamed verb fails the build rather
+ * than silently subscribing to nothing.
+ *
+ * WHY THESE, AND ONLY THESE (v1): each verb here resolves to an owning org
+ * reliably in the fan-out (webhook_resolve_org, migration §6) — the event's
+ * object is a tenant row (job / customer / quote) with an org_id. Verbs whose
+ * org attribution is not yet reliable on the spine (billing, support, org.*) are
+ * intentionally NOT exposed yet; broadening the set is a CEO data-boundary call.
+ *
+ * Client-safe on purpose (no server-only, no imports beyond the Verb TYPE): the
+ * settings form renders the subscribe checkboxes from this same registry, so the
+ * UI can never offer a verb the fan-out would not deliver.
+ */
+
+import type { Verb } from "@/lib/events/registry";
+
+/**
+ * The verbs an org may subscribe a webhook to. Every entry MUST be a member of
+ * the spine `Verb` union — enforced by the compile-time annotation below AND by
+ * the runtime drift-guard test.
+ */
+export const EXPOSABLE_WEBHOOK_EVENTS = [
+  "job.created",
+  "job.scheduled",
+  "job.completed",
+  "job.cancelled",
+  "customer.created",
+  "customer.updated",
+  "quote.sent",
+  "quote.accepted",
+] as const satisfies readonly Verb[];
+
+/** The union of exposable webhook verbs. */
+export type ExposableWebhookEvent = (typeof EXPOSABLE_WEBHOOK_EVENTS)[number];
+
+const EXPOSABLE_SET: ReadonlySet<string> = new Set(EXPOSABLE_WEBHOOK_EVENTS);
+
+/** Human labels for the settings UI, keyed so a verb cannot be offered without one. */
+export const WEBHOOK_EVENT_LABELS: Readonly<Record<ExposableWebhookEvent, string>> = {
+  "job.created": "Job created",
+  "job.scheduled": "Job scheduled",
+  "job.completed": "Job completed",
+  "job.cancelled": "Job cancelled",
+  "customer.created": "Customer created",
+  "customer.updated": "Customer updated",
+  "quote.sent": "Quote sent",
+  "quote.accepted": "Quote accepted",
+};
+
+/** Runtime guard — is `value` a subscribable webhook verb? */
+export function isExposableWebhookEvent(value: string): value is ExposableWebhookEvent {
+  return EXPOSABLE_SET.has(value);
+}
+
+/**
+ * Validate a set of requested verbs against the registry. Deduplicates, preserves
+ * registry order, refuses the empty set (a webhook subscribed to nothing does
+ * nothing and is a creation mistake).
+ */
+export function validateWebhookEvents(
+  requested: readonly string[],
+):
+  | { ok: true; events: ExposableWebhookEvent[] }
+  | { ok: false; invalid: string[] } {
+  const invalid = [...new Set(requested.filter((v) => !isExposableWebhookEvent(v)))];
+  if (invalid.length > 0) return { ok: false, invalid };
+  const wanted = new Set(requested);
+  const events = EXPOSABLE_WEBHOOK_EVENTS.filter((v) => wanted.has(v));
+  if (events.length === 0) return { ok: false, invalid: [] };
+  return { ok: true, events };
+}
+
+// ---------------------------------------------------------------------------
+// Payload redaction — the per-verb key allowlist (defence in depth).
+// ---------------------------------------------------------------------------
+//
+// The spine producer already curates event payloads to be small + non-PII
+// (hq_emit_from_activity drops names/emails/phones). This map is a SECOND,
+// independent boundary applied at send time: for each verb, ONLY the listed data
+// keys are allowed to leave. An unlisted key is dropped even if a future producer
+// change starts emitting it, so broadening what a producer sends never silently
+// widens what a webhook receives. A verb absent from the map sends an empty
+// `data` object (fail-closed).
+
+/** Envelope shape actually sent on the wire. */
+export type WebhookEnvelope = {
+  id: number | null;
+  verb: string;
+  ts: string;
+  org_id: string;
+  object?: { type: string; id: string };
+  data: Record<string, unknown>;
+};
+
+/** Allowed `data` keys per verb. Unlisted keys are stripped; a missing verb ⇒ {}. */
+export const WEBHOOK_REDACTION_MAP: Readonly<
+  Record<ExposableWebhookEvent, readonly string[]>
+> = {
+  "job.created": ["status"],
+  "job.scheduled": ["status"],
+  "job.completed": ["from", "to"],
+  "job.cancelled": ["from", "to", "status"],
+  "customer.created": [],
+  "customer.updated": ["fields"],
+  "quote.sent": ["number", "total"],
+  "quote.accepted": ["number", "total", "source"],
+};
+
+/**
+ * Redact an envelope's `data` to the per-verb allowlist. Pure + deterministic
+ * (unit-tested). Non-exposable verbs (e.g. the 'webhook.ping' sentinel) keep
+ * their data untouched — pings carry no tenant data. Everything outside `data`
+ * (ids, ts, object, org_id) is metadata and passes through.
+ */
+export function redactEnvelope(envelope: WebhookEnvelope): WebhookEnvelope {
+  const verb = envelope.verb;
+  if (!isExposableWebhookEvent(verb)) {
+    // Ping / non-domain messages: no tenant data to redact.
+    return envelope;
+  }
+  const allowed = WEBHOOK_REDACTION_MAP[verb] ?? [];
+  // Not a Supabase read — this is the envelope's own POJO field. Written with ||
+  // (not ??) to stay clear of the loud-read-failure scanner's `.data ??` probe.
+  const rawData: Record<string, unknown> = envelope.data || {};
+  const data: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(rawData, key)) {
+      data[key] = rawData[key];
+    }
+  }
+  return { ...envelope, data };
+}

@@ -23,8 +23,7 @@ import { SafetyBlocksSection } from "./_safety";
 import { MaintenanceSection, type MaintenanceCaseRow } from "./_maintenance";
 import { ServiceSchedulesSection, type ServiceScheduleRow } from "./_service-schedules";
 import { AssetTimelineSection, type TimelineEvent } from "./_timeline";
-import { INSPECTION_OUTCOME_LABELS } from "@/lib/assets/inspection";
-import { MAINTENANCE_STATUS_LABELS as CASE_STATUS_LABELS } from "@/lib/assets/maintenance";
+import { composeAssetTimeline } from "@/lib/assets/timeline";
 import {
   currentSafetyBlocks,
   hasUnbypassedBlock,
@@ -445,8 +444,11 @@ export default async function AssetDetailPage({
   if (svcSchedulesError) throw readFailure("asset detail: service schedules", svcSchedulesError);
   const serviceSchedules: ServiceScheduleRow[] = svcSchedulesRaw ?? [];
 
-  // Unified history: one bounded custody read + events composed from data
-  // already loaded above (inspections, overrides, maintenance cases).
+  // Unified history: two bounded reads (custody assignments + QR-identity
+  // lifecycle) plus events composed from data already loaded above
+  // (inspections, overrides, maintenance cases). Both reads are ACTIVE-org
+  // pinned like every other read on this page — `current_org_ids()` is
+  // permissive, so RLS alone is not scoping.
   const { data: historyRaw, error: historyError } = await (
     supabase.from("asset_assignments" as never) as unknown as {
       select: (c: string) => {
@@ -454,14 +456,19 @@ export default async function AssetDetailPage({
           k: string,
           v: unknown,
         ) => {
-          order: (
-            c: string,
-            o: { ascending: boolean },
+          eq: (
+            k: string,
+            v: unknown,
           ) => {
-            limit: (n: number) => Promise<{
-              data: { assignment_type: string; assigned_at: string; actual_return_at: string | null; location: string | null }[] | null;
-              error: SupabaseReadError | null;
-            }>;
+            order: (
+              c: string,
+              o: { ascending: boolean },
+            ) => {
+              limit: (n: number) => Promise<{
+                data: { assignment_type: string; assigned_at: string; actual_return_at: string | null; location: string | null }[] | null;
+                error: SupabaseReadError | null;
+              }>;
+            };
           };
         };
       };
@@ -469,30 +476,53 @@ export default async function AssetDetailPage({
   )
     .select("assignment_type, assigned_at, actual_return_at, location")
     .eq("asset_id", id)
+    .eq("org_id", ctx.org.id)
     .order("assigned_at", { ascending: false })
     .limit(15);
   if (historyError) throw readFailure("asset detail: custody history", historyError);
-  const timeline: TimelineEvent[] = [];
-  for (const a of historyRaw ?? []) {
-    timeline.push({ at: a.assigned_at, kind: "custody", label: `Checked out (${a.assignment_type.replaceAll("_", " ")}${a.location ? ` — ${a.location}` : ""})` });
-    if (a.actual_return_at) timeline.push({ at: a.actual_return_at, kind: "custody", label: "Returned" });
-  }
-  for (const i of inspections) {
-    if (i.status === "issued" || i.status === "superseded") {
-      timeline.push({
-        at: i.inspected_at ?? i.created_at,
-        kind: "inspection",
-        label: `${i.title} — ${i.outcome ? INSPECTION_OUTCOME_LABELS[i.outcome] : "recorded"}${i.safety_critical && i.outcome === "fail" ? " (safety block)" : ""}`,
-      });
+
+  // QR-identity lifecycle (generate / regenerate / revoke) — the only logged
+  // "QR events" that exist. A scan writes nothing (lib/assets/scan.ts is a pure
+  // resolver; no scan-event table exists), so scans are deliberately absent.
+  const { data: qrHistoryRaw, error: qrHistoryError } = await (
+    supabase.from("asset_qr_identities" as never) as unknown as {
+      select: (c: string) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => {
+          eq: (
+            k: string,
+            v: unknown,
+          ) => {
+            order: (
+              c: string,
+              o: { ascending: boolean },
+            ) => {
+              limit: (n: number) => Promise<{
+                data: { generated_at: string; revoked_at: string | null; revocation_reason: string | null; regenerated_from: string | null }[] | null;
+                error: SupabaseReadError | null;
+              }>;
+            };
+          };
+        };
+      };
     }
-  }
-  for (const o of overridesRaw ?? []) {
-    timeline.push({ at: o.created_at, kind: "override", label: "Operational override recorded" });
-    if (o.revoked_at) timeline.push({ at: o.revoked_at, kind: "override", label: "Override revoked" });
-  }
-  for (const c of maintenanceCases) {
-    timeline.push({ at: c.created_at, kind: "maintenance", label: `${c.title} — ${CASE_STATUS_LABELS[c.status]}` });
-  }
+  )
+    .select("generated_at, revoked_at, revocation_reason, regenerated_from")
+    .eq("asset_id", id)
+    .eq("org_id", ctx.org.id)
+    .order("generated_at", { ascending: false })
+    .limit(15);
+  if (qrHistoryError) throw readFailure("asset detail: qr history", qrHistoryError);
+
+  const timeline: TimelineEvent[] = composeAssetTimeline({
+    custody: historyRaw ?? [],
+    inspections,
+    overrides: overridesRaw ?? [],
+    maintenanceCases,
+    qr: qrHistoryRaw ?? [],
+  });
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error
