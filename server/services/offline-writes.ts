@@ -444,11 +444,18 @@ export async function dispatchOfflineWrite(args: {
 }): Promise<OfflineWriteOutcome> {
   const { item } = args;
 
-  // 1. envelope
+  // 1. envelope. clientKey must be UUID-SHAPED, not merely non-empty: the
+  // column is uuid, so a malformed key 22P02s — on the snag INSERT that
+  // surfaces as a permanent rejection, but on the material-request key
+  // LOOKUP it surfaced as a transient, and a permanently-transient item at
+  // the head of a seq-ordered outbox wedges everything behind it (the
+  // adversarial review's liveness P2). Refuse the shape here, uniformly.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (
     !item ||
     typeof item.clientKey !== "string" ||
-    item.clientKey.length === 0 ||
+    !UUID_RE.test(item.clientKey) ||
     typeof item.orgId !== "string" ||
     item.orgId.length === 0
   ) {
