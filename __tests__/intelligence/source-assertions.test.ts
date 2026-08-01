@@ -44,6 +44,18 @@ const h = vi.hoisted(() => {
     const rec: Rec = { table, eqs: [], ins: [] };
     reads.push(rec);
     const filters: Array<(row: Record<string, unknown>) => boolean> = [];
+    // The one place the filtered result is materialised, shared by `.range(...)`
+    // (the paged gathers) AND the thenable form (server/services/
+    // supplier-performance's `.limit()` chains, which `await` the builder
+    // directly). Both must honour the SAME eq/in filters, or a dropped org pin
+    // would surface through whichever path a group happens to use.
+    const settle = () => {
+      if (failing.has(table)) {
+        return { data: null, error: { message: `${table} exploded` } };
+      }
+      const rows = (tables[table] ?? []).filter((row) => filters.every((f) => f(row)));
+      return { data: rows, error: null };
+    };
     const builder = {
       select: () => builder,
       eq(col: string, val: unknown) {
@@ -69,12 +81,14 @@ const h = vi.hoisted(() => {
         return builder;
       },
       order: () => builder,
-      range: () => {
-        if (failing.has(table)) {
-          return Promise.resolve({ data: null, error: { message: `${table} exploded` } });
-        }
-        const rows = (tables[table] ?? []).filter((row) => filters.every((f) => f(row)));
-        return Promise.resolve({ data: rows, error: null });
+      limit: () => builder,
+      range: () => Promise.resolve(settle()),
+      // Thenable: `await builder` resolves to the filtered { data, error }.
+      then<R>(
+        onF: (v: { data: unknown[] | null; error: { message: string } | null }) => R,
+        onR?: (e: unknown) => R,
+      ) {
+        return Promise.resolve(settle()).then(onF, onR);
       },
     };
     return builder;
@@ -232,8 +246,31 @@ function seedTwoOrgs() {
     { id: "jb-b1", org_id: ORG_B, job_id: "job-b1", revision: 1, total_cost: 5000, labour_cost: 2000, materials_cost: 2000, subcontractors_cost: 500, misc_cost: 500, target_margin_pct: 20, note: null, created_at: "2026-06-01T00:00:00.000Z", superseded_at: null },
   ];
   h.tables.quotes = [];
-  h.tables.finances = [];
-  h.tables.purchase_orders = [];
+  // Suppliers — the SAME merchant account in both orgs (merchants are shared
+  // between an owner's two companies), so a dropped pin blends their records.
+  h.tables.suppliers = [
+    { id: "sup-shared", org_id: ORG_A, name: "Shared Merchant (A)" },
+    { id: "sup-shared", org_id: ORG_B, name: "Shared Merchant (B)" },
+  ];
+  // Supplier POs/bills/GRNs carry job_id null so they never enter the CVR
+  // rollup (which reads finances/POs by budgeted job id); they exist only to
+  // give the supplier-performance rollup something to measure.
+  h.tables.purchase_orders = [
+    { id: "po-a1", org_id: ORG_A, supplier_id: "sup-shared", number: "PO-A1", status: "received", expected_date: "2026-07-01", total: 1000, job_id: null },
+    { id: "po-b1", org_id: ORG_B, supplier_id: "sup-shared", number: "PO-B1", status: "received", expected_date: "2026-07-01", total: 5000, job_id: null },
+  ];
+  h.tables.finances = [
+    // Org A: £1,200 billed against a £1,000 order → £200 over the order.
+    { id: "bill-a1", org_id: ORG_A, supplier_id: "sup-shared", purchase_order_id: "po-a1", amount: 1200, vat_total: 0, reference: null, bill_date: "2026-07-05", category: "materials", job_id: null, created_at: "2026-07-05T10:00:00.000Z" },
+    // Org B: a clean bill on the SAME merchant id — must never reach org A's £.
+    { id: "bill-b1", org_id: ORG_B, supplier_id: "sup-shared", purchase_order_id: "po-b1", amount: 100, vat_total: 0, reference: null, bill_date: "2026-07-05", category: "materials", job_id: null, created_at: "2026-07-05T10:00:00.000Z" },
+  ];
+  h.tables.goods_received_notes = [
+    // Org A: delivered 9 days after the promised date → LATE.
+    { id: "grn-a1", org_id: ORG_A, purchase_order_id: "po-a1", status: "posted", number: "GRN-A1", delivery_date: "2026-07-10" },
+    // Org B: delivered ON TIME on the same merchant — leaking flips org A's rate.
+    { id: "grn-b1", org_id: ORG_B, purchase_order_id: "po-b1", status: "posted", number: "GRN-B1", delivery_date: "2026-07-01" },
+  ];
   h.tables.material_requests = [
     { id: "mr-a1", org_id: ORG_A, status: "approved", needed_by: "2026-07-20", job_id: "job-a1" },
     { id: "mr-b1", org_id: ORG_B, status: "approved", needed_by: "2026-07-20", job_id: "job-b1" },
@@ -363,6 +400,22 @@ describe("dual-org: every table read is pinned to the active org", () => {
     expect(h.ledgers.calls).toEqual([{ orgId: ORG_A, role: "staff" }]);
   });
 
+  it("supplier performance measures ONLY org A's trading history on the shared merchant", async () => {
+    const view = await loadCompanySignals(ORG_A, NOW);
+    expect(view.supplierPerformance.failed).toBe(false);
+    const r = view.supplierPerformance.data!;
+    // Org B's row on the SAME merchant id is absent — the pin, not RLS, is what
+    // stops one merchant's two-company history collapsing into one record.
+    expect(r.suppliersConsidered).toBe(1);
+    expect(r.suppliersWithRecord).toBe(1);
+    // Org A's late delivery counts; org B's on-time delivery on the same
+    // merchant must NOT — a leak would make judgeable = 2, on-time 1.
+    expect(r.orgPunctuality.count).toBe(1);
+    expect(r.orgPunctuality.n).toBe(1);
+    // Org A's £200 over-invoice, never org B's clean bill.
+    expect(r.overBilledExcessTotal).toBe(200);
+  });
+
   it("the rendered day is the LONDON day; the date-column stamp is the invoice authority's", async () => {
     const view = await loadCompanySignals(ORG_A, NOW);
     // 23:30Z on 31 July is already 1 August in London — the display day.
@@ -439,6 +492,23 @@ describe("loud reads — a failed group fails WHOLE and says so; the rest stand"
     expect(view.materials.failed).toBe(false);
     expect(view.materials.data!.measurable).toBe(false);
   });
+
+  it("a failed suppliers read fails ONLY the supplier-performance group", async () => {
+    h.failing.add("suppliers");
+    const view = await loadCompanySignals(ORG_A, NOW);
+    expect(view.supplierPerformance.failed).toBe(true);
+    expect(view.supplierPerformance.data).toBeNull();
+    expect(view.utilisation.failed).toBe(false);
+    expect(view.concentration.failed).toBe(false);
+    expect(view.snags.failed).toBe(false);
+    expect(h.reported.some((c) => c.includes("supplier performance"))).toBe(true);
+  });
+
+  it("a failed supplier-bills read fails supplier performance whole (a partial ledger is a wrong record)", async () => {
+    h.failing.add("finances");
+    const view = await loadCompanySignals(ORG_A, NOW);
+    expect(view.supplierPerformance.failed).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -491,7 +561,7 @@ describe("source pins — the read layer is read-only and pinned", () => {
 
   it("group failures are caught per group, never page-wide", () => {
     const groups = (SERVICE.match(/group\("intelligence: /g) ?? []).length;
-    expect(groups).toBe(8);
+    expect(groups).toBe(9);
   });
 });
 
