@@ -7,12 +7,13 @@
  * + not withdrawn). There is no other portal photo surface — jobs.photos and
  * un-snapshotted attachments are internal.
  *
- * HONESTY NOTE (design, not a bug): as of this train the staff report editor
- * does not yet offer photo selection, so existing snapshots carry
- * `photo_attachment_ids: []` and the portal photos tab renders its empty state.
- * The portal side is built against the frozen-snapshot contract so that the
- * moment the editor starts writing ids, publication — not new portal code — is
- * what makes a photo visible.
+ * The PRODUCER is the staff report photo picker
+ * (app/(app)/site-reports/[id]/_photo-picker.tsx → updateReportPhotos), which
+ * re-verifies every selected id against the job's own image attachments, and
+ * issueReport re-verifies again at freeze time — so an id arriving here has
+ * been double-checked twice on the staff side and is checked a third time by
+ * the portal loader. Reports issued before that picker existed carry
+ * `photo_attachment_ids: []` and simply contribute no photos.
  *
  * This module is pure: id extraction from an untrusted snapshot blob, and the
  * explicit customer-safe projection. All I/O (the customer-scoped queries, the

@@ -25,6 +25,7 @@ import {
   updateReportContent,
   withdrawFromPortal,
 } from "../actions";
+import { ReportPhotoPicker } from "./_photo-picker";
 
 type ReportRow = {
   id: string;
@@ -52,6 +53,7 @@ const SAVED_MAP: Record<string, string> = {
   superseded: "New revision started from the issued report.",
   published: "Published — the customer can now see this report in their portal.",
   withdrawn: "Withdrawn from the customer portal.",
+  photos: "Photo selection saved.",
 };
 const ERROR_MAP: Record<string, string> = {
   validation: "Please check the form.",
@@ -63,6 +65,8 @@ const ERROR_MAP: Record<string, string> = {
   not_issued: "Only an issued report can be published to the portal.",
   not_published: "This report isn't published to the portal.",
   forbidden: "Only an owner or admin can publish or withdraw reports.",
+  photo_validation: "Photo selection was invalid — pick up to 12 of the job's photos.",
+  photo_not_on_job: "One of the selected photos isn't on this job any more. Refresh and re-select.",
 };
 
 const STATUS_STYLES: Record<SiteReportStatus, string> = {
@@ -138,7 +142,14 @@ export default async function SiteReportDetailPage({
     diary: sel?.diary_entry_ids.length ?? 0,
     snags: sel?.snag_ids.length ?? 0,
     toolbox: sel?.toolbox_talk_ids.length ?? 0,
+    // Issued reports show the FROZEN photo count (the snapshot is what the
+    // customer sees); drafts show the working selection.
+    photos:
+      report.snapshot?.content?.sources?.photo_attachment_ids?.length ??
+      sel?.photo_attachment_ids?.length ??
+      0,
   };
+  const selectedPhotoIds = sel?.photo_attachment_ids ?? [];
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? null) : null;
@@ -261,10 +272,11 @@ export default async function SiteReportDetailPage({
         </p>
         {/* Plain divs, not <dl>: the cells are number+caption stats, and a dl
             whose children aren't dt/dd groups fails axe's definition-list rule. */}
-        <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+        <div className="mt-3 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
           <Stat n={counts.diary} label="Diary entries" />
           <Stat n={counts.snags} label="Snags" />
           <Stat n={counts.toolbox} label="Toolbox talks" />
+          <Stat n={counts.photos} label="Customer photos" />
         </div>
       </section>
 
@@ -273,6 +285,17 @@ export default async function SiteReportDetailPage({
       ) : (
         <IssuedView content={content} snapshot={report.snapshot} />
       )}
+
+      {/* Photo selection — editable states only; the issued snapshot's photo
+          set is frozen (DB trigger) and summarised in the stat above. */}
+      {editable && report.job_id ? (
+        <ReportPhotoPicker
+          reportId={report.id}
+          jobId={report.job_id}
+          orgId={ctx.org.id}
+          selectedIds={selectedPhotoIds}
+        />
+      ) : null}
 
       {/* Report-level attachments (cover image / extra evidence). */}
       <AttachmentsPanel targetTable="site_reports" targetId={report.id} />
