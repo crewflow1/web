@@ -859,6 +859,52 @@ describe("the HQ cost view is gated and privilege-honest", () => {
 });
 
 // =====================================================================
+// 8b. The HQ TREND view — same gate, London-pinned, read-only presentation.
+// =====================================================================
+
+describe("the AI-cost trend is gated, London-pinned and writes nothing", () => {
+  it("the trend read lives in the SERVICE-ROLE snapshot module, behind the HQ gate", () => {
+    // It ships inside ai-cost-snapshot.ts, which section 8 already pins as
+    // server-only + service-role and free of any tenant client. The page that
+    // renders it is HQ-gated (requireHqPage), so the trend inherits exactly the
+    // same boundary as every other figure on the surface.
+    const snap = codeOf(read(SNAPSHOT));
+    expect(snap).toMatch(/export\s+async\s+function\s+buildAiCostTrend/);
+    expect(snap).toMatch(/export\s+function\s+composeAiCostTrend/);
+
+    const page = codeOf(read(HQ_PAGE));
+    expect(page).toMatch(/requireHqPage\(\)/);
+    expect(page).toMatch(/buildAiCostTrend/);
+  });
+
+  it("the trend buckets by the EUROPE/LONDON month helper, never by toISOString month maths", () => {
+    // A £100 MONTHLY ceiling is a UK calendar-month promise; the trend that
+    // reports against it must bucket on the same boundary the SQL rollups and
+    // `ukMonthKeyOf` use. `.slice(0, 7)` on an ISO string is the UTC-month
+    // shortcut this forbids — `probeDateFor` legitimately takes `.slice(0, 10)`
+    // (a DATE), which this pattern does not match.
+    const snap = codeOf(read(SNAPSHOT));
+    expect(snap).toMatch(/ukMonthKeyOf/);
+    expect(snap).toMatch(/trailingMonths/);
+    expect(snap).not.toMatch(/toISOString\(\)\.slice\(\s*0\s*,\s*7\s*\)/);
+    expect(snap).not.toMatch(/getUTCMonth\(\)/);
+  });
+
+  it("the trend is READ-ONLY — it reads the rollups and writes no ledger row", () => {
+    // Pure presentation over telemetry that already exists. It must never touch
+    // the write path (the ledger insert or the reservation RPCs), and it reads
+    // through the SAME two invoker-rights rollups the rest of the module uses.
+    const snap = codeOf(read(SNAPSHOT));
+    expect(snap).toMatch(/ai_invocations_month_totals/);
+    expect(snap).toMatch(/ai_invocations_month_by_feature/);
+    expect(snap).not.toMatch(/insert\s+into|\.insert\s*\(/i);
+    expect(snap).not.toMatch(/ai_reserve_invocation|ai_settle_reservation|ai_release_reservation/);
+    // No provider door and no vendor SDK reaches this presentation module.
+    expect(snap).not.toMatch(/@anthropic-ai\/sdk|new\s+Anthropic|new\s+OpenAI|invokeWithGovernor/);
+  });
+});
+
+// =====================================================================
 // 9. EMBEDDINGS GOVERNANCE (slot 20261080) — the widened task_class CHECKs.
 // =====================================================================
 

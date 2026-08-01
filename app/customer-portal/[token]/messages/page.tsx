@@ -4,6 +4,10 @@ import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { sendPortalMessage } from "../../_message-action";
+import {
+  countUnreadOrgRepliesForCustomer,
+  hasUnreadOrgReplyForCustomer,
+} from "@/lib/support/unread";
 
 /**
  * Customer portal — Messages.
@@ -61,7 +65,7 @@ export default async function PortalMessagesPage({
     .select(
       `
         id, ticket_number, subject, status, priority, category,
-        last_reply_at, created_at,
+        last_reply_at, last_reply_kind, created_at,
         last_message:support_messages!support_messages_ticket_id_fkey ( body, created_at, author_kind, internal )
       `,
     )
@@ -80,6 +84,7 @@ export default async function PortalMessagesPage({
     priority: string;
     category: string;
     last_reply_at: string | null;
+    last_reply_kind: "customer" | "hq" | "org" | null;
     created_at: string;
     last_message?: Array<{
       body: string;
@@ -91,6 +96,10 @@ export default async function PortalMessagesPage({
   // Already scoped to this customer at the query level (org_id + customer_id);
   // internal HQ notes are excluded from the preview below (see lastVisible).
   const tickets = (ticketsRaw ?? []) as unknown as TicketRow[];
+  // Derived unread badge — threads where the org replied last and the customer
+  // hasn't answered. No read-marker column (see lib/support/unread). Already
+  // scoped to this customer by the query above.
+  const unreadReplies = countUnreadOrgRepliesForCustomer(tickets);
 
   const banner = (() => {
     if (sp.saved === "sent")
@@ -106,7 +115,17 @@ export default async function PortalMessagesPage({
   return (
     <PortalShell customer={customer} org={org} token={token} active="messages">
       <header className="space-y-1">
-        <h2 className="text-xl font-bold text-slate-900">Messages</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-900">Messages</h2>
+          {unreadReplies > 0 ? (
+            <span
+              className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-800"
+              title={`${unreadReplies} new repl${unreadReplies === 1 ? "y" : "ies"} from ${org.name}`}
+            >
+              {unreadReplies} new repl{unreadReplies === 1 ? "y" : "ies"}
+            </span>
+          ) : null}
+        </div>
         <p className="text-sm text-slate-600">
           Send {org.name} a question, or follow up on an existing thread.
         </p>
@@ -182,8 +201,17 @@ export default async function PortalMessagesPage({
                     className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
                   >
                     <div className="flex items-baseline justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-slate-900">
-                        #{t.ticket_number} · {t.subject}
+                      <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-slate-900">
+                        {hasUnreadOrgReplyForCustomer(t) ? (
+                          <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-indigo-500"
+                            title={`New reply from ${org.name}`}
+                            aria-label="New reply"
+                          />
+                        ) : null}
+                        <span className="truncate">
+                          #{t.ticket_number} · {t.subject}
+                        </span>
                       </p>
                       <span className="shrink-0 text-[11px] text-slate-500">
                         {t.status}

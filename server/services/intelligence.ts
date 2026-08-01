@@ -64,6 +64,14 @@ import {
   type SnagPatterns,
   type SnagRow,
 } from "@/lib/intelligence/snag-patterns";
+import {
+  PRACTICAL_COMPLETION_STATUS,
+  computeProgrammeVariance,
+  type ProgrammeDelayInput,
+  type ProgrammeVarianceJobInput,
+  type ProgrammeVarianceRollup,
+} from "@/lib/intelligence/programme-variance";
+import type { DelayEventStatus } from "@/lib/eot/lifecycle";
 
 /**
  * COMPANY SIGNALS — the read layer for the deterministic intelligence layer.
@@ -363,6 +371,159 @@ export async function gatherProgressRollup(
 }
 
 // ---------------------------------------------------------------------------
+// Group: programme variance (composes planned baselines + delay exposure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ceiling on live jobs whose baselines/milestones are read in one render. As on
+ * the progress rollup: a stated cap, not a silent truncation, and ordered by id
+ * so the capped set is stable between loads. Delay events are read WHOLE for the
+ * org (exposure is not bounded to the capped job set).
+ */
+export const PROGRAMME_VARIANCE_JOB_LIMIT = 200;
+
+export async function gatherProgrammeVariance(
+  db: IntelligenceClient,
+  orgId: string,
+  jobs: JobLite[],
+  now: Date,
+): Promise<{ rollup: ProgrammeVarianceRollup; capped: boolean }> {
+  // The LIVE population: any job not practically complete. A new / in-progress
+  // / blocked job can be behind its plan; a completed one is history.
+  const live = jobs.filter((j) => j.status !== PRACTICAL_COMPLETION_STATUS);
+  const capped = live.length > PROGRAMME_VARIANCE_JOB_LIMIT;
+  const considered = live.slice(0, PROGRAMME_VARIANCE_JOB_LIMIT);
+  const jobIds = considered.map((j) => j.id);
+
+  // Current baselines only: superseded_at IS NULL is the current-revision
+  // predicate lib/job-programme/planned.ts relies on — a superseded plan is the
+  // org's history, never counted here.
+  const baselineRows =
+    jobIds.length === 0
+      ? []
+      : await allRows("intelligence: programme baselines", (from, to) =>
+          db
+            .from("job_programme_baselines")
+            .select("id, job_id, revision, planned_start, planned_end")
+            .eq("org_id", orgId)
+            .in("job_id", jobIds)
+            .is("superseded_at", null)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+
+  const baselineByJob = new Map<string, Row>();
+  const jobByBaseline = new Map<string, string>();
+  for (const b of baselineRows) {
+    const jobId = sv(b.job_id);
+    const id = sv(b.id);
+    if (!jobId || !id) continue;
+    baselineByJob.set(jobId, b);
+    jobByBaseline.set(id, jobId);
+  }
+
+  // Milestones of those baselines — only planned_end is examined by the lib.
+  const baselineIds = [...jobByBaseline.keys()];
+  const milestoneRows =
+    baselineIds.length === 0
+      ? []
+      : await allRows("intelligence: programme milestones", (from, to) =>
+          db
+            .from("job_milestones")
+            .select("id, baseline_id, planned_end")
+            .eq("org_id", orgId)
+            .in("baseline_id", baselineIds)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+  const milestonesByJob = new Map<string, Array<{ planned_end: string }>>();
+  for (const m of milestoneRows) {
+    const jobId = jobByBaseline.get(String(m.baseline_id));
+    if (!jobId) continue;
+    const list = milestonesByJob.get(jobId) ?? [];
+    list.push({ planned_end: String(m.planned_end) });
+    milestonesByJob.set(jobId, list);
+  }
+
+  // Delay events, WHOLE ORG (any job, any status — the pure lib files them by
+  // lifecycle). Exposure follows an EoT dispute past practical completion, so
+  // this is deliberately NOT restricted to the live/capped job set.
+  const delayRows = await allRows("intelligence: delay events", (from, to) =>
+    db
+      .from("delay_events")
+      .select("id, job_id, status, working_days_lost, variation_quote_id")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+
+  // The linked variations' agreed-EoT columns — read by id, org-pinned, so a
+  // stale or hostile id resolves to nothing rather than another tenant's row.
+  const variationIds = [
+    ...new Set(
+      delayRows
+        .map((d) => sv(d.variation_quote_id))
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const variationRows =
+    variationIds.length === 0
+      ? []
+      : await allRows("intelligence: delay variations", (from, to) =>
+          db
+            .from("quotes")
+            .select("id, eot_agreed_at, eot_agreed_completion_date")
+            .eq("org_id", orgId)
+            .in("id", variationIds)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+  const variationById = new Map(variationRows.map((v) => [String(v.id), v]));
+
+  const jobInputs: ProgrammeVarianceJobInput[] = considered.map((j) => {
+    const b = baselineByJob.get(j.id);
+    return {
+      jobId: j.id,
+      label: j.label,
+      // Deep-link straight to the job's programme panel anchor.
+      href: `/jobs/${j.id}#programme`,
+      status: j.status,
+      baseline: b
+        ? {
+            revision: Number(b.revision),
+            planned_start: String(b.planned_start),
+            planned_end: String(b.planned_end),
+          }
+        : null,
+      milestones: milestonesByJob.get(j.id) ?? [],
+    };
+  });
+
+  const delayInputs: ProgrammeDelayInput[] = delayRows.map((d) => {
+    const v = d.variation_quote_id
+      ? variationById.get(String(d.variation_quote_id))
+      : undefined;
+    return {
+      eventId: String(d.id),
+      jobId: sv(d.job_id) ?? "",
+      status: String(d.status) as DelayEventStatus,
+      workingDaysLost: d.working_days_lost == null ? null : Number(d.working_days_lost),
+      variationEotAgreedAt: v ? sv(v.eot_agreed_at) : null,
+      variationEotAgreedCompletionDate: v ? sv(v.eot_agreed_completion_date) : null,
+    };
+  });
+
+  return {
+    rollup: computeProgrammeVariance({
+      jobs: jobInputs,
+      delayEvents: delayInputs,
+      todayKey: formatDayKeyUK(now),
+    }),
+    capped,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Group: CVR rollup (composes the budget authority per job, org-wide)
 // ---------------------------------------------------------------------------
 
@@ -634,6 +795,7 @@ export interface CompanySignalsView {
   utilisation: SignalGroup<OrgUtilisation>;
   concentration: SignalGroup<CustomerConcentration>;
   progress: SignalGroup<{ rollup: ProgressRollup; capped: boolean }>;
+  programmeVariance: SignalGroup<{ rollup: ProgrammeVarianceRollup; capped: boolean }>;
   exposure: SignalGroup<{
     retention: RetentionExposure;
     agedDebt: AgedDebtSummary;
@@ -688,8 +850,16 @@ export async function loadCompanySignals(
     });
   }
 
-  const [utilisation, concentration, progress, exposure, cvr, materials, snags] =
-    await Promise.all([
+  const [
+    utilisation,
+    concentration,
+    progress,
+    programmeVariance,
+    exposure,
+    cvr,
+    materials,
+    snags,
+  ] = await Promise.all([
       group("intelligence: utilisation", () =>
         gatherUtilisation(db, orgId, window30, now.getTime()),
       ),
@@ -700,6 +870,10 @@ export async function loadCompanySignals(
       group("intelligence: progress rollup", async () => {
         if (!jobs) throw new Error("jobs read failed");
         return gatherProgressRollup(db, orgId, jobs, now);
+      }),
+      group("intelligence: programme variance", async () => {
+        if (!jobs) throw new Error("jobs read failed");
+        return gatherProgrammeVariance(db, orgId, jobs, now);
       }),
       group("intelligence: exposure", async () => {
         // Composed whole services — each already active-org pinned, paged and
@@ -740,6 +914,7 @@ export async function loadCompanySignals(
     utilisation,
     concentration,
     progress,
+    programmeVariance,
     exposure,
     cvr,
     materials,
