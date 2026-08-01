@@ -131,16 +131,20 @@ const envSchema = z.object({
   // put the product in breach of a licence or on a bill nobody approved. Binding
   // a provider must be an explicit, named act.
   //
-  // Setting this is NOT sufficient to activate anything: no provider adapter
-  // exists in this build, and none of these keys is read by any code that could
-  // make a request. See lib/weather/readiness.ts for the full activation
-  // checklist and docs/weather/provider-options.md for the licence and cost
-  // homework behind the choice.
+  // Setting this alone is NOT sufficient to activate anything. Since Train 7
+  // an open-meteo adapter EXISTS (built-dark), so the live pair is
+  // WEATHER_PROVIDER="open-meteo" + OPEN_METEO_API_KEY — both unset in every
+  // environment until the commercial decision is taken. See
+  // lib/weather/readiness.ts for the activation checklist and
+  // docs/weather/provider-options.md for the licence and cost homework.
   WEATHER_PROVIDER: z.string().optional(),
   // Met Office Weather DataHub (Site Specific / Global Spot) subscription key.
+  // NO metoffice adapter exists; this key has no reader beyond readiness.
   MET_OFFICE_API_KEY: z.string().optional(),
-  // Open-Meteo COMMERCIAL subscription key. The keyless open-access tier is
-  // licensed for non-commercial use only and must not be used by CrewFlow.
+  // Open-Meteo COMMERCIAL subscription key — read ONLY by the factory arm in
+  // lib/weather/index.ts, which injects it into the adapter. The keyless
+  // open-access tier is licensed for non-commercial use only and must not be
+  // used by CrewFlow; the adapter carries no free-tier endpoint.
   OPEN_METEO_API_KEY: z.string().optional(),
 
   // -- Stripe -------------------------------------------------------------

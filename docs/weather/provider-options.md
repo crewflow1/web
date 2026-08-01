@@ -4,11 +4,14 @@
 and no recommendation is made.** This document exists so the choice can be made on
 evidence rather than on whichever API a developer happened to reach for.
 
-The engineering is complete and dark: the thresholds, the decision layer, the cache
-and the trust boundary all ship in migration `20261074000000` and `lib/weather/`.
-What remains is a commercial decision with a licence and a bill attached, plus one
-piece of data-ingest work that is easy to miss (see
-[The hidden prerequisite](#the-hidden-prerequisite-district--coordinate)).
+The engineering is now complete and dark **end to end**: the thresholds, the
+decision layer, the cache and the trust boundary ship in migration
+`20261074000000` and `lib/weather/`; district→coordinate resolution shipped in
+Train 3; and **Train 7 shipped the Open-Meteo adapter, the fetch/cache pipeline
+and the (unscheduled) cron seam** — see
+[What shipped in Train 7](#what-shipped-in-train-7--adapter--pipeline-built-dark).
+What remains is EXACTLY the commercial decision with a licence and a bill
+attached, plus the credential and one `vercel.json` line it unlocks.
 
 Prices were read from vendor pricing pages in July 2026 and exclude VAT unless
 stated. **Verify before committing** — they move.
@@ -185,6 +188,48 @@ lost NI. Not used.)
 
 ---
 
+## What shipped in Train 7 — adapter + pipeline, BUILT-DARK
+
+Everything below exists in the build, is CI-tested against checked-in fixtures
+with **zero network egress**, and does nothing in any environment because no
+credential exists anywhere. The security suite's transport allowlist pins the
+adapter as the only file permitted to contain a transport primitive.
+
+- **Adapter** — `lib/weather/providers/open-meteo.ts`: implements
+  `WeatherProvider` for BOTH kinds (forecast via the forecast API, observation
+  via the historical/archive API), platform `fetch` only, SI units demanded
+  explicitly (`wind_speed_unit=ms`), UTC, throws typed
+  `WeatherProviderError`s (retryable 429/5xx/network vs deterministic 4xx /
+  malformed). **It speaks ONLY to the commercial `customer-` hosts** — the
+  keyless free endpoints do not appear in the source, so the non-commercial
+  licence cannot be breached by accident; the suite pins their absence. The
+  key is injected by the factory; the adapter reads no environment.
+- **Factory arm** — `getWeatherProvider()` returns the adapter only when
+  `WEATHER_PROVIDER="open-meteo"` AND `OPEN_METEO_API_KEY` is set AND district
+  resolution is available. `PROVIDER_IMPLEMENTED["open-meteo"]` is now `true`
+  (the deliberate, test-tripping flip); `metoffice` remains `false`.
+- **Fetch pipeline** — `server/services/weather-fetch.ts` (service-role, the
+  cache has no INSERT policy): distinct districts under active watch →
+  freshness skip (forecast 6 h, observation 24 h) → resolve (unresolvable ⇒
+  recorded outcome, never guessed) → fetch (retry ≤3 with jittered backoff;
+  breaker trips after 3 consecutive failures) → upsert on
+  `(provider, postcode_district, kind, valid_at)` with `resolved_lat/lon`
+  provenance and per-kind `expires_at` (forecast = fetched+6 h; observation
+  NULL). Windows: forecast +48 h; observation −72 h (antecedent rainfall).
+  Bounded at 200 districts/run.
+- **Cron seam** — `app/api/cron/weather-fetch/route.ts`: Bearer-gated,
+  dark ⇒ 204 no-op with zero DB access, **deliberately NOT in `vercel.json`**
+  — scheduling it is an activation step, and the suite pins its absence.
+- **Kill switch** — no new flag system: `WEATHER_PROVIDER` unset/`none`/`off`/
+  `disabled` ⇒ null regardless of any key, and removing the credential kills
+  it equally; every gate is conjunctive.
+- **Known follow-up (activation-time)** — the archive lags ~5 days, so recent
+  antecedent-rainfall observations may come back empty; if that matters in
+  practice, source recent hours from the forecast endpoint's `past_days`
+  parameter (a product decision, not taken here).
+
+---
+
 ## Call-volume arithmetic
 
 Sizing depends on **distinct districts under watch across the whole platform**, not
@@ -231,17 +276,35 @@ decision: hourly refresh (24/day) multiplies every row by six.
 
 ## What activation requires, in order
 
-1. Choose a provider; confirm its licence covers the intended display surface.
-2. Obtain the key; set `WEATHER_PROVIDER` and the vendor's credential.
-3. ~~Ingest district centroids~~ **DONE** — shipped in `lib/weather/geo`;
-   `districtResolutionAvailable` is now derived from the dataset (see above).
-4. Write `lib/weather/providers/<vendor>.ts` implementing `WeatherProvider`
-   (its `fetchWindow` already receives the resolved coordinates).
-5. Flip that vendor's entry in `PROVIDER_IMPLEMENTED` — **this trips the security
-   suite deliberately**, so activation is a reviewed diff, never a config change.
-6. Add the writer (service-role only — the cache has no INSERT policy) and a
-   scheduled refresh over `weather_watches`; it must write the resolved
-   coordinates into `resolved_lat` / `resolved_lon`.
-7. Render the vendor's required attribution wherever data appears (the ONSPD
-   attribution is already rendered by the readiness panel).
-8. If PAYG: add the watch ceiling *first*.
+*(Updated after Train 7: the engineering items are DONE-dark for Open-Meteo.
+If the commercial decision lands on Open-Meteo, activation is steps 1, 2, 6
+and 7 only. Choosing any other vendor reopens steps 4–5 for that vendor.)*
+
+1. **Choose a provider; confirm its licence covers the intended display
+   surface.** ← the open decision. Nothing signed up for.
+2. **Obtain the key; set `WEATHER_PROVIDER` and the vendor's credential.** ←
+   pending the decision. For Open-Meteo this must be a COMMERCIAL subscription
+   key — the adapter refuses to exist without one and carries no free-tier
+   endpoint (see the licence trap above).
+3. ~~Ingest district centroids~~ **DONE** (Train 3) — shipped in
+   `lib/weather/geo`; `districtResolutionAvailable` is derived from the dataset.
+4. ~~Write `lib/weather/providers/<vendor>.ts`~~ **DONE for Open-Meteo**
+   (Train 7) — both kinds, fixture-tested, zero-egress in CI. A Met Office
+   choice would need its own adapter here plus the transport-roster entry.
+5. ~~Flip that vendor's entry in `PROVIDER_IMPLEMENTED`~~ **DONE for
+   Open-Meteo** (Train 7) — the flip tripped the security suite exactly as
+   designed and the pins were updated to the new truth in the same reviewed
+   diff. `metoffice` remains false.
+6. ~~Add the writer~~ **DONE** (Train 7) — `server/services/weather-fetch.ts`
+   writes `resolved_lat`/`resolved_lon` on every row. **Remaining half:
+   SCHEDULE it** — add `/api/cron/weather-fetch` to `vercel.json` (the
+   security suite pins its absence today; update that pin in the activation
+   diff). Suggested cadence: every 3–6 h, matching the 6 h forecast freshness
+   horizon priced in the arithmetic above.
+7. **Render the vendor's required attribution wherever weather data appears**
+   (CC-BY 4.0 for Open-Meteo — the string ships on `provider.info.attribution`;
+   the ONSPD attribution is already rendered by the readiness panel). ← remains,
+   because no surface renders vendor data yet (there is none to render).
+8. If PAYG: add the watch ceiling *first*. (Open-Meteo is capped, not PAYG, so
+   this is moot unless the decision changes vendor class. The pipeline also
+   self-bounds at 200 districts/run.)

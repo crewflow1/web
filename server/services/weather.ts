@@ -28,9 +28,11 @@ import "server-only";
  * rather than rendering an empty state that looks like fair weather.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * NO NETWORK. This file contains no `fetch`, no vendor SDK and no URL. Fetching
- * would belong in a provider adapter behind `getWeatherProvider()`, and no such
- * adapter exists. The security suite scans this file to keep it that way.
+ * NO NETWORK. This file contains no `fetch`, no vendor SDK and no URL — it
+ * reads the CACHE, never a vendor. Fetching lives behind the seam: the
+ * open-meteo adapter (lib/weather/providers) called by the fetch pipeline
+ * (server/services/weather-fetch.ts), both dark until a credential exists.
+ * The security suite scans this file to keep the read side wire-free.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
