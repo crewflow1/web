@@ -74,12 +74,38 @@ export function OfflineControls({ drawing, identity }: { drawing: Drawing; ident
         // (The old call was a fire-and-forget Next router prefetch of the shell route.)
         let controlled = false;
         if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
-          await Promise.race([navigator.serviceWorker.ready, new Promise((res) => setTimeout(res, 4000))]);
+          // Wait EVENT-DRIVEN for control, not on fixed timeouts. sw.js activate
+          // ends with self.clients.claim(), so control is guaranteed to arrive —
+          // but on a first install the precache runs before claim(), so under CI
+          // load it can land well after any short budget. Resolve the instant the
+          // controller appears instead of racing an arbitrary cap (the old 4000ms
+          // ready race + 2000ms controllerchange cap were the pwa-offline flake).
+          // `ready` is awaited under the SAME generous cap as the control wait below:
+          // on a browser where "serviceWorker" exists but no SW ever activates,
+          // a bare await would hang the download UX forever (the very thing the cap
+          // exists to prevent). 30s is far longer than any real activation, so the
+          // flake fix is preserved; it only bounds the pathological never-activates case.
+          await Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise<void>((res) => setTimeout(res, 30000)),
+          ]);
           if (!navigator.serviceWorker.controller) {
-            await new Promise<void>((res) => {
-              const done = () => res();
-              navigator.serviceWorker.addEventListener("controllerchange", done, { once: true });
-              setTimeout(done, 2000);
+            await new Promise<void>((resolve) => {
+              // Mutual reference: `finish` closes over `timer`, and `timer` is set to
+              // setTimeout(finish); forcing const would trip no-use-before-define.
+              // eslint-disable-next-line prefer-const
+              let timer: ReturnType<typeof setTimeout>;
+              const finish = () => {
+                clearTimeout(timer);
+                navigator.serviceWorker.removeEventListener("controllerchange", check);
+                resolve();
+              };
+              const check = () => { if (navigator.serviceWorker.controller) finish(); };
+              navigator.serviceWorker.addEventListener("controllerchange", check);
+              // One generous safety cap ONLY so a genuinely-broken/unsupported SW
+              // can't hang the download UX forever; never the normal path.
+              timer = setTimeout(finish, 30000);
+              check(); // covers a change fired before the listener attached
             });
           }
           controlled = Boolean(navigator.serviceWorker.controller);
