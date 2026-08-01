@@ -4,9 +4,9 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-**Last reconciled:** 2026-08-01 (Continuation 20 — hardening/reduction wave. 6-agent recon confirmed the safe net-new backlog is drained; 3 safe trains shipped: `/api/health` live DB probe (risk #3), pwa-offline SW-race flake fix (risk #1), and the quotes-approval gate enforced at the DB layer (risk #4, migration `20261090`). Everything else remaining is CEO/provider/legal/product-gated. Migration tip `20261089`→`20261090`.)
-**Production `main`:** `dd74f7d` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261090` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Last reconciled:** 2026-08-01 (ROADMAP COMPLETION PROGRAMME, build-dark mandate — build every gated feature to the point where only a credential/decision/legal input remains, so activation is a config flip. Waves 1–2 shipped 4 trains: HQ **Decision Centre** `20261091` (Phase 16 + Layer-5 Delay/Delegate), **Deterministic Intelligence** (company-health RAG/CLV/subcontractor scoring, Phase 9, 0-mig), HQ **Finance AI** (MRR/ARR board, insufficient-honest, 0-mig), **Maintenance-reminder engine** `20261092` (Phase 7, built dark). Migration tip `20261090`→`20261092`.)
+**Production `main`:** `3ef11a7` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261092` — read from `supabase_migrations.schema_migrations`, NOT inferred
 
 > **✅ C15 INTERRUPTION FULLY RECOVERED (Continuation 16, 2026-08-01).** The four spend-limit-killed
 > lanes were **resumed from their worktrees (never rebuilt)** and shipped, alongside five new trains.
@@ -382,8 +382,10 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261087` | outbound webhooks (`webhook_endpoints`, `webhook_deliveries`) | **APPLIED** — C17, #534 |
 | `20261088` | supplier payment terms (`suppliers.payment_terms_days`) | **APPLIED** — C17, #535 |
 | `20261089` | expense budgets (`expense_budgets`) | **APPLIED** — C18, #538 |
-| `20261090` | quote-approval authz trigger (`enforce_quote_approval_authz` on `quotes`) | **APPLIED (prod tip)** — C20, #544 |
-| `20261091+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| `20261090` | quote-approval authz trigger (`enforce_quote_approval_authz` on `quotes`) | **APPLIED** — C20, #544 |
+| `20261091` | HQ Decision Centre (`hq_decisions` + `hq_decision_events`) | **APPLIED** — Completion W1, #545 |
+| `20261092` | maintenance-reminder engine (`maintenance_reminder_log` + `claim_due_maintenance_reminders`) | **APPLIED (prod tip)** — Completion W2, #548 |
+| `20261093+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
