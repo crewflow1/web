@@ -88,7 +88,7 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
   const mkJob = async (org: string) => {
     const r = await svc()
       .from("jobs")
-      .insert({ org_id: org, status: "in_progress" })
+      .insert({ org_id: org, status: "in-progress" })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();
