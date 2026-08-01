@@ -27,6 +27,21 @@ export const supplierFormSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   notes: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+  // Net payment terms in days (net-30 → 30). OPTIONAL and left undefined when
+  // blank, which the action writes as NULL — "terms not recorded", distinct from
+  // net-0. The bounds mirror the DB CHECK (0..365, migration 20261088); the
+  // 30-day ageing assumption for a null value lives in the read path
+  // (lib/commercial/overdue-payables.ts), never here — a form must not stamp an
+  // assumed term onto a supplier the operator didn't set.
+  payment_terms_days: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: "Payment terms must be a number of days." })
+      .int("Payment terms must be a whole number of days.")
+      .min(0, "Payment terms can't be negative.")
+      .max(365, "Payment terms can't be more than 365 days.")
+      .optional(),
+  ),
 });
 
 export type SupplierFormInput = z.infer<typeof supplierFormSchema>;
