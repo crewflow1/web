@@ -413,12 +413,27 @@ so a credential with no binding produced real, unmetered spend through the
    distribution, in the same diff that binds it. `overrun_count` is the alarm; it
    should be zero in steady state.
 2. **CEO authorisation + a credential**, neither of which this wave touches.
-2b. **EMBEDDINGS ARE STILL UNGOVERNED, and this needs a migration.**
-   `lib/ai/embeddings` spends real money and cannot enter this registry: the
-   ledger's `task_class` CHECK admits only classification / drafting / complex,
-   and an embedding is none of the three. Its exposure is bounded differently —
-   the embedding worker is gated on `memory_embedding.worker_enabled`, so a
-   credential alone does not start it — but HQ recall embeds a query on demand.
+2b. ~~**EMBEDDINGS ARE STILL UNGOVERNED, and this needs a migration.**~~
+   **CLOSED — migration `20261080000000_embeddings_governance.sql`.** The
+   ledger's `task_class` CHECK (and the reservation table's) now admit
+   `embedding`; the registry carries an `embedding` task class on its own
+   `embedding` tier (`TIER_MODEL.embedding = null` — dark, exactly like the
+   generative tiers) plus two feature keys, `memory.embedding_write` (the
+   worker, one governed call per batch) and `memory.embedding_query` (HQ
+   recall's on-demand query embed). The provider door
+   (`lib/ai/embeddings/index.ts`) refuses a PAID provider unless the embedding
+   tier is bound — a bare `OPENAI_API_KEY` yields nothing — and both call
+   sites go through `governedEmbed` (`lib/ai/embeddings/governed.ts`), so a
+   paid embedding gets the same atomic reserve→settle, dedupe and ledger row
+   as every generative call. Two deliberate properties: the DETERMINISTIC
+   provider (CI/dev) is exempt — zero egress, zero cost, pinned by the
+   ratchet as the only path allowed past the door — and the dark
+   short-circuit in `invokeWithGovernor` is now PER-TIER, so binding an
+   embedding model can never open a generative door (or vice versa). The
+   worker keeps its independent gates (`memory_embedding.worker_enabled`, the
+   per-run USD cap, the wall-clock deadline); the governor sits UNDER them.
+   HQ attribution is fail-closed: a paid provider with no
+   `CREWFLOW_INTERNAL_ORG_ID` embeds nothing.
 2c. **Decide HQ's ceiling.** `hq.draft`, `memory.summarise` and `research.*` have
    no tenant, so they bill CrewFlow's own org via `CREWFLOW_INTERNAL_ORG_ID`
    (fail-closed when unset). £100/month was chosen for a *customer's* unit

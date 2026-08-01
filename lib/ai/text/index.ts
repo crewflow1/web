@@ -47,7 +47,7 @@ import "server-only";
  */
 
 import type { TextProvider } from "./types";
-import { isGovernorActivated } from "@/lib/ai/governor/readiness";
+import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 import { createAnthropicTextProvider } from "./anthropic";
 import { createOpenAiTextProvider } from "./openai";
 
@@ -72,7 +72,10 @@ export { textCostUsd } from "./cost";
 export function getTextProvider(): TextProvider | null {
   // THE AUTHORISATION. A vendor key is not permission to spend; a bound cost
   // tier is. Nothing below can be reached without one.
-  if (!isGovernorActivated()) return null;
+  // PER-MODALITY: a generative (cheap/mid/high) tier must be bound — the
+  // global any-tier answer would let an embedding-only activation open this
+  // door on a bare key, recreating the exact defect the closure wave fixed.
+  if (!isInferenceTierActivated()) return null;
 
   const name = (process.env.MEMORY_TEXT_PROVIDER ?? "auto").trim().toLowerCase();
 

@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEmbeddingProvider } from "@/lib/ai/embeddings";
+import { governedEmbed } from "@/lib/ai/embeddings/governed";
+import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import {
   assertValidEmbedding,
   embeddingChecksum,
@@ -164,9 +166,23 @@ export async function runEmbeddingWorker(
     }
 
     // (2) Provider. None → graceful no-op (recall still serves lexical/structural).
+    //     NOTE: the worker never calls provider.embed() itself any more — every
+    //     embedding goes through the governed door (governedEmbed). The provider
+    //     handle here answers "is there one" and supplies info for the SQL
+    //     accounting rows, nothing else.
     const provider = getEmbeddingProvider();
     if (!provider) {
       return emptySummary({ enabled: true, stopped: "no_provider" });
+    }
+
+    // (2b) Attribution. A PAID provider spends CrewFlow's own budget
+    //      (hqBudgetOrgId — HQ memories have no tenant), and a governed call
+    //      with no org cannot be reserved against a ceiling. Fail dark, not
+    //      unattributed. The deterministic provider spends nothing, so it
+    //      needs no org.
+    const budgetOrgId = hqBudgetOrgId();
+    if (provider.info.provider !== "deterministic" && !budgetOrgId) {
+      return emptySummary({ enabled: true, provider: provider.info.version, stopped: "no_budget_org" });
     }
 
     const workerId = `embed-${crypto.randomUUID()}`;
@@ -231,25 +247,52 @@ export async function runEmbeddingWorker(
       batches++;
       claimed += rows.length;
 
-      // (5) Embed the batch via the provider — the ONLY external call, OUTSIDE
-      //     any SQL transaction. A batch-level failure fails every row in it
-      //     (each gets its own retry/backoff/DLQ accounting in SQL).
+      // (5) Embed the batch — through the GOVERNED DOOR, the only external
+      //     call, OUTSIDE any SQL transaction. One batch = one governed call =
+      //     one reservation + one ledger row (vendors bill per request). A
+      //     batch-level provider failure fails every row in it (each gets its
+      //     own retry/backoff/DLQ accounting in SQL); a BUDGET refusal fails
+      //     nobody — see below.
       const inputs = rows.map((r) => r.embed_input);
       const startedAt = Date.now();
       let vectors: number[][] | null = null;
       let batchTokens = 0;
       let failReason: string | null = null;
-      try {
+      let budgetRefused: string | null = null;
+      {
         const signal = opts.callTimeoutMs
           ? AbortSignal.timeout(opts.callTimeoutMs)
           : undefined;
-        const res = await provider.embed(inputs, signal ? { signal } : undefined);
-        vectors = res.vectors;
-        batchTokens = res.tokens;
-      } catch (e) {
-        failReason = e instanceof Error ? e.message : String(e);
+        const res = await governedEmbed({
+          texts: inputs,
+          feature: "memory.embedding_write",
+          // Checked at (2b) for every paid provider; the deterministic
+          // provider never reads it.
+          orgId: budgetOrgId ?? "",
+          userId: null,
+          ...(signal ? { signal } : {}),
+        });
+        if (res.status === "embedded") {
+          vectors = res.vectors;
+          batchTokens = res.tokens;
+        } else if (res.status === "refused") {
+          budgetRefused = res.reason;
+        } else {
+          failReason = res.reason ?? "embed failed";
+        }
       }
       const latencyMs = Date.now() - startedAt;
+
+      if (budgetRefused) {
+        // The governor said no — ceiling reached, reservation store down, or
+        // an identical batch in flight. NOT the rows' fault: failing them
+        // would burn retry attempts toward the dead-letter queue for a
+        // condition that clears by itself. Leave the batch leased —
+        // hq_embedding_reclaim_stale frees it for the next run — and stop
+        // claiming more work.
+        stopped = `budget_refused:${budgetRefused}`;
+        break;
+      }
 
       if (!vectors) {
         // Whole batch failed: record a failed attempt per claimed row.

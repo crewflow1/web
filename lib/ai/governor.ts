@@ -112,7 +112,7 @@ import {
   type AiFeature,
   type AiTaskClass,
 } from "./governor/registry";
-import { isGovernorActivated } from "./governor/readiness";
+import { isTierActivated } from "./governor/readiness";
 import {
   AI_MONTHLY_CEILING_PENCE,
   DEDUPE_WINDOW_MS,
@@ -740,10 +740,15 @@ export async function invokeWithGovernor<T>(
     );
   }
 
-  // 3. THE DARK SHORT-CIRCUIT. No provider is reachable, so there is nothing to
-  //    budget, nothing to deduplicate and nothing to record. Run the caller's
-  //    function exactly as it would have run without this wrapper.
-  if (!isGovernorActivated()) {
+  // 3. THE DARK SHORT-CIRCUIT — PER TIER, not global. THIS call's tier must be
+  //    able to reach a provider; that some OTHER tier is bound is irrelevant
+  //    and, before the embedding tier existed, was a latent gap: a build with
+  //    one modality armed would have sent every other class through the
+  //    reservation path with a null binding (a 1p floor claim for a call that
+  //    reaches nothing). Tier-dark ⇒ run the caller's function exactly as it
+  //    would have run without this wrapper: no reads, no writes.
+  const tier = tierFor(taskClass);
+  if (tier === null || !isTierActivated(tier)) {
     const call = await fn();
     return { status: "ran", value: call.value, budget: "allowed", recorded: false, dark: true };
   }
