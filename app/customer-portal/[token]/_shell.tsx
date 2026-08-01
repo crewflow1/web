@@ -7,7 +7,38 @@ import type { PortalCustomer, PortalOrg } from "../_helpers";
  *
  * Each tab is a route, not a client component, so the customer can
  * deep-link or refresh into any section without losing state.
+ *
+ * NAVIGATION (Train 4). Eleven tabs no longer fit a phone:
+ *  - ≥ sm: the familiar horizontal tab strip (unchanged pattern).
+ *  - < sm: a fixed bottom nav with the four primary destinations plus a
+ *    "More" disclosure listing the rest. Server-rendered and JS-free —
+ *    <details>/<summary> is the accessible disclosure pattern the platform
+ *    gives us for free (keyboard + screen-reader support without a client
+ *    component). Every target is ≥ 44px; aria-current="page" marks the
+ *    active link in BOTH navs; the sheet never widens the body (no
+ *    horizontal scroll at 375px).
  */
+
+type TabId =
+  | "overview"
+  | "quotes"
+  | "invoices"
+  | "jobs"
+  | "photos"
+  | "reports"
+  | "warranties"
+  | "documents"
+  | "messages"
+  | "requests"
+  | "profile";
+
+/** The four destinations that earn a permanent slot on the phone bottom bar. */
+const PRIMARY_TAB_IDS: readonly TabId[] = [
+  "overview",
+  "jobs",
+  "invoices",
+  "messages",
+];
 
 export function PortalShell({
   customer,
@@ -19,27 +50,27 @@ export function PortalShell({
   customer: PortalCustomer;
   org: PortalOrg;
   token: string;
-  active:
-    | "overview"
-    | "quotes"
-    | "invoices"
-    | "jobs"
-    | "reports"
-    | "warranties"
-    | "documents"
-    | "messages";
+  active: TabId;
   children: React.ReactNode;
 }) {
-  const tabs = [
-    { id: "overview" as const, href: `/customer-portal/${token}`, label: "Overview" },
-    { id: "quotes" as const, href: `/customer-portal/${token}/quotes`, label: "Quotes" },
-    { id: "invoices" as const, href: `/customer-portal/${token}/invoices`, label: "Invoices" },
-    { id: "jobs" as const, href: `/customer-portal/${token}/jobs`, label: "Jobs" },
-    { id: "reports" as const, href: `/customer-portal/${token}/reports`, label: "Reports" },
-    { id: "warranties" as const, href: `/customer-portal/${token}/warranties`, label: "Warranties" },
-    { id: "documents" as const, href: `/customer-portal/${token}/documents`, label: "Documents" },
-    { id: "messages" as const, href: `/customer-portal/${token}/messages`, label: "Messages" },
+  const base = `/customer-portal/${token}`;
+  const tabs: Array<{ id: TabId; href: string; label: string }> = [
+    { id: "overview", href: base, label: "Overview" },
+    { id: "quotes", href: `${base}/quotes`, label: "Quotes" },
+    { id: "invoices", href: `${base}/invoices`, label: "Invoices" },
+    { id: "jobs", href: `${base}/jobs`, label: "Jobs" },
+    { id: "photos", href: `${base}/photos`, label: "Photos" },
+    { id: "reports", href: `${base}/reports`, label: "Reports" },
+    { id: "warranties", href: `${base}/warranties`, label: "Warranties" },
+    { id: "documents", href: `${base}/documents`, label: "Documents" },
+    { id: "messages", href: `${base}/messages`, label: "Messages" },
+    { id: "requests", href: `${base}/requests`, label: "Requests" },
+    { id: "profile", href: `${base}/profile`, label: "Profile" },
   ];
+
+  const primaryTabs = tabs.filter((t) => PRIMARY_TAB_IDS.includes(t.id));
+  const moreTabs = tabs.filter((t) => !PRIMARY_TAB_IDS.includes(t.id));
+  const moreIsActive = moreTabs.some((t) => t.id === active);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -66,13 +97,15 @@ export function PortalShell({
           {org.phone ? (
             <a
               href={`tel:${org.phone}`}
-              className="self-start rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:self-auto"
+              className="flex min-h-[44px] items-center self-start rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:self-auto"
             >
               Call {org.name}
             </a>
           ) : null}
         </div>
-        <nav className="mx-auto max-w-3xl px-4">
+        {/* Desktop / tablet: the horizontal tab strip. Hidden on phones — the
+            bottom nav below takes over there. */}
+        <nav aria-label="Portal sections" className="mx-auto hidden max-w-3xl px-4 sm:block">
           <ul className="-mb-px flex gap-1 overflow-x-auto text-sm">
             {tabs.map((t) => (
               <li key={t.id}>
@@ -93,11 +126,78 @@ export function PortalShell({
         </nav>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-4 px-4 py-6">{children}</main>
+      {/* pb-24 on phones clears the fixed bottom nav; sm+ needs none. */}
+      <main className="mx-auto max-w-3xl space-y-4 px-4 pb-24 pt-6 sm:pb-6">
+        {children}
+      </main>
 
-      <footer className="pb-8 pt-4 text-center text-xs text-slate-600">
+      <footer className="pb-28 pt-4 text-center text-xs text-slate-600 sm:pb-8">
         Powered by CrewFlow
       </footer>
+
+      {/* Phone: fixed bottom navigation — 4 primary tabs + a "More" sheet. */}
+      <nav
+        aria-label="Portal sections"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] sm:hidden"
+      >
+        <ul className="grid grid-cols-5">
+          {primaryTabs.map((t) => (
+            <li key={t.id}>
+              <Link
+                href={t.href}
+                aria-current={t.id === active ? "page" : undefined}
+                className={`flex min-h-[56px] flex-col items-center justify-center gap-0.5 px-1 text-[11px] ${
+                  t.id === active
+                    ? "font-semibold text-slate-900"
+                    : "font-medium text-slate-500"
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-1 w-8 rounded-full ${t.id === active ? "bg-slate-900" : "bg-transparent"}`}
+                />
+                {t.label}
+              </Link>
+            </li>
+          ))}
+          <li>
+            <details className="relative">
+              <summary
+                className={`flex min-h-[56px] cursor-pointer list-none flex-col items-center justify-center gap-0.5 px-1 text-[11px] [&::-webkit-details-marker]:hidden ${
+                  moreIsActive
+                    ? "font-semibold text-slate-900"
+                    : "font-medium text-slate-500"
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-1 w-8 rounded-full ${moreIsActive ? "bg-slate-900" : "bg-transparent"}`}
+                />
+                More
+              </summary>
+              <div className="absolute bottom-full right-1 z-50 mb-2 w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                <ul>
+                  {moreTabs.map((t) => (
+                    <li key={t.id}>
+                      <Link
+                        href={t.href}
+                        aria-current={t.id === active ? "page" : undefined}
+                        className={`flex min-h-[44px] items-center rounded-lg px-3 text-sm ${
+                          t.id === active
+                            ? "bg-slate-100 font-semibold text-slate-900"
+                            : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                      >
+                        {t.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          </li>
+        </ul>
+      </nav>
     </div>
   );
 }

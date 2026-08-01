@@ -25,6 +25,11 @@ import {
   isEditable,
   type SiteReportStatus,
 } from "@/lib/site-reports/state";
+import {
+  filterVerifiedPhotoIds,
+  parsePhotoSelection,
+  type VerifiablePhotoAttachment,
+} from "@/lib/site-reports/photo-selection";
 
 /**
  * Site Reports lifecycle actions.
@@ -109,6 +114,47 @@ async function getReport(
   // "not_found" banner while the report actually exists.
   if (error) throw readFailure("site-reports: load", error);
   return data;
+}
+
+/**
+ * Load the attachment rows a photo-id candidate set claims to be — on the
+ * TENANT (user-JWT) client so RLS bounds it to the caller's orgs — pinned to
+ * the ACTIVE org, to job attachments, and to THE report's own job in SQL. The
+ * pure `filterVerifiedPhotoIds` re-checks job binding + image mime in code, so
+ * a client-supplied id survives only if it is an image attachment of exactly
+ * this job in exactly this org — the same double-pin the portal read side uses.
+ */
+async function loadVerifiablePhotoRows(
+  tenant: unknown,
+  orgId: string,
+  jobId: string,
+  ids: string[],
+): Promise<VerifiablePhotoAttachment[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await (
+    reports(tenant).from("tenant_attachments") as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => {
+              in: (k: string, v: unknown[]) => Promise<{
+                data: VerifiablePhotoAttachment[] | null;
+                error: SupabaseReadError | null;
+              }>;
+            };
+          };
+        };
+      };
+    }
+  )
+    .select("id, target_id, mime_type")
+    .eq("org_id", orgId)
+    .eq("target_table", "jobs")
+    .eq("target_id", jobId)
+    .in("id", ids);
+  // Loud fail: a failed verification read must never pass as "no valid photos".
+  if (error) throw readFailure("site-reports: photo verify", error);
+  return data ?? [];
 }
 
 async function nextReportNumber(tenant: unknown, orgId: string): Promise<string> {
@@ -263,6 +309,85 @@ export async function updateReportContent(formData: FormData): Promise<void> {
   redirect(`/site-reports/${id}?saved=content`);
 }
 
+/**
+ * Update the report's PHOTO selection (Train 4 — the producer for the portal
+ * photos tab). Draft/ready_for_review only, exactly like the commentary form —
+ * an issued report's content is frozen by the DB trigger AND refused here, so
+ * the photos a customer was shown can never change after issue.
+ *
+ * SECURITY: the checkbox values are client-supplied ids. Each one is
+ * re-verified server-side — RLS-scoped read, pinned to the active org, to
+ * target_table='jobs' and to THIS report's job, then image-mime re-checked in
+ * code (filterVerifiedPhotoIds). Any id that fails REJECTS the whole
+ * submission rather than silently saving a subset: a dropped id is either
+ * tampering or a stale form, and both deserve a visible error, not a quiet
+ * partial save.
+ */
+export async function updateReportPhotos(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const id = String(formData.get("id") ?? "");
+  if (!siteReportIdSchema.safeParse(id).success) redirect(`/site-reports?error=bad_id`);
+
+  const tenant = await createClient();
+  const report = await getReport(tenant, ctx.org.id, id);
+  if (!report) redirect(`/site-reports?error=not_found`);
+  if (!isEditable(report.status as SiteReportStatus)) {
+    redirect(`/site-reports/${id}?error=not_editable`);
+  }
+  if (!report.job_id) redirect(`/site-reports/${id}?error=no_job`);
+
+  const candidates = parsePhotoSelection(
+    formData.getAll("photo_ids").map((v) => String(v)),
+  );
+  if (candidates === null) {
+    redirect(`/site-reports/${id}?error=photo_validation`);
+  }
+
+  const rows = await loadVerifiablePhotoRows(tenant, ctx.org.id, report.job_id, candidates);
+  const verified = filterVerifiedPhotoIds(candidates, rows, report.job_id);
+  if (verified.length !== candidates.length) {
+    redirect(`/site-reports/${id}?error=photo_not_on_job`);
+  }
+
+  // Replace ONLY the photo selection; the diary/snag/toolbox curation is
+  // edited elsewhere and must survive this write untouched. safeParse: a
+  // malformed legacy sources blob must become a friendly redirect, not a 500
+  // (the reviewer's P2; the sibling parse in issueReport predates this train).
+  const sourcesParsed = reportSourcesSchema.safeParse(report.content?.sources ?? {});
+  if (!sourcesParsed.success) {
+    redirect(`/site-reports/${id}?error=report_content_invalid`);
+  }
+  const existingSources = sourcesParsed.data;
+  const merged: ReportContent = {
+    ...(report.content ?? {}),
+    sources: { ...existingSources, photo_attachment_ids: verified },
+  };
+
+  const { error, count } = await (
+    reports(tenant).from("site_reports") as unknown as UpdateChain
+  )
+    .update({ content: merged }, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[site-reports] photo update failed", error);
+    redirect(`/site-reports/${id}?error=update_failed`);
+  }
+  if (!count) redirect(`/site-reports?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "site_report.photos_updated",
+    targetTable: "site_reports",
+    targetId: id,
+    metadata: { photo_count: verified.length },
+  });
+
+  revalidatePath(`/site-reports/${id}`);
+  redirect(`/site-reports/${id}?saved=photos`);
+}
+
 // Shared transition runner for the simple status-only moves.
 async function runTransition(
   id: string,
@@ -361,6 +486,32 @@ export async function issueReport(id: string): Promise<void> {
 
   const content = report.content ?? {};
   const selection = reportSourcesSchema.parse(content.sources ?? {});
+
+  // Re-verify the PHOTO selection at the moment of freeze, exactly like the
+  // other sources are re-fetched above: each id must still be an image
+  // attachment of THIS org and THIS job (RLS read + org/job pins + in-code
+  // mime/job re-check). An attachment deleted or re-pointed since selection is
+  // DROPPED from the freeze — the snapshot is what the customer will see, so
+  // it may only ever claim photos that verifiably exist on the job right now.
+  const photoRows = await loadVerifiablePhotoRows(
+    tenant,
+    ctx.org.id,
+    report.job_id,
+    selection.photo_attachment_ids,
+  );
+  const frozenSelection = {
+    ...selection,
+    photo_attachment_ids: filterVerifiedPhotoIds(
+      selection.photo_attachment_ids,
+      photoRows,
+      report.job_id,
+    ),
+  };
+  // The snapshot's content carries the VERIFIED selection — snapshot.content.
+  // sources.photo_attachment_ids is precisely what the portal photos tab
+  // trusts (app/customer-portal/_photos.ts), so nothing unverified may freeze.
+  const contentForFreeze: ReportContent = { ...content, sources: frozenSelection };
+
   const snapshot = materializeSnapshot({
     title: report.title,
     reportNumber: report.report_number,
@@ -369,9 +520,9 @@ export async function issueReport(id: string): Promise<void> {
     periodEnd: report.period_end,
     customerName: (job as { customer?: { name: string | null } | null } | null)?.customer?.name ?? null,
     jobLabel: (job as { customer?: { name: string | null } | null } | null)?.customer?.name ?? null,
-    content,
+    content: contentForFreeze,
     sources,
-    selection,
+    selection: frozenSelection,
     issuedAt: new Date().toISOString(),
   });
 
