@@ -72,6 +72,55 @@ export type AiCostFeatureRow = {
   failures: number;
 };
 
+/**
+ * One Europe/London budget month in the trend window.
+ *
+ * `totalPence` is COMMITTED spend only — the same ledger figure the monthly
+ * rollup returns, summed across the estate. In-flight reservations are
+ * deliberately absent: a trend answers "what did each month cost", and a
+ * reservation is not yet a cost. `deltaPence` is the month-over-month change in
+ * committed spend, and is null for the OLDEST month in the window because there
+ * is no earlier month inside it to compare against.
+ */
+export type AiCostTrendMonth = {
+  /** The Europe/London budget month, `YYYY-MM`. */
+  month: MonthKey;
+  /** Human label, e.g. `Aug 2026`. Derived from the key, never re-bucketed. */
+  label: string;
+  totalPence: number;
+  invocations: number;
+  /** Change in committed spend vs the previous month in the window; null for the oldest. */
+  deltaPence: number | null;
+  /** True for the budget month the trend is anchored on (the newest in the window). */
+  isCurrent: boolean;
+};
+
+export type AiCostTrend = {
+  /** The Europe/London budget month the window ends on (its newest month). */
+  asOfMonth: MonthKey;
+  /** How many months the window spans, oldest → newest. */
+  windowMonths: number;
+  /** One entry per window month, OLDEST first, zero-filled where the ledger is silent. */
+  months: ReadonlyArray<AiCostTrendMonth>;
+  /** Sum of committed spend across the whole window. */
+  totalPence: number;
+  /** The single most expensive month's committed spend. Zero when nothing spent. */
+  peakPence: number;
+  /** The month that peak belongs to, or null while the window is all zeros. */
+  peakMonth: MonthKey | null;
+  /** How many months in the window recorded any committed spend. */
+  monthsWithSpend: number;
+  /**
+   * Whether ANY month in the window recorded spend. False while the governor is
+   * dark — which is the honest state today, and the signal the empty view keys
+   * on rather than inventing a series.
+   */
+  hasAnySpend: boolean;
+  /** Per-capability contribution aggregated across the whole window, most expensive first. */
+  byFeature: ReadonlyArray<AiCostFeatureRow>;
+  generatedAt: string;
+};
+
 export type AiCostSnapshot = {
   /** The Europe/London budget month these figures cover, `YYYY-MM`. */
   month: MonthKey;
@@ -238,6 +287,160 @@ export async function buildAiCostSnapshot(month?: MonthKey): Promise<AiCostSnaps
     spikingOrgs: byOrg.filter((o) => o.spiking),
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * How many Europe/London months the HQ trend view spans, ending on the current
+ * month. Twelve: a full year makes a seasonal shape (a busy quarter, a quiet
+ * summer) legible, and is short enough that every bar stays readable at 375px.
+ */
+export const AI_COST_TREND_MONTHS = 12;
+
+/** A `YYYY-MM` key rendered as `Aug 2026`. LABEL ONLY — no bucketing here. */
+function monthLabel(month: MonthKey): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month.trim());
+  if (!m) return month;
+  const year = Number(m[1]);
+  const monthIndex = Number(m[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return month;
+  // A fixed UTC instant on the 1st, formatted in UTC — the key already IS the
+  // Europe/London month, so this only names it and must never shift it.
+  return new Date(Date.UTC(year, monthIndex, 1)).toLocaleDateString("en-GB", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * Compose the trend from a window anchored on `asOfMonth` and a map of
+ * per-month committed totals. PURE — no clock, no I/O — so the London-month
+ * window and the zero-fill can be proven at their boundaries with frozen
+ * fixtures rather than observed in production.
+ *
+ * The window is the `windowMonths` Europe/London months ENDING on `asOfMonth`,
+ * built from `trailingMonths` (the London-pinned label arithmetic) rather than
+ * from any `toISOString` month maths — the same helper the spike baseline uses.
+ * Months the ledger is silent about are filled with an honest zero, never
+ * dropped: a month with no spend is information, and a gap would misread as
+ * "no data" rather than "£0".
+ */
+export function composeAiCostTrend(input: {
+  asOfMonth: MonthKey;
+  windowMonths?: number;
+  monthTotals: ReadonlyMap<MonthKey, { totalPence: number; invocations: number }>;
+  byFeature?: ReadonlyArray<AiCostFeatureRow>;
+  generatedAt?: string;
+}): AiCostTrend {
+  const windowMonths =
+    typeof input.windowMonths === "number" && input.windowMonths > 0
+      ? Math.floor(input.windowMonths)
+      : AI_COST_TREND_MONTHS;
+
+  // trailingMonths gives the months BEFORE asOfMonth, oldest first; asOfMonth
+  // itself is the window's newest month.
+  const window = [...trailingMonths(input.asOfMonth, windowMonths - 1), input.asOfMonth];
+
+  const months: AiCostTrendMonth[] = window.map((month, i) => {
+    const cell = input.monthTotals.get(month);
+    const totalPence = num(cell?.totalPence);
+    const prevTotal = i > 0 ? num(input.monthTotals.get(window[i - 1]!)?.totalPence) : 0;
+    return {
+      month,
+      label: monthLabel(month),
+      totalPence,
+      invocations: num(cell?.invocations),
+      deltaPence: i > 0 ? totalPence - prevTotal : null,
+      isCurrent: month === input.asOfMonth,
+    };
+  });
+
+  let peakPence = 0;
+  let peakMonth: MonthKey | null = null;
+  let monthsWithSpend = 0;
+  let totalPence = 0;
+  for (const m of months) {
+    totalPence += m.totalPence;
+    if (m.totalPence > 0) monthsWithSpend += 1;
+    if (m.totalPence > peakPence) {
+      peakPence = m.totalPence;
+      peakMonth = m.month;
+    }
+  }
+
+  return {
+    asOfMonth: input.asOfMonth,
+    windowMonths,
+    months,
+    totalPence,
+    peakPence,
+    peakMonth,
+    monthsWithSpend,
+    hasAnySpend: totalPence > 0,
+    byFeature: input.byFeature ?? [],
+    generatedAt: input.generatedAt ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Build the estate-wide AI spend TREND — the last `AI_COST_TREND_MONTHS`
+ * Europe/London budget months, month over month, plus per-feature contribution
+ * over the same window.
+ *
+ * Reads exactly like the rest of this module: the SAME two invoker-rights SQL
+ * rollups (`ai_invocations_month_totals`, `ai_invocations_month_by_feature`),
+ * through the SAME service-role client, one call per window month. It writes
+ * nothing — pure presentation over telemetry that already exists. While the
+ * governor is dark every rollup is empty, so the series is twelve honest zeros
+ * rather than a fabricated line.
+ */
+export async function buildAiCostTrend(month?: MonthKey): Promise<AiCostTrend> {
+  const asOfMonth = month ?? ukMonthKeyOf(new Date());
+  const window = [...trailingMonths(asOfMonth, AI_COST_TREND_MONTHS - 1), asOfMonth];
+
+  // One rollup call per window month, in parallel. Each returns per-ORG rows for
+  // that month; the estate total is their sum. Loud reads: orgTotalsFor and
+  // featureTotals already log and degrade to empty on any failure.
+  const [orgTotalsByMonth, featureRowsByMonth] = await Promise.all([
+    Promise.all(window.map((m) => orgTotalsFor(m))),
+    Promise.all(window.map((m) => featureTotals(m))),
+  ]);
+
+  const monthTotals = new Map<MonthKey, { totalPence: number; invocations: number }>();
+  window.forEach((m, i) => {
+    let totalPence = 0;
+    let invocations = 0;
+    for (const row of orgTotalsByMonth[i]!.values()) {
+      totalPence += num(row.total_cost_pence);
+      invocations += num(row.invocations);
+    }
+    monthTotals.set(m, { totalPence, invocations });
+  });
+
+  // Per-feature, summed across the whole window rather than a single month —
+  // "where has the year's money gone", the trend counterpart of the page's
+  // current-month by-feature table.
+  const featureAgg = new Map<string, AiCostFeatureRow>();
+  for (const rows of featureRowsByMonth) {
+    for (const r of rows) {
+      const cur =
+        featureAgg.get(r.feature) ??
+        { feature: r.feature, label: r.label, spentPence: 0, invocations: 0, failures: 0 };
+      cur.spentPence += r.spentPence;
+      cur.invocations += r.invocations;
+      cur.failures += r.failures;
+      featureAgg.set(r.feature, cur);
+    }
+  }
+  const byFeature = [...featureAgg.values()].sort((a, b) => b.spentPence - a.spentPence);
+
+  return composeAiCostTrend({
+    asOfMonth,
+    windowMonths: AI_COST_TREND_MONTHS,
+    monthTotals,
+    byFeature,
+    generatedAt: new Date().toISOString(),
+  });
 }
 
 /** Per-feature totals for a budget month, most expensive first. */
