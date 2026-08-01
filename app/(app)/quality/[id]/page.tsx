@@ -2,15 +2,25 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
-import { getPlan, listJobOptions, listMembers, loadUserNames } from "../_data";
+import {
+  getPlan,
+  listJobOptions,
+  listMembers,
+  listPlanNcrs,
+  listWitnessInvitations,
+  loadUserNames,
+} from "../_data";
 import { HoldPointWarnings } from "../_hold-point-warnings";
 import { ItemCard } from "../_item-card";
+import { WitnessPanel } from "../_witness-panel";
 import {
   addPlanItem,
+  createPlanRevision,
   issuePlan,
   updateInspectionPlan,
   withdrawPlan,
 } from "../actions";
+import { isLive } from "@/lib/quality/ncr";
 import {
   CONTROL_POINTS,
   CONTROL_POINT_META,
@@ -51,6 +61,9 @@ const ERROR_MAP: Record<string, string> = {
   issue_failed: "Couldn't issue the plan. Try again.",
   duplicate_item_number: "That item number is already used in this plan.",
   already_signed_off: "That item already has a sign-off. Void it before recording a new one.",
+  revision_source_not_issued: "Only the current (issued) plan can be revised.",
+  revision_already_in_progress:
+    "A revision draft already exists for this plan. Finish or withdraw it first.",
 };
 
 const SAVED_MAP: Record<string, string> = {
@@ -62,6 +75,10 @@ const SAVED_MAP: Record<string, string> = {
   item_removed: "Inspection item removed.",
   signed_off: "Sign-off recorded.",
   voided: "Sign-off voided. Record the re-inspection when the works are corrected.",
+  witness_invited: "Witness invitation recorded.",
+  witness_recorded: "Witness attendance recorded.",
+  revision_created:
+    "Revision draft created with every check carried forward. Edit it, then issue it to supersede the current plan.",
 };
 
 const inputClass =
@@ -110,11 +127,36 @@ export default async function InspectionPlanPage({
     }
   }
 
+  // M2: witness invitations + the plan's NCR register (both ACTIVE-org pinned).
+  const itemIds = items.map((i) => i.id);
+  const [invitations, ncrs] = await Promise.all([
+    listWitnessInvitations(ctx.org.id, itemIds),
+    listPlanNcrs(ctx.org.id, itemIds),
+  ]);
+  const liveNcrCountByItem = new Map<string, number>();
+  for (const n of ncrs) {
+    if (isLive(n.status)) {
+      liveNcrCountByItem.set(
+        n.inspection_plan_item_id,
+        (liveNcrCountByItem.get(n.inspection_plan_item_id) ?? 0) + 1,
+      );
+    }
+  }
+  const invitationsByItem = new Map<string, typeof invitations>();
+  for (const inv of invitations) {
+    const arr = invitationsByItem.get(inv.inspection_plan_item_id) ?? [];
+    arr.push(inv);
+    invitationsByItem.set(inv.inspection_plan_item_id, arr);
+  }
+
   const userNames = await loadUserNames([
     ...signoffs.map((s) => s.inspected_by),
     ...signoffs.map((s) => s.voided_by).filter((v): v is string => Boolean(v)),
     ...(plan.prepared_by ? [plan.prepared_by] : []),
     ...(plan.issued_by ? [plan.issued_by] : []),
+    ...invitations.flatMap((w) =>
+      [w.invited_by, w.attendance_recorded_by].filter((u): u is string => Boolean(u)),
+    ),
   ]);
 
   // The pickers are only rendered on a draft, so don't pay for them otherwise.
@@ -148,6 +190,9 @@ export default async function InspectionPlanPage({
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[plan.status]}`}
           >
             {ITP_STATUS_LABELS[plan.status]}
+          </span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+            Revision {plan.revision_number}
           </span>
           {isFullyAccepted(progress) && plan.status === "issued" ? (
             <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
@@ -268,11 +313,23 @@ export default async function InspectionPlanPage({
                 userNames={userNames}
                 openHoldItemNumber={progress.openHoldItemNumber}
                 today={today}
+                invitations={invitationsByItem.get(item.id) ?? []}
+                liveNcrCount={liveNcrCountByItem.get(item.id) ?? 0}
               />
             ))}
           </ul>
         )}
       </section>
+
+      {/* ── Witness invitations (issued plans — the DB refuses the rest) ───── */}
+      {plan.status === "issued" ? (
+        <WitnessPanel
+          planId={plan.id}
+          items={items}
+          invitations={invitations}
+          userNames={userNames}
+        />
+      ) : null}
 
       {/* ── Add a check (drafts only — the DB freezes an issued plan) ──────── */}
       {editable ? (
@@ -466,17 +523,28 @@ export default async function InspectionPlanPage({
         ) : plan.status === "issued" ? (
           <>
             <p className="mt-1 text-sm text-slate-600">
-              This plan is frozen. To change it, create a new plan for the same
-              work package — issuing it supersedes this one automatically, and
-              everything signed off here stays attached to this version.
+              This plan is frozen. To change it, start revision{" "}
+              {plan.revision_number + 1}: every check — hold points included —
+              is carried into a new draft, and issuing that draft supersedes
+              this plan automatically. Everything signed off here stays
+              attached to this version.
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
-              <Link
-                href={`/quality/new?jobId=${plan.job_id ?? ""}`}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+              <form action={createPlanRevision}>
+                <input type="hidden" name="id" value={plan.id} />
+                <button
+                  type="submit"
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  Start revision {plan.revision_number + 1}
+                </button>
+              </form>
+              <a
+                href={`/api/quality/${plan.id}/pdf`}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                Create replacement plan
-              </Link>
+                Download evidence PDF
+              </a>
               <form action={withdrawPlan}>
                 <input type="hidden" name="id" value={plan.id} />
                 <button
@@ -489,9 +557,21 @@ export default async function InspectionPlanPage({
             </div>
           </>
         ) : (
-          <p className="mt-1 text-sm text-slate-600">
-            This plan is no longer current, and is kept unchanged as a record.
-          </p>
+          <>
+            <p className="mt-1 text-sm text-slate-600">
+              This plan is no longer current, and is kept unchanged as a record.
+            </p>
+            {plan.reference ? (
+              <div className="mt-4">
+                <a
+                  href={`/api/quality/${plan.id}/pdf`}
+                  className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Download evidence PDF
+                </a>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
 

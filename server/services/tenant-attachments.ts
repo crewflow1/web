@@ -69,6 +69,9 @@ export const ATTACHMENT_TARGET_TABLES = [
   // works-quality evidence: the photo / test certificate that backs an ITP
   // sign-off. Append-only once the sign-off exists (20261076).
   "inspection_signoffs",
+  // works-quality M2: the photo of the nonconformity, the rework, the re-test
+  // certificate — evidence on an NCR (20261081).
+  "non_conformance_reports",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import {
   CONTROL_POINT_META,
@@ -6,7 +7,7 @@ import {
   type ControlPoint,
   type SignoffResult,
 } from "@/lib/quality/itp";
-import type { PlanItemRow, SignoffRow } from "@/lib/quality/schema";
+import type { PlanItemRow, SignoffRow, WitnessInvitationRow } from "@/lib/quality/schema";
 import { deletePlanItem, recordSignoff, voidSignoff } from "./actions";
 
 /**
@@ -41,6 +42,8 @@ export function ItemCard({
   userNames,
   openHoldItemNumber,
   today,
+  invitations = [],
+  liveNcrCount = 0,
 }: {
   item: PlanItemRow;
   /** The single non-void sign-off, if any. */
@@ -56,6 +59,10 @@ export function ItemCard({
   userNames: Map<string, string>;
   openHoldItemNumber: number | null;
   today: string;
+  /** M2: this item's witness invitations (for the sign-off form's picker). */
+  invitations?: WitnessInvitationRow[];
+  /** M2: live NCRs against this item (badge + link). */
+  liveNcrCount?: number;
 }) {
   const cp = CONTROL_POINT_META[item.control_point as ControlPoint];
   const liveMeta = live ? SIGNOFF_RESULT_META[live.result as SignoffResult] : null;
@@ -103,6 +110,11 @@ export function ItemCard({
             Not inspected
           </span>
         )}
+        {liveNcrCount > 0 ? (
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">
+            {liveNcrCount} live NCR{liveNcrCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
       </div>
 
       {isTheGate ? (
@@ -297,6 +309,37 @@ export function ItemCard({
               </div>
             </div>
 
+            {item.control_point !== "inspect" && invitations.some((w) => w.status !== "cancelled") ? (
+              <div>
+                <label htmlFor={`witnessInvitation-${item.id}`} className={labelClass}>
+                  Honoured witness invitation
+                </label>
+                <select
+                  id={`witnessInvitation-${item.id}`}
+                  name="witnessInvitationId"
+                  defaultValue=""
+                  className={inputClass}
+                >
+                  <option value="">No invitation on record</option>
+                  {invitations
+                    .filter((w) => w.status !== "cancelled")
+                    .map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.witness_name} ({w.witness_organisation})
+                        {w.status === "attended"
+                          ? " — attended"
+                          : w.status === "not_attended"
+                            ? " — did not attend"
+                            : ""}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Links this record to the invitation, permanently.
+                </p>
+              </div>
+            ) : null}
+
             {item.control_point !== "inspect" ? (
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -349,6 +392,21 @@ export function ItemCard({
           {item.is_hold_point
             ? "This hold point stays open until the works are corrected and a fresh sign-off accepts them."
             : "This check stays outstanding until a fresh sign-off accepts the works."}
+        </p>
+      ) : null}
+
+      {/* Raise an NCR: from the failed sign-off when there is one, standalone
+          otherwise. A link, not a gate — nothing here is refused or hidden. */}
+      {canSignOff ? (
+        <p className="mt-2">
+          <Link
+            href={`/quality/ncrs/new?itemId=${item.id}${
+              live && live.result === "fail" ? `&signoffId=${live.id}` : ""
+            }`}
+            className="inline-flex min-h-[44px] items-center text-sm font-medium text-red-700 hover:text-red-900"
+          >
+            Raise an NCR against this item
+          </Link>
         </p>
       ) : null}
 

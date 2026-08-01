@@ -15,8 +15,12 @@ import {
   planItemIdSchema,
   signoffSchema,
   voidSignoffSchema,
+  inviteWitnessSchema,
+  witnessOutcomeSchema,
+  startRevisionSchema,
   orNull,
 } from "@/lib/quality/schema";
+import type { PlanItemRow } from "@/lib/quality/schema";
 import { canIssue } from "@/lib/quality/itp";
 import { getPlan } from "./_data";
 
@@ -285,6 +289,7 @@ export async function recordSignoff(formData: FormData): Promise<void> {
     inspectedAt: formData.get("inspectedAt"),
     witnessName: formData.get("witnessName") ?? "",
     witnessOrganisation: formData.get("witnessOrganisation") ?? "",
+    witnessInvitationId: (formData.get("witnessInvitationId") as string) || "",
   });
   if (!parsed.success) {
     redirect(`/quality/${planId}?error=${encodeURIComponent(firstError(parsed.error.issues))}`);
@@ -319,6 +324,8 @@ export async function recordSignoff(formData: FormData): Promise<void> {
     inspected_at: v.inspectedAt,
     witness_name: orNull(v.witnessName),
     witness_organisation: orNull(v.witnessOrganisation),
+    // The DB validates the invitation belongs to THIS item and is not cancelled.
+    witness_invitation_id: v.witnessInvitationId ? v.witnessInvitationId : null,
   });
   if (error) {
     const code = /duplicate key|unique/i.test(error.message)
@@ -329,6 +336,157 @@ export async function recordSignoff(formData: FormData): Promise<void> {
   revalidatePath("/quality");
   revalidatePath(`/quality/${v.planId}`);
   redirect(`/quality/${v.planId}?saved=signed_off`);
+}
+
+// ---------------------------------------------------------------------------
+// Witness invitations (M2)
+//
+// Staff invite a NAMED third party to a witness/approve control point on an
+// issued plan, and staff record whether they attended. The DB enforces the
+// control-point/issued gates and pins the attendance provenance; portal
+// visibility for the customer is deferred (see migration 20261081 header).
+// ---------------------------------------------------------------------------
+export async function inviteWitness(formData: FormData): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  const planId = String(formData.get("planId") ?? "");
+  const parsed = inviteWitnessSchema.safeParse({
+    itemId: formData.get("itemId"),
+    planId,
+    witnessName: formData.get("witnessName"),
+    witnessOrganisation: formData.get("witnessOrganisation"),
+    witnessEmail: formData.get("witnessEmail") ?? "",
+    scheduledFor: formData.get("scheduledFor") ?? "",
+  });
+  if (!parsed.success) {
+    redirect(`/quality/${planId}?error=${encodeURIComponent(firstError(parsed.error.issues))}`);
+  }
+  const v = parsed.data;
+  const supabase = await createClient();
+  // org_id is trigger-DERIVED from the item; passed only for the RLS check.
+  const { error } = await tbl(supabase)("inspection_witness_invitations").insert({
+    org_id: ctx.org.id,
+    inspection_plan_item_id: v.itemId,
+    witness_name: v.witnessName,
+    witness_organisation: v.witnessOrganisation,
+    witness_email: orNull(v.witnessEmail),
+    scheduled_for: orNull(v.scheduledFor),
+  });
+  if (error) redirect(`/quality/${v.planId}?error=${encodeURIComponent(error.message)}`);
+  revalidatePath(`/quality/${v.planId}`);
+  redirect(`/quality/${v.planId}?saved=witness_invited`);
+}
+
+export async function recordWitnessOutcome(formData: FormData): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  const parsed = witnessOutcomeSchema.safeParse({
+    id: formData.get("id"),
+    planId: formData.get("planId"),
+    outcome: formData.get("outcome"),
+  });
+  if (!parsed.success) redirect(`/quality?error=bad_id`);
+  const v = parsed.data;
+  const supabase = await createClient();
+  // The trigger pins attendance_recorded_by/at server-side and refuses any
+  // move off a terminal outcome; count-gated so a 0-row match is never a
+  // false success.
+  const { error, count } = await tbl(supabase)("inspection_witness_invitations")
+    .update({ status: v.outcome }, { count: "exact" })
+    .eq("id", v.id)
+    .eq("org_id", ctx.org.id)
+    .eq("status", "invited");
+  if (error) redirect(`/quality/${v.planId}?error=${encodeURIComponent(error.message)}`);
+  if (!count) redirect(`/quality/${v.planId}?error=not_found`);
+  revalidatePath(`/quality/${v.planId}`);
+  redirect(`/quality/${v.planId}?saved=witness_recorded`);
+}
+
+// ---------------------------------------------------------------------------
+// Revision lineage (M2)
+//
+// New-draft-from-current: copy the ISSUED plan's header AND every item — hold
+// points included — into a draft carrying (root_plan_id, revision_number + 1).
+// Issuing the draft later goes through the untouched issue_inspection_plan
+// RPC, which supersedes this plan atomically. The one-draft-per-series partial
+// unique refuses a concurrent second revision draft, loudly.
+// ---------------------------------------------------------------------------
+export async function createPlanRevision(formData: FormData): Promise<void> {
+  const { user, ctx } = await requireOrgContext();
+  const parsed = startRevisionSchema.safeParse({ id: formData.get("id") });
+  if (!parsed.success) redirect(`/quality?error=bad_id`);
+  const id = parsed.data.id;
+
+  // ACTIVE-org pinned read of the source plan + items.
+  const loaded = await getPlan(ctx.org.id, id);
+  if (!loaded) redirect(`/quality?error=not_found`);
+  const { plan, items } = loaded;
+  if (plan.status !== "issued") {
+    redirect(`/quality/${id}?error=revision_source_not_issued`);
+  }
+
+  const newId = randomUUID();
+  const supabase = await createClient();
+  const { error } = await tbl(supabase)("inspection_test_plans").insert({
+    id: newId,
+    org_id: ctx.org.id,
+    job_id: plan.job_id,
+    title: plan.title,
+    work_package: plan.work_package,
+    location: plan.location,
+    specification_ref: plan.specification_ref,
+    prepared_by: plan.prepared_by,
+    plan_date: plan.plan_date,
+    notes: plan.notes,
+    created_by: user.id,
+    root_plan_id: plan.root_plan_id,
+    revision_number: plan.revision_number + 1,
+  });
+  if (error) {
+    const code = /duplicate key|unique/i.test(error.message)
+      ? "revision_already_in_progress"
+      : encodeURIComponent(error.message);
+    redirect(`/quality/${id}?error=${code}`);
+  }
+
+  // Carry every check forward, hold points included. Every column supplied on
+  // every row: a PostgREST batch sends explicit NULLs for columns present in
+  // any row, so a heterogeneous batch would bypass the column DEFAULTs.
+  if (items.length > 0) {
+    const { error: itemsError } = await tbl(supabase)("inspection_plan_items").insert(
+      items.map((i: PlanItemRow) => ({
+        org_id: ctx.org.id, // trigger-derived from the parent; passed for RLS
+        inspection_test_plan_id: newId,
+        item_number: i.item_number,
+        title: i.title,
+        acceptance_criteria: i.acceptance_criteria,
+        inspection_method: i.inspection_method,
+        specification_ref: i.specification_ref,
+        control_point: i.control_point,
+        is_hold_point: i.is_hold_point,
+        required: i.required,
+      })),
+    );
+    if (itemsError) {
+      // Leave nothing half-built: the draft (and any items that landed) can be
+      // removed — it is a draft, so the delete triggers allow it.
+      await tbl(supabase)("inspection_test_plans")
+        .delete()
+        .eq("id", newId)
+        .eq("org_id", ctx.org.id);
+      redirect(`/quality/${id}?error=${encodeURIComponent(itemsError.message)}`);
+    }
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "inspection_plan.revision_started",
+    targetTable: "inspection_test_plans",
+    targetId: newId,
+    metadata: { source_plan_id: id, revision_number: plan.revision_number + 1 },
+  }).catch(() => {});
+
+  revalidatePath("/quality");
+  redirect(`/quality/${newId}?saved=revision_created`);
 }
 
 /**
