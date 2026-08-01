@@ -28,6 +28,7 @@ type SupplierRow = {
   phone: string | null;
   category: string | null;
   notes: string | null;
+  payment_terms_days: number | null;
 };
 
 const ERROR_MAP: Record<string, string> = {
@@ -68,7 +69,7 @@ export default async function SupplierDetailPage({
     supabase as unknown as SuppliersClient,
     ctx.org.id,
     id,
-    "id, name, email, phone, category, notes",
+    "id, name, email, phone, category, notes, payment_terms_days",
   );
 
   if (!supplier) notFound();
@@ -151,6 +152,8 @@ export default async function SupplierDetailPage({
             phone: supplier.phone ?? "",
             category: supplier.category ?? "",
             notes: supplier.notes ?? "",
+            payment_terms_days:
+              supplier.payment_terms_days != null ? String(supplier.payment_terms_days) : "",
           }}
         />
       </section>

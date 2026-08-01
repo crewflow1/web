@@ -30,6 +30,7 @@ export function SupplierForm({
     email?: string;
     category?: string;
     notes?: string;
+    payment_terms_days?: string;
   };
   submitLabel: string;
   cancelHref: string;
@@ -69,14 +70,27 @@ export function SupplierForm({
           error={fieldErrors.phone}
         />
       </div>
-      <Field
-        name="category"
-        label="Category"
-        optional
-        placeholder="e.g. Plant hire, Materials, Subcontractor"
-        defaultValue={defaults?.category}
-        error={fieldErrors.category}
-      />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          name="category"
+          label="Category"
+          optional
+          placeholder="e.g. Plant hire, Materials, Subcontractor"
+          defaultValue={defaults?.category}
+          error={fieldErrors.category}
+        />
+        <Field
+          name="payment_terms_days"
+          label="Payment terms (days)"
+          type="number"
+          inputMode="numeric"
+          optional
+          placeholder="e.g. 30"
+          help="Days after the bill date a supplier's invoice is due. Leave blank if not agreed — bills then age assuming 30 days."
+          defaultValue={defaults?.payment_terms_days}
+          error={fieldErrors.payment_terms_days}
+        />
+      </div>
       <TextareaField
         name="notes"
         label="Notes"

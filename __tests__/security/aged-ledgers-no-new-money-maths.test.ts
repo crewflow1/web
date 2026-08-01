@@ -56,6 +56,7 @@ function code(path: string): string {
 const AGEING = code("lib/commercial/ageing.ts");
 const DEBTORS = code("lib/commercial/aged-debtors.ts");
 const CREDITORS = code("lib/commercial/aged-creditors.ts");
+const OVERDUE = code("lib/commercial/overdue-payables.ts");
 const REGISTER = code("lib/commercial/retention-register.ts");
 const SERVICE = code("server/services/aged-ledgers.ts");
 
@@ -121,6 +122,39 @@ describe("the payable balance comes from the supplier authority", () => {
   });
 });
 
+describe("overdue payables COMPOSES aged creditors — it only changes the ageing DATE", () => {
+  it("composes composeAgedCreditors rather than re-deriving settlement", () => {
+    // The whole point of the module: inject a due-date resolver into the existing
+    // creditors bridge, so there is one payables settlement path, not two.
+    expect(OVERDUE).toMatch(/composeAgedCreditors[\s\S]*from "@\/lib\/commercial\/aged-creditors"/);
+    expect(OVERDUE).toMatch(/composeAgedCreditors\(/);
+  });
+
+  it("never touches the settlement authority or a balance directly", () => {
+    // It must not import or call computeBillSettlements, re-add gross, or filter
+    // voided payments — those all live behind composeAgedCreditors.
+    expect(OVERDUE).not.toMatch(/computeBillSettlements/);
+    expect(OVERDUE).not.toMatch(/amount[\s\S]{0,20}\+[\s\S]{0,20}vat_total/);
+    expect(OVERDUE).not.toMatch(/gross\s*-\s*settled/);
+    expect(OVERDUE).not.toMatch(/voided_at\s*==?=?\s*null/);
+  });
+
+  it("adds only DATE arithmetic, via the shared day helper — never raw milliseconds", () => {
+    // Due date = base + terms. `addDays` is exact whole-day arithmetic on a date
+    // key; a hand-rolled `+ n * 86_400_000` on an instant would reintroduce the
+    // BST bug the day-key helpers exist to prevent.
+    expect(OVERDUE).toMatch(/addDays.*from "@\/lib\/schedule\/window"/);
+    expect(OVERDUE).not.toContain("86_400_000");
+    expect(OVERDUE).not.toContain("86400000");
+  });
+
+  it("the base date is London-pinned, never a toISOString day", () => {
+    expect(OVERDUE).toMatch(/formatDayKeyUK/);
+    // A bare `.toISOString().slice(0, 10)` on created_at would be the UTC day.
+    expect(OVERDUE).not.toMatch(/created_at[\s\S]{0,40}toISOString/);
+  });
+});
+
 describe("retention comes from the retention authorities", () => {
   it("the register calls computeRetentionPosition and computeRetentionSchedule", () => {
     expect(REGISTER).toMatch(/computeRetentionPosition\(\{/);
@@ -137,7 +171,9 @@ describe("retention comes from the retention authorities", () => {
 describe("the service does reads, not maths", () => {
   it("composes the pure bridges rather than bucketing inline", () => {
     expect(SERVICE).toMatch(/composeAgedDebtors\(/);
-    expect(SERVICE).toMatch(/composeAgedCreditors\(/);
+    // The creditors side now ages by TRUE due date via composeOverduePayables,
+    // which itself composes composeAgedCreditors — one settlement path, two lenses.
+    expect(SERVICE).toMatch(/composeOverduePayables\(/);
   });
 
   it("its ONLY money operation is the round2-wrapped per-invoice payment fold", () => {

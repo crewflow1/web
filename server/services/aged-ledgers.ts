@@ -7,10 +7,8 @@ import {
   composeAgedDebtors,
   type DebtorInvoice,
 } from "@/lib/commercial/aged-debtors";
-import {
-  composeAgedCreditors,
-  type CreditorBill,
-} from "@/lib/commercial/aged-creditors";
+import { type CreditorBill } from "@/lib/commercial/aged-creditors";
+import { composeOverduePayables } from "@/lib/commercial/overdue-payables";
 import type { SupplierAllocationRow, SupplierPaymentRow } from "@/lib/suppliers/payments";
 import type { AgeingLedger } from "@/lib/commercial/ageing";
 
@@ -31,9 +29,14 @@ import type { AgeingLedger } from "@/lib/commercial/ageing";
  * __tests__/security/aged-ledgers-org-scope.test.ts.
  *
  * ── WHICH DATE AGEING IS MEASURED FROM ───────────────────────────────────────
- * Debtors age from the invoice DUE DATE; creditors from the supplier's BILL DATE,
- * because the schema stores no supplier due date or payment terms. Both decisions
- * (and the DDL gap behind the second) are set out in the bridge modules' headers.
+ * Debtors age from the invoice DUE DATE; creditors ALSO age from a due date now —
+ * `bill_date + suppliers.payment_terms_days` (migration 20261088), via
+ * `composeOverduePayables`, which SUPERSEDES the old bill-date basis on this
+ * surface. Where a supplier has no recorded terms, the default (30 days) is
+ * applied as a DISCLOSED assumption, not a stored term. The bill-date lens
+ * remains available in `lib/commercial/aged-creditors` for callers that want
+ * "days since raised" independent of any agreed term. Both decisions are set out
+ * in the bridge modules' headers.
  *
  * ── THE AS-AT DAY, AND WHY IT IS THE CASH SERVICE'S DAY ──────────────────────
  * `invoiceBusinessToday` — the SAME day authority `isInvoiceOverdue`, /cash and
@@ -224,7 +227,11 @@ export async function buildAgedLedgers(
           "payment_id",
           orgId,
         ),
-        paged(db, "suppliers", "id, name", "id", orgId),
+        // `payment_terms_days` (20261088) is read so bills age from their DUE
+        // date, not the raw bill date. A null term is a null in this map; the
+        // pure lib applies the disclosed 30-day default. The name map is built
+        // from the same read, so there is no extra hop.
+        paged(db, "suppliers", "id, name, payment_terms_days", "id", orgId),
       ]);
       if (apResults.some((r) => r.failed)) loadError = true;
       const [billRows = [], apPaymentRows = [], allocationRows = [], supplierRows = []] =
@@ -257,12 +264,24 @@ export async function buildAgedLedgers(
         amount: mv(a.amount),
       }));
 
-      creditors = composeAgedCreditors(
+      creditors = composeOverduePayables(
         {
           bills,
           payments,
           allocations,
           supplierName: new Map(supplierRows.map((s) => [String(s.id), sv(s.name) ?? ""])),
+          // supplier id → recorded terms (null when unrecorded). Coerced to a
+          // finite number or null; the lib turns null into the disclosed default.
+          termsBySupplier: new Map(
+            supplierRows.map((s) => {
+              const raw = s.payment_terms_days;
+              const n = raw == null ? null : Number(raw);
+              return [String(s.id), n != null && Number.isFinite(n) ? n : null] as [
+                string,
+                number | null,
+              ];
+            }),
+          ),
         },
         asAtIso,
       );
