@@ -71,8 +71,11 @@ create table if not exists public.webhook_endpoints (
 
   -- HMAC signing secret. Server-minted, shown once, NEVER tenant-readable
   -- (column-level grant below) and NEVER client-supplied (no tenant UPDATE grant
-  -- names it; the trigger freezes it for every role).
-  secret               text not null check (btrim(secret) <> ''),
+  -- names it; the trigger freezes it for every role). The format CHECK pins it to
+  -- the generator's shape (whsec_ + 43 base62 = 256 bits) so a raw PostgREST
+  -- insert cannot smuggle in a weak/empty/arbitrary string — the DB cannot know a
+  -- value's ORIGIN, so it enforces its SHAPE (the api_keys.key_hash stance).
+  secret               text not null check (secret ~ '^whsec_[0-9A-Za-z]{43}$'),
 
   -- Subscribed verbs. VALIDATED IN THE APP LAYER against the build-fact
   -- EXPOSABLE_WEBHOOK_EVENTS registry (lib/webhooks/events.ts — a curated subset
@@ -102,7 +105,14 @@ create table if not exists public.webhook_endpoints (
   updated_at           timestamptz not null default now(),
 
   -- Candidate key so children bind (endpoint_id, org_id), not endpoint_id alone.
-  constraint webhook_endpoints_id_org_key unique (id, org_id)
+  constraint webhook_endpoints_id_org_key unique (id, org_id),
+
+  -- Belt-and-braces for the verify-before-event gate, declarative and every-role,
+  -- covering INSERT and UPDATE alike: an endpoint can never be 'active' without a
+  -- verification stamp. The BEFORE INSERT trigger forces verified_at NULL, so a
+  -- raw insert of status='active' can never satisfy this and is refused.
+  constraint webhook_endpoints_active_requires_verified
+    check (status <> 'active' or verified_at is not null)
 );
 
 comment on table public.webhook_endpoints is
@@ -172,18 +182,38 @@ create index if not exists webhook_deliveries_org_idx
 create index if not exists webhook_deliveries_endpoint_idx
   on public.webhook_deliveries (endpoint_id, created_at desc);
 
--- ── 3. Endpoint integrity guard (every role) ─────────────────────────────────
+-- ── 3. Endpoint integrity guard (every role, INSERT + UPDATE) ────────────────
 -- Column-level grants stop the AUTHENTICATED role touching secret/counters, but
--- service_role bypasses grants + policies. This makes the invariants hold for
--- every role: the secret and org a row was born with are frozen, verified_at is
--- set-once, and status can never reach 'active' before verification.
--- BEFORE UPDATE only; writes nothing; cannot fire during a delete cascade.
+-- service_role bypasses grants + policies, AND the INSERT column grant is the
+-- default full-column grant (the create action writes the secret through the user
+-- client). This trigger makes the invariants hold for EVERY role on BOTH ops:
+--   INSERT — a fresh endpoint is ALWAYS born unverified and non-active. We force
+--            verified_at NULL (so a raw insert cannot pre-stamp it) and refuse
+--            status='active'. Verification happens later, ONLY via the delivery
+--            pass's NULL→timestamp UPDATE. This closes the "raw-INSERT an active,
+--            self-verified endpoint" bypass.
+--   UPDATE — secret + org are frozen, verified_at is set-once, and status can
+--            never reach 'active' while verified_at is NULL.
+-- Writes nothing that could reproduce the org-teardown failure; the BEFORE guard
+-- cannot fire during a delete cascade.
 create or replace function public.tg_webhook_endpoints_guard()
 returns trigger
 language plpgsql
 set search_path = public
 as $$
 begin
+  if tg_op = 'INSERT' then
+    -- Verification is earned, never asserted at birth: force it off and refuse a
+    -- born-active endpoint. (The table CHECK backstops this declaratively too.)
+    new.verified_at := null;
+    if new.status = 'active' then
+      raise exception 'a webhook endpoint cannot be created active — it must acknowledge a signed ping first'
+        using errcode = 'check_violation';
+    end if;
+    return new;
+  end if;
+
+  -- UPDATE
   if new.secret is distinct from old.secret then
     raise exception 'webhook_endpoints.secret is immutable — delete and recreate the endpoint'
       using errcode = 'check_violation';
@@ -210,7 +240,7 @@ end $$;
 
 drop trigger if exists webhook_endpoints_guard on public.webhook_endpoints;
 create trigger webhook_endpoints_guard
-  before update on public.webhook_endpoints
+  before insert or update on public.webhook_endpoints
   for each row execute function public.tg_webhook_endpoints_guard();
 
 drop trigger if exists webhook_endpoints_set_updated_at on public.webhook_endpoints;
@@ -342,6 +372,45 @@ end $$;
 revoke all on function public.webhook_resolve_org(text, text) from public, anon, authenticated;
 grant execute on function public.webhook_resolve_org(text, text) to service_role;
 
+-- ── 6b. webhook_redact_data — per-verb payload key allowlist (defence in depth) ─
+-- The STORED delivery row must never hold un-redacted event data (a failed/dead/
+-- pending row is on disk and tenant-readable). So redaction happens at FAN-OUT,
+-- here, not only on the wire. The producer already curates payloads to non-PII;
+-- this drops anything outside the per-verb allowlist so a future producer change
+-- that starts emitting more keys can never silently widen what a webhook stores
+-- or sends. This CASE is a hand-mirror of lib/webhooks/events.ts
+-- WEBHOOK_REDACTION_MAP; __tests__/security/outbound-webhooks.test.ts pins the two
+-- against drift. An unknown/non-exposable verb drops ALL data (fail-closed) — the
+-- ping path builds its own payload and never comes through here.
+create or replace function public.webhook_redact_data(p_verb text, p_data jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(
+    (select jsonb_object_agg(key, value)
+       from jsonb_each(coalesce(p_data, '{}'::jsonb))
+      where key = any (
+        case p_verb
+          when 'job.created'      then array['status']
+          when 'job.scheduled'    then array['status']
+          when 'job.completed'    then array['from', 'to']
+          when 'job.cancelled'    then array['from', 'to', 'status']
+          when 'customer.created' then array[]::text[]
+          when 'customer.updated' then array['fields']
+          when 'quote.sent'       then array['number', 'total']
+          when 'quote.accepted'   then array['number', 'total', 'source']
+          else array[]::text[]
+        end
+      )),
+    '{}'::jsonb
+  );
+$$;
+
+revoke all on function public.webhook_redact_data(text, jsonb) from public, anon, authenticated;
+grant execute on function public.webhook_redact_data(text, jsonb) to service_role;
+
 -- ── 7. webhook_fan_out_event — one idempotent delivery per matching endpoint ──
 -- The single source of fan-out logic, called by BOTH the feature's own drain
 -- (§8) and the generic spine drainer's apply seam (§9). Resolves the org, then
@@ -375,7 +444,8 @@ begin
       'ts',     p_event.ts,
       'org_id', v_org,
       'object', jsonb_build_object('type', p_event.object_type, 'id', p_event.object_id),
-      'data',   coalesce(p_event.payload, '{}'::jsonb)
+      -- REDACTED at store time — the on-disk row never holds un-allowlisted data.
+      'data',   public.webhook_redact_data(p_event.verb, coalesce(p_event.payload, '{}'::jsonb))
     ),
     'pending',
     now()

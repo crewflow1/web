@@ -76,24 +76,37 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
     return { id, token: s.data.session?.access_token ?? "" };
   }
 
-  /** Service-role endpoint fixture. `active` sets verified_at so it can fan out. */
+  /**
+   * Service-role endpoint fixture. Endpoints are ALWAYS born paused/unverified
+   * (the INSERT guard forces it); `active` promotes via the same NULL→timestamp
+   * UPDATE the real delivery pass uses, so the fixture exercises the sanctioned
+   * verification path rather than smuggling an active endpoint in at insert.
+   */
   async function mkEndpoint(
     orgId: string,
     opts: { verbs?: string[]; active?: boolean; url?: string } = {},
   ): Promise<string> {
-    const row: Row = {
-      org_id: orgId,
-      url: opts.url ?? `https://hooks.example.com/${randomUUID()}`,
-      secret: generateWebhookSecret(),
-      event_verbs: opts.verbs ?? ["org.created"],
-    };
-    if (opts.active) {
-      row.status = "active";
-      row.verified_at = new Date().toISOString();
-    }
-    const ins = await svc().from("webhook_endpoints").insert(row).select("id").single();
+    const ins = await svc()
+      .from("webhook_endpoints")
+      .insert({
+        org_id: orgId,
+        url: opts.url ?? `https://hooks.example.com/${randomUUID()}`,
+        secret: generateWebhookSecret(),
+        event_verbs: opts.verbs ?? ["org.created"],
+      })
+      .select("id")
+      .single();
     if (ins.error) throw new Error(ins.error.message);
-    return String(ins.data?.id);
+    const id = String(ins.data?.id);
+    if (opts.active) {
+      const up = await svc()
+        .from("webhook_endpoints")
+        .update({ verified_at: new Date().toISOString(), status: "active" })
+        .eq("id", id)
+        .select("id");
+      if (up.error) throw new Error(up.error.message);
+    }
+    return id;
   }
 
   beforeAll(async () => {
@@ -266,7 +279,72 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
     expect((dels.data ?? []).length).toBe(0);
   });
 
-  // --- 5. Verify-before-activate --------------------------------------------
+  // --- 5. Verify-before-activate (incl. the raw-INSERT bypass, P1) ----------
+
+  it("a raw INSERT of an ACTIVE endpoint is refused — even for an org admin (P1)", async () => {
+    // The bypass the review flagged: raw-insert status='active', verified_at=now.
+    const asAdminActive = await asAdmin()
+      .from("webhook_endpoints")
+      .insert({
+        org_id: orgA,
+        url: `https://hooks.example.com/${randomUUID()}`,
+        secret: generateWebhookSecret(),
+        event_verbs: ["job.created"],
+        status: "active",
+        verified_at: new Date().toISOString(),
+        created_by: admin.id,
+      })
+      .select("id")
+      .maybeSingle();
+    expect(asAdminActive.error, "admin raw-insert of an active endpoint must be refused").not.toBeNull();
+
+    // service_role is refused too (trigger + table CHECK, every role).
+    const svcActive = await svc()
+      .from("webhook_endpoints")
+      .insert({
+        org_id: orgA,
+        url: `https://hooks.example.com/${randomUUID()}`,
+        secret: generateWebhookSecret(),
+        event_verbs: ["org.created"],
+        status: "active",
+        verified_at: new Date().toISOString(),
+      })
+      .select("id")
+      .maybeSingle();
+    expect(svcActive.error).not.toBeNull();
+  });
+
+  it("a raw INSERT with a supplied verified_at is forced back to NULL (born unverified, P1)", async () => {
+    const ins = await svc()
+      .from("webhook_endpoints")
+      .insert({
+        org_id: orgA,
+        url: `https://hooks.example.com/${randomUUID()}`,
+        secret: generateWebhookSecret(),
+        event_verbs: ["org.created"],
+        verified_at: new Date().toISOString(), // caller-supplied — must be ignored
+      })
+      .select("id")
+      .single();
+    expect(ins.error).toBeNull();
+    const row = await svc().from("webhook_endpoints").select("verified_at, status").eq("id", String(ins.data?.id)).maybeSingle();
+    expect(row.data?.verified_at).toBeNull(); // forced off at insert
+    expect(row.data?.status).toBe("paused");
+  });
+
+  it("a raw INSERT with a malformed secret is refused (format CHECK)", async () => {
+    const res = await svc()
+      .from("webhook_endpoints")
+      .insert({
+        org_id: orgA,
+        url: `https://hooks.example.com/${randomUUID()}`,
+        secret: "not-a-valid-secret",
+        event_verbs: ["org.created"],
+      })
+      .select("id")
+      .maybeSingle();
+    expect(res.error, "malformed secret must be refused").not.toBeNull();
+  });
 
   it("an unverified endpoint cannot be activated (trigger, every role)", async () => {
     const id = await mkEndpoint(orgA, { active: false });

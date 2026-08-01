@@ -144,11 +144,44 @@ export function isIpLiteral(host: string): boolean {
 }
 
 /**
+ * Canonicalise a hostname before any policy check: lowercase, strip surrounding
+ * IPv6 brackets, and strip a SINGLE trailing dot (the FQDN root label). Without
+ * the trailing-dot strip, `crewflow.uk.` and `svc.internal.` slip past endsWith
+ * checks — and `crewflow.uk.` resolves to the platform's own PUBLIC IP, which the
+ * dns-private recheck would NOT catch. Every host check normalises first.
+ */
+export function normaliseHost(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/\.$/, "");
+}
+
+/**
+ * A host that is really a numeric IP in disguise — a short-form (127.1), all-
+ * decimal integer (2130706433), or hex/octal-labelled address (0x7f.0x0.0x0.0x1,
+ * 0177.0.0.1). getaddrinfo happily resolves these to loopback/RFC-1918 at
+ * dispatch, so the at-rest validator MUST refuse them too (they are never valid
+ * public DNS names). Rule: a real webhook host ends in an ALPHABETIC TLD and
+ * carries no 0x-hex label.
+ */
+export function isNumericHostForm(hostname: string): boolean {
+  const h = normaliseHost(hostname);
+  if (!h) return false;
+  const labels = h.split(".");
+  if (labels.some((l) => /^0x[0-9a-f]+$/i.test(l))) return true; // hex label
+  const last = labels[labels.length - 1] ?? "";
+  if (/^\d+$/.test(last)) return true; // numeric TLD / bare integer / short-form IP
+  return false;
+}
+
+/**
  * The private/loopback/link-local/internal classification for a hostname or IP —
  * the research-fetch isPrivateHost, extended to full IPv6. Pure.
  */
 export function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  const h = normaliseHost(hostname);
   if (h === "localhost" || h.endsWith(".localhost")) return true;
   if (h.endsWith(".internal") || h.endsWith(".local")) return true;
   if (isPrivateIpv4(h)) return true;
@@ -174,7 +207,7 @@ function platformHosts(): Set<string> {
 
 /** Is the host one of the platform's own hostnames (self-callback / SSRF-to-self)? */
 export function isForbiddenPlatformHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
+  const h = normaliseHost(hostname);
   if (h.endsWith(".vercel.app")) return true;
   if (h === "crewflow.uk" || h.endsWith(".crewflow.uk")) return true;
   for (const p of platformHosts()) {
@@ -201,8 +234,8 @@ export function assertPublicWebhookUrl(raw: string): URL {
   if (u.protocol !== "https:") {
     throw new WebhookUrlError("not-https", "webhook URLs must be https");
   }
-  const host = u.hostname.toLowerCase();
-  if (isIpLiteral(host)) {
+  const host = normaliseHost(u.hostname);
+  if (isIpLiteral(host) || isNumericHostForm(host)) {
     throw new WebhookUrlError("ip-literal", "webhook URLs must use a DNS hostname, not an IP");
   }
   if (!host.includes(".")) {

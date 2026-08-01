@@ -163,7 +163,23 @@ describe("migration — org pinning + integrity", () => {
     expect(sql).toMatch(/new\.org_id is distinct from old\.org_id/i);
     expect(sql).toMatch(/old\.verified_at is not null and new\.verified_at is distinct from old\.verified_at/i);
     expect(sql).toMatch(/new\.status = 'active' and new\.verified_at is null/i);
-    expect(sql).toMatch(/create trigger webhook_endpoints_guard\s+before update on public\.webhook_endpoints/i);
+  });
+
+  it("the guard fires on INSERT too, forcing verified_at NULL and refusing a born-active endpoint (P1)", () => {
+    // BEFORE INSERT OR UPDATE — not update-only, which was the bypass.
+    expect(sql).toMatch(/create trigger webhook_endpoints_guard\s+before insert or update on public\.webhook_endpoints/i);
+    // The INSERT branch forces verification off and refuses status='active'.
+    expect(sql).toMatch(/if tg_op = 'INSERT' then/i);
+    expect(sql).toMatch(/new\.verified_at := null/i);
+    expect(sql).toMatch(/cannot be created active/i);
+  });
+
+  it("belt-and-braces: a table CHECK forbids active-without-verified (declarative, INSERT + UPDATE)", () => {
+    expect(sql).toMatch(/constraint webhook_endpoints_active_requires_verified\s+check \(status <> 'active' or verified_at is not null\)/i);
+  });
+
+  it("the secret column is format-pinned so a raw insert can't smuggle a weak/arbitrary value", () => {
+    expect(sql).toMatch(/secret\s+text not null check \(secret ~ '\^whsec_\[0-9A-Za-z\]\{43\}\$'\)/i);
   });
 });
 
@@ -183,6 +199,7 @@ describe("migration — spine consumer wiring", () => {
   it("all new functions are SECURITY DEFINER with a pinned search_path, service_role-only", () => {
     for (const fn of [
       "webhook_resolve_org",
+      "webhook_redact_data",
       "webhook_fan_out_event",
       "webhook_dispatch_drain",
       "webhook_claim_deliveries",
@@ -242,6 +259,11 @@ describe("SSRF — private/loopback/link-local classification", async () => {
     ["::ffff:169.254.169.254", true], // v4-mapped metadata
     ["::ffff:7f00:1", true], // v4-mapped loopback, hex form
     ["2606:4700:4700::1111", false], // public v6 (cloudflare)
+    // trailing-dot (FQDN root) must not bypass the internal/private checks (P2.1)
+    ["printer.local.", true],
+    ["service.internal.", true],
+    ["127.0.0.1.", true],
+    ["example.com.", false],
   ];
 
   it.each(PRIVATE_HOSTS)("isPrivateHost(%s) === %s", (host, expected) => {
@@ -278,6 +300,15 @@ describe("SSRF — assertPublicWebhookUrl rejects everything unsafe", async () =
     ["https://crewflow.uk/hook", "platform-host"],
     ["https://app.crewflow.uk/hook", "platform-host"],
     ["https://anything.vercel.app/hook", "platform-host"],
+    // trailing-dot bypass (P2.1)
+    ["https://crewflow.uk./hook", "platform-host"],
+    ["https://svc.internal./hook", "internal-tld"],
+    // numeric / hex / octal / short-form IPs (P2.2) — the at-rest validator must
+    // refuse what the dispatcher will always block after getaddrinfo.
+    ["https://127.1/hook", "ip-literal"],
+    ["https://2130706433/hook", "ip-literal"],
+    ["https://0x7f.0x0.0x0.0x1/hook", "ip-literal"],
+    ["https://0177.0.0.1/hook", "ip-literal"],
     ["not a url", "invalid-url"],
   ];
 
@@ -445,7 +476,29 @@ describe("exposable-event allowlist — drift guard against the spine registry",
 // ===========================================================================
 
 describe("payload redaction — per-verb key allowlist", async () => {
-  const { redactEnvelope } = await import("@/lib/webhooks/events");
+  const { redactEnvelope, WEBHOOK_REDACTION_MAP } = await import("@/lib/webhooks/events");
+
+  it("the SQL webhook_redact_data mirror does NOT drift from the TS map (stored-row redaction)", () => {
+    const sql = read(MIGRATION);
+    const fnStart = sql.indexOf("create or replace function public.webhook_redact_data");
+    const fnEnd = sql.indexOf("revoke all on function public.webhook_redact_data");
+    expect(fnStart).toBeGreaterThan(-1);
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const body = sql.slice(fnStart, fnEnd);
+
+    const sqlMap: Record<string, string[]> = {};
+    for (const m of body.matchAll(/when '([^']+)'\s+then\s+array\[([^\]]*)\]/g)) {
+      const verb = m[1]!;
+      const keys = [...m[2]!.matchAll(/'([^']+)'/g)].map((k) => k[1]!);
+      sqlMap[verb] = keys;
+    }
+
+    // Same verbs, same allowed keys (order-insensitive) as the TS map.
+    expect(Object.keys(sqlMap).sort()).toEqual(Object.keys(WEBHOOK_REDACTION_MAP).sort());
+    for (const [verb, keys] of Object.entries(WEBHOOK_REDACTION_MAP)) {
+      expect(sqlMap[verb]!.slice().sort(), `SQL redaction for ${verb} drifted`).toEqual([...keys].sort());
+    }
+  });
 
   it("strips any key not on the verb's allowlist", () => {
     const out = redactEnvelope({
@@ -529,6 +582,20 @@ describe("dark ⇒ zero egress + single vetted egress path", () => {
   it("the cron is registered in vercel.json", () => {
     const vercel = JSON.parse(read("vercel.json")) as { crons: { path: string }[] };
     expect(vercel.crons.some((c) => c.path === "/api/cron/webhook-dispatch")).toBe(true);
+  });
+
+  it("the WRITE path is dark too — every mutating action is flag-gated (P2.4)", () => {
+    const actions = codeOf(read("app/(app)/settings/webhooks/actions.ts"));
+    // Each exported mutating action returns early when the flag is off.
+    const gates = actions.match(/if \(!outboundWebhooksEnabled\(\)\) return formError\(FEATURE_OFF\)/g) ?? [];
+    // create + pause + resume + reping + delete = 5 write actions.
+    expect(gates.length).toBeGreaterThanOrEqual(5);
+    // and the gate precedes any DB client / RPC in the create action
+    const createIdx = actions.indexOf("export async function createWebhookEndpoint");
+    const gateIdx = actions.indexOf("outboundWebhooksEnabled()", createIdx);
+    const dbIdx = actions.indexOf("createClient()", createIdx);
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(dbIdx).toBeGreaterThan(gateIdx);
   });
 
   it("the feature flag defaults to false in the env schema", () => {

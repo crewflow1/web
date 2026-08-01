@@ -8,6 +8,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { generateWebhookSecret } from "@/lib/webhooks/secret";
 import { validateWebhookEvents } from "@/lib/webhooks/events";
 import { validateWebhookUrl } from "@/lib/webhooks/ssrf";
+import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 import {
   type FormState,
   formError,
@@ -53,6 +54,10 @@ const createSchema = z.object({
   description: z.string().trim().max(200).optional(),
 });
 
+/** The write path is dark too: with the flag off, no action creates or mutates a
+ *  row — a direct POST while dark is refused before any DB work. */
+const FEATURE_OFF = "Webhooks aren't enabled for your account yet.";
+
 function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
 }
@@ -75,6 +80,7 @@ export async function createWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
   formData: FormData,
 ): Promise<FormState<WebhookFormValues>> {
+  if (!outboundWebhooksEnabled()) return formError(FEATURE_OFF);
   const { user, ctx } = await requireOrgContext();
   if (!isAdminRole(ctx.membership.role)) {
     return formError("Only owners and admins can create webhooks.");
@@ -156,6 +162,7 @@ export async function pauseWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
   formData: FormData,
 ): Promise<FormState<WebhookFormValues>> {
+  if (!outboundWebhooksEnabled()) return formError(FEATURE_OFF);
   const ctx = await authorise();
   if (!ctx) return formError("Only owners and admins can manage webhooks.");
   const result = validateFormData(formData, idSchema);
@@ -177,6 +184,7 @@ export async function resumeWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
   formData: FormData,
 ): Promise<FormState<WebhookFormValues>> {
+  if (!outboundWebhooksEnabled()) return formError(FEATURE_OFF);
   const ctx = await authorise();
   if (!ctx) return formError("Only owners and admins can manage webhooks.");
   const result = validateFormData(formData, idSchema);
@@ -229,6 +237,7 @@ export async function repingWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
   formData: FormData,
 ): Promise<FormState<WebhookFormValues>> {
+  if (!outboundWebhooksEnabled()) return formError(FEATURE_OFF);
   const ctx = await authorise();
   if (!ctx) return formError("Only owners and admins can manage webhooks.");
   const result = validateFormData(formData, idSchema);
@@ -248,6 +257,7 @@ export async function deleteWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
   formData: FormData,
 ): Promise<FormState<WebhookFormValues>> {
+  if (!outboundWebhooksEnabled()) return formError(FEATURE_OFF);
   const ctx = await authorise();
   if (!ctx) return formError("Only owners and admins can manage webhooks.");
   const result = validateFormData(formData, idSchema);
