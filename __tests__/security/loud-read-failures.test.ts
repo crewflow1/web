@@ -380,7 +380,12 @@ const RATCHET: Array<{
     // never as a healthy empty state, so the error is deliberately discarded (identical
     // to hq-research.ts / hq-qualification.ts). See docs/loud-read-failures.md.
     discard: 36,
-    softData: 61,
+    // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
+    // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
+    // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
+    // pure board layer then renders an all-`insufficient` board rather than fake
+    // data. See docs/loud-read-failures.md.
+    softData: 62,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.

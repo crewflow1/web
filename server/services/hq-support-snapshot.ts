@@ -183,6 +183,51 @@ export async function listSupportTicketsForHq(): Promise<HqSupportTicketRow[]> {
 }
 
 // ---------------------------------------------------------------------
+// Lean board reader — ticket rows ONLY, no message join.
+// ---------------------------------------------------------------------
+
+/**
+ * The minimal ticket columns the deterministic triage board needs. No org
+ * name, no message preview, no internal-notes flag.
+ */
+export type HqSupportBoardRow = {
+  status: string;
+  priority: string;
+  category: string;
+  created_at: string;
+  resolved_at: string | null;
+  closed_at: string | null;
+  last_reply_at: string | null;
+  last_reply_kind: "customer" | "hq" | null;
+};
+
+/**
+ * Fetch just the ticket columns the triage board triages over. Unlike
+ * `listSupportTicketsForHq` (which additionally batch-fetches every message
+ * body across all tickets to build the list-UI preview + internal-notes flag),
+ * this reads the tickets table alone — the board never touches message bodies,
+ * so it should not pull them cross-tenant. Loud-read/degrade: on a read error
+ * `res.data` is null and we return `[]`, exactly like the other HQ readers.
+ */
+export async function listSupportTicketRowsForHq(): Promise<HqSupportBoardRow[]> {
+  const res = await adminTable("support_tickets")
+    .select(
+      [
+        "status",
+        "priority",
+        "category",
+        "last_reply_at",
+        "last_reply_kind",
+        "resolved_at",
+        "closed_at",
+        "created_at",
+      ].join(", "),
+    )
+    .order("created_at", { ascending: false });
+  return (res.data ?? []) as unknown as HqSupportBoardRow[];
+}
+
+// ---------------------------------------------------------------------
 // Detail (single ticket + full message thread)
 // ---------------------------------------------------------------------
 
