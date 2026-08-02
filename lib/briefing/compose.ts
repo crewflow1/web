@@ -634,3 +634,101 @@ export type BriefingItemKey = (typeof BRIEFING_ITEM_KEYS)[number];
 export function isBriefingItemKey(v: string): v is BriefingItemKey {
   return (BRIEFING_ITEM_KEYS as readonly string[]).includes(v);
 }
+
+// ── WEATHER SECTION ──────────────────────────────────────────────────────────
+//
+// A dedicated, NON-RANKED section rather than a ranked item, for two reasons.
+// First, a permanent "weather not connected" line in the "what needs you today"
+// list would be exactly the wallpaper this briefing is designed to avoid — so
+// the status lives in its own section the surface can render quietly. Second,
+// and more important: the honesty rule. Weather is location-specific and, until
+// a provider is bound, entirely dark; this section renders REAL readings when
+// they exist and an explicit "not available" line otherwise. It never states
+// that conditions are clear unless jobs were actually assessed against observed
+// data — "no data" and "no risk" must never look alike. It fabricates nothing.
+
+/** One at-risk job, as the briefing needs it (a pass-through of the schedule signal). */
+export interface WeatherBriefingRisk {
+  label: string;
+  day: string;
+  district: string;
+  verdict: "not_viable" | "caution";
+  conditions: readonly string[];
+}
+
+/**
+ * The weather facts the briefing renders — derived by the service from the
+ * schedule weather signal (server/services/schedule-integrity.ts). Pure input:
+ * the composer decides wording, never availability.
+ */
+export interface WeatherBriefingInput {
+  /** Weather intelligence is active. False in every environment today. */
+  available: boolean;
+  /** The honest status sentence from readiness, shown when unavailable. */
+  statusLine: string;
+  /** Scheduled jobs assessed against REAL readings for their day. */
+  assessedJobs: number;
+  /** Jobs with a known location but no reading for the day — "could not check". */
+  insufficientJobs: number;
+  /** The at-risk jobs, already deterministic. */
+  risks: readonly WeatherBriefingRisk[];
+}
+
+export type WeatherBriefingStatus = "unavailable" | "clear" | "risk";
+
+export interface WeatherBriefingSection {
+  /**
+   * `unavailable` — dark, or active-but-no-readings-yet: honestly not checked.
+   * `clear` — jobs WERE assessed against real data and none is at risk.
+   * `risk` — at least one job's forecast threatens the work.
+   */
+  status: WeatherBriefingStatus;
+  /** The one line a surface renders. Never claims "clear" without real data. */
+  line: string;
+  /** The at-risk jobs, for a surface that wants to itemise them. */
+  risks: readonly WeatherBriefingRisk[];
+}
+
+/**
+ * Compose the weather section. Pure and deterministic: the same input always
+ * yields the same line.
+ */
+export function composeWeatherSection(input: WeatherBriefingInput): WeatherBriefingSection {
+  // Dark, or a provider bound but no readings cover the scheduled work yet.
+  // Both are honestly "not available" — NEVER a green all-clear.
+  if (!input.available || input.assessedJobs === 0) {
+    return {
+      status: "unavailable",
+      line: input.available
+        ? "Weather intelligence is connected, but no forecast readings cover the scheduled work yet — nothing has been checked."
+        : "Weather intelligence is not connected — no forecast is being checked. This is not a report that conditions are clear.",
+      risks: [],
+    };
+  }
+
+  if (input.risks.length === 0) {
+    // A legitimate all-clear: real readings were assessed and nothing breached.
+    const n = input.assessedJobs;
+    const insuff =
+      input.insufficientJobs > 0
+        ? ` ${input.insufficientJobs} more had no reading for the day and could not be checked.`
+        : "";
+    return {
+      status: "clear",
+      line: `Checked ${n} scheduled ${plural(n, "job")} against the forecast — no weather stoppages flagged.${insuff}`,
+      risks: [],
+    };
+  }
+
+  const blocking = input.risks.filter((r) => r.verdict === "not_viable").length;
+  const n = input.risks.length;
+  const lead =
+    blocking > 0
+      ? `${blocking} scheduled ${plural(blocking, "job")} ${blocking === 1 ? "faces" : "face"} conditions that would stop weather-sensitive work`
+      : `${n} scheduled ${plural(n, "job")} ${n === 1 ? "faces" : "face"} marginal conditions`;
+  return {
+    status: "risk",
+    line: `${lead}. Check the forecast before committing crews.`,
+    risks: input.risks,
+  };
+}

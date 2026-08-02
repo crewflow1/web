@@ -38,12 +38,23 @@ import {
  * disagreeing with the chart beside it.
  *
  * ── THE WEATHER SEAM ───────────────────────────────────────────────────────
- * `weatherEvidenceAvailable` is a parameter, hard-false at every call site
- * today: the weather cache (20261074) is dark and empty, and NOTHING on this
- * lane reads it at runtime. Every weather-category event therefore carries
- * the explicit gap "weather evidence unavailable — provider dark". When a
- * provider is bound, the caller flips the flag and supplies readings through
- * a NEW input — no rule in this file changes.
+ * `weatherEvidenceAvailable` is a parameter the caller DERIVES from the shipped
+ * weather cache (20261074) via the governed read accessor
+ * (server/services/weather.ts → buildWeatherSnapshot). It is `true` only when
+ * real observed readings exist for a weather event's delay window, and the
+ * per-event evidence itself arrives through `weatherEvidenceByEvent`. This file
+ * still owns NO rule about WHETHER weather is available — it renders what the
+ * caller resolved:
+ *   • flag false (the state of every environment today — provider dark, cache
+ *     empty) ⇒ every weather-category event carries the explicit gap
+ *     "weather evidence unavailable — provider dark", BYTE-IDENTICAL to before
+ *     this seam was wired. Nothing is fabricated: an absent reading is a gap,
+ *     never a green corroboration.
+ *   • flag true ⇒ the dark gap is suppressed and, where the caller supplied a
+ *     reading summary for that event, it is attached as `weatherEvidence`.
+ * The invariant this preserves: no reading is ever invented. When the cache is
+ * empty the pack looks exactly as it did before, because the accessor returns
+ * no readings and the caller passes `false`.
  *
  * Deterministic and permutation-independent: categories render in
  * DELAY_CATEGORIES order, events sort by (started_on, id), variations by
@@ -91,6 +102,32 @@ export interface VariationEvidenceRow {
   eot_requested_completion_date: string | null;
   eot_agreed_completion_date: string | null;
   eot_agreed_at: string | null;
+}
+
+/**
+ * Observed weather over one delay event's window, as EVIDENCE.
+ *
+ * A deterministic reduction of the readings the governed accessor returned for
+ * the event's district and dates — never a forecast, never a claim. Every field
+ * is `number | null`, and `null` means "no reading reported this metric", never
+ * "zero" (the decision layer's own rule, kept here so a missing gust can never
+ * read as calm). Present ONLY when real readings exist; absent otherwise.
+ */
+export interface EotWeatherEvidence {
+  /** The postcode district the readings are for. */
+  district: string;
+  /** How many cached readings covered the window — 0 is never represented (the whole object is absent instead). */
+  readingCount: number;
+  /** Coldest air temperature observed in the window, °C. */
+  minAirTempC: number | null;
+  /** Strongest mean wind observed, m/s. */
+  maxWindSpeedMs: number | null;
+  /** Strongest gust observed, m/s — the number that stops a lift or strips a sheet. */
+  maxWindGustMs: number | null;
+  /** Peak precipitation intensity, mm/h. */
+  maxPrecipRateMmH: number | null;
+  /** Total precipitation accumulated across the window, mm. */
+  totalPrecipMm: number | null;
 }
 
 // ── Output shapes ────────────────────────────────────────────────────────────
@@ -150,6 +187,13 @@ export interface EotPackEvent {
   diaryEntry: DiaryEvidenceRow | null;
   /** Resolved linked variation, when linked. */
   variation: EotVariationSummary | null;
+  /**
+   * Observed weather over this event's window, when the caller resolved real
+   * readings for it. Null for every non-weather event, and null for a weather
+   * event whenever the cache held no readings (the dark state today) — in which
+   * case the `weather_evidence_dark` gap is emitted instead. Never fabricated.
+   */
+  weatherEvidence: EotWeatherEvidence | null;
 }
 
 export interface EotCategoryBlock {
@@ -196,8 +240,21 @@ export interface EotPackInput {
   variations: readonly VariationEvidenceRow[];
   /** Composed progress summary; null when the progress read failed. */
   progress: ProgressSummary | null;
-  /** Hard-false until the weather provider activates. */
+  /**
+   * True IFF the caller resolved real observed readings for at least one weather
+   * event's window (server/services/eot-pack.ts derives this from the governed
+   * weather accessor). False in every environment today — the provider is dark
+   * and the cache is empty — which keeps the pack byte-identical to before this
+   * seam was wired.
+   */
   weatherEvidenceAvailable: boolean;
+  /**
+   * Per-event observed-weather evidence, keyed by delay-event id. Supplied only
+   * alongside `weatherEvidenceAvailable: true`; an event absent from the map (or
+   * a dark build with no map at all) simply carries no evidence and, if it is a
+   * weather event, keeps its dark gap. Never contains a fabricated reading.
+   */
+  weatherEvidenceByEvent?: ReadonlyMap<string, EotWeatherEvidence>;
   /** ISO timestamp for the pack header — injected, never `new Date()` here. */
   generatedAt: string;
 }
@@ -264,6 +321,13 @@ export function assembleEotPack(input: EotPackInput): EotEvidencePack {
       : "other";
 
     const ended = e.ended_on;
+    // Evidence attaches ONLY to weather events, ONLY when the caller declared it
+    // available, and ONLY where a reading summary was supplied for this id. Every
+    // other case is null — never a manufactured reading.
+    const weatherEvidence: EotWeatherEvidence | null =
+      category === "weather" && input.weatherEvidenceAvailable
+        ? (input.weatherEvidenceByEvent?.get(e.id) ?? null)
+        : null;
     const packEvent: EotPackEvent = {
       id: e.id,
       category,
@@ -278,6 +342,7 @@ export function assembleEotPack(input: EotPackInput): EotEvidencePack {
       variation: e.variation_quote_id
         ? (variationById.get(e.variation_quote_id) ?? null)
         : null,
+      weatherEvidence,
     };
     const list = packEvents.get(category) ?? [];
     list.push(packEvent);

@@ -17,8 +17,24 @@ import {
   buildScheduleWindow,
   ROTA_LOOKBACK_MS,
   SCHEDULE_WINDOW_DAYS,
+  ukDayStartMs,
+  ukDayEndMs,
   type ScheduleWindow,
 } from "@/lib/schedule/window";
+import { buildWeatherSnapshot, type WeatherSnapshot } from "@/server/services/weather";
+import {
+  getWeatherReadiness,
+  weatherStatusLine,
+  districtForAddress,
+  WORK_TYPES,
+} from "@/lib/weather";
+import { resolveJobAddress } from "@/lib/address";
+import {
+  assessScheduleWeather,
+  unavailableWeatherSignal,
+  type ScheduledJobWeatherInput,
+  type WeatherScheduleSignal,
+} from "@/lib/schedule/weather-risk";
 import {
   recommendForConflicts,
   summariseRecommendations,
@@ -386,7 +402,20 @@ export interface ScheduleIntegrityReport {
    */
   recommendations: Map<string, ScheduleRecommendation>;
   recommendationSummary: RecommendationSummary;
+  /**
+   * WEATHER (orthogonal axis, additive). Does the forecast threaten any
+   * scheduled job in the window? Read through the governed accessor
+   * (server/services/weather.ts), so it is dark and honestly "unavailable" in
+   * every environment today — never a false all-clear. See lib/schedule/
+   * weather-risk.ts for the one rule (real readings only) it enforces.
+   */
+  weather: WeatherScheduleSignal;
   generatedAt: string;
+}
+
+/** The honest dark weather signal, sourced from readiness. Zero DB access. */
+function darkWeatherSignal(): WeatherScheduleSignal {
+  return unavailableWeatherSignal(weatherStatusLine(getWeatherReadiness()));
 }
 
 function emptyReport(window: ScheduleWindow, generatedAt: string): ScheduleIntegrityReport {
@@ -398,8 +427,100 @@ function emptyReport(window: ScheduleWindow, generatedAt: string): ScheduleInteg
     summary: summariseScheduleConflicts([]),
     recommendations,
     recommendationSummary: summariseRecommendations(recommendations),
+    weather: darkWeatherSignal(),
     generatedAt,
   };
+}
+
+/** Columns needed to resolve a job's effective site address → postcode district. */
+const JOB_LOCATION_COLS =
+  "id, scheduled_date, site_address_line1, site_address_line2, site_city, site_county, " +
+  "site_postcode, site_country, customers(name, address_line1, address_line2, city, county, postcode, country)";
+
+type CustomerLocation = {
+  name: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  county: string | null;
+  postcode: string | null;
+  country: string | null;
+};
+type JobLocationRow = {
+  id: string;
+  scheduled_date: string | null;
+  site_address_line1: string | null;
+  site_address_line2: string | null;
+  site_city: string | null;
+  site_county: string | null;
+  site_postcode: string | null;
+  site_country: string | null;
+  customers: CustomerLocation | CustomerLocation[] | null;
+};
+
+/**
+ * Build the weather signal for the window.
+ *
+ * DARK-SAFE FIRST. When weather intelligence is not active — every environment
+ * today — this returns the honest "unavailable" signal WITHOUT reading a single
+ * row (the readiness short-circuit), so the schedule report is byte-identical to
+ * before this axis existed. When active, it reads the window's scheduled jobs
+ * with their addresses (org-pinned, on top of RLS — the #456 rule), resolves
+ * each to a postcode district, and reads the forecast for each distinct
+ * (district, day) ONCE through the governed accessor. A district that carries no
+ * postcode is never guessed; a day with no cached reading is counted as
+ * insufficient, never cleared.
+ */
+async function buildScheduleWeatherSignal(
+  db: ScheduleClient,
+  orgId: string,
+  window: ScheduleWindow,
+): Promise<WeatherScheduleSignal> {
+  const readiness = getWeatherReadiness();
+  const statusLine = weatherStatusLine(readiness);
+  if (!readiness.available) return unavailableWeatherSignal(statusLine);
+
+  const jobRows = await pagedRows<JobLocationRow>(
+    db,
+    "jobs",
+    JOB_LOCATION_COLS,
+    orgId,
+    (b) => b.gte("scheduled_date", window.fromDay).lte("scheduled_date", window.toDay),
+  );
+
+  // One accessor call per distinct (district, day) — the economic collapse the
+  // postcode module was built for: forty jobs cluster into a handful of reads.
+  const snapshotCache = new Map<string, WeatherSnapshot>();
+  const inputs: ScheduledJobWeatherInput[] = [];
+
+  for (const j of jobRows) {
+    const day = j.scheduled_date;
+    if (!day) continue; // Unscheduled: not part of the day-keyed forecast axis.
+    const customer = Array.isArray(j.customers) ? j.customers[0] : j.customers;
+    const district = districtForAddress(resolveJobAddress(j, customer));
+    const label = (customer?.name ?? "").trim() || `Job ${j.id.slice(0, 8)}`;
+
+    if (district === null) {
+      inputs.push({ jobId: j.id, label, day, district: null, snapshot: null });
+      continue;
+    }
+
+    const key = `${district}|${day}`;
+    let snapshot = snapshotCache.get(key);
+    if (!snapshot) {
+      snapshot = await buildWeatherSnapshot({
+        orgId,
+        district,
+        workTypes: [...WORK_TYPES],
+        from: new Date(ukDayStartMs(day)),
+        to: new Date(ukDayEndMs(day)),
+      });
+      snapshotCache.set(key, snapshot);
+    }
+    inputs.push({ jobId: j.id, label, day, district, snapshot });
+  }
+
+  return assessScheduleWeather(inputs, { available: readiness.available, statusLine });
 }
 
 /**
@@ -420,13 +541,16 @@ export async function buildScheduleIntegrity(
   const limit = options.limit ?? SCHEDULE_CONFLICTS_PAGE_LIMIT;
   try {
     const supabase = await createClient();
-    const facts = await gatherScheduleFacts(supabase as unknown as ScheduleClient, orgId, window);
+    const client = supabase as unknown as ScheduleClient;
+    const facts = await gatherScheduleFacts(client, orgId, window);
     const input: ScheduleConflictInput = facts;
     const all = detectScheduleConflicts(input);
     const shown = all.slice(0, limit);
     // PURE, and passed the SAME facts the detection ran on — so a proposal can
     // never cite a row the finding above it did not see.
     const recommendations = recommendForConflicts(shown, facts satisfies RecommendationInput);
+    // Orthogonal weather axis. Dark today ⇒ a single readiness check, no reads.
+    const weather = await buildScheduleWeatherSignal(client, orgId, window);
     return {
       window,
       conflicts: shown,
@@ -434,6 +558,7 @@ export async function buildScheduleIntegrity(
       summary: summariseScheduleConflicts(all),
       recommendations,
       recommendationSummary: summariseRecommendations(recommendations),
+      weather,
       generatedAt,
     };
   } catch (err) {
@@ -458,4 +583,27 @@ export async function loadScheduleConflicts(
     limit: Number.MAX_SAFE_INTEGER,
   });
   return conflicts;
+}
+
+/**
+ * The weather signal alone — what the Daily Briefing consumes.
+ *
+ * Its own best-effort read so a briefing weather line never depends on the full
+ * conflict build. Dark today ⇒ a single readiness check with ZERO database
+ * access, so it costs a briefing nothing until a provider is bound.
+ */
+export async function loadScheduleWeatherSignal(
+  orgId: string,
+  now: Date = new Date(),
+): Promise<WeatherScheduleSignal> {
+  const window = buildScheduleWindow(now, SCHEDULE_WINDOW_DAYS);
+  try {
+    const readiness = getWeatherReadiness();
+    if (!readiness.available) return unavailableWeatherSignal(weatherStatusLine(readiness));
+    const supabase = await createClient();
+    return await buildScheduleWeatherSignal(supabase as unknown as ScheduleClient, orgId, window);
+  } catch (err) {
+    console.warn("[schedule-integrity] weather signal failed; reporting unavailable", err);
+    return darkWeatherSignal();
+  }
 }
