@@ -6,7 +6,7 @@ import {
   listVariationOptionsForJob,
 } from "../_data";
 import { createDelayEvent } from "../actions";
-import { DelayEventFields, hintClass, inputClass, labelClass } from "../_form-fields";
+import { DelayCreateForm } from "../_create-form";
 
 /**
  * /delays/new — draft a delay event.
@@ -22,7 +22,7 @@ import { DelayEventFields, hintClass, inputClass, labelClass } from "../_form-fi
 type SP = Promise<{ error?: string; jobId?: string }>;
 
 export default async function NewDelayEventPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const jobs = await listJobOptions(ctx.org.id);
   const preselectedJob = jobs.find((j) => j.id === sp.jobId) ?? null;
@@ -74,52 +74,18 @@ export default async function NewDelayEventPage({ searchParams }: { searchParams
           </p>
         </div>
       ) : (
-        <form
+        // CREATE is offline-writable (lib/offline/registry.ts — delay_event.create).
+        // The identity handed to the form is the one the SERVER just resolved for
+        // this request — newly authored work is never attributed from a client-side
+        // marker on a shared tablet (#456).
+        <DelayCreateForm
           action={createDelayEvent}
-          className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-        >
-          <div>
-            <label htmlFor="jobId" className={labelClass}>
-              Job<span className="ml-0.5 text-red-500">*</span>
-            </label>
-            <select
-              id="jobId"
-              name="jobId"
-              required
-              defaultValue={preselectedJob?.id ?? ""}
-              className={inputClass}
-            >
-              <option value="" disabled>
-                Choose a job…
-              </option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.label}
-                </option>
-              ))}
-            </select>
-            {!preselectedJob ? (
-              <p className={hintClass}>
-                Diary and variation links are job-specific — you can add them while
-                editing the draft after saving.
-              </p>
-            ) : null}
-          </div>
-
-          <DelayEventFields diaryOptions={diaryOptions} variationOptions={variationOptions} />
-
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <Link href="/delays" className="text-sm text-slate-600 hover:text-slate-900">
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              className="inline-flex min-h-[44px] items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              Save draft
-            </button>
-          </div>
-        </form>
+          jobs={jobs}
+          preselectedJobId={preselectedJob?.id ?? ""}
+          diaryOptions={diaryOptions}
+          variationOptions={variationOptions}
+          offline={{ userId: user.id, orgId: ctx.org.id }}
+        />
       )}
     </div>
   );
