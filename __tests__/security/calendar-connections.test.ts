@@ -286,7 +286,9 @@ describe("calendar connect routes are gated + dark", () => {
     expect(guardIdx).toBeGreaterThan(-1);
     expect(exchangeIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(exchangeIdx);
-    expect(code).toMatch(/state !== stateCookie/);
+    // Constant-time state verification — never a bare string `!==` on a token.
+    expect(code).toMatch(/timingSafeEqual/);
+    expect(code).not.toMatch(/state !== stateCookie/);
   });
 
   it("callback never writes a connected row without an account handle", () => {

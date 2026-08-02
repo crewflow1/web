@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
@@ -8,6 +10,10 @@ import {
   CALENDAR_PROVIDERS,
   type CalendarProvider,
 } from "@/lib/integrations/calendar/oauth";
+import {
+  encryptToken,
+  isTokenEncryptionConfigured,
+} from "@/lib/integrations/token-crypto";
 
 /**
  * Calendar OAuth — CONNECT callback. DARK.
@@ -32,6 +38,19 @@ const VALID: readonly CalendarProvider[] = CALENDAR_PROVIDERS;
 
 function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
+}
+
+/**
+ * Constant-time comparison of the echoed `state` against the cookie. A length
+ * check first (timingSafeEqual throws on unequal lengths), then the timing-safe
+ * compare — a mismatch leaks no timing signal. Mirrors the webhook-signature
+ * idiom; never a bare `===`/`!==` string compare on a security token.
+ */
+function stateMatches(a: string, b: string): boolean {
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }
 
 const STATE_COOKIE = (p: string) => `cal_oauth_state_${p}`;
@@ -90,14 +109,36 @@ export async function GET(
     );
   }
 
+  // TOKEN-ENCRYPTION TRIPWIRE. A connectable provider MUST have a valid token
+  // encryption key, or we REFUSE the exchange and write NOTHING. This enforces
+  // "no plaintext token is ever written" in code: the encrypt-before-write below
+  // would throw without a key, so we fail loudly here — before any token
+  // exchange — rather than mid-write. Dark today (no creds ⇒ never connectable),
+  // so this never triggers; on activation it forces the key to be set.
+  if (!isTokenEncryptionConfigured()) {
+    console.error("[calendar] refusing exchange: token encryption key missing", { provider });
+    return NextResponse.json(
+      {
+        ok: false,
+        provider,
+        status: "encryption_not_configured",
+        message:
+          `${provider} calendar cannot be connected: INTEGRATION_TOKEN_ENCRYPTION_KEY ` +
+          `is not set. No token was requested or stored.`,
+      },
+      { status: 500 },
+    );
+  }
+
   // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
   const code = searchParams.get("code");
   const state = searchParams.get("state");
 
-  // Anti-CSRF: the state echoed back must match the cookie the connect route set.
+  // Anti-CSRF: the state echoed back must match the cookie the connect route set
+  // (constant-time compare — never a bare string `!==` on a security token).
   const stateCookie = request.cookies.get(STATE_COOKIE(provider))?.value ?? null;
   const verifier = request.cookies.get(VERIFIER_COOKIE(provider))?.value ?? null;
-  if (!code || !state || !stateCookie || state !== stateCookie || !verifier) {
+  if (!code || !state || !stateCookie || !verifier || !stateMatches(state, stateCookie)) {
     return backToSettings(origin, "state_mismatch", provider);
   }
 
@@ -120,6 +161,7 @@ export async function GET(
     return backToSettings(origin, "no_account", provider);
   }
 
+  const refreshToken = exchanged.tokens.refreshToken;
   const supabase = await createClient();
   // calendar_connections post-dates the generated types.ts; cast to a minimal
   // upsert builder. RLS (admin-write) is the real authorisation for this write.
@@ -137,10 +179,12 @@ export async function GET(
       provider,
       status: "connected",
       external_account_id: handle,
-      // Encrypted application-side at activation (see migration note); this
-      // build never reaches here.
-      access_token: exchanged.tokens.accessToken,
-      refresh_token: exchanged.tokens.refreshToken,
+      // Tokens are AES-256-GCM encrypted application-side BEFORE they reach the
+      // DB — the columns hold ciphertext, never a plaintext secret. The tripwire
+      // above guarantees a key is present, so encryptToken cannot throw here.
+      // token_expires_at is not a secret and is stored as-is.
+      access_token: encryptToken(exchanged.tokens.accessToken),
+      refresh_token: refreshToken === null ? null : encryptToken(refreshToken),
       token_expires_at: exchanged.tokens.expiresAt,
       connected_by: user.id,
       connected_at: new Date().toISOString(),
