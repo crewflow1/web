@@ -8,8 +8,11 @@ import {
   isMicrosoftCalendarConnectable,
 } from "@/lib/integrations/calendar/oauth";
 import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
+import { listBankConnections } from "@/server/services/bank-connections";
+import { isBankingProviderConnectable } from "@/lib/integrations/banking/oauth";
 import { CalendarConnectionsPanel } from "./CalendarConnectionsPanel";
 import { HmrcConnectionPanel } from "./HmrcConnectionPanel";
+import { BankConnectionsPanel } from "./BankConnectionsPanel";
 
 /**
  * /settings/integrations — third-party integration connections (calendar today).
@@ -44,6 +47,7 @@ export default async function IntegrationsSettingsPage() {
 
   const connections = await listCalendarConnections(ctx.org.id);
   const hmrc = await getHmrcConnection(ctx.org.id);
+  const bankConnections = await listBankConnections(ctx.org.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -56,6 +60,14 @@ export default async function IntegrationsSettingsPage() {
         }}
       />
       <HmrcConnectionPanel connection={hmrc} connectable={isHmrcConnectable()} />
+      <BankConnectionsPanel
+        connections={bankConnections}
+        connectable={{
+          truelayer: isBankingProviderConnectable("truelayer"),
+          plaid: isBankingProviderConnectable("plaid"),
+          nordigen: isBankingProviderConnectable("nordigen"),
+        }}
+      />
     </div>
   );
 }
