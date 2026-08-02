@@ -264,6 +264,30 @@ const envSchema = z.object({
   // recognition (a legal gate). Left unset in every environment.
   NEXT_PUBLIC_FEATURE_HMRC_CONNECT: z.enum(["true", "false"]).default("false"),
 
+  // Open Banking bank-feed connect surface (20261100). DEFAULTS OFF. Switch 1 of
+  // two: while off, /api/integrations/banking/[provider]/* return not_configured
+  // and the settings panel renders "not configured". The SECOND switch is the
+  // aggregator credentials + a bound BANKING_PROVIDER; the flag alone opens no
+  // door — isBankingProviderConnectable() requires BOTH. Above both sits the FCA
+  // AISP authorisation legal gate. Never flip to "true" before all three exist.
+  NEXT_PUBLIC_FEATURE_BANKING_CONNECT: z.enum(["true", "false"]).default("false"),
+
+  // -- Open Banking / bank-feed aggregator (20261100 — DARK, FCA-gated) ---
+  // The single OAuth client the bank-feed substrate binds to, plus the aggregator
+  // it is bound to. UNSET in every environment today. Activation is a
+  // configuration + LEGAL act: Open Banking / Account Information Services are
+  // FCA-regulated, so a live bank connection requires FCA AISP authorisation (or
+  // agent permission) IN ADDITION to these credentials and the feature flag. The
+  // substrate (lib/integrations/banking/*) REFUSES-before-fetch while any of these
+  // is absent, so no live bank call is reachable. BANKING_PROVIDER names the one
+  // active aggregator ('truelayer' | 'plaid' | 'nordigen'); unbound ⇒ nothing is
+  // connectable. Free string so a new aggregator needs zero env-schema edits.
+  // Tokens at rest reuse INTEGRATION_TOKEN_ENCRYPTION_KEY (declared with the
+  // accounting/calendar substrates via process.env; read by token-crypto.ts).
+  BANKING_PROVIDER: z.string().optional(),
+  BANKING_CLIENT_ID: z.string().optional(),
+  BANKING_CLIENT_SECRET: z.string().optional(),
+
   // -- Auth: Microsoft SSO (DARK — credential-gated) ----------------------
   // Whether the "Continue with Microsoft" button is exposed on /login.
   // DEFAULTS OFF. The button + server action (signInWithMicrosoft, provider
