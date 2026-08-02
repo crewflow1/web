@@ -28,8 +28,11 @@ import {
   formatRate,
   type WorkforceSummary,
 } from "@/lib/ai-employees/stats";
+import { getBoardroomCards } from "@/server/services/hq-task-pipeline";
+import { deriveEmployeeCards } from "@/lib/hq/boardroom-cards";
 import { statusStyle, accentClasses } from "./_styles";
 import { EmployeeIcon } from "./_icon";
+import { BoardroomCardTrio, PipelineStagePill } from "./_cards";
 
 /**
  * AI Boardroom — roster grid (CEO Directive 001, Phase 1).
@@ -60,9 +63,11 @@ export default async function AiBoardroomPage({
   searchParams: SP;
 }) {
   const sp = await searchParams;
-  const [employees, workforce] = await Promise.all([
+  const now = new Date();
+  const [employees, workforce, boardroomCards] = await Promise.all([
     listAiEmployees(),
     getAiWorkforceStats(),
+    getBoardroomCards(now),
   ]);
 
   const q = (sp.q ?? "").trim().toLowerCase();
@@ -236,6 +241,8 @@ export default async function AiBoardroomPage({
             {filtered.map((e) => {
               const accent = accentClasses(e.accent);
               const stats = statsForEmployee(workforce, e.id);
+              const cards =
+                boardroomCards.byEmployee.get(e.id) ?? deriveEmployeeCards([], now);
               return (
                 <li key={e.id}>
                   <Link
@@ -264,6 +271,17 @@ export default async function AiBoardroomPage({
                     <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-400">
                       {e.description}
                     </p>
+
+                    {/* Confidence / ETA / Health — the mandated boardroom cards,
+                        derived deterministically from the durable task queue. */}
+                    <div className="mt-3">
+                      <BoardroomCardTrio cards={cards} now={now} />
+                    </div>
+                    {cards.pipeline.current ? (
+                      <div className="mt-2">
+                        <PipelineStagePill pipeline={cards.pipeline} />
+                      </div>
+                    ) : null}
 
                     {/* Live workforce telemetry */}
                     <div className="mt-3 grid grid-cols-3 gap-2">

@@ -18,8 +18,10 @@ import {
   relativeTime,
 } from "@/lib/ai-employees/model";
 import { computeEmployeeStats, formatRate } from "@/lib/ai-employees/stats";
+import { getBoardroomCardsForEmployee } from "@/server/services/hq-task-pipeline";
 import { statusStyle, taskStatusPill, accentClasses } from "../_styles";
 import { EmployeeIcon } from "../_icon";
+import { BoardroomCardPanel, PipelineStageStrip } from "../_cards";
 import {
   updateAiEmployeeConfig,
   addAiEmployeeTask,
@@ -78,10 +80,12 @@ export default async function AiEmployeeDetailPage({
   // page used to read). Resolved alongside the read-only shared-memory feed (CEO Directive 002),
   // a permission-aware slice this employee may READ; both are best-effort and degrade to a safe
   // default rather than breaking the profile.
-  const [served, memoryFeed, memoryTypes] = await Promise.all([
+  const now = new Date();
+  const [served, memoryFeed, memoryTypes, boardroomCards] = await Promise.all([
     resolveServedCapabilityView(e),
     getEmployeeMemoryFeed({ id: e.id, department: e.department }),
     listMemoryTypes(),
+    getBoardroomCardsForEmployee(e.id, now),
   ]);
   // The complete served token set seeds the registry-native authoring editor (one token/line).
   const capabilityTokens = [...served.tokens];
@@ -220,6 +224,21 @@ export default async function AiEmployeeDetailPage({
               value={stats.memoryUsageLabel}
               sub={`${stats.memoryChars.toLocaleString("en-GB")} chars`}
             />
+          </div>
+        </Section>
+
+        {/* Confidence / ETA / Health + the product pipeline — the mandated boardroom
+            cards, derived deterministically from this employee's durable task queue. */}
+        <Section
+          title="Delivery outlook"
+          subtitle="Confidence, ETA, and Health derived from the durable task queue (verification, deadlines, lease/heartbeat, retries). Honest — insufficient data never reads as green."
+        >
+          <BoardroomCardPanel cards={boardroomCards} now={now} />
+          <div className="mt-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Product pipeline
+            </p>
+            <PipelineStageStrip pipeline={boardroomCards.pipeline} />
           </div>
         </Section>
 
