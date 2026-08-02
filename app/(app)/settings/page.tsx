@@ -293,6 +293,23 @@ export default async function SettingsPage() {
         </section>
       ) : null}
 
+      {/* Automations --------------------------------------------------- */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Automations</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Turn CrewFlow&apos;s built-in automations on or off, and schedule rules
+          to run on a timetable.
+        </p>
+        <div className="mt-4">
+          <Link
+            href="/settings/automations"
+            className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            Manage automations
+          </Link>
+        </div>
+      </section>
+
       {/* Plan & billing ----------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">

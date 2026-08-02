@@ -3,6 +3,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
+import {
+  effectiveEnabled,
+  loadRuleOverridesBestEffort,
+} from "@/server/services/automation-rules";
+import { invoiceDueDate } from "@/lib/invoices/due-date";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import {
   AUTOMATION_RULES,
@@ -55,6 +60,17 @@ export async function dispatchAutomation(
   const admin = createAdminClient();
   const out: Array<{ rule_id: string; status: "ok" | "failed" | "skipped"; error?: string }> = [];
 
+  // Per-org enable-state OVERRIDE (table automation_rules, 20261096). The static
+  // catalogue flag is the DEFAULT; a per-org row overrides it. Read ONCE per
+  // dispatch, pinned to THIS event's org, and best-effort — a read failure falls
+  // back to the catalogue defaults, so the engine never throws and never changes
+  // behaviour on a transient error. Pinning to event.org_id is also a tenancy
+  // guard: a rule's enable-state is resolved against its own org, never blended.
+  const overrides = await loadRuleOverridesBestEffort(
+    admin as unknown as { from: (t: string) => never },
+    event.org_id,
+  );
+
   for (const rule of matched) {
     const correlationId = correlationIdFor(
       event.type,
@@ -62,7 +78,7 @@ export async function dispatchAutomation(
       event.source_id,
     );
 
-    if (!rule.enabled) {
+    if (!effectiveEnabled(rule, overrides)) {
       // Terminal + immediate: claim and stamp complete in one step, so a
       // disabled rule can never be "reclaimed" and re-skipped forever.
       await recordDisabled(admin, event, rule, correlationId);
@@ -400,24 +416,213 @@ async function runAction(
       });
       return { ok: true, kind: "milestone_signal_recorded" };
     case "send_email_queue":
+      return runSendEmailQueue(event, rule);
     case "create_invoice_draft":
+      return runCreateInvoiceDraft(event);
     case "update_status":
-      // Future expansion. The directive's Step 4 built-ins ALREADY
-      // emit notifications via 'create_notification' which fans out
-      // to email through the existing notification_email_queue cron.
-      // Direct queue writes / invoice creation / status mutation
-      // are reserved for a future user-rule authoring phase.
-      return { ok: true, kind: `${action}_noop_v1` };
+      // DOCUMENTED NO-OP — deliberately NOT wired, and this is the honest call.
+      //
+      // There is no SAFE, GENERIC status-mutation authority to reuse. Every
+      // domain status transition is guarded by its own invariants and its own
+      // server action: quotes freeze on acceptance and revert to pending on
+      // post-approval edits (triggers quotes_freeze_accepted / the approval
+      // gate), invoices and jobs have their own lifecycles. A generic,
+      // payload-driven UPDATE from the dispatcher would bypass exactly those
+      // guards — and, fired from an arbitrary event, could target the wrong
+      // table entirely. Wiring it would fabricate authority the engine must not
+      // hold. A real status change must go through its domain-specific guarded
+      // action; this stays a no-op until such an action is exposed to automation.
+      return { ok: true, kind: "update_status_noop_documented" };
   }
 }
 
-async function runCreateNotification(
+/**
+ * send_email_queue — WIRED to the existing notification→email bridge.
+ *
+ * `emitNotifications` with an `email` directive is the ONE authorised path from
+ * the in-app bus to email: it persists the notification then enqueues a row on
+ * `notification_email_queue`, drained to Resend by /api/cron/notifications-drain.
+ * We reuse it verbatim rather than writing the queue directly, so recipient
+ * resolution, org-email routing and the queue's own (notification_id)
+ * idempotency all apply unchanged.
+ *
+ * ORG-SCOPED: the notification carries `event.org_id`, and the recipient is
+ * resolved from THAT org's contact email — never another tenant's. IDEMPOTENT:
+ * the whole rule run is guarded by the dispatcher's (rule_id, correlation_id)
+ * claim, so a re-fire never double-queues.
+ */
+async function runSendEmailQueue(
   event: AutomationEvent,
   rule: AutomationRule,
 ): Promise<Record<string, unknown>> {
-  // Domain-specific copy for each event type. The dispatcher owns
-  // the wording — keeps the rule catalogue declarative.
   const audience = event.type.startsWith("demo.") ? "hq" : "customer";
+  const note: NotificationCreate = {
+    org_id: event.org_id,
+    user_id: null,
+    audience: audience as "customer" | "hq",
+    type: `automation.${event.type}.email`,
+    category: "system",
+    priority: event.type === "invoice.overdue" ? "high" : "medium",
+    title: notificationTitleFor(event, rule),
+    body: null,
+    action_url: actionUrlForEvent(event),
+    source_module: "automation",
+    source_id: event.source_id,
+    metadata: { rule_id: rule.id, event_type: event.type, channel: "email" },
+    // The opt-in directive that makes emitNotifications ALSO queue an email.
+    // Recipient resolved from the audience → the org's contact email.
+    email: {},
+  };
+  await emitNotifications([note]);
+  return { ok: true, kind: "email_queued", audience };
+}
+
+/**
+ * create_invoice_draft — WIRED to the real quote→draft-invoice authority.
+ *
+ * Reuses the exact path the quote-acceptance flow uses (app/(app)/quotes/
+ * actions.ts): allocate a number via the `next_invoice_number` RPC and insert a
+ * `status='draft'` invoice. Because the dispatcher runs service-role, tenancy is
+ * pinned EXPLICITLY on every hop — the quote read, the number allocation
+ * (`target_org`) and the insert all carry `event.org_id`, so this can only ever
+ * bill within its own org.
+ *
+ * SCOPE — quote-sourced events only. A draft invoice needs a priced source; the
+ * only such source in the model is a quote. For any other source_table this is a
+ * documented skip (returns ok) rather than a fabricated invoice.
+ *
+ * IDEMPOTENT — three layers: the dispatcher's rule claim (one run per event),
+ * the reuse-existing-invoice-for-quote guard here, and the DB partial unique
+ * index on invoices(quote_id). A 23505 on insert is treated as "already exists".
+ */
+async function runCreateInvoiceDraft(
+  event: AutomationEvent,
+): Promise<Record<string, unknown>> {
+  if (event.source_table !== "quotes") {
+    // No priced source to invoice from — documented skip, not a fabrication.
+    return { ok: true, kind: "invoice_draft_skipped_not_quote" };
+  }
+  const admin = createAdminClient();
+
+  // Resolve the quote WITHIN this org. A foreign/absent quote reads as nothing,
+  // so a crafted cross-org source_id can never produce an invoice.
+  const quoteRes = await (
+    admin.from("quotes" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: Record<string, unknown> | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, org_id, customer_id, subtotal, vat_total, job_id")
+    .eq("id", event.source_id)
+    .eq("org_id", event.org_id)
+    .maybeSingle();
+  if (quoteRes.error) {
+    throw new Error(`invoice_draft quote read failed: ${quoteRes.error.message}`);
+  }
+  const quote = quoteRes.data;
+  if (!quote) {
+    return { ok: true, kind: "invoice_draft_skipped_no_quote" };
+  }
+
+  // Reuse guard (org-scoped): never post a second invoice for a quote that
+  // already has one — the in-code half of invoices(quote_id) uniqueness.
+  const existing = await (
+    admin.from("invoices" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            limit: (n: number) => {
+              maybeSingle: () => Promise<{
+                data: { id: string } | null;
+                error: { message: string } | null;
+              }>;
+            };
+          };
+        };
+      };
+    }
+  )
+    .select("id")
+    .eq("quote_id", quote.id as string)
+    .eq("org_id", event.org_id)
+    .limit(1)
+    .maybeSingle();
+  if (existing.error) {
+    throw new Error(`invoice_draft existing read failed: ${existing.error.message}`);
+  }
+  if (existing.data?.id) {
+    return { ok: true, kind: "invoice_draft_exists", invoice_id: existing.data.id };
+  }
+
+  // Allocate the next per-org invoice number (MUTATES the org's sequence — so
+  // target_org must be event.org_id, never another tenant's series).
+  const numRes = await (
+    admin as unknown as {
+      rpc: (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    }
+  ).rpc("next_invoice_number", { target_org: event.org_id });
+  if (numRes.error || !numRes.data) {
+    throw new Error(
+      `invoice_draft number alloc failed: ${numRes.error?.message ?? "no number"}`,
+    );
+  }
+
+  const ins = await (
+    admin.from("invoices" as never) as unknown as {
+      insert: (row: unknown) => {
+        select: (c: string) => {
+          single: () => Promise<{
+            data: { id: string } | null;
+            error: { message: string; code?: string } | null;
+          }>;
+        };
+      };
+    }
+  )
+    .insert({
+      org_id: event.org_id,
+      quote_id: quote.id,
+      customer_id: quote.customer_id ?? null,
+      number: numRes.data as string,
+      amount: quote.subtotal ?? 0,
+      vat_total: quote.vat_total ?? 0,
+      status: "draft",
+      job_id: quote.job_id ?? null,
+      due_date: invoiceDueDate(new Date().toISOString()),
+    })
+    .select("id")
+    .single();
+
+  if (ins.error) {
+    // A concurrent creator won the invoices(quote_id) race — idempotent success.
+    if (ins.error.code === "23505") {
+      return { ok: true, kind: "invoice_draft_exists_race" };
+    }
+    throw new Error(`invoice_draft insert failed: ${ins.error.message}`);
+  }
+  return { ok: true, kind: "invoice_draft_created", invoice_id: ins.data?.id };
+}
+
+/**
+ * Domain-specific notification copy per event type. The dispatcher owns the
+ * wording so the rule catalogue stays declarative. Shared by create_notification
+ * and send_email_queue.
+ */
+function notificationTitleFor(
+  event: AutomationEvent,
+  rule: AutomationRule,
+): string {
   const titles: Record<string, string> = {
     "quote.accepted": "A quote was just accepted",
     "quote.declined": "A quote was declined",
@@ -436,7 +641,32 @@ async function runCreateNotification(
     "account.created": "Welcome to CrewFlow",
     "payment.recorded": "Payment recorded",
   };
+  return titles[event.type] ?? rule.label;
+}
 
+/** Deep-link for a notification, derived from the source table. */
+function actionUrlForEvent(event: AutomationEvent): string {
+  switch (event.source_table) {
+    case "quotes":
+      return `/quotes/${event.source_id}`;
+    case "invoices":
+      return `/invoices/${event.source_id}`;
+    case "jobs":
+      return `/jobs/${event.source_id}`;
+    case "imports":
+      return `/imports/${event.source_id}`;
+    case "support_tickets":
+      return `/support/${event.source_id}`;
+    default:
+      return `/dashboard`;
+  }
+}
+
+async function runCreateNotification(
+  event: AutomationEvent,
+  rule: AutomationRule,
+): Promise<Record<string, unknown>> {
+  const audience = event.type.startsWith("demo.") ? "hq" : "customer";
   const note: NotificationCreate = {
     org_id: event.org_id,
     user_id: null,
@@ -444,20 +674,9 @@ async function runCreateNotification(
     type: `automation.${event.type}`,
     category: "system",
     priority: event.type === "invoice.overdue" ? "high" : "medium",
-    title: titles[event.type] ?? rule.label,
+    title: notificationTitleFor(event, rule),
     body: null,
-    action_url:
-      event.source_table === "quotes"
-        ? `/quotes/${event.source_id}`
-        : event.source_table === "invoices"
-          ? `/invoices/${event.source_id}`
-          : event.source_table === "jobs"
-            ? `/jobs/${event.source_id}`
-            : event.source_table === "imports"
-              ? `/imports/${event.source_id}`
-              : event.source_table === "support_tickets"
-                ? `/support/${event.source_id}`
-                : `/dashboard`,
+    action_url: actionUrlForEvent(event),
     source_module: "automation",
     source_id: event.source_id,
     metadata: { rule_id: rule.id, event_type: event.type },
