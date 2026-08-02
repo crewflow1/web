@@ -175,23 +175,31 @@ export async function VoicePanel({ orgId, setupId }: { orgId: string; setupId: s
       <form action={provisionPhoneNumber} className="grid grid-cols-1 gap-2 sm:grid-cols-5">
         <input type="hidden" name="setup_id" value={setupId} />
         <input type="hidden" name="org_id" value={orgId} />
-        <select name="provider" className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" defaultValue="twilio">
+        <select
+          name="provider"
+          aria-label="Telephony provider"
+          className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          defaultValue="twilio"
+        >
           <option value="twilio">Twilio</option>
           <option value="vapi">Vapi</option>
         </select>
         <input
           name="e164"
+          aria-label="Phone number (E.164)"
           placeholder="+441234567890"
           className="rounded-md border border-slate-300 px-2 py-1.5 text-sm sm:col-span-1"
           required
         />
         <input
           name="provider_number_sid"
+          aria-label="Provider number SID"
           placeholder="Provider SID"
           className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
         />
         <input
           name="label"
+          aria-label="Number label (optional)"
           placeholder="Label (optional)"
           className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
         />

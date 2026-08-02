@@ -36,6 +36,7 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
   let recordInboundCall: typeof import("@/server/services/telephony").recordInboundCall;
   let appendCallEvent: typeof import("@/server/services/telephony").appendCallEvent;
   let resolveOrgForDialedNumber: typeof import("@/lib/telephony/router").resolveOrgForDialedNumber;
+  let processInboundEnquiry: typeof import("@/server/services/receptionist").processInboundEnquiry;
 
   const NUM_A = `+4470001${TOKEN.replace(/\D/g, "").slice(-5).padStart(5, "0")}`;
   const NUM_B = `+4470002${TOKEN.replace(/\D/g, "").slice(-5).padStart(5, "0")}`;
@@ -65,6 +66,15 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
     const res = await db(serviceClient()).from("calls").select("status").eq("id", callId);
     expect(res.error, res.error?.message).toBeNull();
     return ((res.data ?? [])[0] as { status: string } | undefined)?.status;
+  };
+  const enquiriesFor = async (org: string, providerMessageId: string) => {
+    const res = await db(serviceClient())
+      .from("inbound_enquiries")
+      .select("id")
+      .eq("org_id", org)
+      .eq("provider_message_id", providerMessageId);
+    expect(res.error, res.error?.message).toBeNull();
+    return (res.data ?? []) as Array<{ id: string }>;
   };
 
   beforeAll(async () => {
@@ -98,6 +108,7 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
     recordInboundCall = svcMod.recordInboundCall;
     appendCallEvent = svcMod.appendCallEvent;
     resolveOrgForDialedNumber = (await import("@/lib/telephony/router")).resolveOrgForDialedNumber;
+    processInboundEnquiry = (await import("@/server/services/receptionist")).processInboundEnquiry;
   });
 
   afterAll(async () => {
@@ -172,6 +183,46 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
     // A late out-of-order 'ringing' must NOT walk a completed call back.
     await appendCallEvent(orgA, callId, { type: "ringing", providerEventId: "ringing-late", payload: {}, occurredAt: new Date().toISOString() });
     expect(await statusOf(callId)).toBe("completed");
+  });
+
+  // ── P2-1: single-delegation-door enquiry idempotency (ordering) ─────────────
+
+  it("a STATUS event arriving BEFORE origination still yields exactly ONE enquiry", async () => {
+    const sid = `CA-${TOKEN}-P21A`;
+    // 1. Status route fires first (Twilio is unordered): it creates the calls row.
+    const statusFirst = await recordInboundCall(orgA, call({ providerCallId: sid, to: NUM_A }));
+    expect(statusFirst.created).toBe(true);
+    // 2. Origination then arrives and sees created:false — it MUST still delegate
+    //    (unconditional door). It carries provider_message_id = CallSid.
+    const origination = await recordInboundCall(orgA, call({ providerCallId: sid, to: NUM_A }));
+    expect(origination.created).toBe(false);
+    await processInboundEnquiry({
+      org_id: orgA,
+      channel: "phone",
+      caller: "+447700900123",
+      dedup_key: sid,
+      provider_message_id: sid,
+    });
+    // The enquiry exists exactly once despite the calls row pre-existing.
+    expect((await enquiriesFor(orgA, sid)).length).toBe(1);
+  });
+
+  it("REDELIVERY of origination does NOT duplicate the enquiry (provider_message_id dedup)", async () => {
+    const sid = `CA-${TOKEN}-P21B`;
+    await recordInboundCall(orgA, call({ providerCallId: sid, to: NUM_A }));
+    const delegate = () =>
+      processInboundEnquiry({
+        org_id: orgA,
+        channel: "phone",
+        caller: "+447700900123",
+        dedup_key: sid,
+        provider_message_id: sid,
+      });
+    const first = await delegate();
+    const second = await delegate(); // redelivered origination
+    // Same enquiry short-circuited; exactly one row on (org_id, provider_message_id).
+    expect(second.enquiry_id).toBe(first.enquiry_id);
+    expect((await enquiriesFor(orgA, sid)).length).toBe(1);
   });
 
   // ── isolation + composite FK ────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { buildAckDropTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
 import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
+import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
 
 /**
  * Twilio inbound VOICE webhook — the origination edge (Wave 8).
@@ -94,7 +95,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     // 8. Persist origination + the first lifecycle event (admin client, org-pinned).
-    const { callId, created } = await recordInboundCall(orgId, call);
+    const { callId } = await recordInboundCall(orgId, call);
     await appendCallEvent(orgId, callId, {
       type: call.status,
       providerEventId: call.providerEventId,
@@ -102,21 +103,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       occurredAt: call.occurredAt,
     });
 
-    // 9. Delegate to the UNCHANGED ingestion core — same path as SMS/WhatsApp —
-    //    ONCE per call (only on the row we created), so a redelivered origination
-    //    yields no second enquiry. Best-effort: a failure must not break the TwiML.
-    if (created) {
-      try {
-        await processInboundEnquiry({
-          org_id: orgId,
-          channel: "phone",
-          caller: call.from,
-          dedup_key: call.providerCallId,
-        });
-      } catch (e) {
-        Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice", stage: "enquiry" } });
-        console.error("[twilio-voice] enquiry delegation failed", e);
-      }
+    // 9. Delegate to the UNCHANGED ingestion core — same path as SMS/WhatsApp.
+    //    Origination is the SINGLE delegation door (the status route never
+    //    delegates). We delegate UNCONDITIONALLY rather than gating on the
+    //    calls-row `created` flag: Twilio is at-least-once and unordered, so a
+    //    status callback can create the calls row first, making origination see
+    //    created:false — a `created`-gated skip would then DROP the enquiry
+    //    entirely. Idempotency is owned downstream instead: `provider_message_id`
+    //    (the CallSid) drives processInboundEnquiry's (org_id, provider_message_id)
+    //    partial-unique dedup, so a redelivered origination folds into the same
+    //    enquiry. Best-effort: a failure must not break the TwiML.
+    try {
+      await processInboundEnquiry({
+        org_id: orgId,
+        channel: "phone",
+        caller: call.from,
+        dedup_key: call.providerCallId,
+        provider_message_id: call.providerCallId,
+      });
+    } catch (e) {
+      Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice", stage: "enquiry" } });
+      console.error("[twilio-voice] enquiry delegation failed", e);
     }
   } catch (e) {
     Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice" } });
@@ -127,6 +134,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // 10. Return TwiML the caller hears.
-  return new NextResponse(buildInboundTwiml(), { status: 200, headers: TWIML_HEADERS });
+  // 10. Return TwiML the caller hears. The AI spoken-turn seam is reachable here
+  //     so activation is config-only (bind the generative tier — no engineering).
+  //     It is DARK today: maybeGenerateVoiceTurn returns null (no tier bound / no
+  //     transcript / blocked / error), and we fall back to the EXISTING
+  //     deterministic greeting — identical behaviour to before this wiring. The
+  //     caller's utterance (Twilio's gather SpeechResult) is passed when present;
+  //     the origination POST carries none, so the seam short-circuits on the
+  //     empty transcript. Never throws — the greeting is always a safe fallback.
+  const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
+  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript });
+  const twiml = spokenTurn ? buildInboundTwiml(spokenTurn) : buildInboundTwiml();
+  return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS });
 }
