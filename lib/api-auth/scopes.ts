@@ -7,19 +7,31 @@
  * pins only shape (no NULL/blank entries); THIS module is the authority on
  * which scope strings exist.
  *
- * v1 defines EXACTLY ONE scope. `read:jobs` names a capability the future
- * jobs read endpoint will enforce via {@link hasScope} — no such endpoint
- * exists yet (substrate only; the /api/v1/me probe requires no scope).
+ * v1 defines a per-RESOURCE read scope, one string per public-API surface:
+ * `read:jobs`, `read:customers`, `read:invoices`, `read:quotes`. Each names a
+ * capability the matching /api/v1 read endpoint enforces via {@link hasScope},
+ * so a key granted only `read:jobs` cannot read invoices — least privilege is
+ * expressed in the grant, not just the route. The whole read surface ships
+ * DARK behind FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts); these scopes
+ * are inert until that flag is flipped.
+ *
  * Adding a scope here is a reviewed code change: the drift-guard test in
  * __tests__/api-auth freezes this array with a deep-equal, so growth is a
- * deliberate diff line, never an accident.
+ * deliberate diff line, never an accident. The DB stores scopes as opaque
+ * text[] (shape-checked only — no value constraint), so this registry, not a
+ * migration, is the single authority on which strings exist.
  *
  * Client-safe on purpose (no server-only, no imports): the settings form
  * renders scope checkboxes from this same registry, so the UI can never
  * offer a scope the resolver would not understand.
  */
 
-export const SCOPES = ["read:jobs"] as const;
+export const SCOPES = [
+  "read:jobs",
+  "read:customers",
+  "read:invoices",
+  "read:quotes",
+] as const;
 
 /** Compile-time union of every scope this build understands. */
 export type Scope = (typeof SCOPES)[number];
@@ -28,6 +40,9 @@ export type Scope = (typeof SCOPES)[number];
  *  cannot be offered without being defined, nor defined without a label). */
 export const SCOPE_LABELS: Readonly<Record<Scope, string>> = {
   "read:jobs": "Read jobs",
+  "read:customers": "Read customers",
+  "read:invoices": "Read invoices",
+  "read:quotes": "Read quotes",
 };
 
 export function isScope(value: string): value is Scope {

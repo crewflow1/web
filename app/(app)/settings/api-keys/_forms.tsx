@@ -109,7 +109,7 @@ export function CreateApiKeyForm() {
                   type="checkbox"
                   name="scopes"
                   value={scope}
-                  defaultChecked={SCOPES.length === 1}
+                  defaultChecked={(SCOPES as readonly string[]).length === 1}
                   className="mt-0.5 h-4 w-4 rounded border-slate-300"
                 />
                 <span>

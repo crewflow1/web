@@ -1,26 +1,27 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { resolveApiKey, type ResolvedApiKey } from "@/lib/api-auth/resolve";
-import { hasScope } from "@/lib/api-auth/scopes";
+import { hasScope, type Scope } from "@/lib/api-auth/scopes";
 import { DEFAULT_LIMITS, enforceIdentified } from "@/lib/security/rate-limit";
 import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
 
 /**
- * The shared front door for every /api/v1/jobs* handler (Train K / Mission 9).
- *
- * One chokepoint so the list route and the by-id route cannot drift in how
- * they gate. In strict order:
+ * The shared front door for EVERY /api/v1 tenant-data handler (Train K → the
+ * Open-API expansion). One chokepoint so the jobs / customers / invoices /
+ * quotes routes cannot drift in how they gate. In strict order:
  *
  *   1. FLAG — off ⇒ 404. The surface does not exist until the CEO enables it;
  *      a 401/403 here would leak that the endpoint is real-but-locked. 404 is
- *      the dark state.
+ *      the dark state. ALL v1 read surfaces share the ONE flag
+ *      (FEATURE_PUBLIC_API_JOBS): flipping it is the whole activation decision.
  *   2. AUTH — resolveApiKey is the single authority (re-checks revoked/expired
  *      against Postgres every call, no cache) ⇒ 401 on missing/bad/revoked/
  *      expired.
- *   3. SCOPE — read:jobs required ⇒ 403 without it. A live key that simply was
- *      not granted this capability is authenticated but forbidden.
+ *   3. SCOPE — the per-resource read scope required ⇒ 403 without it. A live
+ *      key that was not granted THIS capability is authenticated but forbidden,
+ *      so a `read:jobs`-only key cannot read invoices.
  *   4. RATE LIMIT — keyed by the KEY ID (never IP), the api_v1 budget shared
- *      with /api/v1/me ⇒ 429 over budget.
+ *      across every v1 route ⇒ 429 over budget.
  *
  * Returns the resolved key on success, or a Response to return immediately.
  */
@@ -41,17 +42,50 @@ const unauthorized = (): Response =>
     },
   );
 
-const forbidden = (): Response =>
+const forbidden = (scope: Scope = "read:jobs"): Response =>
   NextResponse.json(
-    { ok: false, error: "insufficient_scope", required_scope: "read:jobs" },
+    { ok: false, error: "insufficient_scope", required_scope: scope },
     {
       status: 403,
       headers: {
-        "www-authenticate":
-          'Bearer realm="crewflow-api", error="insufficient_scope", scope="read:jobs"',
+        "www-authenticate": `Bearer realm="crewflow-api", error="insufficient_scope", scope="${scope}"`,
       },
     },
   );
+
+/**
+ * The GENERIC gate every tenant-data v1 route calls, parameterised by the one
+ * scope it demands. Same ordered flag → auth → scope → rate-limit contract as
+ * the jobs guard below; the resource routes pass their own scope so a key is
+ * checked for exactly the capability it is using.
+ */
+export async function guardPublicApiRequest(
+  request: Request,
+  requiredScope: Scope,
+): Promise<GuardResult> {
+  // 1. Flag — dark ⇒ 404, before we even look at the credential.
+  if (!isPublicApiJobsEnabled()) return { ok: false, response: notFound() };
+
+  // 2. Auth.
+  const key = await resolveApiKey(request.headers.get("authorization"));
+  if (!key) return { ok: false, response: unauthorized() };
+
+  // 3. Scope — the exact per-resource capability this route needs.
+  if (!hasScope(key.scopes, requiredScope)) {
+    return { ok: false, response: forbidden(requiredScope) };
+  }
+
+  // 4. Rate limit — AFTER resolution, keyed by the key id (see DEFAULT_LIMITS
+  //    .api_v1). The 401/403 paths above stay un-metered but are cheap.
+  const limited = await enforceIdentified(
+    "api_v1",
+    key.keyId,
+    DEFAULT_LIMITS.api_v1,
+  );
+  if (limited) return { ok: false, response: limited };
+
+  return { ok: true, key };
+}
 
 export async function guardPublicJobsRequest(
   request: Request,
