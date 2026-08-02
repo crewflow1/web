@@ -58,6 +58,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/product-ai", label: "📊 Product AI" },
   { href: "/admin/marketing-ai", label: "📣 Marketing AI" },
   { href: "/admin/customer-success-ai", label: "🤝 Customer-Success AI" },
+  { href: "/admin/executive-assistant-ai", label: "🗂️ Executive-Assistant AI" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue" },
   { href: "/admin/notifications", label: "Notifications" },
