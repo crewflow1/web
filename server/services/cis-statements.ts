@@ -417,6 +417,21 @@ export async function preparedReturnIsStale(row: CisMonthlyReturnRow): Promise<b
   return data !== row.ledger_fingerprint;
 }
 
+/** A single monthly return by id, org-scoped. The export route's read. */
+export async function getReturnById(
+  orgId: string,
+  returnId: string,
+): Promise<CisMonthlyReturnRow | null> {
+  const c = await client();
+  const { data, error } = await table(c, "cis_monthly_returns")
+    .select(RETURN_COLUMNS)
+    .eq("org_id", orgId)
+    .eq("id", returnId)
+    .maybeSingle();
+  if (error) throw readFailure("cis: monthly return by id", error);
+  return (data as unknown as CisMonthlyReturnRow | null) ?? null;
+}
+
 export async function listPreparedReturns(orgId: string): Promise<CisMonthlyReturnRow[]> {
   const c = await client();
   const { data, error } = await table(c, "cis_monthly_returns")

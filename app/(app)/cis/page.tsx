@@ -22,8 +22,20 @@ import {
 import { cisStatementDueDate, cisTaxMonthEnd, cisTaxMonthLabel } from "@/lib/cis/tax-month";
 import { formatGbp } from "@/lib/money";
 
-import { ContractorProfileForm, IssueStatementButton, MarkExportedButton, PrepareReturnButton } from "./_forms";
-import { exportCisReturn, issueCisStatement, prepareCisReturn, saveContractorProfile } from "./actions";
+import {
+  ContractorProfileForm,
+  EmailStatementsButton,
+  IssueStatementButton,
+  MarkExportedButton,
+  PrepareReturnButton,
+} from "./_forms";
+import {
+  emailCisStatements,
+  exportCisReturn,
+  issueCisStatement,
+  prepareCisReturn,
+  saveContractorProfile,
+} from "./actions";
 
 /**
  * CIS monthly centre — payment & deduction statements and the CIS300-shape
@@ -268,8 +280,24 @@ export default async function CisPage({
             taxMonthEnd={month}
             label={prepared ? "Re-prepare figures" : "Prepare figures"}
           />
-          {prepared ? <MarkExportedButton action={exportCisReturn} returnId={prepared.id} /> : null}
+          {prepared ? (
+            <>
+              <a
+                href={`/api/cis/returns/${prepared.id}/export.csv`}
+                className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
+              >
+                Download CIS300 CSV
+              </a>
+              <MarkExportedButton action={exportCisReturn} returnId={prepared.id} />
+            </>
+          ) : null}
         </div>
+        {prepared ? (
+          <p className="text-xs text-slate-500">
+            The CSV is the figures to file yourself through HMRC&rsquo;s online service or your
+            filing software. CrewFlow does not file it.
+          </p>
+        ) : null}
 
         {prepared ? (
           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -298,6 +326,18 @@ export default async function CisPage({
             what="Give to subcontractors by"
           />
         </div>
+
+        {statements.some((s) => s.status === "issued") ? (
+          <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 pb-4">
+            <EmailStatementsButton action={emailCisStatements} taxMonthEnd={month} />
+            <a
+              href={`/api/cis/statements/export.csv?month=${month}`}
+              className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
+            >
+              Download statements CSV
+            </a>
+          </div>
+        ) : null}
 
         {dataset.lines.length === 0 ? (
           <p className="text-sm text-slate-600">

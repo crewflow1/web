@@ -11,6 +11,7 @@ import {
   upsertContractorProfile,
   withdrawStatement,
 } from "@/server/services/cis-statements";
+import { queueCisStatementEmails } from "@/server/services/cis-statement-emails";
 import {
   cisContractorProfileSchema,
   cisReturnPrepareSchema,
@@ -239,4 +240,71 @@ export async function exportCisReturn(
   return formSuccess({
     successMessage: "Marked as exported. This records your download — it does not file the return.",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Emailing statements to subcontractors
+// ---------------------------------------------------------------------------
+
+/**
+ * Email the current (issued, statutory) payment & deduction statements for a tax
+ * month to the subcontractors they belong to.
+ *
+ * ── NOT A FILING ────────────────────────────────────────────────────────────
+ * Giving a subcontractor their statement is an obligation owed to the
+ * SUBCONTRACTOR (CIS340 3.15), not a submission to HMRC — the name is "email",
+ * never "file" or "submit". It puts the document onto CrewFlow's existing
+ * outbound email queue; the shared drain sends it via Resend, and with no email
+ * provider configured (the production default) nothing leaves the building.
+ *
+ * IDEMPOTENT: a statement is queued at most once (keyed on its number), so
+ * re-running over an unchanged month queues nothing new. Gross-paid (non-
+ * statutory) statements and subcontractors with no email on file are skipped and
+ * reported, never sent silently.
+ *
+ * OWNER/ADMIN ONLY — re-checked here for a good message; the real boundary is
+ * the admin-only RLS on cis_statements the service reads through.
+ */
+export async function emailCisStatements(
+  _prev: FormState<Values>,
+  formData: FormData,
+): Promise<FormState<Values>> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+
+  const taxMonthEnd = String(formData.get("tax_month_end") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(taxMonthEnd)) {
+    return formError("Choose a tax month.");
+  }
+
+  let result;
+  try {
+    result = await queueCisStatementEmails({ orgId: ctx.org.id, taxMonthEnd });
+  } catch {
+    return formError("Could not queue statement emails. Try again.");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "cis.statements.emailed",
+    targetTable: "cis_statements",
+    targetId: ctx.org.id,
+    // Counts only — never a recipient address or a tax identifier.
+    metadata: {
+      tax_month_end: taxMonthEnd,
+      queued: result.queued,
+      already_queued: result.alreadyQueued,
+      no_email: result.noEmail,
+      not_statutory: result.notStatutory,
+    },
+  }).catch(() => {});
+
+  revalidate();
+
+  const parts = [`${result.queued} statement${result.queued === 1 ? "" : "s"} queued to send`];
+  if (result.alreadyQueued > 0) parts.push(`${result.alreadyQueued} already sent`);
+  if (result.noEmail > 0) parts.push(`${result.noEmail} with no email on file`);
+  if (result.notStatutory > 0) parts.push(`${result.notStatutory} paid gross (not required)`);
+  return formSuccess({ successMessage: `${parts.join(" · ")}.` });
 }
