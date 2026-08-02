@@ -166,7 +166,20 @@ describe("eot · lifecycle lives in the database", () => {
   });
 });
 
-describe("eot · the weather seam stays dormant", () => {
+describe("eot · the weather seam is wired through the governed accessor, dark-safe", () => {
+  // DELIBERATE PIN UPDATE (weather consumer wiring). The previous truth was
+  // "the seam stays dormant — no weather read, flag HARD FALSE". The new truth,
+  // updated in the SAME diff that wired the consumer (exactly as the codebase's
+  // activation discipline requires): the EOT service now reads observed weather
+  // for a delay window THROUGH THE GOVERNED ACCESSOR (server/services/weather.ts),
+  // and derives `weatherEvidenceAvailable` from what it finds. The dark-safety is
+  // preserved and STRENGTHENED into pins: no file touches a weather TABLE
+  // directly, only the SERVICE may reach the accessor, and the flag is derived —
+  // never a hard-coded `true`. The runtime proof that the dark path stays
+  // byte-identical (flag false, zero client construction) lives in
+  // __tests__/eot/pack-weather.test.ts and __tests__/weather/eot-evidence-dark.test.ts.
+  const ACCESSOR_ALLOWED = new Set(["server/services/eot-pack.ts"]);
+
   it("weather_district carries the SAME district CHECK as the dark cache", () => {
     const weatherMigration = stripComments(read(`supabase/migrations/${WEATHER_MIGRATION}`));
     const cacheRegex = weatherMigration.match(/postcode_district ~ '([^']+)'/)?.[1];
@@ -187,22 +200,49 @@ describe("eot · the weather seam stays dormant", () => {
     );
   });
 
-  it("NO runtime read of any weather table anywhere on the lane", () => {
+  it("NO raw weather-TABLE read anywhere on the lane — the cache is only reached through the accessor", () => {
+    // The trust property that survives activation: no EOT file names a weather
+    // table in a query. The accessor owns the watch-gated, org-scoped RLS read;
+    // the lane never hand-rolls one.
     for (const rel of EOT_SOURCES) {
       const code = stripComments(read(rel));
-      expect(code, `${rel} must not read the dark weather cache`).not.toMatch(
+      expect(code, `${rel} must not query a weather table directly`).not.toMatch(
         /weather_readings|weather_watches/,
-      );
-      expect(code, `${rel} must not import the weather service`).not.toMatch(
-        /from ["']@\/(server\/services|lib)\/weather/,
       );
     }
   });
 
-  it("the pack is assembled with weatherEvidenceAvailable HARD FALSE", () => {
+  it("ONLY the EOT service may reach the weather domain — never the pure lib, PDF, pages or actions", () => {
+    // The accessor is a server read; it belongs behind the service, not scattered
+    // across the pure lib or the surfaces. A future edit that imports it anywhere
+    // else must trip here.
+    for (const rel of EOT_SOURCES) {
+      if (ACCESSOR_ALLOWED.has(rel)) continue;
+      const code = stripComments(read(rel));
+      expect(code, `${rel} must not import the weather domain`).not.toMatch(
+        /from ["']@\/(server\/services|lib)\/weather/,
+      );
+    }
+    // And the one file that may, does — via the governed accessor, not a table.
     const service = stripComments(read("server/services/eot-pack.ts"));
-    expect(service).toMatch(/weatherEvidenceAvailable:\s*false/);
+    expect(service).toMatch(/from ["']@\/server\/services\/weather["']/);
+    expect(service).toMatch(/buildWeatherSnapshot/);
+  });
+
+  it("the pack's weatherEvidenceAvailable is DERIVED, gated on readiness — never hard-coded true", () => {
+    // DELIBERATE PIN UPDATE: successor to "HARD FALSE". What is pinned now is
+    // that the flag is computed from the accessor's result behind the readiness
+    // short-circuit, so a dark build resolves it to false with zero weather work,
+    // and it can never be forced true by a literal.
+    const service = stripComments(read("server/services/eot-pack.ts"));
+    // Gated on the dark short-circuit.
+    expect(service).toMatch(/isWeatherAvailable\s*\(/);
+    // Derived from real evidence, not a literal.
+    expect(service).toMatch(/weatherEvidenceAvailable:\s*weatherEvidenceByEvent\.size\s*>\s*0/);
     expect(service).not.toMatch(/weatherEvidenceAvailable:\s*true/);
+    // An empty window yields no evidence — the readings-length guard that keeps a
+    // dark cache from ever manufacturing a corroboration.
+    expect(service).toMatch(/readings\.length === 0/);
   });
 });
 

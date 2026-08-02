@@ -2,11 +2,19 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { loadJobProgress } from "@/server/services/job-progress";
+import { buildWeatherSnapshot } from "@/server/services/weather";
+import {
+  isWeatherAvailable,
+  isPostcodeDistrict,
+  summariseWindow,
+  type PostcodeDistrict,
+} from "@/lib/weather";
 import {
   assembleEotPack,
   type DelayEventRow,
   type DiaryEvidenceRow,
   type EotEvidencePack,
+  type EotWeatherEvidence,
   type VariationEvidenceRow,
 } from "@/lib/eot/pack";
 
@@ -34,10 +42,17 @@ import {
  * existing owner of the series merge — never re-implemented. If its reads
  * fail, the pack ships with progress:null and failed:true.
  *
- * NO WEATHER READS. weather_readings / weather_watches (20261074) are dark
- * and empty; this service never queries them. The pack's
- * weatherEvidenceAvailable flag is HARD FALSE here — flipping it is the
- * weather activation lane's change, made when there is a provider to read.
+ * WEATHER is READ THROUGH THE GOVERNED ACCESSOR, never a raw table query.
+ * This service NEVER touches weather_readings / weather_watches directly; it
+ * calls server/services/weather.ts → buildWeatherSnapshot, which owns the
+ * readiness short-circuit and the watch-gated, org-scoped RLS read. Today that
+ * accessor is dark (no provider, empty cache): `isWeatherAvailable()` is false,
+ * so this service issues ZERO weather work, `weatherEvidenceAvailable` resolves
+ * to false, and the pack is BYTE-IDENTICAL to before this seam was wired. When
+ * a provider is activated the same code path resolves real observed readings for
+ * each weather event's window and attaches them as evidence — no engineering
+ * change required. A reading is never invented: an empty window yields no
+ * evidence and the pack keeps its honest "provider dark" gap.
  *
  * PAGING via fetchAllRows (unique total order on `id`); chronology is the
  * pure lib's job.
@@ -156,6 +171,77 @@ export interface EotPackView {
 }
 
 /**
+ * One inclusive UK-day window covering a delay event, as the half-open
+ * `[from, to)` instant range the accessor expects. Dates are stored as plain
+ * `YYYY-MM-DD`; the window runs from the START of `started_on` to the END of
+ * `ended_on` (or `started_on` when the delay is still open / single-day). Pure
+ * date arithmetic — no clock — so the same event always resolves the same
+ * window.
+ */
+function delayWindow(startedOn: string, endedOn: string | null): { from: Date; to: Date } | null {
+  const startMs = Date.parse(`${startedOn}T00:00:00Z`);
+  const endDay = endedOn ?? startedOn;
+  const endStartMs = Date.parse(`${endDay}T00:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endStartMs)) return null;
+  // Exclusive upper bound = start of the day AFTER the last delay day.
+  return { from: new Date(startMs), to: new Date(endStartMs + 86_400_000) };
+}
+
+/**
+ * Resolve observed-weather evidence for the recorded weather events on a job.
+ *
+ * DARK-SAFE BY CONSTRUCTION. When weather is not activated (every environment
+ * today) this returns an empty map WITHOUT calling the accessor at all — so the
+ * pack is byte-identical to before this seam existed. When activated, it reads
+ * each weather event's window through the governed accessor (org-scoped,
+ * watch-gated RLS) and reduces the readings to a deterministic evidence summary.
+ * An event whose window holds no readings contributes NOTHING to the map — it
+ * keeps its honest "provider dark" gap rather than a fabricated corroboration.
+ */
+async function resolveWeatherEvidence(
+  orgId: string,
+  events: readonly DelayEventRow[],
+): Promise<Map<string, EotWeatherEvidence>> {
+  const evidence = new Map<string, EotWeatherEvidence>();
+  // The readiness short-circuit, taken here too so the dark build does zero
+  // weather work (the accessor would also short-circuit, but skipping the loop
+  // keeps the common case a single boolean check).
+  if (!isWeatherAvailable()) return evidence;
+
+  for (const e of events) {
+    if (e.status !== "recorded" || e.category !== "weather") continue;
+    if (!isPostcodeDistrict(e.weather_district)) continue;
+    const window = delayWindow(e.started_on, e.ended_on);
+    if (window === null) continue;
+
+    const snapshot = await buildWeatherSnapshot({
+      orgId,
+      district: e.weather_district as PostcodeDistrict,
+      // Evidence is the OBSERVED conditions, not a workability verdict — no work
+      // types requested, just the raw readings for the window.
+      workTypes: [],
+      from: window.from,
+      to: window.to,
+    });
+
+    const readings = snapshot.window?.readings ?? [];
+    if (readings.length === 0) continue; // No reading ⇒ no evidence, never a guess.
+
+    const { summary, coverage } = summariseWindow(snapshot.window!);
+    evidence.set(e.id, {
+      district: e.weather_district,
+      readingCount: coverage.readingCount,
+      minAirTempC: summary.minAirTempC,
+      maxWindSpeedMs: summary.maxWindSpeedMs,
+      maxWindGustMs: summary.maxWindGustMs,
+      maxPrecipRateMmH: summary.maxPrecipRateMmH,
+      totalPrecipMm: summary.totalPrecipMm,
+    });
+  }
+  return evidence;
+}
+
+/**
  * Load one job's full evidence pack: delay events, linked diary entries,
  * variations, and progress context — assembled by the pure lib.
  *
@@ -180,6 +266,10 @@ export async function loadEotEvidencePack(
     .filter((id): id is string => id !== null);
   const diary = await gatherLinkedDiaryEntries(supabase, orgId, diaryIds);
 
+  // Dark-safe: an empty map in every environment today (provider unbound), so
+  // `weatherEvidenceAvailable` is false and the pack keeps its honest gaps.
+  const weatherEvidenceByEvent = await resolveWeatherEvidence(orgId, events.rows);
+
   const pack = assembleEotPack({
     jobId,
     events: events.rows,
@@ -188,8 +278,10 @@ export async function loadEotEvidencePack(
     // A failed progress read must not masquerade as "no readings": null +
     // failed:true, and the pure lib emits no progress gap for null.
     progress: progress.failed ? null : progress.summary,
-    // HARD FALSE until the weather lane activates a provider (20261074).
-    weatherEvidenceAvailable: false,
+    // TRUE IFF the governed accessor returned real observed readings for at
+    // least one weather event. False in every environment today (dark cache).
+    weatherEvidenceAvailable: weatherEvidenceByEvent.size > 0,
+    weatherEvidenceByEvent,
     generatedAt: now.toISOString(),
   });
 

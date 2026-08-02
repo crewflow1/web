@@ -5,13 +5,18 @@ import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/li
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
-import { loadScheduleConflicts } from "./schedule-integrity";
+import { loadScheduleConflicts, loadScheduleWeatherSignal } from "./schedule-integrity";
 import { buildFleetComplianceRollup } from "./fleet-snapshot";
 import { loadLowStockSignal, type StockClient } from "./stock";
 import { loadCisHmrcSignal, type CashOutClient } from "./org-cash-out";
 import { loadSupplierBillVarianceSignal, type PoMatchingClient } from "./po-matching";
 import { rollupKind } from "@/lib/schedule/conflicts";
-import { composeBriefing, type BriefingInput } from "@/lib/briefing/compose";
+import {
+  composeBriefing,
+  composeWeatherSection,
+  type BriefingInput,
+  type WeatherBriefingSection,
+} from "@/lib/briefing/compose";
 import { summariseBriefing, type BriefingSummary } from "@/lib/briefing/narrative";
 import type { BriefingItem } from "@/lib/briefing/types";
 
@@ -37,8 +42,23 @@ const COMPLIANCE_WINDOW_DAYS = 30;
 export interface DailyBriefing {
   items: BriefingItem[];
   summary: BriefingSummary;
+  /**
+   * WEATHER — a non-ranked status section (never a ranked item, to avoid
+   * wallpaper). Dark today: an honest "not connected" line, never a false
+   * all-clear. See lib/briefing/compose.ts → composeWeatherSection.
+   */
+  weather: WeatherBriefingSection;
   generatedAt: string;
 }
+
+/** The honest dark weather section — used on the failure path. */
+const DARK_WEATHER_SECTION: WeatherBriefingSection = composeWeatherSection({
+  available: false,
+  statusLine: "",
+  assessedJobs: 0,
+  insufficientJobs: 0,
+  risks: [],
+});
 
 type Row = Record<string, unknown>;
 /**
@@ -110,6 +130,7 @@ export async function buildDailyBriefing(
       lowStock,
       cisDueToHmrc,
       supplierBillVariance,
+      scheduleWeather,
       dismissRes,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
@@ -149,6 +170,12 @@ export async function buildDailyBriefing(
       // failed read emits no line rather than a false all-clear. Detection only
       // — no bill is credited and no cost is posted.
       loadSupplierBillVarianceSignal(supabase as unknown as PoMatchingClient, orgId),
+      // WEATHER (orthogonal axis). Read through the governed accessor, so it is
+      // dark and honestly "unavailable" in every environment today — a single
+      // readiness check with ZERO database access until a provider is bound.
+      // Best-effort like the rest of this batch: a failure yields the honest
+      // unavailable signal, never a false all-clear.
+      loadScheduleWeatherSignal(orgId, now),
       // ACTIVE-org pin: the write side stamps `org_id: ctx.org.id`, and
       // `item_key` is a generic string ("overdue_invoices", …), so an unpinned
       // read let a dismissal made in one org silently hide the SAME briefing
@@ -275,10 +302,31 @@ export async function buildDailyBriefing(
     };
 
     const items = composeBriefing(input);
-    return { items, summary: summariseBriefing(items, now), generatedAt };
+    // Weather section — the schedule signal's facts, worded by the pure composer.
+    // Dark today ⇒ an honest "not connected" line, never a false all-clear.
+    const weather = composeWeatherSection({
+      available: scheduleWeather.available,
+      statusLine: scheduleWeather.statusLine,
+      assessedJobs: scheduleWeather.assessedJobs,
+      insufficientJobs: scheduleWeather.insufficientJobs,
+      risks: scheduleWeather.risks.map((r) => ({
+        label: r.label,
+        day: r.day,
+        district: r.district,
+        verdict: r.verdict,
+        conditions: r.conditions,
+      })),
+    });
+    return { items, summary: summariseBriefing(items, now), weather, generatedAt };
   } catch (err) {
-    // Additive section — never break the dashboard. Log and show all-clear.
+    // Additive section — never break the dashboard. Log and show empty. The
+    // weather section degrades to its honest "not connected" line, never green.
     console.warn("[briefing] buildDailyBriefing failed; showing empty briefing", err);
-    return { items: [], summary: summariseBriefing([], now), generatedAt };
+    return {
+      items: [],
+      summary: summariseBriefing([], now),
+      weather: DARK_WEATHER_SECTION,
+      generatedAt,
+    };
   }
 }
