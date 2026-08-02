@@ -27,6 +27,23 @@ import type {
  * BEST-EFFORT, like the audit emit it accompanies: a failed shadow persistence must
  * never break the run it observes (the shadow is an observer, not a participant), so
  * this returns a discriminated {@link ShadowObservationWriteResult} and NEVER throws.
+ *
+ * IDEMPOTENT BY A NATURAL KEY (CEO Directive #016 / D-06, R2). The Task Engine retries
+ * whole tasks (`server/sdk/tasks.ts`), so the autonomous branch — and therefore this
+ * write — can re-run for the SAME decision. A re-run must not accumulate duplicate
+ * shadow rows. The natural key is the run+action identity `(correlation_id · task_id ·
+ * action_id)`, every field of which is STABLE across retries: `correlation_id` is the
+ * task's own, assigned at enqueue and carried on the task row; `task_id` is constant;
+ * and `action_id` (`subjectType:subjectId:type`) is derived deterministically. Before
+ * the insert this consults the table for an existing observation under that key and, if
+ * one is present, returns it as a NO-OP SUCCESS (FIRST-WRITE-WINS) — the executor is
+ * observe-only and deterministic per (action, verdict), so a retry yields the SAME
+ * observation, and the earliest record is the one worth keeping. This is a natural-key
+ * guard, not a live-apply idempotency marker: it never reads or writes the application /
+ * apply-once store, so it cannot touch the ground truth a real cut-over depends on (the
+ * Shadow Truthfulness Rule). The dedup read is itself best-effort — a failed lookup
+ * PROCEEDS to the insert (a rare duplicate is preferable to a dropped observation) and
+ * never throws.
  */
 
 // hq_record_executor_shadow isn't in the generated Supabase types yet; cast past the
@@ -36,16 +53,78 @@ type RecordShadowRpc = (
   args: Record<string, unknown>,
 ) => Promise<{ data: number | string | null; error: { message: string } | null }>;
 
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/** The append-only observation table — the durable home for shadow facts (RLS:hq). */
+const OBSERVATIONS_TABLE = "hq_ai_executor_shadow_observations";
+
+// hq_ai_executor_shadow_observations is a service-role-only HQ table, not in the
+// generated Supabase types — cast past the typed client to the minimal read surface the
+// idempotency guard needs (the same `as unknown as` shim the read-side module uses).
+type LookupQuery = {
+  select(columns: string): LookupQuery;
+  eq(column: string, value: unknown): LookupQuery;
+  order(column: string, options?: { ascending?: boolean }): LookupQuery;
+  limit(count: number): LookupQuery;
+} & PromiseLike<{ data: { id: number }[] | null; error: { message: string } | null }>;
+
 /**
- * Append one shadow observation durably through the SECURITY DEFINER RPC. Never
- * throws — a spine/store hiccup is logged and returned, never raised, so a shadow
- * write can never break the autonomous run it observes.
+ * The id of the EARLIEST existing observation filed under this record's natural key
+ * `(correlation_id · task_id · action_id)`, or `null` when none exists (a first write).
+ * Best-effort: any lookup fault returns `null` so recording proceeds — we would rather
+ * risk a rare duplicate than silently drop the observation. Never throws.
+ */
+async function findExistingObservationId(
+  admin: AdminClient,
+  record: ShadowObservationRecord,
+): Promise<number | null> {
+  try {
+    const query = admin.from(OBSERVATIONS_TABLE as never) as unknown as LookupQuery;
+    const { data, error } = await query
+      .select("id")
+      .eq("correlation_id", record.correlationId)
+      .eq("task_id", record.taskId)
+      .eq("action_id", record.actionId)
+      .order("id", { ascending: true })
+      .limit(1);
+    if (error) {
+      console.error("[executor-shadow] idempotency lookup failed; proceeding to insert", {
+        correlationId: record.correlationId,
+        actionId: record.actionId,
+        error: error.message,
+      });
+      return null;
+    }
+    const rows = Array.isArray(data) ? data : [];
+    return rows.length > 0 ? Number(rows[0]!.id) : null;
+  } catch (e) {
+    console.error("[executor-shadow] idempotency lookup threw; proceeding to insert", {
+      correlationId: record.correlationId,
+      message: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
+
+/**
+ * Append one shadow observation durably through the SECURITY DEFINER RPC, IDEMPOTENTLY.
+ * Never throws — a spine/store hiccup is logged and returned, never raised, so a shadow
+ * write can never break the autonomous run it observes. A re-run of the same decision
+ * (same `correlation_id · task_id · action_id`) is a no-op success, not a duplicate row.
  */
 export async function recordExecutorShadowObservation(
   record: ShadowObservationRecord,
 ): Promise<ShadowObservationWriteResult> {
   try {
     const admin = createAdminClient();
+
+    // Idempotency guard (natural key). First-write-wins: a prior observation under this
+    // run+action identity is returned unchanged — no second row is written on a retry.
+    const existingId = await findExistingObservationId(admin, record);
+    if (existingId != null) {
+      return { ok: true, id: existingId };
+    }
+
     const rpc = admin.rpc.bind(admin) as unknown as RecordShadowRpc;
     const { data, error } = await rpc("hq_record_executor_shadow", {
       p_outcome: record.outcome,
@@ -87,7 +166,8 @@ export async function recordExecutorShadowObservation(
  * The production {@link ShadowObservationStore} — binds the durable RPC primitive into
  * the append-only store seam the runner records through. This is the server-only
  * counterpart of `createInMemoryShadowObservationStore` (the pure reference): same
- * contract, real persistence. Write-only and best-effort by construction.
+ * contract, real persistence, idempotent by the run+action natural key, and best-effort
+ * by construction (it never throws).
  */
 export function createDurableShadowObservationStore(): ShadowObservationStore {
   return Object.freeze({

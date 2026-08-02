@@ -202,3 +202,42 @@ describe("R1+R2 executor shadow — the source observes and persists ONLY a shad
     expect(code).not.toContain(".put(");
   });
 });
+
+// =====================================================================
+// 4. Source-level — the DURABLE store (server/services/executor-shadow.ts) is
+//    OBSERVATION-ONLY and IDEMPOTENT: it writes ONLY the shadow table through the
+//    shadow RPC, never an application / apply-once record, and de-duplicates a
+//    re-run by a natural key (so the Task Engine's whole-task retry cannot
+//    accumulate duplicate observations). Comments are stripped first so the prose
+//    that documents what the store does NOT do cannot trip a match.
+// =====================================================================
+
+describe("R2 durable shadow store — observation-only, idempotent, never an application record", () => {
+  const ROOT = resolve(__dirname, "..", "..");
+  const storeCode = readFileSync(resolve(ROOT, "server/services/executor-shadow.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "") // block comments (incl. JSDoc)
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // line comments (keep `://`)
+
+  it("writes ONLY through the shadow RPC and ONLY to the shadow table — no apply/tenant write", () => {
+    // The one write verb is the SECURITY DEFINER shadow RPC…
+    expect(storeCode).toContain("hq_record_executor_shadow");
+    // …landing ONLY in the shadow table. No apply-once RPC, no application store, no live apply.
+    expect(storeCode).toContain("hq_ai_executor_shadow_observations");
+    expect(storeCode).not.toContain("applyOnce");
+    expect(storeCode).not.toContain("appliedRecord");
+    expect(storeCode).not.toContain("ApplicationStore");
+    expect(storeCode).not.toContain("hq_apply"); // no apply-on-approval / apply-once RPC
+    // The store MUTATES nothing — it only reads (idempotency guard) and calls the append RPC.
+    expect(storeCode).not.toContain(".update(");
+    expect(storeCode).not.toContain(".delete(");
+    expect(storeCode).not.toContain(".upsert(");
+  });
+
+  it("is IDEMPOTENT by a natural key — a re-run is deduped before the insert", () => {
+    // The guard reads the shadow table by the run+action natural key and short-circuits a re-run.
+    expect(storeCode).toContain("findExistingObservationId");
+    expect(storeCode).toContain('.eq("correlation_id"');
+    expect(storeCode).toContain('.eq("task_id"');
+    expect(storeCode).toContain('.eq("action_id"');
+  });
+});
