@@ -261,6 +261,24 @@ export const AI_FEATURES = {
     degradesTo: "The deterministic acknowledgement (fallbackResponse).",
   },
   /**
+   * The AI receptionist's spoken conversation turn on an inbound VOICE call
+   * (Wave 8). `drafting`, not `complex`: it is customer-facing prose (spoken to
+   * the caller), the same class as the WhatsApp/SMS reply draft, and it reaches
+   * a model only through the shared text door under the governor.
+   *
+   * DARK: no generative tier is bound, so `maybeGenerateVoiceTurn`
+   * (lib/telephony/ai-turn.ts) returns null before the governor is reached and
+   * the caller speaks the deterministic acknowledgement TwiML. There is no
+   * spoken AI turn until a tier is bound.
+   */
+  "receptionist.voice_turn": {
+    key: "receptionist.voice_turn",
+    label: "Voice receptionist spoken turn",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the voice webhook plays the deterministic acknowledgement TwiML (no generated speech). A caller hears the fixed greeting, exactly as today; nothing is generated.",
+  },
+  /**
    * Quote drafting — a scope of works a human reviews, edits, prices and only
    * then turns into a quote through the existing builder.
    *

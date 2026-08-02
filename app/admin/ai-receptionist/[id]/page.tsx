@@ -16,6 +16,7 @@ import {
   toggleAiReceptionistChecklist,
   updateAiReceptionistNotes,
 } from "../actions";
+import { VoicePanel } from "../_components/voice-panel";
 
 type Row = {
   id: string;
@@ -304,6 +305,8 @@ export default async function HqAiReceptionistDetailPage({
           </button>
         </form>
       </section>
+
+      {row.org_id ? <VoicePanel orgId={row.org_id} setupId={row.id} /> : null}
     </div>
   );
 }
