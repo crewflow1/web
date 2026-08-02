@@ -5,8 +5,10 @@
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
 **Last reconciled:** 2026-08-01 (ROADMAP COMPLETION PROGRAMME, build-dark mandate — build every gated feature to the point where only a credential/decision/legal input remains, so activation is a config flip. Waves 1–2 shipped 4 trains: HQ **Decision Centre** `20261091` (Phase 16 + Layer-5 Delay/Delegate), **Deterministic Intelligence** (company-health RAG/CLV/subcontractor scoring, Phase 9, 0-mig), HQ **Finance AI** (MRR/ARR board, insufficient-honest, 0-mig), **Maintenance-reminder engine** `20261092` (Phase 7, built dark). Migration tip `20261090`→`20261092`.)
-**Production `main`:** `5742c64` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261094` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Production `main`:** `650cef3` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261095` — read from `supabase_migrations.schema_migrations`, NOT inferred
+
+> **COMPLETION PROGRAMME Wave 5 batch-2 (2026-08-02) — 2 more trains, merged + deployed + production-verified; providers still dark.** **Marketing AI** (#559, 0-mig — deterministic acquisition/funnel over `demo_requests` (CrewFlow's own marketing capture, not tenant `leads` → #456-safe) + analytics; channel/campaign/ad-spend/SEO honestly insufficient; P1 fixed pre-merge: demo-status classifier aligned to the LIVE sales lifecycle `won/lost/payment_*/active` so metrics can't under-report or falsely say "no decisions yet"). **Xero/QuickBooks OAuth connection substrate** (#558, `20261095` — `accounting_connections`, two-switch dark gate, PKCE+single-use-state, no-fake-connected CHECK; **P1 fixed pre-merge: token columns made service-role-only** via table-revoke + 12-column re-grant, since a bare column-revoke is a Postgres no-op while the table grant stands). Activation = provider creds + `FEATURE_ACCOUNTING_CONNECT` + app-side token encryption (KMS decision). HQ AI-employee roster: 10 boarded (research/qual/outreach + Finance/Support/CTO/QA/Operations/Product/Marketing); remaining Design/Documentation lack a deterministic data source (needs-new-capability, not built). Migration tip `20261094`→`20261095`.
 
 > **COMPLETION PROGRAMME Wave 5 batch-1 (2026-08-02) — 3 more AI-employee executors, all 0-migration, merged + deployed + production-verified; providers still dark.** **QA AI** (#556 — executor-shadow divergence/error, reply-audit acceptance, task failure/retry; test-results/a11y/release-approval honestly insufficient), **Operations AI** (#555 — system/cron/email health, alert load, task-queue health; estate-throughput deliberately NOT read cross-tenant per the #456 leak class), **Product AI** (#557 — feature-request demand + themes via a PII-free lean reader, adoption/activation/growth; competitor/roadmap insufficient). All follow the Finance→Support→CTO→QA pattern (deterministic board + dark narrative + honest-insufficient + no unwired governor key). Adversarial reviews all SHIP; Product's P2 (loud-read ratchet blinded by a shared `res` var name) fixed pre-merge — ratchet coverage restored, baseline back to 62. Migration tip unchanged (`20261094`). HQ AI-employee roster now executing/boarded: research, qualification, outreach + Finance, Support, CTO, QA, Operations, Product (9 of ~13); remaining: Marketing, Design, Documentation, Executive-Assistant, Sales-orchestrator, Customer-Success.
 
@@ -391,8 +393,9 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261091` | HQ Decision Centre (`hq_decisions` + `hq_decision_events`) | **APPLIED** — Completion W1, #545 |
 | `20261092` | maintenance-reminder engine (`maintenance_reminder_log` + `claim_due_maintenance_reminders`) | **APPLIED** — Completion W2, #548 |
 | `20261093` | accounting export log (`accounting_export_log`) | **APPLIED** — Completion W3, #549 |
-| `20261094` | HQ task pipeline (`hq_ai_tasks.pipeline_stage` + `hq_ai_task_stage_events`) | **APPLIED (prod tip)** — Completion W4, #552 |
-| `20261095+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| `20261094` | HQ task pipeline (`hq_ai_tasks.pipeline_stage` + `hq_ai_task_stage_events`) | **APPLIED** — Completion W4, #552 |
+| `20261095` | accounting OAuth connections (`accounting_connections`, tokens service-role-only) | **APPLIED (prod tip)** — Completion W5, #558 |
+| `20261096+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
