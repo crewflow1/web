@@ -385,6 +385,19 @@ const RATCHET: Array<{
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
     // pure board layer then renders an all-`insufficient` board rather than fake
     // data. See docs/loud-read-failures.md.
+    // 62 (unchanged): the new Product AI reader `listFeatureSignalRowsForHq`
+    // (same file) inspects its read error and returns `null` on failure — the
+    // honest loud-degrade path, so it is genuinely guarded and self-skips. It
+    // names its result `sigRes` (NOT `res`) on purpose: the ratchet excludes a
+    // `<var>.data ?? []` read once any `<var>.error` check exists file-wide, so a
+    // `res.error` guard here would have masked the two pre-existing, genuinely
+    // UNGUARDED `res`-named soft reads in this file (`listSupportTicketsForHq`
+    // L~110 and `listSupportTicketRowsForHq` L~227 — both still `res.data ?? []`
+    // with no error check of their own, degrading silently). Using a distinct
+    // `sigRes` keeps `res.error` absent file-wide, so those two remain COUNTED
+    // and the ratchet still sees any future unguarded `res.data ?? []` here.
+    // The new reader adds no soft-data debt; baseline is unchanged from before
+    // this PR. See docs/loud-read-failures.md.
     softData: 62,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest

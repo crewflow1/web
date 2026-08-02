@@ -228,6 +228,45 @@ export async function listSupportTicketRowsForHq(): Promise<HqSupportBoardRow[]>
 }
 
 // ---------------------------------------------------------------------
+// Product-signal reader — the leanest ticket shape, NO PII.
+// ---------------------------------------------------------------------
+
+/**
+ * The minimal ticket columns the deterministic Product AI board needs:
+ * id + category + status + created_at ONLY. No subject, no priority, no org
+ * name, and crucially NO message bodies — the board groups by category and
+ * counts feature-request/bug volume + request aging, none of which needs any
+ * free-text field, so none is read (keeping customer PII off this surface).
+ */
+export type ProductSignalRow = {
+  id: string;
+  category: string;
+  status: string;
+  created_at: string;
+};
+
+/**
+ * Fetch just the columns the Product AI board triages over. Unlike
+ * `listSupportTicketRowsForHq` (priority/last-reply columns for the triage
+ * board) and `listSupportTicketsForHq` (which additionally batch-fetches every
+ * message body), this reads the barest ticket identity + category + status +
+ * created_at. LOUD DEGRADE: on a read error we log and return `null` (not `[]`)
+ * so the pure layer marks demand insufficient rather than fabricating a zero.
+ */
+export async function listFeatureSignalRowsForHq(): Promise<
+  ProductSignalRow[] | null
+> {
+  const sigRes = await adminTable("support_tickets")
+    .select(["id", "category", "status", "created_at"].join(", "))
+    .order("created_at", { ascending: false });
+  if (sigRes.error) {
+    console.error("[hq-product] feature-signal read failed", sigRes.error);
+    return null;
+  }
+  return (sigRes.data ?? []) as unknown as ProductSignalRow[];
+}
+
+// ---------------------------------------------------------------------
 // Detail (single ticket + full message thread)
 // ---------------------------------------------------------------------
 
