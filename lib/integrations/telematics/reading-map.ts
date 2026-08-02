@@ -166,6 +166,12 @@ export function normalizeSamsaraSamples(
     const vehicleId = resolveVehicleId(r.id);
     if (!vehicleId) continue; // unmapped vehicle — skip rather than guess.
     const gps = r.gps ?? null;
+    // recorded_at is NOT NULL in the DB. A sample with no provider timestamp
+    // cannot be honestly placed in time, so DROP it rather than coin an empty
+    // string that would fail the insert (or, worse, a fabricated "now"). This
+    // keeps the mapper a faithful transcription and activation a config-flip.
+    const recordedAt = gps?.time;
+    if (typeof recordedAt !== "string" || recordedAt.length === 0) continue;
     const metres = gps?.odometerMeters;
     const odometerMiles =
       typeof metres === "number" && Number.isFinite(metres)
@@ -173,8 +179,8 @@ export function normalizeSamsaraSamples(
         : null;
     out.push({
       vehicleId,
-      eventId: `${r.id}:${gps?.time ?? ""}`,
-      recordedAt: gps?.time ?? "",
+      eventId: `${r.id}:${recordedAt}`,
+      recordedAt,
       latitude: gps?.latitude ?? null,
       longitude: gps?.longitude ?? null,
       odometerMiles,

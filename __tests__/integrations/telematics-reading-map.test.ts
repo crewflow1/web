@@ -176,6 +176,23 @@ describe("normalizeSamsaraSamples — native shape → agnostic shape", () => {
     expect(n.odometerMiles).toBeNull();
   });
 
+  it("DROPS a sample with no provider timestamp (recorded_at is NOT NULL)", () => {
+    // An odometer-bearing sample with no gps.time cannot be honestly placed in
+    // time — it must be dropped, not coined as "" (which would fail the insert)
+    // nor fabricated to now.
+    const noTime = normalizeSamsaraSamples(
+      [stat({ gps: { latitude: 1, longitude: 2, odometerMeters: 1609344 } })],
+      RESOLVE,
+    );
+    expect(noTime).toHaveLength(0);
+    // Empty-string time is likewise dropped.
+    const emptyTime = normalizeSamsaraSamples(
+      [stat({ gps: { latitude: 1, longitude: 2, time: "" } })],
+      RESOLVE,
+    );
+    expect(emptyTime).toHaveLength(0);
+  });
+
   it("round-trips through the mapper to a valid, signal-bearing reading", () => {
     const normalized = normalizeSamsaraSamples([stat({})], RESOLVE);
     const rows = mapSamplesToReadings(normalized, TARGET);
