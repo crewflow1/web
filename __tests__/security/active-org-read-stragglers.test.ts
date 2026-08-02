@@ -130,15 +130,20 @@ describe("payroll actions — runs, hours and locks stay inside the ACTIVE org",
 // ---------------------------------------------------------------------------
 
 describe("site-reports createSiteReport — the job resolve is pinned", () => {
-  const F = () => fn(src("app/(app)/site-reports/actions.ts"), "createSiteReport");
+  // The create-time job resolve moved into the SHARED write core (train "offl":
+  // createSiteReportDraftRecord in server/services/site-report-writes.ts), which
+  // both the online form post and the offline queue replay now call — so the pin
+  // is enforced once for both entry points. It pins by the org ARGUMENT (`orgId`
+  // = ctx.org.id) rather than ctx directly.
+  const F = () =>
+    fn(src("server/services/site-report-writes.ts"), "createSiteReportDraftRecord");
 
   it("resolves the job by id AND active org (job_id arrives from the form)", () => {
-    // The report shell is stamped org_id: ctx.org.id, so an unpinned resolve
-    // let a dual-org member hang this org's report off the OTHER org's job —
-    // inheriting that job's customer_id for portal scoping. Same shape as
-    // createBlueprint in active-org-list-scoping.test.ts §5.
+    // The report shell is stamped org_id: orgId, so an unpinned resolve would let
+    // a dual-org member hang this org's report off the OTHER org's job —
+    // inheriting that job's customer_id for portal scoping.
     expect(F()).toMatch(
-      /\.from\("jobs"\)\s*\.select\("id, customer_id"\)\s*\.eq\("id", data\.job_id\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+      /from\("jobs"[\s\S]*?\.select\("id, customer_id"\)\s*\.eq\("id", args\.input\.job_id\)\s*\.eq\("org_id", orgId\)/,
     );
   });
 
@@ -146,7 +151,7 @@ describe("site-reports createSiteReport — the job resolve is pinned", () => {
     // gatherReportSources reads diaries/snags/etc by job_id; verifying the job
     // first makes those child reads derived-safe.
     const body = F();
-    const resolveIdx = body.indexOf('.eq("id", data.job_id)');
+    const resolveIdx = body.indexOf('.eq("id", args.input.job_id)');
     const gatherIdx = body.indexOf("gatherReportSources(");
     expect(resolveIdx).toBeGreaterThan(-1);
     expect(gatherIdx).toBeGreaterThan(-1);

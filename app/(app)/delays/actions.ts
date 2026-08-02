@@ -2,9 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { createDelayEventDraftRecord } from "@/server/services/delay-event-writes";
 import {
   closeDelayEventSchema,
   createDelayEventSchema,
@@ -65,27 +65,26 @@ export async function createDelayEvent(formData: FormData): Promise<void> {
   if (!parsed.success) {
     redirect(`/delays/new?error=${encodeURIComponent(firstError(parsed.error.issues))}`);
   }
-  const v = parsed.data;
-  const id = randomUUID();
-  const supabase = await createClient();
-  const { error } = await tbl(supabase)("delay_events").insert({
-    id,
-    org_id: ctx.org.id,
-    job_id: v.jobId,
-    category: v.category,
-    started_on: v.startedOn,
-    ended_on: orNull(v.endedOn),
-    working_days_lost: v.workingDaysLost === "" || v.workingDaysLost === undefined ? null : v.workingDaysLost,
-    description: v.description,
-    diary_entry_id: orNull(v.diaryEntryId),
-    variation_quote_id: orNull(v.variationQuoteId),
-    weather_district: orNull(v.weatherDistrict),
-    created_by: user.id,
+
+  // ONE write path — the online form and the offline queue replay both land in
+  // createDelayEventDraftRecord (server/services/delay-event-writes.ts). This
+  // action no longer owns an insert, so validation, org pinning, the job guard
+  // and the draft-only rule cannot drift between the two entry points.
+  const outcome = await createDelayEventDraftRecord({
+    ctx,
+    user,
+    input: parsed.data,
   });
-  if (error) redirect(`/delays/new?error=${encodeURIComponent(error.message)}`);
+  if (outcome.status !== "accepted" && outcome.status !== "duplicate") {
+    const msg =
+      outcome.status === "rejected" && outcome.reason === "job_missing"
+        ? "That job isn't in this workspace — switch workspace and try again."
+        : "Couldn't save that delay event. Refresh and try again.";
+    redirect(`/delays/new?error=${encodeURIComponent(msg)}`);
+  }
 
   revalidatePath("/delays");
-  redirect(`/delays/${id}?saved=created`);
+  redirect(`/delays/${outcome.id}?saved=created`);
 }
 
 export async function updateDelayEvent(formData: FormData): Promise<void> {

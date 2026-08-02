@@ -11,7 +11,11 @@ import {
 import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
 import { createSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
+import { createDelayEventSchema } from "@/lib/eot/schema";
+import { createSiteReportSchema } from "@/lib/site-reports/schema";
 import { createMaterialRequestDraftRecord } from "@/server/services/material-request-writes";
+import { createDelayEventDraftRecord } from "@/server/services/delay-event-writes";
+import { createSiteReportDraftRecord } from "@/server/services/site-report-writes";
 
 /**
  * OFFLINE WRITE — the server side. ONE write path per entity, shared by the
@@ -505,6 +509,28 @@ export async function dispatchOfflineWrite(args: {
     case "material_request.create": {
       const input = materialRequestFormSchema.parse(parsed.data);
       return createMaterialRequestDraftRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "delay_event.create": {
+      const input = createDelayEventSchema.parse(parsed.data);
+      return createDelayEventDraftRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "site_report.create": {
+      const input = createSiteReportSchema.parse(parsed.data);
+      return createSiteReportDraftRecord({
         ctx: args.ctx,
         user: args.user,
         input,

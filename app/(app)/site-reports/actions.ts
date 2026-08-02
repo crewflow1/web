@@ -7,11 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { gatherReportSources } from "@/server/services/site-report-sources";
+import { createSiteReportDraftRecord } from "@/server/services/site-report-writes";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import {
-  defaultSelection,
-  materializeSnapshot,
-} from "@/lib/site-reports/aggregate";
+import { materializeSnapshot } from "@/lib/site-reports/aggregate";
 import {
   createSiteReportSchema,
   reportContentSchema,
@@ -157,24 +155,6 @@ async function loadVerifiablePhotoRows(
   return data ?? [];
 }
 
-async function nextReportNumber(tenant: unknown, orgId: string): Promise<string> {
-  // Per-org sequential-ish number. Low volume + cosmetic; a race just yields a
-  // duplicate label, never a data-integrity problem.
-  const { count } = await (
-    reports(tenant).from("site_reports") as unknown as {
-      select: (
-        c: string,
-        o: { count: "exact"; head: true },
-      ) => {
-        eq: (k: string, v: unknown) => Promise<{ count: number | null }>;
-      };
-    }
-  )
-    .select("id", { count: "exact", head: true })
-    .eq("org_id", orgId);
-  return `SR-${String((count ?? 0) + 1).padStart(4, "0")}`;
-}
-
 export async function createSiteReport(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
 
@@ -192,60 +172,22 @@ export async function createSiteReport(formData: FormData): Promise<void> {
   const data = parsed.success ? parsed.data : null;
   if (!data) redirect(`/site-reports/new?error=validation`);
 
-  const tenant = await createClient();
-
-  // Resolve the job's customer for portal scoping (RLS-scoped read).
-  const { data: job, error: jobError } = await tenant
-    .from("jobs")
-    .select("id, customer_id")
-    .eq("id", data.job_id)
-    .eq("org_id", ctx.org.id)
-    .maybeSingle();
-  if (jobError) throw readFailure("site-reports: job resolve", jobError);
-  if (!job) redirect(`/site-reports/new?error=bad_job`);
-
-  // Seed the draft: aggregate the period's sources and propose them all.
-  const sources = await gatherReportSources(
-    data.job_id,
-    data.period_start,
-    data.period_end,
-  );
-  const content: ReportContent = { sources: defaultSelection(sources) };
-  const reportNumber = await nextReportNumber(tenant, ctx.org.id);
-
-  const id = randomUUID();
-  const { error } = await (
-    reports(tenant).from("site_reports") as unknown as InsertChain
-  ).insert({
-    id,
-    org_id: ctx.org.id,
-    job_id: data.job_id,
-    customer_id: (job as { customer_id: string | null }).customer_id ?? null,
-    report_number: reportNumber,
-    title: data.title,
-    period_start: data.period_start,
-    period_end: data.period_end,
-    status: "draft",
-    revision: 1,
-    content,
-    prepared_by: user.id,
-  });
-  if (error) {
-    console.error("[site-reports] insert failed", error);
-    redirect(`/site-reports/new?error=record_failed`);
+  // ONE write path — the online form and the offline queue replay both land in
+  // createSiteReportDraftRecord (server/services/site-report-writes.ts), which
+  // owns the job guard, source aggregation, the cosmetic number, the draft
+  // insert and the audit. This action no longer owns an insert, so the two
+  // entry points cannot drift.
+  const outcome = await createSiteReportDraftRecord({ ctx, user, input: data });
+  if (outcome.status !== "accepted" && outcome.status !== "duplicate") {
+    const err =
+      outcome.status === "rejected" && outcome.reason === "job_missing"
+        ? "bad_job"
+        : "record_failed";
+    redirect(`/site-reports/new?error=${err}`);
   }
 
-  await recordAdminActivity({
-    actorId: user.id,
-    actorEmail: user.email ?? null,
-    action: "site_report.created",
-    targetTable: "site_reports",
-    targetId: id,
-    metadata: { job_id: data.job_id, period_start: data.period_start, period_end: data.period_end },
-  });
-
   revalidatePath("/site-reports");
-  redirect(`/site-reports/${id}?saved=created`);
+  redirect(`/site-reports/${outcome.id}?saved=created`);
 }
 
 export async function updateReportContent(formData: FormData): Promise<void> {

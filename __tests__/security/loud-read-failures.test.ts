@@ -362,7 +362,12 @@ const RATCHET: Array<{
     // sits behind a real check and stops counting as debt. A SAFETY control
     // that hid itself on read failure — see the marquee pin above.
     softData: 49,
-    countOnly: 5,
+    // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
+    // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
+    // shared write core (server/services/site-report-writes.ts), so the online
+    // form and the offline queue replay allocate it identically. The count-only
+    // shape moved with it — it is now counted under "server + lib + components".
+    countOnly: 4,
   },
   {
     scope: "app outside (app) — admin/api/portal/q/onboarding",
@@ -402,7 +407,12 @@ const RATCHET: Array<{
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.
-    countOnly: 5,
+    // 5 → 6: train "offl" moved createSiteReport's cosmetic report-number count read
+    // (`nextReportNumber`) into the shared write core
+    // (server/services/site-report-writes.ts) — same head:true count, now here
+    // instead of under app/(app); a duplicate label on a race is harmless (there
+    // is no unique constraint on report_number).
+    countOnly: 6,
   },
 ];
 

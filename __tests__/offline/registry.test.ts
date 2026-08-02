@@ -32,6 +32,10 @@ const expansionMigration = readFileSync(
   join(root, "supabase/migrations/20261083000000_offline_write_expansion.sql"),
   "utf8",
 );
+const expansion2Migration = readFileSync(
+  join(root, "supabase/migrations/20261101000000_offline_write_expansion_2.sql"),
+  "utf8",
+);
 
 /**
  * kind → (table with the DB idempotency gate, the migration that opened it,
@@ -75,20 +79,46 @@ const GATES: Record<
       lines: [{ description: "Cement 25kg", qty: 20, unit: "bag" }],
     },
   },
+  "delay_event.create": {
+    table: "delay_events",
+    migration: expansion2Migration,
+    validPayload: {
+      jobId: "11111111-1111-4111-8111-111111111111",
+      category: "weather",
+      startedOn: "2026-07-30",
+      endedOn: "2026-07-31",
+      workingDaysLost: 2,
+      description: "Heavy rain stopped groundworks",
+    },
+  },
+  "site_report.create": {
+    table: "site_reports",
+    migration: expansion2Migration,
+    validPayload: {
+      job_id: "11111111-1111-4111-8111-111111111111",
+      title: "Week 30 progress",
+      period_start: "2026-07-27",
+      period_end: "2026-07-31",
+    },
+  },
 };
 
 describe("offline write registry — exactly the entities the product enabled", () => {
-  it("the enabled set is site_diary.create + snag.create + material_request.create", () => {
+  it("the enabled set is diary + snag + material_request + delay_event + site_report", () => {
     // If this fails, an entity became (or stopped being) offline-writable.
     // That is a CEO/product decision (docs/offline-write-queue.md) — update the
     // doc, the registry rationale and this list together, deliberately.
     // Train 5 (migration 20261083) added the snag CREATE and the material
-    // request DRAFT create; toolbox-talk acks were considered and REJECTED
-    // (server-pinned attestation time — see the registry header).
+    // request DRAFT create; the "offl" train (migration 20261101) added the
+    // delay-event DRAFT create and the site-report DRAFT create. Toolbox-talk
+    // acks and ITP inspection sign-offs were considered and REJECTED (server-
+    // pinned attestation time — see the registry header).
     expect([...OFFLINE_WRITE_KINDS]).toEqual([
       "site_diary.create",
       "snag.create",
       "material_request.create",
+      "delay_event.create",
+      "site_report.create",
     ]);
   });
 
@@ -114,10 +144,19 @@ describe("offline write registry — exactly the entities the product enabled", 
     expect(isOfflineWriteKind("site_diary.create")).toBe(true);
     expect(isOfflineWriteKind("snag.create")).toBe(true);
     expect(isOfflineWriteKind("material_request.create")).toBe(true);
+    expect(isOfflineWriteKind("delay_event.create")).toBe(true);
+    expect(isOfflineWriteKind("site_report.create")).toBe(true);
     expect(isOfflineWriteKind("site_diary.update")).toBe(false);
     expect(isOfflineWriteKind("snag.update")).toBe(false);
     expect(isOfflineWriteKind("material_request.submit")).toBe(false);
+    // the delay-event lifecycle transitions are NOT offline-writable
+    expect(isOfflineWriteKind("delay_event.record")).toBe(false);
+    expect(isOfflineWriteKind("delay_event.withdraw")).toBe(false);
+    // the site-report lifecycle transitions are NOT offline-writable
+    expect(isOfflineWriteKind("site_report.issue")).toBe(false);
+    expect(isOfflineWriteKind("site_report.approve")).toBe(false);
     expect(isOfflineWriteKind("toolbox_talk.acknowledge")).toBe(false);
+    expect(isOfflineWriteKind("inspection.signoff")).toBe(false);
     expect(isOfflineWriteKind("invoices.create")).toBe(false);
     expect(isOfflineWriteKind("")).toBe(false);
     expect(isOfflineWriteKind(null)).toBe(false);
@@ -197,6 +236,58 @@ describe("offline write registry — the shared schemas are genuinely shared", (
     expect(OFFLINE_WRITE_REGISTRY["material_request.create"].schema).toBe(
       materialRequestFormSchema,
     );
+  });
+
+  it("delay_event.create validates with the SAME schema the online action uses", async () => {
+    const { createDelayEventSchema } = await import("@/lib/eot/schema");
+    expect(OFFLINE_WRITE_REGISTRY["delay_event.create"].schema).toBe(
+      createDelayEventSchema,
+    );
+  });
+
+  it("site_report.create validates with the SAME schema the online action uses", async () => {
+    const { createSiteReportSchema } = await import("@/lib/site-reports/schema");
+    expect(OFFLINE_WRITE_REGISTRY["site_report.create"].schema).toBe(
+      createSiteReportSchema,
+    );
+  });
+
+  it("delay_event + site_report refuse offline exactly what they refuse online", () => {
+    const delay = offlineWriteEntity("delay_event.create").schema;
+    const okDelay = {
+      jobId: "11111111-1111-4111-8111-111111111111",
+      category: "weather",
+      startedOn: "2026-07-30",
+      description: "Rain stopped work",
+    };
+    expect(delay.safeParse(okDelay).success).toBe(true);
+    expect(delay.safeParse({ ...okDelay, jobId: "not-a-uuid" }).success).toBe(false);
+    expect(delay.safeParse({ ...okDelay, category: "act_of_god" }).success).toBe(false);
+    expect(delay.safeParse({ ...okDelay, startedOn: "30/07/2026" }).success).toBe(false);
+    expect(delay.safeParse({ ...okDelay, description: "" }).success).toBe(false);
+    // a lifecycle status can never be smuggled into the queue — Zod strips it
+    const stripped = delay.safeParse({ ...okDelay, status: "recorded" });
+    expect(stripped.success).toBe(true);
+    expect((stripped as { data: object }).data).not.toHaveProperty("status");
+
+    const report = offlineWriteEntity("site_report.create").schema;
+    const okReport = {
+      job_id: "11111111-1111-4111-8111-111111111111",
+      title: "Week 30",
+      period_start: "2026-07-27",
+      period_end: "2026-07-31",
+    };
+    expect(report.safeParse(okReport).success).toBe(true);
+    expect(report.safeParse({ ...okReport, job_id: "not-a-uuid" }).success).toBe(false);
+    expect(report.safeParse({ ...okReport, title: "" }).success).toBe(false);
+    // period_end before period_start is refused, offline as online
+    expect(
+      report.safeParse({ ...okReport, period_end: "2026-07-01" }).success,
+    ).toBe(false);
+    // no lifecycle status rides in
+    const r2 = report.safeParse({ ...okReport, status: "issued" });
+    expect(r2.success).toBe(true);
+    expect((r2 as { data: object }).data).not.toHaveProperty("status");
   });
 
   it("each schema refuses offline exactly what it refuses online", () => {
@@ -291,6 +382,10 @@ describe("offline write registry — user-facing counting", () => {
     expect(describeOfflineCount("material_request.create", 2)).toBe(
       "2 materials requests",
     );
+    expect(describeOfflineCount("delay_event.create", 1)).toBe("1 delay event");
+    expect(describeOfflineCount("delay_event.create", 2)).toBe("2 delay events");
+    expect(describeOfflineCount("site_report.create", 1)).toBe("1 site report");
+    expect(describeOfflineCount("site_report.create", 2)).toBe("2 site reports");
   });
 });
 
@@ -306,6 +401,11 @@ describe("offline write registry — the read-only stance is written down", () =
       "stock",
       "permits",
       "toolbox",
+      // the "offl" train's enabled entities and its rejections, documented
+      // where the decision lives.
+      "delay event",
+      "site report",
+      "progress observation",
     ]) {
       expect(src.toLowerCase(), `no rationale recorded for ${topic}`).toContain(topic);
     }
@@ -313,5 +413,9 @@ describe("offline write registry — the read-only stance is written down", () =
     // ack was rejected because the attestation TIME is server-pinned evidence.
     expect(src).toMatch(/acknowledged_at/);
     expect(src).toMatch(/material_request\.submit/);
+    // The "offl" train rejected ITP sign-offs on the same server-pinned-time
+    // ground and progress observations on the upsert-revert ground.
+    expect(src).toMatch(/recorded_at/);
+    expect(src).toMatch(/inspection_signoffs/);
   });
 });
