@@ -2,11 +2,14 @@ import Link from "next/link";
 
 import { requireOrgContext } from "@/server/auth/session";
 import { listCalendarConnections } from "@/server/services/calendar-connections";
+import { getHmrcConnection } from "@/server/services/hmrc-connections";
 import {
   isGoogleCalendarConnectable,
   isMicrosoftCalendarConnectable,
 } from "@/lib/integrations/calendar/oauth";
+import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
 import { CalendarConnectionsPanel } from "./CalendarConnectionsPanel";
+import { HmrcConnectionPanel } from "./HmrcConnectionPanel";
 
 /**
  * /settings/integrations — third-party integration connections (calendar today).
@@ -40,6 +43,7 @@ export default async function IntegrationsSettingsPage() {
   }
 
   const connections = await listCalendarConnections(ctx.org.id);
+  const hmrc = await getHmrcConnection(ctx.org.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -51,6 +55,7 @@ export default async function IntegrationsSettingsPage() {
           microsoft: isMicrosoftCalendarConnectable(),
         }}
       />
+      <HmrcConnectionPanel connection={hmrc} connectable={isHmrcConnectable()} />
     </div>
   );
 }

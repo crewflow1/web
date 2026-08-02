@@ -64,6 +64,18 @@ const envSchema = z.object({
   VAPI_API_KEY: z.string().optional(),
   VAPI_WEBHOOK_SECRET: z.string().optional(),
 
+  // -- HMRC MTD (Making Tax Digital) — DARK, credential + recognition gated ----
+  // The OAuth2 client credentials for HMRC's MTD APIs (VAT digital filing +
+  // CIS300). BOTH absent ⇒ isHmrcConnectable() is false ⇒ the connect/callback
+  // routes 503, the OAuth resolver refuses before any fetch, and the VAT/CIS
+  // payload composers refuse to build. Unset in every environment. Setting these
+  // is NOT sufficient to go live: the NEXT_PUBLIC_FEATURE_HMRC_CONNECT flag is a
+  // second switch, and — even then — CrewFlow cannot SUBMIT to HMRC until it
+  // completes HMRC's vendor RECOGNITION (a legal gate). The substrate stops at
+  // "prepared/held": no code path files a return. See lib/integrations/hmrc.
+  HMRC_CLIENT_ID: z.string().optional(),
+  HMRC_CLIENT_SECRET: z.string().optional(),
+
   // -- AI models ----------------------------------------------------------
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -243,6 +255,14 @@ const envSchema = z.object({
   // settings UI is read-only. The SECOND flip is per-org: an org must configure
   // AND verify (signed ping) an endpoint before any real event fans out to it.
   NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS: z.enum(["true", "false"]).default("false"),
+  // HMRC MTD connect surface — DEFAULTS OFF. While off the HMRC connect/callback
+  // routes 503, isHmrcConnectable() returns false regardless of credentials, and
+  // the settings surface renders "not configured". The SECOND switch is the HMRC
+  // client credentials (HMRC_CLIENT_ID + HMRC_CLIENT_SECRET): the flag alone opens
+  // no door — isHmrcConnectable() requires BOTH the flag AND the credentials. Even
+  // both together only enable CONNECT, never SUBMIT — filing needs HMRC vendor
+  // recognition (a legal gate). Left unset in every environment.
+  NEXT_PUBLIC_FEATURE_HMRC_CONNECT: z.enum(["true", "false"]).default("false"),
 
   // -- Auth: Microsoft SSO (DARK — credential-gated) ----------------------
   // Whether the "Continue with Microsoft" button is exposed on /login.
