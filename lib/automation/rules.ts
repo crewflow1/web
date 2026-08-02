@@ -73,6 +73,35 @@ export const AUTOMATION_RULES: ReadonlyArray<AutomationRule> = [
     enabled: true,
     actions: ["create_notification"],
   },
+  // ── Opt-in rules (default OFF) — the home of the newly-wired actions ────────
+  // These carry the previously-stubbed actions that now call real authorities
+  // (send_email_queue → the notification→email bridge; create_invoice_draft →
+  // the quote→draft-invoice path). They ship `enabled: false` so they have ZERO
+  // effect on the live path until an org turns them on via a per-org override
+  // (automation_rules) — the exact override mechanism this workstream adds. An
+  // org opts in from Settings → Automations; the dispatcher then resolves them
+  // enabled for that org only.
+  {
+    id: "payment_recorded_email_receipt",
+    label: "Payment received → email receipt",
+    description:
+      "When a payment is recorded, queue a receipt email to the customer. " +
+      "Off by default — enable per org in Settings → Automations.",
+    trigger: "payment.recorded",
+    enabled: false,
+    actions: ["send_email_queue"],
+  },
+  {
+    id: "quote_accepted_autoinvoice",
+    label: "Quote accepted → ensure draft invoice",
+    description:
+      "When a quote is accepted, make sure a draft invoice exists for it " +
+      "(idempotent — reuses the one the accept flow already creates). Off by " +
+      "default — enable per org in Settings → Automations.",
+    trigger: "quote.accepted",
+    enabled: false,
+    actions: ["create_invoice_draft"],
+  },
 ];
 
 /** Find rules whose trigger matches `type`. */
