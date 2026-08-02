@@ -101,10 +101,15 @@ describe("hashApiKey — stability", () => {
 });
 
 describe("SCOPES registry — the drift guard", () => {
-  it("v1 defines EXACTLY ['read:jobs'] — growing this list is a reviewed decision", () => {
+  it("v1 defines EXACTLY the per-resource read scopes — growing this list is a reviewed decision", () => {
     // Deep-equal, not contains: adding, renaming or removing a scope must
     // fail here and be changed consciously, together with its enforcement.
-    expect([...SCOPES]).toEqual(["read:jobs"]);
+    expect([...SCOPES]).toEqual([
+      "read:jobs",
+      "read:customers",
+      "read:invoices",
+      "read:quotes",
+    ]);
   });
 
   it("the compile-time union matches the runtime array", () => {
