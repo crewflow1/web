@@ -1,6 +1,8 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
+import { decryptToken } from "@/lib/integrations/token-crypto";
+
 import type { AccountingProvider } from "./adapters";
 
 /**
@@ -264,5 +266,25 @@ export async function exchangeCodeForTokens(params: {
       externalTenantId: null,
       realmId: realmId ?? null,
     },
+  };
+}
+
+/**
+ * Decrypt-on-use seam. Tokens are stored as AES-256-GCM ciphertext (the callback
+ * encrypts them before the DB write); this is the SINGLE place the live push /
+ * refresh path turns them back into usable secrets, immediately before a provider
+ * API call. `decryptToken` throws on a wrong key or any tamper, so a corrupted
+ * token can never be silently used. Pure — no network, no darkness concern (a
+ * caller only reaches here after resolving a connected, connectable provider).
+ * Nobody calls this while dark; it is wired at activation.
+ */
+export function decryptStoredTokens(stored: {
+  accessToken: string;
+  refreshToken: string | null;
+}): { accessToken: string; refreshToken: string | null } {
+  return {
+    accessToken: decryptToken(stored.accessToken),
+    refreshToken:
+      stored.refreshToken !== null ? decryptToken(stored.refreshToken) : null,
   };
 }

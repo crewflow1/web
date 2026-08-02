@@ -240,8 +240,10 @@ describe("accounting connect routes are gated + dark", () => {
     expect(guardIdx).toBeGreaterThan(-1);
     expect(exchangeIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(exchangeIdx);
-    // And it verifies OAuth state (anti-CSRF) before trusting the callback.
-    expect(code).toMatch(/state !== stateCookie/);
+    // And it verifies OAuth state (anti-CSRF) CONSTANT-TIME before trusting the
+    // callback — never a bare string `!==` compare on a security token.
+    expect(code).toMatch(/timingSafeEqual/);
+    expect(code).not.toMatch(/state !== stateCookie/);
   });
 
   it("callback never writes a connected row without an account handle", () => {
