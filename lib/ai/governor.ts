@@ -103,6 +103,7 @@ import "server-only";
  * behaviour is byte-identical and `ai_cost_reservations` stays empty.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   featureDefinition,
@@ -220,51 +221,125 @@ export type BudgetSnapshot = {
  * (`ai_invocations_month_totals`), which applies the identical UK window; the
  * two definitions are pinned against each other in the integration suite.
  *
- * FAIL-SAFE, NOT FAIL-OPEN in one specific way: if the ledger cannot be read at
- * all, this returns `allowed` with `spentPence: 0`. That is a deliberate choice
- * for a system where AI is an ENHANCEMENT over a working deterministic path — a
- * database blip must not silently disable receipt extraction for every tenant.
- * The exposure is bounded by the fact that the read failing is itself an
- * incident that surfaces elsewhere. If AI ever becomes load-bearing rather than
- * additive, this is the line to revisit.
+ * IT FAILS CLOSED. If the ledger OR the live-reservation state cannot be read,
+ * this returns `status: "blocked"` — it DENIES rather than answering "allowed,
+ * £0 spent". This reverses the module's former fail-open posture here, which two
+ * independent audits flagged as the one code hazard blocking safe cost-tier
+ * activation: an unreadable ledger silently uncapping AI spend. A budget check
+ * that cannot see the budget must not assume an empty one. The cost of a
+ * false-deny is exactly the documented degraded path each governed feature
+ * already has and already tests (an empty draft, a deterministic extraction, a
+ * fixed acknowledgement); the cost of a false-allow is unbounded money.
  *
- * THAT FAIL-OPEN IS PRESERVED AND IT IS NO LONGER THE CEILING. This function is
- * now an OBSERVATION — it feeds the HQ view, the spike baseline and the
- * warning bands. The ceiling itself is enforced by `reserveBudget`, which is a
- * WRITE and therefore fails CLOSED: see its own note for why the two postures
- * differ rather than contradict.
+ * The read failure is reported LOUDLY (Sentry + structured log) from the
+ * fail-closed branch, so the degraded-deny mode is an explicit, visible incident
+ * rather than a silent one.
+ *
+ * This is now consistent with `reserveBudget`, the WRITE that enforces the
+ * ceiling atomically and has always failed closed: both the authorisation and
+ * this refusal-adjacent read now deny on error rather than one denying and the
+ * other waving the call through. The lenient, fail-to-zero reads still exist for
+ * the purely ADVISORY surfaces (spike baseline, HQ trend) — see
+ * `readMonthSpendPence` — where a wrong number on a dashboard is the only cost
+ * of a blip and no spend decision hangs on it.
  */
 export async function checkBudget(orgId: string, month?: MonthKey): Promise<BudgetSnapshot> {
   const monthKey = month ?? ukMonthKeyOf(new Date());
   const ceilingPence = AI_MONTHLY_CEILING_PENCE;
 
-  const [spentPence, reservedPence] = await Promise.all([
-    readMonthSpendPence(orgId, monthKey),
-    readMonthReservedPence(orgId, monthKey),
+  const [spent, reserved] = await Promise.all([
+    readMonthSpend(orgId, monthKey),
+    readMonthReserved(orgId, monthKey),
   ]);
+
+  // FAIL CLOSED — the hazard this change exists to close. An unreadable ledger
+  // or reservation state means we DO NOT KNOW what has been spent, so we deny
+  // the invocation rather than assume there is room. Reported loudly so the
+  // degraded-deny mode surfaces as an incident.
+  if (!spent.ok || !reserved.ok) {
+    const err = new Error(
+      `[ai/governor] checkBudget FAILING CLOSED for org ${orgId} (${monthKey}): ` +
+        `spend ${spent.ok ? "ok" : "UNREADABLE"}, reservations ${reserved.ok ? "ok" : "UNREADABLE"} ` +
+        `— denying spend rather than assuming an empty budget.`,
+    );
+    Sentry.captureException(err);
+    console.error(err.message);
+    return {
+      orgId,
+      month: monthKey,
+      // We have no trustworthy figure; report zero rather than a guess, but the
+      // status is what callers gate on and it is `blocked`.
+      spentPence: 0,
+      reservedPence: 0,
+      ceilingPence,
+      status: "blocked",
+    };
+  }
+
   return {
     orgId,
     month: monthKey,
-    spentPence,
-    reservedPence,
+    spentPence: spent.pence,
+    reservedPence: reserved.pence,
     ceilingPence,
     // Committed AND claimed: the honest answer to "is there room for another
     // call", which is what a budget status is for.
-    status: evaluateBudget(spentPence + reservedPence, ceilingPence),
+    status: evaluateBudget(spent.pence + reserved.pence, ceilingPence),
   };
+}
+
+/**
+ * The outcome of a ledger/reservation read.
+ *
+ * `{ ok: false }` is the load-bearing distinction for the fail-closed change: an
+ * unreadable ledger is NOT the same as a genuinely empty one, and collapsing the
+ * two to `0` is exactly what let `checkBudget` answer "allowed, £0 spent" when
+ * the truth was "we cannot see the budget at all". The refusal-adjacent
+ * `checkBudget` consumes this directly so it can DENY on a failure; the advisory
+ * wrappers below flatten it to `0` where that is the right, deliberate posture.
+ */
+type LedgerReadResult = { ok: true; pence: number } | { ok: false };
+
+/**
+ * Total COMMITTED spend for one org in one UK budget month, in pence.
+ *
+ * Signals a read failure rather than swallowing it. A malformed month is a
+ * caller bug, not a read failure — there is no window to query — so it yields a
+ * trustworthy `0` rather than a false deny.
+ */
+async function readMonthSpend(orgId: string, month: MonthKey): Promise<LedgerReadResult> {
+  const { startMs } = ukMonthWindow(month);
+  if (!Number.isFinite(startMs)) return { ok: true, pence: 0 };
+  try {
+    const { data, error } = await db(createAdminClient()).rpc("ai_invocations_month_totals", {
+      p_org_id: orgId,
+      // Any date inside the month; the function truncates to the UK month start.
+      p_month: new Date(startMs + 86_400_000).toISOString().slice(0, 10),
+    });
+    if (error) {
+      console.error("[ai/governor] month totals read failed", error);
+      return { ok: false };
+    }
+    const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+    const total = rows[0]?.total_cost_pence;
+    return { ok: true, pence: typeof total === "number" ? total : Number(total ?? 0) || 0 };
+  } catch (e) {
+    console.error("[ai/governor] month totals read threw", e);
+    return { ok: false };
+  }
 }
 
 /**
  * Live (unexpired) claims for one org in one UK budget month, in pence.
  *
- * 0 on any read failure, mirroring `readMonthSpendPence` — this read feeds the
- * advisory surfaces, never the refusal, so the same reasoning applies. The
- * refusal path never calls it: `ai_reserve_invocation` recomputes the figure
- * itself, inside its lock, where it cannot be stale.
+ * Signals a read failure, exactly like `readMonthSpend`. The refusal path
+ * (`ai_reserve_invocation`) never calls it — it recomputes the figure itself,
+ * inside its lock, where it cannot be stale — but `checkBudget` reads it and
+ * must DENY when it cannot be trusted.
  */
-async function readMonthReservedPence(orgId: string, month: MonthKey): Promise<number> {
+async function readMonthReserved(orgId: string, month: MonthKey): Promise<LedgerReadResult> {
   const { startMs } = ukMonthWindow(month);
-  if (!Number.isFinite(startMs)) return 0;
+  if (!Number.isFinite(startMs)) return { ok: true, pence: 0 };
   try {
     const { data, error } = await db(createAdminClient()).rpc("ai_reservations_month_totals", {
       p_org_id: orgId,
@@ -272,13 +347,13 @@ async function readMonthReservedPence(orgId: string, month: MonthKey): Promise<n
     });
     if (error) {
       console.error("[ai/governor] reservation totals read failed", error);
-      return 0;
+      return { ok: false };
     }
     const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
-    return num(rows[0]?.live_pence);
+    return { ok: true, pence: num(rows[0]?.live_pence) };
   } catch (e) {
     console.error("[ai/governor] reservation totals read threw", e);
-    return 0;
+    return { ok: false };
   }
 }
 
@@ -288,27 +363,16 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Total spend for one org in one UK budget month, in pence. 0 on any read failure. */
+/**
+ * Total spend for one org in one UK budget month, in pence. 0 on any read
+ * failure — the ADVISORY reading, for callers where a wrong number on a
+ * dashboard is the only cost of a blip and no spend decision hangs on it (the
+ * spike baseline, the HQ trend). The refusal-adjacent `checkBudget` reads
+ * `readMonthSpend` directly so it can tell a real zero from an unreadable ledger.
+ */
 async function readMonthSpendPence(orgId: string, month: MonthKey): Promise<number> {
-  const { startMs } = ukMonthWindow(month);
-  if (!Number.isFinite(startMs)) return 0;
-  try {
-    const { data, error } = await db(createAdminClient()).rpc("ai_invocations_month_totals", {
-      p_org_id: orgId,
-      // Any date inside the month; the function truncates to the UK month start.
-      p_month: new Date(startMs + 86_400_000).toISOString().slice(0, 10),
-    });
-    if (error) {
-      console.error("[ai/governor] month totals read failed", error);
-      return 0;
-    }
-    const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
-    const total = rows[0]?.total_cost_pence;
-    return typeof total === "number" ? total : Number(total ?? 0) || 0;
-  } catch (e) {
-    console.error("[ai/governor] month totals read threw", e);
-    return 0;
-  }
+  const result = await readMonthSpend(orgId, month);
+  return result.ok ? result.pence : 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
