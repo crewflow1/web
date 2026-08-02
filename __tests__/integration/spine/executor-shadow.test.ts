@@ -1,6 +1,16 @@
 import { expect, it } from "vitest";
 import { anonClient, describeIntegration, serviceClient } from "../_harness";
 
+// createAdminClient (the durable store's client) reads NEXT_PUBLIC_SUPABASE_URL; the harness
+// resolves either NEXT_PUBLIC_SUPABASE_URL or the bare SUPABASE_URL. Mirror the bare value into
+// the NEXT_PUBLIC name so the real store binds to the SAME local database the harness guards —
+// set BEFORE importing the server-only store, which snapshots nothing but reads env per call.
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= process.env.SUPABASE_URL;
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= process.env.SUPABASE_ANON_KEY;
+
+import { createDurableShadowObservationStore } from "@/server/services/executor-shadow";
+import { shadowObservationRecord, type ShadowObservationContext } from "@/server/sdk/shadow";
+
 /**
  * Executor-shadow durable store — real-Postgres proof of Directive #016 R2 (Module: Live Executor
  * Rollout).
@@ -169,5 +179,65 @@ describeIntegration("Executor-shadow durable store · hq_ai_executor_shadow_obse
     const read = await svc().from(TABLE).select("id, detail").eq("correlation_id", correlationId);
     expect(read.data).toHaveLength(1);
     expect(read.data?.[0]?.detail).toBe("");
+  });
+});
+
+/**
+ * The DURABLE store's natural-key idempotency, proven against real Postgres (R2). The RPC itself
+ * always inserts (the DB carries no unique constraint — a 0-migration train); idempotency is the
+ * store's guard-read over `(correlation_id · task_id · action_id)`, so it can only be proven by
+ * driving the REAL store, not the RPC. A re-run of the same autonomous decision — exactly what the
+ * Task Engine's whole-task retry produces — must leave exactly ONE row.
+ */
+describeIntegration("Executor-shadow durable store · natural-key idempotency (R2)", () => {
+  const ctx = (correlationId: string, actionId = "lead:lead_1:memory.write"): ShadowObservationContext => ({
+    source: "autonomous",
+    correlationId,
+    taskId: "task-shadow-idem-it",
+    actionId,
+  });
+
+  it("recording the SAME decision twice leaves exactly one row (first-write-wins)", async () => {
+    const correlationId = crypto.randomUUID();
+    const store = createDurableShadowObservationStore();
+    const record = shadowObservationRecord(ctx(correlationId), {
+      outcome: "planned",
+      toolLabel: "memory.write",
+      idempotencyKey: `autonomous·task-shadow-idem-it·memory.write·lead%3Alead_1%3Amemory.write·${correlationId}`,
+    });
+
+    const first = await store.record(record);
+    const second = await store.record(record); // the retry
+    expect(first.ok, first.ok ? "" : first.error).toBe(true);
+    expect(second.ok, second.ok ? "" : second.error).toBe(true);
+    // the retry returned the FIRST row's id — a no-op success, not a new insert
+    if (first.ok && second.ok) expect(second.id).toBe(first.id);
+
+    const read = await svc().from(TABLE).select("id").eq("correlation_id", correlationId);
+    expect(read.error, read.error?.message).toBeNull();
+    expect(read.data, "a re-run must not duplicate the shadow row").toHaveLength(1);
+  });
+
+  it("a DIFFERENT action under the same run is a distinct key → a distinct row", async () => {
+    const correlationId = crypto.randomUUID();
+    const store = createDurableShadowObservationStore();
+    await store.record(
+      shadowObservationRecord(ctx(correlationId, "lead:lead_1:memory.write"), {
+        outcome: "planned",
+        toolLabel: "memory.write",
+        idempotencyKey: `autonomous·task-shadow-idem-it·memory.write·lead%3Alead_1%3Amemory.write·${correlationId}`,
+      }),
+    );
+    await store.record(
+      shadowObservationRecord(ctx(correlationId, "lead:lead_2:memory.write"), {
+        outcome: "planned",
+        toolLabel: "memory.write",
+        idempotencyKey: `autonomous·task-shadow-idem-it·memory.write·lead%3Alead_2%3Amemory.write·${correlationId}`,
+      }),
+    );
+
+    const read = await svc().from(TABLE).select("action_id").eq("correlation_id", correlationId);
+    expect(read.error, read.error?.message).toBeNull();
+    expect(read.data).toHaveLength(2);
   });
 });
