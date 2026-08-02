@@ -43,6 +43,10 @@ const EOT_SOURCES = [
   "app/(app)/jobs/[id]/_job-delays.tsx",
   "lib/pdf/eot-pack-pdf.tsx",
   "app/api/jobs/[id]/eot-pack/pdf/route.ts",
+  "lib/eot/letter.ts",
+  "server/services/eot-notice.ts",
+  "lib/pdf/eot-notice-pdf.tsx",
+  "app/api/delays/[id]/notice/pdf/route.ts",
 ];
 
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), "utf8");
@@ -346,6 +350,66 @@ describe("eot · the PDF is recorded-only, private, and not a claim letter", () 
 
   it("the document itself says a contractual claim letter is deliberately not generated", () => {
     expect(template).toMatch(/not\s+a contractual claim and no claim letter is generated/i);
+  });
+});
+
+describe("eot · the notice is a NOTICE, not a claim — and invents nothing", () => {
+  const composer = read("lib/eot/letter.ts");
+  const composerCode = stripComments(composer);
+  const service = read("server/services/eot-notice.ts");
+  const serviceCode = stripComments(service);
+  const template = read("lib/pdf/eot-notice-pdf.tsx");
+  const route = read("app/api/delays/[id]/notice/pdf/route.ts");
+  const routeCode = stripComments(route);
+
+  it("the service hands the composer contract terms as literal null — never a fabricated value", () => {
+    expect(serviceCode).toMatch(/contractReference:\s*null/);
+    expect(serviceCode).toMatch(/contractClause:\s*null/);
+    expect(serviceCode).toMatch(/contractCompletionDate:\s*null/);
+  });
+
+  it("the composer fills fields only from its input and marks absent ones [not specified]", () => {
+    expect(composerCode).toContain('NOT_SPECIFIED = "[not specified]"');
+    // The absent-value helper is the ONLY thing that produces a value from a
+    // possibly-null source; it collapses null to the placeholder, never a guess.
+    expect(composerCode).toMatch(/const specified = trimmed\.length > 0/);
+    expect(composerCode).toMatch(/unspecified/);
+  });
+
+  it("every scoped read in the notice service is org-pinned (delay_events, jobs, diary, quotes)", () => {
+    for (const table of ["delay_events", "site_diary_entries", "quotes", "jobs"]) {
+      for (const chain of serviceCode.split(new RegExp(`\\(["']${table}["']\\)`)).slice(1)) {
+        expect(
+          chain.slice(0, 400),
+          `eot-notice service: a ${table} chain is missing its org pin`,
+        ).toMatch(/\.eq\(["']org_id["'],/);
+      }
+    }
+    // organizations IS the tenant — scoped by its own primary key = the org id.
+    for (const chain of serviceCode.split(/\(["']organizations["']\)/).slice(1)) {
+      expect(chain.slice(0, 400), "organizations read must be pinned to the active org id").toMatch(
+        /\.eq\(["']id["'],\s*orgId\)/,
+      );
+    }
+  });
+
+  it("the notice is recorded-only (409 otherwise) and foreign/missing is 404", () => {
+    expect(serviceCode).toMatch(/status !== "recorded"/);
+    expect(serviceCode).toMatch(/not_recorded/);
+    expect(serviceCode).toMatch(/not_found/);
+    expect(routeCode).toMatch(/404/);
+    expect(routeCode).toMatch(/409/);
+  });
+
+  it("the route is org-scoped, private and no-store", () => {
+    expect(routeCode).toMatch(/requireOrgContext/);
+    expect(routeCode).toMatch(/loadEotNotice\(ctx\.org\.id,/);
+    expect(routeCode).toContain('"Cache-Control": "private, no-store"');
+  });
+
+  it("the document says on its face it is not a determination of entitlement", () => {
+    expect(composer).toMatch(/does not itself assert contractual entitlement/i);
+    expect(template).toMatch(/not a determination of entitlement/i);
   });
 });
 
