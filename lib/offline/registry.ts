@@ -2,6 +2,8 @@ import { z } from "zod";
 import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
 import { createSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
+import { createDelayEventSchema } from "@/lib/eot/schema";
+import { createSiteReportSchema } from "@/lib/site-reports/schema";
 
 /**
  * OFFLINE WRITE REGISTRY — the one place that decides what CrewFlow will accept
@@ -59,6 +61,33 @@ import { materialRequestFormSchema } from "@/lib/material-requests/schema";
  *                            Materials and taps Send — stated in the form
  *                            wording, not hidden.
  *
+ *   delay_event.create       An EOT delay event (20261084), as a DRAFT ONLY. Its
+ *                            entire value is CONTEMPORANEOUS capture — under
+ *                            JCT/NEC an extension of time stands or falls on what
+ *                            was recorded AT THE TIME work stopped — which is
+ *                            precisely the no-signal moment the queue exists for.
+ *                            It is born 'draft' (the core pins status; the payload
+ *                            cannot carry one) and the 'recorded'/'withdrawn'
+ *                            transitions are NOT captured offline: their
+ *                            provenance (recorded_at/by) is server-pinned by the
+ *                            transition trigger and a draft-CHECK makes pre-forged
+ *                            provenance unrepresentable — replaying a "recorded"
+ *                            hours later would forge the timestamp that trigger
+ *                            protects. No money: working_days_lost is the
+ *                            recorder's CLAIM, never computed, and no finances row
+ *                            is touched. After sync a human opens Delays and taps
+ *                            Record — stated in the form wording.
+ *
+ *   site_report.create       The site report (20260922), as a DRAFT ONLY. The
+ *                            report NUMBER is a per-org COSMETIC label allocated
+ *                            at SYNC time by the same helper the online action
+ *                            uses (never minted offline), and the lifecycle
+ *                            (ready_for_review → approved → issued, with
+ *                            server-pinned issued_at and the customer-visible
+ *                            snapshot freeze) stays online-only. The draft is the
+ *                            honest offline artefact; a human completes and issues
+ *                            it online.
+ *
  * ── DELIBERATELY NOT ENABLED (and why) ────────────────────────────────────────
  * Everything else in the product stays READ-ONLY offline. The reasons are not
  * uniform, and that is the point — each needs its own product decision:
@@ -93,6 +122,23 @@ import { materialRequestFormSchema } from "@/lib/material-requests/schema";
  *                               superseded in between. The engine's natural key would
  *                               make the replay idempotent, but idempotent capture of
  *                               dishonest evidence is still dishonest evidence.
+ *   ITP inspection sign-offs    Considered for the "offl" train and REJECTED on the
+ *                               toolbox-ack ground exactly: inspection_signoffs
+ *                               (20261076) server-pins recorded_at ("the single most
+ *                               load-bearing fact on the row"), version-anchors to
+ *                               the plan's ISSUED reference, carries a typed-name
+ *                               signature with contractual force, and computes a
+ *                               HOLD-POINT breach stamp at insert against the plan's
+ *                               live state. An offline capture replayed later would
+ *                               misdate the attestation and could mis-stamp the gate.
+ *   job progress observations   Its ONLINE write path is an UPSERT on the natural key
+ *                               (job_id, observed_on) — a create-OR-CORRECT. Replaying
+ *                               it hours later would silently revert a correction made
+ *                               while offline (the site_diary/snag UPDATE reason), and
+ *                               an insert-only offline fork would break the "a queued
+ *                               write is not a special write" property.
+ *   fuel / expense logs         Carry a monetary cost and (for expenses) a receipt
+ *                               image — money out plus binary, the expenses exclusion.
  *
  * Nothing here is a technical blocker. Each is a decision about what a builder is
  * allowed to promise a client, an insurer, or HMRC about a record created with no
@@ -104,6 +150,8 @@ export const OFFLINE_WRITE_KINDS = [
   "site_diary.create",
   "snag.create",
   "material_request.create",
+  "delay_event.create",
+  "site_report.create",
 ] as const;
 export type OfflineWriteKind = (typeof OFFLINE_WRITE_KINDS)[number];
 
@@ -182,6 +230,28 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
         })
         .join("\n");
     },
+  },
+  "delay_event.create": {
+    label: "delay event",
+    labelPlural: "delay events",
+    viewHref: "/delays",
+    schema: createDelayEventSchema,
+    // The recorder's own words + the facts of the stoppage — what they must be
+    // able to read back and re-type if the server ever refuses the item.
+    recoverFields: [
+      "description",
+      "category",
+      "startedOn",
+      "endedOn",
+      "workingDaysLost",
+    ],
+  },
+  "site_report.create": {
+    label: "site report",
+    labelPlural: "site reports",
+    viewHref: "/site-reports",
+    schema: createSiteReportSchema,
+    recoverFields: ["title", "period_start", "period_end"],
   },
 };
 

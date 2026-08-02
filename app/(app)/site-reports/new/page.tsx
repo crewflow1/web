@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createSiteReport } from "../actions";
+import { SiteReportForm } from "../_form";
 import { readFailure } from "@/lib/supabase/read-failure";
 
 const ERROR_MAP: Record<string, string> = {
@@ -24,7 +25,7 @@ export default async function NewSiteReportPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -36,7 +37,13 @@ export default async function NewSiteReportPage({
     .order("created_at", { ascending: false })
     .limit(200);
   if (jobsError) throw readFailure("site reports: job picker", jobsError);
-  const jobs = (jobsRaw ?? []) as unknown as JobOption[];
+  const jobs = ((jobsRaw ?? []) as unknown as JobOption[]).map((j) => ({
+    id: j.id,
+    label:
+      (j.customer?.name ?? "Job") +
+      (j.scheduled_date ? ` · ${j.scheduled_date}` : "") +
+      (j.status ? ` · ${j.status}` : ""),
+  }));
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -73,93 +80,18 @@ export default async function NewSiteReportPage({
         </div>
       ) : null}
 
-      <form
+      {/* CREATE is offline-writable (lib/offline/registry.ts — site_report.create).
+          The identity handed to the form is the one the SERVER just resolved for
+          this request — newly authored work is never attributed from a client-side
+          marker on a shared tablet (#456). */}
+      <SiteReportForm
         action={createSiteReport}
-        className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <div>
-          <label htmlFor="title" className="block text-sm font-medium text-slate-800">
-            Report title<span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <input
-            id="title"
-            name="title"
-            type="text"
-            required
-            autoFocus
-            placeholder="Weekly progress report — week 12"
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="job_id" className="block text-sm font-medium text-slate-800">
-            Job / site<span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <select
-            id="job_id"
-            name="job_id"
-            required
-            defaultValue={sp.job ?? ""}
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          >
-            <option value="" disabled>
-              Choose a job…
-            </option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {(j.customer?.name ?? "Job") +
-                  (j.scheduled_date ? ` · ${j.scheduled_date}` : "") +
-                  (j.status ? ` · ${j.status}` : "")}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label htmlFor="period_start" className="block text-sm font-medium text-slate-800">
-              Period start<span className="ml-0.5 text-red-500">*</span>
-            </label>
-            <input
-              id="period_start"
-              name="period_start"
-              type="date"
-              required
-              defaultValue={start}
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </div>
-          <div>
-            <label htmlFor="period_end" className="block text-sm font-medium text-slate-800">
-              Period end<span className="ml-0.5 text-red-500">*</span>
-            </label>
-            <input
-              id="period_end"
-              name="period_end"
-              type="date"
-              required
-              defaultValue={end}
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Gather &amp; create draft
-          </button>
-          <Link
-            href="/site-reports"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+        jobs={jobs}
+        presetJob={sp.job ?? ""}
+        defaultPeriodStart={start}
+        defaultPeriodEnd={end}
+        offline={{ userId: user.id, orgId: ctx.org.id }}
+      />
     </div>
   );
 }

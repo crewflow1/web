@@ -277,9 +277,16 @@ describe("eot · org pinning per read", () => {
     }
   });
 
-  it("every write in actions.ts is org-pinned (insert carries org_id; updates .eq it)", () => {
+  it("every write in the delay lane is org-pinned (insert carries org_id; updates .eq it)", () => {
+    // The create INSERT moved into the SHARED write core (train "offl":
+    // createDelayEventDraftRecord in server/services/delay-event-writes.ts),
+    // which both the online form post and the offline queue replay call — so it
+    // is pinned once for both. It pins by the org ARGUMENT (`orgId` = ctx.org.id).
+    const core = stripComments(read("server/services/delay-event-writes.ts"));
+    expect(core).toMatch(/insert\(\{[\s\S]*?org_id: orgId/);
+    // The lifecycle updates (record/withdraw/close/update) still live in the
+    // action and stay ctx-pinned.
     const code = stripComments(read("app/(app)/delays/actions.ts"));
-    expect(code).toMatch(/insert\(\{[\s\S]*?org_id: ctx\.org\.id/);
     const updates = (code.match(/\.update\(/g) ?? []).length;
     const pins = (code.match(/\.eq\("org_id", ctx\.org\.id\)/g) ?? []).length;
     expect(updates).toBeGreaterThan(0);
