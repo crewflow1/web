@@ -1,10 +1,13 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { requireOrgContext } from "@/server/auth/session";
 import {
   buildAccountingExport,
   recordAccountingExport,
 } from "@/server/services/accounting-export";
+import { disconnectAccountingProvider } from "@/server/services/accounting-connections";
 import {
   getAccountingAdapter,
   type AccountingProvider,
@@ -97,4 +100,41 @@ export async function requestAccountingPush(
 
   const reason = !invRes.ok ? invRes.message : !payRes.ok ? payRes.message : "Push failed.";
   return { ok: false, provider, message: reason };
+}
+
+/**
+ * Disconnect an accounting provider — the admin action that wires the panel's
+ * "Disconnect" control to `disconnectAccountingProvider`. Clears the tokens +
+ * account handle and returns the row to `disconnected`.
+ *
+ * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin loudly; the
+ * admin-write RLS on accounting_connections (20261095) is the real boundary for
+ * the UPDATE, which runs under the caller's JWT. Org-pinned via ctx.org.id.
+ * LOUD: a failed disconnect throws rather than silently reporting success.
+ *
+ * A plain form-action (FormData → void) so the panel needs no client JS; on
+ * success the page is revalidated so the connected state disappears.
+ */
+export async function disconnectAccountingConnection(
+  formData: FormData,
+): Promise<void> {
+  const providerRaw = String(formData.get("provider") ?? "");
+  if (providerRaw !== "xero" && providerRaw !== "quickbooks") {
+    throw new Error("Unknown accounting provider.");
+  }
+  const provider = providerRaw as AccountingProvider;
+
+  const { ctx } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error(
+      "Only an owner or admin may disconnect an accounting provider.",
+    );
+  }
+
+  const res = await disconnectAccountingProvider(ctx.org.id, provider);
+  if (!res.ok) {
+    throw new Error(res.error ?? "Disconnect failed.");
+  }
+
+  revalidatePath("/reports");
 }

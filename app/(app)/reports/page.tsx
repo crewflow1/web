@@ -7,6 +7,12 @@ import {
 } from "@/lib/reports/aggregates";
 import { requireOrgContext } from "@/server/auth/session";
 import { AccountingExportPanel } from "./accounting/AccountingExportPanel";
+import { AccountingConnectionsPanel } from "./accounting/AccountingConnectionsPanel";
+import { listAccountingConnections } from "@/server/services/accounting-connections";
+import {
+  isXeroConnectable,
+  isQuickbooksConnectable,
+} from "@/lib/integrations/accounting/oauth";
 
 /**
  * /reports — owner-facing time-series aggregates.
@@ -52,11 +58,14 @@ export default async function ReportsPage() {
   const { ctx } = await requireOrgContext();
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
-  const [jobs, revenue, vat, top] = await Promise.all([
+  const [jobs, revenue, vat, top, connections] = await Promise.all([
     jobsPerWeek(ctx.org.id, 8),
     revenuePerMonth(ctx.org.id, 12),
     vatPerQuarter(ctx.org.id, 4),
     topCustomersByRevenue(ctx.org.id, 10),
+    isAdmin
+      ? listAccountingConnections(ctx.org.id)
+      : Promise.resolve([]),
   ]);
 
   const totalJobs = jobs.reduce((s, r) => s + r.total, 0);
@@ -117,6 +126,19 @@ export default async function ReportsPage() {
           Admin-only: generating a bookkeeping export is an admin act, doubled
           by the admin-write RLS on accounting_export_log. */}
       {isAdmin ? <AccountingExportPanel /> : null}
+
+      {/* Accounting connections — connect a Xero / QuickBooks account. DARK:
+          the OAuth flow is credential-gated, so the connect buttons render
+          disabled ("configure credentials") until activation. Admin-only. */}
+      {isAdmin ? (
+        <AccountingConnectionsPanel
+          connections={connections}
+          connectable={{
+            xero: isXeroConnectable(),
+            quickbooks: isQuickbooksConnectable(),
+          }}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Jobs per week ----------------------------------------------- */}
