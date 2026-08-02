@@ -5,8 +5,11 @@
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
 **Last reconciled:** 2026-08-01 (ROADMAP COMPLETION PROGRAMME, build-dark mandate — build every gated feature to the point where only a credential/decision/legal input remains, so activation is a config flip. Waves 1–2 shipped 4 trains: HQ **Decision Centre** `20261091` (Phase 16 + Layer-5 Delay/Delegate), **Deterministic Intelligence** (company-health RAG/CLV/subcontractor scoring, Phase 9, 0-mig), HQ **Finance AI** (MRR/ARR board, insufficient-honest, 0-mig), **Maintenance-reminder engine** `20261092` (Phase 7, built dark). Migration tip `20261090`→`20261092`.)
-**Production `main`:** `3ef11a7` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261092` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Production `main`:** `be731cb` — verified against `/api/health`, not inferred
+**Production migration tip:** `20261094` — read from `supabase_migrations.schema_migrations`, NOT inferred
+
+> **COMPLETION PROGRAMME Waves 3–4 (2026-08-02) — 6 more trains, all merged + deployed + production-verified; providers still dark.**
+> Wave 3: **Accounting export** `20261093` (deterministic canonical mapper + live CSV + Xero/QuickBooks adapters built dark; P2s fixed pre-merge: draft-invoice exclusion + non-silent truncation); **Open API expansion** (0-mig — `/api/v1/{customers,invoices,quotes}` + OpenAPI 3.1 doc, flag-dark, key-auth, org-scoped, explicit DTO allowlists excluding cost/secret/PII; a flaky test de-flaked). Wave 4: **Support AI** (0-mig deterministic triage board; P2 fixed: open-count from active rows, no fake-zero-on-error); **HQ Task Pipeline + Boardroom Confidence/ETA/Health** `20261094` (additive `pipeline_stage` + append-only `hq_ai_task_stage_events` + sanctioned `set_stage` RPC); **Auth completion** (0-mig — email+password, reset, MFA-TOTP enrol/challenge, Microsoft-SSO + account-linking dark; additive/no-lockout, MFA NOT enforced; P2 fixed: backslash open-redirect + signup enumeration + a login-form e2e regression); **CTO AI** (0-mig deterministic platform-health board — uptime/CI/deploy metrics honestly insufficient, no data source). Every train ran the full gate; adversarial review caught real defects each time (GDPR-erasure immutability, INSERT-bypass, honest-null seam, double-send, open-redirect) fixed before merge. Migration tip `20261092`→`20261094`.
 
 > **✅ C15 INTERRUPTION FULLY RECOVERED (Continuation 16, 2026-08-01).** The four spend-limit-killed
 > lanes were **resumed from their worktrees (never rebuilt)** and shipped, alongside five new trains.
@@ -384,8 +387,10 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261089` | expense budgets (`expense_budgets`) | **APPLIED** — C18, #538 |
 | `20261090` | quote-approval authz trigger (`enforce_quote_approval_authz` on `quotes`) | **APPLIED** — C20, #544 |
 | `20261091` | HQ Decision Centre (`hq_decisions` + `hq_decision_events`) | **APPLIED** — Completion W1, #545 |
-| `20261092` | maintenance-reminder engine (`maintenance_reminder_log` + `claim_due_maintenance_reminders`) | **APPLIED (prod tip)** — Completion W2, #548 |
-| `20261093+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| `20261092` | maintenance-reminder engine (`maintenance_reminder_log` + `claim_due_maintenance_reminders`) | **APPLIED** — Completion W2, #548 |
+| `20261093` | accounting export log (`accounting_export_log`) | **APPLIED** — Completion W3, #549 |
+| `20261094` | HQ task pipeline (`hq_ai_tasks.pipeline_stage` + `hq_ai_task_stage_events`) | **APPLIED (prod tip)** — Completion W4, #552 |
+| `20261095+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
