@@ -117,10 +117,21 @@ export async function updateSession(request: NextRequest) {
     pathname === "/api/waitlist" ||
     pathname === "/api/demo";
 
-  // Auth-flow pages (login / signup / check-email).
+  // Auth-flow pages (login / signup / check-email / reset-password).
+  //
+  // /reset-password is the "forgot password" request page — a LOGGED-OUT user
+  // must be able to reach it, so it belongs here (an authed visitor is bounced
+  // to their dashboard, which is fine — they'd change a password in-app).
+  //
+  // Deliberately NOT listed here (must stay reachable by an AUTHENTICATED
+  // session, so they must not be treated as auth-flow and bounced away):
+  //   - /login/mfa       → the aal1 session finishing its TOTP challenge.
+  //   - /update-password → the recovery session (or a signed-in user) setting
+  //                        a new password. Both hold a live session by design.
   const isAuthFlow =
     pathname === "/login" ||
     pathname === "/signup" ||
+    pathname === "/reset-password" ||
     pathname.startsWith("/check-email");
 
   // Build a redirect response that preserves any session cookies Supabase

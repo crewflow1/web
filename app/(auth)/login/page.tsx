@@ -1,4 +1,10 @@
-import { signInWithGoogle, signInWithMagicLink } from "../actions";
+import {
+  signInWithGoogle,
+  signInWithMagicLink,
+  signInWithMicrosoft,
+} from "../actions";
+import { EmailPasswordForm } from "../_email-password-form";
+import { env } from "@/lib/env";
 
 type SearchParams = Promise<{
   error?: string;
@@ -46,7 +52,7 @@ const ERROR_MESSAGES: Record<
     recoverable: true,
   },
   oauth_no_url: {
-    msg: "We couldn't start the Google sign-in. Please try again.",
+    msg: "We couldn't start the sign-in. Please try again.",
     recoverable: false,
   },
 };
@@ -65,6 +71,8 @@ export default async function LoginPage({
       : null;
   const isRecoverableError = errorEntry?.recoverable ?? false;
   const emailHint = sp.email ?? "";
+  const nextHint = sp.next ?? "";
+  const microsoftEnabled = env.NEXT_PUBLIC_FEATURE_MICROSOFT_SSO === "true";
 
   return (
     <div className="space-y-6">
@@ -88,23 +96,45 @@ export default async function LoginPage({
         </div>
       ) : null}
 
-      <form action={signInWithGoogle}>
-        <button
-          type="submit"
-          className="flex w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
-        >
-          <GoogleIcon className="h-5 w-5" />
-          Continue with Google
-        </button>
-      </form>
+      <div className="space-y-3">
+        <form action={signInWithGoogle}>
+          <button
+            type="submit"
+            className="flex w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
+          >
+            <GoogleIcon className="h-5 w-5" />
+            Continue with Google
+          </button>
+        </form>
+
+        {/* Microsoft SSO — DARK by default. Only renders when the Azure
+            provider credential is configured (NEXT_PUBLIC_FEATURE_MICROSOFT_SSO).
+            No broken/fake button while off. */}
+        {microsoftEnabled ? (
+          <form action={signInWithMicrosoft}>
+            <button
+              type="submit"
+              className="flex w-full items-center justify-center gap-3 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50"
+            >
+              <MicrosoftIcon className="h-5 w-5" />
+              Continue with Microsoft
+            </button>
+          </form>
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
         <div className="h-px flex-1 bg-slate-200" />
-        <span>or</span>
+        <span>or with a magic link</span>
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
-      <form action={signInWithMagicLink} className="space-y-3">
+      <form
+        action={signInWithMagicLink}
+        className="space-y-3"
+        data-testid="magic-link-form"
+        aria-label="Sign in with a magic link"
+      >
         <label htmlFor="email" className="block text-sm font-medium text-slate-700">
           Email
         </label>
@@ -133,10 +163,32 @@ export default async function LoginPage({
         </p>
       </form>
 
+      <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
+        <div className="h-px flex-1 bg-slate-200" />
+        <span>or use a password</span>
+        <div className="h-px flex-1 bg-slate-200" />
+      </div>
+
+      {/* Email + password — ADDITIVE. Existing Google + magic-link above are
+          unchanged; a passwordless user simply has no password and keeps using
+          those. */}
+      <EmailPasswordForm next={nextHint || undefined} />
+
       <p className="text-center text-xs text-slate-500">
         By continuing you agree to CrewFlow&apos;s Terms and acknowledge our Privacy Policy.
       </p>
     </div>
+  );
+}
+
+function MicrosoftIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M11.4 11.4H2V2h9.4v9.4Z" fill="#F25022" />
+      <path d="M22 11.4h-9.4V2H22v9.4Z" fill="#7FBA00" />
+      <path d="M11.4 22H2v-9.4h9.4V22Z" fill="#00A4EF" />
+      <path d="M22 22h-9.4v-9.4H22V22Z" fill="#FFB900" />
+    </svg>
   );
 }
 

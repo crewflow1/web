@@ -6,6 +6,15 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
+import {
+  type FormState,
+  formError,
+  formSuccess,
+  validateFormData,
+} from "@/lib/forms/state";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { safeInternalPath } from "@/server/auth/safe-path";
+import { ensureUserRow } from "@/server/services/bootstrap-account";
 
 function getOrigin(headerList: Headers): string {
   const fromHeader = headerList.get("origin") ?? headerList.get("referer");
@@ -116,4 +125,399 @@ export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
   redirect("/login");
+}
+
+// ===========================================================================
+// EMAIL + PASSWORD  (ADDITIVE — alongside magic-link + Google, never replacing)
+// ===========================================================================
+//
+// CONFIG NOTE (activation, not code): email+password sign-in relies on the
+// Supabase "Email" auth provider having the PASSWORD grant enabled in the
+// dashboard (Authentication → Providers → Email). Magic-link (OTP) uses the
+// same provider, so it is almost certainly already on — but if signInWithPassword
+// returns "Email logins are disabled" it is that toggle, NOT this code. The UI
+// below is built so it works the moment the grant is on. Nothing here changes
+// the existing signInWithOtp / signInWithOAuth flows.
+//
+// A magic-link / Google user simply has no password set: signInWithPassword
+// returns "Invalid login credentials" for them, which we surface plainly. Their
+// passwordless sign-in keeps working exactly as before.
+
+// Supabase hashes with bcrypt, which silently truncates beyond 72 bytes — cap
+// the input so "the first 72 chars" can never become a confusing auth mismatch.
+const PASSWORD_MAX = 72;
+const PASSWORD_MIN = 8;
+
+const passwordSignInSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(254),
+  password: z.string().min(1, "Enter your password").max(PASSWORD_MAX),
+  // Optional post-login landing, carried from ?next= on /login. Validated
+  // below (must be a local path) before it is ever used as a redirect target.
+  next: z.string().optional(),
+});
+
+const passwordSignUpSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(254),
+  password: z
+    .string()
+    .min(PASSWORD_MIN, `Use at least ${PASSWORD_MIN} characters`)
+    .max(PASSWORD_MAX, `Use at most ${PASSWORD_MAX} characters`),
+  confirm: z.string().min(1, "Re-enter your password"),
+}).refine((v) => v.password === v.confirm, {
+  message: "Passwords don't match",
+  path: ["confirm"],
+});
+
+/**
+ * Compute a safe post-login landing, mirroring app/auth/callback/route.ts:
+ *   - super-admin  → /admin/organizations (never a tenant workspace)
+ *   - explicit safe /next (local, non-/admin) → honoured
+ *   - otherwise     → /dashboard
+ */
+function safeLanding(email: string | null, rawNext: string | undefined): string {
+  const isAdmin = isSuperAdminEmail(email);
+  const safeExplicit = safeInternalPath(rawNext);
+  if (isAdmin) {
+    return safeExplicit && safeExplicit.startsWith("/admin")
+      ? safeExplicit
+      : "/admin/organizations";
+  }
+  if (safeExplicit && !safeExplicit.startsWith("/admin")) return safeExplicit;
+  return "/dashboard";
+}
+
+/**
+ * Email + password sign-in.
+ *
+ * Returns a FormState (useActionState) so the /login form can render inline
+ * errors and preserve the typed email — no redirect round-trip that would
+ * wipe the field. On success `redirectTo` names the landing; the client
+ * navigates there.
+ *
+ * If the user has a VERIFIED TOTP factor, a session is created at aal1 and we
+ * redirect to /login/mfa to finish the challenge (→ aal2). We do NOT hard-block
+ * aal1 sessions elsewhere — MFA is opt-in (see the enforcement note in
+ * app/(app)/settings/security/actions.ts).
+ */
+export async function signInWithPassword(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, passwordSignInSchema);
+  if (!result.ok) {
+    // Never echo the password back into the form values.
+    const s = result.state;
+    if (s.values) delete (s.values as Record<string, unknown>).password;
+    return s;
+  }
+  const { email, password, next } = result.data;
+
+  // Same limiter as magic-link — throttles credential-stuffing per address.
+  // Fails OPEN (see lib/security/rate-limit) so a limiter fault never locks
+  // anyone out of sign-in.
+  const limit = await consume("auth", email, DEFAULT_LIMITS.auth);
+  if (!limit.allowed) {
+    return formError(
+      "Too many sign-in attempts. Please wait a few minutes and try again.",
+      { email },
+    );
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error || !data.user) {
+    // Loud but non-enumerating: identical message whether the email is unknown
+    // or the password is wrong. A magic-link/Google user (no password) also
+    // lands here — the hint points them back to the passwordless options.
+    return formError(
+      "Incorrect email or password. If you normally sign in with Google or a magic link, use those options above.",
+      { email },
+    );
+  }
+
+  // Defensive bootstrap parity with the OAuth/magic-link callback so a
+  // password sign-in never lands on a page that expects a public.users row.
+  try {
+    await ensureUserRow({ id: data.user.id, email: data.user.email ?? email });
+  } catch {
+    // Non-fatal: requireOrgContext will route brand-new users to onboarding.
+  }
+
+  // MFA gate: a verified factor leaves the fresh session at aal1 with a
+  // pending aal2. Finish the challenge before landing.
+  const { data: aal } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.nextLevel !== aal.currentLevel) {
+    return formSuccess({ redirectTo: `/login/mfa${next ? `?next=${encodeURIComponent(next)}` : ""}` });
+  }
+
+  return formSuccess({ redirectTo: safeLanding(data.user.email ?? email, next) });
+}
+
+/**
+ * Email + password sign-up.
+ *
+ * Uses supabase.auth.signUp. If the project requires email confirmation
+ * (Supabase setting), no session is returned and we tell the user to confirm
+ * via the emailed link (it lands on /auth/callback like every other link). If
+ * confirmation is off, a session is returned and we bootstrap + land them.
+ */
+export async function signUpWithPassword(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, passwordSignUpSchema);
+  if (!result.ok) {
+    const s = result.state;
+    if (s.values) {
+      delete (s.values as Record<string, unknown>).password;
+      delete (s.values as Record<string, unknown>).confirm;
+    }
+    return s;
+  }
+  const { email, password } = result.data;
+
+  const limit = await consume("auth", email, DEFAULT_LIMITS.auth);
+  if (!limit.allowed) {
+    return formError(
+      "Too many attempts. Please wait a few minutes and try again.",
+      { email },
+    );
+  }
+
+  const supabase = await createClient();
+  const origin = getOrigin(await headers());
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: `${origin}/auth/callback` },
+  });
+
+  if (error) {
+    // NEUTRAL, non-enumerating: Supabase's raw error.message leaks account
+    // existence ("User already registered") for a known email. Return an
+    // identical message regardless of the underlying cause so signup cannot be
+    // used to probe which emails have accounts.
+    return formError(
+      "Could not create the account. If you already have one, sign in instead.",
+      { email },
+    );
+  }
+
+  // No session ⇒ email confirmation is required. Don't pretend they're in.
+  if (!data.session) {
+    return formSuccess({
+      successMessage:
+        "Account created. Check your email for a confirmation link to finish signing in.",
+      values: { email },
+    });
+  }
+
+  // Confirmation disabled ⇒ signed in immediately. Bootstrap + land.
+  if (data.user) {
+    try {
+      await ensureUserRow({ id: data.user.id, email: data.user.email ?? email });
+    } catch {
+      // Non-fatal — onboarding will pick them up.
+    }
+  }
+  return formSuccess({ redirectTo: safeLanding(data.user?.email ?? email, undefined) });
+}
+
+// ===========================================================================
+// PASSWORD RESET / RECOVERY
+// ===========================================================================
+
+const resetRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(254),
+});
+
+/**
+ * Request a password-reset email. Supabase emails a recovery link that lands
+ * on /auth/callback (type=recovery), which verifies the token, creates a
+ * session, and forwards to /update-password (via ?next=).
+ *
+ * Always returns the SAME success state whether or not the address exists —
+ * never leak account existence.
+ */
+export async function requestPasswordReset(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, resetRequestSchema);
+  if (!result.ok) return result.state;
+  const { email } = result.data;
+
+  const limit = await consume("auth", email, DEFAULT_LIMITS.auth);
+  // Even when throttled we return the neutral success message — no enumeration,
+  // no lockout signal.
+  if (limit.allowed) {
+    const supabase = await createClient();
+    const origin = getOrigin(await headers());
+    await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${origin}/auth/callback?next=/update-password`,
+    });
+  }
+
+  return formSuccess({
+    successMessage:
+      "If an account exists for that email, we've sent a link to reset your password. It can take a minute to arrive and may land in spam.",
+    values: { email },
+  });
+}
+
+const updatePasswordSchema = z.object({
+  password: z
+    .string()
+    .min(PASSWORD_MIN, `Use at least ${PASSWORD_MIN} characters`)
+    .max(PASSWORD_MAX, `Use at most ${PASSWORD_MAX} characters`),
+  confirm: z.string().min(1, "Re-enter your password"),
+}).refine((v) => v.password === v.confirm, {
+  message: "Passwords don't match",
+  path: ["confirm"],
+});
+
+/**
+ * Set a new password for the CURRENTLY authenticated session.
+ *
+ * Reached two ways, both requiring a live session (so this can never set a
+ * stranger's password):
+ *   1. from the recovery link (callback established a recovery session), or
+ *   2. a signed-in user changing their password in-app.
+ *
+ * If there is no session we refuse loudly rather than silently no-op.
+ */
+export async function updatePassword(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, updatePasswordSchema);
+  if (!result.ok) {
+    const s = result.state;
+    if (s.values) {
+      delete (s.values as Record<string, unknown>).password;
+      delete (s.values as Record<string, unknown>).confirm;
+    }
+    return s;
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return formError(
+      "Your reset link has expired or you're signed out. Request a new reset email and try again.",
+    );
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: result.data.password });
+  if (error) {
+    return formError(error.message);
+  }
+
+  return formSuccess({
+    successMessage: "Password updated. You can use it to sign in from now on.",
+    redirectTo: safeLanding(user.email ?? null, undefined),
+  });
+}
+
+// ===========================================================================
+// MICROSOFT SSO  (DARK — credential-gated; provider 'azure')
+// ===========================================================================
+
+/**
+ * Begin a Microsoft (Azure AD) OAuth flow. Mirrors signInWithGoogle.
+ *
+ * DARK by default: the "Continue with Microsoft" button only renders when
+ * NEXT_PUBLIC_FEATURE_MICROSOFT_SSO === "true", which should be flipped ONLY
+ * once the EXTERNAL credential exists (a Supabase Azure provider backed by an
+ * Azure AD app registration). Without that, Supabase returns a provider error
+ * — this action surfaces it plainly rather than failing silently.
+ */
+export async function signInWithMicrosoft() {
+  const supabase = await createClient();
+  const origin = getOrigin(await headers());
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "azure",
+    options: {
+      redirectTo: `${origin}/auth/callback`,
+      scopes: "email openid profile",
+    },
+  });
+
+  if (error) {
+    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+  }
+  if (data?.url) {
+    redirect(data.url);
+  }
+  redirect("/login?error=oauth_no_url");
+}
+
+// ===========================================================================
+// MFA (TOTP) LOGIN CHALLENGE  (opt-in; upgrades an aal1 session to aal2)
+// ===========================================================================
+
+const mfaChallengeSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code from your app"),
+  next: z.string().optional(),
+});
+
+/**
+ * Complete the TOTP challenge at login. Requires a live (aal1) session — the
+ * password step already created one. Finds the user's verified TOTP factor,
+ * challenges it, and verifies the code to reach aal2.
+ *
+ * NOTE: this is the OPT-IN completion of MFA for users who enrolled. It is
+ * NOT a global gate — users without a factor never reach here, and an aal1
+ * session is not forcibly blocked elsewhere.
+ */
+export async function challengeMfa(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, mfaChallengeSchema);
+  if (!result.ok) return result.state;
+  const { code, next } = result.data;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return formError("Your session expired. Please sign in again.");
+  }
+
+  const { data: factors, error: listErr } = await supabase.auth.mfa.listFactors();
+  if (listErr) {
+    return formError("We couldn't load your authentication factors. Try again.");
+  }
+  const totp = (factors?.totp ?? []).find((f) => f.status === "verified");
+  if (!totp) {
+    // No verified factor — nothing to challenge. Let them straight in rather
+    // than trapping them on this page.
+    return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });
+  }
+
+  const { data: challenge, error: chErr } = await supabase.auth.mfa.challenge({
+    factorId: totp.id,
+  });
+  if (chErr || !challenge) {
+    return formError("We couldn't start the verification. Try again.");
+  }
+
+  const { error: verifyErr } = await supabase.auth.mfa.verify({
+    factorId: totp.id,
+    challengeId: challenge.id,
+    code,
+  });
+  if (verifyErr) {
+    return formError("That code didn't match. Check your authenticator app and try again.");
+  }
+
+  return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });
 }
