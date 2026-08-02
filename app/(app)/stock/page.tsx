@@ -83,6 +83,12 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
         </div>
         <div className="flex gap-2">
           <Link
+            href="/stock/vans"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Van stock
+          </Link>
+          <Link
             href="/stock/items"
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >

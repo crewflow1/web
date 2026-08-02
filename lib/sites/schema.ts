@@ -46,6 +46,11 @@ export const SITE_KIND_HINTS: Record<SiteKind, string> = {
 };
 
 export function siteKindLabel(kind: string): string {
+  // 'vehicle' is a real site kind (a van used as a stock location,
+  // 20261102000000) but deliberately NOT part of SITE_KINDS: a vehicle location
+  // is created through its vehicle, never typed into the /sites form. Labelled
+  // here so it renders properly wherever a van site appears in the stock UI.
+  if (kind === "vehicle") return "Vehicle";
   return SITE_KIND_LABELS[kind as SiteKind] ?? kind;
 }
 
