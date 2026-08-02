@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { AiReceptionistForm } from "./_form";
+import { VoiceStatus } from "./_voice-status";
 import { saveAiReceptionistSetup } from "./actions";
 import {
   AI_RECEPTIONIST_STATUS_LABELS,
@@ -155,6 +156,8 @@ export default async function AiReceptionistSettingsPage() {
           </p>
         </div>
       ) : null}
+
+      <VoiceStatus orgId={ctx.org.id} />
 
       <AiReceptionistForm
         action={saveAiReceptionistSetup}

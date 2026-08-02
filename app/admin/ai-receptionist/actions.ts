@@ -257,3 +257,118 @@ export async function markAiReceptionistConfigured(formData: FormData): Promise<
   revalidatePath("/settings/ai-receptionist");
   redirect(`/admin/ai-receptionist/${id}?saved=configured`);
 }
+
+// ---------------------------------------------------------------------------
+// Voice Telephony (Wave 8) — phone_numbers provisioning (admin-write).
+//
+// HQ provisions the org↔dialed-number routing that attributes an inbound voice
+// call to a tenant. The provider secret is NEVER handled here — it is a
+// service-role-only column set out of band; this action writes only the routing
+// (provider, e164, provider_number_sid, label). A number is inactive until an
+// admin activates it, and the DB CHECK refuses active=true without a provider
+// SID (no-fake-provisioned).
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+/** Provision (or re-provision) a routed number for an org. */
+export async function provisionPhoneNumber(formData: FormData): Promise<void> {
+  const admin = await requireSuperAdmin();
+  const setupId = String(formData.get("setup_id") ?? "");
+  const orgId = String(formData.get("org_id") ?? "");
+  const provider = String(formData.get("provider") ?? "").trim().toLowerCase();
+  const e164 = String(formData.get("e164") ?? "").trim();
+  const providerNumberSid = String(formData.get("provider_number_sid") ?? "").trim();
+  const label = String(formData.get("label") ?? "").trim();
+
+  const back = setupId.match(UUID_RE) ? `/admin/ai-receptionist/${setupId}` : "/admin/ai-receptionist";
+
+  if (
+    !orgId.match(UUID_RE) ||
+    !(provider === "twilio" || provider === "vapi") ||
+    !/^\+[1-9]\d{6,15}$/.test(e164)
+  ) {
+    redirect(`${back}?error=invalid_input`);
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await (
+    supabase.from("phone_numbers" as never) as unknown as {
+      insert: (row: unknown) => Promise<{ error: { message: string } | null }>;
+    }
+  ).insert({
+    org_id: orgId,
+    provider,
+    e164,
+    provider_number_sid: providerNumberSid || null,
+    label: label || null,
+    active: false,
+    created_by: admin.id,
+  });
+
+  if (error) {
+    console.error("[admin/ai-receptionist] provisionPhoneNumber failed", error.message);
+    redirect(`${back}?error=update_failed`);
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "voice.number_provisioned",
+    targetTable: "phone_numbers",
+    targetId: e164,
+    metadata: { org_id: orgId, provider, e164 },
+  });
+
+  revalidatePath(back);
+  revalidatePath("/settings/ai-receptionist");
+  redirect(`${back}?saved=voice_number`);
+}
+
+/** Activate / deactivate a routed number. The DB refuses active without a SID. */
+export async function setPhoneNumberActive(formData: FormData): Promise<void> {
+  const admin = await requireSuperAdmin();
+  const setupId = String(formData.get("setup_id") ?? "");
+  const id = String(formData.get("id") ?? "");
+  const orgId = String(formData.get("org_id") ?? "");
+  const active = String(formData.get("active") ?? "") === "true";
+  const back = setupId.match(UUID_RE) ? `/admin/ai-receptionist/${setupId}` : "/admin/ai-receptionist";
+
+  if (!id.match(UUID_RE) || !orgId.match(UUID_RE)) {
+    redirect(`${back}?error=invalid_input`);
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await (
+    supabase.from("phone_numbers" as never) as unknown as {
+      update: (row: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+        };
+      };
+    }
+  )
+    .update({ active })
+    // Pin BOTH id and org_id — never toggle another org's number.
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  if (error) {
+    // The no-fake CHECK (active without a provider SID) surfaces here.
+    console.error("[admin/ai-receptionist] setPhoneNumberActive failed", error.message);
+    redirect(`${back}?error=update_failed`);
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: active ? "voice.number_activated" : "voice.number_deactivated",
+    targetTable: "phone_numbers",
+    targetId: id,
+    metadata: { org_id: orgId, active },
+  });
+
+  revalidatePath(back);
+  revalidatePath("/settings/ai-receptionist");
+  redirect(`${back}?saved=voice_number`);
+}

@@ -54,6 +54,13 @@ const envSchema = z.object({
   // proxy that rewrites host/proto. Optional: absent, the route reconstructs the URL
   // from the forwarded request headers. Not a secret; carries no credential.
   TWILIO_STATUS_CALLBACK_URL: z.string().optional(),
+  // The PUBLIC status-callback URL Twilio is configured to POST inbound-VOICE
+  // lifecycle events to (Wave 8). The voice twin of TWILIO_STATUS_CALLBACK_URL:
+  // Twilio signs THIS exact URL, so when set it is the canonical value the voice
+  // status webhook verifies X-Twilio-Signature against — authoritative behind a
+  // proxy that rewrites host/proto. Optional; absent, the route reconstructs the
+  // URL from the forwarded request headers. Not a secret; carries no credential.
+  TWILIO_VOICE_STATUS_CALLBACK_URL: z.string().optional(),
   VAPI_API_KEY: z.string().optional(),
   VAPI_WEBHOOK_SECRET: z.string().optional(),
 
@@ -118,6 +125,18 @@ const envSchema = z.object({
   // Setting this to "none"/"off"/"disabled" is a SECOND kill switch independent of the flag.
   // Free string (not an enum) so a new provider needs zero env-schema edits.
   COMMS_WHATSAPP_PROVIDER: z.string().optional(),
+
+  // -- Communication Layer: inbound VOICE provider (Wave 8) --------------
+  // Names the active inbound-voice telephony provider — the receptionist's
+  // FIRST inbound-voice transport. Default "auto": prefer Twilio when its
+  // account creds are set, else Vapi when its key is set, else none. Identical
+  // PLUG-IN doctrine to the SMS/WhatsApp seams: with no provider configured
+  // getVoiceProvider() returns null ⇒ the voice webhooks 503 and process
+  // NOTHING (the posture in prod, CI and dev, which set none of them). Setting
+  // this to "none"/"off"/"disabled" is a SECOND kill switch independent of the
+  // NEXT_PUBLIC_FEATURE_VOICE_INBOUND flag. Free string (not an enum) so a new
+  // provider needs zero env-schema edits.
+  COMMS_VOICE_PROVIDER: z.string().optional(),
 
   // -- Weather intelligence (20261074) ------------------------------------
   // Names the active weather provider. There is NO DEFAULT and no "auto": unset
@@ -208,6 +227,13 @@ const envSchema = z.object({
   NEXT_PUBLIC_FEATURE_VOICE_NOTES: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
+  // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
+  // (twilio/voice, twilio/voice/status, vapi) 503 before any work, the org↔number
+  // routing/calls/call_events tables carry no rows the substrate populates, and the
+  // admin/settings surfaces render "not configured". The SECOND switch is per-provider
+  // credentials (COMMS_VOICE_PROVIDER + TWILIO_*/VAPI_* creds): the flag alone opens
+  // no door — isVoiceConfigured() requires BOTH the flag AND a resolvable provider.
+  NEXT_PUBLIC_FEATURE_VOICE_INBOUND: z.enum(["true", "false"]).default("false"),
   // The R28 Conversation Execution Engine's organisational control: whether the org has enabled CONTROLLED
   // LIVE BOOKING EXECUTION. DEFAULTS OFF — until explicitly armed, every prepared booking is `blocked_by_org`.
   // Even when armed, a booking never executes autonomously: the strongest eligibility is `requires_human_review`.
