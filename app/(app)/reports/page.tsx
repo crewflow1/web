@@ -6,6 +6,7 @@ import {
   topCustomersByRevenue,
 } from "@/lib/reports/aggregates";
 import { requireOrgContext } from "@/server/auth/session";
+import { AccountingExportPanel } from "./accounting/AccountingExportPanel";
 
 /**
  * /reports — owner-facing time-series aggregates.
@@ -49,6 +50,8 @@ const WEEK_LABEL = (iso: string): string => {
 
 export default async function ReportsPage() {
   const { ctx } = await requireOrgContext();
+  const isAdmin =
+    ctx.membership.role === "owner" || ctx.membership.role === "admin";
   const [jobs, revenue, vat, top] = await Promise.all([
     jobsPerWeek(ctx.org.id, 8),
     revenuePerMonth(ctx.org.id, 12),
@@ -109,6 +112,11 @@ export default async function ReportsPage() {
           </Link>
         ))}
       </nav>
+
+      {/* Accounting export — CSV works now; Xero/QuickBooks are dark seams.
+          Admin-only: generating a bookkeeping export is an admin act, doubled
+          by the admin-write RLS on accounting_export_log. */}
+      {isAdmin ? <AccountingExportPanel /> : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Jobs per week ----------------------------------------------- */}
