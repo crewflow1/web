@@ -202,6 +202,47 @@ export function PrepareReturnButton({
   );
 }
 
+/**
+ * Email the month's issued, statutory statements to their subcontractors.
+ *
+ * "Email", never "file" or "send to HMRC": this delivers the document the
+ * subcontractor is owed, and nothing here reaches HMRC. Idempotent, so a second
+ * click over an unchanged month queues nothing new.
+ */
+export function EmailStatementsButton({
+  action,
+  taxMonthEnd,
+}: {
+  action: ActionFn;
+  taxMonthEnd: string;
+}) {
+  const [state, formAction, pending] = useActionState(action, INITIAL_FORM_STATE);
+
+  return (
+    <form action={formAction} className="inline-flex flex-col items-start gap-1">
+      <input type="hidden" name="tax_month_end" value={taxMonthEnd} />
+      <button
+        type="submit"
+        disabled={pending}
+        className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {pending ? "Queuing…" : "Email statements to subcontractors"}
+      </button>
+      <span className="text-xs text-slate-500">
+        Sends each subcontractor their own statement. It does not file anything with HMRC.
+      </span>
+      {state.error ? (
+        <span role="alert" className="text-xs text-red-700">
+          {state.error}
+        </span>
+      ) : null}
+      {state.successMessage ? (
+        <span className="text-xs text-emerald-700">{state.successMessage}</span>
+      ) : null}
+    </form>
+  );
+}
+
 export function MarkExportedButton({
   action,
   returnId,
