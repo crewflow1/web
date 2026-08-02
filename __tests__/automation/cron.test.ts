@@ -124,4 +124,21 @@ describe("computeNextRun — determinism + correctness (UTC)", () => {
       computeNextRun("0 0 29 2 *", at("2026-03-01T00:00:00.000Z")).toISOString(),
     ).toBe("2028-02-29T00:00:00.000Z");
   });
+
+  it("treats a stepped day-of-month field as RESTRICTED, not a wildcard", () => {
+    // Regression: '*/n' on dom/dow is a restricted field (value subset), so it
+    // must fire every nth day — NOT every day. '0 9 */3 * *' from the 1st (a
+    // matching day) advances to the 4th, not the 2nd.
+    expect(
+      computeNextRun("0 9 */3 * *", at("2026-08-01T09:00:00.000Z")).toISOString(),
+    ).toBe("2026-08-04T09:00:00.000Z");
+  });
+
+  it("treats a stepped day-of-week field as RESTRICTED, not a wildcard", () => {
+    // '0 9 * * */2' = every other weekday starting Sunday(0): Sun, Tue, Thu, Sat.
+    // From Sun 2 Aug 2026 10:00 the next match is Tue the 4th — NOT Mon the 3rd.
+    expect(
+      computeNextRun("0 9 * * */2", at("2026-08-02T10:00:00.000Z")).toISOString(),
+    ).toBe("2026-08-04T09:00:00.000Z");
+  });
 });

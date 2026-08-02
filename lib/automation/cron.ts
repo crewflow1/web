@@ -71,7 +71,11 @@ function parseField(raw: string, index: number): ParsedField {
     throw new CronParseError(`cron field ${index + 1} is empty`);
   }
 
-  const wildcard = token === "*" || token.startsWith("*/");
+  // Only a literal "*" disables the field for the POSIX day-of-month/day-of-week
+  // union rule. A stepped "*/n" IS a restricted field (its value set is a strict
+  // subset), so it must NOT count as a wildcard — otherwise dayMatches() ignores
+  // the value set and fires every day instead of every nth day.
+  const wildcard = token === "*";
   const values = new Set<number>();
 
   for (const part of token.split(",")) {
