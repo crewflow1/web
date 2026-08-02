@@ -83,6 +83,12 @@ export interface TaskRow {
   dedupe_key: string | null;
   origin: string;
   created_by: string | null;
+  /**
+   * The Master-Plan PRODUCT pipeline stage (idea…review) — orthogonal to `status`
+   * (the EXECUTION lifecycle). Nullable: a task may be unstaged. Added by migration
+   * 20261094000000; moved only via `setTaskStage` (the hq_ai_task_set_stage RPC).
+   */
+  pipeline_stage: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +131,29 @@ export type CancelResult =
 
 /** `reapTasks` — how many expired-lease tasks were recovered. */
 export type ReapResult = { ok: true; reaped: number } | TaskRpcError;
+
+/** The eleven Master-Plan product pipeline stages (see migration 20261094000000). */
+export type PipelineStage =
+  | "idea"
+  | "research"
+  | "specification"
+  | "design"
+  | "engineering"
+  | "testing"
+  | "documentation"
+  | "marketing"
+  | "sales"
+  | "deployment"
+  | "review";
+
+/**
+ * `setTaskStage` — the stage moved (`task`), or the move was refused: `invalid_stage`
+ * (not one of the eleven) or `not_updatable` (no such task, or it is terminal/frozen).
+ */
+export type SetStageResult =
+  | { ok: true; task: TaskRow }
+  | { ok: false; reason: "invalid_stage" | "not_updatable" }
+  | TaskRpcError;
 
 // ---------------------------------------------------------------------
 // The typed RPC shim — identical idiom to hq-memory.ts. `.bind(admin)` is
@@ -382,4 +411,30 @@ export async function reapTasks(
   });
   if (error) return { ok: false, reason: "error", error: error.message };
   return { ok: true, reaped: typeof data === "number" ? data : 0 };
+}
+
+/**
+ * Move a task along the PRODUCT pipeline (`hq_ai_task_set_stage`) — the ONE sanctioned
+ * write path for `pipeline_stage`, mirroring the engine's function-entry-point design.
+ * The stage axis is orthogonal to `status`: this never changes the execution lifecycle.
+ * Refused on a terminal (frozen) task (`not_updatable`) or an unknown stage
+ * (`invalid_stage`). Each successful move appends to the append-only
+ * `hq_ai_task_stage_events` history via the DB trigger.
+ */
+export async function setTaskStage(
+  taskId: string,
+  stage: PipelineStage,
+): Promise<SetStageResult> {
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<TaskEnvelope>(admin, "hq_ai_task_set_stage", {
+    p_task_id: taskId,
+    p_stage: stage,
+  });
+
+  if (error) return { ok: false, reason: "error", error: error.message };
+  if (data?.ok === true && data.task) return { ok: true, task: data.task };
+  if (data?.ok === false && (data.reason === "invalid_stage" || data.reason === "not_updatable")) {
+    return { ok: false, reason: data.reason };
+  }
+  return { ok: false, reason: "error", error: "hq_ai_task_set_stage: malformed response" };
 }
