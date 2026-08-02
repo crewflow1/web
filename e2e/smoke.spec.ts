@@ -33,7 +33,16 @@ test.describe("smoke — public + auth surfaces render", () => {
     await expect(
       page.getByRole("heading", { name: /sign in/i }),
     ).toBeVisible();
-    await expect(page.locator('input[type="email"]')).toBeVisible();
+    // The login page now offers several methods (Google, magic link, and
+    // email+password), so several email inputs exist. Scope the assertion to
+    // the magic-link form specifically and prove it renders its email input
+    // plus its submit button.
+    const magicLinkForm = page.getByTestId("magic-link-form");
+    await expect(magicLinkForm).toBeVisible();
+    await expect(magicLinkForm.locator('input[type="email"]')).toBeVisible();
+    await expect(
+      magicLinkForm.getByRole("button", { name: /magic link/i }),
+    ).toBeVisible();
   });
 });
 

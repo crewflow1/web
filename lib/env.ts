@@ -218,6 +218,25 @@ const envSchema = z.object({
   // AND verify (signed ping) an endpoint before any real event fans out to it.
   NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS: z.enum(["true", "false"]).default("false"),
 
+  // -- Auth: Microsoft SSO (DARK — credential-gated) ----------------------
+  // Whether the "Continue with Microsoft" button is exposed on /login.
+  // DEFAULTS OFF. The button + server action (signInWithMicrosoft, provider
+  // 'azure') are BUILT and tested behind this flag, but Microsoft SSO cannot
+  // work until an EXTERNAL credential exists: a Supabase Azure provider
+  // configured with an Azure AD app registration (client id/secret + redirect
+  // URI). Flipping this to "true" WITHOUT that config would show a button that
+  // dead-ends at a provider error — so the flag stays off until the credential
+  // is in place. No fake: while off the button does not render at all.
+  NEXT_PUBLIC_FEATURE_MICROSOFT_SSO: z.enum(["true", "false"]).default("false"),
+
+  // -- Auth: OAuth account linking (config-gated) -------------------------
+  // Whether the "Link account" controls (linkIdentity) render in account
+  // settings. DEFAULTS OFF. linkIdentity requires Supabase "Manual Linking"
+  // to be enabled in the dashboard (Auth settings) — a CONFIG toggle, not a
+  // credential. The action + UI seam are built behind this flag; flip to
+  // "true" once manual linking is enabled so the button never dead-ends.
+  NEXT_PUBLIC_FEATURE_ACCOUNT_LINKING: z.enum(["true", "false"]).default("false"),
+
   // -- Public API jobs read surface (Train K / Mission 9) ----------------
   // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): whether the public read API
   // /api/v1/jobs is EXPOSED. DEFAULTS OFF — the routes ship dark. Exposing
