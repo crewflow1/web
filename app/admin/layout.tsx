@@ -51,6 +51,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/ai-receptionist/review", label: "↳ Reply review inbox" },
   { href: "/admin/ai-receptionist/deliveries", label: "↳ Reply delivery monitor" },
   { href: "/admin/finance", label: "💰 Finance AI" },
+  { href: "/admin/support-ai", label: "🛟 Support AI" },
   { href: "/admin/billing", label: "Billing" },
   { href: "/admin/support", label: "Support queue" },
   { href: "/admin/notifications", label: "Notifications" },
