@@ -64,6 +64,37 @@ describe("csvEscape — the CSV quoting contract", () => {
   });
 });
 
+describe("csvEscape — formula-injection neutralisation (OWASP)", () => {
+  it("neutralises a leading =, +, @ formula trigger with an apostrophe", () => {
+    expect(csvEscape("=SUM(A1)")).toBe("'=SUM(A1)");
+    expect(csvEscape("+1+1")).toBe("'+1+1");
+    expect(csvEscape("@cmd")).toBe("'@cmd");
+  });
+
+  it("neutralises a leading tab or carriage return trigger", () => {
+    expect(csvEscape("\tfoo")).toBe("'\tfoo");
+  });
+
+  it("neutralises a dangerous formula that also needs quoting", () => {
+    // Leading '=' → apostrophe-prefixed; embedded comma + quotes → RFC-4180 quoted.
+    expect(csvEscape('=HYPERLINK("http://evil","x")')).toBe(
+      '"\'=HYPERLINK(""http://evil"",""x"")"',
+    );
+  });
+
+  it("PRESERVES genuine negative numbers (not treated as formulas)", () => {
+    // A financial export must keep -100.00 numeric — no apostrophe.
+    expect(csvEscape("-100.00")).toBe("-100.00");
+    expect(csvEscape("-5")).toBe("-5");
+    expect(csvEscape(-100.5)).toBe("-100.5");
+  });
+
+  it("still neutralises a leading '-' that is NOT a plain number", () => {
+    expect(csvEscape("-1+2")).toBe("'-1+2");
+    expect(csvEscape("-cmd")).toBe("'-cmd");
+  });
+});
+
 describe("csv consolidation — one authoritative owner (source-pinned)", () => {
   it("lib/csv.ts is the sole definition and exports csvEscape", () => {
     const code = read("lib/csv.ts");
