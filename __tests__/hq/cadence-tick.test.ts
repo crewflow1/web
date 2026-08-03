@@ -1,11 +1,32 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// The super-admin allowlist is an ENV allowlist parsed once at import, so it can't
-// be stubbed after the fact — mock the predicate directly to exercise both sides
-// of the gate deterministically.
-vi.mock("@/server/auth/superadmin", () => ({
-  isSuperAdminEmail: (email: string | null | undefined) => email === "boss@crewflow.uk",
+// The super-admin allowlist is an ENV allowlist baked into the frozen `env`
+// object at import, so it can't be stubbed after the fact — mock the predicate
+// directly to exercise both sides of the gate deterministically.
+//
+// Collision-proofing: several sibling unit files (admin/ai-boardroom,
+// admin/memory, admin/approval-panel, admin/sales-ai) mock this SAME module with
+// their own hoisted `vi.fn()`. To stay hermetic under the full-suite run we use
+// the same shape they do — a hoisted `vi.fn()` whose implementation is
+// re-asserted in `beforeEach` — so a cross-file `vi.mock`/global mock reset can
+// never leave this file's gate behaving unexpectedly (the "passes alone, fails
+// in-suite" signature). A plain inline factory cannot self-heal after a global
+// reset; re-asserting per test does.
+const { isSuperAdminEmailMock } = vi.hoisted(() => ({
+  isSuperAdminEmailMock: vi.fn((email: string | null | undefined) => email === "boss@crewflow.uk"),
 }));
+vi.mock("@/server/auth/superadmin", () => ({
+  isSuperAdminEmail: isSuperAdminEmailMock,
+}));
+
+beforeEach(() => {
+  // Re-assert this file's gate before every test, undoing any cross-file
+  // clearAllMocks/resetAllMocks that ran between files in the shared suite.
+  isSuperAdminEmailMock.mockReset();
+  isSuperAdminEmailMock.mockImplementation(
+    (email: string | null | undefined) => email === "boss@crewflow.uk",
+  );
+});
 
 import { computeNextRun } from "@/lib/automation/cron";
 import {
