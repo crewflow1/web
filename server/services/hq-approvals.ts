@@ -460,6 +460,24 @@ export async function listDecidedApprovals(limit = 50): Promise<ApprovalRow[]> {
   return Array.isArray(data) ? data : [];
 }
 
+/**
+ * The APPROVED (granted) approvals, oldest-first — the read model the apply-on-approval runtime
+ * sweeps (server/services/hq-apply-drain.ts). Strictly `state = 'approved'`: pending/escalated
+ * (still awaiting judgement) and rejected/expired (terminal, never applied) are excluded, so a swept
+ * item is always one a human granted. This is the ONE accessor the drain reads approvals through —
+ * hq_approvals stays single-writer/single-reader behind this service (the encapsulation ratchet).
+ */
+export async function listApprovedApprovals(limit = 100): Promise<ApprovalRow[]> {
+  const admin = createAdminClient();
+  const { data, error } = await approvals<ApprovalRow>(admin)
+    .select(ROW_COLUMNS)
+    .eq("state", "approved")
+    .order("requested_at", { ascending: true })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw readFailure("hq-approvals: approved approvals", error);
+  return Array.isArray(data) ? data : [];
+}
+
 /** Every approval ever raised for a subject — its full story (newest first). */
 export async function listApprovalsForSubject(
   subjectType: string,
