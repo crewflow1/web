@@ -51,6 +51,21 @@ export type TelematicsFetchInput = {
   since?: string | null;
 };
 
+/**
+ * The outcome of resolving the connection HANDLE (the provider account id) from a
+ * freshly-issued access token. The OAuth callback query does NOT carry the account
+ * id for these aggregators (Samsara), so the handle is resolved by an authenticated
+ * provider call (e.g. Samsara `GET /me`) right after the token exchange.
+ */
+export type TelematicsAccountResult =
+  | { ok: true; provider: TelematicsProvider; externalAccountId: string }
+  | {
+      ok: false;
+      provider: TelematicsProvider;
+      reason: "unavailable" | "error";
+      message: string;
+    };
+
 export interface TelematicsAdapter {
   readonly provider: TelematicsProvider;
   /**
@@ -65,6 +80,13 @@ export interface TelematicsAdapter {
    * availability guard.
    */
   fetchReadings(input: TelematicsFetchInput): Promise<TelematicsFetchResult>;
+  /**
+   * Resolve the provider account id (the connection handle the DB CHECK requires
+   * for a `connected` row) from a decrypted access token. Refuses — no network —
+   * when dark, exactly like fetchReadings; the network call lives strictly AFTER
+   * the availability guard.
+   */
+  resolveAccountHandle(accessToken: string): Promise<TelematicsAccountResult>;
 }
 
 /** The `unavailable` result — the ONLY outcome the dark path may produce. */

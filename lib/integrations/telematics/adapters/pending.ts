@@ -2,6 +2,7 @@ import "server-only";
 
 import { isTelematicsProviderConnectable } from "../oauth";
 import type {
+  TelematicsAccountResult,
   TelematicsAdapter,
   TelematicsFetchInput,
   TelematicsFetchResult,
@@ -43,6 +44,26 @@ export class PendingTelematicsAdapter implements TelematicsAdapter {
       provider: this.provider,
       reason: "error",
       message: `${this.provider} telematics feed is configured but not yet activated in this build.`,
+    };
+  }
+
+  async resolveAccountHandle(_accessToken: string): Promise<TelematicsAccountResult> {
+    // DARK GUARD FIRST — no network without credentials.
+    if (!this.isAvailable()) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "unavailable",
+        message: `${this.provider} telematics feed is not connected; no account handle to resolve.`,
+      };
+    }
+    // Connectable but the concrete account lookup is not yet implemented — still
+    // NO live provider call is made from this build.
+    return {
+      ok: false,
+      provider: this.provider,
+      reason: "error",
+      message: `${this.provider} account resolution is configured but not yet activated in this build.`,
     };
   }
 }

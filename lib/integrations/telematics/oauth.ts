@@ -289,6 +289,105 @@ export async function exchangeCodeForTokens(params: {
 }
 
 /**
+ * Refresh an access token using a stored refresh token (grant_type=refresh_token).
+ * REFUSES (no `fetch`) when the provider is not connectable — the dark guard sits
+ * before the only network call, exactly as the code exchange does, so the refresh
+ * path is structurally unreachable dark.
+ *
+ * ── PROVIDER TOKEN MODELS (accurate to Samsara) ─────────────────────────────
+ * Samsara supports BOTH an OAuth 2.0 marketplace flow (a short-lived access token
+ * + a refresh token — this function renews it) AND a static, long-lived API
+ * token for single-org use. The two are reconciled at the CALLER, not here: the
+ * sync path refreshes ONLY when a `token_expires_at` is set and near/past. A
+ * static API token carries no expiry, so it is never refreshed — the same code is
+ * correct for both models. Verizon Connect Reveal likewise issues refreshable
+ * tokens; this grant is provider-agnostic behind the connectable guard.
+ *
+ * The refresh_token MUST already be DECRYPTED (via decryptStoredTokens). The
+ * client secret goes in the HTTP Basic header, never a log line or the URL. A
+ * provider may ROTATE the refresh token on refresh; when it does not, the caller
+ * keeps the prior one (refreshToken falls back to the input at the call site).
+ */
+export async function refreshAccessToken(params: {
+  provider: TelematicsProvider;
+  refreshToken: string;
+}): Promise<ExchangeResult> {
+  const { provider, refreshToken } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
+  const client = isTelematicsProviderConnectable(provider) ? resolveClient() : null;
+  if (!client) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} telematics feed is not configured; no token refresh is possible.`,
+    };
+  }
+
+  const cfg = PROVIDER_OAUTH[provider];
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: client.clientId,
+  });
+  const basic = Buffer.from(`${client.clientId}:${client.clientSecret}`).toString(
+    "base64",
+  );
+
+  let res: Response;
+  try {
+    res = await fetch(cfg.tokenUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        authorization: `Basic ${basic}`,
+      },
+      body: body.toString(),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `token refresh request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  if (!res.ok) {
+    // Do NOT echo the response body wholesale — it can carry sensitive detail.
+    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!json.access_token) {
+    return { ok: false, reason: "error", message: "token refresh returned no access token" };
+  }
+
+  const expiresAt =
+    typeof json.expires_in === "number"
+      ? new Date(Date.now() + json.expires_in * 1000).toISOString()
+      : null;
+
+  return {
+    ok: true,
+    tokens: {
+      accessToken: json.access_token,
+      // A provider MAY rotate the refresh token; if it does not, this is null and
+      // the caller retains the prior refresh token.
+      refreshToken: json.refresh_token ?? null,
+      expiresAt,
+      // Refresh does not re-resolve the account handle; the caller keeps the one
+      // resolved at connect time.
+      externalAccountId: null,
+    },
+  };
+}
+
+/**
  * Decrypt-on-use seam. Tokens are stored as AES-256-GCM ciphertext (the callback
  * encrypts them before the DB write); this is the SINGLE place a future
  * reading-pull / refresh path turns them back into usable secrets, immediately

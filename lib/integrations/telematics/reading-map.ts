@@ -140,8 +140,16 @@ export function mapSamplesToReadings(
 
 /** A Samsara vehicle-stats sample (the subset the mapper needs). */
 export type SamsaraVehicleStat = {
-  /** Samsara vehicle id — the tenant maps this to a fleet_vehicles.asset_id. */
+  /** Samsara vehicle id — opaque to CrewFlow; used only for the idempotency key. */
   id: string;
+  /**
+   * The vehicle's external identifiers as Samsara reports them (e.g.
+   * `{ "vin": "1HGBH41JXMN109186", "maintenanceId": "250020" }`). The VIN is the
+   * ONE identifier both Samsara and the CrewFlow fleet register (fleet_vehicles.vin)
+   * carry, so it — not Samsara's opaque internal id — is the natural vehicle
+   * resolution key. Optional: absent on older payloads, where we fall back to `id`.
+   */
+  externalIds?: Record<string, string> | null;
   gps?: {
     latitude?: number | null;
     longitude?: number | null;
@@ -150,6 +158,23 @@ export type SamsaraVehicleStat = {
     time?: string | null;
   } | null;
 };
+
+/**
+ * Extract a VIN from a Samsara externalIds map, normalised (trimmed, upper-cased)
+ * so it matches a fleet_vehicles.vin lookup exactly. Samsara names this key `vin`
+ * on the vehicles endpoint. Returns null when absent/blank. Pure.
+ */
+export function vinFromExternalIds(
+  externalIds: Record<string, string> | null | undefined,
+): string | null {
+  if (!externalIds) return null;
+  for (const [key, value] of Object.entries(externalIds)) {
+    if (key.toLowerCase() === "vin" && typeof value === "string" && value.trim().length > 0) {
+      return value.trim().toUpperCase();
+    }
+  }
+  return null;
+}
 
 /**
  * Normalise Samsara vehicle-stats into the provider-agnostic sample shape. The
@@ -163,7 +188,11 @@ export function normalizeSamsaraSamples(
 ): TelematicsSample[] {
   const out: TelematicsSample[] = [];
   for (const r of rows) {
-    const vehicleId = resolveVehicleId(r.id);
+    // Resolve on the VIN both systems share when Samsara reports one; fall back to
+    // the opaque Samsara vehicle id (older payloads / tests). The idempotency key
+    // stays keyed to the stable Samsara id regardless.
+    const resolutionKey = vinFromExternalIds(r.externalIds) ?? r.id;
+    const vehicleId = resolveVehicleId(resolutionKey);
     if (!vehicleId) continue; // unmapped vehicle — skip rather than guess.
     const gps = r.gps ?? null;
     // recorded_at is NOT NULL in the DB. A sample with no provider timestamp

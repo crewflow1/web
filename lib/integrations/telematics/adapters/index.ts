@@ -44,4 +44,5 @@ export type {
   TelematicsProvider,
   TelematicsFetchResult,
   TelematicsFetchInput,
+  TelematicsAccountResult,
 } from "./types";
