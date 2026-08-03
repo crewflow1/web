@@ -42,6 +42,8 @@ const dbState = {
   exportLogInserts: [] as Row[],
   pushedUpserts: [] as Row[][],
   connUpdates: [] as Row[],
+  // captured deletes against accounting_pushed_entities (the ledger reset)
+  ledgerDeletes: [] as Array<{ table: string; filters: Array<[string, unknown]> }>,
   eqLog: [] as Array<[string, string, unknown]>, // [table, col, val]
 };
 
@@ -53,13 +55,17 @@ function resetDb() {
   dbState.exportLogInserts = [];
   dbState.pushedUpserts = [];
   dbState.connUpdates = [];
+  dbState.ledgerDeletes = [];
   dbState.eqLog = [];
 }
 
 /** A chainable, thenable query builder over one table. */
 function makeBuilder(table: string) {
-  let op: "select" | "insert" | "update" | "upsert" = "select";
+  let op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
   let payload: unknown = null;
+  // Per-builder filters so a DELETE resolution can see its own scoping (a delete
+  // must be org- AND provider-pinned).
+  const filters: Array<[string, unknown]> = [];
 
   const result = (): { data: unknown; error: null } => {
     if (op === "select") {
@@ -77,6 +83,12 @@ function makeBuilder(table: string) {
     }
     if (op === "update" && table === "accounting_connections") {
       dbState.connUpdates.push(payload as Row);
+    }
+    if (op === "delete" && table === "accounting_pushed_entities") {
+      dbState.ledgerDeletes.push({ table, filters: [...filters] });
+      // The reset clears the (org, provider) high-water-mark — model that so a
+      // subsequent buildAccountingExport sees an empty ledger and excludes nothing.
+      dbState.ledger = [];
     }
     return { data: null, error: null };
   };
@@ -100,8 +112,13 @@ function makeBuilder(table: string) {
       payload = rows;
       return builder;
     },
+    delete() {
+      op = "delete";
+      return builder;
+    },
     eq(col: string, val: unknown) {
       dbState.eqLog.push([table, col, val]);
+      filters.push([col, val]);
       return builder;
     },
     neq() {
@@ -160,7 +177,11 @@ vi.mock("@/lib/integrations/accounting/adapters", () => ({
 
 // Imported AFTER the mocks so they bind to the fakes.
 import { buildAccountingExport } from "@/server/services/accounting-export";
-import { syncToProvider } from "@/server/services/accounting-connections";
+import {
+  disconnectAccountingProvider,
+  resetPushedLedger,
+  syncToProvider,
+} from "@/server/services/accounting-connections";
 
 const ORG = "org-A";
 
@@ -337,5 +358,75 @@ describe("syncToProvider push-once recording", () => {
     // The adapter only ever SAW invoice C — A and B were excluded before the push.
     expect(adapterCfg.invRows.map((r) => r.sourceId)).toEqual(["inv-C"]);
     expect(dbState.pushedUpserts.flat().map((r) => r.entity_id)).toEqual(["inv-C"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D. DISCONNECT / REBIND resets the ledger — a fresh tenant re-pushes ALL history
+//
+// THE BUG (c29). `disconnectAccountingProvider` only nulled the connection
+// fields; it never cleared accounting_pushed_entities. So disconnect → reconnect
+// a DIFFERENT external tenant left the OLD account's high-water-mark in place, and
+// every id pushed to tenant A stayed excluded from the export to the (empty)
+// tenant B — the operator saw pushed=0 / "already up to date" while the new
+// company's books never received any history. Silent under-export with a false
+// success signal. The admin-DELETE RLS policy created for this reset was DEAD.
+// ---------------------------------------------------------------------------
+
+describe("disconnect / rebind resets the push-once ledger", () => {
+  it("(a) disconnect DELETEs the ledger for (org, provider), org- AND provider-scoped", async () => {
+    dbState.ledger = [
+      { entity_type: "invoice", entity_id: "inv-A" },
+      { entity_type: "invoice", entity_id: "inv-B" },
+    ];
+
+    const res = await disconnectAccountingProvider(ORG, "xero");
+    expect(res.ok).toBe(true);
+
+    // Exactly one delete, against the ledger, scoped to this org AND provider.
+    expect(dbState.ledgerDeletes).toHaveLength(1);
+    expect(dbState.ledgerDeletes[0]!.table).toBe("accounting_pushed_entities");
+    const filters = Object.fromEntries(dbState.ledgerDeletes[0]!.filters);
+    expect(filters.org_id).toBe(ORG);
+    expect(filters.provider).toBe("xero");
+    // The ledger rows for (org, provider) are gone.
+    expect(dbState.ledger).toHaveLength(0);
+    // The connection itself was still reset back to disconnected.
+    expect(dbState.connUpdates.some((u) => u.status === "disconnected")).toBe(true);
+  });
+
+  it("(b) after disconnect the next sync re-pushes ALL history (empty ledger → nothing excluded)", async () => {
+    dbState.ledger = [
+      { entity_type: "invoice", entity_id: "inv-A" },
+      { entity_type: "invoice", entity_id: "inv-B" },
+    ];
+
+    // Disconnect clears the high-water-mark…
+    await disconnectAccountingProvider(ORG, "xero");
+    expect(dbState.ledger).toHaveLength(0);
+
+    // …so the export for a freshly-reconnected tenant includes everything again.
+    dbState.invoices = [
+      invoiceRow("inv-A", "INV-A", "2026-07-01T09:00:00Z"),
+      invoiceRow("inv-B", "INV-B", "2026-07-02T09:00:00Z"),
+    ];
+    const { rows } = await buildAccountingExport({ orgId: ORG, excludePushedFor: "xero" });
+    expect(
+      rows
+        .filter((r) => r.type === "invoice")
+        .map((r) => r.sourceId)
+        .sort(),
+    ).toEqual(["inv-A", "inv-B"]);
+  });
+
+  it("resetPushedLedger issues a single org+provider-pinned delete", async () => {
+    dbState.ledger = [{ entity_type: "invoice", entity_id: "inv-A" }];
+
+    const res = await resetPushedLedger(fakeClient as never, ORG, "quickbooks");
+    expect(res.ok).toBe(true);
+    expect(dbState.ledgerDeletes).toHaveLength(1);
+    const filters = Object.fromEntries(dbState.ledgerDeletes[0]!.filters);
+    expect(filters.org_id).toBe(ORG);
+    expect(filters.provider).toBe("quickbooks");
   });
 });

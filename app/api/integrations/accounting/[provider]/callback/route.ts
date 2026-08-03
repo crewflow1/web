@@ -15,6 +15,7 @@ import {
   isTokenEncryptionConfigured,
 } from "@/lib/integrations/token-crypto";
 import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
+import { resetPushedLedger } from "@/server/services/accounting-connections";
 
 /**
  * Accounting OAuth — CONNECT callback. DARK.
@@ -186,6 +187,47 @@ export async function GET(
 
   const refreshToken = exchanged.tokens.refreshToken;
   const supabase = await createClient();
+
+  // REBIND GUARD. If this org was already connected to a DIFFERENT external
+  // account under this provider (a reconnect that skipped an explicit
+  // disconnect), the push-once ledger still holds the OLD account's
+  // high-water-mark. Left in place, the new (empty) account would have every id
+  // excluded from its export — the operator sees "already up to date" while the
+  // new company's books never receive any history. Read the previously stored
+  // handle (non-token columns, member-readable) and, when it DIFFERS from the
+  // newly resolved one, reset the ledger BEFORE persisting the new connection so
+  // the fresh tenant re-pushes all history. (An explicit disconnect resets it
+  // too; this covers the connect-straight-over-the-top path.)
+  const prev = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            maybeSingle: () => PromiseLike<{
+              data: { external_tenant_id: string | null; realm_id: string | null } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data: existing } = await prev
+    .from("accounting_connections")
+    .select("external_tenant_id, realm_id")
+    .eq("org_id", ctx.org.id)
+    .eq("provider", provider)
+    .maybeSingle();
+  const previousHandle = existing?.external_tenant_id ?? existing?.realm_id ?? null;
+  if (previousHandle && previousHandle !== handle) {
+    const reset = await resetPushedLedger(supabase, ctx.org.id, provider);
+    // Refuse rather than connect over a stale ledger — a fresh account MUST start
+    // from an empty high-water-mark or it silently under-exports.
+    if (!reset.ok) {
+      return backToReports(origin, "error", provider);
+    }
+  }
+
   // accounting_connections post-dates the generated types.ts; cast to a minimal
   // upsert builder. RLS (admin-write) is the real authorisation for this write.
   const loose = supabase as unknown as {
