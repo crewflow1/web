@@ -24,6 +24,14 @@ type PoRow = {
   supplier: { name: string } | null;
 };
 
+// The register's "where is this order up to" line, shared by the desktop table
+// cell and the mobile card so the two never drift: a posted-receipt count once
+// deliveries exist, otherwise "Awaiting" for a sent order and "—" for the rest.
+function deliveriesLabel(po: PoRow, receiptCount: number): string {
+  if (receiptCount > 0) return `${receiptCount} received`;
+  return po.status === "sent" ? "Awaiting" : "—";
+}
+
 export default async function PurchaseOrdersPage({
   searchParams,
 }: {
@@ -112,46 +120,78 @@ export default async function PurchaseOrdersPage({
           </Link>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-2.5">Number</th>
-                <th className="px-4 py-2.5">Supplier</th>
-                <th className="px-4 py-2.5">Expected</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Deliveries</th>
-                <th className="px-4 py-2.5 text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.map((po) => (
-                <tr key={po.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5">
-                    <Link href={`/purchase-orders/${po.id}`} className="font-medium text-slate-900 hover:underline">
-                      {po.number}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-600">{po.supplier?.name ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{po.expected_date ?? "—"}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[po.status] ?? "bg-slate-100 text-slate-600"}`}>
-                      {poStatusLabel(po.status)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-500">
-                    {(() => {
-                      const n = receiptCounts.get(po.id) ?? 0;
-                      if (n > 0) return `${n} received`;
-                      return po.status === "sent" ? "Awaiting" : "—";
-                    })()}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-medium text-slate-900">{GBP.format(Number(po.total ?? 0))}</td>
+        <>
+          {/* Desktop table. `overflow-x-auto` (not `overflow-hidden`) so a wide
+              row scrolls sideways within its own box rather than clipping the
+              right-aligned Total — mirrors jobs/quotes/invoices. */}
+          <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm md:block">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5">Number</th>
+                  <th className="px-4 py-2.5">Supplier</th>
+                  <th className="px-4 py-2.5">Expected</th>
+                  <th className="px-4 py-2.5">Status</th>
+                  <th className="px-4 py-2.5">Deliveries</th>
+                  <th className="px-4 py-2.5 text-right">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((po) => (
+                  <tr key={po.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5">
+                      <Link href={`/purchase-orders/${po.id}`} className="font-medium text-slate-900 hover:underline">
+                        {po.number}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600">{po.supplier?.name ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{po.expected_date ?? "—"}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[po.status] ?? "bg-slate-100 text-slate-600"}`}>
+                        {poStatusLabel(po.status)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{deliveriesLabel(po, receiptCounts.get(po.id) ?? 0)}</td>
+                    <td className="px-4 py-2.5 text-right font-medium text-slate-900">{GBP.format(Number(po.total ?? 0))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards — the register on a phone. Same data, links and
+              formatting as the table; nothing clips because the Total lives on
+              its own line, not in a right-aligned column. */}
+          <ul className="space-y-2 md:hidden">
+            {rows.map((po) => (
+              <li key={po.id}>
+                <Link
+                  href={`/purchase-orders/${po.id}`}
+                  className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900">{po.number}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {po.supplier?.name ?? "—"}
+                        {po.expected_date ? ` · expected ${po.expected_date}` : ""}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">{deliveriesLabel(po, receiptCounts.get(po.id) ?? 0)}</div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-sm font-semibold text-slate-900">{GBP.format(Number(po.total ?? 0))}</div>
+                      <span
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLE[po.status] ?? "bg-slate-100 text-slate-600"}`}
+                      >
+                        {poStatusLabel(po.status)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
