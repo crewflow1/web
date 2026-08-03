@@ -109,6 +109,11 @@ describe("mapTransactionToLine — dates, references, pinning", () => {
     expect(row.org_id).toBe(TARGET.orgId);
     expect(row.bank_statement_id).toBe(TARGET.bankStatementId);
   });
+
+  it("carries the aggregator tx id as provider_tx_id (the dedupe key)", () => {
+    const row = mapTransactionToLine(tx({ id: "tl-77" }), TARGET);
+    expect(row.provider_tx_id).toBe("tl-77");
+  });
 });
 
 describe("mapStatementToLines — whole statement", () => {
@@ -130,6 +135,7 @@ describe("mapStatementToLines — whole statement", () => {
       amount: 100,
       description: "ACME LTD PAYMENT",
       reference: "INV-0001",
+      provider_tx_id: "a",
     });
     expect(rows[1]!.amount).toBe(-40);
     expect(rows[1]!.posted_at).toBe("2026-07-02");

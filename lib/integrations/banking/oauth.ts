@@ -293,18 +293,172 @@ export async function exchangeCodeForTokens(params: {
       ? new Date(Date.now() + json.expires_in * 1000).toISOString()
       : null;
 
+  // Resolve the connection handle from the aggregator (not a callback query
+  // param — TrueLayer does not echo one). For TrueLayer this is a `/data/v1/me`
+  // call with the fresh access token; other providers carry the ref on the
+  // callback query, so we fall back to it. Guarded (connectable) + after the
+  // exchange fetch, so still unreachable dark.
+  const resolved = await resolveConnectionHandle({
+    provider,
+    accessToken: json.access_token,
+  });
+
   return {
     ok: true,
     tokens: {
       accessToken: json.access_token,
       refreshToken: json.refresh_token ?? null,
       expiresAt,
-      // The institution is resolved via a follow-up aggregator call at
-      // activation; the connection reference is carried on the callback query.
-      connectionRef: connectionRef ?? null,
+      connectionRef: resolved.connectionRef ?? connectionRef ?? null,
+      institutionId: resolved.institutionId,
+      institutionName: resolved.institutionName,
+    },
+  };
+}
+
+/**
+ * Refresh an access token via `grant_type=refresh_token`. REFUSES (no `fetch`)
+ * when the provider is not connectable — the dark path is structural. On success
+ * returns fresh tokens; when the aggregator does not rotate the refresh token,
+ * the caller's existing refresh token is preserved. No connection handle is
+ * re-resolved (the connection is unchanged), and no secret is ever logged.
+ */
+export async function refreshAccessToken(params: {
+  provider: BankingProvider;
+  refreshToken: string;
+}): Promise<ExchangeResult> {
+  const { provider, refreshToken } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
+  const client = isBankingProviderConnectable(provider) ? resolveClient() : null;
+  if (!client) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} bank feed is not configured; no token refresh is possible.`,
+    };
+  }
+
+  const cfg = PROVIDER_OAUTH[provider];
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: client.clientId,
+  });
+  const basic = Buffer.from(`${client.clientId}:${client.clientSecret}`).toString(
+    "base64",
+  );
+
+  let res: Response;
+  try {
+    res = await fetch(cfg.tokenUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        authorization: `Basic ${basic}`,
+      },
+      body: body.toString(),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `token refresh request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  if (!res.ok) {
+    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!json.access_token) {
+    return { ok: false, reason: "error", message: "token refresh returned no access token" };
+  }
+
+  const expiresAt =
+    typeof json.expires_in === "number"
+      ? new Date(Date.now() + json.expires_in * 1000).toISOString()
+      : null;
+
+  return {
+    ok: true,
+    tokens: {
+      accessToken: json.access_token,
+      // TrueLayer does not always rotate the refresh token — keep the old one
+      // when none comes back so the connection stays refreshable.
+      refreshToken: json.refresh_token ?? refreshToken,
+      expiresAt,
+      connectionRef: null,
       institutionId: null,
       institutionName: null,
     },
+  };
+}
+
+/** The non-secret connection handle an aggregator resolves for a fresh token. */
+export type ConnectionHandle = {
+  connectionRef: string | null;
+  institutionId: string | null;
+  institutionName: string | null;
+};
+
+/**
+ * Resolve the aggregator connection handle (institution + connection reference)
+ * from a fresh access token. REFUSES (no `fetch`, all-null handle) when the
+ * provider is not connectable — the dark path. For TrueLayer this is a
+ * `/data/v1/me` call (the Data API's account-holder/credentials metadata); other
+ * providers carry the handle on the callback query, so this returns all-null and
+ * the caller falls back. A failed lookup returns all-null (never throws) so the
+ * callback can refuse rather than write a handle-less `connected` row.
+ */
+export async function resolveConnectionHandle(params: {
+  provider: BankingProvider;
+  accessToken: string;
+}): Promise<ConnectionHandle> {
+  const { provider, accessToken } = params;
+  const empty: ConnectionHandle = {
+    connectionRef: null,
+    institutionId: null,
+    institutionName: null,
+  };
+
+  // DARK GUARD FIRST + TrueLayer-only resolution. Non-TrueLayer providers do not
+  // resolve here; the exchange falls back to the callback-carried ref.
+  if (provider !== "truelayer") return empty;
+  if (!isBankingProviderConnectable(provider)) return empty;
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.truelayer.com/data/v1/me", {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+  } catch {
+    return empty;
+  }
+  if (!res.ok) return empty;
+
+  const json = (await res.json()) as {
+    results?: Array<{
+      credentials_id?: string | null;
+      provider?: { provider_id?: string | null; display_name?: string | null } | null;
+    }>;
+  };
+  const first = json.results?.[0];
+  if (!first) return empty;
+  return {
+    connectionRef: first.credentials_id ?? null,
+    institutionId: first.provider?.provider_id ?? null,
+    institutionName: first.provider?.display_name ?? null,
   };
 }
 
