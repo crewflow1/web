@@ -2,6 +2,7 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * H2-CASH M4 — /cash money-OUT + net position, on a phone.
@@ -167,6 +168,10 @@ test.describe("cash position on a phone — money out and the net position at 37
     await expect(bills.locator('a[href*="/payments"]').first()).toBeVisible();
 
     // ── 375px: the page body must not scroll sideways ───────────────────────
+    // Settle first: reading scrollWidth before web fonts land measures fallback
+    // glyph metrics (narrower), which can mask a real overflow. The rows above
+    // are already asserted visible, so this only adds the fonts.ready wait.
+    await settleForAxe(page);
     const overflow = await page.evaluate(() => {
       const el = document.documentElement;
       return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };

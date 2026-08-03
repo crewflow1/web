@@ -2,6 +2,7 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * O3 OPERATIONAL STOCK — Journey: a delivery becomes stock, and stock becomes a job.
@@ -228,6 +229,14 @@ test.describe("operational stock — delivery to job", () => {
     await page.setViewportSize({ width: 375, height: 812 });
     for (const url of ["/stock", "/stock/items", "/stock/items/new"]) {
       await page.goto(url);
+      // Settle BEFORE measuring: these routes stream (Suspense skeletons swap
+      // for real rows a beat after `load`) and web fonts arrive later still.
+      // scrollWidth read straight after goto() measures the skeleton with
+      // fallback glyph metrics — narrower than the settled page — so a genuine
+      // overflow (the un-wrapped action row) reads as fitting and the test
+      // flake-passes. settleForAxe waits for fonts.ready + every skeleton
+      // animation to unmount, so the measurement is of the page a user sees.
+      await settleForAxe(page);
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
