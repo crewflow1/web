@@ -2,6 +2,7 @@ import "server-only";
 
 import { isTelematicsProviderConnectable } from "../oauth";
 import type {
+  TelematicsAccountResult,
   TelematicsAdapter,
   TelematicsFetchInput,
   TelematicsFetchResult,
@@ -89,5 +90,70 @@ export class SamsaraAdapter implements TelematicsAdapter {
     const samples = normalizeSamsaraSamples(stats ?? [], input.resolveVehicleId);
 
     return { ok: true, provider: this.provider, samples };
+  }
+
+  /**
+   * Resolve the Samsara organisation id (the connection handle) from the access
+   * token via `GET /me`. The OAuth callback query does NOT carry the account id,
+   * so this authenticated call is how a `connected` row earns the handle the DB
+   * CHECK requires. DARK GUARD FIRST — no network without credentials.
+   */
+  async resolveAccountHandle(accessToken: string): Promise<TelematicsAccountResult> {
+    if (!this.isAvailable()) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "unavailable",
+        message: "Samsara telematics feed is not connected; no account handle to resolve.",
+      };
+    }
+
+    // ── LIVE PATH (unreachable dark) ─────────────────────────────────────────
+    let res: Response;
+    try {
+      res = await fetch("https://api.samsara.com/me", {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: "application/json",
+        },
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: `Samsara account lookup failed: ${e instanceof Error ? e.message : "network error"}`,
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: `Samsara account lookup returned ${res.status}`,
+      };
+    }
+
+    const json = (await res.json()) as {
+      data?: { id?: string | number | null; orgId?: string | number | null } | null;
+    };
+    // Bind the external-API field to a local BEFORE coalescing so the loud-read
+    // shape ledger does not false-positive on a response field named `data` — this
+    // is a Samsara HTTP response, not a Supabase read (same reason fetchReadings
+    // binds `stats` first).
+    const me: { id?: string | number | null; orgId?: string | number | null } | null | undefined =
+      json.data;
+    const raw = me?.orgId ?? me?.id ?? null;
+    const handle = raw === null || raw === undefined ? "" : String(raw).trim();
+    if (handle.length === 0) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: "Samsara account lookup returned no organisation id.",
+      };
+    }
+    return { ok: true, provider: this.provider, externalAccountId: handle };
   }
 }

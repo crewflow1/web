@@ -104,6 +104,10 @@
     {
       "path": "/api/cron/hq-cadence-tick",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/telematics-sync",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

@@ -13,7 +13,10 @@ import {
   encryptToken,
   isTokenEncryptionConfigured,
 } from "@/lib/integrations/token-crypto";
-import type { TelematicsProvider } from "@/lib/integrations/telematics/adapters";
+import {
+  getTelematicsAdapter,
+  type TelematicsProvider,
+} from "@/lib/integrations/telematics/adapters";
 
 /**
  * Telematics OAuth — CONNECT callback. DARK (503).
@@ -132,8 +135,6 @@ export async function GET(
   // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
   const code = searchParams.get("code");
   const state = searchParams.get("state");
-  // The provider account id is carried on the callback query.
-  const externalAccountId = searchParams.get("account_id") ?? searchParams.get("org_id");
 
   // Anti-CSRF: the state echoed back must match the cookie the connect route set
   // (constant-time compare — never a bare string `!==` on a security token).
@@ -149,19 +150,23 @@ export async function GET(
     code,
     codeVerifier: verifier,
     redirectUri,
-    externalAccountId,
   });
 
   if (!exchanged.ok) {
     return backToIntegrations(origin, "error", provider);
   }
 
-  const handle = exchanged.tokens.externalAccountId;
-  if (!handle) {
-    // The DB CHECK forbids a connected row without a connection handle; refuse
-    // rather than write an invalid row.
+  // RESOLVE THE CONNECTION HANDLE from the token, NOT a callback query param —
+  // Samsara's OAuth redirect does not carry the account id, so the provider is
+  // asked (Samsara `GET /me`) with the freshly-issued access token. Refuse to
+  // write a `connected` row without a real handle (the DB CHECK forbids it too).
+  const account = await getTelematicsAdapter(provider).resolveAccountHandle(
+    exchanged.tokens.accessToken,
+  );
+  if (!account.ok) {
     return backToIntegrations(origin, "no_account", provider);
   }
+  const handle = account.externalAccountId;
 
   const refreshToken = exchanged.tokens.refreshToken;
   const supabase = await createClient();
@@ -180,7 +185,7 @@ export async function GET(
       org_id: ctx.org.id,
       provider,
       status: "connected",
-      external_account_id: exchanged.tokens.externalAccountId,
+      external_account_id: handle,
       // Tokens are AES-256-GCM encrypted application-side BEFORE they reach the
       // DB — the columns hold ciphertext, never a plaintext secret. The tripwire
       // above guarantees a key is present, so encryptToken cannot throw here.
