@@ -427,7 +427,11 @@ type RotaRow = {
   user: { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null;
 };
 
-const ROTA_PUSH_COLUMNS = "id, org_id, starts_at, ends_at, notes, user:users ( full_name, email )";
+// rota_entries has TWO FKs to users (user_id, created_by); embed MUST name the
+// constraint or PostgREST rejects the whole query (PGRST201). The shift's assigned
+// staff member is user_id.
+const ROTA_PUSH_COLUMNS =
+  "id, org_id, starts_at, ends_at, notes, user:users!rota_entries_user_id_fkey ( full_name, email )";
 
 /**
  * One-way push: project a CrewFlow rota SHIFT into an external calendar event,
