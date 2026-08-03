@@ -11,7 +11,10 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
-import { bestEffortPushJob } from "@/server/services/calendar-connections";
+import {
+  bestEffortPushJob,
+  bestEffortDeleteJobEvent,
+} from "@/server/services/calendar-connections";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 
 /**
@@ -170,8 +173,15 @@ export async function updateJob(
 
   // Best-effort one-way push to a connected calendar (see createJob). A no-op
   // while dark; on a re-save it updates the SAME event via calendar_event_links.
+  // When scheduled_date is CLEARED (now null) we instead delete any external
+  // event so a de-scheduled job does not strand an orphan on the calendar. The
+  // delete composer is read-free here: it is a no-op when no link exists and is
+  // idempotent/404-tolerant, so we always attempt it on null WITHOUT reading the
+  // prior scheduled_date (no extra loud read needed).
   if (result.data.scheduled_date) {
     await bestEffortPushJob(ctx.org.id, id);
+  } else {
+    await bestEffortDeleteJobEvent(ctx.org.id, id);
   }
 
   return formSuccess({ successMessage: "Job updated." });
@@ -180,6 +190,12 @@ export async function updateJob(
 export async function deleteJob(id: string) {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
+
+  // Best-effort: remove any external calendar event BEFORE the job row goes away
+  // (so the mapping is still resolvable), so a deleted job does not strand an
+  // orphan event forever. A no-op while dark; never blocks or fails the delete.
+  await bestEffortDeleteJobEvent(ctx.org.id, id);
+
   const { error, count } = await supabase
     .from("jobs")
     .delete({ count: "exact" })

@@ -4,6 +4,7 @@ import {
   buildEventPayload,
   buildRotaEventPayload,
   pushEventToProvider,
+  deleteEventFromProvider,
   type JobForEvent,
   type RotaForEvent,
 } from "@/lib/integrations/calendar/push-adapter";
@@ -194,6 +195,96 @@ describe("pushEventToProvider", () => {
       tokens: { accessToken: "AT", refreshToken: "RT" },
       payload: buildEventPayload(JOB)!,
       externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("not_configured");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteEventFromProvider", () => {
+  it("issues a DELETE to the provider event and succeeds (Google)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(204, null));
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
+    });
+    expect(res.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://www.googleapis.com/calendar/v3/calendars/primary/events/evt-g1");
+    expect((init as RequestInit).method).toBe("DELETE");
+  });
+
+  it("issues a DELETE to the Microsoft Graph event and succeeds", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(204, null));
+    const res = await deleteEventFromProvider({
+      provider: "microsoft",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-m1",
+    });
+    expect(res.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://graph.microsoft.com/v1.0/me/events/evt-m1");
+    expect((init as RequestInit).method).toBe("DELETE");
+  });
+
+  it("TOLERATES a 404 (already-gone) as success", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(404, { error: "not found" }));
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-gone",
+    });
+    expect(res.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("TOLERATES a 410 Gone (Google already-deleted) as success", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(410, { error: "gone" }));
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-gone",
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("surfaces a non-404 error status", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(500, { error: "boom" }));
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toContain("500");
+  });
+
+  it("on 401 refreshes the token, retries the DELETE ONCE, and returns renewed tokens", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(401, { error: "expired" })) // first delete
+      .mockResolvedValueOnce(jsonRes(200, { access_token: "AT2", expires_in: 3600 })) // refresh
+      .mockResolvedValueOnce(jsonRes(204, null)); // retried delete
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.refreshed?.accessToken).toBe("AT2");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((fetchMock.mock.calls[2]![1] as RequestInit).headers).toMatchObject({
+      authorization: "Bearer AT2",
+    });
+  });
+
+  it("REFUSES with NO network call while dark (no-op)", async () => {
+    disableProviders();
+    const res = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("not_configured");

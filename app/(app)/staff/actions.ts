@@ -12,7 +12,10 @@ import {
 } from "@/server/services/staff-invite";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
-import { bestEffortPushRota } from "@/server/services/calendar-connections";
+import {
+  bestEffortPushRota,
+  bestEffortDeleteRotaEvent,
+} from "@/server/services/calendar-connections";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   updateStaffProfileSchema,
@@ -525,6 +528,12 @@ export async function deleteRotaEntry(entryId: string) {
   if (!uuid.safeParse(entryId).success) redirect("/staff/rota");
 
   const supabase = await createClient();
+
+  // Best-effort: remove any external calendar event BEFORE the shift row goes
+  // away (so the mapping is still resolvable), so a deleted shift does not strand
+  // an orphan event forever. A no-op while dark; never blocks or fails the delete.
+  await bestEffortDeleteRotaEvent(ctx.org.id, entryId);
+
   const { error } = await supabase
     .from("rota_entries")
     .delete()

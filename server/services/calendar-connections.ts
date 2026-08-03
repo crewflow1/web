@@ -13,6 +13,7 @@ import {
   buildEventPayload,
   buildRotaEventPayload,
   pushEventToProvider,
+  deleteEventFromProvider,
 } from "@/lib/integrations/calendar/push-adapter";
 import {
   readConnectionTokens,
@@ -20,6 +21,7 @@ import {
   markConnectionSynced,
   findEventLink,
   upsertEventLink,
+  deleteEventLink,
 } from "@/lib/integrations/calendar/token-store";
 
 /**
@@ -611,6 +613,178 @@ export async function bestEffortPushRota(
     return { status: result.status };
   } catch (e) {
     console.error("[calendar] best-effort rota push threw", {
+      rotaId,
+      message: e instanceof Error ? e.message : "unknown error",
+    });
+    return { status: "error" };
+  }
+}
+
+export type DeleteResult = {
+  ok: boolean;
+  status: "deleted" | "skipped_dark" | "no_link" | "error";
+  provider: CalendarProvider | null;
+  message: string;
+};
+
+/**
+ * The removal half of the one-way push: when a local entity that was projected
+ * onto a calendar goes away (a job/rota shift is deleted, or a job's
+ * scheduled_date is cleared), remove its external event so the calendar does not
+ * strand an orphan forever (crew dispatched to a cancelled job on activation).
+ *
+ * Resolves the org's connected provider + connection, looks up the
+ * calendar_event_links row for this local entity, DELETEs the provider event
+ * (404/410-tolerant — already-gone is success), then removes the link row so a
+ * re-created entity of the same id becomes a fresh INSERT. Org-pinned.
+ *
+ * DARK. Exactly like pushJobToCalendar: with no connected+connectable provider it
+ * returns `skipped_dark` WITHOUT contacting any provider and WITHOUT touching a
+ * link. With no link row it returns `no_link` — a no-op success, so a clear/delete
+ * for an entity that was never pushed costs one org-pinned read and nothing more.
+ */
+async function deleteEventForLocalEntity(
+  orgId: string,
+  localKind: "job" | "rota",
+  localId: string,
+): Promise<DeleteResult> {
+  // Resolve the org's connected calendar provider (token-free read, loud).
+  const connections = await listCalendarConnections(orgId);
+  const active = connections.find((c) => c.status === "connected") ?? null;
+
+  // DARK PATH. No connected+connectable provider → delete nothing, touch no link.
+  const providerConnectable =
+    active !== null && isCalendarProviderConnectable(active.provider);
+  if (!active || !providerConnectable) {
+    return {
+      ok: true,
+      status: "skipped_dark",
+      provider: active?.provider ?? null,
+      message: "No connected calendar with live credentials; nothing was deleted.",
+    };
+  }
+
+  // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
+  // Service-role read of the (encrypted) stored tokens + the connection id.
+  const stored = await readConnectionTokens(orgId, active.provider);
+  if (!stored) {
+    return {
+      ok: true,
+      status: "skipped_dark",
+      provider: active.provider,
+      message: "The connected calendar has no stored credentials.",
+    };
+  }
+
+  // No mapping → nothing was ever pushed for this entity; a clean no-op success.
+  const externalEventId = await findEventLink(
+    orgId,
+    stored.connectionId,
+    localKind,
+    localId,
+  );
+  if (!externalEventId) {
+    return {
+      ok: true,
+      status: "no_link",
+      provider: active.provider,
+      message: `No calendar event is mapped to this ${localKind}; nothing to delete.`,
+    };
+  }
+
+  const tokens = decryptStoredTokens({
+    accessToken: stored.accessToken,
+    refreshToken: stored.refreshToken,
+  });
+
+  const deleted = await deleteEventFromProvider({
+    provider: active.provider,
+    tokens,
+    externalEventId,
+  });
+  if (!deleted.ok) {
+    // Leave the link row in place so a later retry can still find + remove it.
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      message: `Calendar delete failed: ${deleted.message}`,
+    };
+  }
+
+  // A 401 forced a silent refresh — persist the renewed (encrypted) tokens.
+  if (deleted.refreshed) {
+    await persistRefreshedTokens(orgId, active.provider, deleted.refreshed);
+  }
+
+  // The external event is gone (deleted or already-absent) — drop the mapping.
+  await deleteEventLink(orgId, stored.connectionId, localKind, localId);
+  await markConnectionSynced(orgId, active.provider);
+
+  return {
+    ok: true,
+    status: "deleted",
+    provider: active.provider,
+    message: `Calendar event for ${localKind} ${localId} deleted.`,
+  };
+}
+
+/**
+ * Best-effort calendar-event delete for a job that is being deleted or having its
+ * scheduled_date cleared — the CALLER seam wired into deleteJob / updateJob.
+ * Mirrors bestEffortPushJob: a DARK gate first (no DB/network while the flag is
+ * off, ALWAYS today), then delegate and SWALLOW every failure so a calendar hiccup
+ * never fails or blocks the primary delete/update.
+ */
+export async function bestEffortDeleteJobEvent(
+  orgId: string,
+  jobId: string,
+): Promise<{ status: DeleteResult["status"] }> {
+  if (!calendarConnectFeatureEnabled()) {
+    return { status: "skipped_dark" };
+  }
+  try {
+    const result = await deleteEventForLocalEntity(orgId, "job", jobId);
+    if (!result.ok && result.status === "error") {
+      console.error("[calendar] best-effort job delete error", {
+        jobId,
+        provider: result.provider,
+        message: result.message,
+      });
+    }
+    return { status: result.status };
+  } catch (e) {
+    console.error("[calendar] best-effort job delete threw", {
+      jobId,
+      message: e instanceof Error ? e.message : "unknown error",
+    });
+    return { status: "error" };
+  }
+}
+
+/**
+ * Best-effort calendar-event delete for a rota shift being deleted — the CALLER
+ * seam wired into deleteRotaEntry. Mirrors bestEffortDeleteJobEvent exactly.
+ */
+export async function bestEffortDeleteRotaEvent(
+  orgId: string,
+  rotaId: string,
+): Promise<{ status: DeleteResult["status"] }> {
+  if (!calendarConnectFeatureEnabled()) {
+    return { status: "skipped_dark" };
+  }
+  try {
+    const result = await deleteEventForLocalEntity(orgId, "rota", rotaId);
+    if (!result.ok && result.status === "error") {
+      console.error("[calendar] best-effort rota delete error", {
+        rotaId,
+        provider: result.provider,
+        message: result.message,
+      });
+    }
+    return { status: result.status };
+  } catch (e) {
+    console.error("[calendar] best-effort rota delete threw", {
       rotaId,
       message: e instanceof Error ? e.message : "unknown error",
     });
