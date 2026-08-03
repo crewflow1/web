@@ -7,6 +7,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import {
   exchangeCodeForTokens,
   isProviderConnectable,
+  resolveXeroTenantId,
+  accountingRedirectUri,
 } from "@/lib/integrations/accounting/oauth";
 import {
   encryptToken,
@@ -145,7 +147,10 @@ export async function GET(
     return backToReports(origin, "state_mismatch", provider);
   }
 
-  const redirectUri = `${origin}/api/integrations/accounting/${provider}/callback`;
+  // Must match the connect route's redirect_uri exactly (OAuth requirement);
+  // both derive it from the same helper — pinned when ACCOUNTING_REDIRECT_URI is
+  // set, else the request origin.
+  const redirectUri = accountingRedirectUri(provider, origin);
   const exchanged = await exchangeCodeForTokens({
     provider,
     code,
@@ -158,7 +163,21 @@ export async function GET(
     return backToReports(origin, "error", provider);
   }
 
-  const handle = exchanged.tokens.externalTenantId ?? exchanged.tokens.realmId;
+  // Xero's code exchange returns tokens but NOT the tenant to act on — resolve it
+  // via GET /connections so the connection completes with a real account handle
+  // (no more `no_account` dead-end). QuickBooks carries its realm id on the
+  // callback query, so it needs no follow-up. Both follow-up calls are after the
+  // connectable guard, so they are unreachable dark.
+  let externalTenantId = exchanged.tokens.externalTenantId;
+  if (provider === "xero" && !externalTenantId) {
+    const resolved = await resolveXeroTenantId(exchanged.tokens.accessToken);
+    if (!resolved.ok) {
+      return backToReports(origin, "no_account", provider);
+    }
+    externalTenantId = resolved.tenantId;
+  }
+
+  const handle = externalTenantId ?? exchanged.tokens.realmId;
   if (!handle) {
     // The DB CHECK forbids a connected row without an account handle; refuse
     // rather than write an invalid row.
@@ -182,7 +201,7 @@ export async function GET(
       org_id: ctx.org.id,
       provider,
       status: "connected",
-      external_tenant_id: exchanged.tokens.externalTenantId,
+      external_tenant_id: externalTenantId,
       realm_id: exchanged.tokens.realmId,
       // Tokens are AES-256-GCM encrypted application-side BEFORE they reach the
       // DB — the columns hold ciphertext, never a plaintext secret. The tripwire

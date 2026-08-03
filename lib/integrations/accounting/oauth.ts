@@ -2,8 +2,13 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { decryptToken } from "@/lib/integrations/token-crypto";
+import { refreshOAuthToken } from "@/lib/integrations/oauth-refresh";
 
-import type { AccountingProvider } from "./adapters";
+// Import the provider type from the adapter TYPES module (not ./adapters), so
+// this server-only module does not pull the adapter index at runtime — the
+// adapters value-import `isProviderConnectable` from here, so a value import the
+// other way would be a cycle. (The banking / telematics substrates do the same.)
+import type { AccountingProvider } from "./adapters/types";
 
 /**
  * Accounting OAuth — the provider-agnostic CONNECT substrate. DARK.
@@ -100,6 +105,33 @@ const PROVIDER_OAUTH: Record<
     scope: "com.intuit.quickbooks.accounting",
   },
 };
+
+/**
+ * Resolve the OAuth redirect URI for a provider callback.
+ *
+ * SECURITY (ACTIVATION GATE). The redirect_uri MUST be pinned to a trusted,
+ * allow-listed host at activation, or a spoofed Host / X-Forwarded-* header
+ * could point the authorization code at an attacker-controlled origin. The
+ * accounting_connections migration (20261095) documents this as a BLOCKING
+ * activation prerequisite.
+ *
+ * `ACCOUNTING_REDIRECT_URI`, when set, is that allow-listed ORIGIN (e.g.
+ * `https://app.example`) and OVERRIDES the request-origin-derived value — the
+ * authorize redirect and the token-exchange redirect then both use it, exactly
+ * as OAuth requires them to match. It is declared here but intentionally UNSET:
+ * unset, behaviour is unchanged (origin taken from the request), which is fine
+ * dark and in a trusted single-origin deploy. Activation sets it to close the
+ * host-spoofing gate. The callback PATH is fixed and appended here so the
+ * connect and callback routes can never construct divergent URIs.
+ */
+export function accountingRedirectUri(
+  provider: AccountingProvider,
+  requestOrigin: string,
+): string {
+  const pinned = envValue("ACCOUNTING_REDIRECT_URI");
+  const base = (pinned ?? requestOrigin).replace(/\/+$/, "");
+  return `${base}/api/integrations/accounting/${provider}/callback`;
+}
 
 /** The PKCE + state material a connect redirect must persist to verify the callback. */
 export type AuthorizeChallenge = {
@@ -287,4 +319,121 @@ export function decryptStoredTokens(stored: {
     refreshToken:
       stored.refreshToken !== null ? decryptToken(stored.refreshToken) : null,
   };
+}
+
+/**
+ * Refresh an access token for a connected provider. REFUSES (no network) when
+ * the provider is not connectable — the dark guard is FIRST, so the refresh
+ * `fetch` (inside the shared helper) is unreachable without client credentials +
+ * the feature flag, exactly like the code exchange. The refresh token is a
+ * PLAINTEXT secret the caller has already decrypted; it is never logged.
+ *
+ * On success the returned `refreshToken` is the provider's ROTATED token when it
+ * issued one, else null — the caller keeps the existing stored refresh token in
+ * that case rather than nulling it.
+ */
+export async function refreshAccessToken(params: {
+  provider: AccountingProvider;
+  refreshToken: string;
+}): Promise<ExchangeResult> {
+  const { provider, refreshToken } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network. The
+  // helper's `fetch` is unreachable dark because this guard precedes it.
+  const client = isProviderConnectable(provider) ? resolveClient(provider) : null;
+  if (!client) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} is not configured; no token refresh is possible.`,
+    };
+  }
+
+  const cfg = PROVIDER_OAUTH[provider];
+  const refreshed = await refreshOAuthToken({
+    tokenUrl: cfg.tokenUrl,
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    refreshToken,
+  });
+  if (!refreshed.ok) {
+    return { ok: false, reason: "error", message: refreshed.message };
+  }
+
+  return {
+    ok: true,
+    tokens: {
+      accessToken: refreshed.tokens.accessToken,
+      refreshToken: refreshed.tokens.refreshToken,
+      expiresAt: refreshed.tokens.expiresAt,
+      // A refresh never re-resolves the account handle; the caller preserves the
+      // externalTenantId / realmId it already stored.
+      externalTenantId: null,
+      realmId: null,
+    },
+  };
+}
+
+/** Xero's connections endpoint — resolves which tenant an access token can act on. */
+const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
+
+export type TenantResolution =
+  | { ok: true; tenantId: string }
+  | { ok: false; reason: "not_configured" | "error"; message: string };
+
+/**
+ * Resolve the Xero tenant id for a freshly-exchanged access token by calling
+ * `GET /connections`. Xero's authorization_code exchange returns tokens but NOT
+ * the tenant to act on; a connected org may have authorised one or more tenants,
+ * and every Accounting API call needs the `Xero-tenant-id` header. This is the
+ * follow-up that turns "we have a token" into "we know which company book to
+ * post to", closing the connect flow's `no_account` dead-end.
+ *
+ * REFUSES (no network) when Xero is not connectable — the dark guard is first,
+ * so the `fetch` is unreachable dark. Returns the FIRST tenant of type
+ * `ORGANISATION`; a token with no organisation connection is an `error`.
+ */
+export async function resolveXeroTenantId(
+  accessToken: string,
+): Promise<TenantResolution> {
+  // DARK GUARD FIRST. Not connectable → no network call.
+  if (!isProviderConnectable("xero")) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: "xero is not configured; cannot resolve a tenant id.",
+    };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(XERO_CONNECTIONS_URL, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `xero connections request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: "error", message: `xero connections returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as Array<{
+    tenantId?: string;
+    tenantType?: string;
+  }>;
+  const list = Array.isArray(json) ? json : [];
+  const org = list.find((c) => c.tenantType === "ORGANISATION" && c.tenantId);
+  const tenantId = (org ?? list.find((c) => c.tenantId))?.tenantId ?? null;
+  if (!tenantId) {
+    return { ok: false, reason: "error", message: "xero connections returned no tenant" };
+  }
+  return { ok: true, tenantId };
 }

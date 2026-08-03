@@ -8,6 +8,7 @@ import {
   type CanonicalInvoiceInput,
   type CanonicalPaymentInput,
 } from "@/lib/integrations/accounting/canonical";
+import type { AccountingProvider } from "@/lib/integrations/accounting/adapters/types";
 import { invoiceBusinessToday } from "@/lib/invoices/overdue";
 
 /**
@@ -79,14 +80,30 @@ export type AccountingExport = {
  *
  * `todayIso` is injected (defaults to the UK business day) so the overdue
  * display derivation is deterministic and the pure mapper never reads a clock.
+ *
+ * ── PUSH-ONCE EXCLUSION (`excludePushedFor`) ─────────────────────────────────
+ * When a provider is given, every invoice / payment ALREADY recorded in the
+ * push-once ledger (accounting_pushed_entities) for that (org, provider) is
+ * EXCLUDED, and each surviving canonical row carries its immutable CrewFlow id
+ * as `sourceId`. This is what makes a provider sync push ONLY not-yet-pushed
+ * rows: re-running a sync can never re-send a row the provider already accepted,
+ * so activation cannot duplicate invoices. The CSV path passes no provider and
+ * so is unchanged — it exports the full ledger and carries no `sourceId`.
+ *
+ * The exclusion read is LOUD (throws on failure) BY DESIGN: silently proceeding
+ * with "nothing excluded" would re-push the whole history and duplicate every
+ * invoice — the exact failure this guard exists to stop. A failed sync is always
+ * safer than a duplicating one.
  */
 export async function buildAccountingExport(params: {
   orgId: string;
   from?: string | null;
   to?: string | null;
   todayIso?: string;
+  /** When set, exclude rows already pushed to this provider and stamp `sourceId`. */
+  excludePushedFor?: AccountingProvider;
 }): Promise<AccountingExport> {
-  const { orgId, from, to } = params;
+  const { orgId, from, to, excludePushedFor } = params;
   const todayIso = params.todayIso ?? invoiceBusinessToday();
   const supabase = await createClient();
 
@@ -97,7 +114,7 @@ export async function buildAccountingExport(params: {
   let invQ = supabase
     .from("invoices")
     .select(
-      "number, status, amount, vat_total, total, due_date, sent_at, created_at, " +
+      "id, number, status, amount, vat_total, total, due_date, sent_at, created_at, " +
         "customer:customers(name), quote:quotes(customer:customers(name))",
     )
     .eq("org_id", orgId)
@@ -128,7 +145,7 @@ export async function buildAccountingExport(params: {
       // simple invoice_id and the composite (invoice_id, org_id)), so a bare
       // `invoices(...)` is a PGRST201 ambiguous-embed. Pin the composite FK,
       // which is the tenant-safe one.
-      "amount, paid_at, " +
+      "id, amount, paid_at, " +
         "invoice:invoices!invoice_payments_invoice_org_fkey(number, " +
         "customer:customers(name), quote:quotes(customer:customers(name)))",
     )
@@ -161,8 +178,22 @@ export async function buildAccountingExport(params: {
     });
   }
 
-  const invoices: CanonicalInvoiceInput[] = invCap.rows.map((r) => {
+  // ── PUSH-ONCE EXCLUSION ────────────────────────────────────────────────────
+  // On the provider-push path, drop every invoice / payment already recorded in
+  // the push-once ledger so the batch contains ONLY not-yet-pushed rows. LOUD:
+  // a failed read throws (never a silent "nothing excluded" that would re-push
+  // the whole history and duplicate every invoice).
+  let invDbRows = invCap.rows as ReadonlyArray<{ id?: string }>;
+  let payDbRows = payCap.rows as ReadonlyArray<{ id?: string }>;
+  if (excludePushedFor) {
+    const pushed = await readPushedEntityIds(supabase, orgId, excludePushedFor);
+    invDbRows = invDbRows.filter((r) => !pushed.invoice.has(String(r.id)));
+    payDbRows = payDbRows.filter((r) => !pushed.payment.has(String(r.id)));
+  }
+
+  const invoices: CanonicalInvoiceInput[] = invDbRows.map((r) => {
     const row = r as unknown as NameJoin & {
+      id: string;
       number: string | null;
       status: string | null;
       amount: number | string | null;
@@ -173,6 +204,8 @@ export async function buildAccountingExport(params: {
       created_at: string | null;
     };
     return {
+      // Threaded to the canonical row's `sourceId` only on the push path.
+      source_id: excludePushedFor ? row.id : null,
       number: row.number,
       status: row.status,
       amount: row.amount,
@@ -185,13 +218,15 @@ export async function buildAccountingExport(params: {
     };
   });
 
-  const payments: CanonicalPaymentInput[] = payCap.rows.map((r) => {
+  const payments: CanonicalPaymentInput[] = payDbRows.map((r) => {
     const row = r as unknown as {
+      id: string;
       amount: number | string | null;
       paid_at: string | null;
       invoice?: (NameJoin & { number?: string | null }) | null;
     };
     return {
+      source_id: excludePushedFor ? row.id : null,
       invoice_number: row.invoice?.number ?? null,
       customer_name: row.invoice ? joinedCustomerName(row.invoice) : null,
       amount: row.amount,
@@ -256,6 +291,98 @@ export async function recordAccountingExport(
   });
   if (error) {
     console.error("[accounting] export-log insert failed", error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+// ── PUSH-ONCE LEDGER (accounting_pushed_entities) ────────────────────────────
+
+/** One source row a provider has accepted — its type + immutable CrewFlow id. */
+export type PushedEntity = { entityType: "invoice" | "payment"; entityId: string };
+
+/**
+ * Read the set of (invoice / payment) source ids already pushed to a provider
+ * for one org, from the push-once ledger. Org-pinned (runs under the caller's
+ * JWT; member-read RLS). LOUD — a failed read throws, because the caller
+ * (buildAccountingExport's exclusion) must NEVER proceed as if nothing was
+ * pushed: that would re-push the whole history and duplicate every invoice.
+ */
+async function readPushedEntityIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  provider: AccountingProvider,
+): Promise<{ invoice: Set<string>; payment: Set<string> }> {
+  const loose = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => PromiseLike<{
+            data: { entity_type: string; entity_id: string }[] | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+  };
+  const { data, error } = await loose
+    .from("accounting_pushed_entities")
+    .select("entity_type, entity_id")
+    .eq("org_id", orgId)
+    .eq("provider", provider);
+  if (error) throw readFailure("accounting export: pushed-entity ledger", error);
+
+  const invoice = new Set<string>();
+  const payment = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.entity_type === "invoice") invoice.add(row.entity_id);
+    else if (row.entity_type === "payment") payment.add(row.entity_id);
+  }
+  return { invoice, payment };
+}
+
+/**
+ * Record — idempotently — that a provider has ACCEPTED these source rows, so a
+ * future sync excludes them. Runs under the caller's JWT, so the admin-write RLS
+ * on accounting_pushed_entities is the real authorisation. Org-pinned.
+ *
+ * ON CONFLICT DO NOTHING via `ignoreDuplicates`: recording a row that is already
+ * in the ledger is a no-op, so a retry (or a re-push the provider's idempotency
+ * key collapsed) never errors and never double-records. Called with EXACTLY the
+ * accepted prefix on a partial push, so a row is recorded only once it is truly
+ * at the provider.
+ */
+export async function recordPushedEntities(input: {
+  orgId: string;
+  createdBy: string;
+  provider: AccountingProvider;
+  entities: readonly PushedEntity[];
+}): Promise<{ ok: boolean; error?: string }> {
+  if (input.entities.length === 0) return { ok: true };
+  const supabase = await createClient();
+  const loose = supabase as unknown as {
+    from: (t: string) => {
+      upsert: (
+        rows: Record<string, unknown>[],
+        opts: { onConflict: string; ignoreDuplicates: boolean },
+      ) => PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+  const rows = input.entities.map((e) => ({
+    org_id: input.orgId,
+    created_by: input.createdBy,
+    provider: input.provider,
+    entity_type: e.entityType,
+    entity_id: e.entityId,
+  }));
+  const { error } = await loose
+    .from("accounting_pushed_entities")
+    .upsert(rows, {
+      onConflict: "org_id,provider,entity_type,entity_id",
+      ignoreDuplicates: true,
+    });
+  if (error) {
+    console.error("[accounting] pushed-entity record failed", error);
     return { ok: false, error: error.message };
   }
   return { ok: true };

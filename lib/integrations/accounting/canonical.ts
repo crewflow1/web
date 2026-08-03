@@ -71,10 +71,22 @@ export type CanonicalAccountingRow = {
   invoice_number: string;
   /** Displayed status: an invoice's derived status, or "received" for a payment. */
   status: string;
+  /**
+   * INTERNAL push-tracking id — the CrewFlow primary key of the source row
+   * (invoices.id / invoice_payments.id). Present only on the provider-push path
+   * (buildAccountingExport threads it from the DB row); undefined for the CSV
+   * path. It is the immutable identity the push-once ledger
+   * (accounting_pushed_entities) records and excludes against, and the stable
+   * seed for a per-entity provider idempotency key. Never serialised to CSV —
+   * ACCOUNTING_CSV_COLUMNS does not name it — so it cannot leak into an export.
+   */
+  sourceId?: string;
 };
 
 /** What the mapper needs about one invoice. A pure projection of the DB row. */
 export type CanonicalInvoiceInput = OverdueJudgeable & {
+  /** CrewFlow invoices.id — threaded onto the row's `sourceId` (push path only). */
+  source_id?: string | null;
   number: string | null;
   amount: number | string | null;
   vat_total: number | string | null;
@@ -87,6 +99,8 @@ export type CanonicalInvoiceInput = OverdueJudgeable & {
 
 /** What the mapper needs about one payment (a money-in event). */
 export type CanonicalPaymentInput = {
+  /** CrewFlow invoice_payments.id — threaded onto the row's `sourceId` (push path only). */
+  source_id?: string | null;
   invoice_number: string | null;
   customer_name: string | null;
   amount: number | string | null;
@@ -140,7 +154,7 @@ export function toCanonicalRows(
       inv.total !== null && inv.total !== undefined && inv.total !== ""
         ? Number(inv.total)
         : net + vat;
-    rows.push({
+    const row: CanonicalAccountingRow = {
       date: dateOnly(inv.sent_at) || dateOnly(inv.created_at),
       type: "invoice",
       customer: inv.customer_name ?? "",
@@ -149,11 +163,16 @@ export function toCanonicalRows(
       gross: money2(grossNum),
       invoice_number: inv.number ?? "",
       status: invoiceDisplayStatus(inv, opts.todayIso),
-    });
+    };
+    // Attach the push-tracking id only when the caller supplied one (the push
+    // path). Omitting the key entirely on the CSV path keeps that row's shape
+    // untouched — CSV never sees a sourceId, present or absent.
+    if (inv.source_id) row.sourceId = inv.source_id;
+    rows.push(row);
   }
 
   for (const pay of payments) {
-    rows.push({
+    const row: CanonicalAccountingRow = {
       date: dateOnly(pay.paid_at),
       type: "payment",
       customer: pay.customer_name ?? "",
@@ -162,7 +181,9 @@ export function toCanonicalRows(
       gross: money2(pay.amount),
       invoice_number: pay.invoice_number ?? "",
       status: "received",
-    });
+    };
+    if (pay.source_id) row.sourceId = pay.source_id;
+    rows.push(row);
   }
 
   rows.sort((a, b) => {

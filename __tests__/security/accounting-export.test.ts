@@ -33,6 +33,7 @@ const CSV = "lib/integrations/accounting/csv.ts";
 const XERO = "lib/integrations/accounting/adapters/xero.ts";
 const QBO = "lib/integrations/accounting/adapters/quickbooks.ts";
 const SERVICE = "server/services/accounting-export.ts";
+const CONNECTIONS_SERVICE = "server/services/accounting-connections.ts";
 const ROUTE = "app/api/accounting/export/route.ts";
 const ACTION = "app/(app)/reports/accounting/actions.ts";
 
@@ -58,23 +59,36 @@ const sql = sqlOnly(read(MIG));
 
 describe("accounting adapters are dark without credentials", () => {
   const original = { ...process.env };
+  const DARK_INPUT = {
+    rows: [] as never[],
+    accessToken: "",
+    refresh: async () => null,
+  };
   const clear = () => {
     for (const k of [
+      "FEATURE_ACCOUNTING_CONNECT",
       "XERO_CLIENT_ID",
       "XERO_CLIENT_SECRET",
-      "XERO_TENANT_ID",
-      "QUICKBOOKS_CLIENT_ID",
-      "QUICKBOOKS_CLIENT_SECRET",
-      "QUICKBOOKS_REALM_ID",
+      "QBO_CLIENT_ID",
+      "QBO_CLIENT_SECRET",
     ]) {
       delete process.env[k];
     }
   };
 
-  it("report unavailable when their credentials are absent", () => {
+  it("report unavailable when the two-switch gate is not satisfied", () => {
     clear();
     expect(getAccountingAdapter("xero").isAvailable()).toBe(false);
     expect(getAccountingAdapter("quickbooks").isAvailable()).toBe(false);
+    process.env = { ...original };
+  });
+
+  it("credentials WITHOUT the feature flag are still dark (two-switch)", () => {
+    clear();
+    process.env.XERO_CLIENT_ID = "id";
+    process.env.XERO_CLIENT_SECRET = "secret";
+    // FEATURE_ACCOUNTING_CONNECT deliberately left off.
+    expect(getAccountingAdapter("xero").isAvailable()).toBe(false);
     process.env = { ...original };
   });
 
@@ -82,8 +96,10 @@ describe("accounting adapters are dark without credentials", () => {
     clear();
     for (const p of ["xero", "quickbooks"] as const) {
       const a = getAccountingAdapter(p);
-      const inv = await a.pushInvoices([]);
-      const pay = await a.pushPayments([]);
+      // If a `fetch` were reached it would throw in this test env; a clean
+      // `unavailable` return proves the push never touched the network.
+      const inv = await a.pushInvoices(DARK_INPUT);
+      const pay = await a.pushPayments(DARK_INPUT);
       expect(inv.ok).toBe(false);
       expect(pay.ok).toBe(false);
       if (!inv.ok) expect(inv.reason).toBe("unavailable");
@@ -92,39 +108,39 @@ describe("accounting adapters are dark without credentials", () => {
     process.env = { ...original };
   });
 
-  it("make NO network call and construct NO client (no fetch / SDK in source)", () => {
+  it("construct NO provider SDK client (only `fetch` is the network)", () => {
     for (const f of [XERO, QBO]) {
       const code = codeOf(read(f));
-      expect(code).not.toMatch(/\bfetch\s*\(/);
       expect(code).not.toMatch(/\bnew\s+XMLHttpRequest\b/);
-      expect(code).not.toMatch(/https?:\/\/[a-z]/i);
-      // No provider SDK import.
+      // No provider SDK import — the only network is the guarded `fetch`.
       expect(code).not.toMatch(/from\s+["']xero-node["']/);
       expect(code).not.toMatch(/from\s+["']node-quickbooks["']/);
       expect(code).not.toMatch(/from\s+["']intuit-oauth["']/);
     }
   });
 
-  it("gate the (unreachable) push body strictly AFTER the availability check", () => {
+  it("REFUSE before fetch: every `fetch` lives AFTER the isAvailable guard", () => {
     for (const f of [XERO, QBO]) {
       const code = codeOf(read(f));
-      // Every push method returns unavailable() when !isAvailable() before doing
-      // anything else — the guard is the first statement.
-      expect(code).toMatch(/if\s*\(\s*!this\.isAvailable\(\)\s*\)\s*return\s+unavailable/);
+      const guardIdx = code.indexOf("if (!this.isAvailable())");
+      const fetchIdx = code.indexOf("fetch(");
+      expect(guardIdx).toBeGreaterThan(-1);
+      expect(fetchIdx).toBeGreaterThan(-1);
+      // The dark guard precedes any network call — refuse-before-fetch.
+      expect(guardIdx).toBeLessThan(fetchIdx);
     }
   });
 });
 
 describe("accounting readiness — CSV live, providers dark", () => {
-  it("CSV is always ready; providers are credential-gated (dark today)", () => {
+  it("CSV is always ready; providers are two-switch-gated (dark today)", () => {
     const original = { ...process.env };
     for (const k of [
+      "FEATURE_ACCOUNTING_CONNECT",
       "XERO_CLIENT_ID",
       "XERO_CLIENT_SECRET",
-      "XERO_TENANT_ID",
-      "QUICKBOOKS_CLIENT_ID",
-      "QUICKBOOKS_CLIENT_SECRET",
-      "QUICKBOOKS_REALM_ID",
+      "QBO_CLIENT_ID",
+      "QBO_CLIENT_SECRET",
     ]) {
       delete process.env[k];
     }
@@ -221,10 +237,24 @@ describe("accounting export service + surfaces", () => {
     }
   });
 
-  it("the provider-push action records skipped_dark when the adapter is dark", () => {
+  it("the provider-push action delegates to the ONE push composition (syncToProvider)", () => {
     const code = codeOf(read(ACTION));
+    // The action no longer resolves the adapter itself; it hands off to the
+    // connections service, which records skipped_dark on the dark path.
+    expect(code).toMatch(/syncToProvider\(/);
+    expect(code).toMatch(/skipped_dark/);
+  });
+
+  it("the connections service records skipped_dark and refuses before push when dark", () => {
+    const code = codeOf(read(CONNECTIONS_SERVICE));
     expect(code).toMatch(/isAvailable\(\)/);
     expect(code).toMatch(/status:\s*"skipped_dark"/);
+    // The dark guard precedes the token read + adapter push.
+    const guardIdx = code.indexOf("adapter.isAvailable()");
+    const pushIdx = code.indexOf("adapter.pushInvoices(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(pushIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(pushIdx);
   });
 });
 
