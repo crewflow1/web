@@ -225,3 +225,45 @@ export async function upsertEventLink(params: {
     throw new Error(`calendar event-link upsert failed: ${error.message}`);
   }
 }
+
+/**
+ * Remove the (connection, local entity) → external event mapping after the
+ * external event has been deleted (or was already gone), so a re-created local
+ * entity of the same id is treated as a fresh INSERT rather than PATCHing a
+ * now-nonexistent event. Org + connection pinned; idempotent (deleting an absent
+ * link is a no-op success).
+ */
+export async function deleteEventLink(
+  orgId: string,
+  connectionId: string,
+  localKind: "job" | "rota",
+  localId: string,
+): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      delete: () => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            eq: (col: string, val: string) => {
+              eq: (
+                col: string,
+                val: string,
+              ) => PromiseLike<{ error: { message: string } | null }>;
+            };
+          };
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("calendar_event_links")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId)
+    .eq("local_kind", localKind)
+    .eq("local_id", localId);
+  if (error) {
+    throw new Error(`calendar event-link delete failed: ${error.message}`);
+  }
+}

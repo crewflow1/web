@@ -17,13 +17,16 @@ import {
  * serialises that shape for
  * the target provider and creates (POST) or patches (PATCH) the event via the
  * Google Calendar / Microsoft Graph event APIs, refreshing the access token on a
- * 401 and retrying once.
+ * 401 and retrying once. `deleteEventFromProvider` is the removal half — a DELETE
+ * of the provider event (404/410-tolerant) when the local entity that owned it
+ * goes away, so a deleted/de-scheduled job or shift does not strand an orphan
+ * event forever.
  *
  * ── DARK BY DEFAULT ─────────────────────────────────────────────────────────
- * `pushEventToProvider` REFUSES (returns not_configured, NO `fetch`) when the
- * provider is not connectable — the network call is structurally unreachable
- * without client credentials + FEATURE_CALENDAR_CONNECT. The only `fetch` lives
- * strictly AFTER that guard. No token is ever logged.
+ * `pushEventToProvider` / `deleteEventFromProvider` REFUSE (return not_configured,
+ * NO `fetch`) when the provider is not connectable — the network call is
+ * structurally unreachable without client credentials + FEATURE_CALENDAR_CONNECT.
+ * Every `fetch` lives strictly AFTER that guard. No token is ever logged.
  */
 
 /** A provider-neutral calendar event. Serialised per-provider before the write. */
@@ -276,4 +279,85 @@ export async function pushEventToProvider(params: {
     etag: api.readEtag(json),
     ...(refreshed ? { refreshed } : {}),
   };
+}
+
+export type DeleteAdapterResult =
+  | {
+      ok: true;
+      /** Present only when a 401 forced a refresh; the caller must persist these. */
+      refreshed?: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
+    }
+  | { ok: false; reason: "not_configured" | "error"; message: string };
+
+/**
+ * DELETE a provider calendar event — the removal half of the one-way push. Called
+ * when the local entity that owned the event goes away (a job or rota shift is
+ * deleted, or a job's scheduled date is cleared) so the external calendar does not
+ * strand an orphan event forever. Mirrors pushEventToProvider: same connectable
+ * guard, same 401→refresh→retry-once.
+ *
+ * 404/410-TOLERANT. An already-gone event is a SUCCESS, not an error — a delete
+ * that finds nothing to remove has still achieved the goal (idempotent). Google
+ * returns 410 Gone for an already-deleted event, Microsoft 404; both count as ok.
+ *
+ * REFUSES (no `fetch`) when the provider is not connectable — structurally dark.
+ */
+export async function deleteEventFromProvider(params: {
+  provider: CalendarProvider;
+  tokens: { accessToken: string; refreshToken: string | null };
+  externalEventId: string;
+}): Promise<DeleteAdapterResult> {
+  const { provider, tokens, externalEventId } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
+  if (!isCalendarProviderConnectable(provider)) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} calendar is not configured; nothing was deleted.`,
+    };
+  }
+
+  const api = EVENT_API[provider];
+  const url = `${api.base}/${externalEventId}`;
+
+  const doFetch = (accessToken: string) =>
+    fetch(url, {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+
+  let refreshed:
+    | { accessToken: string; refreshToken: string | null; expiresAt: string | null }
+    | undefined;
+  let res: Response;
+  try {
+    res = await doFetch(tokens.accessToken);
+
+    // 401 → refresh the access token and retry ONCE.
+    if (res.status === 401 && tokens.refreshToken) {
+      const r = await refreshAccessToken({ provider, refreshToken: tokens.refreshToken });
+      if (!r.ok) {
+        return { ok: false, reason: "error", message: `token refresh failed: ${r.message}` };
+      }
+      refreshed = r.tokens;
+      res = await doFetch(r.tokens.accessToken);
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `event delete request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  // Success (204/200) OR already-gone (404/410) — either way the event is absent.
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    return { ok: false, reason: "error", message: `event delete returned ${res.status}` };
+  }
+
+  return { ok: true, ...(refreshed ? { refreshed } : {}) };
 }

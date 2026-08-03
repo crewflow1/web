@@ -51,6 +51,10 @@ const h = vi.hoisted(() => {
         st.row = r;
         return b;
       },
+      delete() {
+        st.op = "delete";
+        return b;
+      },
       upsert(r: Record<string, unknown>) {
         st.op = "upsert";
         st.row = r;
@@ -95,6 +99,11 @@ const h = vi.hoisted(() => {
       });
       return { error: null };
     }
+    if (st.table === "calendar_event_links" && st.op === "delete") {
+      const key = `${eqVal(st, "connection_id")}|${eqVal(st, "local_kind")}|${eqVal(st, "local_id")}`;
+      state.eventLinks.delete(key);
+      return { error: null };
+    }
     return { data: null, error: null };
   };
 
@@ -114,12 +123,17 @@ vi.mock("@/lib/supabase/read-failure", () => ({
   readFailure: (ctx: string, e: { message: string }) => new Error(`${ctx}: ${e.message}`),
 }));
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { encryptToken } from "@/lib/integrations/token-crypto";
 import {
   pushJobToCalendar,
   bestEffortPushJob,
   pushRotaToCalendar,
   bestEffortPushRota,
+  bestEffortDeleteJobEvent,
+  bestEffortDeleteRotaEvent,
 } from "@/server/services/calendar-connections";
 
 const CREDS = {
@@ -307,5 +321,101 @@ describe("bestEffortPushRota — caller seam", () => {
   it("delegates to the push once live and never throws", async () => {
     const res = await bestEffortPushRota("org-1", "rota-1");
     expect(res).toEqual({ status: "pushed" });
+  });
+});
+
+describe("bestEffortDeleteJobEvent — removes the provider event + link row", () => {
+  it("DELETEs the mapped provider event and drops the calendar_event_links row", async () => {
+    await pushJobToCalendar("org-1", "job-1"); // seed the link
+    expect(h.state.eventLinks.size).toBe(1);
+    fetchMock.mockClear();
+
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "deleted" });
+    // The link row is gone (no orphan mapping left behind).
+    expect(h.state.eventLinks.size).toBe(0);
+    // A provider DELETE was issued to the mapped event.
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://www.googleapis.com/calendar/v3/calendars/primary/events/evt-1");
+    expect((init as RequestInit).method).toBe("DELETE");
+  });
+
+  it("is a no_link no-op (no provider call) when the job was never pushed", async () => {
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "no_link" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tolerates a 404 from the provider and still removes the link", async () => {
+    await pushJobToCalendar("org-1", "job-1");
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(jsonRes(404, { error: "not found" }));
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "deleted" });
+    expect(h.state.eventLinks.size).toBe(0);
+  });
+
+  it("is a pure no-op while dark: no client, no network", async () => {
+    delete process.env.FEATURE_CALENDAR_CONNECT;
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "skipped_dark" });
+    expect(h.createClientMock).not.toHaveBeenCalled();
+    expect(h.createAdminMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skipped_dark with NO token read / NO network when nothing is connected", async () => {
+    h.state.connections = [{ ...CONNECTED_GOOGLE, status: "disconnected", external_account_id: null }];
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "skipped_dark" });
+    expect(h.createAdminMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("bestEffortDeleteRotaEvent — removes the provider event + 'rota' link", () => {
+  it("DELETEs the mapped provider event and drops the 'rota' link row", async () => {
+    await pushRotaToCalendar("org-1", "rota-1");
+    expect(h.state.eventLinks.get("conn-1|rota|rota-1")).toBeTruthy();
+    fetchMock.mockClear();
+
+    const res = await bestEffortDeleteRotaEvent("org-1", "rota-1");
+    expect(res).toEqual({ status: "deleted" });
+    expect(h.state.eventLinks.size).toBe(0);
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("is a pure no-op while dark: no client, no network", async () => {
+    delete process.env.FEATURE_CALENDAR_CONNECT;
+    const res = await bestEffortDeleteRotaEvent("org-1", "rota-1");
+    expect(res).toEqual({ status: "skipped_dark" });
+    expect(h.createClientMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("delete/clear wiring (source) — the composer is invoked at the call sites", () => {
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+
+  it("updateJob deletes the external event when scheduled_date is cleared", () => {
+    const src = read("app/(app)/jobs/actions.ts");
+    // The clear branch (else of the scheduled_date guard) calls the delete composer.
+    expect(src).toMatch(
+      /if \(result\.data\.scheduled_date\)[\s\S]*?bestEffortPushJob[\s\S]*?\} else \{[\s\S]*?bestEffortDeleteJobEvent\(ctx\.org\.id, id\)/,
+    );
+  });
+
+  it("deleteJob deletes the external event before the row is removed", () => {
+    const src = read("app/(app)/jobs/actions.ts");
+    expect(src).toMatch(
+      /bestEffortDeleteJobEvent\(ctx\.org\.id, id\)[\s\S]*?\.from\("jobs"\)[\s\S]*?\.delete\(/,
+    );
+  });
+
+  it("deleteRotaEntry deletes the external event before the row is removed", () => {
+    const src = read("app/(app)/staff/actions.ts");
+    expect(src).toMatch(
+      /bestEffortDeleteRotaEvent\(ctx\.org\.id, entryId\)[\s\S]*?\.from\("rota_entries"\)[\s\S]*?\.delete\(/,
+    );
   });
 });
