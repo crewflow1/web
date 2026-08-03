@@ -56,6 +56,10 @@ function makeMock() {
     const chain: Record<string, unknown> = {};
     for (const m of ["select", "eq", "gte", "lt"]) chain[m] = () => chain;
     chain.limit = () => chain;
+    // `.range()` is how the paged invoices/finances reads (fetchAllRows) request
+    // each page. The queue serves one enqueued page per await, so a test can
+    // simulate a multi-page (>1000-row) quarter by enqueuing successive pages.
+    chain.range = () => chain;
     chain.order = () => {
       state.calledOrder = true;
       return chain;
@@ -210,6 +214,51 @@ describe("prepareVatReturnAction — composes + inserts a prepared record", () =
     expect(payload.vatReclaimedCurrPeriod).toBe(40); // box 4 = input VAT
     expect(payload.netVatDue).toBe(60); // box 5 = |box3 - box4|
     expect(payload.periodKey).toBe("2026-07-01");
+  });
+});
+
+// ── (a2) F-1: pages a >1000-row quarter, never just the first 1000 ────────────
+
+describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () => {
+  it("sums output/input VAT across EVERY page into the frozen 9-box payload", async () => {
+    // The bug this guards: computeVatQuarter SUMs by iterating rows, so a bare
+    // `.select()` truncated at the 1000-row PostgREST cap would freeze an
+    // understated payload into hmrc_submissions.payload — a busy quarter filing
+    // too little VAT. Each enqueued entry is one page; fetchAllRows keeps paging
+    // while a page is full (500), so a full+full+short sequence proves it read
+    // past the first page rather than stopping at it.
+    const invPage = (n: number) =>
+      Array.from({ length: n }, () => ({
+        status: "paid",
+        vat_total: 1,
+        paid_at: "2026-08-15T00:00:00.000Z",
+        created_at: "2026-08-15T00:00:00.000Z",
+      }));
+    const finPage = (n: number) =>
+      Array.from({ length: n }, () => ({ vat_total: 1, created_at: "2026-08-15T00:00:00.000Z" }));
+
+    mock.enqueue("subFind", { data: [], error: null }); // no existing record
+    // 1200 paid invoices → £1200 output VAT (pages 500 + 500 + 200).
+    mock.enqueue("invoices", { data: invPage(500), error: null });
+    mock.enqueue("invoices", { data: invPage(500), error: null });
+    mock.enqueue("invoices", { data: invPage(200), error: null });
+    // 1100 finance rows → £1100 input VAT (pages 500 + 500 + 100).
+    mock.enqueue("finances", { data: finPage(500), error: null });
+    mock.enqueue("finances", { data: finPage(500), error: null });
+    mock.enqueue("finances", { data: finPage(100), error: null });
+    mock.enqueue("connSelect", { data: { id: "conn-1" }, error: null });
+    mock.enqueue("subInsert", { data: { id: "sub-big", status: "prepared" }, error: null });
+
+    await actions.prepareVatReturnAction(fd({ quarterStart: "2026-07-01" }));
+
+    const sub = mock.inserts.find((i) => i.table === "hmrc_submissions");
+    expect(sub, "a hmrc_submissions row must be inserted").toBeDefined();
+    const payload = sub!.payload.payload as Record<string, number>;
+    // If the reads had truncated at 1000, box 1 would be 1000 and box 4 would be
+    // 1000 (or the first page's 500). Full pagination yields the true totals.
+    expect(payload.vatDueSales).toBe(1200); // box 1 — ALL 1200 paid invoices
+    expect(payload.vatReclaimedCurrPeriod).toBe(1100); // box 4 — ALL 1100 finances
+    expect(payload.netVatDue).toBe(100); // |1200 − 1100|
   });
 });
 
