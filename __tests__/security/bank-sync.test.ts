@@ -13,7 +13,7 @@ import { resolve } from "node:path";
  *   - the cron route is CRON_SECRET-gated and dark-no-ops (204) BEFORE telemetry,
  *   - token refresh + handle resolution refuse without credentials,
  *   - no secret is ever logged,
- *   - the dedupe migration is additive (a partial unique index; writes nothing).
+ *   - the dedupe migration is additive (a plain unique index; writes nothing).
  */
 
 const ROOT = resolve(__dirname, "..", "..");
@@ -137,10 +137,19 @@ describe("dedupe migration 20261109 — additive, writes nothing", () => {
   it("adds a nullable provider_tx_id column (CSV rows keep NULL)", () => {
     expect(sql).toMatch(/add column if not exists provider_tx_id text/i);
   });
-  it("creates a PARTIAL unique index on (org_id, provider_tx_id)", () => {
+  it("creates a PLAIN unique index on (org_id, provider_tx_id)", () => {
+    // MUST be plain, not partial: the sync engine upserts with
+    // `ON CONFLICT (org_id, provider_tx_id) DO NOTHING`, which Postgres cannot
+    // infer against a partial index (that raises 42P10). NULLs-distinct keeps
+    // CSV rows (provider_tx_id NULL) unaffected. See the runtime proof in
+    // __tests__/integration/banking/bank-sync-dedupe.test.ts.
     expect(sql).toMatch(
-      /create unique index if not exists[\s\S]*\(org_id, provider_tx_id\)[\s\S]*where provider_tx_id is not null/i,
+      /create unique index if not exists\s+bank_statement_lines_org_provider_tx_uniq[\s\S]*\(org_id, provider_tx_id\)/i,
     );
+    // No partial predicate — a WHERE would make it un-inferrable by ON CONFLICT.
+    const idxIdx = sql.indexOf("create unique index");
+    const idxStmt = sql.slice(idxIdx);
+    expect(idxStmt).not.toMatch(/where\s+provider_tx_id\s+is\s+not\s+null/i);
   });
   it("writes no data (no insert/update)", () => {
     expect(sql).not.toMatch(/insert\s+into/i);
