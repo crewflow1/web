@@ -463,6 +463,57 @@ describe("exposable-event allowlist — drift guard against the spine registry",
     }
   });
 
+  it("every exposable verb has a REAL spine producer — no advertised-but-silent events (C26)", () => {
+    // The activity→spine mapper (hq_emit_from_activity) is the ONLY producer that
+    // feeds the operations verbs a webhook can subscribe to. Parse the verbs it can
+    // actually emit — the dotted string literals on the right of each `then` in its
+    // v_verb CASE — and assert every advertised verb is one of them. This is the
+    // guard the C26 audit was missing: it FAILS if the catalogue ever again
+    // advertises a verb (e.g. job.scheduled / job.cancelled) that has no producer,
+    // so a subscriber can never be handed an event that will never fire.
+    const producerFile = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .filter((f) =>
+        readFileSync(resolve(MIG_DIR, f), "utf8").includes(
+          "create or replace function public.hq_emit_from_activity",
+        ),
+      )
+      .sort()
+      .at(-1);
+    expect(producerFile, "no migration defines hq_emit_from_activity").toBeTruthy();
+    const full = readFileSync(resolve(MIG_DIR, producerFile!), "utf8");
+    const start = full.indexOf("create or replace function public.hq_emit_from_activity");
+    const end = full.indexOf("revoke all on function public.hq_emit_from_activity", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    // Only the v_verb mapping block — stop at the payload CASE so we read producer
+    // OUTPUTS, not payload keys. Comments stripped so the doc comment's example map
+    // (which lists job.scheduled/job.cancelled as NOT produced) is never mistaken
+    // for real producer code.
+    const mapBlock = sqlOnly(full.slice(start, end));
+    const vVerbStart = mapBlock.indexOf("v_verb := case");
+    const vVerbEnd = mapBlock.indexOf("v_payload := case");
+    expect(vVerbStart).toBeGreaterThan(-1);
+    expect(vVerbEnd).toBeGreaterThan(vVerbStart);
+    const vVerbBlock = mapBlock.slice(vVerbStart, vVerbEnd);
+
+    const produced = new Set<string>();
+    for (const m of vVerbBlock.matchAll(/then\s+'([a-z_]+\.[a-z_]+)'/g)) {
+      produced.add(m[1]!);
+    }
+    // Sanity: the six known producers are present (so a broken parse can't pass by
+    // finding nothing).
+    expect(produced.size).toBeGreaterThanOrEqual(6);
+    expect(produced.has("job.completed")).toBe(true);
+
+    for (const verb of EXPOSABLE_WEBHOOK_EVENTS) {
+      expect(
+        produced.has(verb),
+        `${verb} is advertised as subscribable but has NO spine producer in ${producerFile}`,
+      ).toBe(true);
+    }
+  });
+
   it("the allowlist is minimal and non-empty (a data-boundary decision)", () => {
     expect(EXPOSABLE_WEBHOOK_EVENTS.length).toBeGreaterThan(0);
     expect(EXPOSABLE_WEBHOOK_EVENTS.length).toBeLessThanOrEqual(12);
@@ -486,7 +537,20 @@ describe("payload redaction — per-verb key allowlist", async () => {
   const { redactEnvelope, WEBHOOK_REDACTION_MAP } = await import("@/lib/webhooks/events");
 
   it("the SQL webhook_redact_data mirror does NOT drift from the TS map (stored-row redaction)", () => {
-    const sql = read(MIGRATION);
+    // Read the AUTHORITATIVE (latest) definition: webhook_redact_data is
+    // create-or-replace'd, so a later migration can redefine it. Pick the
+    // newest migration that defines it (filenames sort chronologically).
+    const definingFile = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .filter((f) =>
+        readFileSync(resolve(MIG_DIR, f), "utf8").includes(
+          "create or replace function public.webhook_redact_data",
+        ),
+      )
+      .sort()
+      .at(-1);
+    expect(definingFile, "no migration defines webhook_redact_data").toBeTruthy();
+    const sql = readFileSync(resolve(MIG_DIR, definingFile!), "utf8");
     const fnStart = sql.indexOf("create or replace function public.webhook_redact_data");
     const fnEnd = sql.indexOf("revoke all on function public.webhook_redact_data");
     expect(fnStart).toBeGreaterThan(-1);
