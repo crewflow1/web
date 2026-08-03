@@ -39,6 +39,7 @@ import {
   formError,
   formSuccess,
 } from "@/lib/forms/state";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 
 const uuid = z.string().uuid();
 
@@ -580,6 +581,23 @@ export async function commitImport(importId: string) {
   revalidatePath(`/imports/${importId}`);
   revalidatePath("/imports");
   revalidatePath("/dashboard");
+
+  // Automation OS — the import session has just committed (status flipped to
+  // "committed" above), so fire `import.completed` for the "migration completed →
+  // notify owner" rule. Org-pinned, keyed on the import session id, idempotent via
+  // (rule_id, correlation_id) in automation_runs, best-effort — a dispatch failure
+  // never derails the commit. Fired BEFORE the redirect (redirect() throws to
+  // unwind), so it cannot be skipped by the navigation.
+  await dispatchAutomation({
+    type: "import.completed",
+    org_id: ctx.org.id,
+    source_table: "imports",
+    source_id: importId,
+    payload: { imported, skipped },
+  }).catch((e) => {
+    console.error("[imports] automation dispatch failed", e);
+  });
+
   redirect(`/imports/${importId}?saved=committed&imported=${imported}&skipped=${skipped}`);
 }
 
