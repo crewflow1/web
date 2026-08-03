@@ -304,11 +304,33 @@ export function failedRecord(input: {
  * ({@link createInMemoryApplicationStore}); like {@link import("./executor").ToolImplementation}, the
  * store is the one place an effect happens, and it belongs to the caller.
  */
+/**
+ * What {@link ApplicationStore.put} did — a total, discriminated result {@link applyOnce} branches on
+ * to keep exactly-once true UNDER CONCURRENCY.
+ *
+ *   • `stored` — the ordinary path: this caller's row was persisted (the append-only history's latest
+ *     row).
+ *   • `already_applied` — the concurrent-loser path: a competing writer had already filed the SINGLE
+ *     permitted `applied` row for this key, so the durable store refused this insert (Postgres 23505 on
+ *     the partial unique index `hq_application_records_applied_uniq`) and reconciled to that WINNING
+ *     record. The caller must report `already_applied` and NOT a second apply. The in-memory reference
+ *     never returns this (it has no cross-caller uniqueness); only the durable table can — which is
+ *     exactly where two concurrent drains could otherwise both file `applied` (the P2 this closes).
+ */
+export type ApplicationPutResult =
+  | { readonly status: "stored" }
+  | { readonly status: "already_applied"; readonly record: AppliedApplicationRecord };
+
 export interface ApplicationStore {
   /** The record filed under `key`, or `undefined` — the no-op-success lookup ({@link applyOnce}). */
   get(key: string): Promise<ApplicationRecord | undefined>;
-  /** Persist (insert-or-replace) a record under its own `key`. */
-  put(record: ApplicationRecord): Promise<void>;
+  /**
+   * Persist a record under its own `key`. Returns {@link ApplicationPutResult}: `stored` when this
+   * caller's row landed, or `already_applied` (with the winning record) when a concurrent writer had
+   * already filed the single permitted `applied` marker — the exactly-once reconciliation the durable
+   * store performs on a 23505 unique violation.
+   */
+  put(record: ApplicationRecord): Promise<ApplicationPutResult>;
 }
 
 /**
@@ -324,8 +346,11 @@ export function createInMemoryApplicationStore(): ApplicationStore {
     async get(key: string): Promise<ApplicationRecord | undefined> {
       return byKey.get(key);
     },
-    async put(record: ApplicationRecord): Promise<void> {
+    async put(record: ApplicationRecord): Promise<ApplicationPutResult> {
+      // Latest-wins, no cross-caller uniqueness — the reference never reconciles a concurrent loser
+      // (only the durable table's partial unique index can); it always reports `stored`.
       byKey.set(record.key, record);
+      return { status: "stored" };
     },
   });
 }
@@ -412,7 +437,17 @@ export async function applyOnce(input: ApplyOnceInput): Promise<ApplyOnceResult>
       attempts,
       approver,
     });
-    await store.put(record);
+    const putResult = await store.put(record);
+    // Concurrency reconciliation (the exactly-once guard). A competing drain may have won the SINGLE
+    // `applied` row for this key between our `get` above and this `put` — the durable store's partial
+    // unique index refuses our insert (Postgres 23505) and reports `already_applied` with the winner's
+    // record. We then report `already_applied`, NOT a second `applied`: no second marker is filed, and
+    // every SUBSEQUENT sweep sees the winner via `get` and never crosses the boundary again. (In the
+    // rare same-tick overlap both racers crossed the injected boundary once each; the sanctioned
+    // authority is idempotent by the Executor Idempotency Rule — same key → applied once.)
+    if (putResult.status === "already_applied") {
+      return { status: "already_applied", key, record: putResult.record };
+    }
     return { status: "applied", key, record };
   }
 

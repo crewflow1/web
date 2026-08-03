@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  type AppliedApplicationRecord,
+  type ApplicationPutResult,
   type ApplicationRecord,
   type ApplicationStore,
   type ExecutionIdentity,
@@ -33,6 +35,15 @@ import {
  * an applied action would let the next sweep re-apply it. So a hard persistence fault THROWS at the
  * boundary rather than being swallowed — the sweep records the run as failed and re-attempts, which
  * (given the applied row DID land or DID NOT) the natural-key guard then reconciles.
+ *
+ * EXACTLY ONE `applied` MARKER PER KEY, UNDER CONCURRENCY (the P2 close-out). `get → applyOnce → put`
+ * is a read-then-write with no mutual exclusion, so two concurrent drains could BOTH read `undefined`
+ * and BOTH try to file an `applied` row. The table's partial unique index (`(key) WHERE status =
+ * 'applied'`, migration 20261106000000) makes that structurally impossible: the loser's insert is
+ * refused with Postgres 23505, which {@link putApplicationRecord} reconciles by re-reading the WINNING
+ * `applied` row and returning `already_applied` — NOT an error and NOT a second apply. Non-applied
+ * (failed/escalated) attempts are unconstrained, so latest-wins history is preserved; a NON-23505
+ * fault still throws (this is the idempotency ground truth, not best-effort).
  */
 
 // hq_record_application isn't in the generated Supabase types; cast past the typed client (the same
@@ -40,7 +51,17 @@ import {
 type RecordApplicationRpc = (
   fn: "hq_record_application",
   args: Record<string, unknown>,
-) => Promise<{ data: number | string | null; error: { message: string } | null }>;
+) => Promise<{
+  data: number | string | null;
+  // `code` carries the Postgres SQLSTATE PostgREST surfaces for an RPC fault — 23505 (unique_violation)
+  // is the exactly-once signal from the partial `applied` unique index.
+  error: { message: string; code?: string | null } | null;
+}>;
+
+/** Postgres unique_violation (SQLSTATE 23505) — the exactly-once signal from `hq_application_records_applied_uniq`. */
+function isUniqueViolation(error: { code?: string | null; message?: string }): boolean {
+  return error.code === "23505" || /duplicate key value|unique constraint/i.test(error.message ?? "");
+}
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -144,10 +165,48 @@ async function getApplicationRecord(
 }
 
 /**
- * Append one application record durably through the SECURITY DEFINER RPC. THROWS on a hard fault —
- * this write is the idempotency ground truth, not a best-effort observation.
+ * The single `applied` record filed under `key` (id desc), or `undefined`. Used to RECONCILE a
+ * concurrent loser: after a 23505 on the partial unique index, this reads back the WINNER's `applied`
+ * row so the loser reports `already_applied` with the winning record rather than a phantom second apply.
+ * A read fault THROWS (same reasoning as {@link getApplicationRecord}).
  */
-async function putApplicationRecord(admin: AdminClient, record: ApplicationRecord): Promise<void> {
+async function getAppliedRecord(
+  admin: AdminClient,
+  key: string,
+): Promise<AppliedApplicationRecord | undefined> {
+  const query = admin.from(RECORDS_TABLE as never) as unknown as LookupQuery;
+  const { data, error } = await query
+    .select(
+      "key, status, source, correlation_id, task_id, approval_id, tool_label, action_id, " +
+        "attempts, escalated, approver_id, approver_email, result, error",
+    )
+    .eq("key", key)
+    .eq("status", "applied")
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error(`hq-application: get("${key}") failed: ${error.message}`);
+  }
+  const row = (Array.isArray(data) ? data : [])[0];
+  if (!row) return undefined;
+  const record = recordOf(row);
+  return record.status === "applied" ? record : undefined;
+}
+
+/**
+ * Append one application record durably through the SECURITY DEFINER RPC.
+ *
+ * THROWS on a hard fault — this write is the idempotency ground truth, not a best-effort observation —
+ * EXCEPT the one benign, expected concurrency outcome: an `applied` insert refused by the partial
+ * unique index with Postgres 23505 (unique_violation) means a competing drain already won the SINGLE
+ * `applied` row for this key. That is NOT a fault and NOT a second apply: we RECONCILE by re-reading
+ * the winning `applied` row and returning `already_applied` (so {@link applyOnce} reports the same and
+ * never files a second marker). A failed/escalated write is unconstrained and cannot take this path.
+ */
+async function putApplicationRecord(
+  admin: AdminClient,
+  record: ApplicationRecord,
+): Promise<ApplicationPutResult> {
   const identity = record.identity;
   const rpc = admin.rpc.bind(admin) as unknown as RecordApplicationRpc;
   const { data, error } = await rpc("hq_record_application", {
@@ -166,9 +225,25 @@ async function putApplicationRecord(admin: AdminClient, record: ApplicationRecor
     p_result: record.status === "applied" ? (record.result ?? null) : null,
     p_error: record.status === "failed" ? record.error : null,
   });
-  if (error || data == null) {
-    throw new Error(`hq-application: put("${record.key}") failed: ${error?.message ?? "no id returned"}`);
+  if (error) {
+    // Exactly-once reconciliation: the losing drain of an `applied` race. Re-read the winning row and
+    // report it — never throw, never re-apply. Only an `applied` insert can hit the partial index.
+    if (record.status === "applied" && isUniqueViolation(error)) {
+      const winner = await getAppliedRecord(admin, record.key);
+      if (winner) {
+        return { status: "already_applied", record: winner };
+      }
+      // The unique index fired but no `applied` row is readable — a genuine inconsistency; fail loud.
+      throw new Error(
+        `hq-application: put("${record.key}") hit a unique violation but the winning applied row was not found`,
+      );
+    }
+    throw new Error(`hq-application: put("${record.key}") failed: ${error.message}`);
   }
+  if (data == null) {
+    throw new Error(`hq-application: put("${record.key}") failed: no id returned`);
+  }
+  return { status: "stored" };
 }
 
 /**

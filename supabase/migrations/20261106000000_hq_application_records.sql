@@ -27,9 +27,19 @@
 -- same key, always. The store is APPEND-ONLY (each attempt writes a new row; UPDATE/DELETE are
 -- blocked even under service-role), so the audit is complete; the LIVE state for the apply-once
 -- guard is the LATEST row under a key (`get(key)` reads it, id-desc). A prior `applied` row makes a
--- re-run a no-op success; a prior `escalated` failure stops the auto-retry. Two rows can therefore
--- share a `key` — that is the attempt history, not a violation — so there is deliberately NO unique
--- constraint on `key`.
+-- re-run a no-op success; a prior `escalated` failure stops the auto-retry. Multiple NON-applied
+-- rows can therefore share a `key` — that is the attempt history (failed/escalated), not a
+-- violation — so there is deliberately NO unqualified unique constraint on `key`.
+--
+-- EXACTLY ONE `applied` MARKER PER KEY, UNDER CONCURRENCY (the exactly-once guard; P2 close-out). The
+-- apply-once guard is a read-then-write (`get(key)` → `applyOnce` → `put`); with no mutual exclusion,
+-- two concurrent drains could BOTH read `undefined` and BOTH file an `applied` row — a double-apply
+-- once a real authority is bound. A PARTIAL UNIQUE INDEX on `(key) WHERE status = 'applied'` makes
+-- that structurally impossible: at most one `applied` row can ever exist per key, so the losing drain's
+-- insert is refused with Postgres unique_violation (23505). The service-layer store reconciles that
+-- 23505 by re-reading the winning `applied` row and returning `already_applied` — NOT an error and NOT
+-- a second apply (server/services/hq-application.ts `putApplicationRecord`). The index is partial, so
+-- the append-only failed/escalated attempt history under a key stays unconstrained.
 --
 -- HQ-GLOBAL SCOPING, consistent with every other hq_* table. HQ has no tenant org: this is HQ
 -- infrastructure, not tenant data, so there is no org_id to pin (the #456 org/HQ-pinned rule is
@@ -100,6 +110,13 @@ create table if not exists public.hq_application_records (
 -- The apply-once lookup: the LATEST row under a key (id desc). Also the attempt history per key.
 create index if not exists hq_application_records_key_idx
   on public.hq_application_records (key, id desc);
+-- THE EXACTLY-ONCE GUARD: at most ONE `applied` marker per key. Two concurrent drains cannot both
+-- file an `applied` row — the loser's insert is refused with 23505 and the store reconciles it to
+-- `already_applied` (server/services/hq-application.ts). Partial (WHERE status = 'applied'), so the
+-- append-only failed/escalated attempt history under a key stays unconstrained. Additive + idempotent.
+create unique index if not exists hq_application_records_applied_uniq
+  on public.hq_application_records (key)
+  where status = 'applied';
 -- Observability: the apply-on-approval audit for one approved item / one run.
 create index if not exists hq_application_records_approval_idx
   on public.hq_application_records (approval_id)

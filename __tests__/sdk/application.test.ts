@@ -8,6 +8,7 @@ import {
   createInMemoryApplicationStore,
   applyOnce,
   DEFAULT_APPLICATION_RETRY_CEILING,
+  type ApplicationStore,
   type ExecutionIdentity,
   type ApproverAttribution,
 } from "@/server/sdk/application";
@@ -279,5 +280,30 @@ describe("applyOnce — apply exactly once through the injected boundary", () =>
     });
     expect(r.status).toBe("applied");
     if (r.status === "applied") expect(r.record.approver).toEqual(approver);
+  });
+
+  it("reconciles a concurrent loser: a put reporting already_applied yields already_applied with the WINNER's record — never a second apply", async () => {
+    // Models the durable store's 23505 reconcile: `get` sees no prior record (so applyOnce crosses the
+    // boundary), but the `put` loses the race — a competing drain already filed the single `applied`
+    // row. applyOnce must report already_applied with the WINNER's record, not `applied`.
+    const winner = appliedRecord({
+      key: deriveIdempotencyKey(apprId({ actionId: "X" })),
+      identity: apprId({ actionId: "X" }),
+      label: "comm.send",
+      result: { by: "winner" },
+    });
+    const losingStore: ApplicationStore = {
+      async get() {
+        return undefined;
+      },
+      async put() {
+        return { status: "already_applied", record: winner };
+      },
+    };
+    const boundary = appliedApply({ by: "loser" }, "comm.send");
+    const r = await applyOnce({ store: losingStore, identity: apprId({ actionId: "X" }), apply: boundary.apply });
+    expect(r.status).toBe("already_applied");
+    // The reconciled record is the WINNER's, not this caller's — no phantom second apply is reported.
+    if (r.status === "already_applied") expect(r.record.result).toEqual({ by: "winner" });
   });
 });

@@ -13,7 +13,7 @@ import {
   type ApplyAuthority,
   type ApprovedItem,
 } from "@/server/services/hq-apply-drain";
-import { appliedRecord, deriveIdempotencyKey, type ExecutionIdentity } from "@/server/sdk/application";
+import { applyOnce, appliedRecord, deriveIdempotencyKey, type ExecutionIdentity } from "@/server/sdk/application";
 import type { ExecutionOutcome } from "@/server/sdk/executor";
 
 /**
@@ -217,6 +217,41 @@ describeIntegration("Apply-on-approval durable store · hq_application_records",
       p_tool_label: "send", p_action_id: id.actionId,
     });
     expect(anonWrite.error, "anon must not be able to record application markers").not.toBeNull();
+  });
+
+  it("EXACTLY-ONCE UNDER CONCURRENCY: two concurrent applyOnce calls file ONE applied row; the loser reconciles to already_applied", async () => {
+    // The P2 close-out. get → applyOnce → put is a read-then-write with no mutual exclusion, so two
+    // concurrent drains could both read `undefined` and both file `applied`. The partial unique index
+    // makes that impossible: the loser's insert is refused with 23505 and reconciled to already_applied.
+    const store = createDurableApplicationStore();
+    const id = identity(crypto.randomUUID());
+    const key = deriveIdempotencyKey(id);
+
+    // The sanctioned boundary — count how many times it is COMMITTED as an apply.
+    let committed = 0;
+    const apply = async (): Promise<ExecutionOutcome> => ({ status: "applied", label: "send", result: { seq: (committed += 1) } });
+
+    const [a, b] = await Promise.all([
+      applyOnce({ store, identity: id, apply }),
+      applyOnce({ store, identity: id, apply }),
+    ]);
+
+    // One winner records `applied`; the loser reconciles to already_applied — NOT an error, NOT a
+    // second apply. (Ordering is non-deterministic, so assert the SET of outcomes.)
+    expect([a.status, b.status].sort()).toEqual(["already_applied", "applied"]);
+
+    // STRUCTURAL exactly-once: precisely ONE `applied` row exists for the key.
+    const appliedRows = await db(serviceClient()).from(RECORDS).select("id").eq("key", key).eq("status", "applied");
+    expect(appliedRows.data ?? [], "at most one applied marker may ever exist per key").toHaveLength(1);
+
+    // Exactly one applyOnce COMMITTED the apply (the loser filed no second marker).
+    expect([a, b].filter((r) => r.status === "applied")).toHaveLength(1);
+
+    // And a subsequent sweep never re-crosses the boundary — the durable marker short-circuits applyOnce.
+    const before = committed;
+    const third = await applyOnce({ store, identity: id, apply });
+    expect(third.status).toBe("already_applied");
+    expect(committed, "an applied key must never cross the boundary again").toBe(before);
   });
 
   it("the store is append-only — UPDATE and DELETE are rejected even for service_role", async () => {

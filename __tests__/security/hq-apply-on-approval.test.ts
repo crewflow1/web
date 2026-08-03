@@ -73,8 +73,13 @@ describe("apply-once — the durable idempotency ground truth", () => {
     expect(store).toMatch(/throw new Error\(`hq-application: put/);
     expect(store).toMatch(/throw new Error\(`hq-application: get/);
   });
-  it("the migration carries NO unique constraint on key (attempts are an append-only history)", () => {
-    expect(migrationCode).not.toMatch(/unique[\s\S]{0,40}\bkey\b/i);
+  it("a PARTIAL unique index enforces at most one 'applied' row per key (attempts stay append-only history)", () => {
+    // The exactly-once guard: at most one `applied` marker per key, so two concurrent drains can never
+    // both file `applied` (the loser is refused with 23505 and reconciled to already_applied).
+    expect(migrationCode).toMatch(/create unique index[\s\S]*?\(key\)\s*where status = 'applied'/i);
+    // It MUST stay partial — an UNQUALIFIED unique on `(key)` would forbid the append-only failed /
+    // escalated attempt history. (Any `unique ... (key)` must carry a WHERE before its `;`.)
+    expect(migrationCode).not.toMatch(/unique[^;]*\(key\)(?![^;]*where)/i);
     // UPDATE/DELETE are blocked even under service-role.
     expect(migrationCode).toMatch(/before update on public\.hq_application_records/);
     expect(migrationCode).toMatch(/before delete on public\.hq_application_records/);
