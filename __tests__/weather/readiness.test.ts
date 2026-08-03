@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   getWeatherReadiness,
   isWeatherAvailable,
@@ -241,6 +241,55 @@ describe("stranded credential risk", () => {
     const r = getWeatherReadiness();
     expect(r.credentialsPresent).toBe(false);
     expect(r.blockers).toContain("OPEN_METEO_API_KEY");
+  });
+});
+
+describe("the runtime watch signal — no green over an empty pipeline", () => {
+  const fullyBuilt = {
+    providerImplemented: true,
+    districtResolutionAvailable: true,
+    decisionLayerImplemented: true,
+    credentialPresent: true,
+  } as const;
+
+  // Select a known vendor + key so `selectionUsable` (env-derived, not
+  // overridable) is satisfied and only the watch clause is under test.
+  beforeEach(() => {
+    process.env.WEATHER_PROVIDER = "metoffice";
+    process.env.MET_OFFICE_API_KEY = "k";
+  });
+
+  it("defaults to null and does NOT drag `available` down — every DB-free caller is unchanged", () => {
+    const r = getWeatherReadiness(fullyBuilt);
+    expect(r.hasActiveWatches).toBeNull();
+    expect(r.available).toBe(true);
+    expect(r.blockers).toHaveLength(0);
+  });
+
+  it("with a provider fully resolvable but NO active watch, `available` is forced false", () => {
+    const r = getWeatherReadiness({ ...fullyBuilt, hasActiveWatches: false });
+    expect(r.hasActiveWatches).toBe(false);
+    expect(r.available).toBe(false);
+    expect(r.blockers.join(" ")).toMatch(/no active weather watches/i);
+  });
+
+  it("with at least one active watch, the clause is satisfied and `available` holds", () => {
+    const r = getWeatherReadiness({ ...fullyBuilt, hasActiveWatches: true });
+    expect(r.hasActiveWatches).toBe(true);
+    expect(r.available).toBe(true);
+    expect(r.blockers.join(" ")).not.toMatch(/no active weather watches/i);
+  });
+
+  it("an empty pipeline can NEVER on its own make weather available — the invariant still needs the build-time facts", () => {
+    // hasActiveWatches:true must not paper over a missing provider.
+    const r = getWeatherReadiness({
+      providerImplemented: false,
+      credentialPresent: true,
+      districtResolutionAvailable: true,
+      decisionLayerImplemented: true,
+      hasActiveWatches: true,
+    });
+    expect(r.available).toBe(false);
   });
 });
 

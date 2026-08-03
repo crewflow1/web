@@ -210,6 +210,24 @@ export type WeatherReadiness = {
    * which is precisely the `ungovernedCredentialRisk` the AI governor reports.
    */
   strandedCredentialRisk: boolean;
+  /**
+   * Does the pipeline have anything to fetch FOR? A runtime fact, not a
+   * build-time one, so it is INJECTED rather than read here — this module stays
+   * edge-safe, DB-free and unable to throw (see the header). A caller that can
+   * reach the database (the /weather page, an operator surface) counts the
+   * org's active `weather_watches` and hands the answer in.
+   *
+   *   `null`  — not evaluated at this call site (the default, and what every
+   *             synchronous hot-path caller passes). Leaves `available`
+   *             untouched, exactly as before this signal existed.
+   *   `true`  — at least one active watch exists; the pipeline has work.
+   *   `false` — NO active watch exists. `weather_readings` is watch-gated by
+   *             RLS and the fetch pipeline returns "no active watches — nothing
+   *             to fetch", so with a provider bound but zero watches the feature
+   *             is bound-but-inert. This is the false-green this signal closes:
+   *             `available` is forced false and a blocker names the producer.
+   */
+  hasActiveWatches: boolean | null;
 };
 
 /**
@@ -227,6 +245,12 @@ export function getWeatherReadiness(
     districtResolutionAvailable?: boolean;
     /** Override the credential lookup. Testing only. */
     credentialPresent?: boolean;
+    /**
+     * The runtime watch signal (see `hasActiveWatches` on the shape). Supplied
+     * by a caller that has counted the org's active watches; omitted (⇒ null)
+     * by every DB-free caller, which leaves `available` unchanged.
+     */
+    hasActiveWatches?: boolean;
   } = {},
 ): WeatherReadiness {
   const rawSelection = (process.env.WEATHER_PROVIDER ?? "").trim().toLowerCase();
@@ -256,8 +280,19 @@ export function getWeatherReadiness(
   // Mirrors `getWeatherProvider() !== null` in ./index.
   const providerResolvable = providerImplemented && selectionUsable && credentialsPresent;
 
-  // THE INVARIANTS. Both build-time clauses are ones no environment can satisfy.
-  const available = decisionLayerImplemented && providerResolvable && districtResolutionAvailable;
+  // The runtime watch signal. `null` (default) means "not evaluated here" and
+  // must NOT drag `available` down — only a definite `false` (a caller looked
+  // and there are no watches) does, so the build-time invariants are unchanged
+  // for every synchronous, DB-free caller.
+  const hasActiveWatches = overrides.hasActiveWatches ?? null;
+
+  // THE INVARIANTS. The build-time clauses are ones no environment can satisfy;
+  // the watch clause is a runtime one that only bites when a caller supplied it.
+  const available =
+    decisionLayerImplemented &&
+    providerResolvable &&
+    districtResolutionAvailable &&
+    hasActiveWatches !== false;
 
   const blockers: string[] = [];
   if (!decisionLayerImplemented) {
@@ -298,6 +333,17 @@ export function getWeatherReadiness(
         "Directory with scripts/derive-district-centroids.ts (Open Government Licence v3.0)",
     );
   }
+  if (hasActiveWatches === false) {
+    // Bound-but-inert: a provider could be resolvable, yet the pipeline has
+    // nothing to fetch for because no district is under watch. The watch
+    // producer (server/services/weather-watch-sync.ts, run by the
+    // weather-watch-sync cron) keeps one active watch per live job's postcode
+    // district; until it has, `available` stays false rather than green-over-empty.
+    blockers.push(
+      "no active weather watches exist yet — the pipeline has nothing to fetch " +
+        "(the weather-watch-sync producer keeps one watch per live job's postcode district)",
+    );
+  }
 
   const credentialsFound = KNOWN_WEATHER_CREDENTIALS.filter((v) => present(process.env[v]));
   // Per-vendor: a credential is stranded when ITS OWN vendor has no adapter to
@@ -319,6 +365,7 @@ export function getWeatherReadiness(
     blockers,
     credentialsFound,
     strandedCredentialRisk,
+    hasActiveWatches,
   };
 }
 
