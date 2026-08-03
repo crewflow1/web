@@ -4,6 +4,7 @@ import {
   computePayeMonth,
   computeCorpTaxYear,
   startOfQuarterIso,
+  endOfQuarterExclusiveIso,
   startOfTaxYearIso,
 } from "@/lib/tax/compute";
 
@@ -114,6 +115,57 @@ describe("computeVatQuarter", () => {
     expect(authority.output_vat).toBe(1000);
     expect(authority.input_vat).toBe(200);
     expect(authority.net_payable).toBe(800);
+  });
+});
+
+describe("dashboard 'VAT this quarter' tile — regression: 6-month window must not leak earlier-quarter input VAT", () => {
+  // The dashboard loads a 6-MONTH finances window (for the profitability charts)
+  // and used to hand-roll a SECOND VAT calculator that summed input VAT across
+  // EVERY loaded finance row with no quarter gate, while output VAT was gated to
+  // the current quarter. The input leg spanned ~2 quarters vs the output leg's
+  // one, so net VAT owed was systematically UNDERSTATED. The tile now calls the
+  // single authority with an exclusive upper bound, exactly as the page does:
+  //   computeVatQuarter(invoices, finances, quarterStart, endOfQuarterExclusiveIso(quarterStart))
+  //
+  // quarterStart mirrors the page's local startOfQuarterISO(), a FULL ISO string.
+  const quarterStart = "2026-07-01T00:00:00.000Z"; // current quarter = Q3 (Jul–Sep)
+  const quarterEnd = endOfQuarterExclusiveIso(quarterStart);
+
+  // A realistic 6-month window: April–September. Q2 (Apr–Jun) rows must NOT count.
+  const invoices = [
+    // Paid in the current quarter → output VAT counts
+    { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-07-05", created_at: "2026-06-25" },
+    // Paid in the EARLIER quarter → excluded
+    { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-05-01", created_at: "2026-04-20" },
+  ];
+  const finances = [
+    // EARLIER quarter (Q2) input VAT — the leg the buggy calculator wrongly summed
+    { vat_total: 500, amount: 2500, created_at: "2026-05-15" },
+    // Current-quarter (Q3) input VAT — the only input that belongs to this return
+    { vat_total: 100, amount: 500, created_at: "2026-07-10" },
+    { vat_total: 50, amount: 250, created_at: "2026-08-20" },
+  ];
+
+  it("gates BOTH legs to the current quarter — earlier-quarter input VAT is excluded", () => {
+    const vat = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    expect(vat.output_vat).toBe(400); // Q2 paid invoice excluded
+    expect(vat.input_vat).toBe(150); // 100 + 50; the £500 Q2 cost is NOT summed
+    expect(vat.net_payable).toBe(250);
+    expect(vat.confidence).toBe("computed");
+  });
+
+  it("net VAT is HIGHER than the old 'sum all loaded finances' bug produced (understatement removed)", () => {
+    const fixed = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    // The pre-fix inline block: output gated to the quarter, but input summed
+    // across the ENTIRE 6-month window with no gate.
+    const buggyInputVat = finances.reduce((s, f) => s + Number(f.vat_total ?? 0), 0);
+    const buggyNetVat = fixed.output_vat - buggyInputVat; // 400 − 650 = −250
+    expect(buggyInputVat).toBe(650);
+    expect(buggyNetVat).toBe(-250);
+    // The fix owes £250; the bug claimed a £250 refund — understated by exactly the
+    // earlier quarter's £500 input VAT.
+    expect(fixed.net_payable).toBeGreaterThan(buggyNetVat);
+    expect(fixed.net_payable - buggyNetVat).toBe(500);
   });
 });
 

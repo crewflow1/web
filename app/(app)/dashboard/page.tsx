@@ -40,6 +40,10 @@ import {
   type TimeEntry,
 } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  computeVatQuarter,
+  endOfQuarterExclusiveIso,
+} from "@/lib/tax/compute";
 
 /**
  * Owner dashboard.
@@ -427,14 +431,12 @@ export default async function DashboardPage() {
   let overdueTotal = 0;
   let dueThisWeekCount = 0;
   let dueThisWeekTotal = 0;
-  let outputVatQuarter = 0;
   const todayIso = new Date().toISOString().slice(0, 10);
   const weekFromNowIso = new Date(Date.now() + 7 * 86_400_000)
     .toISOString()
     .slice(0, 10);
   for (const inv of invoices) {
     const total = Number(inv.total ?? 0);
-    const vat = Number(inv.vat_total ?? 0);
     // M1: this tile is now an accrual ("invoiced") figure keyed off
     // created_at, NOT an inv.status === "paid" sum. A mis-marked or
     // synthetic invoice (status "paid" with no invoice_payments rows) used
@@ -470,16 +472,20 @@ export default async function DashboardPage() {
         dueThisWeekTotal += total;
       }
     }
-    if (inv.status === "paid" && inv.paid_at && inv.paid_at >= quarterStart) {
-      outputVatQuarter += vat;
-    }
   }
 
-  let inputVatQuarter = 0;
-  for (const f of finances) {
-    inputVatQuarter += Number(f.vat_total ?? 0);
-  }
-  const netVatQuarter = outputVatQuarter - inputVatQuarter;
+  // VAT this quarter — the SINGLE authority (lib/tax/compute.ts). Output VAT
+  // (paid invoices) and input VAT (logged finance rows) are BOTH gated to the
+  // current quarter [quarterStart, endOfQuarterExclusive). The 6-month finances
+  // window loaded above contains the current quarter; computeVatQuarter applies
+  // its own in-period gate, so the earlier quarters in that window are excluded
+  // from the input leg (they previously understated net VAT owed).
+  const vat = computeVatQuarter(
+    invoices,
+    finances,
+    quarterStart,
+    endOfQuarterExclusiveIso(quarterStart),
+  );
 
   // ---- time + labour (Wave 4) ----
   const timeEntries = (timeEntriesRaw ?? []) as TimeEntry[];
@@ -798,9 +804,9 @@ export default async function DashboardPage() {
         />
         <Kpi
           label="VAT this quarter"
-          value={GBP.format(netVatQuarter)}
+          value={GBP.format(vat.net_payable)}
           href="/finances"
-          sub={`output ${GBP.format(outputVatQuarter)} − input ${GBP.format(inputVatQuarter)}`}
+          sub={`output ${GBP.format(vat.output_vat)} − input ${GBP.format(vat.input_vat)}`}
         />
       </section>
 
@@ -1335,11 +1341,13 @@ function Kpi({
   href?: string;
 }) {
   const body = (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </div>
-      <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
+      <div className="mt-2 text-xl sm:text-2xl font-bold text-slate-900 truncate tabular-nums">
+        {value}
+      </div>
       {sub ? (
         <div className="mt-1 text-xs text-slate-500 truncate">{sub}</div>
       ) : null}
