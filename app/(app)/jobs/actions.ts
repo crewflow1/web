@@ -108,19 +108,6 @@ export async function updateJob(
     result.data.recurring_end_date,
   );
 
-  // Read the CURRENT status (org-pinned) so we can fire `job.completed` only on a
-  // real transition INTO "completed", not on every save of an already-completed
-  // job. Best-effort — a failed read simply skips the transition detection; it
-  // never blocks the save. The dispatch below is idempotent regardless (keyed on
-  // the job id), so this read is an efficiency + honesty guard, not correctness.
-  const { data: priorRow } = await supabase
-    .from("jobs")
-    .select("status")
-    .eq("id", id)
-    .eq("org_id", ctx.org.id)
-    .maybeSingle();
-  const priorStatus = priorRow?.status ?? null;
-
   const { error, count } = await supabase
     .from("jobs")
     .update(
@@ -161,19 +148,21 @@ export async function updateJob(
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
 
-  // Automation OS — a job flipping INTO "completed" fires `job.completed` so the
-  // "job completed → suggest invoice" rule can run. Only on a real transition
-  // (prior status was not already "completed"), mirroring how quote.accepted /
-  // payment.recorded are dispatched: org-pinned, keyed on the job id, idempotent
-  // via (rule_id, correlation_id) in automation_runs, and best-effort — a dispatch
-  // failure never derails the save.
-  if (result.data.status === "completed" && priorStatus !== "completed") {
+  // Automation OS — a completed job fires `job.completed` so the "job completed →
+  // suggest invoice" rule can run. Dispatched whenever the saved status is
+  // "completed"; the dispatcher claims (rule_id, correlation_id) against a unique
+  // constraint in automation_runs (correlation = `job.completed:jobs:<id>`), so
+  // each rule fires exactly once per job no matter how many times a completed job
+  // is re-saved — no prior-status read needed. Mirrors quote.accepted /
+  // payment.recorded: org-pinned, keyed on the job id, best-effort (a dispatch
+  // failure never derails the save).
+  if (result.data.status === "completed") {
     await dispatchAutomation({
       type: "job.completed",
       org_id: ctx.org.id,
       source_table: "jobs",
       source_id: id,
-      payload: { from: priorStatus, to: "completed" },
+      payload: { to: "completed" },
     }).catch((e) => {
       console.error("[jobs] automation dispatch failed", e);
     });
