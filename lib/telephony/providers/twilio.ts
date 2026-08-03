@@ -88,20 +88,62 @@ export function parseTwilioVoiceWebhook(
   };
 }
 
-/**
- * Build the TwiML the origination route returns. Kept deliberately minimal and
- * deterministic — a fixed spoken acknowledgement. Any AI-generated spoken turn
- * is a separate, governed, tier-gated seam (lib/telephony/ai-turn.ts) that is
- * dark today; this is the fallback a caller always hears.
- */
-export function buildInboundTwiml(message?: string): string {
-  const say = message?.trim() || "Thank you for calling. Please leave a message after the tone.";
-  const escaped = say
+/** XML-escape a spoken string so a caller utterance can never break the TwiML. */
+function escapeXml(s: string): string {
+  return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escaped}</Say></Response>`;
+}
+
+/**
+ * The single conversational callback the <Gather> loop POSTs the caller's
+ * SpeechResult to. It reuses the origination route's guard chain and drives the
+ * governed AI spoken-turn seam. Kept relative so it is signed/reconstructed
+ * against whatever public host Twilio reached (behind Vercel's proxy).
+ */
+export const TWILIO_VOICE_GATHER_ACTION = "/api/webhooks/twilio/voice/gather";
+
+/**
+ * Build a fixed, deterministic acknowledgement TwiML — a bare <Say> with no
+ * <Gather>, so the call ENDS after it plays. Used for the ack-drop (unrouted)
+ * and for the graceful "leave it with us" fallback when the AI turn is dark: a
+ * conversational loop must never spin silently when nothing can answer.
+ */
+export function buildInboundTwiml(message?: string): string {
+  const say = message?.trim() || "Thank you for calling. Please leave a message after the tone.";
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(say)}</Say></Response>`;
+}
+
+/**
+ * Build a CONVERSATIONAL turn: SAY `prompt` while LISTENING (speech recognition)
+ * and POST the transcript to the gather-callback route so the governed AI seam
+ * can produce the next spoken turn. Nesting the greeting/turn inside <Gather> is
+ * what makes the seam reachable — Twilio only delivers `SpeechResult` to a
+ * <Gather action=…> URL. A `<Say>`+`<Hangup/>` branch AFTER the <Gather> handles
+ * the caller who says nothing, so the call ends politely instead of hanging.
+ */
+export function buildGatherTwiml(opts?: {
+  prompt?: string;
+  noInput?: string;
+  action?: string;
+}): string {
+  const prompt = opts?.prompt?.trim() || "Thank you for calling. How can I help you today?";
+  const noInput =
+    opts?.noInput?.trim() ||
+    "Sorry, I didn't catch that. Please call back when you're ready. Goodbye.";
+  const action = opts?.action?.trim() || TWILIO_VOICE_GATHER_ACTION;
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    `<Gather input="speech" action="${escapeXml(action)}" method="POST" speechTimeout="auto">` +
+    `<Say>${escapeXml(prompt)}</Say>` +
+    `</Gather>` +
+    `<Say>${escapeXml(noInput)}</Say>` +
+    `<Hangup/>` +
+    `</Response>`
+  );
 }
 
 /** The TwiML returned when a call cannot be attributed to an org (ack-drop). */

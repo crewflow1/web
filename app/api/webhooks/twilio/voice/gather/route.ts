@@ -1,0 +1,112 @@
+import { NextResponse } from "next/server";
+import { isMaintenanceMode } from "@/lib/maintenance";
+import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
+import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
+import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
+import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
+
+/**
+ * Twilio inbound VOICE gather-callback — the conversational spoken-turn loop.
+ *
+ * The origination route greets the caller inside a <Gather input="speech"> whose
+ * action is THIS route. Twilio transcribes the caller's utterance and POSTs it
+ * here as `SpeechResult` — the ONLY place a transcript ever arrives, so this is
+ * where the governed AI spoken-turn seam (maybeGenerateVoiceTurn) is actually
+ * reachable with a non-empty transcript.
+ *
+ * It reuses the origination edge's guard chain VERBATIM, in the same order:
+ *   1. maintenance 503 → 2. rate-limit → 3. DARK GATE 503 before ANY work →
+ *   4. read the RAW body → 5. FAIL-CLOSED signature verify BEFORE parsing →
+ *   6. normalise → 7. resolve the org from the DIALED number (never the body) →
+ *   8. generate the governed turn from `SpeechResult` → 9. return TwiML.
+ *
+ * The turn TwiML SAYs the AI reply and NESTS a further <Gather> back to this
+ * same route, continuing the conversation. When the turn is null (DARK: no tier
+ * bound / blocked / deduped / provider error) we return a graceful deterministic
+ * TwiML that ends the call politely — never an error, never a silent loop, never
+ * a leak. Identical dark posture to before: a bound tier is still required.
+ */
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const TWIML_HEADERS = { "content-type": "text/xml; charset=utf-8" } as const;
+
+/** The exact URL Twilio signed — reconstructed from forwarded headers. */
+function callbackUrl(request: Request): string {
+  const parsed = new URL(request.url);
+  const proto = request.headers.get("x-forwarded-proto") ?? parsed.protocol.replace(/:$/, "");
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? parsed.host;
+  return `${proto}://${host}${parsed.pathname}${parsed.search}`;
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  if (isMaintenanceMode()) {
+    return NextResponse.json(
+      { ok: false, maintenance: true, message: "Scheduled maintenance — retry shortly." },
+      { status: 503, headers: { "retry-after": "120", "cache-control": "no-store" } },
+    );
+  }
+
+  const rl = enforce(request, "twilio_voice_gather", DEFAULT_LIMITS.api);
+  if (rl) return rl as unknown as NextResponse;
+
+  // 3. THE DARK GATE — before any work. Flag off or no provider ⇒ 503.
+  if (!isVoiceConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: "not_enabled" },
+      { status: 503, headers: { "retry-after": "300", "cache-control": "no-store" } },
+    );
+  }
+
+  // 4. Raw body FIRST — the signature is over the exact params.
+  const rawBody = await request.text();
+  const params = Object.fromEntries(new URLSearchParams(rawBody)) as Record<string, string>;
+
+  const provider = getVoiceProvider();
+  if (!provider) {
+    return NextResponse.json({ ok: false, error: "not_enabled" }, { status: 503 });
+  }
+
+  // 5. FAIL-CLOSED signature verification BEFORE parsing or any side effect.
+  const authentic = await provider.verify({
+    signature: request.headers.get("x-twilio-signature"),
+    url: callbackUrl(request),
+    rawBody,
+    params,
+  });
+  if (!authentic) {
+    return NextResponse.json({ ok: false, error: "invalid_signature" }, { status: 401 });
+  }
+
+  // 6. Normalise the verified body. A gather callback with no usable identity is
+  //    answered with the deterministic greeting rather than an error.
+  const call = provider.parse({ rawBody, params });
+  if (!call) {
+    return new NextResponse(buildInboundTwiml(), { status: 200, headers: TWIML_HEADERS });
+  }
+
+  // 7. Attribute the org from the DIALED number — never the caller-controlled body.
+  const orgId = await resolveOrgForDialedNumber(call.to);
+  if (!orgId) {
+    // Ack-drop: no tenant work, polite TwiML.
+    return new NextResponse(buildAckDropTwiml(), { status: 200, headers: TWIML_HEADERS });
+  }
+
+  // 8. The caller's utterance, transcribed by Twilio's <Gather input="speech">.
+  //    This is the transcript the governed seam short-circuits on when empty.
+  const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
+  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript });
+
+  // 9. A generated turn CONTINUES the loop (SAY the reply, then <Gather> again).
+  //    A null turn (dark / no tier / blocked / deduped / error) degrades to a
+  //    graceful, deterministic close — never an error, never a silent re-gather.
+  const twiml = spokenTurn
+    ? buildGatherTwiml({ prompt: spokenTurn })
+    : buildInboundTwiml(
+        "Thank you. We'll pass your message to the team and someone will call you back. Goodbye.",
+      );
+  return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS });
+}

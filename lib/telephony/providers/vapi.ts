@@ -72,12 +72,22 @@ export function mapVapiStatus(
   }
 }
 
+type VapiToolFunction = { name?: string; arguments?: unknown };
+type VapiToolCallRaw = { id?: string; function?: VapiToolFunction };
+
 type VapiBody = {
   message?: {
     type?: string;
     status?: string;
     endedReason?: string;
     timestamp?: string | number;
+    transcript?: string;
+    /** Newer tool-calls shape. */
+    toolCalls?: VapiToolCallRaw[];
+    toolCallList?: VapiToolCallRaw[];
+    /** Legacy single function-call shape. */
+    functionCall?: VapiToolFunction;
+    artifact?: { messages?: Array<{ role?: string; message?: string; content?: string }> };
     call?: {
       id?: string;
       customer?: { number?: string };
@@ -87,6 +97,139 @@ type VapiBody = {
     customer?: { number?: string };
   };
 };
+
+/** Read the Vapi server-message `type` from a raw body. Pure; never throws. */
+export function readVapiMessageType(rawBody: string): string | null {
+  try {
+    const body = JSON.parse(rawBody) as VapiBody;
+    const t = body?.message?.type;
+    return typeof t === "string" && t.trim() ? t.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract routing + conversation context from ANY Vapi message (not only status
+ * updates): the DIALED number to attribute the org from, the caller, and the
+ * caller's latest utterance to feed the governed turn. Pure; null on bad JSON.
+ */
+export function parseVapiConversation(rawBody: string): {
+  to: string | null;
+  from: string | null;
+  transcript: string;
+} | null {
+  let body: VapiBody;
+  try {
+    body = JSON.parse(rawBody) as VapiBody;
+  } catch {
+    return null;
+  }
+  const msg = body?.message;
+  if (!msg) return null;
+
+  const call = msg.call;
+  const from = (call?.customer?.number ?? msg.customer?.number ?? "").trim() || null;
+  const to = (call?.phoneNumber?.number ?? msg.phoneNumber?.number ?? "").trim() || null;
+
+  // Prefer an explicit transcript; else the last user turn in the artifact.
+  let transcript = typeof msg.transcript === "string" ? msg.transcript.trim() : "";
+  if (!transcript && Array.isArray(msg.artifact?.messages)) {
+    for (let i = msg.artifact!.messages!.length - 1; i >= 0; i--) {
+      const m = msg.artifact!.messages![i];
+      if ((m?.role ?? "").toLowerCase() === "user") {
+        transcript = (m?.message ?? m?.content ?? "").toString().trim();
+        if (transcript) break;
+      }
+    }
+  }
+  return { to, from, transcript };
+}
+
+/** One normalised tool/function invocation from a Vapi conversational message. */
+export type VapiToolInvocation = { id: string | null; name: string; args: Record<string, unknown> };
+
+/** Extract the tool/function calls from a Vapi tool-calls / function-call body. */
+export function extractVapiToolCalls(rawBody: string): VapiToolInvocation[] {
+  let body: VapiBody;
+  try {
+    body = JSON.parse(rawBody) as VapiBody;
+  } catch {
+    return [];
+  }
+  const msg = body?.message;
+  if (!msg) return [];
+
+  const parseArgs = (raw: unknown): Record<string, unknown> => {
+    if (raw && typeof raw === "object") return raw as Record<string, unknown>;
+    if (typeof raw === "string" && raw.trim()) {
+      try {
+        const p = JSON.parse(raw);
+        return p && typeof p === "object" ? (p as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  };
+
+  const list = msg.toolCalls ?? msg.toolCallList ?? [];
+  const fromList: VapiToolInvocation[] = list.map((t) => ({
+    id: t?.id?.trim() || null,
+    name: (t?.function?.name ?? "").trim(),
+    args: parseArgs(t?.function?.arguments),
+  }));
+  if (fromList.length) return fromList.filter((t) => t.name);
+
+  // Legacy single function-call.
+  if (msg.functionCall?.name) {
+    return [{ id: null, name: msg.functionCall.name.trim(), args: parseArgs(msg.functionCall.arguments) }];
+  }
+  return [];
+}
+
+/**
+ * Build the assistant configuration Vapi expects in reply to an assistant-request.
+ * Vendor-neutral, credential-free, and safe to emit while DARK — it declares the
+ * receptionist's model/voice/transcriber and opening line; no live provider call
+ * is made here. The generative model itself remains governed at turn time via the
+ * tool-call path and `maybeGenerateVoiceTurn`.
+ */
+export function buildVapiAssistantConfig(opts?: {
+  firstMessage?: string;
+  systemPrompt?: string;
+}): Record<string, unknown> {
+  const firstMessage =
+    opts?.firstMessage?.trim() || "Thank you for calling. How can I help you today?";
+  const systemPrompt =
+    opts?.systemPrompt?.trim() ||
+    [
+      "You are CrewFlow Receptionist, answering a phone call for a UK construction firm.",
+      "Reply in ONE or TWO short spoken sentences — plain speech, no markdown, no lists.",
+      "Be warm and concise. Never promise prices, never book or schedule work.",
+    ].join(" ");
+  return {
+    assistant: {
+      firstMessage,
+      model: {
+        provider: "custom-llm",
+        model: "crewflow-receptionist",
+        messages: [{ role: "system", content: systemPrompt }],
+      },
+      transcriber: { provider: "deepgram", model: "nova-2", language: "en-GB" },
+      voice: { provider: "vapi", voiceId: "Elliot" },
+    },
+  };
+}
+
+/** Wrap governed tool/turn outputs into the response shape Vapi consumes. */
+export function buildVapiToolResults(
+  results: Array<{ toolCallId: string | null; result: string }>,
+): Record<string, unknown> {
+  return {
+    results: results.map((r) => ({ toolCallId: r.toolCallId, result: r.result })),
+  };
+}
 
 /** Parse a VERIFIED Vapi webhook body into the neutral shape, or null. */
 export function parseVapiWebhook(input: {
