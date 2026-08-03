@@ -17,6 +17,13 @@ import {
 const TRUELAYER_DATA_API = "https://api.truelayer.com";
 
 /**
+ * First-sync backfill window (days) used when there is no `since` (never synced).
+ * Bounds the very first pull so activation does not fetch an unbounded ~2-year
+ * history; steady-state runs extend forward via the sync engine's overlap window.
+ */
+const FIRST_SYNC_BACKFILL_DAYS = 90;
+
+/**
  * TrueLayer banking adapter — DARK.
  *
  * This adapter is a SEAM, not a live integration. It reports itself unavailable
@@ -87,8 +94,8 @@ export class TrueLayerAdapter implements BankingAdapter {
     );
 
     // TrueLayer's transactions endpoint takes an explicit ISO from/to window. We
-    // pull from `since` (or a wide default) up to now; the sync engine re-runs an
-    // overlapping window and the DB dedupes on provider_tx_id.
+    // pull from `since` (or a bounded 90-day first-sync default) up to now; the
+    // sync engine re-runs an overlapping window and the DB dedupes on provider_tx_id.
     const from = this.fromParam(input.since);
     const to = new Date().toISOString();
 
@@ -160,14 +167,26 @@ export class TrueLayerAdapter implements BankingAdapter {
     };
   }
 
-  /** Resolve the `from` window: the `since` day, else a wide default (~2 years back). */
+  /**
+   * Resolve the `from` window: the `since` day, else a bounded first-sync
+   * default (FIRST_SYNC_BACKFILL_DAYS back).
+   *
+   * A `null` since means "never synced" — the very first pull. Defaulting to a
+   * ~2-year window there made the first sync unbounded: it fetched every line the
+   * account had, feeding thousands of candidate ids into the dedupe read and the
+   * insert path on activation. A 90-day window is a sensible first-sync backfill
+   * (steady-state runs then extend forward via the 7-day overlap window in
+   * bank-sync.ts, so no ongoing transaction is missed). TrueLayer's /transactions
+   * endpoint returns the full window's `results` in one response with no cursor,
+   * so this date cap is the bound on the first pull's size.
+   */
   private fromParam(since: string | null | undefined): string {
     if (since && since.length > 0) {
       // Accept a plain date or a full ISO timestamp; TrueLayer wants ISO.
       return since.length === 10 ? `${since}T00:00:00Z` : since;
     }
-    const wide = new Date();
-    wide.setUTCFullYear(wide.getUTCFullYear() - 2);
-    return wide.toISOString();
+    const backfill = new Date();
+    backfill.setUTCDate(backfill.getUTCDate() - FIRST_SYNC_BACKFILL_DAYS);
+    return backfill.toISOString();
   }
 }
