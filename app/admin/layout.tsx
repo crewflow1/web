@@ -89,8 +89,11 @@ export default async function AdminLayout({
 
   // Live ticket count drives the Support queue badge. Best-effort —
   // failures degrade to no badge rather than breaking the layout.
+  // `null` (read failed) and a rejected promise both degrade to no badge — a
+  // missing nav badge makes no health claim (unlike the CEO board, which now
+  // shows Support as "Unavailable" rather than a false all-clear).
   const openTickets = await countOpenSupportTicketsForHq().catch(() => 0);
-  const supportBadge = badgeText(openTickets);
+  const supportBadge = badgeText(openTickets ?? 0);
   // Same pattern for unread HQ notifications.
   const unreadNotifs = await getUnreadCountForHq().catch(() => 0);
   const notifBadge = notifBadgeText(unreadNotifs);

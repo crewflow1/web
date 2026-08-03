@@ -38,8 +38,12 @@ import {
 // ---------------------------------------------------------------------
 
 export type CeoInput = ExecutiveInput & {
-  /** Open support tickets (open / in progress / waiting on customer). */
-  openSupportTickets: number;
+  /**
+   * Open support tickets (open / in progress / waiting on customer). `null`
+   * when the support_tickets read FAILED — the board must then show Support as
+   * insufficient, never fabricate an all-clear from an unreadable queue.
+   */
+  openSupportTickets: number | null;
   /** AI employees not in the "disabled" state. */
   aiEmployeesActive: number;
   /** Total AI employees on the roster. */
@@ -56,7 +60,12 @@ export type CeoInput = ExecutiveInput & {
 // Health — a single, honest signal per department.
 // ---------------------------------------------------------------------
 
-export type DeptHealthTone = "healthy" | "steady" | "attention" | "foundation";
+export type DeptHealthTone =
+  | "healthy"
+  | "steady"
+  | "attention"
+  | "foundation"
+  | "insufficient";
 
 export type DeptHealth = {
   tone: DeptHealthTone;
@@ -68,6 +77,11 @@ const HEALTH_LABEL: Record<DeptHealthTone, string> = {
   steady: "Steady",
   attention: "Needs attention",
   foundation: "Foundation",
+  // "insufficient" is NOT "foundation": foundation is a CONFIRMED real zero
+  // (machinery built, no volume yet); insufficient means the underlying read
+  // FAILED, so no honest claim — green or otherwise — can be made. Mirrors the
+  // AI Boardroom's honest-label rule (lib/hq/boardroom-cards.ts).
+  insufficient: "Unavailable",
 };
 
 function health(tone: DeptHealthTone, label?: string): DeptHealth {
@@ -100,10 +114,16 @@ export function growthHealth(
 }
 
 /**
- * Support health: a clear queue is healthy, a light queue steady, a heavy
- * backlog needs attention.
+ * Support health. Honest by construction, split three ways:
+ *   - `null`  → the ticket read FAILED; report `insufficient`, never a green
+ *               "All clear" conjured from unreadable data.
+ *   - `0`     → a CONFIRMED empty queue (query succeeded); genuinely all clear.
+ *   - `1..10` → a light queue is steady; a heavier backlog needs attention.
+ * The null branch is the whole point: a swallowed-zero upstream would make this
+ * department the only one that greens on absent data.
  */
-export function supportHealth(openTickets: number): DeptHealth {
+export function supportHealth(openTickets: number | null): DeptHealth {
+  if (openTickets === null) return health("insufficient");
   if (!(openTickets > 0)) return health("healthy", "All clear");
   if (openTickets <= 10) return health("steady", "Steady");
   return health("attention", "Backlog");
@@ -146,10 +166,11 @@ export function learningHealth(active: number, total: number): DeptHealth {
 // Board shape.
 // ---------------------------------------------------------------------
 
-/** A labelled figure inside a department scorecard. */
+/** A labelled figure inside a department scorecard. `value` is `null` when the
+ * figure could not be read — the UI renders an em-dash, never a fabricated 0. */
 export type DeptStat = {
   label: string;
-  value: number;
+  value: number | null;
   format: ExecFormat;
 };
 

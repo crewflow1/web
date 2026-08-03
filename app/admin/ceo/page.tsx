@@ -90,6 +90,12 @@ const HEALTH: Record<DeptHealthTone, { dot: string; pill: string }> = {
     dot: "bg-slate-500",
     pill: "bg-slate-700/40 text-slate-400 ring-slate-600/40",
   },
+  // Read failed — deliberately NOT green and visually distinct from the slate
+  // "foundation" (a confirmed real zero). A hollow zinc chip reads as "unknown".
+  insufficient: {
+    dot: "bg-zinc-400 ring-1 ring-zinc-300/40",
+    pill: "bg-zinc-500/10 text-zinc-300 ring-zinc-400/40",
+  },
 };
 
 export default function CeoDashboardPage() {
@@ -303,7 +309,7 @@ function StatBlock({ stat }: { stat: DeptStat }) {
         {stat.label}
       </p>
       <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-200">
-        {formatExec(stat.value, stat.format)}
+        {stat.value === null ? "—" : formatExec(stat.value, stat.format)}
       </p>
     </div>
   );
@@ -327,6 +333,7 @@ function HealthLegend() {
     { tone: "steady", label: "Steady" },
     { tone: "attention", label: "Attention" },
     { tone: "foundation", label: "Foundation" },
+    { tone: "insufficient", label: "Unavailable" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

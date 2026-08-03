@@ -87,10 +87,23 @@ describe("ceo — health rules (honest by construction)", () => {
     });
   });
 
-  it("support health: clear queue healthy, light steady, backlog attention", () => {
+  it("support health: CONFIRMED-zero clear, light steady, backlog attention", () => {
+    // A CONFIRMED zero (the read succeeded and found 0 open tickets) may honestly
+    // read "All clear" — but only because the number is real. See the null case
+    // below for the fabricated-green defect this scoping guards against.
     expect(supportHealth(0)).toEqual({ tone: "healthy", label: "All clear" });
     expect(supportHealth(3)).toEqual({ tone: "steady", label: "Steady" });
     expect(supportHealth(11)).toEqual({ tone: "attention", label: "Backlog" });
+  });
+
+  it("support health: an UNREADABLE queue is insufficient, never a false green", () => {
+    // `null` = the support_tickets read FAILED. It must NOT collapse to the same
+    // "healthy / All clear" as a confirmed zero — that was the honesty defect:
+    // a swallowed-zero upstream greened the board off unreadable data.
+    const unreadable = supportHealth(null);
+    expect(unreadable).toEqual({ tone: "insufficient", label: "Unavailable" });
+    expect(unreadable.tone).not.toBe("healthy");
+    expect(unreadable.tone).not.toBe("foundation");
   });
 
   it("engine health is foundation at zero volume, live once it logs work", () => {
@@ -227,7 +240,8 @@ describe("ceo — empty window is honest, never a false green", () => {
     }
   });
 
-  it("an empty support queue is healthy, not foundation", () => {
+  it("a CONFIRMED-empty support queue is healthy, not foundation", () => {
+    // baseInput carries openSupportTickets: 0 — a real, readable zero.
     expect(dept.get("support")?.health).toEqual({
       tone: "healthy",
       label: "All clear",
@@ -238,5 +252,30 @@ describe("ceo — empty window is honest, never a false green", () => {
     const vital = new Map(board.vitals.map((v) => [v.key, v]));
     expect(vital.get("arr")?.value).toBe(0);
     expect(vital.get("win_rate")?.value).toBe(0);
+  });
+});
+
+describe("ceo — an unreadable support read is insufficient, never a false green", () => {
+  // openSupportTickets: null models a FAILED support_tickets read. The board
+  // must distinguish this from a confirmed zero: no green health, and no
+  // fabricated ticket figure on the headline.
+  const board = assembleCeoBoard(baseInput({ openSupportTickets: null }));
+  const support = board.departments.find((d) => d.key === "support")!;
+
+  it("greens NOTHING when the support count could not be read", () => {
+    expect(support.health.tone).toBe("insufficient");
+    expect(support.health.tone).not.toBe("healthy");
+    expect(support.health.tone).not.toBe("foundation");
+  });
+
+  it("shows no fabricated ticket figure — the headline value is null", () => {
+    expect(support.headline.value).toBeNull();
+  });
+
+  it("every other department is unaffected by the null support read", () => {
+    for (const d of board.departments) {
+      if (d.key === "support") continue;
+      expect(d.health.tone).not.toBe("insufficient");
+    }
   });
 });
