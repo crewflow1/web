@@ -106,6 +106,33 @@ const PROVIDER_OAUTH: Record<
   },
 };
 
+/**
+ * Resolve the OAuth redirect URI for a provider callback.
+ *
+ * SECURITY (ACTIVATION GATE). The redirect_uri MUST be pinned to a trusted,
+ * allow-listed host at activation, or a spoofed Host / X-Forwarded-* header
+ * could point the authorization code at an attacker-controlled origin. The
+ * accounting_connections migration (20261095) documents this as a BLOCKING
+ * activation prerequisite.
+ *
+ * `ACCOUNTING_REDIRECT_URI`, when set, is that allow-listed ORIGIN (e.g.
+ * `https://app.example`) and OVERRIDES the request-origin-derived value — the
+ * authorize redirect and the token-exchange redirect then both use it, exactly
+ * as OAuth requires them to match. It is declared here but intentionally UNSET:
+ * unset, behaviour is unchanged (origin taken from the request), which is fine
+ * dark and in a trusted single-origin deploy. Activation sets it to close the
+ * host-spoofing gate. The callback PATH is fixed and appended here so the
+ * connect and callback routes can never construct divergent URIs.
+ */
+export function accountingRedirectUri(
+  provider: AccountingProvider,
+  requestOrigin: string,
+): string {
+  const pinned = envValue("ACCOUNTING_REDIRECT_URI");
+  const base = (pinned ?? requestOrigin).replace(/\/+$/, "");
+  return `${base}/api/integrations/accounting/${provider}/callback`;
+}
+
 /** The PKCE + state material a connect redirect must persist to verify the callback. */
 export type AuthorizeChallenge = {
   /** Where to send the tenant's browser to authorize. */

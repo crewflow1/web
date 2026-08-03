@@ -30,21 +30,31 @@ import {
  * per-tenant env is read here. Set XERO_CLIENT_ID + XERO_CLIENT_SECRET and flip
  * FEATURE_ACCOUNTING_CONNECT and this adapter posts real invoices / payments.
  *
- * ── THE PUSH ─────────────────────────────────────────────────────────────────
- * Canonical rows → the pure body builders (provider-payloads.ts) → POST to the
- * Xero Accounting API with `Authorization: Bearer` + `Xero-tenant-id`. On a 401
- * the request is retried ONCE after a token refresh (the input's `refresh`
- * callback). An `Idempotency-Key` derived from the payload lets Xero collapse a
- * duplicate push (e.g. a retried action) into a single write.
+ * ── THE PUSH (PER-ENTITY) ────────────────────────────────────────────────────
+ * Canonical rows → the pure body builders (provider-payloads.ts) → ONE POST PER
+ * ROW to the Xero Accounting API with `Authorization: Bearer` + `Xero-tenant-id`.
+ * On a 401 the push refreshes the token ONCE (the input's `refresh` callback,
+ * shared across the whole loop) and retries. Each POST carries a STABLE per-entity
+ * `Idempotency-Key` seeded by the CrewFlow row id (`sourceId`), so re-pushing the
+ * SAME invoice is a no-op at Xero even within its key-retention window.
+ *
+ * WHY PER-ROW, NOT PER-BATCH. A single batch POST carries ONE Idempotency-Key
+ * hashed over the WHOLE body, so adding a new invoice to a later sync changes the
+ * key and Xero re-creates the earlier invoices (it permits duplicate
+ * InvoiceNumbers). A per-entity key keyed on the immutable row id is idempotent
+ * regardless of what else is in the sync — the defence-in-depth behind the
+ * push-once ledger (accounting_pushed_entities), which is the primary guard.
  */
 
 const XERO_API = "https://api.xero.com/api.xro/2.0";
 
-/** Stable idempotency key for a request body — identical rows ⇒ identical key. */
-function idempotencyKey(kind: string, tenantId: string, body: unknown): string {
-  const h = createHash("sha256")
-    .update(`${kind}:${tenantId}:${JSON.stringify(body)}`)
-    .digest("hex");
+/**
+ * Stable idempotency key for ONE entity. Seeded by the immutable CrewFlow row id
+ * when present (so the key is identical across every sync that re-pushes the same
+ * row), else by the row body as a deterministic fallback.
+ */
+function idempotencyKey(kind: string, tenantId: string, seed: string): string {
+  const h = createHash("sha256").update(`${kind}:${tenantId}:${seed}`).digest("hex");
   return `crewflow-xero-${kind}-${h.slice(0, 32)}`;
 }
 
@@ -56,25 +66,30 @@ export class XeroAdapter implements AccountingAdapter {
   }
 
   async pushInvoices(input: AccountingPushInput): Promise<AccountingPushResult> {
-    return this.push("invoices", input, buildXeroInvoicesBody(input.rows));
+    const built = buildXeroInvoicesBody(input.rows).Invoices;
+    return this.push("invoices", "Invoices", input, built);
   }
 
   async pushPayments(input: AccountingPushInput): Promise<AccountingPushResult> {
     // Bank account code the receipts land in. Configurable via env with a sane
     // Xero default ("090" is Xero's standard Bank account code); not a secret.
     const bankCode = process.env.XERO_BANK_ACCOUNT_CODE?.trim() || "090";
-    return this.push(
-      "payments",
-      input,
-      buildXeroPaymentsBody(input.rows, bankCode),
-    );
+    const built = buildXeroPaymentsBody(input.rows, bankCode).Payments;
+    return this.push("payments", "Payments", input, built);
   }
 
-  /** Shared POST with Bearer + tenant header, idempotency, and 401→refresh→retry. */
+  /**
+   * Push each row as its OWN POST, carrying a stable per-entity idempotency key.
+   * Bearer + tenant header, 401→refresh→retry (refreshed ONCE, shared across the
+   * loop). Returns `pushed` = the count Xero accepted; on a mid-loop failure the
+   * error carries that same prefix count so the caller records exactly what
+   * Xero took and re-pushes only the tail.
+   */
   private async push(
     kind: "invoices" | "payments",
+    endpoint: "Invoices" | "Payments",
     input: AccountingPushInput,
-    body: { Invoices?: unknown[]; Payments?: unknown[] },
+    built: readonly unknown[],
   ): Promise<AccountingPushResult> {
     // DARK GUARD FIRST. With no credentials / flag off we return without touching
     // the network. Everything below is unreachable until connectable.
@@ -93,45 +108,64 @@ export class XeroAdapter implements AccountingAdapter {
         message: "Xero push has no tenant id; reconnect the Xero account.",
       };
     }
-    const count = input.rows.length;
-    if (count === 0) return { ok: true, provider: this.provider, pushed: 0 };
+    const tenantId = input.tenantId;
+    const rows = input.rows;
+    if (rows.length === 0) return { ok: true, provider: this.provider, pushed: 0 };
 
-    const url = `${XERO_API}/${kind === "invoices" ? "Invoices" : "Payments"}`;
-    const key = idempotencyKey(kind, input.tenantId, body);
+    const url = `${XERO_API}/${endpoint}`;
+    // Refresh is shared across the whole loop: a single 401 refreshes ONCE and
+    // every subsequent row uses the new token (like the QBO adapter's AuthCtx).
+    const ctx = { token: input.accessToken, refreshed: false };
 
-    // ── LIVE PATH (unreachable dark) ─────────────────────────────────────────
-    let res = await this.post(url, input.accessToken, input.tenantId, key, body);
-    if (res.status === 401) {
-      // Expired/invalid token → refresh ONCE and retry with the new token.
-      const fresh = await input.refresh();
-      if (!fresh) {
+    let pushed = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const one = built[i];
+      const body = kind === "invoices" ? { Invoices: [one] } : { Payments: [one] };
+      // Stable per-entity key: seed by the immutable CrewFlow row id when we have
+      // it, else the row body (deterministic fallback).
+      const seed = rows[i]!.sourceId ?? JSON.stringify(one);
+      const key = idempotencyKey(kind, tenantId, seed);
+
+      // ── LIVE PATH (unreachable dark) ───────────────────────────────────────
+      let res = await this.post(url, ctx.token, tenantId, key, body);
+      if (res.status === 401 && !ctx.refreshed) {
+        // Expired/invalid token → refresh ONCE and retry this row with the new token.
+        ctx.refreshed = true;
+        const fresh = await input.refresh();
+        if (!fresh) {
+          return {
+            ok: false,
+            provider: this.provider,
+            reason: "error",
+            message: "Xero rejected the token and it could not be refreshed.",
+            pushed,
+          };
+        }
+        ctx.token = fresh;
+        res = await this.post(url, ctx.token, tenantId, key, body);
+      }
+
+      if (res.networkError) {
         return {
           ok: false,
           provider: this.provider,
           reason: "error",
-          message: "Xero rejected the token and it could not be refreshed.",
+          message: `Xero push failed: ${res.networkError}`,
+          pushed,
         };
       }
-      res = await this.post(url, fresh, input.tenantId, key, body);
+      if (res.status < 200 || res.status >= 300) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `Xero ${kind} push returned ${res.status}`,
+          pushed,
+        };
+      }
+      pushed += 1;
     }
-
-    if (res.networkError) {
-      return {
-        ok: false,
-        provider: this.provider,
-        reason: "error",
-        message: `Xero push failed: ${res.networkError}`,
-      };
-    }
-    if (res.status < 200 || res.status >= 300) {
-      return {
-        ok: false,
-        provider: this.provider,
-        reason: "error",
-        message: `Xero ${kind} push returned ${res.status}`,
-      };
-    }
-    return { ok: true, provider: this.provider, pushed: count };
+    return { ok: true, provider: this.provider, pushed };
   }
 
   /** One POST attempt. Never throws — a network failure is reported on the result. */

@@ -8,6 +8,7 @@ import {
   exchangeCodeForTokens,
   isProviderConnectable,
   resolveXeroTenantId,
+  accountingRedirectUri,
 } from "@/lib/integrations/accounting/oauth";
 import {
   encryptToken,
@@ -146,7 +147,10 @@ export async function GET(
     return backToReports(origin, "state_mismatch", provider);
   }
 
-  const redirectUri = `${origin}/api/integrations/accounting/${provider}/callback`;
+  // Must match the connect route's redirect_uri exactly (OAuth requirement);
+  // both derive it from the same helper — pinned when ACCOUNTING_REDIRECT_URI is
+  // set, else the request origin.
+  const redirectUri = accountingRedirectUri(provider, origin);
   const exchanged = await exchangeCodeForTokens({
     provider,
     code,

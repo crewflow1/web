@@ -57,6 +57,13 @@ export type AccountingPushInput = {
  *   - ok               — rows accepted by the provider (unreachable today).
  *   - unavailable      — credentials absent; nothing was sent (the dark path).
  *   - error            — credentials present but the push failed.
+ *
+ * `pushed` on the ERROR variant is the count the provider ACCEPTED before the
+ * failure — 0 when nothing was accepted (or unavailable), N for a per-row push
+ * (Xero / QBO) that created N rows then failed on the (N+1)th. It lets the
+ * caller record EXACTLY the accepted prefix in the push-once ledger, so a
+ * partial failure re-pushes only the tail and never re-sends an accepted row.
+ * The rows are pushed in input order, so the accepted prefix is `rows[0..pushed)`.
  */
 export type AccountingPushResult =
   | { ok: true; provider: AccountingProvider; pushed: number }
@@ -65,6 +72,8 @@ export type AccountingPushResult =
       provider: AccountingProvider;
       reason: "unavailable" | "error";
       message: string;
+      /** Rows the provider accepted before the failure (the input-order prefix). Default 0. */
+      pushed?: number;
     };
 
 export interface AccountingAdapter {

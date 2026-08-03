@@ -6,6 +6,8 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import {
   buildAccountingExport,
   recordAccountingExport,
+  recordPushedEntities,
+  type PushedEntity,
 } from "@/server/services/accounting-export";
 import {
   getAccountingAdapter,
@@ -365,6 +367,15 @@ async function stampSyncOutcome(
  * the caller-JWT surface), proactively refresh a near-expiry token, and hand the
  * adapter a `refresh` callback for the reactive 401 path. Org-pinned; the export
  * log write is admin-gated by RLS.
+ *
+ * PUSH-ONCE. The export is built with `excludePushedFor: provider`, so each sync
+ * pushes ONLY invoices / payments not already recorded in the push-once ledger
+ * (accounting_pushed_entities). On success we record EXACTLY the accepted prefix
+ * (invRes.pushed / payRes.pushed) back to the ledger, so a re-run can never
+ * re-send a row the provider already has. This is what makes activation clean:
+ * adding an invoice later and re-syncing pushes only the new invoice, never a
+ * duplicate of the earlier ones. A FAILED push records nothing for its failed
+ * tail, so it is retried next sync.
  */
 export async function syncToProvider(
   orgId: string,
@@ -428,7 +439,9 @@ export async function syncToProvider(
     if (fresh) accessToken = fresh;
   }
 
-  const { rows } = await buildAccountingExport({ orgId });
+  // PUSH-ONCE: only rows not already in the ledger for this provider, each row
+  // carrying its immutable CrewFlow id as `sourceId`.
+  const { rows } = await buildAccountingExport({ orgId, excludePushedFor: provider });
   const invoiceRows = rows.filter((r) => r.type === "invoice");
   const paymentRows = rows.filter((r) => r.type === "payment");
   const base = {
@@ -440,6 +453,45 @@ export async function syncToProvider(
   const invRes = await adapter.pushInvoices({ ...base, rows: invoiceRows });
   const payRes = await adapter.pushPayments({ ...base, rows: paymentRows });
 
+  // The count the provider ACCEPTED for each kind — full count on ok, the
+  // reported prefix on a partial failure, 0 otherwise. Rows are pushed in input
+  // order, so the accepted rows are exactly the leading `accepted` of each array.
+  const invAccepted = invRes.ok ? invRes.pushed : invRes.pushed ?? 0;
+  const payAccepted = payRes.ok ? payRes.pushed : payRes.pushed ?? 0;
+
+  // Record EXACTLY what landed — the accepted prefix — so it is excluded next
+  // sync and a re-run never re-sends it. A row without a sourceId (never on this
+  // path) is skipped defensively rather than mis-recorded.
+  const accepted: PushedEntity[] = [
+    ...invoiceRows
+      .slice(0, invAccepted)
+      .filter((r) => r.sourceId)
+      .map((r) => ({ entityType: "invoice" as const, entityId: r.sourceId! })),
+    ...paymentRows
+      .slice(0, payAccepted)
+      .filter((r) => r.sourceId)
+      .map((r) => ({ entityType: "payment" as const, entityId: r.sourceId! })),
+  ];
+  if (accepted.length > 0) {
+    const rec = await recordPushedEntities({
+      orgId,
+      createdBy: actorId,
+      provider,
+      entities: accepted,
+    });
+    if (!rec.ok) {
+      // Rows DID land at the provider; failing to record them is a push-once
+      // hazard, so surface it loudly. The per-entity provider idempotency key is
+      // the backstop that keeps a re-push a no-op within its retention window.
+      console.error("[accounting] failed to record pushed entities", {
+        provider,
+        message: rec.error,
+      });
+    }
+  }
+
+  const pushed = invAccepted + payAccepted;
+
   if (invRes.ok && payRes.ok) {
     await stampSyncOutcome(orgId, provider, null);
     await recordAccountingExport({
@@ -447,18 +499,23 @@ export async function syncToProvider(
       createdBy: actorId,
       format: provider,
       status: "pushed",
-      rowCount: rows.length,
+      rowCount: pushed,
     });
     return {
       ok: true,
       provider,
       status: "pushed",
-      pushed: rows.length,
-      message: `Pushed ${rows.length} rows to ${provider}.`,
+      pushed,
+      message:
+        pushed === 0
+          ? `${provider} is already up to date; nothing new to push.`
+          : `Pushed ${pushed} new rows to ${provider}.`,
     };
   }
 
   const message = !invRes.ok ? invRes.message : !payRes.ok ? payRes.message : "Push failed.";
   await stampSyncOutcome(orgId, provider, message);
-  return { ok: false, provider, status: "error", pushed: 0, message };
+  // `pushed` reflects the rows that DID land before the failure (already recorded
+  // above), so a retry pushes only the tail.
+  return { ok: false, provider, status: "error", pushed, message };
 }

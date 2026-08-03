@@ -250,6 +250,85 @@ describe("Xero adapter push", () => {
 });
 
 // ---------------------------------------------------------------------------
+// XERO PUSH-ONCE — per-entity, stable idempotency key (the duplicate fix)
+// ---------------------------------------------------------------------------
+
+describe("Xero per-entity idempotency (push-once defence-in-depth)", () => {
+  const withId = (row: CanonicalAccountingRow, sourceId: string): CanonicalAccountingRow => ({
+    ...row,
+    sourceId,
+  });
+  const A = withId({ ...INVOICE_ROW, invoice_number: "INV-A" }, "inv-A");
+  const B = withId({ ...INVOICE_ROW, invoice_number: "INV-B" }, "inv-B");
+
+  const base = (rows: CanonicalAccountingRow[]): AccountingPushInput => ({
+    rows,
+    accessToken: "ACCESS-1",
+    tenantId: "TENANT-1",
+    realmId: null,
+    refresh: vi.fn(async () => null),
+  });
+
+  function keysFrom(fetchMock: ReturnType<typeof vi.fn>): Array<string | undefined> {
+    return fetchMock.mock.calls.map((c) => {
+      const init = (c as unknown as [string, RequestInit])[1];
+      return (init.headers as Record<string, string>)["Idempotency-Key"];
+    });
+  }
+
+  it("pushes EACH invoice as its own POST, each with a distinct per-entity key", async () => {
+    enableXero();
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("xero").pushInvoices(base([A, B]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(2);
+    // One POST per invoice — NOT a single batch POST.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const keys = keysFrom(fetchMock);
+    expect(keys[0]).not.toBe(keys[1]); // different invoices → different keys
+    // Each body carries exactly ONE invoice.
+    for (const call of fetchMock.mock.calls) {
+      const init = (call as unknown as [string, RequestInit])[1];
+      const body = JSON.parse(init.body as string);
+      expect(body.Invoices).toHaveLength(1);
+    }
+  });
+
+  it("the SAME invoice re-pushed yields the IDENTICAL key (a Xero no-op, no duplicate)", async () => {
+    enableXero();
+    const fetch1 = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetch1);
+    await getAccountingAdapter("xero").pushInvoices(base([A]));
+    const keyFirst = keysFrom(fetch1)[0];
+
+    // A LATER sync whose batch also contains B must NOT change A's key — this is
+    // exactly the batch-hash bug: the key is seeded by the row id, not the body.
+    const fetch2 = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetch2);
+    await getAccountingAdapter("xero").pushInvoices(base([A, B]));
+    const keyForAOnSecondSync = keysFrom(fetch2)[0];
+
+    expect(keyForAOnSecondSync).toBe(keyFirst);
+  });
+
+  it("reports the ACCEPTED PREFIX count when a mid-batch row fails", async () => {
+    enableXero();
+    // First invoice 200, second 400 → accepted prefix is 1.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ Invoices: [] }, 200))
+      .mockResolvedValueOnce(jsonResponse({ error: "bad" }, 400));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("xero").pushInvoices(base([A, B]));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.pushed).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // XERO TENANT RESOLUTION + REFRESH ENDPOINT
 // ---------------------------------------------------------------------------
 
@@ -476,6 +555,35 @@ describe("QuickBooks adapter push", () => {
     const res = await getAccountingAdapter("quickbooks").pushInvoices(baseInput());
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.message).toMatch(/400/);
+  });
+
+  it("reports the ACCEPTED PREFIX count when the 2nd invoice fails (push-once)", async () => {
+    enableQbo();
+    let invPost = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("Item")) {
+        return jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } });
+      }
+      if (method === "GET" && url.includes("Customer")) {
+        return jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } });
+      }
+      if (method === "POST" && url.includes("/invoice")) {
+        invPost += 1;
+        return invPost === 1
+          ? jsonResponse({ Invoice: { Id: "11" } })
+          : jsonResponse({ Fault: {} }, 400);
+      }
+      return jsonResponse({}, 500);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(
+      baseInput({ rows: [INVOICE_ROW, { ...INVOICE_ROW, invoice_number: "INV-002" }] }),
+    );
+    expect(res.ok).toBe(false);
+    // The first invoice was accepted before the second failed.
+    if (!res.ok) expect(res.pushed).toBe(1);
   });
 
   it("payment: links to the invoice found by DocNumber", async () => {

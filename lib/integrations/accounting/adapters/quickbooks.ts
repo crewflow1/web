@@ -96,7 +96,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     let pushed = 0;
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
-      if (!customer.ok) return this.err(customer.message);
+      if (!customer.ok) return this.err(customer.message, pushed);
       const body = buildQboInvoiceBody(row, { customerId: customer.id, itemId: item.id });
       const res = await this.authedJson(
         ctx,
@@ -105,7 +105,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("inv", realmId, body),
       );
-      if (!res.ok) return this.err(this.reason("invoice", res));
+      if (!res.ok) return this.err(this.reason("invoice", res), pushed);
       pushed += 1;
     }
     return { ok: true, provider: this.provider, pushed };
@@ -122,7 +122,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
     let pushed = 0;
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
-      if (!customer.ok) return this.err(customer.message);
+      if (!customer.ok) return this.err(customer.message, pushed);
       // Link to the invoice by its DocNumber when it exists in QBO; else record
       // an unapplied payment (still an honest receipt).
       const invoiceId = await this.resolveInvoiceId(ctx, realmId, row.invoice_number);
@@ -134,7 +134,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("pay", realmId, body),
       );
-      if (!res.ok) return this.err(this.reason("payment", res));
+      if (!res.ok) return this.err(this.reason("payment", res), pushed);
       pushed += 1;
     }
     return { ok: true, provider: this.provider, pushed };
@@ -162,8 +162,13 @@ export class QuickBooksAdapter implements AccountingAdapter {
     return null;
   }
 
-  private err(message: string): AccountingPushResult {
-    return { ok: false, provider: this.provider, reason: "error", message };
+  /**
+   * An error result carrying the count the provider ACCEPTED before failing
+   * (default 0). Per-row pushes pass the running `pushed` so the caller records
+   * exactly the accepted prefix and re-pushes only the tail.
+   */
+  private err(message: string, pushed = 0): AccountingPushResult {
+    return { ok: false, provider: this.provider, reason: "error", message, pushed };
   }
 
   private reason(kind: string, res: JsonResult): string {

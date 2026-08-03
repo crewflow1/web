@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireOrgContext } from "@/server/auth/session";
-import { buildAuthorizeUrl } from "@/lib/integrations/accounting/oauth";
+import {
+  buildAuthorizeUrl,
+  accountingRedirectUri,
+} from "@/lib/integrations/accounting/oauth";
 import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
 
 /**
@@ -50,7 +53,10 @@ export async function GET(
     );
   }
 
-  const redirectUri = `${new URL(request.url).origin}/api/integrations/accounting/${provider}/callback`;
+  // Origin-pinned when ACCOUNTING_REDIRECT_URI is set (activation gate against
+  // Host spoofing), else derived from the request origin. Must match the
+  // callback's redirect_uri exactly, which is why both use this one helper.
+  const redirectUri = accountingRedirectUri(provider, new URL(request.url).origin);
   const authorize = buildAuthorizeUrl(provider, redirectUri);
 
   // DARK: not configured → return a clear state, no redirect, no cookies.
