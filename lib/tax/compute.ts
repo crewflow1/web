@@ -5,7 +5,8 @@
  * filing. UK numbers (small Ltd) baked in:
  *   Corporation tax  19% (small profits rate, profit under £50k)
  *                    25% (main rate, profit over £250k)
- *                    Marginal relief between £50k–£250k (approximated)
+ *                    HMRC marginal relief between £50k–£250k
+ *                    (tax = profit×25% − (£250k − profit)×3/200, FY2023+)
  *   VAT              already computed from invoice/finance rows
  *   PAYE             PAYE + employee NI + employer NI from payroll runs
  *
@@ -20,6 +21,12 @@ const UK_CT_SMALL_RATE = 0.19;
 const UK_CT_MAIN_RATE = 0.25;
 const UK_CT_SMALL_THRESHOLD = 50_000;
 const UK_CT_MAIN_THRESHOLD = 250_000;
+/**
+ * HMRC's standard marginal relief fraction for financial years 2023 onward
+ * (3/200 = 0.015). Marginal relief reduces the 25% main-rate charge for profits
+ * between the two thresholds. See HMRC "Marginal Relief for Corporation Tax".
+ */
+const UK_CT_MARGINAL_FRACTION = 3 / 200;
 
 export type TaxSummary = {
   vat_quarter: {
@@ -64,25 +71,38 @@ type FinanceRow = {
   created_at: string;
 };
 
-/** Output VAT = sum of vat_total on PAID invoices within the period. */
+/**
+ * The single VAT authority — output VAT on PAID invoices, input VAT on logged
+ * finance rows, over the quarter `[quarterStartIso, quarterEndIso)`.
+ *
+ * The lower bound is INCLUSIVE; the optional upper bound is EXCLUSIVE. Pass the
+ * exclusive end (start of the next quarter — see `endOfQuarterExclusiveIso`) so a
+ * future-dated `paid_at` / `created_at` cannot leak a LATER quarter's VAT into
+ * this one. Omitting it preserves the historical open-ended behaviour
+ * (everything on/after the start), which the cash-out consumer still relies on.
+ *
+ * Basis is disclosed and deliberate: output VAT is CASH (paid invoices), input
+ * VAT is ACCRUAL (all logged costs). The dashboard tile, the quarterly PDF and
+ * the HMRC 9-box composer all read THIS function — there is no second calculator.
+ */
 export function computeVatQuarter(
   invoices: InvoiceRow[],
   finances: FinanceRow[],
   quarterStartIso: string,
+  quarterEndIso?: string,
 ): TaxSummary["vat_quarter"] {
+  const inPeriod = (iso: string): boolean =>
+    iso >= quarterStartIso &&
+    (quarterEndIso === undefined || iso < quarterEndIso);
   let outputVat = 0;
   for (const inv of invoices) {
-    if (
-      inv.status === "paid" &&
-      inv.paid_at &&
-      inv.paid_at >= quarterStartIso
-    ) {
+    if (inv.status === "paid" && inv.paid_at && inPeriod(inv.paid_at)) {
       outputVat += Number(inv.vat_total ?? 0);
     }
   }
   let inputVat = 0;
   for (const f of finances) {
-    if (f.created_at >= quarterStartIso) {
+    if (inPeriod(f.created_at)) {
       inputVat += Number(f.vat_total ?? 0);
     }
   }
@@ -195,11 +215,16 @@ export function computeCorpTaxYear(
     estimatedTax = estimatedProfit * UK_CT_MAIN_RATE;
     rate = UK_CT_MAIN_RATE;
   } else {
-    // Linear marginal relief between thresholds — approximation.
-    const fraction = (estimatedProfit - UK_CT_SMALL_THRESHOLD) /
-      (UK_CT_MAIN_THRESHOLD - UK_CT_SMALL_THRESHOLD);
-    rate = UK_CT_SMALL_RATE + fraction * (UK_CT_MAIN_RATE - UK_CT_SMALL_RATE);
-    estimatedTax = estimatedProfit * rate;
+    // HMRC marginal relief (single company, full 12-month accounting period, no
+    // associated companies, no franked investment income — the case this
+    // estimator already assumes): charge the full 25% main rate, then subtract
+    //   MR = (upper limit − profit) × standard fraction (3/200).
+    // At £50k this equals a flat 19%; at £250k relief is nil (flat 25%); it is
+    // continuous at both boundaries. `rate` is the resulting EFFECTIVE rate.
+    const marginalRelief =
+      (UK_CT_MAIN_THRESHOLD - estimatedProfit) * UK_CT_MARGINAL_FRACTION;
+    estimatedTax = estimatedProfit * UK_CT_MAIN_RATE - marginalRelief;
+    rate = estimatedTax / estimatedProfit;
   }
   return {
     estimated_profit: Math.round(estimatedProfit * 100) / 100,
@@ -213,6 +238,19 @@ export function computeCorpTaxYear(
 export function startOfQuarterIso(now: Date = new Date()): string {
   const q = Math.floor(now.getUTCMonth() / 3);
   return new Date(Date.UTC(now.getUTCFullYear(), q * 3, 1))
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * EXCLUSIVE upper bound for a quarter: the first day of the NEXT quarter after
+ * the one starting at `quarterStartIso`. Feed this to `computeVatQuarter` so a
+ * future-dated payment cannot leak into the current quarter, and to keep the
+ * dashboard tile, the PDF working paper and the HMRC composer on one boundary.
+ */
+export function endOfQuarterExclusiveIso(quarterStartIso: string): string {
+  const d = new Date(quarterStartIso);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 3, 1))
     .toISOString()
     .slice(0, 10);
 }

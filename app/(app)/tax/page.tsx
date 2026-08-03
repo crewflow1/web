@@ -7,6 +7,7 @@ import {
   computePayeMonth,
   computeCorpTaxYear,
   startOfQuarterIso,
+  endOfQuarterExclusiveIso,
   startOfTaxYearIso,
 } from "@/lib/tax/compute";
 
@@ -21,7 +22,7 @@ import {
  *   - Calendar quarter VAT (Jan/Apr/Jul/Oct). VAT-staggers are a follow-up.
  *   - Tax year starts 6 April.
  *   - Small profits rate 19% under £50k; main rate 25% over £250k;
- *     marginal relief approximated linearly between thresholds.
+ *     HMRC marginal relief (3/200) applied between thresholds.
  */
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -118,7 +119,14 @@ export default async function TaxDashboardPage() {
       : null,
   }));
 
-  const vat = computeVatQuarter(invoices, finances, quarterStartIso);
+  // Invoices/finances are fetched for the whole tax year, so the quarter's
+  // EXCLUSIVE upper bound is what keeps a next-quarter payment out of this tile.
+  const vat = computeVatQuarter(
+    invoices,
+    finances,
+    quarterStartIso,
+    endOfQuarterExclusiveIso(quarterStartIso),
+  );
   const paye = computePayeMonth(payrollLines);
   const corp = computeCorpTaxYear(invoices, finances, yearStartIso);
 
