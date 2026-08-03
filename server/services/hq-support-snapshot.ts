@@ -411,7 +411,18 @@ export async function loadSupportTicketDetailForHq(
 // Open-ticket count (drives HQ_NAV badge)
 // ---------------------------------------------------------------------
 
-export async function countOpenSupportTicketsForHq(): Promise<number> {
+/**
+ * Count open support tickets across every tenant (drives the HQ nav badge and
+ * the CEO board's Support department).
+ *
+ * LOUD DEGRADE: on a read error we log and return `null` — NOT `0`. A swallowed
+ * zero here is a fabricated-green honesty defect: the CEO board would render
+ * Support as "All clear / Healthy" off an unreadable queue. `null` lets the
+ * pure layer distinguish a CONFIRMED empty queue (query succeeded, 0 open) from
+ * an UNREADABLE one (query failed) and mark the latter insufficient, matching
+ * the loud-read discipline of its sibling `listFeatureSignalRowsForHq`.
+ */
+export async function countOpenSupportTicketsForHq(): Promise<number | null> {
   const admin = createAdminClient();
   const { count, error } = await admin
     .from("support_tickets" as never)
@@ -419,7 +430,7 @@ export async function countOpenSupportTicketsForHq(): Promise<number> {
     .in("status" as never, ["open", "in_progress", "waiting_on_customer"]);
   if (error) {
     console.error("[hq-support] countOpenSupportTicketsForHq failed", error);
-    return 0;
+    return null;
   }
   return count ?? 0;
 }

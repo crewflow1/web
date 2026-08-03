@@ -25,7 +25,9 @@ export function ExecCounter({
   durationMs = 1100,
   delayMs = 0,
 }: {
-  value: number;
+  /** `null` means the underlying figure could not be read — render an em-dash,
+   * never count up to a fabricated 0. */
+  value: number | null;
   format: ExecFormat;
   durationMs?: number;
   delayMs?: number;
@@ -37,6 +39,7 @@ export function ExecCounter({
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (value === null) return;
     if (reduce || value === 0) {
       setDisplay(value);
       return;
@@ -50,6 +53,13 @@ export function ExecCounter({
     return () => controls.stop();
   }, [value, reduce, durationMs, delayMs]);
 
+  if (value === null) {
+    return (
+      <span className="tabular-nums text-slate-500" aria-label="No data">
+        —
+      </span>
+    );
+  }
   return <span className="tabular-nums">{formatExec(display, format)}</span>;
 }
 
