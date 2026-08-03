@@ -129,14 +129,21 @@ function connectableEnv(): void {
   vi.stubEnv("INTEGRATION_TOKEN_ENCRYPTION_KEY", KEY_B64);
 }
 
+// The REAL Samsara /fleet/vehicles/stats per-vehicle shape: `gps` is the fix
+// only, and `obdOdometerMeters` is its OWN top-level { time, value } stat in
+// METRES. (The old fixture nested odometerMeters inside gps — a shape the API
+// never returns — which is exactly why the odometer feed was dead.)
 const STAT = {
   id: "sam-1",
   externalIds: { vin: "vin123" },
   gps: {
     latitude: 51.5074,
     longitude: -0.1278,
-    odometerMeters: 1609344, // exactly 1000 miles
     time: "2026-07-15T09:30:00Z",
+  },
+  obdOdometerMeters: {
+    time: "2026-07-15T09:30:00Z",
+    value: 1609344, // exactly 1000 miles
   },
 };
 
