@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -96,16 +97,19 @@ export async function addInvoicePayment(
     return formSuccess({ successMessage: "Payment recorded." });
   }
 
-  const { error } = await supabase.from("invoice_payments").insert({
-    org_id: inv.org_id,
-    invoice_id: invoiceId,
-    amount: result.data.amount,
-    paid_at: result.data.paid_at,
-    reference: result.data.reference ?? null,
-    notes: result.data.notes ?? null,
-    source: "manual",
-    created_by: user.id,
-  });
+  const { data: inserted, error } = await supabase
+    .from("invoice_payments").insert({
+      org_id: inv.org_id,
+      invoice_id: invoiceId,
+      amount: result.data.amount,
+      paid_at: result.data.paid_at,
+      reference: result.data.reference ?? null,
+      notes: result.data.notes ?? null,
+      source: "manual",
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
   if (error) {
     // Log the full Postgres error shape (code/details/hint) so a recurrence
     // is diagnosable from logs instead of guessable. The user still gets a
@@ -125,6 +129,29 @@ export async function addInvoicePayment(
       "Couldn't record payment. Try again.",
       result.data as PaymentValues,
     );
+  }
+
+  // Automation OS — a payment recorded here is as real as one recorded via the
+  // allocate flow, so it fires the same `payment.recorded` event. Keyed on the
+  // unique invoice_payments row id (a distinct correlation from the allocate
+  // path's `payments` receipt id), org-pinned to inv.org_id, and best-effort so
+  // an automation failure never fails the recorded payment. Dark by default —
+  // the only rule on this trigger ships enabled:false.
+  if (inserted?.id) {
+    await dispatchAutomation({
+      type: "payment.recorded",
+      org_id: inv.org_id,
+      source_table: "invoice_payments",
+      source_id: inserted.id,
+      payload: {
+        amount: result.data.amount,
+        invoice_id: invoiceId,
+        source: "manual",
+      },
+      actor_email: user.email ?? null,
+    }).catch((e) => {
+      console.error("[invoice-payment] automation dispatch failed", e);
+    });
   }
 
   revalidatePath(`/invoices/${invoiceId}`);
