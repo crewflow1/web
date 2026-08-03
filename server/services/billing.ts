@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { round2, toPounds } from "@/lib/money";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
@@ -20,10 +21,11 @@ import type { StageStatus } from "@/lib/billing/types";
 
 type Row = Record<string, unknown>;
 /** Permissive, self-returning view of the query builder (billing tables aren't in the generated types). */
-type AnyB = PromiseLike<{ data: Row[] | null }> & {
+type AnyB = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => AnyB;
   eq: (k: string, v: unknown) => AnyB;
   order: (k: string, o: { ascending: boolean }) => AnyB;
+  range: (from: number, to: number) => AnyB;
   maybeSingle: () => PromiseLike<{ data: Row | null }>;
 };
 type LooseClient = { from: (t: string) => AnyB };
@@ -100,8 +102,21 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
     const invoiceIds = invoiceRows.map((i) => String(i.id));
 
     // Per-invoice paid ledger (Σ invoice_payments) — for cash.received + stage status.
+    // PAGED (F-1): this reads the WHOLE org's payments then filters to this job's
+    // invoices in JS and SUMS them, so a bare `.select()` truncated at the 1000-row
+    // cap would under-state received cash once an org crosses 1000 payments. Paged
+    // under the cap on the unique `id`; the file's best-effort posture (this
+    // additive surface must never throw the job page) is preserved — fetchAllRows
+    // hands back whatever it read on error, exactly the existing `?? []` behaviour.
     const paymentsRes = invoiceIds.length
-      ? await db.from("invoice_payments").select("invoice_id, amount").eq("org_id", orgId)
+      ? await fetchAllRows<Row>((from, to) =>
+          db
+            .from("invoice_payments")
+            .select("invoice_id, amount")
+            .eq("org_id", orgId)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
       : { data: [] as Row[] };
     const payments = ((paymentsRes.data ?? []) as Row[])
       .filter((p) => invoiceIds.includes(String(p.invoice_id)))

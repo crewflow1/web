@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { isInvoiceOverdue } from "@/lib/invoices/overdue";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
@@ -214,20 +215,41 @@ export default async function DashboardPage() {
         .range(0, ACTIVITY_PAGE_SIZE - 1),
     ]);
 
-  // Wave 3 — payment + reconciliation rollups.
-  const [{ data: paymentsThisMonth }, { data: unmatchedLines }] =
-    await Promise.all([
+  // Wave 3 — payment + reconciliation rollups. PAGED + LOUD (F-1): the cash-in
+  // tile SUMS every payment this month and the reconciliation tile COUNTS every
+  // suggested bank line — a bare `.select()` truncates at the 1000-row cap, so a
+  // busy month's cash-in would silently under-report. Every sibling read on this
+  // page already pages through `fetchAllRows`; these two were the holdouts. On
+  // error they THROW (not `?? []`): an errored money/reconciliation read must
+  // never render as a reassuring low number.
+  const [paymentsRes, unmatchedRes] = await Promise.all([
+    fetchAllRows((from, to) =>
       supabase
         .from("invoice_payments")
-        .select("amount, paid_at, source")
+        .select("id, amount, paid_at, source")
         .eq("org_id", ctx.org.id)
-        .gte("paid_at", monthStart.slice(0, 10)),
+        .gte("paid_at", monthStart.slice(0, 10))
+        .order("paid_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
       supabase
         .from("bank_statement_lines")
         .select("id, amount, posted_at")
         .eq("org_id", ctx.org.id)
-        .eq("match_status", "suggested"),
-    ]);
+        .eq("match_status", "suggested")
+        .order("posted_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+  if (paymentsRes.error)
+    throw readFailure("dashboard: invoice payments (cash-in)", paymentsRes.error);
+  if (unmatchedRes.error)
+    throw readFailure("dashboard: unmatched bank lines", unmatchedRes.error);
+  const paymentsThisMonth = paymentsRes.data;
+  const unmatchedLines = unmatchedRes.data;
 
   // Wave 4 — time + payroll rollups (last 30 days of time entries is plenty
   // for "this week" + "this month" tiles).

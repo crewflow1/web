@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   TaxQuarterPdf,
   type TaxQuarterPdfInput,
@@ -42,32 +44,53 @@ export async function GET(request: NextRequest) {
   // Use end-of-day to include rows posted on the final day.
   const qEndExclusive = `${qEnd}T23:59:59.999Z`;
 
-  const [{ data: invoicesRaw }, { data: financesRaw }, { data: org }] =
-    await Promise.all([
+  const [
+    { data: invoicesRaw, error: invoicesError },
+    { data: financesRaw, error: financesError },
+    { data: org },
+  ] = await Promise.all([
       // ACTIVE-org pins — this PDF is an HMRC VAT-return working paper. The org
       // header below is already read by `ctx.org.id`, so an unpinned figure set
       // would put BOTH companies' VAT under ONE company's letterhead.
-      supabase
-        .from("invoices")
-        .select("number, status, amount, vat_total, total, paid_at, created_at")
-        .eq("org_id", ctx.org.id)
-        .eq("status", "paid")
-        .gte("paid_at", qStart)
-        .lte("paid_at", qEndExclusive)
-        .order("paid_at", { ascending: true }),
-      supabase
-        .from("finances")
-        .select("category, amount, vat_total, created_at")
-        .eq("org_id", ctx.org.id)
-        .gte("created_at", qStart)
-        .lte("created_at", qEndExclusive)
-        .order("created_at", { ascending: true }),
+      //
+      // PAGED (F-1). The row lists ARE the audit trail behind the VAT total and
+      // `computeVatQuarter` sums over every one of them: a bare `.select()`
+      // truncates at the 1000-row cap, so a high-volume quarter would render an
+      // HMRC working paper whose totals silently under-state. `fetchAllRows`
+      // pages under the cap on a unique `paid_at`/`created_at`+`id` total order.
+      fetchAllRows((from, to) =>
+        supabase
+          .from("invoices")
+          .select("id, number, status, amount, vat_total, total, paid_at, created_at")
+          .eq("org_id", ctx.org.id)
+          .eq("status", "paid")
+          .gte("paid_at", qStart)
+          .lte("paid_at", qEndExclusive)
+          .order("paid_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("finances")
+          .select("id, category, amount, vat_total, created_at")
+          .eq("org_id", ctx.org.id)
+          .gte("created_at", qStart)
+          .lte("created_at", qEndExclusive)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       supabase
         .from("organizations")
         .select("name, vat_number")
         .eq("id", ctx.org.id)
         .maybeSingle(),
     ]);
+  // Loud fail: an errored read must never silently render a working paper with
+  // missing (or zero) rows — that is a mis-stated HMRC figure.
+  if (invoicesError) throw readFailure("tax pdf: invoices", invoicesError);
+  if (financesError) throw readFailure("tax pdf: finances", financesError);
 
   const paidInvoices: QuarterRow[] = (invoicesRaw ?? []).map((r) => ({
     date: (r.paid_at as string | null)?.slice(0, 10) ?? "—",

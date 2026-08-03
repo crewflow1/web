@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
 import { StateForm } from "@/components/forms/StateForm";
@@ -44,11 +45,20 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
       .eq("org_id", ctx.org.id)
       .order("uploaded_at", { ascending: false })
       .limit(20),
-    supabase
-      .from("invoices")
-      .select("id, number, total, due_date, status")
-      .eq("org_id", ctx.org.id)
-      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
+    // PAGED (F-1): outstandingRows feeds the outstanding-total SUM and the
+    // "N unpaid invoices" COUNT — never a rendered list — so a bare `.select()`
+    // that truncated at the 1000-row cap would silently under-state both the
+    // money headline and the count once an org crosses 1000 open invoices.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, number, total, due_date, status")
+        .eq("org_id", ctx.org.id)
+        .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+        .order("due_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (statementsError) throw readFailure("payments: statements", statementsError);
   // Money figure — a failed read must not render "£0.00 outstanding".

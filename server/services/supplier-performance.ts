@@ -1,6 +1,7 @@
 import "server-only";
 
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   computeSupplierPerformance,
   type PerfBillRow,
@@ -67,6 +68,7 @@ type Filter<T> = PromiseLike<Res<T[]>> & {
   in: (k: string, v: readonly unknown[]) => Filter<T>;
   order: (k: string, o?: { ascending?: boolean }) => Filter<T>;
   limit: (n: number) => Filter<T>;
+  range: (from: number, to: number) => Filter<T>;
 };
 
 /** The read surface this service needs. Satisfied by a Supabase client. */
@@ -272,6 +274,14 @@ export const COMPARISON_SUPPLIER_LIMIT = 60;
  * re-read the same `purchase_order_line_items`. Same queries, same org pin,
  * same loud-read discipline — just grouped by supplier_id afterwards.
  *
+ * PAGED (F-1). The single-supplier loader's `.limit(PO_LIMIT/GRN_LIMIT/…)` caps
+ * are PER-SUPPLIER ceilings; reused here across the WHOLE shortlist they became
+ * ORG-WIDE caps, so an org with more than (say) 1000 purchase orders across its
+ * suppliers had the tail silently dropped and every downstream rate computed
+ * from a truncated denominator. Each org-wide read below therefore pages through
+ * `fetchAllRows` on its existing unique (domain col + `id`) total order instead
+ * of taking a single capped page.
+ *
  * Suppliers with NOTHING measurable are returned too (with `empty: true`), so
  * the surface can distinguish "we have never bought from them" from "they have
  * a clean record" — collapsing those two is how an untried supplier comes to
@@ -286,37 +296,43 @@ export async function listSupplierPerformance(
   const c = db;
   const supplierIds = suppliers.map((s) => s.id);
 
-  const poRes = await c
-    .from("purchase_orders")
-    .select<PerfPoRow & { supplier_id: string | null }>(`${PO_COLUMNS}, supplier_id`)
-    .eq("org_id", orgId)
-    .in("supplier_id", supplierIds)
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: true })
-    .limit(PO_LIMIT);
+  const poRes = await fetchAllRows<PerfPoRow & { supplier_id: string | null }>((from, to) =>
+    c
+      .from("purchase_orders")
+      .select<PerfPoRow & { supplier_id: string | null }>(`${PO_COLUMNS}, supplier_id`)
+      .eq("org_id", orgId)
+      .in("supplier_id", supplierIds)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (poRes.error) throw readFailure("supplier comparison: purchase orders", poRes.error);
   const allPos = poRes.data ?? [];
   const poIds = allPos.map((p) => p.id);
 
   const [billsRes, paymentsRes] = await Promise.all([
-    c
-      .from("finances")
-      .select<PerfBillRow & { supplier_id: string | null }>(`${BILL_COLUMNS}, supplier_id`)
-      .eq("org_id", orgId)
-      .in("supplier_id", supplierIds)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: true })
-      .limit(BILL_LIMIT),
-    c
-      .from("supplier_payments")
-      .select<SupplierPaymentRow & { supplier_id: string | null }>(
-        `${PAYMENT_COLUMNS}, supplier_id`,
-      )
-      .eq("org_id", orgId)
-      .in("supplier_id", supplierIds)
-      .order("paid_at", { ascending: false })
-      .order("id", { ascending: true })
-      .limit(PAYMENT_LIMIT),
+    fetchAllRows<PerfBillRow & { supplier_id: string | null }>((from, to) =>
+      c
+        .from("finances")
+        .select<PerfBillRow & { supplier_id: string | null }>(`${BILL_COLUMNS}, supplier_id`)
+        .eq("org_id", orgId)
+        .in("supplier_id", supplierIds)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<SupplierPaymentRow & { supplier_id: string | null }>((from, to) =>
+      c
+        .from("supplier_payments")
+        .select<SupplierPaymentRow & { supplier_id: string | null }>(
+          `${PAYMENT_COLUMNS}, supplier_id`,
+        )
+        .eq("org_id", orgId)
+        .in("supplier_id", supplierIds)
+        .order("paid_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (billsRes.error) throw readFailure("supplier comparison: bills", billsRes.error);
   if (paymentsRes.error) throw readFailure("supplier comparison: payments", paymentsRes.error);
@@ -327,22 +343,26 @@ export async function listSupplierPerformance(
   let allPoLines: PerfPoLineRow[] = [];
   if (poIds.length > 0) {
     const [grnRes, lineRes] = await Promise.all([
-      c
-        .from("goods_received_notes")
-        .select<PerfGrnRow>(GRN_COLUMNS)
-        .eq("org_id", orgId)
-        .in("purchase_order_id", poIds)
-        .order("delivery_date", { ascending: false })
-        .order("id", { ascending: true })
-        .limit(GRN_LIMIT),
-      c
-        .from("purchase_order_line_items")
-        .select<PerfPoLineRow>(PO_LINE_COLUMNS)
-        .eq("org_id", orgId)
-        .in("purchase_order_id", poIds)
-        .order("purchase_order_id", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(LINE_LIMIT),
+      fetchAllRows<PerfGrnRow>((from, to) =>
+        c
+          .from("goods_received_notes")
+          .select<PerfGrnRow>(GRN_COLUMNS)
+          .eq("org_id", orgId)
+          .in("purchase_order_id", poIds)
+          .order("delivery_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows<PerfPoLineRow>((from, to) =>
+        c
+          .from("purchase_order_line_items")
+          .select<PerfPoLineRow>(PO_LINE_COLUMNS)
+          .eq("org_id", orgId)
+          .in("purchase_order_id", poIds)
+          .order("purchase_order_id", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
     if (grnRes.error) throw readFailure("supplier comparison: goods received notes", grnRes.error);
     if (lineRes.error) throw readFailure("supplier comparison: ordered lines", lineRes.error);
@@ -353,28 +373,38 @@ export async function listSupplierPerformance(
   let allGrnLines: PerfGrnLineRow[] = [];
   const grnIds = allGrns.map((g) => g.id);
   if (grnIds.length > 0) {
-    const res = await c
-      .from("goods_received_lines")
-      .select<PerfGrnLineRow>(GRN_LINE_COLUMNS)
-      .eq("org_id", orgId)
-      .in("goods_received_note_id", grnIds)
-      .order("goods_received_note_id", { ascending: true })
-      .order("purchase_order_line_item_id", { ascending: true })
-      .limit(LINE_LIMIT);
+    const res = await fetchAllRows<PerfGrnLineRow>((from, to) =>
+      c
+        .from("goods_received_lines")
+        .select<PerfGrnLineRow>(GRN_LINE_COLUMNS)
+        .eq("org_id", orgId)
+        .in("goods_received_note_id", grnIds)
+        .order("goods_received_note_id", { ascending: true })
+        .order("purchase_order_line_item_id", { ascending: true })
+        .range(from, to),
+    );
     if (res.error) throw readFailure("supplier comparison: received lines", res.error);
     allGrnLines = res.data ?? [];
   }
 
   let allAllocations: SupplierAllocationRow[] = [];
   if (allPayments.length > 0) {
-    const res = await c
-      .from("supplier_payment_allocations")
-      .select<SupplierAllocationRow>("payment_id, finance_id, amount")
-      .eq("org_id", orgId)
-      .in(
-        "payment_id",
-        allPayments.map((p) => p.id),
-      );
+    // Paged too: an org's allocations grow with every payment settled, so this
+    // `.in(payment_id, …)` read is org-wide-unbounded just like the others.
+    // supplier_payment_allocations has a unique `id` PK — order on it for a
+    // stable page boundary even though the grouping below is by supplier.
+    const res = await fetchAllRows<SupplierAllocationRow>((from, to) =>
+      c
+        .from("supplier_payment_allocations")
+        .select<SupplierAllocationRow>("payment_id, finance_id, amount")
+        .eq("org_id", orgId)
+        .in(
+          "payment_id",
+          allPayments.map((p) => p.id),
+        )
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (res.error) throw readFailure("supplier comparison: allocations", res.error);
     allAllocations = res.data ?? [];
   }

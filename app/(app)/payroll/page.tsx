@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { defaultPeriod } from "@/lib/payroll/compute";
 import { createPayrollRun } from "./actions";
@@ -59,11 +60,21 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
   const runIds = (runs ?? []).map((r) => r.id);
   const totalsByRun = new Map<string, { gross: number; net: number; count: number }>();
   if (runIds.length > 0) {
-    const { data: lines, error: linesError } = await supabase
-      .from("payroll_lines")
-      .select("payroll_run_id, gross_pay, net_pay")
-      .eq("org_id", ctx.org.id)
-      .in("payroll_run_id", runIds);
+    // F-1: ≤50 runs × many employees can exceed the 1000-row PostgREST cap, so
+    // page the per-run lines rather than reading a single truncated page.
+    const { data: lines, error: linesError } = await fetchAllRows<{
+      payroll_run_id: string;
+      gross_pay: number | null;
+      net_pay: number | null;
+    }>((from, to) =>
+      supabase
+        .from("payroll_lines")
+        .select("id, payroll_run_id, gross_pay, net_pay")
+        .eq("org_id", ctx.org.id)
+        .in("payroll_run_id", runIds)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     // Money figures — a failed read must not render every run as £0.00.
     if (linesError) throw readFailure("payroll register: totals", linesError);
     for (const l of lines ?? []) {

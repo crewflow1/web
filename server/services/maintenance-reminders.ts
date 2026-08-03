@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendEmail } from "@/lib/email/send";
 import { maintenanceRemindersSending } from "@/lib/maintenance/readiness";
 import { todayIso } from "@/lib/warranties/schedule";
@@ -87,6 +88,8 @@ type AnyChain = {
   update: (row: unknown) => AnyChain;
   eq: (k: string, v: unknown) => AnyChain;
   in: (k: string, v: unknown[]) => AnyChain;
+  order: (k: string, o: { ascending: boolean }) => AnyChain;
+  range: (from: number, to: number) => AnyChain;
   then: PromiseLike<Res<unknown[]>>["then"];
 };
 function table(admin: AdminClient, name: string): AnyChain {
@@ -122,11 +125,19 @@ export async function drainDueReminders(
   // ── 1. COMPUTE ────────────────────────────────────────────────────────────
   // Active, published warranties for this org — the ones a customer can see and
   // therefore the ones a reminder concerns.
-  const warrantyRes = (await table(admin, "job_warranties")
-    .select(
-      "id, job_id, period_months, service_interval_months, status, portal_published_at, portal_withdrawn_at",
-    )
-    .eq("org_id", orgId)) as unknown as Res<WarrantyRow[]>;
+  // PAGED (F-1): this cron must consider EVERY active warranty for the org — a
+  // bare `.select()` truncated at the 1000-row cap would silently leave a busy
+  // org's later warranties without reminders. Paged under the cap on `id`.
+  const warrantyRes = await fetchAllRows<WarrantyRow>(
+    (from, to) =>
+      table(admin, "job_warranties")
+        .select(
+          "id, job_id, period_months, service_interval_months, status, portal_published_at, portal_withdrawn_at",
+        )
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: WarrantyRow[] | null; error: unknown }>,
+  );
   if (warrantyRes.error) throw readFailure("maintenance reminders: warranties", warrantyRes.error);
 
   const warranties = (warrantyRes.data ?? []).filter(
@@ -138,11 +149,19 @@ export async function drainDueReminders(
 
   // The frozen completion date per job — the ONLY clock a warranty may run on.
   const jobIds = [...new Set(warranties.map((w) => w.job_id))];
-  const certRes = (await table(admin, "completion_certificates")
-    .select("job_id, completion_date")
-    .eq("org_id", orgId)
-    .eq("status", "issued")
-    .in("job_id", jobIds)) as unknown as Res<CertRow[]>;
+  // PAGED (F-1): `jobIds` grows with the (now fully-read) warranty set, so this
+  // `.in("job_id", …)` read is itself unbounded — one issued certificate per job,
+  // and >1000 warrantied jobs would truncate the completion-date lookup.
+  const certRes = await fetchAllRows<CertRow>(
+    (from, to) =>
+      table(admin, "completion_certificates")
+        .select("job_id, completion_date")
+        .eq("org_id", orgId)
+        .eq("status", "issued")
+        .in("job_id", jobIds)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: CertRow[] | null; error: unknown }>,
+  );
   if (certRes.error) throw readFailure("maintenance reminders: certificates", certRes.error);
 
   const completionByJob = new Map<string, string>();
@@ -150,10 +169,18 @@ export async function drainDueReminders(
     if (c.job_id) completionByJob.set(c.job_id, c.completion_date);
   }
 
-  // Reminders already logged for this org — the dedupe input.
-  const logRes = (await table(admin, "maintenance_reminder_log")
-    .select("warranty_id, kind, due_date")
-    .eq("org_id", orgId)) as unknown as Res<LogRow[]>;
+  // Reminders already logged for this org — the dedupe input. PAGED (F-1): the
+  // log is append-only and grows every run, so a truncated read would let the
+  // planner re-propose already-sent reminders (the insert's onConflict backstops
+  // an actual duplicate row, but the dedupe should not silently degrade).
+  const logRes = await fetchAllRows<LogRow>(
+    (from, to) =>
+      table(admin, "maintenance_reminder_log")
+        .select("warranty_id, kind, due_date")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: LogRow[] | null; error: unknown }>,
+  );
   if (logRes.error) throw readFailure("maintenance reminders: existing log", logRes.error);
 
   const forReminder: WarrantyForReminder[] = warranties.map((w) => ({

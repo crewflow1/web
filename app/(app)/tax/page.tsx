@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   computeVatQuarter,
   computePayeMonth,
@@ -74,25 +75,46 @@ export default async function TaxDashboardPage() {
       // ACTIVE-org pins. Every figure on this page is an HMRC-facing estimate
       // (VAT due, PAYE/NI, Corporation Tax): RLS admits every org the viewer
       // belongs to, so a dual-org owner's tax dashboard SUMMED both companies.
-      supabase
-        .from("invoices")
-        .select("status, vat_total, total, amount, paid_at, created_at")
-        .eq("org_id", ctx.org.id)
-        .gte("created_at", yearStartIso),
-      supabase
-        .from("finances")
-        .select("vat_total, amount, created_at")
-        .eq("org_id", ctx.org.id)
-        .gte("created_at", yearStartIso),
-      supabase
-        .from("payroll_lines")
-        // `gross_pay` is required by computePayeMonth — employer NI is derived from
-        // it, and employer NI is part of the monthly PAYE bill.
-        .select(
-          "paye_estimate, ni_estimate, gross_pay, run:payroll_runs ( period_start, status, cycle )",
-        )
-        .eq("org_id", ctx.org.id)
-        .gte("created_at", `${monthKey}-01T00:00:00Z`),
+      //
+      // PAGED (F-1). These reads feed SUMs over a whole tax year of invoices /
+      // finances (and a month of payroll lines): a bare `.select()` truncates at
+      // the 1000-row PostgREST cap, so a busy org's VAT / Corporation Tax would
+      // silently under-report to HMRC. `fetchAllRows` pages under the cap on a
+      // unique `created_at`+`id` total order.
+      fetchAllRows((from, to) =>
+        supabase
+          .from("invoices")
+          .select("id, status, vat_total, total, amount, paid_at, created_at")
+          .eq("org_id", ctx.org.id)
+          .gte("created_at", yearStartIso)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("finances")
+          .select("id, vat_total, amount, created_at")
+          .eq("org_id", ctx.org.id)
+          .gte("created_at", yearStartIso)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("payroll_lines")
+          // `gross_pay` is required by computePayeMonth — employer NI is derived from
+          // it, and employer NI is part of the monthly PAYE bill.
+          .select(
+            "id, paye_estimate, ni_estimate, gross_pay, run:payroll_runs ( period_start, status, cycle )",
+          )
+          .eq("org_id", ctx.org.id)
+          .gte("created_at", `${monthKey}-01T00:00:00Z`)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
   // Loud fail: every figure here is an HMRC-facing estimate — an errored read
   // must never render as £0 VAT/PAYE/CT due.

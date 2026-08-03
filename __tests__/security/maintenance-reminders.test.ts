@@ -158,6 +158,15 @@ function makeBuilder(table: string) {
       state.filters.push({ k, v });
       return builder;
     },
+    // Chainable no-ops so the fetchAllRows page builder (.order(id).range(from,to))
+    // resolves the same seeded rows — the F-1 pagination fix doesn't change the
+    // dark-path behaviour these tests assert.
+    order(_k: string, _o?: unknown) {
+      return builder;
+    },
+    range(_from: number, _to: number) {
+      return builder;
+    },
     then(onF: (r: unknown) => unknown, onR?: (e: unknown) => unknown) {
       return Promise.resolve(resolve_()).then(onF, onR);
     },

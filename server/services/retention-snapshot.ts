@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   OVERDUE_COLLECTABLE_STATUSES,
   invoiceBusinessToday,
@@ -97,12 +98,19 @@ export async function buildRetentionSnapshot(
       .select("amount")
       .eq("org_id", orgId)
       .gte("paid_at", sevenDaysAgo.slice(0, 10)),
-    // All-time invoiced (sent + paid, not draft / void).
-    supabase
-      .from("invoices")
-      .select("total, status")
-      .eq("org_id", orgId)
-      .in("status", ["sent", "paid", "awaiting_payment", "partially_paid", "overdue"]),
+    // All-time invoiced (sent + paid, not draft / void). PAGED (F-1): this feeds
+    // the `invoiced_total_gbp` SUM below, so a bare `.select()` truncated at the
+    // 1000-row cap would silently under-state lifetime invoiced revenue once an
+    // org crosses 1000 non-draft invoices.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, total, status")
+        .eq("org_id", orgId)
+        .in("status", ["sent", "paid", "awaiting_payment", "partially_paid", "overdue"])
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Overdue count — DERIVED, matching lib/invoices/overdue.ts exactly.
     //
     // This previously filtered `.eq("status", "overdue")`, which counted only
