@@ -61,7 +61,7 @@ type Conn = {
   last_sync_at: string | null;
 };
 
-type Vehicle = { asset_id: string; vin: string | null };
+type Vehicle = { asset_id: string; vin: string | null; odometer_miles?: number | null };
 
 type Upsert = { rows: Record<string, unknown>[]; opts: Record<string, unknown> };
 
@@ -101,7 +101,10 @@ function makeDb(opts: {
         };
       }
       if (table === "fleet_vehicles") {
-        return { select: () => selectChain(opts.vehicles) };
+        return {
+          select: () => selectChain(opts.vehicles),
+          update: (row: Record<string, unknown>) => updateChain(row),
+        };
       }
       if (table === "telematics_readings") {
         return {
@@ -229,6 +232,74 @@ describe("runTelematicsSync — fetch → readings write", () => {
     expect(summary.outcomes[0]!.outcome).toBe("empty");
     // The write was still ATTEMPTED with the idempotent contract.
     expect(db.upserts[0]!.opts.ignoreDuplicates).toBe(true);
+  });
+});
+
+describe("runTelematicsSync — odometer forward-update (forward-only)", () => {
+  it("advances fleet_vehicles.odometer from the newest reading when it is higher", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      // STAT reports 1000 miles; the register is behind at 500.
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123", odometer_miles: 500 }],
+    });
+    admin.client = db.client;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [STAT] }), { status: 200 })),
+    );
+
+    await runTelematicsSync();
+
+    const odoUpdate = db.updates.find((u) => "odometer_miles" in u);
+    expect(odoUpdate).toBeTruthy();
+    expect(odoUpdate!.odometer_miles).toBe(1000);
+    // Stamped with the reading's own instant, not "now".
+    expect(odoUpdate!.odometer_recorded_at).toBe("2026-07-15T09:30:00Z");
+  });
+
+  it("does NOT decrease a stored odometer when the reading is lower (forward-only)", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      // Register already at 5000; the incoming 1000-mile reading is stale/lower.
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123", odometer_miles: 5000 }],
+    });
+    admin.client = db.client;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [STAT] }), { status: 200 })),
+    );
+
+    await runTelematicsSync();
+
+    // The reading still lands (append-only history is faithful)...
+    expect(db.upserts).toHaveLength(1);
+    // ...but the register odometer is NOT walked backwards.
+    const odoUpdate = db.updates.find((u) => "odometer_miles" in u);
+    expect(odoUpdate).toBeUndefined();
   });
 });
 
