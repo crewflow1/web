@@ -354,9 +354,13 @@ const envSchema = z.object({
   ACCOUNTING_REDIRECT_URI: z.string().optional(),
   // Non-secret tunables. XERO_BANK_ACCOUNT_CODE is the Xero bank account code
   // receipts (payments) land in (default "090", Xero's standard Bank account).
-  // QBO_API_BASE_URL overrides the QuickBooks API host (default production) for a
-  // sandbox company. Both optional; neither is a credential.
+  // XERO_SALES_ACCOUNT_CODE is the revenue account AUTHORISED ACCREC invoice
+  // lines post to (default "200", Xero's standard Sales account); Xero rejects an
+  // AUTHORISED sales invoice whose lines carry no account reference, so the push
+  // must attach one. QBO_API_BASE_URL overrides the QuickBooks API host (default
+  // production) for a sandbox company. All optional; none is a credential.
   XERO_BANK_ACCOUNT_CODE: z.string().optional(),
+  XERO_SALES_ACCOUNT_CODE: z.string().optional(),
   QBO_API_BASE_URL: z.string().optional(),
 
   // -- Integration token encryption (accounting/calendar/banking/telematics) --

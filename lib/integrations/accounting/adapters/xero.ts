@@ -66,7 +66,12 @@ export class XeroAdapter implements AccountingAdapter {
   }
 
   async pushInvoices(input: AccountingPushInput): Promise<AccountingPushResult> {
-    const built = buildXeroInvoicesBody(input.rows).Invoices;
+    // Revenue account the AUTHORISED ACCREC lines post to. Configurable via env
+    // with a sane Xero default ("200" is Xero's standard Sales account); not a
+    // secret. Xero rejects an AUTHORISED sales invoice whose lines name no
+    // account, so this is required — the twin of the bank code on payments.
+    const salesCode = process.env.XERO_SALES_ACCOUNT_CODE?.trim() || "200";
+    const built = buildXeroInvoicesBody(input.rows, salesCode).Invoices;
     return this.push("invoices", "Invoices", input, built);
   }
 
