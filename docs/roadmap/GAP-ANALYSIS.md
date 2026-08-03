@@ -4,9 +4,15 @@
 
 This is the canonical residual after the Roadmap Completion Programme (Waves 1–12). The rule of the programme: **build every engineering task that can be completed without an external credential, a CEO/product decision, real customer data, or legal approval** — and build every *gated* feature's full substrate DARK so activation is a configuration change, not an engineering project.
 
-## ⚠️ SUPERSEDED by the C26 zero-trust audit (2026-08-03)
+## ⚠️ SUPERSEDED — authoritative record is now C28 (2026-08-03)
 
-**The "Category 1 = EMPTY" claim below is FALSE** — see `docs/roadmap/C26-ZERO-TRUST-AUDIT.md`. The audit found real engineering remaining, principally: the 5 dark OAuth integrations are NOT config-flip-ready (no token-refresh anywhere; accounting/calendar push are stubs; banking/telematics sync uncalled; connect dead-ends), a shipped `/stock` mobile-overflow, an HQ CEO honesty crack, an unwired automation trigger, 2 phantom webhook events, an orphaned VOICE_NOTES flag, and a corporation-tax under-calculation. Categories 2–4 below remain broadly valid for the genuinely-complete surfaces, but the integration rows must be read as 🔴 (engineering), not 🟡 (credential). Treat the audit doc as authoritative.
+**The "Category 1 = EMPTY" claim below is FALSE.** Two zero-trust audits confirm remaining engineering:
+- **C26** (`docs/roadmap/C26-ZERO-TRUST-AUDIT.md`) found the first tranche; all of it was fixed in the C27 remediation (10 trains, migrations `20261109`–`20261111`, deployed & verified).
+- **C28** (`docs/roadmap/C28-ZERO-TRUST-AUDIT-2.md`) re-audited *after* C27 with 18 hostile auditors and found **11 further confirmed engineering gaps** across 8 domains: archived-lead pipeline leak, 10 HQ narrative `return null` stubs, apply-on-approval has no production authority, Xero missing AccountCode, VAT unreliable in both Xero+QBO payloads, no calendar rota-shift producer, `telematics_readings` has zero consumers, no `weather_watches` producer, `/reports` F-1 1000-row truncation, and no conversational voice spoken-turn.
+
+**Do NOT rely on the "config-flip-only" framing in Category 2 below for calendar (rota half), telematics, weather, accounting (AccountCode/VAT), voice, or the HQ narratives/apply surfaces — those rows are 🔴 (engineering), tracked in C28, and several carry code comments that falsely claim config-only activation.** C28 is the authoritative gap record; remediation is in progress.
+
+**Also corrected by C28:** the memory notes "payroll = estimates only", "offline = read-only", and "5 ungoverned AI sites" are all **stale/false** — those surfaces verified complete.
 
 ## ~~Category 1 — ENGINEERING (buildable now): EMPTY~~ (RETRACTED — see above)
 
