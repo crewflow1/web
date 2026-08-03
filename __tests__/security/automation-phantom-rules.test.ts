@@ -67,6 +67,20 @@ function walk(dir: string): string[] {
  */
 function collectProducedVerbs(): Set<string> {
   const produced = new Set<string>();
+  for (const { verb } of collectProducerSites()) produced.add(verb);
+  return produced;
+}
+
+/**
+ * The richer sweep: every LITERAL `dispatchAutomation({ type, ..., source_table })`
+ * site, as a {verb, source_table} pair. Used by the wrong-transition-alias guard
+ * below — it is not enough that a verb is produced SOMEWHERE (the C29 guard); it
+ * must be produced from the source_table that matches the verb's semantic entity.
+ * A lead firing `support.ticket.created` (source_table:"leads") passed the plain
+ * verb sweep but is a mis-wired alias, and this catches it.
+ */
+function collectProducerSites(): Array<{ verb: string; source_table: string | null }> {
+  const sites: Array<{ verb: string; source_table: string | null }> = [];
   const files = ["app", "lib", "server"].flatMap((d) => walk(resolve(ROOT, d)));
   for (const file of files) {
     const src = codeOf(readFileSync(file, "utf8"));
@@ -76,12 +90,43 @@ function collectProducedVerbs(): Set<string> {
       // this codebase puts `type:` as the first field of the event object.
       const window = src.slice(idx, idx + 300);
       const m = /dispatchAutomation\(\s*\{\s*type:\s*"([a-z][a-z.]*)"/.exec(window);
-      if (m) produced.add(m[1]!);
+      if (m) {
+        const st = /source_table:\s*"([a-z_]+)"/.exec(window);
+        sites.push({ verb: m[1]!, source_table: st ? st[1]! : null });
+      }
       idx = src.indexOf("dispatchAutomation(", idx + 1);
     }
   }
-  return produced;
+  return sites;
 }
+
+/** verb → the set of source_tables it is literally dispatched with. */
+function collectProducedVerbSources(): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const { verb, source_table } of collectProducerSites()) {
+    if (!source_table) continue;
+    if (!map.has(verb)) map.set(verb, new Set());
+    map.get(verb)!.add(source_table);
+  }
+  return map;
+}
+
+/**
+ * The semantic entity each enabled trigger verb MUST be dispatched from. This is
+ * the honest producer→consumer contract: the "Support ticket opened" rule may
+ * only be advertised as live if a REAL support ticket (source_table
+ * "support_tickets") fires it — not a lead, not a quote. Add a row here when a
+ * new enabled rule lands; a verb absent from this map is not checked (opt-in /
+ * disabled verbs like payment.recorded intentionally have multiple sources).
+ */
+const EXPECTED_SOURCE_TABLE: Record<string, string> = {
+  "quote.accepted": "quotes",
+  "invoice.overdue": "invoices",
+  "job.completed": "jobs",
+  "import.completed": "imports",
+  "onboarding.completed": "organizations",
+  "support.ticket.created": "support_tickets",
+};
 
 // ===========================================================================
 // 1. The core drift guard
@@ -113,6 +158,30 @@ describe("automation catalogue — no enabled-but-producer-less rule (phantom gu
           `dispatches it — this is a phantom rule. Either wire a dispatchAutomation ` +
           `producer at the real transition, or ship it enabled:false (see the ` +
           `demo_booked_notify_hq annotation in lib/automation/rules.ts).`,
+      ).toBe(true);
+    }
+  });
+
+  it("every enabled rule's verb is produced from the source_table that MATCHES its entity (no wrong-transition alias)", () => {
+    // The C30 class: a rule ships enabled:true and its verb IS produced somewhere
+    // (so the plain phantom guard is green), but from the WRONG entity — e.g. a
+    // lead dispatching `support.ticket.created` (source_table "leads"). The
+    // "Support ticket opened" rule then fires on lead creation and never on a
+    // real ticket. This asserts producer↔consumer honesty by source_table.
+    const bySource = collectProducedVerbSources();
+    for (const rule of AUTOMATION_RULES.filter((r) => r.enabled)) {
+      const expected = EXPECTED_SOURCE_TABLE[rule.trigger];
+      if (!expected) continue; // not an entity-pinned verb; covered by other guards
+      const sources = bySource.get(rule.trigger) ?? new Set<string>();
+      expect(
+        sources.has(expected),
+        `Rule "${rule.id}" (enabled) triggers on "${rule.trigger}", which must be ` +
+          `dispatched with source_table "${expected}" (its real entity) but the only ` +
+          `producer source_table(s) found are [${[...sources].join(", ") || "none"}]. ` +
+          `A verb produced from the wrong entity is a mis-wired alias: the rule fires ` +
+          `on the wrong transition and never on the one it advertises. Wire a ` +
+          `dispatchAutomation producer at the real transition with the correct ` +
+          `source_table (see app/(app)/support/actions.ts createSupportTicket).`,
       ).toBe(true);
     }
   });

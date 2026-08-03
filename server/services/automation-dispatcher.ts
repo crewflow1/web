@@ -627,6 +627,7 @@ function notificationTitleFor(
     "quote.accepted": "A quote was just accepted",
     "quote.declined": "A quote was declined",
     "quote.sent": "Quote sent to customer",
+    "lead.created": "A new lead came in",
     "invoice.overdue": "An invoice is overdue",
     "invoice.created": "Invoice created",
     "job.completed": "Job marked complete — send the invoice?",
@@ -655,6 +656,8 @@ function actionUrlForEvent(event: AutomationEvent): string {
       return `/jobs/${event.source_id}`;
     case "imports":
       return `/imports/${event.source_id}`;
+    case "leads":
+      return `/leads/${event.source_id}`;
     case "support_tickets":
       return `/support/${event.source_id}`;
     default:

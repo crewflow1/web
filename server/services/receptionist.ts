@@ -2305,8 +2305,14 @@ export async function processInboundEnquiry(
       },
     });
 
+    // A qualified enquiry created a LEAD, not a support ticket — dispatch the
+    // honest `lead.created` verb (source_table:"leads"). This used to fire
+    // `support.ticket.created`, which mis-routed a lead through the enabled
+    // "Support ticket opened" rule and mislabelled the notification. Idempotent
+    // via correlation lead.created:leads:<id>; org-pinned; best-effort so a
+    // dispatch failure never disturbs the ingestion contract above.
     await dispatchAutomation({
-      type: "support.ticket.created", // closest existing event id; new lead trigger could land later
+      type: "lead.created",
       org_id: input.org_id,
       source_table: "leads",
       source_id: leadId,

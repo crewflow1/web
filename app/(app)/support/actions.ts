@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
@@ -108,6 +109,29 @@ export async function createSupportTicket(formData: FormData): Promise<void> {
       priority: parsed.data.priority,
       category: parsed.data.category,
     },
+  });
+
+  // 4. Automation OS — a REAL support ticket now fires `support.ticket.created`,
+  //    the trigger the enabled "Support ticket opened" rule watches. Previously
+  //    NOTHING dispatched this verb from actual ticket creation (the receptionist
+  //    mis-fired it on lead creation), so the enabled rule never ran on the
+  //    transition it advertises. Idempotent via correlation
+  //    support.ticket.created:support_tickets:<id>; org-pinned to the ticket's
+  //    org; best-effort so a dispatch failure never derails ticket creation.
+  await dispatchAutomation({
+    type: "support.ticket.created",
+    org_id: ctx.membership.org_id,
+    source_table: "support_tickets",
+    source_id: ticket.id,
+    payload: {
+      ticket_number: ticket.ticket_number,
+      subject: parsed.data.subject,
+      priority: parsed.data.priority,
+      category: parsed.data.category,
+    },
+    actor_email: user.email ?? null,
+  }).catch((e) => {
+    console.error("[customer-support] automation dispatch failed", e);
   });
 
   revalidatePath("/support");
