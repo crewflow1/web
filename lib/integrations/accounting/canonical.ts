@@ -125,6 +125,20 @@ export function money2(value: number | string | null | undefined): string {
   return (n === 0 ? 0 : n).toFixed(2);
 }
 
+/**
+ * The effective whole-percent VAT rate of an invoice line, derived from its net
+ * and VAT. Pure. This is the SINGLE source of the rate the provider pushes read
+ * to choose a tax code (Xero TaxType / QBO TxnTaxCodeRef): the canonical row is
+ * header-level (one line per invoice), so there is no per-line `vat_rate` to
+ * thread — the honest per-invoice rate is `round(vat / net * 100)`, exactly the
+ * derivation the shipped CSV export uses for its header-total fallback row. A
+ * zero / missing net yields 0 (never NaN or Infinity), matching a 0-VAT line.
+ */
+export function effectiveVatRate(net: number, vat: number): number {
+  if (!Number.isFinite(net) || !Number.isFinite(vat) || net <= 0) return 0;
+  return Math.round((vat / net) * 100);
+}
+
 /** A Postgres timestamp/date -> `YYYY-MM-DD`, or "" when absent. Pure. */
 function dateOnly(value: string | null | undefined): string {
   if (!value) return "";

@@ -11,7 +11,9 @@ import { unavailable } from "./types";
 import {
   buildQboInvoiceBody,
   buildQboPaymentBody,
+  qboSalesTaxCodeName,
 } from "../provider-payloads";
+import { effectiveVatRate } from "../canonical";
 
 /**
  * QuickBooks Online accounting adapter.
@@ -93,11 +95,37 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const item = await this.resolveServiceItemId(ctx, realmId);
     if (!item.ok) return this.err(item.message);
 
+    // Memoise the org's VAT code id per rate — resolved lazily, once per rate.
+    const taxCodeByRate = new Map<number, string>();
+
     let pushed = 0;
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
       if (!customer.ok) return this.err(customer.message, pushed);
-      const body = buildQboInvoiceBody(row, { customerId: customer.id, itemId: item.id });
+
+      // A VAT-bearing line needs the org's tax code, else QBO ignores the
+      // TotalTax and the VAT is lost. Resolve (and cache) it by rate; a
+      // zero-VAT line needs none (TaxExcluded ⇒ gross == net).
+      const vat = Number(row.vat);
+      let taxCodeId: string | null = null;
+      if (Number.isFinite(vat) && vat > 0) {
+        const rate = effectiveVatRate(Number(row.net || row.gross), vat);
+        const cached = taxCodeByRate.get(rate);
+        if (cached) {
+          taxCodeId = cached;
+        } else {
+          const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
+          if (!resolved.ok) return this.err(resolved.message, pushed);
+          taxCodeByRate.set(rate, resolved.id);
+          taxCodeId = resolved.id;
+        }
+      }
+
+      const body = buildQboInvoiceBody(row, {
+        customerId: customer.id,
+        itemId: item.id,
+        taxCodeId,
+      });
       const res = await this.authedJson(
         ctx,
         "POST",
@@ -196,6 +224,39 @@ export class QuickBooksAdapter implements AccountingAdapter {
         ok: false,
         message:
           "QuickBooks has no Service item to post invoice lines against; create one in QuickBooks first.",
+      };
+    }
+    return { ok: true, id };
+  }
+
+  /**
+   * Resolve the org's VAT code id for a rate, by NAME (mirrors the Service-item
+   * lookup). QBO ignores an explicit TotalTax for a UK company unless a
+   * TxnTaxCodeRef names the code, so a VAT-bearing invoice MUST resolve one —
+   * failing loudly (like the missing-item case) is safer than silently posting
+   * an invoice with the VAT dropped.
+   */
+  private async resolveTaxCodeId(
+    ctx: AuthCtx,
+    realmId: string,
+    rate: number,
+  ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+    const name = qboSalesTaxCodeName(rate);
+    const res = await this.authedJson(
+      ctx,
+      "GET",
+      `/v3/company/${realmId}/query?query=${encodeURIComponent(
+        `select Id from TaxCode where Name = '${q(name)}'`,
+      )}`,
+    );
+    if (!res.ok) return { ok: false, message: this.reason("tax code lookup", res) };
+    const id = firstEntityId(res.json, "TaxCode");
+    if (!id) {
+      return {
+        ok: false,
+        message:
+          `QuickBooks has no VAT code named "${name}" for the ${rate}% rate; ` +
+          "create it in QuickBooks (Taxes) first.",
       };
     }
     return { ok: true, id };

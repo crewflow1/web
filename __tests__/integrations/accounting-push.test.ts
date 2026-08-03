@@ -95,8 +95,8 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("provider-payloads (pure)", () => {
-  it("Xero invoice body: ACCREC, Contact by name, exclusive net+vat line", () => {
-    const body = buildXeroInvoicesBody([INVOICE_ROW]);
+  it("Xero invoice body: ACCREC, Contact by name, exclusive net+vat line, account + tax code", () => {
+    const body = buildXeroInvoicesBody([INVOICE_ROW], "200");
     expect(body.Invoices).toHaveLength(1);
     const inv = body.Invoices[0] as Record<string, unknown>;
     expect(inv.Type).toBe("ACCREC");
@@ -106,6 +106,41 @@ describe("provider-payloads (pure)", () => {
     const line = (inv.LineItems as Array<Record<string, unknown>>)[0]!;
     expect(line.UnitAmount).toBe(100);
     expect(line.TaxAmount).toBe(20);
+    // GAP A: an AUTHORISED ACCREC line MUST name a revenue account.
+    expect(line.AccountCode).toBe("200");
+    // GAP B: a TaxType makes Xero honour the manual TaxAmount (20% → OUTPUT2).
+    expect(line.TaxType).toBe("OUTPUT2");
+  });
+
+  it("Xero invoice body: EVERY emitted line carries a non-empty AccountCode", () => {
+    const rows: CanonicalAccountingRow[] = [
+      { ...INVOICE_ROW, invoice_number: "INV-A" },
+      { ...INVOICE_ROW, invoice_number: "INV-B", net: "50.00", vat: "2.50", gross: "52.50" },
+      { ...INVOICE_ROW, invoice_number: "INV-C", net: "80.00", vat: "0.00", gross: "80.00" },
+    ];
+    const body = buildXeroInvoicesBody(rows, "200");
+    for (const inv of body.Invoices as Array<Record<string, unknown>>) {
+      const line = (inv.LineItems as Array<Record<string, unknown>>)[0]!;
+      expect(typeof line.AccountCode).toBe("string");
+      expect(line.AccountCode).not.toBe("");
+    }
+  });
+
+  it("Xero invoice body: TaxType tracks the rate and gross == net + vat (20/5/0)", () => {
+    const cases: Array<{ row: CanonicalAccountingRow; taxType: string }> = [
+      { row: { ...INVOICE_ROW, net: "100.00", vat: "20.00", gross: "120.00" }, taxType: "OUTPUT2" },
+      { row: { ...INVOICE_ROW, net: "100.00", vat: "5.00", gross: "105.00" }, taxType: "RROUTPUT" },
+      { row: { ...INVOICE_ROW, net: "100.00", vat: "0.00", gross: "100.00" }, taxType: "ZERORATEDOUTPUT" },
+    ];
+    for (const { row, taxType } of cases) {
+      const body = buildXeroInvoicesBody([row], "200");
+      const inv = body.Invoices[0] as Record<string, unknown>;
+      const line = (inv.LineItems as Array<Record<string, unknown>>)[0]!;
+      expect(line.TaxType).toBe(taxType);
+      // Exclusive line ⇒ Xero gross = UnitAmount + TaxAmount; must equal canonical gross.
+      const posted = (line.UnitAmount as number) + (line.TaxAmount as number);
+      expect(posted).toBeCloseTo(Number(row.gross), 2);
+    }
   });
 
   it("Xero payment body: applied to invoice by number, gross amount, bank code", () => {
@@ -116,16 +151,50 @@ describe("provider-payloads (pure)", () => {
     expect(pay.Amount).toBe(120);
   });
 
-  it("QBO invoice body: CustomerRef + ItemRef + DocNumber + tax", () => {
-    const body = buildQboInvoiceBody(INVOICE_ROW, { customerId: "3", itemId: "7" });
+  it("QBO invoice body: CustomerRef + ItemRef + DocNumber + tax code + TaxExcluded", () => {
+    const body = buildQboInvoiceBody(INVOICE_ROW, {
+      customerId: "3",
+      itemId: "7",
+      taxCodeId: "TAX-20",
+    });
     expect(body.DocNumber).toBe("INV-001");
     expect((body.CustomerRef as { value: string }).value).toBe("3");
+    // GAP B: ex-VAT amounts ⇒ QBO must ADD tax, not derive it inclusive.
+    expect(body.GlobalTaxCalculation).toBe("TaxExcluded");
     const line = (body.Line as Array<Record<string, unknown>>)[0]!;
     expect(line.Amount).toBe(100);
     expect(
       (line.SalesItemLineDetail as { ItemRef: { value: string } }).ItemRef.value,
     ).toBe("7");
-    expect((body.TxnTaxDetail as { TotalTax: number }).TotalTax).toBe(20);
+    // GAP B: a bare TotalTax is ignored for a UK company — the code must be named.
+    const tax = body.TxnTaxDetail as { TotalTax: number; TxnTaxCodeRef: { value: string } };
+    expect(tax.TotalTax).toBe(20);
+    expect(tax.TxnTaxCodeRef.value).toBe("TAX-20");
+  });
+
+  it("QBO invoice body: gross == net + tax across 20/5/0 (TaxExcluded)", () => {
+    const cases: CanonicalAccountingRow[] = [
+      { ...INVOICE_ROW, net: "100.00", vat: "20.00", gross: "120.00" },
+      { ...INVOICE_ROW, net: "100.00", vat: "5.00", gross: "105.00" },
+      { ...INVOICE_ROW, net: "100.00", vat: "0.00", gross: "100.00" },
+    ];
+    for (const row of cases) {
+      const body = buildQboInvoiceBody(row, { customerId: "3", itemId: "7", taxCodeId: "TAX" });
+      expect(body.GlobalTaxCalculation).toBe("TaxExcluded");
+      const net = (body.Line as Array<Record<string, unknown>>)[0]!.Amount as number;
+      const totalTax =
+        (body.TxnTaxDetail as { TotalTax?: number } | undefined)?.TotalTax ?? 0;
+      // TaxExcluded ⇒ QBO gross = sum(line amounts) + TotalTax.
+      expect(net + totalTax).toBeCloseTo(Number(row.gross), 2);
+    }
+  });
+
+  it("QBO invoice body: a zero-VAT line carries no TxnTaxDetail", () => {
+    const body = buildQboInvoiceBody(
+      { ...INVOICE_ROW, net: "80.00", vat: "0.00", gross: "80.00" },
+      { customerId: "3", itemId: "7", taxCodeId: null },
+    );
+    expect(body.TxnTaxDetail).toBeUndefined();
   });
 
   it("QBO payment body: linked when invoiceId present, unlinked otherwise", () => {
@@ -246,6 +315,44 @@ describe("Xero adapter push", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.pushed).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts each invoice line with a non-empty AccountCode and gross-correct tax (20/5/0)", async () => {
+    enableXero();
+    process.env.XERO_SALES_ACCOUNT_CODE = "200";
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rows: CanonicalAccountingRow[] = [
+      { ...INVOICE_ROW, invoice_number: "INV-20", net: "100.00", vat: "20.00", gross: "120.00" },
+      { ...INVOICE_ROW, invoice_number: "INV-05", net: "100.00", vat: "5.00", gross: "105.00" },
+      { ...INVOICE_ROW, invoice_number: "INV-00", net: "100.00", vat: "0.00", gross: "100.00" },
+    ];
+    const res = await getAccountingAdapter("xero").pushInvoices(baseInput({ rows }));
+    expect(res.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    fetchMock.mock.calls.forEach((call, i) => {
+      const init = (call as unknown as [string, RequestInit])[1];
+      const body = JSON.parse(init.body as string);
+      const line = body.Invoices[0].LineItems[0];
+      expect(line.AccountCode).toBe("200");
+      expect(typeof line.TaxType).toBe("string");
+      expect(line.TaxType).not.toBe("");
+      // Exclusive ⇒ gross = UnitAmount + TaxAmount, must match canonical gross.
+      expect(line.UnitAmount + line.TaxAmount).toBeCloseTo(Number(rows[i]!.gross), 2);
+    });
+  });
+
+  it("honours a configured XERO_SALES_ACCOUNT_CODE", async () => {
+    enableXero();
+    process.env.XERO_SALES_ACCOUNT_CODE = "4000";
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    await getAccountingAdapter("xero").pushInvoices(baseInput());
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    const body = JSON.parse(init.body as string);
+    expect(body.Invoices[0].LineItems[0].AccountCode).toBe("4000");
   });
 });
 
@@ -400,16 +507,21 @@ function qboRouter(
   handlers: {
     itemQuery?: () => Response;
     customerQuery?: () => Response;
-    customerCreate?: () => Response;
     invoiceQuery?: () => Response;
+    taxCodeQuery?: () => Response;
+    customerCreate?: () => Response;
     invoiceCreate?: () => Response;
     paymentCreate?: () => Response;
   },
 ) {
   const empty = () => jsonResponse({ QueryResponse: {} });
+  // A VAT-bearing invoice push resolves a TxnTaxCodeRef by name; default to a
+  // resolvable code so callers that don't care about tax still succeed.
+  const taxCode = () => jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TAX-20" }] } });
   return vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (method === "GET" && url.includes("/query")) {
+      if (url.includes("TaxCode")) return (handlers.taxCodeQuery ?? taxCode)();
       if (url.includes("Item")) return (handlers.itemQuery ?? empty)();
       if (url.includes("Customer")) return (handlers.customerQuery ?? empty)();
       if (url.includes("Invoice")) return (handlers.invoiceQuery ?? empty)();
@@ -526,6 +638,9 @@ describe("QuickBooks adapter push", () => {
       if (method === "GET" && url.includes("Customer")) {
         return jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } });
       }
+      if (method === "GET" && url.includes("TaxCode")) {
+        return jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TAX-20" }] } });
+      }
       if (method === "POST" && url.includes("/invoice")) {
         return jsonResponse({ Invoice: { Id: "11" } });
       }
@@ -568,6 +683,9 @@ describe("QuickBooks adapter push", () => {
       if (method === "GET" && url.includes("Customer")) {
         return jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } });
       }
+      if (method === "GET" && url.includes("TaxCode")) {
+        return jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TAX-20" }] } });
+      }
       if (method === "POST" && url.includes("/invoice")) {
         invPost += 1;
         return invPost === 1
@@ -584,6 +702,56 @@ describe("QuickBooks adapter push", () => {
     expect(res.ok).toBe(false);
     // The first invoice was accepted before the second failed.
     if (!res.ok) expect(res.pushed).toBe(1);
+  });
+
+  it("resolves a TxnTaxCodeRef and posts gross-correct tax across 20/5/0", async () => {
+    enableQbo();
+    const fetchMock = qboRouter({
+      itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      taxCodeQuery: () => jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TC-1" }] } }),
+      invoiceCreate: () => jsonResponse({ Invoice: { Id: "11" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rows: CanonicalAccountingRow[] = [
+      { ...INVOICE_ROW, invoice_number: "INV-20", net: "100.00", vat: "20.00", gross: "120.00" },
+      { ...INVOICE_ROW, invoice_number: "INV-05", net: "100.00", vat: "5.00", gross: "105.00" },
+      { ...INVOICE_ROW, invoice_number: "INV-00", net: "100.00", vat: "0.00", gross: "100.00" },
+    ];
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(baseInput({ rows }));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(3);
+
+    const invoiceBodies = fetchMock.mock.calls
+      .filter((c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST")
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(invoiceBodies).toHaveLength(3);
+    invoiceBodies.forEach((body, i) => {
+      expect(body.GlobalTaxCalculation).toBe("TaxExcluded");
+      const net = body.Line[0].Amount as number;
+      const totalTax = body.TxnTaxDetail?.TotalTax ?? 0;
+      // VAT-bearing rows name the resolved tax code; the zero-rate row omits it.
+      if (Number(rows[i]!.vat) > 0) {
+        expect(body.TxnTaxDetail.TxnTaxCodeRef.value).toBe("TC-1");
+      } else {
+        expect(body.TxnTaxDetail).toBeUndefined();
+      }
+      expect(net + totalTax).toBeCloseTo(Number(rows[i]!.gross), 2);
+    });
+  });
+
+  it("errors clearly when a VAT-bearing invoice has no matching tax code", async () => {
+    enableQbo();
+    const fetchMock = qboRouter({
+      itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      taxCodeQuery: () => jsonResponse({ QueryResponse: {} }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(baseInput());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toMatch(/VAT code/i);
   });
 
   it("payment: links to the invoice found by DocNumber", async () => {
