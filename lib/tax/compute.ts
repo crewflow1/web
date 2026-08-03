@@ -16,6 +16,7 @@
  */
 
 import { employerCostsForStoredLine } from "@/lib/payroll/compute";
+import { isIssuedStatus } from "@/lib/invoices/schema";
 
 const UK_CT_SMALL_RATE = 0.19;
 const UK_CT_MAIN_RATE = 0.25;
@@ -187,6 +188,13 @@ export function computePayeMonth(
  * Corporation tax — estimate based on annual profit since current
  * year started. Profit = invoiced revenue (net) – finance costs (net),
  * roughly approximating P&L gross margin.
+ *
+ * Revenue counts ONLY ISSUED invoices (see ISSUED_INVOICE_STATUSES): `draft`
+ * invoices are never-issued and carry the schema/new-invoice default status while
+ * still holding real line amounts, so including them would count every unsent
+ * invoice as revenue and overstate profit — and the tax due — for essentially
+ * every org. This keeps the estimate on the "Invoiced · accrual" basis the page
+ * declares. Basis matches computeVatQuarter's disclosed treatment.
  */
 export function computeCorpTaxYear(
   invoices: InvoiceRow[],
@@ -195,7 +203,7 @@ export function computeCorpTaxYear(
 ): TaxSummary["corp_tax_year"] {
   let revenue = 0;
   for (const inv of invoices) {
-    if (inv.created_at >= yearStartIso) {
+    if (inv.created_at >= yearStartIso && isIssuedStatus(inv.status)) {
       revenue += Number(inv.amount ?? 0); // net of VAT
     }
   }

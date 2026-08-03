@@ -52,6 +52,35 @@ export const OUTSTANDING_STATUSES: ReadonlyArray<InvoiceStatus> = [
   "overdue",
 ];
 
+/**
+ * Statuses where the invoice has been ISSUED — i.e. sent to the customer and so
+ * recognisable as revenue on an accrual basis. Everything except `draft`.
+ *
+ * `draft` is authoritatively "never issued" (see lib/invoices/overdue.ts): it is
+ * the schema DEFAULT and the new-invoice default, so effectively every invoice is
+ * a draft carrying real line amounts before it is sent. Counting drafts as revenue
+ * overstates profit — and hence the Corporation Tax estimate — for essentially
+ * every org, and contradicts the "Invoiced · accrual" basis the tax page declares.
+ *
+ * There is no `void`/`cancelled` member in this schema (the enum is draft, sent,
+ * awaiting_payment, partially_paid, paid, overdue). If one is ever added it must be
+ * excluded here too. This is the single accrual-revenue authority every summing
+ * caller should read.
+ */
+export const ISSUED_INVOICE_STATUSES = [
+  "sent",
+  "awaiting_payment",
+  "partially_paid",
+  "paid",
+  // Legacy stored value — an issued invoice that went unpaid past its due date.
+  "overdue",
+] as const satisfies readonly InvoiceStatus[];
+
+/** True when the invoice has been issued (any status other than `draft`). */
+export function isIssuedStatus(status: string | null | undefined): boolean {
+  return (ISSUED_INVOICE_STATUSES as readonly string[]).includes(status ?? "");
+}
+
 const optionalString = (max: number) =>
   z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
