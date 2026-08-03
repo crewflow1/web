@@ -12,6 +12,7 @@ import {
 } from "@/server/services/staff-invite";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
+import { bestEffortPushRota } from "@/server/services/calendar-connections";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   updateStaffProfileSchema,
@@ -483,7 +484,7 @@ export async function createRotaEntry(
     }
   }
 
-  const { error } = await supabase
+  const { data: inserted, error } = await supabase
     .from("rota_entries")
     .insert({
       org_id: ctx.org.id,
@@ -493,7 +494,9 @@ export async function createRotaEntry(
       ends_at: result.data.ends_at,
       notes: result.data.notes ?? null,
       created_by: user.id,
-    });
+    })
+    .select("id")
+    .maybeSingle();
   if (error) {
     console.error("[rota] insert failed", error);
     return formError(
@@ -503,6 +506,16 @@ export async function createRotaEntry(
   }
 
   revalidatePath("/staff/rota");
+
+  // Best-effort one-way push to a connected calendar. A no-op while the calendar
+  // integration is dark (the flag is off, so no DB/network happens); once live it
+  // creates/updates the external event and never blocks or fails the save. This is
+  // the standalone-shift half — a rota entry (even one with no backing job) lands
+  // on the calendar spanning its own start/end, not a synthesised default.
+  if (inserted?.id) {
+    await bestEffortPushRota(ctx.org.id, inserted.id);
+  }
+
   return formSuccess({ successMessage: "Shift added." });
 }
 

@@ -24,10 +24,11 @@ const h = vi.hoisted(() => {
   };
   const state: {
     job: Record<string, unknown> | null;
+    rota: Record<string, unknown> | null;
     connections: ConnRow[];
     tokenRow: Record<string, unknown> | null;
     eventLinks: Map<string, { external_event_id: string }>;
-  } = { job: null, connections: [], tokenRow: null, eventLinks: new Map() };
+  } = { job: null, rota: null, connections: [], tokenRow: null, eventLinks: new Map() };
 
   type BuilderState = {
     table: string;
@@ -73,6 +74,7 @@ const h = vi.hoisted(() => {
 
   const serverResolver: Resolver = (st) => {
     if (st.table === "jobs" && st.op === "select") return { data: state.job, error: null };
+    if (st.table === "rota_entries" && st.op === "select") return { data: state.rota, error: null };
     if (st.table === "calendar_connections" && st.op === "select")
       return { data: state.connections, error: null };
     return { data: null, error: null };
@@ -116,6 +118,8 @@ import { encryptToken } from "@/lib/integrations/token-crypto";
 import {
   pushJobToCalendar,
   bestEffortPushJob,
+  pushRotaToCalendar,
+  bestEffortPushRota,
 } from "@/server/services/calendar-connections";
 
 const CREDS = {
@@ -150,6 +154,15 @@ const JOB = {
   site_country: "UK",
 };
 
+const ROTA = {
+  id: "rota-1",
+  org_id: "org-1",
+  starts_at: "2026-09-01T07:30:00+00:00",
+  ends_at: "2026-09-01T15:45:00+00:00",
+  notes: "Cover the yard",
+  user: { full_name: "Jane Doe", email: "jane@acme.co" },
+};
+
 const CONNECTED_GOOGLE = {
   provider: "google",
   status: "connected",
@@ -163,6 +176,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const [k, v] of Object.entries(CREDS)) process.env[k] = v;
   h.state.job = { ...JOB };
+  h.state.rota = { ...ROTA };
   h.state.connections = [CONNECTED_GOOGLE];
   h.state.tokenRow = {
     id: "conn-1",
@@ -232,6 +246,66 @@ describe("bestEffortPushJob — caller seam", () => {
 
   it("delegates to the push once live and never throws", async () => {
     const res = await bestEffortPushJob("org-1", "job-1");
+    expect(res).toEqual({ status: "pushed" });
+  });
+});
+
+describe("pushRotaToCalendar — live path", () => {
+  it("INSERTs an event with the shift's own start/end and writes a 'rota' event link", async () => {
+    const res = await pushRotaToCalendar("org-1", "rota-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed", provider: "google", externalEventId: "evt-1" });
+    // The link is keyed by local_kind 'rota' (distinct from a 'job' link).
+    expect(h.state.eventLinks.size).toBe(1);
+    expect(h.state.eventLinks.get("conn-1|rota|rota-1")).toEqual({ external_event_id: "evt-1" });
+    // First push is a POST carrying the shift's real bounds (not 08:00–17:00).
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect((init as RequestInit).method).toBe("POST");
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body.summary).toBe("Shift — Jane Doe");
+    expect(body.start).toEqual({ dateTime: "2026-09-01T07:30:00", timeZone: "UTC" });
+    expect(body.end).toEqual({ dateTime: "2026-09-01T15:45:00", timeZone: "UTC" });
+  });
+
+  it("re-push UPDATEs the SAME event (PATCH) and does not duplicate the link", async () => {
+    await pushRotaToCalendar("org-1", "rota-1");
+    fetchMock.mockClear();
+    const res = await pushRotaToCalendar("org-1", "rota-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed", externalEventId: "evt-1" });
+    expect(h.state.eventLinks.size).toBe(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://www.googleapis.com/calendar/v3/calendars/primary/events/evt-1");
+    expect((init as RequestInit).method).toBe("PATCH");
+  });
+
+  it("returns not_found for a missing rota entry", async () => {
+    h.state.rota = null;
+    const res = await pushRotaToCalendar("org-1", "rota-1");
+    expect(res).toMatchObject({ ok: false, status: "not_found" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns skipped_dark with NO token read / NO network when nothing is connected", async () => {
+    h.state.connections = [{ ...CONNECTED_GOOGLE, status: "disconnected", external_account_id: null }];
+    const res = await pushRotaToCalendar("org-1", "rota-1");
+    expect(res).toMatchObject({ ok: false, status: "skipped_dark" });
+    expect(h.createAdminMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("bestEffortPushRota — caller seam", () => {
+  it("is a pure no-op while dark: no client, no network", async () => {
+    delete process.env.FEATURE_CALENDAR_CONNECT;
+    const res = await bestEffortPushRota("org-1", "rota-1");
+    expect(res).toEqual({ status: "skipped_dark" });
+    expect(h.createClientMock).not.toHaveBeenCalled();
+    expect(h.createAdminMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("delegates to the push once live and never throws", async () => {
+    const res = await bestEffortPushRota("org-1", "rota-1");
     expect(res).toEqual({ status: "pushed" });
   });
 });
