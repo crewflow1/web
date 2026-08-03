@@ -4,7 +4,7 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
-import { buildAckDropTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
+import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
 import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
@@ -134,16 +134,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // 10. Return TwiML the caller hears. The AI spoken-turn seam is reachable here
-  //     so activation is config-only (bind the generative tier — no engineering).
-  //     It is DARK today: maybeGenerateVoiceTurn returns null (no tier bound / no
-  //     transcript / blocked / error), and we fall back to the EXISTING
-  //     deterministic greeting — identical behaviour to before this wiring. The
-  //     caller's utterance (Twilio's gather SpeechResult) is passed when present;
-  //     the origination POST carries none, so the seam short-circuits on the
-  //     empty transcript. Never throws — the greeting is always a safe fallback.
+  // 10. Return TwiML that OPENS the conversational loop. The greeting is wrapped
+  //     in a <Gather input="speech"> whose action is the gather-callback route —
+  //     that is what makes the AI spoken-turn seam reachable, because Twilio only
+  //     delivers a `SpeechResult` transcript to a <Gather action=…> URL. The
+  //     origination POST itself carries no transcript, so maybeGenerateVoiceTurn
+  //     short-circuits (empty transcript, or dark: no tier bound) and we greet
+  //     with the deterministic prompt while still listening. The caller's first
+  //     utterance then lands on /voice/gather, where the governed turn is
+  //     generated. Activation still requires binding the generative tier — the
+  //     engineering (the loop) now exists, so activation is genuinely config-only.
+  //     Never throws — buildGatherTwiml always returns a safe, listening greeting.
   const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
   const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript });
-  const twiml = spokenTurn ? buildInboundTwiml(spokenTurn) : buildInboundTwiml();
+  const twiml = buildGatherTwiml({ prompt: spokenTurn ?? undefined });
   return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS });
 }

@@ -4,9 +4,17 @@ import "server-only";
  * Voice Telephony (Wave 8) — the AI spoken-turn seam, GOVERNED and DARK.
  *
  * When an inbound voice call is answered, this is where the AI receptionist's
- * spoken reply WOULD be generated. It is dark today and returns `null`, so the
- * webhook plays its deterministic acknowledgement TwiML — a caller hears the
- * fixed greeting, exactly as today.
+ * spoken reply is generated. It is dark today and returns `null`, so the webhook
+ * plays its deterministic acknowledgement TwiML — a caller hears the fixed
+ * greeting, exactly as today.
+ *
+ * REACHABILITY: this seam only does work with a NON-EMPTY transcript, and a
+ * transcript only exists inside the conversational loop — Twilio delivers the
+ * caller's `SpeechResult` to the <Gather> callback route
+ * (app/api/webhooks/twilio/voice/gather), and Vapi delivers it on its tool/
+ * assistant messages. The origination POST carries none, so it short-circuits
+ * there. Binding the generative tier is therefore genuinely all activation
+ * needs — the loop that feeds this seam is built.
  *
  * THE GATE IS ACTIVATION, NOT A KEY — the governance-closure idiom
  * (server/services/receptionist.ts `extractFields`). This is deliberately NOT a
