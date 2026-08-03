@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
@@ -150,6 +151,7 @@ interface QueryBuilder<T> extends PromiseLike<DbResult<T[]>> {
   lt(col: string, val: unknown): QueryBuilder<T>;
   order(col: string, opts?: { ascending?: boolean }): QueryBuilder<T>;
   limit(n: number): QueryBuilder<T>;
+  range(from: number, to: number): QueryBuilder<T>;
   maybeSingle(): PromiseLike<DbResult<T>>;
 }
 interface InsertBuilder<T> extends PromiseLike<DbResult<T[]>> {
@@ -314,20 +316,37 @@ export async function prepareVatReturn(params: {
   // Output VAT is CASH (invoices marked paid in the quarter); input VAT is
   // ACCRUAL (finance rows logged in the quarter). Same predicates the tax page
   // and quarterly PDF use, so the prepared record matches what the org sees.
-  const { data: invRows, error: invErr } = await db
-    .from("invoices")
-    .select("status, vat_total, paid_at, created_at")
-    .eq("org_id", orgId)
-    .eq("status", "paid")
-    .gte("paid_at", quarterStartIso)
-    .lt("paid_at", quarterEndIso);
+  //
+  // PAGED (F-1). computeVatQuarter SUMs by iterating every row, so a bare
+  // `.select()` truncated at the 1000-row PostgREST cap would understate the
+  // 9-box payload that insertSubmission FREEZES into hmrc_submissions.payload —
+  // a busy quarter would file too little VAT. `fetchAllRows` pages under the cap
+  // on a unique total order (paid_at+id for invoices, created_at+id for
+  // finances), matching the paged reads on the tax page and quarterly PDF.
+  const { data: invRows, error: invErr } = await fetchAllRows((from, to) =>
+    db
+      .from("invoices")
+      .select("id, status, vat_total, paid_at, created_at")
+      .eq("org_id", orgId)
+      .eq("status", "paid")
+      .gte("paid_at", quarterStartIso)
+      .lt("paid_at", quarterEndIso)
+      .order("paid_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (invErr) throw readFailure("hmrc vat prepare: invoices", invErr);
-  const { data: finRows, error: finErr } = await db
-    .from("finances")
-    .select("vat_total, created_at")
-    .eq("org_id", orgId)
-    .gte("created_at", quarterStartIso)
-    .lt("created_at", quarterEndIso);
+  const { data: finRows, error: finErr } = await fetchAllRows((from, to) =>
+    db
+      .from("finances")
+      .select("id, vat_total, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", quarterStartIso)
+      .lt("created_at", quarterEndIso)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (finErr) throw readFailure("hmrc vat prepare: finances", finErr);
 
   const invoices = ((invRows ?? []) as unknown as Array<{

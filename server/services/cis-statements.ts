@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   assessStatementFreshness,
   buildMonthlyReturnDataset,
@@ -44,6 +45,7 @@ interface Sel<T> extends PromiseLike<Res<T[]>> {
   in(c: string, v: unknown[]): Sel<T>;
   order(c: string, o?: { ascending?: boolean }): Sel<T>;
   limit(n: number): Sel<T>;
+  range(from: number, to: number): Sel<T>;
   is(c: string, v: unknown): Sel<T>;
   maybeSingle(): PromiseLike<Res<T>>;
 }
@@ -134,31 +136,49 @@ export async function listMonthSnapshots(
   supplierId?: string,
 ): Promise<CisPaymentSnapshotRow[]> {
   const c = await client();
-  let q = table(c, "cis_payment_snapshots")
-    .select(SNAPSHOT_COLUMNS)
-    .eq("org_id", orgId)
-    .eq("tax_month_end", taxMonthEnd);
-  if (supplierId) q = q.eq("supplier_id", supplierId);
-  // Loud fail: a failed read must never build a NIL return — nil is a real,
-  // reportable state and cannot be allowed to alias a query failure.
-  const { data, error } = await q;
+  // PAGED (F-1). A busy contractor's tax month can cross the 1000-row PostgREST
+  // cap (many subcontractors × many payments). This set is SUMMED downstream
+  // into every statement and monthly-return total, so a bare `.select()` would
+  // silently truncate and under-report. Page under the cap on the unique
+  // (org_id, payment_id) key. Loud fail: a failed read must never build a NIL
+  // return — nil is a real, reportable state and cannot alias a query failure.
+  const { data, error } = await fetchAllRows((from, to) => {
+    let q = table(c, "cis_payment_snapshots")
+      .select(SNAPSHOT_COLUMNS)
+      .eq("org_id", orgId)
+      .eq("tax_month_end", taxMonthEnd);
+    if (supplierId) q = q.eq("supplier_id", supplierId);
+    return q.order("payment_id", { ascending: true }).range(from, to);
+  });
   if (error) throw readFailure("cis: month payment snapshots", error);
   const rows = (data ?? []) as RawSnapshot[];
   if (rows.length === 0) return [];
 
   // Loud fail: this join drives the voided-payment filter — on error it must
-  // block, not fail open into including voided payments.
-  const { data: payments, error: paymentsError } = await table(c, "supplier_payments")
-    .select("id, paid_at, voided_at")
-    .eq("org_id", orgId)
-    .in("id", rows.map((r) => r.payment_id));
-  if (paymentsError) throw readFailure("cis: snapshot payments join", paymentsError);
-
-  const byId = new Map(
-    ((payments ?? []) as Array<{ id: string; paid_at: string; voided_at: string | null }>).map(
-      (p) => [p.id, p],
-    ),
-  );
+  // block, not fail open into including voided payments. CHUNKED (F-1): with the
+  // snapshot read now fully paged, `rows` can exceed 1000, so the `.in(id, …)`
+  // join would itself truncate at the cap and leave later snapshots with no
+  // payment match (defaulting voided_at to null ⇒ a voided payment sneaks in).
+  // Chunk the id list strictly below the cap so each `.in()` returns in full
+  // (supplier_payments.id is unique, so a chunk of N ids yields ≤ N rows).
+  const byId = new Map<string, { id: string; paid_at: string; voided_at: string | null }>();
+  const JOIN_CHUNK = 500;
+  const paymentIds = rows.map((r) => r.payment_id);
+  for (let i = 0; i < paymentIds.length; i += JOIN_CHUNK) {
+    const idsChunk = paymentIds.slice(i, i + JOIN_CHUNK);
+    const { data: payments, error: paymentsError } = await table(c, "supplier_payments")
+      .select("id, paid_at, voided_at")
+      .eq("org_id", orgId)
+      .in("id", idsChunk);
+    if (paymentsError) throw readFailure("cis: snapshot payments join", paymentsError);
+    for (const p of (payments ?? []) as Array<{
+      id: string;
+      paid_at: string;
+      voided_at: string | null;
+    }>) {
+      byId.set(p.id, p);
+    }
+  }
 
   return rows
     .map((r) => {
@@ -220,10 +240,21 @@ export async function listStatements(
   opts: { taxMonthEnd?: string; supplierId?: string } = {},
 ): Promise<CisStatementRow[]> {
   const c = await client();
-  let q = table(c, "cis_statements").select(STATEMENT_COLUMNS).eq("org_id", orgId);
-  if (opts.taxMonthEnd) q = q.eq("tax_month_end", opts.taxMonthEnd);
-  if (opts.supplierId) q = q.eq("supplier_id", opts.supplierId);
-  const { data, error } = await q.order("tax_month_end", { ascending: false }).order("statement_number");
+  // PAGED (F-1). An org accrues one statement per subcontractor per tax month,
+  // so this org-scoped list grows without bound and a bare `.select()` would
+  // silently truncate at the 1000-row cap — dropping older statements and the
+  // downstream email queue's view of them. Keep the display order (month desc,
+  // number) and add the unique `id` tiebreak so pages can't drop/repeat a row.
+  const { data, error } = await fetchAllRows((from, to) => {
+    let q = table(c, "cis_statements").select(STATEMENT_COLUMNS).eq("org_id", orgId);
+    if (opts.taxMonthEnd) q = q.eq("tax_month_end", opts.taxMonthEnd);
+    if (opts.supplierId) q = q.eq("supplier_id", opts.supplierId);
+    return q
+      .order("tax_month_end", { ascending: false })
+      .order("statement_number")
+      .order("id", { ascending: true })
+      .range(from, to);
+  });
   if (error) throw readFailure("cis: statements list", error);
   return (data ?? []) as unknown as CisStatementRow[];
 }
@@ -446,15 +477,24 @@ export async function listPreparedReturns(orgId: string): Promise<CisMonthlyRetu
 
 export async function listReturnLines(orgId: string, returnId: string) {
   const c = await client();
-  const { data, error } = await table(c, "cis_monthly_return_lines")
-    .select(
-      "supplier_id, subcontractor_name, subcontractor_utr_masked, verification_number, " +
-        "verification_number_required, rate_is_uniform, deduction_rate, cis_status, " +
-        "gross_amount, materials_amount, deduction_amount, payment_count",
-    )
-    .eq("org_id", orgId)
-    .eq("return_id", returnId)
-    .order("subcontractor_name");
+  // PAGED (F-1). A single monthly return has one line per subcontractor, which a
+  // large contractor can push past the 1000-row cap; these lines ARE the return
+  // body, so a truncated read would file/export an incomplete return. Page on a
+  // unique total order — supplier_id is unique per return (one line per sub),
+  // with `id` as an explicit tiebreak.
+  const { data, error } = await fetchAllRows((from, to) =>
+    table(c, "cis_monthly_return_lines")
+      .select(
+        "supplier_id, subcontractor_name, subcontractor_utr_masked, verification_number, " +
+          "verification_number_required, rate_is_uniform, deduction_rate, cis_status, " +
+          "gross_amount, materials_amount, deduction_amount, payment_count",
+      )
+      .eq("org_id", orgId)
+      .eq("return_id", returnId)
+      .order("supplier_id", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("cis: return lines", error);
   return (data ?? []) as Array<Record<string, unknown>>;
 }
