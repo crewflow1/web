@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
 import { StateForm } from "@/components/forms/StateForm";
@@ -28,6 +29,11 @@ import {
   computeJobProfitability,
   marginPillClass,
 } from "@/lib/profitability/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import type { TimeEntry } from "@/lib/time/compute";
 import {
   computeRetentionPosition,
   maxReleasable,
@@ -191,7 +197,42 @@ export default async function EditJobPage({
     variation_number: number | null;
   }>;
 
-  const profit = computeJobProfitability(job.id, invRows, finRows);
+  // A job's ACTUAL cost is its `finances` rows PLUS time-tracked labour (gross) PLUS
+  // employer NI + pension on-costs on those hours — the same composition the
+  // dashboard uses, via the shared builder, so this summary can't report a job with
+  // clocked labour as more profitable than its own commercial page does.
+  // SCOPE: job-lifetime hours (a whole-job view, not a month). time_entries is paged
+  // — a long, well-staffed job can cross the 1000-row cap.
+  const [jobTimeEntriesRes, membershipsRes] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .eq("job_id", job.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    supabase
+      .from("memberships")
+      .select("user_id, user:users ( id, hourly_pay )")
+      .eq("org_id", ctx.org.id),
+  ]);
+  const jobTimeEntries = (jobTimeEntriesRes.data ?? []) as unknown as TimeEntry[];
+  const hourlyByUser = new Map<string, number>();
+  for (const m of membershipsRes.data ?? []) {
+    const uid = (m as { user_id: string }).user_id;
+    const u = (m as unknown as { user?: { hourly_pay: number | null } }).user;
+    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
+  }
+  const costInput = buildJobCostInput({
+    finances: finRows.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    timeEntries: jobTimeEntries,
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
+  const profit = computeJobProfitability(job.id, invRows, costInput);
 
   // Retention (Programme C) — the rate lives on the job, releases in the ledger.
   // Neither is in the generated Supabase types yet; the held figure is DERIVED.

@@ -26,20 +26,19 @@ import {
   profitByMonth,
   marginPillClass,
   marginBand,
-  labourCostsFromTimeEntries,
   type JobProfitability,
 } from "@/lib/profitability/compute";
 import {
+  buildJobCostInput,
+  windowHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import {
   hoursInWindow,
-  hoursByJob,
   startOfWeekIso,
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
-import {
-  computePayrollLine,
-  employerOnCostsFromTimeEntries,
-} from "@/lib/payroll/compute";
+import { computePayrollLine } from "@/lib/payroll/compute";
 
 /**
  * Owner dashboard.
@@ -470,7 +469,6 @@ export default async function DashboardPage() {
   const monthEndDate = new Date(Date.now() + 86_400_000);
   const teamHoursWeek = hoursInWindow(timeEntries, weekStartDate, weekEndDate);
   const teamHoursMonth = hoursInWindow(timeEntries, monthStartDate, monthEndDate);
-  const hoursPerJob = hoursByJob(timeEntries, monthStartDate, monthEndDate);
 
   // Per-user hourly rate for the labour cost roll-up.
   const hourlyByUser = new Map<string, number>();
@@ -559,41 +557,30 @@ export default async function DashboardPage() {
   // ---- profitability ---------------------------------------------------
   // Per-job rollup. Invoices contribute revenue via job_id; finances
   // contribute costs via job_id. Jobs with neither don't appear.
-  // Wave 4 — labour cost from time entries is treated as a virtual
-  // finance row tagged 'labour', so the existing profitability code
-  // picks it up under the labour bucket without bespoke wiring.
-  const labourSlices = Array.from(hoursPerJob.entries()).flatMap(([jobId]) => {
-    const entriesForJob = timeEntries.filter((te) => te.job_id === jobId);
-    // Aggregate hours per (user, job) for fair cost attribution.
-    const byUser = new Map<string, number>();
-    for (const te of entriesForJob) {
-      const h = hoursInWindow([te], monthStartDate, monthEndDate);
-      if (h > 0) byUser.set(te.user_id, (byUser.get(te.user_id) ?? 0) + h);
-    }
-    return Array.from(byUser.entries()).map(([userId, hours]) => ({
-      job_id: jobId,
-      user_id: userId,
-      hours,
-    }));
-  });
-  const labourRows = labourCostsFromTimeEntries(labourSlices, hourlyByUser);
-  // Employer NI + employer pension on those same hours, as additional `labour`
-  // rows. Without these the labour bucket held GROSS pay only, so gross profit and
-  // margin were overstated on every job with direct labour — the platform told
-  // owners they were more profitable than they are. Employer NI is banded on the
-  // worker's whole-period earnings, so it is computed per person and apportioned
-  // across their jobs by hours (see `employerOnCostsFromTimeEntries`) rather than
-  // computed per job, which would give each job its own secondary threshold.
-  const employerOnCostRows = employerOnCostsFromTimeEntries(
-    labourSlices,
+  //
+  // The cost input is the SHARED composition `[...finances, ...labour,
+  // ...employerOnCosts]` (see `@/lib/profitability/job-cost-input`): time-tracked
+  // labour (gross) PLUS employer NI + employer pension on those hours, each a
+  // virtual `labour`-tagged finance row. Without them the labour bucket held GROSS
+  // pay only, so gross profit and margin were overstated on every job with direct
+  // labour. Employer NI is banded on the worker's whole-period earnings, so the
+  // builder computes it per person and apportions across their jobs by hours.
+  //
+  // The dashboard's labour/margin tiles are a MONTH view, so it measures hours over
+  // the month window. The per-job commercial surfaces use job-lifetime hours from
+  // the SAME builder — the one composition, two scopes.
+  const dashboardCostInput = buildJobCostInput({
+    finances,
+    timeEntries,
     hourlyByUser,
-    "monthly",
-    monthStart.slice(0, 10),
-  );
+    hoursForEntries: windowHoursSource(monthStartDate, monthEndDate),
+    cycle: "monthly",
+    periodStartIso: monthStart.slice(0, 10),
+  });
   const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
     jobs,
     invoices,
-    [...finances, ...labourRows, ...employerOnCostRows],
+    dashboardCostInput,
   );
   const topProfitable = topProfitableJobs(profitabilityRows, 5);
   const worstMarginJobs = worstJobs(profitabilityRows, 5);

@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { formatGbp } from "@/lib/money";
+import type { TimeEntry } from "@/lib/time/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
@@ -160,10 +166,49 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
       billed: billedByPo.get(p.id) ?? 0,
     })),
   );
+  // Bring the per-job cost/profit into line with the dashboard: a job's ACTUAL
+  // cost is its `finances` rows PLUS time-tracked labour (gross) PLUS employer NI +
+  // pension on-costs on those hours — not `finances` alone. Composing them here via
+  // the shared builder is what stops this page from reporting every job with
+  // clocked labour as more profitable than it truly is.
+  //
+  // SCOPE: job-lifetime hours. This is a whole-job commercial/budget view, so every
+  // hour ever booked to the job counts — unlike the dashboard's month window, which
+  // would silently drop labour worked in earlier months.
+  // time_entries is paged: a long, well-staffed job can cross the 1000-row cap.
+  const [jobTimeEntriesRes, membershipsRes] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .eq("job_id", id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    supabase
+      .from("memberships")
+      .select("user_id, user:users ( id, hourly_pay )")
+      .eq("org_id", ctx.org.id),
+  ]);
+  const jobTimeEntries = (jobTimeEntriesRes.data ?? []) as unknown as TimeEntry[];
+  const hourlyByUser = new Map<string, number>();
+  for (const m of membershipsRes.data ?? []) {
+    const uid = (m as { user_id: string }).user_id;
+    const u = (m as unknown as { user?: { hourly_pay: number | null } }).user;
+    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
+  }
+  const costInput = buildJobCostInput({
+    finances: finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    timeEntries: jobTimeEntries,
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
   const profit = computeJobProfitability(
     id,
     invoices.map((i) => ({ job_id: i.job_id, amount: i.amount })),
-    finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    costInput,
   );
   const costsTotal = profit?.costs_total ?? 0;
   const grossProfit = profit?.gross_profit ?? 0;
