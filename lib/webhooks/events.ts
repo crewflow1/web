@@ -16,6 +16,20 @@
  * org attribution is not yet reliable on the spine (billing, support, org.*) are
  * intentionally NOT exposed yet; broadening the set is a CEO data-boundary call.
  *
+ * NOT exposed, and why (drift correction, C26): the registry `Verb` union also
+ * contains `job.scheduled` and `job.cancelled`, but NEITHER has a spine PRODUCER
+ * — the activity→spine mapper (hq_emit_from_activity, 20260720010000) emits only
+ * job.created / job.completed / customer.created / customer.updated / quote.sent /
+ * quote.accepted. There is no "scheduled" or "cancelled" job transition to map:
+ * jobs.status is new|in-progress|completed|blocked (no cancel), scheduling is a
+ * scheduled_date change surfaced as the un-exposed `job.rescheduled` activity, and
+ * a delete is a hard delete (`job.deleted`, deliberately kept off the spine). A
+ * subscriber to a producer-less verb would receive silence forever, so those two
+ * are OMITTED here rather than advertised. The drift-guard test asserts every
+ * entry below has a REAL producer, so re-adding one without a producer fails CI.
+ * Making them real (a new deliverable event) is a producer + data-boundary
+ * decision, not a catalogue edit.
+ *
  * Client-safe on purpose (no server-only, no imports beyond the Verb TYPE): the
  * settings form renders the subscribe checkboxes from this same registry, so the
  * UI can never offer a verb the fan-out would not deliver.
@@ -30,9 +44,7 @@ import type { Verb } from "@/lib/events/registry";
  */
 export const EXPOSABLE_WEBHOOK_EVENTS = [
   "job.created",
-  "job.scheduled",
   "job.completed",
-  "job.cancelled",
   "customer.created",
   "customer.updated",
   "quote.sent",
@@ -47,9 +59,7 @@ const EXPOSABLE_SET: ReadonlySet<string> = new Set(EXPOSABLE_WEBHOOK_EVENTS);
 /** Human labels for the settings UI, keyed so a verb cannot be offered without one. */
 export const WEBHOOK_EVENT_LABELS: Readonly<Record<ExposableWebhookEvent, string>> = {
   "job.created": "Job created",
-  "job.scheduled": "Job scheduled",
   "job.completed": "Job completed",
-  "job.cancelled": "Job cancelled",
   "customer.created": "Customer created",
   "customer.updated": "Customer updated",
   "quote.sent": "Quote sent",
@@ -106,9 +116,7 @@ export const WEBHOOK_REDACTION_MAP: Readonly<
   Record<ExposableWebhookEvent, readonly string[]>
 > = {
   "job.created": ["status"],
-  "job.scheduled": ["status"],
   "job.completed": ["from", "to"],
-  "job.cancelled": ["from", "to", "status"],
   "customer.created": [],
   "customer.updated": ["fields"],
   "quote.sent": ["number", "total"],
