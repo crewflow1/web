@@ -12,6 +12,7 @@ import {
   validateFormData,
 } from "@/lib/forms/state";
 import { bestEffortPushJob } from "@/server/services/calendar-connections";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 
 /**
  * Job CRUD server actions.
@@ -106,6 +107,7 @@ export async function updateJob(
     result.data.recurring_pattern,
     result.data.recurring_end_date,
   );
+
   const { error, count } = await supabase
     .from("jobs")
     .update(
@@ -145,6 +147,26 @@ export async function updateJob(
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
+
+  // Automation OS — a completed job fires `job.completed` so the "job completed →
+  // suggest invoice" rule can run. Dispatched whenever the saved status is
+  // "completed"; the dispatcher claims (rule_id, correlation_id) against a unique
+  // constraint in automation_runs (correlation = `job.completed:jobs:<id>`), so
+  // each rule fires exactly once per job no matter how many times a completed job
+  // is re-saved — no prior-status read needed. Mirrors quote.accepted /
+  // payment.recorded: org-pinned, keyed on the job id, best-effort (a dispatch
+  // failure never derails the save).
+  if (result.data.status === "completed") {
+    await dispatchAutomation({
+      type: "job.completed",
+      org_id: ctx.org.id,
+      source_table: "jobs",
+      source_id: id,
+      payload: { to: "completed" },
+    }).catch((e) => {
+      console.error("[jobs] automation dispatch failed", e);
+    });
+  }
 
   // Best-effort one-way push to a connected calendar (see createJob). A no-op
   // while dark; on a re-save it updates the SAME event via calendar_event_links.

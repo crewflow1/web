@@ -47,12 +47,31 @@ export const AUTOMATION_RULES: ReadonlyArray<AutomationRule> = [
     enabled: true,
     actions: ["create_notification", "create_milestone"],
   },
+  // PRODUCER-LESS on the org-scoped engine (honest interim, C29) — enabled:false.
+  //
+  // Mirrors the outbound-webhooks discipline (lib/webhooks/events.ts:27-30): a
+  // rule must never advertise itself as live when no real event can fire it.
+  // `demo.booked` has NO org-scoped `dispatchAutomation` producer, and cannot: a
+  // demo is booked into `demo_requests`, a GLOBAL HQ marketing table with no
+  // tenant `org_id` at booking time (only `linked_org_id`, populated later, once
+  // the prospect converts — migration 20260626120000). The automation OS is
+  // fundamentally org-scoped: dispatchAutomation resolves per-org rule overrides
+  // and writes `automation_runs.org_id` against the EVENT's org. There is no
+  // owning tenant org to attribute a fresh demo booking to, so this rule cannot
+  // fire honestly. It ships DISABLED until a demo→org producer exists (a real
+  // event + data-boundary decision, not a catalogue edit). The drift-guard test
+  // __tests__/security/automation-phantom-rules.test.ts fails CI if this is
+  // re-enabled without a real producer. The HQ-facing "new demo booked" notice
+  // is already handled directly by the demo flow (app/api/demo/route.ts +
+  // app/admin/demos/actions.ts), not by this org-scoped engine.
   {
     id: "demo_booked_notify_hq",
     label: "Demo booked",
-    description: "When a prospect books a demo, notify HQ.",
+    description:
+      "When a prospect books a demo, notify HQ. Producer-less on the org-scoped " +
+      "engine — off until a demo→org event exists (see comment above).",
     trigger: "demo.booked",
-    enabled: true,
+    enabled: false,
     actions: ["create_notification"],
   },
   {

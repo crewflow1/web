@@ -9,6 +9,7 @@ import {
   CHECKLIST_STEP_ORDER,
   type ChecklistStepId,
 } from "@/lib/onboarding/checklist";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 
 /**
  * Guided onboarding server actions.
@@ -80,6 +81,23 @@ export async function markCompleted(): Promise<void> {
   const state = await readState();
   if (typeof state.completed_at === "string") return;
   await writeState({ ...state, completed_at: new Date().toISOString() });
+
+  // Automation OS — setup has just hit 100% for the FIRST time (the guard above
+  // returns early once completed_at is stamped, so this runs once per org). Fire
+  // `onboarding.completed` for the "setup complete → notify HQ + congratulate"
+  // rule. Org-pinned, keyed on the org id, idempotent via (rule_id,
+  // correlation_id) in automation_runs, best-effort — a dispatch failure never
+  // blocks the completion stamp.
+  const { ctx } = await requireOrgContext();
+  await dispatchAutomation({
+    type: "onboarding.completed",
+    org_id: ctx.org.id,
+    source_table: "organizations",
+    source_id: ctx.org.id,
+    payload: {},
+  }).catch((e) => {
+    console.error("[onboarding] automation dispatch failed", e);
+  });
 }
 
 /**
