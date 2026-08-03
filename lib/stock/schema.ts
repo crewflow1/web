@@ -59,6 +59,20 @@ const optionalQuantity = z.preprocess(
 );
 
 /**
+ * A re-order BATCH field: blank → undefined, otherwise a strictly POSITIVE 2dp
+ * number. Mirrors the DB CHECK (reorder_quantity > 0, 20261107000000): a reorder
+ * level of 0 is meaningful ("flag at zero"), but re-ordering 0 units is not.
+ */
+const optionalPositiveQuantity = z.preprocess(
+  blankToUndefined,
+  z.coerce
+    .number({ invalid_type_error: "Use a number" })
+    .positive("How many to re-order must be above zero")
+    .max(9_999_999, "That's too big")
+    .optional(),
+);
+
+/**
  * The add / edit form for a catalogue item, validated as ONE shape so create
  * and edit can never drift into accepting different fields.
  *
@@ -87,6 +101,7 @@ export const stockItemFormSchema = z
     supplier_reference: optionalText(120),
     reorder_level: optionalQuantity,
     target_level: optionalQuantity,
+    reorder_quantity: optionalPositiveQuantity,
     notes: optionalText(2000),
   })
   .refine(

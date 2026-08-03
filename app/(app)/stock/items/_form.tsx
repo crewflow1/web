@@ -43,6 +43,7 @@ export type StockItemFormDefaults = {
   supplier_reference?: string;
   reorder_level?: string;
   target_level?: string;
+  reorder_quantity?: string;
   notes?: string;
 };
 
@@ -170,6 +171,17 @@ export function StockItemForm({
             error={fieldErrors.target_level}
           />
         </div>
+        <Field
+          name="reorder_quantity"
+          label="Re-order this many"
+          optional
+          type="number"
+          inputMode="decimal"
+          placeholder="e.g. 50"
+          help="A fixed batch to buy each time it runs low. Leave blank to top up to the target instead."
+          defaultValue={defaults?.reorder_quantity}
+          error={fieldErrors.reorder_quantity}
+        />
       </fieldset>
 
       <fieldset className="space-y-4 border-t border-slate-100 pt-5">

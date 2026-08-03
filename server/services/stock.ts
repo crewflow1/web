@@ -80,7 +80,7 @@ export const STOCK_RECENT_LIMIT = 50;
 
 export const STOCK_ITEM_COLUMNS =
   "id, name, description, sku, unit, active, preferred_supplier_id, supplier_reference, " +
-  "reorder_level, target_level, notes, created_at";
+  "reorder_level, target_level, reorder_quantity, notes, created_at";
 
 export const STOCK_MOVEMENT_COLUMNS =
   "id, stock_item_id, site_id, movement_type, qty, effect, occurred_at, actor_id, notes, " +
@@ -97,6 +97,7 @@ export type StockItemRow = {
   supplier_reference: string | null;
   reorder_level: number | string | null;
   target_level: number | string | null;
+  reorder_quantity: number | string | null;
   notes: string | null;
   created_at: string;
 };

@@ -83,6 +83,12 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
         </div>
         <div className="flex gap-2">
           <Link
+            href="/stock/replenishment"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Replenishment
+          </Link>
+          <Link
             href="/stock/vans"
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
@@ -178,6 +184,14 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
               <CardHeader
                 title="Needs ordering"
                 hint="Out of stock first, then anything at or below its reorder level."
+                action={
+                  <Link
+                    href="/stock/replenishment"
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Review &amp; re-order
+                  </Link>
+                }
               />
               <ul className="divide-y divide-slate-100">
                 {attention.map((p) => (
