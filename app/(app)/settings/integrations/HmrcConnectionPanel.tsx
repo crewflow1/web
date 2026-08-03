@@ -48,6 +48,15 @@ export function HmrcConnectionPanel({
         step that is not yet in place.
       </p>
 
+      <p className="mt-2 text-xs text-slate-500">
+        Prepare and review your held VAT and CIS300 returns on the{" "}
+        <a href="/tax" className="font-medium text-slate-700 underline hover:text-slate-900">
+          Tax page
+        </a>
+        . No HMRC connection is required to prepare them — they are built from your
+        own CrewFlow figures and never sent.
+      </p>
+
       <ul className="mt-4 divide-y divide-slate-100">
         {(["vat", "cis"] as const).map((flow) => (
           <li key={flow} className="flex flex-wrap items-center justify-between gap-3 py-3">
