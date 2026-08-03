@@ -153,10 +153,17 @@ export type SamsaraVehicleStat = {
   gps?: {
     latitude?: number | null;
     longitude?: number | null;
-    /** Samsara reports odometer in METRES. */
-    odometerMeters?: number | null;
     time?: string | null;
   } | null;
+  /**
+   * The odometer. Samsara's `/fleet/vehicles/stats` returns `obdOdometerMeters`
+   * as its OWN TOP-LEVEL per-vehicle stat — a `{ time, value }` object where
+   * `value` is METRES — NOT a field nested inside `gps` (the `gps` stat carries
+   * only latitude/longitude/heading/speed/address/time). Reading it off `gps`
+   * left the odometer feed dead: it was always undefined, so every sample
+   * mapped to a null odometer and the register never forward-updated.
+   */
+  obdOdometerMeters?: { time?: string | null; value?: number | null } | null;
 };
 
 /**
@@ -195,13 +202,20 @@ export function normalizeSamsaraSamples(
     const vehicleId = resolveVehicleId(resolutionKey);
     if (!vehicleId) continue; // unmapped vehicle — skip rather than guess.
     const gps = r.gps ?? null;
+    const odo = r.obdOdometerMeters ?? null;
     // recorded_at is NOT NULL in the DB. A sample with no provider timestamp
     // cannot be honestly placed in time, so DROP it rather than coin an empty
     // string that would fail the insert (or, worse, a fabricated "now"). This
     // keeps the mapper a faithful transcription and activation a config-flip.
-    const recordedAt = gps?.time;
-    if (typeof recordedAt !== "string" || recordedAt.length === 0) continue;
-    const metres = gps?.odometerMeters;
+    // gps.time drives it for a fix; an ODOMETER-ONLY sample (no gps stat) is
+    // still placed in time via the odometer stat's own timestamp so it persists.
+    const rawTime =
+      typeof gps?.time === "string" && gps.time.length > 0 ? gps.time : odo?.time;
+    if (typeof rawTime !== "string" || rawTime.length === 0) continue;
+    const recordedAt = rawTime;
+    // Samsara reports the odometer in METRES on the TOP-LEVEL obdOdometerMeters
+    // stat ({ time, value }) — never nested in gps.
+    const metres = odo?.value;
     const odometerMiles =
       typeof metres === "number" && Number.isFinite(metres)
         ? metres / METRES_PER_MILE

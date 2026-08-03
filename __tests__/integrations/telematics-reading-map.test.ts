@@ -135,20 +135,27 @@ describe("normalizeSamsaraSamples — native shape → agnostic shape", () => {
   const RESOLVE = (id: string) =>
     id === "sam-1" ? "33333333-3333-3333-3333-333333333333" : null;
 
+  // The REAL Samsara /fleet/vehicles/stats shape: `gps` carries only the fix
+  // (lat/lng/time) and `obdOdometerMeters` is its OWN TOP-LEVEL { time, value }
+  // stat where value is METRES. (The old fixtures nested odometerMeters inside
+  // gps — a shape the API never returns — so green tests encoded the dead feed.)
   function stat(over: Partial<SamsaraVehicleStat>): SamsaraVehicleStat {
     return {
       id: "sam-1",
       gps: {
         latitude: 51.5074,
         longitude: -0.1278,
-        odometerMeters: 1609344, // exactly 1000 miles
         time: "2026-07-10T12:00:00Z",
+      },
+      obdOdometerMeters: {
+        time: "2026-07-10T12:00:00Z",
+        value: 1609344, // exactly 1000 miles
       },
       ...over,
     };
   }
 
-  it("converts odometer METRES → MILES (once, tested here)", () => {
+  it("converts odometer METRES → MILES from the TOP-LEVEL obdOdometerMeters stat", () => {
     const n = normalizeSamsaraSamples([stat({})], RESOLVE)[0]!;
     // 1,609,344 m / 1609.344 = 1000 miles.
     expect(n.odometerMiles).toBeCloseTo(1000, 6);
@@ -168,26 +175,46 @@ describe("normalizeSamsaraSamples — native shape → agnostic shape", () => {
     expect(out).toHaveLength(0);
   });
 
-  it("no odometer metres → null odometer (not NaN)", () => {
+  it("no obdOdometerMeters stat → null odometer (not NaN)", () => {
     const n = normalizeSamsaraSamples(
-      [stat({ gps: { latitude: 1, longitude: 2, time: "2026-01-01T00:00:00Z" } })],
+      [stat({ obdOdometerMeters: null })],
       RESOLVE,
     )[0]!;
     expect(n.odometerMiles).toBeNull();
   });
 
-  it("DROPS a sample with no provider timestamp (recorded_at is NOT NULL)", () => {
-    // An odometer-bearing sample with no gps.time cannot be honestly placed in
-    // time — it must be dropped, not coined as "" (which would fail the insert)
-    // nor fabricated to now.
+  it("an ODOMETER-ONLY sample (no gps fix) still yields a row placed in time", () => {
+    // A vehicle reporting an odometer stat but no gps fix must PERSIST: the fix
+    // is null/null but the odometer survives, timed by obdOdometerMeters.time.
+    const n = normalizeSamsaraSamples(
+      [
+        stat({
+          gps: null,
+          obdOdometerMeters: { time: "2026-07-11T08:00:00Z", value: 3218688 }, // 2000 mi
+        }),
+      ],
+      RESOLVE,
+    );
+    expect(n).toHaveLength(1);
+    expect(n[0]!.latitude).toBeNull();
+    expect(n[0]!.longitude).toBeNull();
+    expect(n[0]!.odometerMiles).toBeCloseTo(2000, 6);
+    // recorded_at falls back to the odometer stat's own timestamp.
+    expect(n[0]!.recordedAt).toBe("2026-07-11T08:00:00Z");
+    expect(n[0]!.eventId).toBe("sam-1:2026-07-11T08:00:00Z");
+  });
+
+  it("DROPS a sample with no provider timestamp anywhere (recorded_at is NOT NULL)", () => {
+    // Neither a gps.time nor an obdOdometerMeters.time — cannot be honestly
+    // placed in time, so it is dropped rather than coined "" or fabricated now.
     const noTime = normalizeSamsaraSamples(
-      [stat({ gps: { latitude: 1, longitude: 2, odometerMeters: 1609344 } })],
+      [stat({ gps: null, obdOdometerMeters: { value: 1609344 } })],
       RESOLVE,
     );
     expect(noTime).toHaveLength(0);
-    // Empty-string time is likewise dropped.
+    // Empty-string gps.time with no odometer fallback is likewise dropped.
     const emptyTime = normalizeSamsaraSamples(
-      [stat({ gps: { latitude: 1, longitude: 2, time: "" } })],
+      [stat({ gps: { latitude: 1, longitude: 2, time: "" }, obdOdometerMeters: null })],
       RESOLVE,
     );
     expect(emptyTime).toHaveLength(0);
