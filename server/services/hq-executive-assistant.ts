@@ -10,6 +10,7 @@ import {
   type ExecutiveAssistantBoard,
   type ExecutiveAssistantInput,
 } from "@/lib/hq/executive-assistant";
+import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
 
 /**
  * CrewFlow HQ — Executive-Assistant AI aggregator (super-admin surface). Service-role only.
@@ -44,9 +45,11 @@ import {
 export type ExecutiveAssistantBoardResult = {
   board: ExecutiveAssistantBoard;
   /**
-   * The governed executive-assistant narrative. DARK for now (see
-   * `loadExecutiveAssistantNarrative`) — always `null` until a model tier is
-   * bound. The UI shows an empty state.
+   * The governed executive-assistant narrative — a short prose blurb over the
+   * deterministic "what needs the human" digest, generated via the shared HQ
+   * narrative helper. `null` until a model tier is bound (and the vendor
+   * credential + HQ budget org are present), on any governor refusal, or on a
+   * provider failure. The UI shows an empty state.
    */
   narrative: string | null;
   generatedAt: string;
@@ -217,30 +220,27 @@ export async function loadExecutiveAssistantBoard(): Promise<ExecutiveAssistantB
   const input: ExecutiveAssistantInput = { approvals, decisions, tasks, alerts };
 
   const board = computeExecutiveAssistantBoard(input, new Date());
-  const narrative = await loadExecutiveAssistantNarrative();
+  const narrative = await loadExecutiveAssistantNarrative(board);
 
   return { board, narrative, generatedAt: new Date().toISOString() };
 }
 
 /**
- * Executive-assistant narrative — DARK STUB. Returns `null` and constructs NO SDK.
+ * Executive-assistant narrative — GOVERNED, FAIL-CLOSED. Delegates to the shared
+ * HQ narrative helper (server/services/hq-narrative.ts), which reaches a model
+ * ONLY through `invokeWithGovernor` → `getTextProvider` under the registered
+ * `hq.executive_assistant_narrative` feature key (task class `drafting`), billed
+ * to the HQ budget org. The model is handed the FINISHED deterministic digest and
+ * may only describe it — every displayed figure still comes from
+ * `computeExecutiveAssistantBoard`.
  *
- * A governed prose summary of the "what needs the human" digest belongs behind
- * `invokeWithGovernor` (lib/ai/governor.ts), under a registered AI feature whose
- * tier the registry arms. There is no registered feature/task_class for an HQ
- * executive-assistant narrative today, and reusing a tenant-facing key would
- * misattribute HQ spend in the governor ledger.
- *
- * Deliberately NO governor registry key is added for it: an unwired registry entry
- * is a permission granted to nothing, which the governance-closure ratchet
- * (__tests__/security/ai-governance-closure.test.ts) treats as drift — the
- * Operations AI, CTO AI, and Support AI all deferred their keys for exactly this
- * reason, and the Executive-Assistant AI follows suit.
- *
- * Rather than mis-key a governed call, this stays dark: it returns `null` and
- * imports no model SDK, so the dark path can construct nothing that could spend
- * money. The page shows a "populates once a model tier is bound" empty state.
+ * DARK until a generative tier is bound: with no tier bound `getTextProvider()`
+ * returns `null`, so this returns `null` and the page shows its
+ * "populates once a model tier is bound" empty state — now honest, because
+ * binding a tier (plus the credential + HQ budget org) is the only switch.
  */
-async function loadExecutiveAssistantNarrative(): Promise<string | null> {
-  return null;
+async function loadExecutiveAssistantNarrative(
+  board: ExecutiveAssistantBoard,
+): Promise<string | null> {
+  return generateHqBoardNarrative("hq.executive_assistant_narrative", board);
 }

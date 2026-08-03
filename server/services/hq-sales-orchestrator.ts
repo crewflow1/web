@@ -8,6 +8,7 @@ import {
   type SalesOrchestratorDrainsInput,
   type SalesOrchestratorInput,
 } from "@/lib/hq/sales-orchestrator";
+import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
 
 /**
  * CrewFlow HQ — Sales-Orchestrator AI aggregator (super-admin surface).
@@ -44,9 +45,11 @@ import {
 export type SalesOrchestratorBoardResult = {
   board: SalesOrchestratorBoard;
   /**
-   * The governed sales-orchestrator narrative. DARK for now (see
-   * `loadSalesOrchestratorNarrative`) — always `null` until a model tier is
-   * bound. The UI shows an empty state.
+   * The governed sales-orchestrator narrative — a short prose blurb over the
+   * deterministic pipeline-health figures, generated via the shared HQ narrative
+   * helper. `null` until a model tier is bound (and the vendor credential + HQ
+   * budget org are present), on any governor refusal, or on a provider failure.
+   * The UI shows an empty state.
    */
   narrative: string | null;
   generatedAt: string;
@@ -274,30 +277,27 @@ export async function loadSalesOrchestratorBoard(): Promise<SalesOrchestratorBoa
   };
 
   const board = computeSalesOrchestratorBoard(input, new Date());
-  const narrative = await loadSalesOrchestratorNarrative();
+  const narrative = await loadSalesOrchestratorNarrative(board);
 
   return { board, narrative, generatedAt: new Date().toISOString() };
 }
 
 /**
- * Sales-orchestrator narrative — DARK STUB. Returns `null` and constructs NO SDK.
+ * Sales-orchestrator narrative — GOVERNED, FAIL-CLOSED. Delegates to the shared
+ * HQ narrative helper (server/services/hq-narrative.ts), which reaches a model
+ * ONLY through `invokeWithGovernor` → `getTextProvider` under the registered
+ * `hq.sales_orchestrator_narrative` feature key (task class `drafting`), billed to
+ * the HQ budget org. The model is handed the FINISHED deterministic board and may
+ * only describe it — every displayed figure still comes from
+ * `computeSalesOrchestratorBoard`.
  *
- * A governed prose summary of the pipeline-health board belongs behind
- * `invokeWithGovernor` (lib/ai/governor.ts), under a registered AI feature whose
- * tier the registry arms. There is no registered feature/task_class for an HQ
- * Sales-Orchestrator narrative today, and reusing a tenant-facing key would
- * misattribute HQ spend in the governor ledger.
- *
- * Deliberately NO governor registry key is added for it: an unwired registry
- * entry is a permission granted to nothing, which the governance-closure ratchet
- * (__tests__/security/ai-governance-closure.test.ts) treats as drift — the
- * Marketing, Product and Customer-Success AIs all deferred their keys for exactly
- * this reason, and the Sales-Orchestrator AI follows suit.
- *
- * Rather than mis-key a governed call, this stays dark: it returns `null` and
- * imports no model SDK, so the dark path can construct nothing that could spend
- * money. The page shows a "populates once a model tier is bound" empty state.
+ * DARK until a generative tier is bound: with no tier bound `getTextProvider()`
+ * returns `null`, so this returns `null` and the page shows its
+ * "populates once a model tier is bound" empty state — now honest, because
+ * binding a tier (plus the credential + HQ budget org) is the only switch.
  */
-async function loadSalesOrchestratorNarrative(): Promise<string | null> {
-  return null;
+async function loadSalesOrchestratorNarrative(
+  board: SalesOrchestratorBoard,
+): Promise<string | null> {
+  return generateHqBoardNarrative("hq.sales_orchestrator_narrative", board);
 }

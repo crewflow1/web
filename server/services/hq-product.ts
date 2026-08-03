@@ -11,6 +11,7 @@ import {
   type ProductBoard,
   type ProductInput,
 } from "@/lib/hq/product";
+import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
 
 /**
  * CrewFlow HQ — Product AI aggregator (super-admin surface). Service-role only.
@@ -33,8 +34,11 @@ import {
 export type ProductBoardResult = {
   board: ProductBoard;
   /**
-   * The governed product narrative. DARK for now (see `loadProductNarrative`) —
-   * always `null` until a model tier is bound. The UI shows an empty state.
+   * The governed product narrative — a short prose blurb over the deterministic
+   * product-signal figures, generated via the shared HQ narrative helper. `null`
+   * until a model tier is bound (and the vendor credential + HQ budget org are
+   * present), on any governor refusal, or on a provider failure. The UI shows an
+   * empty state.
    */
   narrative: string | null;
   generatedAt: string;
@@ -95,30 +99,24 @@ export async function loadProductBoard(): Promise<ProductBoardResult> {
   };
 
   const board = computeProductBoard(input, new Date());
-  const narrative = await loadProductNarrative();
+  const narrative = await loadProductNarrative(board);
 
   return { board, narrative, generatedAt: new Date().toISOString() };
 }
 
 /**
- * Product narrative — DARK STUB. Returns `null` and constructs NO SDK.
+ * Product narrative — GOVERNED, FAIL-CLOSED. Delegates to the shared HQ narrative
+ * helper (server/services/hq-narrative.ts), which reaches a model ONLY through
+ * `invokeWithGovernor` → `getTextProvider` under the registered
+ * `hq.product_narrative` feature key (task class `drafting`), billed to the HQ
+ * budget org. The model is handed the FINISHED deterministic board and may only
+ * describe it — every displayed figure still comes from `computeProductBoard`.
  *
- * A governed prose summary of the product-signal board belongs behind
- * `invokeWithGovernor` (lib/ai/governor.ts), under a registered AI feature whose
- * tier the registry arms. There is no registered feature/task_class for an HQ
- * Product narrative today, and reusing a tenant-facing key would misattribute HQ
- * spend in the governor ledger.
- *
- * Deliberately NO governor registry key is added for it: an unwired registry
- * entry is a permission granted to nothing, which the governance-closure ratchet
- * (__tests__/security/ai-governance-closure.test.ts) treats as drift — the CTO AI
- * and Support AI deferred their keys for exactly this reason, and the Product AI
- * follows suit.
- *
- * Rather than mis-key a governed call, this stays dark: it returns `null` and
- * imports no model SDK, so the dark path can construct nothing that could spend
- * money. The page shows a "populates once a model tier is bound" empty state.
+ * DARK until a generative tier is bound: with no tier bound `getTextProvider()`
+ * returns `null`, so this returns `null` and the page shows its
+ * "populates once a model tier is bound" empty state — now honest, because
+ * binding a tier (plus the credential + HQ budget org) is the only switch.
  */
-async function loadProductNarrative(): Promise<string | null> {
-  return null;
+async function loadProductNarrative(board: ProductBoard): Promise<string | null> {
+  return generateHqBoardNarrative("hq.product_narrative", board);
 }

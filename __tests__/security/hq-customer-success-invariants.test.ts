@@ -8,10 +8,13 @@ import { resolve } from "node:path";
  * Pins:
  *   1. The page AND the aggregator gate on requireHqPage — HQ-only, never
  *      tenant auth. A non-allowlisted caller must 404 before seeing any figure.
- *   2. The customer-success-narrative path is DARK: the service constructs NO
- *      model SDK, reads NO vendor credential, and imports no @/lib/ai/* module,
- *      so the dark path cannot spend money. It also adds NO governor registry key
- *      (an unwired permission is drift the governance-closure ratchet rejects).
+ *   2. The customer-success-narrative path is GOVERNED but DARK BY DEFAULT: the
+ *      aggregator delegates to the shared HQ narrative helper
+ *      (server/services/hq-narrative.ts) under the registered
+ *      `hq.customer_success_narrative` key. The aggregator itself constructs NO
+ *      model SDK, reads NO vendor credential, and opens no model door — the door
+ *      + governor live in the helper — so with no tier bound it returns null and
+ *      cannot spend money.
  *   3. The pure layer is clock- and Supabase-free (takes an injected `now`).
  *   4. Registered in the HQ nav.
  *   5. NO TENANT BLEND: the aggregator reads CrewFlow's OWN demo_requests capture
@@ -62,15 +65,20 @@ describe("Customer-Success AI — super-admin gated (HQ-only)", () => {
   });
 });
 
-describe("Customer-Success AI — the narrative is dark, constructs no model SDK", () => {
-  it("the narrative loader returns null (dark stub)", () => {
+describe("Customer-Success AI — the narrative is GOVERNED (fail-closed), constructs no raw SDK", () => {
+  it("the narrative loader delegates to the shared governed helper", () => {
     expect(SERVICE).toMatch(/loadCustomerSuccessNarrative/);
-    expect(SERVICE).toMatch(/return\s+null\s*;/);
+    // Wired through the shared HQ narrative helper under its registered key —
+    // the service never reaches a model itself. Dark until a tier is bound.
+    expect(SERVICE).toMatch(/generateHqBoardNarrative\(\s*"hq\.customer_success_narrative"/);
+    expect(SERVICE).toMatch(/@\/server\/services\/hq-narrative/);
   });
 
-  it("the service imports no AI/governor/model module and constructs no SDK", () => {
+  it("the service constructs no raw model SDK and opens no model door directly", () => {
     expect(SERVICE_CODE).not.toMatch(/@anthropic-ai\/sdk|from\s*"openai"|new\s+Anthropic\(|new\s+OpenAI\(/);
+    // The provider door + governor live in the shared helper, not on this surface.
     expect(SERVICE_CODE).not.toMatch(/from\s*"@\/lib\/ai\//);
+    expect(SERVICE_CODE).not.toMatch(/\bgetTextProvider\s*\(|\bgetVisionProvider\s*\(/);
   });
 });
 
