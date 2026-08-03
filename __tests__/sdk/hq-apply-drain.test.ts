@@ -187,4 +187,23 @@ describe("runApplyOnApprovalDrain — the sanctioned authority is the ONLY path 
       }),
     ).toBeNull();
   });
+
+  it("the DEFAULT authority (production wiring, authority omitted) is unbound — every item is skipped, nothing applied or recorded", async () => {
+    // The route runs `runApplyOnApprovalDrain()` with NO authority, so the default resolves — this
+    // proves the production default (createUnboundApplyAuthority) is the one actually wired, not just
+    // that an explicitly-passed unbound authority behaves. A skip per item is the safe-no-op proof.
+    const inner = createInMemoryApplicationStore();
+    let puts = 0;
+    const store = { get: inner.get, put: async (r: Parameters<typeof inner.put>[0]) => { puts += 1; return inner.put(r); } };
+    const items = [approvedApproval("p"), approvedApproval("q"), approvedApproval("r")];
+    const summary = await runApplyOnApprovalDrain({
+      env: { CREWFLOW_HQ_APPLY_ON_APPROVAL: "on" }, // kill-switch ON, but authority is the default
+      store,
+      readApproved: readerOf(items),
+      now: clock,
+      // authority intentionally omitted — exercise the production default (unbound)
+    });
+    expect(summary).toMatchObject({ enabled: true, swept: 3, applied: 0, alreadyApplied: 0, failed: 0, escalated: 0, skipped: 3 });
+    expect(puts, "an unbound default authority must never record an application marker").toBe(0);
+  });
 });

@@ -17,11 +17,26 @@ import { runApplyOnApprovalDrain } from "@/server/services/hq-apply-drain";
  * SHIPS DARK, BY TWO GATES:
  *   1. The kill-switch `CREWFLOW_HQ_APPLY_ON_APPROVAL` is OFF by default, so
  *      `runApplyOnApprovalDrain` short-circuits before any read or apply (returns `enabled: false`).
- *   2. Even ON, live apply to real tenant data ADDITIONALLY requires the CEO authority per ADR 0009:
- *      the production sanctioned authority is UNBOUND, so the sweep applies nothing until a CEO
- *      cut-over binds a real authority. Binding it is a config/wiring flip, not an engineering task.
+ *   2. Even ON, this route runs the PRODUCTION defaults, whose sanctioned authority is
+ *      `createUnboundApplyAuthority` — it resolves EVERY approved item to `null`, so the sweep skips
+ *      each one, applies nothing, and records nothing. This is a deliberate no-op, not a wired-live
+ *      path awaiting a flag.
  *
- * The run's `cron_runs` row is the drain-health golden signal (`withCronTelemetry`).
+ * WHAT "GOING LIVE" ACTUALLY TAKES (it is engineering, NOT just a config flip):
+ *   (a) a production `ApplyAuthority.resolve()` that maps each approved descriptor to a
+ *       boundary closure routed through the sanctioned executor (`executePlan` bound to a real
+ *       `ToolImplementation` at each tool's SECURITY DEFINER entry point), with per-action-type
+ *       coverage and refuse-before-effect for any unmapped type;
+ *   (b) wiring the executor off `REFERENCE_EXECUTOR` (server/sdk/tasks.ts ~L684) to real tool
+ *       implementations; and
+ *   (c) the ADR 0009 CEO live cut-over authority — activating an autonomous apply-authority is a
+ *       product/authority decision, not something switched on silently.
+ * The apply SUBSTRATE below it (durable append-only store, exactly-once partial unique index,
+ * idempotency key, kill-switch, approved-only reader, service-role-only write RPC) IS complete and
+ * verified; the bound authority in (a)/(b) is the remaining, unbuilt work.
+ *
+ * The run's `cron_runs` row is the drain-health golden signal (`withCronTelemetry`). While unbound,
+ * its summary reports `swept > 0, applied = 0, skipped = swept` — the visible no-op fingerprint.
  *
  * Auth: Bearer CRON_SECRET (lib/cron/auth). Returns 401 otherwise.
  */
@@ -37,7 +52,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const { status, payload } = await withCronTelemetry("hq-apply-drain", async () => {
     // Production deps by construction: default env kill-switch, durable store, UNBOUND authority
-    // (live apply is the CEO cut-over per ADR 0009), service-role approved-only reader.
+    // (resolves every item to null → applies nothing; live apply is the ADR 0009 CEO cut-over plus
+    // the bound-authority + real-executor engineering described above), service-role reader.
     const summary = await runApplyOnApprovalDrain();
     return { ok: summary.ok, summary };
   });

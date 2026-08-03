@@ -38,13 +38,25 @@ import { listDecisions } from "@/server/services/hq-decisions";
  *      `CREWFLOW_EXECUTOR_SHADOW` posture. OFF (the default, and prod today), {@link
  *      runApplyOnApprovalDrain} returns IMMEDIATELY: it reads no approved rows, resolves no
  *      authority, and applies nothing — a total no-op.
- *   2. THE AUTHORITY (ADR 0009). Even with the kill-switch ON, live apply to real tenant data
- *      requires the CEO authority per ADR 0009. The production authority is {@link
- *      createUnboundApplyAuthority} — it resolves EVERY item to `null`, so the sweep applies nothing
- *      and records nothing until a CEO cut-over binds a real sanctioned authority (the executor's
- *      SECURITY DEFINER boundary / the task engine). Binding it is a config/wiring flip, not a
- *      change to this sweep. A `null` authority is NEVER a bare write — it is the sweep declining to
- *      act.
+ *   2. THE AUTHORITY. Even with the kill-switch ON, this sweep still applies NOTHING, because the
+ *      production authority is {@link createUnboundApplyAuthority} — it resolves EVERY item to
+ *      `null`, so every item is SKIPPED (nothing applied, nothing recorded). A `null` authority is
+ *      NEVER a bare write — it is the sweep declining to act.
+ *
+ *      Binding a real authority is ENGINEERING, not merely a config/wiring flip. Going live requires:
+ *        (a) a production `ApplyAuthority.resolve()` that maps each approved descriptor to a boundary
+ *            closure routed through the sanctioned executor (`executePlan` bound to a real
+ *            {@link import("@/server/sdk/executor").ToolImplementation} at each tool's SECURITY
+ *            DEFINER entry point), with per-action-type coverage and refuse-before-effect for any
+ *            unmapped type;
+ *        (b) wiring the executor off `REFERENCE_EXECUTOR` (server/sdk/tasks.ts ~L684, still the
+ *            reference tool registry — no real effect) to real tool implementations; and
+ *        (c) the ADR 0009 CEO live cut-over authority — a product/authority decision, never a silent
+ *            flip.
+ *      What IS built and verified is the apply SUBSTRATE this authority would plug into: the durable
+ *      append-only store, the exactly-once partial unique index, the idempotency key, the
+ *      kill-switch, the approved-only reader, and the service-role-only write RPC. The bound
+ *      authority in (a)/(b) is the remaining, deliberately-unbuilt work.
  *
  * APPROVED-ONLY. The sweep reads ONLY `approved` hq_decisions (status='approved') and `approved`
  * hq_approvals (state='approved'); a pending/rejected/delayed/delegated/escalated/expired item is
@@ -126,10 +138,15 @@ export interface ApplyAuthority {
 
 /**
  * The production authority — UNBOUND, so the sweep is dark even with the kill-switch on. Every item
- * resolves to `null`: no live sanctioned boundary is bound in this train, because binding one is the
- * CEO cut-over (ADR 0009). This is not a stub to be filled in with a bare write — it is the honest
- * default posture: apply-on-approval has a durable record store and a running (dark) sweep, and
- * turning it live means binding a real sanctioned authority here, a config/wiring flip.
+ * resolves to `null`: NO live sanctioned boundary is bound, so on every real approval the sweep
+ * skips the item, applies nothing, and records nothing. This is the honest default posture, not a
+ * stub to be filled with a bare write.
+ *
+ * Replacing it with a real authority is ENGINEERING, not a config flip (see the module header,
+ * gate 2): it needs a `resolve()` that maps each approved descriptor to a boundary closure routed
+ * through the sanctioned executor with per-action-type coverage and refuse-before-effect, the
+ * executor wired off `REFERENCE_EXECUTOR` to real tool implementations, and the ADR 0009 CEO live
+ * cut-over. Until all three land, this default keeps the drain a safe, provable no-op.
  */
 export function createUnboundApplyAuthority(): ApplyAuthority {
   return Object.freeze({ resolve: () => null });
@@ -318,6 +335,17 @@ export async function runApplyOnApprovalDrain(
         escalated += 1;
         break;
     }
+  }
+
+  // Honesty signal: with the PRODUCTION default (createUnboundApplyAuthority) every item resolves to
+  // null, so a non-empty sweep applies nothing and skips everything. Make that no-op unmistakable in
+  // the logs rather than leaving it implicit in the summary counts. This changes NO behaviour — the
+  // sweep already applied nothing; it only names why (no bound authority — see the module header).
+  if (items.length > 0 && skipped === items.length && applied === 0 && alreadyApplied === 0) {
+    console.info(
+      "[hq-apply-drain] unbound authority: swept approved items but applied none (no bound ApplyAuthority; live apply is unbuilt engineering + the ADR 0009 CEO cut-over)",
+      { swept: items.length, skipped },
+    );
   }
 
   return {
