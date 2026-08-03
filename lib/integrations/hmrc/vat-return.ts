@@ -18,11 +18,21 @@ import type { TaxSummary } from "@/lib/tax/compute";
  * stops at "prepared/held": the composed payload is stored in hmrc_submissions
  * (status prepared|held — there is no filed state) and never POSTed.
  *
- * ── REFUSE WHEN DARK ────────────────────────────────────────────────────────
+ * ── REFUSE WHEN DARK (with one INTERNAL exception) ──────────────────────────
  * `composeVatReturn` REFUSES (returns { ok:false, reason:'not_configured' })
  * unless HMRC is connectable (two-switch: client creds + feature flag). So while
- * dark not even the payload is built — defence in depth around the migration's
- * dark posture and the routes' 503.
+ * dark not even the SUBMIT-bound payload is built — defence in depth around the
+ * migration's dark posture and the routes' 503.
+ *
+ * The SOLE exception is `opts.allowInternalPrepare`: preparing + HOLDING an
+ * internal frozen record is pure composition over CrewFlow's OWN VAT authority
+ * (computeVatQuarter). It needs no HMRC OAuth connection, no token and no vendor
+ * recognition — it never leaves CrewFlow. So the prepare/hold path (see
+ * server/services/hmrc-connections.ts) passes `allowInternalPrepare: true` to
+ * build the frozen payload for storage in hmrc_submissions while dark. This does
+ * NOT open any submit/network path — there is still no code that POSTs the result
+ * to HMRC (that stays recognition-gated). The dark default is unchanged: a caller
+ * that omits the flag still refuses while dark.
  *
  * ── THE 9 BOXES (HMRC vocabulary) ───────────────────────────────────────────
  *   box 1 vatDueSales            — VAT due on sales & other outputs.
@@ -94,13 +104,30 @@ export type ComposeVatResult =
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const roundPounds = (n: number) => Math.round(n);
 
+/** Options for the composer. `allowInternalPrepare` is the internal prepare/hold seam. */
+export type ComposeVatOptions = {
+  /**
+   * Allow building the payload WITHOUT a live HMRC connection — for the internal
+   * prepare/hold record only (server/services/hmrc-connections.ts). Never set this
+   * on any submit/network path; it does not exist and stays recognition-gated.
+   */
+  allowInternalPrepare?: boolean;
+};
+
 /**
  * Compose the 9-box MTD VAT return payload. REFUSES when HMRC is not connectable
- * (dark) or the period key is missing. Pure — builds a value, sends nothing.
+ * (dark) or the period key is missing — UNLESS `opts.allowInternalPrepare` is set,
+ * the internal prepare/hold seam, which needs no live connection. Pure — builds a
+ * value, sends nothing.
  */
-export function composeVatReturn(input: ComposeVatInput): ComposeVatResult {
-  // DARK GUARD FIRST — do not even assemble a submission payload while dark.
-  if (!isHmrcConnectable()) {
+export function composeVatReturn(
+  input: ComposeVatInput,
+  opts?: ComposeVatOptions,
+): ComposeVatResult {
+  // DARK GUARD FIRST — do not even assemble a submission payload while dark,
+  // except for the internal prepare/hold path (CrewFlow's own figures, no token,
+  // never transmitted).
+  if (!opts?.allowInternalPrepare && !isHmrcConnectable()) {
     return {
       ok: false,
       reason: "not_configured",

@@ -19,10 +19,19 @@ import type { MonthlyReturnDataset } from "@/lib/cis/statements";
  * (status prepared|held — there is no filed state) and never transmitted. This
  * mirrors the existing CIS_NO_FILING_NOTICE posture in lib/cis/statements.ts.
  *
- * ── REFUSE WHEN DARK ────────────────────────────────────────────────────────
+ * ── REFUSE WHEN DARK (with one INTERNAL exception) ──────────────────────────
  * `composeCis300Return` REFUSES (returns { ok:false, reason:'not_configured' })
- * unless HMRC is connectable (two-switch). So while dark not even the payload is
- * built.
+ * unless HMRC is connectable (two-switch). So while dark not even the SUBMIT-bound
+ * payload is built.
+ *
+ * The SOLE exception is `opts.allowInternalPrepare`: preparing + HOLDING an
+ * internal frozen record is pure composition over CrewFlow's OWN CIS dataset
+ * (buildMonthlyReturnDataset). It needs no HMRC OAuth connection, no token and no
+ * vendor recognition — it never leaves CrewFlow. The prepare/hold path (see
+ * server/services/hmrc-connections.ts) passes `allowInternalPrepare: true` to
+ * build the frozen payload for storage in hmrc_submissions while dark. This opens
+ * NO submit/network path — no code POSTs the result to HMRC. The dark default is
+ * unchanged: a caller that omits the flag still refuses while dark.
  *
  * ── THE DECLARATIONS ────────────────────────────────────────────────────────
  * A real CIS300 carries the contractor's declarations (employment status,
@@ -110,14 +119,31 @@ function taxYearLabel(taxMonthEnd: string): string {
   return `${startYear}-${String(end).padStart(2, "0")}`;
 }
 
+/** Options for the composer. `allowInternalPrepare` is the internal prepare/hold seam. */
+export type ComposeCis300Options = {
+  /**
+   * Allow building the payload WITHOUT a live HMRC connection — for the internal
+   * prepare/hold record only (server/services/hmrc-connections.ts). Never set this
+   * on any submit/network path; it does not exist and stays recognition-gated.
+   */
+  allowInternalPrepare?: boolean;
+};
+
 /**
  * Compose the CIS300 monthly-return payload from the existing return dataset.
  * REFUSES when HMRC is not connectable (dark) or the dataset lacks a tax-month
- * end. Pure — builds a value, sends nothing. Declarations are never asserted.
+ * end — UNLESS `opts.allowInternalPrepare` is set, the internal prepare/hold seam,
+ * which needs no live connection. Pure — builds a value, sends nothing.
+ * Declarations are never asserted.
  */
-export function composeCis300Return(input: ComposeCis300Input): ComposeCis300Result {
-  // DARK GUARD FIRST — do not even assemble a submission payload while dark.
-  if (!isHmrcConnectable()) {
+export function composeCis300Return(
+  input: ComposeCis300Input,
+  opts?: ComposeCis300Options,
+): ComposeCis300Result {
+  // DARK GUARD FIRST — do not even assemble a submission payload while dark,
+  // except for the internal prepare/hold path (CrewFlow's own figures, no token,
+  // never transmitted).
+  if (!opts?.allowInternalPrepare && !isHmrcConnectable()) {
     return {
       ok: false,
       reason: "not_configured",
