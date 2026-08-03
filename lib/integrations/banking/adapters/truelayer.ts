@@ -7,7 +7,14 @@ import type {
   BankingAdapter,
 } from "./types";
 import { unavailable } from "./types";
-import { normalizeTrueLayerTransactions, type AggregatorStatement } from "../statement-map";
+import {
+  normalizeTrueLayerTransactions,
+  type AggregatorStatement,
+  type TrueLayerTransaction,
+} from "../statement-map";
+
+/** TrueLayer Data API base — the ONLY host this adapter contacts, and only after the guard. */
+const TRUELAYER_DATA_API = "https://api.truelayer.com";
 
 /**
  * TrueLayer banking adapter — DARK.
@@ -50,48 +57,117 @@ export class TrueLayerAdapter implements BankingAdapter {
     }
 
     // ── LIVE PATH (unreachable dark) ─────────────────────────────────────────
-    // The ONLY network call in this adapter, strictly after the guard above.
-    let res: Response;
+    // Every `fetch` below is strictly after the guard above. Two API calls:
+    // (1) enumerate accounts, (2) per account pull settled transactions over a
+    // date range. A 401/403 on either surfaces `unauthorized` so the caller
+    // refreshes the token and retries once.
+    let accountsRes: Response;
     try {
-      res = await fetch("https://api.truelayer.com/data/v1/accounts", {
-        method: "GET",
-        headers: {
-          authorization: `Bearer ${input.accessToken}`,
-          accept: "application/json",
-        },
-      });
+      accountsRes = await this.get("/data/v1/accounts", input.accessToken);
     } catch (e) {
-      return {
-        ok: false,
-        provider: this.provider,
-        reason: "error",
-        message: `TrueLayer fetch failed: ${e instanceof Error ? e.message : "network error"}`,
-      };
+      return this.networkError(e);
     }
-    if (!res.ok) {
+    const accountsAuth = this.authFailure(accountsRes.status);
+    if (accountsAuth) return accountsAuth;
+    if (!accountsRes.ok) {
       return {
         ok: false,
         provider: this.provider,
         reason: "error",
-        message: `TrueLayer returned ${res.status}`,
+        message: `TrueLayer /accounts returned ${accountsRes.status}`,
       };
     }
 
-    // At activation: for each account, pull /accounts/{id}/transactions and
-    // normalise. The native TrueLayer shape → provider-agnostic transactions is
-    // done by the pure `normalizeTrueLayerTransactions` mapper so the arithmetic
-    // (sign / date) lives once and is unit-tested.
-    const json = (await res.json()) as {
+    const accountsJson = (await accountsRes.json()) as {
       results?: Array<{ account_id?: string; display_name?: string }>;
     };
-    const statements: AggregatorStatement[] = (json.results ?? []).map((acct) => ({
-      accountId: acct.account_id ?? "",
-      accountName: acct.display_name ?? null,
-      // Activation wires the per-account transactions fetch here; the normaliser
-      // is the seam that keeps the mapper provider-agnostic.
-      transactions: normalizeTrueLayerTransactions([]),
-    }));
+    const accounts = (accountsJson.results ?? []).filter(
+      (a): a is { account_id: string; display_name?: string } =>
+        typeof a.account_id === "string" && a.account_id.length > 0,
+    );
+
+    // TrueLayer's transactions endpoint takes an explicit ISO from/to window. We
+    // pull from `since` (or a wide default) up to now; the sync engine re-runs an
+    // overlapping window and the DB dedupes on provider_tx_id.
+    const from = this.fromParam(input.since);
+    const to = new Date().toISOString();
+
+    const statements: AggregatorStatement[] = [];
+    for (const acct of accounts) {
+      const path =
+        `/data/v1/accounts/${encodeURIComponent(acct.account_id)}/transactions` +
+        `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      let txRes: Response;
+      try {
+        txRes = await this.get(path, input.accessToken);
+      } catch (e) {
+        return this.networkError(e);
+      }
+      const txAuth = this.authFailure(txRes.status);
+      if (txAuth) return txAuth;
+      if (!txRes.ok) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `TrueLayer /transactions returned ${txRes.status}`,
+        };
+      }
+      const txJson = (await txRes.json()) as { results?: TrueLayerTransaction[] };
+      statements.push({
+        accountId: acct.account_id,
+        accountName: acct.display_name ?? null,
+        // The native TrueLayer shape → provider-agnostic transactions is done by
+        // the pure `normalizeTrueLayerTransactions` mapper so the arithmetic
+        // (sign / date) lives once and is unit-tested.
+        transactions: normalizeTrueLayerTransactions(txJson.results ?? []),
+      });
+    }
 
     return { ok: true, provider: this.provider, statements };
+  }
+
+  /** One authenticated GET against the TrueLayer Data API. No secret is logged. */
+  private get(path: string, accessToken: string): Promise<Response> {
+    return fetch(`${TRUELAYER_DATA_API}${path}`, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+  }
+
+  /** Map a 401/403 to the `unauthorized` outcome (drives refresh→retry); else null. */
+  private authFailure(status: number): BankFetchResult | null {
+    if (status === 401 || status === 403) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "unauthorized",
+        message: `TrueLayer rejected the access token (${status}).`,
+      };
+    }
+    return null;
+  }
+
+  private networkError(e: unknown): BankFetchResult {
+    return {
+      ok: false,
+      provider: this.provider,
+      reason: "error",
+      message: `TrueLayer fetch failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  /** Resolve the `from` window: the `since` day, else a wide default (~2 years back). */
+  private fromParam(since: string | null | undefined): string {
+    if (since && since.length > 0) {
+      // Accept a plain date or a full ISO timestamp; TrueLayer wants ISO.
+      return since.length === 10 ? `${since}T00:00:00Z` : since;
+    }
+    const wide = new Date();
+    wide.setUTCFullYear(wide.getUTCFullYear() - 2);
+    return wide.toISOString();
   }
 }

@@ -30,14 +30,16 @@ export type BankingProvider = "truelayer" | "plaid" | "nordigen";
  * The outcome of a statement fetch.
  *   - ok           — statements returned by the aggregator (unreachable today).
  *   - unavailable  — not connectable; nothing was fetched (the dark path).
- *   - error        — connectable but the fetch failed.
+ *   - unauthorized — the access token was rejected (401/403); the caller should
+ *                    refresh the token and retry once before surfacing an error.
+ *   - error        — connectable but the fetch failed for any other reason.
  */
 export type BankFetchResult =
   | { ok: true; provider: BankingProvider; statements: AggregatorStatement[] }
   | {
       ok: false;
       provider: BankingProvider;
-      reason: "unavailable" | "error";
+      reason: "unavailable" | "unauthorized" | "error";
       message: string;
     };
 

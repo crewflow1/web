@@ -76,6 +76,13 @@ export type BankStatementLineInsert = {
   amount: number;
   description: string | null;
   reference: string | null;
+  /**
+   * The aggregator's stable transaction id (20261109). The dedupe key for an
+   * idempotent feed import — a re-sync of an overlapping window inserts no
+   * duplicate line because `(org_id, provider_tx_id)` is UNIQUE. NULL only for
+   * legacy CSV-uploaded lines, never for a feed-imported one.
+   */
+  provider_tx_id: string | null;
 };
 
 /** Options binding a mapped statement to its org + parent statement row. */
@@ -117,6 +124,8 @@ export function mapTransactionToLine(
     amount: signedAmount(tx.amount, tx.direction),
     description: tx.description ?? null,
     reference: tx.reference ?? tx.id ?? null,
+    // The aggregator tx id is the idempotency key; never lost so a re-sync dedupes.
+    provider_tx_id: tx.id ?? null,
   };
 }
 
