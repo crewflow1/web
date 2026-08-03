@@ -236,7 +236,12 @@ const envSchema = z.object({
   DEV_TEST_USER_EMAIL: z.string().email().optional(),
 
   // -- Feature flags ------------------------------------------------------
-  NEXT_PUBLIC_FEATURE_VOICE_NOTES: z.enum(["true", "false"]).default("false"),
+  // NOTE: there is intentionally NO NEXT_PUBLIC_FEATURE_VOICE_NOTES flag. The
+  // `voice_notes` table exists in the baseline schema (with RLS in the jobs
+  // migration) as reserved scaffold, but it has ZERO runtime wiring — no route,
+  // component, server action, or read/write anywhere in the app. Do not add a
+  // gate flag for it: a declared-but-unconsumed flag would falsely imply a live
+  // feature exists. When the feature is actually built, add the flag then.
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
   // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
