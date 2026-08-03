@@ -9,9 +9,9 @@ import {
   LEAD_STAGE_STYLES,
   LEAD_SOURCES,
   LEAD_URGENCIES,
-  type LeadStage,
 } from "@/lib/leads/schema";
-import { LeadCard, type PipelineLead } from "./_card";
+import { LeadCard } from "./_card";
+import { bucketPipelineLeads } from "./pipeline";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 import { ilikeOrFilter, LEAD_SEARCH_COLUMNS } from "@/lib/search/filters";
 
@@ -58,6 +58,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     )
     // ACTIVE-org pin — the pipeline must show one company's leads, not both.
     .eq("org_id", ctx.org.id)
+    // Archived leads (set by the Archive action) must drop OUT of the pipeline
+    // — they are a terminal, non-stage status. Excluding them at the query keeps
+    // them off every column AND out of the forecast headline; bucketPipelineLeads
+    // is the in-memory second line of defence for any other non-stage status.
+    .neq("status", "archived")
     .order("last_activity_at", { ascending: false })
     .limit(500);
 
@@ -92,36 +97,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (error) throw readFailure("leads pipeline: leads", error);
   const leads = raw ?? [];
 
-  // Bucket by stage. Anything unknown defaults to "new" for display.
-  const byStage: Record<LeadStage, PipelineLead[]> = {
-    new: [],
-    contacted: [],
-    qualified: [],
-    quoted: [],
-    won: [],
-    lost: [],
-    job_booked: [],
-  };
-  let totalValue = 0;
-  for (const l of leads) {
-    const status = (LEAD_STAGES as readonly string[]).includes(l.status)
-      ? (l.status as LeadStage)
-      : "new";
-    const ev = Number(l.estimated_value ?? 0);
-    totalValue += ev;
-    byStage[status].push({
-      id: l.id,
-      service: l.service ?? null,
-      source: l.source,
-      urgency: l.urgency ?? null,
-      postcode: l.postcode ?? null,
-      estimated_value: l.estimated_value ? Number(l.estimated_value) : null,
-      status,
-      last_activity_at: l.last_activity_at,
-      customer_name: l.customer?.name ?? null,
-      assigned_name: l.assigned?.full_name ?? l.assigned?.email ?? null,
-    });
-  }
+  // Bucket by stage + tally the forecast. Any row whose status is not a known
+  // stage (archived, or a legacy/unknown value) is skipped entirely — it lands
+  // in no column and is excluded from totalValue. See bucketPipelineLeads.
+  const { byStage, totalValue } = bucketPipelineLeads(leads);
 
   // Build assigned-staff filter options inline from the visible data.
   const assignedOptions = new Map<string, string>();
