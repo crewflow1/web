@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   exchangeCodeForTokens,
@@ -212,12 +213,18 @@ export async function GET(
       };
     };
   };
-  const { data: existing } = await prev
+  const { data: existing, error: existingError } = await prev
     .from("accounting_connections")
     .select("external_tenant_id, realm_id")
     .eq("org_id", ctx.org.id)
     .eq("provider", provider)
     .maybeSingle();
+  // LOUD. A failed read here must NOT be treated as "no prior handle" — that
+  // would skip a needed ledger reset and silently under-export to the new tenant.
+  // Surface the error instead of proceeding on a false negative.
+  if (existingError) {
+    throw readFailure("accounting connections: rebind handle", existingError);
+  }
   const previousHandle = existing?.external_tenant_id ?? existing?.realm_id ?? null;
   if (previousHandle && previousHandle !== handle) {
     const reset = await resetPushedLedger(supabase, ctx.org.id, provider);
