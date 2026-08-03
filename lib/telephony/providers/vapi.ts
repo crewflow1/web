@@ -115,6 +115,8 @@ export function readVapiMessageType(rawBody: string): string | null {
  * caller's latest utterance to feed the governed turn. Pure; null on bad JSON.
  */
 export function parseVapiConversation(rawBody: string): {
+  /** The Vapi call id — the correlation key for persisting this call's turns. */
+  callId: string | null;
   to: string | null;
   from: string | null;
   transcript: string;
@@ -129,6 +131,7 @@ export function parseVapiConversation(rawBody: string): {
   if (!msg) return null;
 
   const call = msg.call;
+  const callId = call?.id?.trim() || null;
   const from = (call?.customer?.number ?? msg.customer?.number ?? "").trim() || null;
   const to = (call?.phoneNumber?.number ?? msg.phoneNumber?.number ?? "").trim() || null;
 
@@ -143,7 +146,7 @@ export function parseVapiConversation(rawBody: string): {
       }
     }
   }
-  return { to, from, transcript };
+  return { callId, to, from, transcript };
 }
 
 /** One normalised tool/function invocation from a Vapi conversational message. */

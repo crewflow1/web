@@ -11,9 +11,15 @@ import {
   parseVapiConversation,
   readVapiMessageType,
 } from "@/lib/telephony/providers/vapi";
-import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
-import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
+import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
+import {
+  appendCallEvent,
+  loadRecentSpokenTurns,
+  persistSpokenTurn,
+  recordInboundCall,
+} from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
+import type { NormalizedInboundCall } from "@/lib/telephony/types";
 
 /**
  * Vapi inbound-VOICE webhook (Wave 8).
@@ -106,15 +112,72 @@ export async function POST(request: Request): Promise<NextResponse> {
         buildVapiToolResults(toolCalls.map((t) => ({ toolCallId: t.id, result: ack }))),
       );
     }
+
+    // Resolve THIS call's row (idempotent on the Vapi call id) and load its prior
+    // spoken turns, so the governed seam has MEMORY of the conversation — the same
+    // persistence substrate as Twilio. Best-effort: all persistence is wrapped so a
+    // DB error degrades to the fixed ack rather than dropping the call, and it runs
+    // AFTER the dark + HMAC gates above.
+    let callId: string | null = null;
+    let priorTurns: VoiceTurnHistoryEntry[] = [];
+    if (ctx?.callId) {
+      try {
+        const normalized: NormalizedInboundCall = {
+          provider: "vapi",
+          providerCallId: ctx.callId,
+          from: ctx.from,
+          to: ctx.to,
+          status: "in_progress",
+          providerEventId: null,
+          occurredAt: new Date().toISOString(),
+          raw: {},
+        };
+        const rec = await recordInboundCall(orgId, normalized);
+        callId = rec.callId;
+        priorTurns = await loadRecentSpokenTurns(orgId, callId);
+      } catch (e) {
+        Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "load" } });
+        console.error("[vapi] call resolve / history load failed", e);
+      }
+    }
+
+    const transcript = (ctx?.transcript ?? "").trim();
     const results: Array<{ toolCallId: string | null; result: string }> = [];
+    let firstReply: string | null = null;
     for (const t of toolCalls) {
       const query =
-        (ctx?.transcript ?? "").trim() ||
+        transcript ||
         (typeof t.args.query === "string" ? t.args.query : "") ||
         (typeof t.args.message === "string" ? t.args.message : "");
-      const turn = await maybeGenerateVoiceTurn({ orgId, transcript: query, context: t.name });
+      const turn = await maybeGenerateVoiceTurn({
+        orgId,
+        transcript: query,
+        context: t.name,
+        history: priorTurns,
+      });
+      if (firstReply === null && turn) firstReply = turn;
       results.push({ toolCallId: t.id, result: turn ?? ack });
     }
+
+    // Persist the caller's utterance + the generated reply (transcript + call_events
+    // audit), correlated by the Vapi call id — even when dark (reply null), so the
+    // enquiry still captures WHAT THE CALLER SAID. Best-effort: never break the call.
+    if (callId && ctx?.callId && (transcript || firstReply)) {
+      try {
+        await persistSpokenTurn({
+          orgId,
+          callId,
+          providerCallId: ctx.callId,
+          transcript,
+          reply: firstReply,
+          priorTurns,
+        });
+      } catch (e) {
+        Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "persist" } });
+        console.error("[vapi] spoken-turn persistence failed", e);
+      }
+    }
+
     return NextResponse.json(buildVapiToolResults(results));
   }
 
@@ -130,7 +193,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const { callId, created } = await recordInboundCall(orgId, call);
+    const { callId } = await recordInboundCall(orgId, call);
     const result = await appendCallEvent(orgId, callId, {
       type: call.status,
       providerEventId: call.providerEventId,
@@ -138,15 +201,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       occurredAt: call.occurredAt,
     });
 
-    // Delegate to the ingestion core ONCE per call (on the row we created), so a
-    // stream of status events for one call yields exactly one enquiry.
-    if (created) {
+    // Delegate to the ingestion core UNCONDITIONALLY (same posture as the Twilio
+    // origination edge). We do NOT gate on the calls-row `created` flag: a status
+    // update — or the conversational tool-call branch above — can create the calls
+    // row first, so a `created`-gated skip would DROP the enquiry entirely. Vapi is
+    // at-least-once and unordered. Idempotency is owned downstream: the CallSid is
+    // both the dedup_key and the provider_message_id, so processInboundEnquiry's
+    // (org_id, provider_message_id) partial-unique dedup folds every redelivery
+    // into the same enquiry. Best-effort: a failure must not break the response.
+    {
       try {
         await processInboundEnquiry({
           org_id: orgId,
           channel: "phone",
           caller: call.from,
           dedup_key: call.providerCallId,
+          // Correlate the enquiry to the call by CallSid, so the spoken-turn loop
+          // can populate its raw_text (mirrors the Twilio origination edge).
+          provider_message_id: call.providerCallId,
         });
       } catch (e) {
         Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "enquiry" } });

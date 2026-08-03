@@ -197,6 +197,174 @@ export async function appendCallEvent(
   return { appended: true, duplicate: false, status: nextStatus };
 }
 
+// =====================================================================
+// SPOKEN-TURN PERSISTENCE — the conversational loop's durable memory.
+//
+// The C28 spoken-turn loop was hollow: it generated a reply per <Gather> callback
+// and DISCARDED both the caller's transcript and the AI's reply, so every turn was
+// amnesiac and the origination enquiry stayed body-less (a human saw "someone
+// called from +44…" and nothing they said). These helpers close that hole using
+// the EXISTING substrate — no new migration:
+//   • each spoken turn is appended to the append-only `call_events` audit (the same
+//     writer the lifecycle uses), carrying the caller's SpeechResult + the reply;
+//   • the origination enquiry's `raw_text` is populated with the running transcript,
+//     mirroring how SMS/WhatsApp populate `raw_text`, correlated by CallSid.
+// `call_events.event_type` has no dedicated "turn" value (its CHECK is the call
+// lifecycle vocabulary), so a turn is recorded under `in_progress` — the honest
+// state for mid-call speech — and the payload marker below distinguishes a spoken
+// turn from a plain status transition on read.
+// =====================================================================
+
+/** The lifecycle event a mid-call spoken turn is recorded under (see note above). */
+const SPOKEN_TURN_EVENT_TYPE: CallEventType = "in_progress";
+/** Payload discriminator: how a history read tells a spoken turn from a status event. */
+const SPOKEN_TURN_KIND = "spoken_turn";
+
+/** One caller utterance + the receptionist's reply, as persisted on a call. */
+export type SpokenTurn = { transcript: string; reply: string | null };
+
+/**
+ * Render a list of spoken turns into the human-readable transcript stored on the
+ * enquiry's `raw_text`. Caller and receptionist lines interleave in order; empty
+ * lines are dropped. Pure.
+ */
+export function composeCallTranscript(turns: SpokenTurn[]): string {
+  const lines: string[] = [];
+  for (const t of turns) {
+    const said = (t.transcript ?? "").trim();
+    const reply = (t.reply ?? "").trim();
+    if (said) lines.push(`Caller: ${said}`);
+    if (reply) lines.push(`Receptionist: ${reply}`);
+  }
+  return lines.join("\n");
+}
+
+// The minimal ordered-read shape for loading a call's prior spoken turns. Cast past
+// the generated types (call_events is RLS:member-read and written service-role-only).
+type SpokenTurnReadFilter = {
+  eq: (k: string, v: unknown) => SpokenTurnReadFilter;
+  order: (
+    col: string,
+    opts: { ascending: boolean },
+  ) => {
+    limit: (
+      n: number,
+    ) => Promise<{ data: Array<{ payload: unknown }> | null; error: { message: string } | null }>;
+  };
+};
+
+/**
+ * Load the prior spoken turns for a call, oldest-first — the memory the governed
+ * turn seam folds in so a turn can reason over the conversation, not just the
+ * latest utterance. Org-pinned (defence in depth over the admin client). Filters
+ * to the spoken-turn payload marker, so lifecycle `in_progress` status events are
+ * never mistaken for turns. Fails loud on a read error (the caller decides whether
+ * to degrade); a missing/empty call simply yields no turns.
+ */
+export async function loadRecentSpokenTurns(
+  orgId: string,
+  callId: string,
+  limit = 20,
+): Promise<SpokenTurn[]> {
+  const admin = createAdminClient();
+  const query = (admin.from("call_events" as never) as unknown as {
+    select: (cols: string) => SpokenTurnReadFilter;
+  }).select("payload");
+  const { data, error } = await query
+    .eq("org_id", orgId)
+    .eq("call_id", callId)
+    .eq("event_type", SPOKEN_TURN_EVENT_TYPE)
+    .order("occurred_at", { ascending: true })
+    .limit(limit);
+  if (error) {
+    Sentry.captureException(new Error(`loadRecentSpokenTurns failed: ${error.message}`), {
+      tags: { service: "telephony" },
+    });
+    throw new Error(`loadRecentSpokenTurns failed: ${error.message}`);
+  }
+  const turns: SpokenTurn[] = [];
+  for (const row of data ?? []) {
+    const p = row.payload as { kind?: unknown; speech_result?: unknown; reply?: unknown } | null;
+    if (!p || p.kind !== SPOKEN_TURN_KIND) continue;
+    turns.push({
+      transcript: typeof p.speech_result === "string" ? p.speech_result : "",
+      reply: typeof p.reply === "string" ? p.reply : null,
+    });
+  }
+  return turns;
+}
+
+/**
+ * Update the origination enquiry's `raw_text` with the running call transcript, so
+ * the `inbound_enquiries` row has real content like an SMS/WhatsApp message instead
+ * of an empty body. Correlated by (org_id, provider_message_id = CallSid) — the key
+ * the origination enquiry was created under. Org-pinned; fails loud. An empty
+ * transcript is a no-op; a CallSid with no matching enquiry updates zero rows (a
+ * benign no-op, not an error).
+ */
+async function updateEnquiryTranscript(
+  orgId: string,
+  providerCallId: string,
+  transcript: string,
+): Promise<void> {
+  if (!transcript.trim()) return;
+  const admin = createAdminClient();
+  const { error } = await (admin.from("inbound_enquiries" as never) as unknown as {
+    update: (row: unknown) => {
+      eq: (k: string, v: unknown) => {
+        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+      };
+    };
+  })
+    .update({ raw_text: transcript })
+    .eq("org_id", orgId)
+    .eq("provider_message_id", providerCallId);
+  if (error) {
+    Sentry.captureException(new Error(`updateEnquiryTranscript failed: ${error.message}`), {
+      tags: { service: "telephony" },
+    });
+    throw new Error(`updateEnquiryTranscript failed: ${error.message}`);
+  }
+}
+
+/**
+ * Persist ONE spoken turn: append it to the append-only `call_events` audit
+ * (caller SpeechResult + generated reply) AND fold it into the enquiry's `raw_text`
+ * (prior turns + this one). This is the single write door the webhook loops call
+ * after generating a turn. Org-pinned throughout. THROWS on a write failure — the
+ * caller wraps it best-effort so a persistence error degrades the call gracefully
+ * (log + continue) rather than dropping it.
+ */
+export async function persistSpokenTurn(args: {
+  orgId: string;
+  callId: string;
+  providerCallId: string;
+  transcript: string;
+  reply: string | null;
+  priorTurns: SpokenTurn[];
+}): Promise<void> {
+  await appendCallEvent(args.orgId, args.callId, {
+    type: SPOKEN_TURN_EVENT_TYPE,
+    // No provider-supplied per-event id for a turn; NULLs are distinct under the
+    // (call_id, provider_event_id) unique, so successive turns coexist.
+    providerEventId: null,
+    payload: {
+      kind: SPOKEN_TURN_KIND,
+      speech_result: args.transcript,
+      reply: args.reply,
+    },
+    occurredAt: new Date().toISOString(),
+  });
+  await updateEnquiryTranscript(
+    args.orgId,
+    args.providerCallId,
+    composeCallTranscript([
+      ...args.priorTurns,
+      { transcript: args.transcript, reply: args.reply },
+    ]),
+  );
+}
+
 /** Feature flag: inbound voice is DARK unless explicitly enabled. */
 export function isVoiceInboundLive(): boolean {
   return voiceInboundFeatureEnabled();
