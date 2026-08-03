@@ -333,7 +333,33 @@ const envSchema = z.object({
   MS_GRAPH_CLIENT_SECRET: z.string().optional(),
   FEATURE_CALENDAR_CONNECT: z.string().optional(),
 
-  // -- Integration token encryption (accounting/calendar/banking substrates) --
+  // -- Accounting: Xero / QuickBooks (20261093/95 — DARK, two-switch gated) ----
+  // The OAuth CLIENT credentials the accounting-export provider push binds to,
+  // plus the master connect flag. UNSET in every environment today. Activation is
+  // credentials + flag ONLY: set a provider's client id/secret AND flip
+  // FEATURE_ACCOUNTING_CONNECT and the connect flow + the Xero/QuickBooks push go
+  // live with no further code change. Neither switch alone opens a door —
+  // isProviderConnectable() requires BOTH — and the substrate
+  // (lib/integrations/accounting/*) REFUSES-before-fetch while either is absent,
+  // so no live provider call is reachable. The per-org tenant/realm + tokens are
+  // resolved from accounting_connections (encrypted, service-role), NOT from env,
+  // so ONE client credential set serves every tenant. Tokens at rest use
+  // INTEGRATION_TOKEN_ENCRYPTION_KEY. FEATURE_ACCOUNTING_CONNECT is a free string
+  // (read as "1"/"true") so no schema edit is needed to flip it.
+  FEATURE_ACCOUNTING_CONNECT: z.string().optional(),
+  XERO_CLIENT_ID: z.string().optional(),
+  XERO_CLIENT_SECRET: z.string().optional(),
+  QBO_CLIENT_ID: z.string().optional(),
+  QBO_CLIENT_SECRET: z.string().optional(),
+  ACCOUNTING_REDIRECT_URI: z.string().optional(),
+  // Non-secret tunables. XERO_BANK_ACCOUNT_CODE is the Xero bank account code
+  // receipts (payments) land in (default "090", Xero's standard Bank account).
+  // QBO_API_BASE_URL overrides the QuickBooks API host (default production) for a
+  // sandbox company. Both optional; neither is a credential.
+  XERO_BANK_ACCOUNT_CODE: z.string().optional(),
+  QBO_API_BASE_URL: z.string().optional(),
+
+  // -- Integration token encryption (accounting/calendar/banking/telematics) --
   // The base64-encoded 32-byte AES-256 key that encrypts OAuth tokens at rest
   // (token-crypto.ts). UNSET today; the callback tripwire REFUSES a token exchange
   // when it is absent, so no plaintext token can ever be written. Required before

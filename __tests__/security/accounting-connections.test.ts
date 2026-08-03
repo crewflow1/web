@@ -8,6 +8,8 @@ import {
   accountingConnectFeatureEnabled,
   buildAuthorizeUrl,
   exchangeCodeForTokens,
+  refreshAccessToken,
+  resolveXeroTenantId,
 } from "@/lib/integrations/accounting/oauth";
 
 /**
@@ -112,15 +114,69 @@ describe("accounting OAuth resolver is dark without credentials", () => {
     }
   });
 
-  it("the ONLY fetch lives AFTER the connectable guard (structural dark path)", () => {
+  it("the FIRST fetch lives AFTER the connectable guard (structural dark path)", () => {
     const code = codeOf(read(OAUTH));
-    // Exactly one fetch call site, and both guard returns precede any fetch.
     const fetchIdx = code.indexOf("fetch(");
     expect(fetchIdx).toBeGreaterThan(-1);
-    // Every exchange guard returns not_configured before the fetch offset.
+    // The first guard returns not_configured before the first fetch offset.
     const guardIdx = code.indexOf("reason: \"not_configured\"");
     expect(guardIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(fetchIdx);
+  });
+
+  it("refreshAccessToken REFUSES with NO network call when dark", async () => {
+    for (const p of ["xero", "quickbooks"] as const) {
+      const res = await refreshAccessToken({ provider: p, refreshToken: "irrelevant" });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("not_configured");
+    }
+  });
+
+  it("resolveXeroTenantId REFUSES with NO network call when dark", async () => {
+    const res = await resolveXeroTenantId("irrelevant-access-token");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("not_configured");
+  });
+
+  it("refreshAccessToken guards (not_configured) BEFORE the refresh helper call", () => {
+    const code = codeOf(read(OAUTH));
+    const seg = code.slice(code.indexOf("export async function refreshAccessToken"));
+    const guardIdx = seg.indexOf("reason: \"not_configured\"");
+    const callIdx = seg.indexOf("refreshOAuthToken(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(callIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(callIdx);
+  });
+
+  it("resolveXeroTenantId guards (not_configured) BEFORE its fetch", () => {
+    const code = codeOf(read(OAUTH));
+    const seg = code.slice(code.indexOf("export async function resolveXeroTenantId"));
+    const guardIdx = seg.indexOf("reason: \"not_configured\"");
+    const fetchIdx = seg.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+  });
+});
+
+describe("accounting connection tokens are service-role only (column-privilege honoured)", () => {
+  const code = codeOf(read(SERVICE));
+
+  it("reads + writes the token columns via the service-role admin client", () => {
+    // The migration REVOKES SELECT on the token columns from `authenticated`, so
+    // the live push MUST use createAdminClient() to read/refresh them.
+    expect(code).toMatch(/createAdminClient\(\)/);
+    expect(code).toMatch(/access_token/);
+  });
+
+  it("never adds a token column to the caller-JWT SELECT projection", () => {
+    // The tenant-facing SELECT_COLUMNS constant stays token-free.
+    expect(code).not.toMatch(/SELECT_COLUMNS[\s\S]{0,10}=[\s\S]{0,200}access_token/i);
+  });
+
+  it("encrypts before persisting a refreshed token and decrypts on use", () => {
+    expect(code).toMatch(/encryptToken\(/);
+    expect(code).toMatch(/decryptToken\(/);
   });
 });
 
@@ -274,10 +330,20 @@ describe("accounting connections service — org-pinned, loud, token-free reads"
     expect(code).toMatch(/throw readFailure\(/);
   });
 
-  it("NEVER selects a token column back to a tenant surface", () => {
-    // The select-columns constant carries no token field.
-    expect(code).not.toMatch(/select[\s\S]{0,120}access_token/i);
+  it("NEVER selects a token column back to a TENANT (caller-JWT) surface", () => {
+    // The caller-JWT projection constant carries no token field — the tenant read
+    // surface (listAccountingConnections / getAccountingConnection) is token-free.
     expect(code).not.toMatch(/SELECT_COLUMNS[\s\S]{0,10}=[\s\S]{0,200}access_token/i);
+    // The ONLY select that names a token column is the SERVICE-ROLE helper, which
+    // reads via createAdminClient — the column-privilege boundary (migration
+    // 20261095 revokes token SELECT from `authenticated`) demands service-role.
+    const seg = code.slice(code.indexOf("async function readConnectionSecrets"));
+    expect(seg).toMatch(/createAdminClient\(\)/);
+    expect(seg).toMatch(/\.select\(\s*\n?\s*["'][^"']{0,40}access_token/);
+    // The caller-JWT client (createClient) never selects a token column: every
+    // createClient()-backed read uses the token-free SELECT_COLUMNS.
+    const tokenSelects = code.match(/\.select\([^)]*access_token/g) ?? [];
+    expect(tokenSelects.length).toBe(1);
   });
 
   it("syncToProvider records skipped_dark when the adapter is dark", () => {

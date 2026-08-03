@@ -56,4 +56,4 @@ export function getAccountingReadiness(): AccountingReadiness {
 }
 
 export type { AccountingAdapter, AccountingProvider } from "./types";
-export type { AccountingPushResult } from "./types";
+export type { AccountingPushResult, AccountingPushInput } from "./types";

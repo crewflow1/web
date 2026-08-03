@@ -4,24 +4,25 @@ import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/session";
 import {
-  buildAccountingExport,
-  recordAccountingExport,
-} from "@/server/services/accounting-export";
-import { disconnectAccountingProvider } from "@/server/services/accounting-connections";
-import {
-  getAccountingAdapter,
-  type AccountingProvider,
-} from "@/lib/integrations/accounting/adapters";
+  disconnectAccountingProvider,
+  syncToProvider,
+} from "@/server/services/accounting-connections";
+import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
 
 /**
- * Accounting provider-push action — the DARK path.
+ * Accounting provider-push action.
  *
  * The CSV export is a plain GET download (app/api/accounting/export). This
- * action drives the Xero / QuickBooks buttons. Because those adapters are
- * credential-less today they push NOTHING: the action resolves the adapter,
- * calls it, sees `unavailable`, and records a `skipped_dark` audit row — an
- * honest "the provider was not contacted because it is not connected", never a
- * fake success and never a live API call.
+ * action drives the Xero / QuickBooks buttons: it gates the caller (admin) and
+ * delegates to the ONE push composition, `syncToProvider`, which resolves the
+ * org's connection tokens (service-role), refreshes when needed, and pushes the
+ * canonical rows through the provider adapter.
+ *
+ * DARK: while a provider is not connectable (flag off / no OAuth credentials —
+ * ALWAYS today) `syncToProvider` refuses BEFORE any network call, records a
+ * `skipped_dark` audit row, and returns an honest "not connected" — never a fake
+ * success and never a live API call. On activation (credentials + flag) the SAME
+ * path performs the real push with no further code change.
  *
  * AUTHORISATION IS DOUBLED. The role check produces a sentence for the operator;
  * the admin-write RLS on accounting_export_log is the real boundary for the log
@@ -58,17 +59,10 @@ export async function requestAccountingPush(
     };
   }
 
-  const adapter = getAccountingAdapter(provider);
-
-  // If the adapter is dark, do NOT build/push — record the skip and return.
-  if (!adapter.isAvailable()) {
-    await recordAccountingExport({
-      orgId: ctx.org.id,
-      createdBy: user.id,
-      format: provider,
-      status: "skipped_dark",
-      rowCount: 0,
-    });
+  // ONE push composition. Dark ⇒ refuses before any network call and records
+  // skipped_dark; live (activation) ⇒ resolves tokens, refreshes, pushes.
+  const result = await syncToProvider(ctx.org.id, provider, user.id);
+  if (result.status === "skipped_dark") {
     return {
       ok: false,
       provider,
@@ -78,28 +72,7 @@ export async function requestAccountingPush(
           : "QuickBooks is not connected yet. Use CSV export today; API push activates once QuickBooks OAuth is configured.",
     };
   }
-
-  // Credentialed path (unreachable today). Build the rows and attempt a push;
-  // the adapter still makes no live call in this build.
-  const { rows } = await buildAccountingExport({ orgId: ctx.org.id });
-  const invoiceRows = rows.filter((r) => r.type === "invoice");
-  const paymentRows = rows.filter((r) => r.type === "payment");
-  const invRes = await adapter.pushInvoices(invoiceRows);
-  const payRes = await adapter.pushPayments(paymentRows);
-
-  if (invRes.ok && payRes.ok) {
-    await recordAccountingExport({
-      orgId: ctx.org.id,
-      createdBy: user.id,
-      format: provider,
-      status: "pushed",
-      rowCount: rows.length,
-    });
-    return { ok: true, provider, message: `Pushed ${rows.length} rows to ${provider}.` };
-  }
-
-  const reason = !invRes.ok ? invRes.message : !payRes.ok ? payRes.message : "Push failed.";
-  return { ok: false, provider, message: reason };
+  return { ok: result.ok, provider, message: result.message };
 }
 
 /**
