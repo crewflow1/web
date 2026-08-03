@@ -458,6 +458,30 @@ export const AI_FEATURES = {
     degradesTo:
       "null — the runner falls back to its deterministic prep assembly, exactly as it does with no key.",
   },
+
+  /**
+   * HQ Workflow-Saga: AI-assisted decomposition of a directive into a
+   * cross-department step GRAPH (lib/hq/workflow/ai-decompose.ts).
+   *
+   * `complex` — genuinely multi-step reasoning that reads a free-form directive
+   * and proposes an ordered, dependency-linked graph of steps across
+   * departments. It is a FEATURE key mapping to the existing `complex` task
+   * class → `high` tier; it registers NO new governor TIER (which the
+   * governance-closure ratchet forbids), so binding a tier is what arms it, not
+   * a key alone.
+   *
+   * DARK: no generative tier is bound, so `maybeDecomposeWithAi` returns null
+   * before the governor is reached and the caller uses the DETERMINISTIC
+   * template decomposition (lib/hq/workflow/decompose.ts) — the substrate the
+   * whole feature rests on. There is no AI-planned saga until a tier is bound.
+   */
+  "hq.saga_decomposition": {
+    key: "hq.saga_decomposition",
+    label: "Workflow-saga decomposition",
+    taskClass: "complex",
+    degradesTo:
+      "null — the caller falls back to the deterministic template decomposition (decomposeDirective), which is the substrate and is always available. No saga is ever left unplanned for want of a model.",
+  },
 } as const satisfies Record<string, AiFeatureDefinition>;
 
 export type AiFeature = keyof typeof AI_FEATURES;
