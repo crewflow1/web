@@ -1,7 +1,12 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
+import {
+  readFailure,
+  reportReadFailure,
+  type SupabaseReadError,
+} from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   toCanonicalRows,
   type CanonicalAccountingRow,
@@ -38,12 +43,14 @@ import { invoiceBusinessToday } from "@/lib/invoices/overdue";
 export const MAX_ROWS = 50_000;
 
 /**
- * Cap a read result and report whether it was truncated at the cap. Pure.
+ * Cap a fully-paged read result and report whether it exceeded the ceiling. Pure.
  *
- * The reads request `MAX_ROWS + 1` rows, so a returned length exceeding the cap
- * is the signal that MORE rows existed than were exported. The extra probe row
- * is sliced off; `truncated` is the loud flag the caller must surface rather
- * than silently drop the tail.
+ * The reads are paged in full via `fetchAllRows`, so the input is the TRUE row
+ * count, not a clamped probe. A length beyond `cap` means the org holds more
+ * rows than the export ceiling admits: the tail is sliced off and `truncated` is
+ * the loud flag the caller must surface rather than silently drop it. This makes
+ * the flag honest — before the F-1 fix a single `.limit(MAX_ROWS + 1)` was
+ * clamped to 1000, so the length never reached the cap and `truncated` was DEAD.
  */
 export function capRows<T>(
   data: readonly T[],
@@ -111,61 +118,80 @@ export async function buildAccountingExport(params: {
     typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
   // ── Invoices ───────────────────────────────────────────────────────────────
-  let invQ = supabase
-    .from("invoices")
-    .select(
-      "id, number, status, amount, vat_total, total, due_date, sent_at, created_at, " +
-        "customer:customers(name), quote:quotes(customer:customers(name))",
-    )
-    .eq("org_id", orgId)
-    // Exclude drafts: a draft invoice is not a real sale and must never become
-    // an accounting row (it would post as a genuine sales invoice on the future
-    // provider push). Keep every real status (sent / awaiting_payment /
-    // partially_paid / paid / overdue).
-    .neq("status", "draft")
-    .order("created_at", { ascending: true })
-    // Request one past the cap so a full result reveals truncation (capRows).
-    .limit(MAX_ROWS + 1);
-  // Window on the tax point (sent_at when issued, else created_at). We can only
-  // range one column in PostgREST, so bound created_at and let the exact tax
-  // point fall out of the mapper — a conservative superset the accountant filters.
-  if (dayOk(from)) invQ = invQ.gte("created_at", `${from}T00:00:00Z`);
-  if (dayOk(to)) invQ = invQ.lte("created_at", `${to}T23:59:59Z`);
-
-  const invRes = await invQ;
-  if (invRes.error) {
-    throw readFailure("accounting export: invoices", invRes.error);
+  // PAGE THE FULL LEDGER (F-1). A single `.limit(N)` is silently clamped to
+  // PostgREST `max_rows` (1000), so a `.limit(MAX_ROWS + 1)` probe returned AT
+  // MOST 1000 rows and the truncation flag was DEAD — the export dropped rows
+  // 1001+ with no notice. `fetchAllRows` pages under the cap with a unique `id`
+  // tiebreak on the (created_at) ordering so no page can drop or repeat a row.
+  const { data: invData, error: invErr } = await fetchAllRows<{ id?: string }>(
+    (lo, hi) => {
+      let q = supabase
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, sent_at, created_at, " +
+            "customer:customers(name), quote:quotes(customer:customers(name))",
+        )
+        .eq("org_id", orgId)
+        // Exclude drafts: a draft invoice is not a real sale and must never
+        // become an accounting row (it would post as a genuine sales invoice on
+        // the future provider push). Keep every real status (sent /
+        // awaiting_payment / partially_paid / paid / overdue).
+        .neq("status", "draft");
+      // Window on the tax point (sent_at when issued, else created_at). We can
+      // only range one column in PostgREST, so bound created_at and let the exact
+      // tax point fall out of the mapper — a conservative superset the accountant
+      // filters. Filters applied BEFORE the transform methods so the builder
+      // stays a filter builder through the conditionals.
+      if (dayOk(from)) q = q.gte("created_at", `${from}T00:00:00Z`);
+      if (dayOk(to)) q = q.lte("created_at", `${to}T23:59:59Z`);
+      // The nested customer/quote embed defeats PostgREST's row-type inference
+      // (it resolves to GenericStringError); cast to the paged shape — the rows
+      // are re-typed at the mapper below.
+      return q
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(lo, hi) as unknown as PromiseLike<PageResult<{ id?: string }>>;
+    },
+  );
+  // LOUD: a failed read throws, never a silent partial export (fetchAllRows is
+  // best-effort and hands back the partial set + error — we refuse it).
+  if (invErr) {
+    throw readFailure("accounting export: invoices", invErr as SupabaseReadError);
   }
 
   // ── Payments ─────────────────────────────────────────────────────────────────
-  let payQ = supabase
-    .from("invoice_payments")
-    .select(
-      // Disambiguate the embed: invoice_payments has TWO FKs to invoices (the
-      // simple invoice_id and the composite (invoice_id, org_id)), so a bare
-      // `invoices(...)` is a PGRST201 ambiguous-embed. Pin the composite FK,
-      // which is the tenant-safe one.
-      "id, amount, paid_at, " +
-        "invoice:invoices!invoice_payments_invoice_org_fkey(number, " +
-        "customer:customers(name), quote:quotes(customer:customers(name)))",
-    )
-    .eq("org_id", orgId)
-    .order("paid_at", { ascending: true })
-    // Request one past the cap so a full result reveals truncation (capRows).
-    .limit(MAX_ROWS + 1);
-  if (dayOk(from)) payQ = payQ.gte("paid_at", from);
-  if (dayOk(to)) payQ = payQ.lte("paid_at", to);
-
-  const payRes = await payQ;
-  if (payRes.error) {
-    throw readFailure("accounting export: payments", payRes.error);
+  const { data: payData, error: payErr } = await fetchAllRows<{ id?: string }>(
+    (lo, hi) => {
+      let q = supabase
+        .from("invoice_payments")
+        .select(
+          // Disambiguate the embed: invoice_payments has TWO FKs to invoices (the
+          // simple invoice_id and the composite (invoice_id, org_id)), so a bare
+          // `invoices(...)` is a PGRST201 ambiguous-embed. Pin the composite FK,
+          // which is the tenant-safe one.
+          "id, amount, paid_at, " +
+            "invoice:invoices!invoice_payments_invoice_org_fkey(number, " +
+            "customer:customers(name), quote:quotes(customer:customers(name)))",
+        )
+        .eq("org_id", orgId);
+      if (dayOk(from)) q = q.gte("paid_at", from);
+      if (dayOk(to)) q = q.lte("paid_at", to);
+      return q
+        .order("paid_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(lo, hi) as unknown as PromiseLike<PageResult<{ id?: string }>>;
+    },
+  );
+  if (payErr) {
+    throw readFailure("accounting export: payments", payErr as SupabaseReadError);
   }
 
-  // Cap each read at MAX_ROWS and detect truncation. A partial export must never
-  // be silent (the loud-reads doctrine): if either read hit the cap, report it
-  // loudly here and hand `truncated` back for the route to surface.
-  const invCap = capRows(invRes.data ?? []);
-  const payCap = capRows(payRes.data ?? []);
+  // Apply MAX_ROWS as a genuine ceiling AFTER full paging, so `truncated` is
+  // derived from the TRUE row count (not a clamped probe). A partial export must
+  // never be silent (the loud-reads doctrine): if either read exceeded the
+  // ceiling, report it loudly here and hand `truncated` back for the route.
+  const invCap = capRows(invData);
+  const payCap = capRows(payData);
   const truncated = invCap.truncated || payCap.truncated;
   if (truncated) {
     reportReadFailure("accounting export: row cap reached", {
@@ -313,28 +339,62 @@ async function readPushedEntityIds(
   orgId: string,
   provider: AccountingProvider,
 ): Promise<{ invoice: Set<string>; payment: Set<string> }> {
+  type LedgerRow = { entity_type: string; entity_id: string };
+  // accounting_pushed_entities post-dates the generated types.ts, so cast to a
+  // minimal paged read builder. `.range()` + a unique (entity_type, entity_id)
+  // ordering pages the WHOLE anti-set: an incomplete exclusion set (capped at
+  // 1000 by the PostgREST clamp before the F-1 fix) could let an entity beyond
+  // the first 1000 be re-pushed and duplicated.
   const loose = supabase as unknown as {
     from: (t: string) => {
       select: (c: string) => {
         eq: (col: string, val: string) => {
-          eq: (col: string, val: string) => PromiseLike<{
-            data: { entity_type: string; entity_id: string }[] | null;
-            error: { message: string } | null;
-          }>;
+          eq: (col: string, val: string) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean },
+            ) => {
+              order: (
+                col: string,
+                opts: { ascending: boolean },
+              ) => {
+                range: (
+                  from: number,
+                  to: number,
+                ) => PromiseLike<{
+                  data: LedgerRow[] | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
         };
       };
     };
   };
-  const { data, error } = await loose
-    .from("accounting_pushed_entities")
-    .select("entity_type, entity_id")
-    .eq("org_id", orgId)
-    .eq("provider", provider);
-  if (error) throw readFailure("accounting export: pushed-entity ledger", error);
+  const { data, error } = await fetchAllRows<LedgerRow>((lo, hi) =>
+    loose
+      .from("accounting_pushed_entities")
+      .select("entity_type, entity_id")
+      .eq("org_id", orgId)
+      .eq("provider", provider)
+      .order("entity_type", { ascending: true })
+      .order("entity_id", { ascending: true })
+      .range(lo, hi),
+  );
+  // LOUD — a failed read throws, never a silent "nothing excluded". An
+  // incomplete anti-set would re-push the whole history and duplicate every
+  // invoice; a failed sync is always safer than a duplicating one.
+  if (error) {
+    throw readFailure(
+      "accounting export: pushed-entity ledger",
+      error as SupabaseReadError,
+    );
+  }
 
   const invoice = new Set<string>();
   const payment = new Set<string>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     if (row.entity_type === "invoice") invoice.add(row.entity_id);
     else if (row.entity_type === "payment") payment.add(row.entity_id);
   }
