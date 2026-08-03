@@ -39,6 +39,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/approvals", label: "✅ Approvals" },
   { href: "/admin/decisions", label: "⚖️ Decision Centre" },
   { href: "/admin/workflow-sagas", label: "🕸️ Workflow Sagas" },
+  { href: "/admin/hq-cadence", label: "🕰️ Cadence Clock" },
   { href: "/admin/executor-shadow", label: "👁️ Executor Shadow" },
   { href: "/admin/memory", label: "📚 Shared Memory" },
   { href: "/admin/sales", label: "💼 Sales AI" },
