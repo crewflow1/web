@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
   buildEventPayload,
+  buildRotaEventPayload,
   pushEventToProvider,
   type JobForEvent,
+  type RotaForEvent,
 } from "@/lib/integrations/calendar/push-adapter";
 
 /**
@@ -79,6 +81,36 @@ describe("buildEventPayload", () => {
 
   it("returns null for an unscheduled job (nothing to place on a calendar)", () => {
     expect(buildEventPayload({ ...JOB, scheduled_date: null })).toBeNull();
+  });
+});
+
+describe("buildRotaEventPayload", () => {
+  const ROTA: RotaForEvent = {
+    id: "rota-1",
+    starts_at: "2026-09-01T07:30:00+00:00",
+    ends_at: "2026-09-01T15:45:00+00:00",
+    notes: "Cover the yard",
+    staffName: "Jane Doe",
+  };
+
+  it("spans the shift's OWN start/end (not a fixed 08:00–17:00) as UTC wall-clock", () => {
+    const p = buildRotaEventPayload(ROTA);
+    expect(p).not.toBeNull();
+    expect(p!.startDateTime).toBe("2026-09-01T07:30:00");
+    expect(p!.endDateTime).toBe("2026-09-01T15:45:00");
+    expect(p!.timeZone).toBe("UTC");
+    expect(p!.summary).toBe("Shift — Jane Doe");
+    expect(p!.description).toContain("rota-1");
+    expect(p!.description).toContain("Cover the yard");
+    expect(p!.location).toBeNull();
+  });
+
+  it("falls back to a generic title when the staff name is unknown", () => {
+    expect(buildRotaEventPayload({ ...ROTA, staffName: null })!.summary).toBe("Rota shift");
+  });
+
+  it("returns null when a bound is unparseable (nothing to place on a calendar)", () => {
+    expect(buildRotaEventPayload({ ...ROTA, starts_at: "not-a-date" })).toBeNull();
   });
 });
 

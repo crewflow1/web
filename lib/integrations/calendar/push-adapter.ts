@@ -11,7 +11,10 @@ import {
  *
  * `buildEventPayload` maps a CrewFlow job (with its unified default rota shift of
  * 08:00–17:00 on the scheduled date, per the job↔rota unification) into a
- * provider-neutral event shape. `pushEventToProvider` serialises that shape for
+ * provider-neutral event shape; `buildRotaEventPayload` maps a standalone rota
+ * shift, spanning its OWN starts_at/ends_at rather than a synthesised default, so
+ * a shift with no backing job still lands on the calendar. `pushEventToProvider`
+ * serialises that shape for
  * the target provider and creates (POST) or patches (PATCH) the event via the
  * Google Calendar / Microsoft Graph event APIs, refreshing the access token on a
  * 401 and retrying once.
@@ -90,6 +93,58 @@ export function buildEventPayload(job: JobForEvent): CalendarEventPayload | null
     startDateTime: `${job.scheduled_date}T${DEFAULT_SHIFT_START}`,
     endDateTime: `${job.scheduled_date}T${DEFAULT_SHIFT_END}`,
     timeZone: DEFAULT_TIME_ZONE,
+  };
+}
+
+/** The subset of a rota-entry row (+ its staff member's name) this adapter maps into an event. */
+export type RotaForEvent = {
+  id: string;
+  /** Shift bounds as stored — timestamptz (UTC) strings. */
+  starts_at: string;
+  ends_at: string;
+  notes: string | null;
+  /** The assigned staff member's display name (full name, falling back to email). */
+  staffName: string | null;
+};
+
+/**
+ * Convert a timestamptz to a wall-clock ISO string WITHOUT offset (paired with a
+ * UTC time zone), e.g. "2026-09-01T08:00:00.000Z" → "2026-09-01T08:00:00". Returns
+ * null for an unparseable value.
+ */
+function toWallClockUtc(ts: string): string | null {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19);
+}
+
+/**
+ * Map a rota shift into a provider-neutral event payload. Unlike a job (which
+ * synthesises a fixed 08:00–17:00 default), a rota entry carries its OWN
+ * starts_at / ends_at, so the event spans the real shift — the standalone-shift
+ * gap the job-only push left uncovered. The shift is stored as an absolute instant
+ * (timestamptz), so it is emitted as UTC wall-clock time. Pure — no I/O. Returns
+ * null when either bound is missing or unparseable.
+ */
+export function buildRotaEventPayload(rota: RotaForEvent): CalendarEventPayload | null {
+  const startDateTime = toWallClockUtc(rota.starts_at);
+  const endDateTime = toWallClockUtc(rota.ends_at);
+  if (!startDateTime || !endDateTime) return null;
+
+  const who = (rota.staffName ?? "").trim();
+  const summary = who.length > 0 ? `Shift — ${who}` : "Rota shift";
+
+  const description = [`CrewFlow rota shift ${rota.id}`, rota.notes ?? ""]
+    .filter((l) => l.trim().length > 0)
+    .join("\n");
+
+  return {
+    summary,
+    description,
+    location: null,
+    startDateTime,
+    endDateTime,
+    timeZone: "UTC",
   };
 }
 

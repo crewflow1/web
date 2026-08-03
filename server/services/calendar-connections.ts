@@ -11,6 +11,7 @@ import {
 } from "@/lib/integrations/calendar/oauth";
 import {
   buildEventPayload,
+  buildRotaEventPayload,
   pushEventToProvider,
 } from "@/lib/integrations/calendar/push-adapter";
 import {
@@ -410,6 +411,207 @@ export async function bestEffortPushJob(
   } catch (e) {
     console.error("[calendar] best-effort job push threw", {
       jobId,
+      message: e instanceof Error ? e.message : "unknown error",
+    });
+    return { status: "error" };
+  }
+}
+
+type RotaRow = {
+  id: string;
+  org_id: string;
+  starts_at: string;
+  ends_at: string;
+  notes: string | null;
+  // A to-one join; supabase-js may hand it back as an object or a 1-element array.
+  user: { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null;
+};
+
+// rota_entries has TWO FKs to users (user_id, created_by); embed MUST name the
+// constraint or PostgREST rejects the whole query (PGRST201). The shift's assigned
+// staff member is user_id.
+const ROTA_PUSH_COLUMNS =
+  "id, org_id, starts_at, ends_at, notes, user:users!rota_entries_user_id_fkey ( full_name, email )";
+
+/**
+ * One-way push: project a CrewFlow rota SHIFT into an external calendar event,
+ * recording the mapping in calendar_event_links (local_kind 'rota') so a re-push
+ * updates the same event rather than duplicating it. Org-pinned.
+ *
+ * This is the standalone-shift half of the push: a rota entry with no backing job
+ * (job_id null) is never covered by pushJobToCalendar, and even a job-backed shift
+ * spans its OWN starts_at/ends_at rather than the job's synthesised 08:00–17:00.
+ *
+ * DARK. Exactly like pushJobToCalendar: resolves the org's connected provider,
+ * sees it is NOT connectable (always, today), and returns `skipped_dark` WITHOUT
+ * contacting any provider and WITHOUT writing an event link. There is no code path
+ * from dark to a provider network call or a written link.
+ */
+export async function pushRotaToCalendar(
+  orgId: string,
+  rotaId: string,
+): Promise<PushResult> {
+  const supabase = await createClient();
+
+  // Read the rota entry, org-pinned + loud. A missing entry is a clean not_found.
+  const rotaQ = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            maybeSingle: () => PromiseLike<{
+              data: RotaRow | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data: rota, error: rotaErr } = await rotaQ
+    .from("rota_entries")
+    .select(ROTA_PUSH_COLUMNS)
+    .eq("id", rotaId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (rotaErr) throw readFailure("calendar push: rota", rotaErr);
+  if (!rota) {
+    return {
+      ok: false,
+      status: "not_found",
+      provider: null,
+      externalEventId: null,
+      message: "Rota shift not found in this organisation.",
+    };
+  }
+
+  // Resolve the org's connected calendar provider (token-free read, loud).
+  const connections = await listCalendarConnections(orgId);
+  const active = connections.find((c) => c.status === "connected") ?? null;
+
+  // DARK PATH. Either there is no connected provider, or the provider's adapter
+  // has no credentials (always, today). Push nothing; write no event link.
+  const providerConnectable =
+    active !== null && isCalendarProviderConnectable(active.provider);
+  if (!active || !providerConnectable) {
+    return {
+      ok: false,
+      status: "skipped_dark",
+      provider: active?.provider ?? null,
+      externalEventId: null,
+      message:
+        "No connected calendar with live credentials; nothing was sent. " +
+        "Connect a calendar and configure its OAuth credentials to enable push.",
+    };
+  }
+
+  // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
+  const staff = Array.isArray(rota.user) ? rota.user[0] ?? null : rota.user;
+  const payload = buildRotaEventPayload({
+    id: rota.id,
+    starts_at: rota.starts_at,
+    ends_at: rota.ends_at,
+    notes: rota.notes,
+    staffName: staff?.full_name ?? staff?.email ?? null,
+  });
+  if (!payload) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: null,
+      message: `Rota shift ${rota.id} has no usable start/end to place on a calendar.`,
+    };
+  }
+
+  // Service-role read of the (encrypted) stored tokens — the only reader of the
+  // token columns. Decrypted on use, immediately before the provider call.
+  const stored = await readConnectionTokens(orgId, active.provider);
+  if (!stored) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: null,
+      message: "The connected calendar has no stored credentials to push with.",
+    };
+  }
+  const tokens = decryptStoredTokens({
+    accessToken: stored.accessToken,
+    refreshToken: stored.refreshToken,
+  });
+
+  // Existing mapping → PATCH that event; none → INSERT a new one (idempotent).
+  const existingEventId = await findEventLink(orgId, stored.connectionId, "rota", rotaId);
+
+  const pushed = await pushEventToProvider({
+    provider: active.provider,
+    tokens,
+    payload,
+    externalEventId: existingEventId,
+  });
+  if (!pushed.ok) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: existingEventId,
+      message: `Calendar push failed: ${pushed.message}`,
+    };
+  }
+
+  // A 401 forced a silent refresh — persist the renewed (encrypted) tokens.
+  if (pushed.refreshed) {
+    await persistRefreshedTokens(orgId, active.provider, pushed.refreshed);
+  }
+
+  // Record the mapping (upsert) so the next push updates this same event.
+  await upsertEventLink({
+    orgId,
+    connectionId: stored.connectionId,
+    localKind: "rota",
+    localId: rotaId,
+    externalEventId: pushed.externalEventId,
+    etag: pushed.etag,
+  });
+  await markConnectionSynced(orgId, active.provider);
+
+  return {
+    ok: true,
+    status: "pushed",
+    provider: active.provider,
+    externalEventId: pushed.externalEventId,
+    message: `Rota shift ${rota.id} pushed to the ${active.provider} calendar.`,
+  };
+}
+
+/**
+ * Best-effort calendar push for a rota-shift save — the CALLER seam wired into
+ * createRotaEntry. Mirrors bestEffortPushJob exactly: a DARK gate first (no
+ * DB/network while the feature flag is off, ALWAYS today), then delegate to
+ * pushRotaToCalendar and SWALLOW every failure so a calendar hiccup never fails or
+ * blocks the primary shift save.
+ */
+export async function bestEffortPushRota(
+  orgId: string,
+  rotaId: string,
+): Promise<{ status: PushResult["status"] }> {
+  if (!calendarConnectFeatureEnabled()) {
+    return { status: "skipped_dark" };
+  }
+  try {
+    const result = await pushRotaToCalendar(orgId, rotaId);
+    if (!result.ok && result.status === "error") {
+      console.error("[calendar] best-effort rota push error", {
+        rotaId,
+        provider: result.provider,
+        message: result.message,
+      });
+    }
+    return { status: result.status };
+  } catch (e) {
+    console.error("[calendar] best-effort rota push threw", {
+      rotaId,
       message: e instanceof Error ? e.message : "unknown error",
     });
     return { status: "error" };
