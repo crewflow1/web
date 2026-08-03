@@ -141,6 +141,8 @@ export interface ItemPosition {
   active: boolean;
   reorderLevel: number | null;
   targetLevel: number | null;
+  /** The fixed replenishment batch (stock_items.reorder_quantity, 20261107). */
+  reorderQuantity: number | null;
   available: number;
   level: StockLevel;
   /** How many to order to reach target_level. Null when there is no target. */
@@ -155,6 +157,7 @@ export interface ItemRowInput {
   active?: boolean | null;
   reorder_level?: number | string | null;
   target_level?: number | string | null;
+  reorder_quantity?: number | string | null;
 }
 
 const numOrNull = (v: number | string | null | undefined): number | null =>
@@ -179,6 +182,7 @@ export function buildItemPositions(
       const available = round2(totals.get(item.id) ?? 0);
       const reorderLevel = numOrNull(item.reorder_level);
       const targetLevel = numOrNull(item.target_level);
+      const reorderQuantity = numOrNull(item.reorder_quantity);
       return {
         id: item.id,
         name: item.name,
@@ -187,6 +191,7 @@ export function buildItemPositions(
         active: item.active ?? true,
         reorderLevel,
         targetLevel,
+        reorderQuantity,
         available,
         level: stockLevel(available, reorderLevel),
         shortfall:

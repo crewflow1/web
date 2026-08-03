@@ -115,6 +115,7 @@ function itemColumns(d: ReturnType<typeof stockItemFormSchema.parse>) {
     supplier_reference: d.supplier_reference ?? null,
     reorder_level: d.reorder_level ?? null,
     target_level: d.target_level ?? null,
+    reorder_quantity: d.reorder_quantity ?? null,
     notes: d.notes ?? null,
   };
 }

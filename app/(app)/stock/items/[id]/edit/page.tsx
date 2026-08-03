@@ -67,6 +67,7 @@ export default async function EditStockItemPage({ params }: { params: Params }) 
           supplier_reference: text(item.supplier_reference),
           reorder_level: text(item.reorder_level),
           target_level: text(item.target_level),
+          reorder_quantity: text(item.reorder_quantity),
           notes: text(item.notes),
         }}
       />
