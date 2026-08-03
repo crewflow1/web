@@ -57,6 +57,19 @@ import {
 const REFRESH_SKEW_MS = 60_000;
 /** Overlap window (days) subtracted from last_sync_at so a boundary tx is never missed (dedupe absorbs it). */
 const SYNC_OVERLAP_DAYS = 7;
+/**
+ * How many provider_tx_ids to send per dedupe `.in()` query.
+ *
+ * supabase-js `.in()` on a `.select()` is a GET — every id is serialised into the
+ * URL query string. A first sync feeds the FULL candidate list (potentially
+ * thousands of ~50-char TrueLayer ids), which overflows the ~8KB request-line
+ * limit (→ 414/400) at only a few hundred ids and throws the whole read. At 100
+ * ids the `provider_tx_id=in.(...)` filter stays well under the limit even for
+ * long (~55-char) ids — measured against the local PostgREST/Kong stack, which
+ * already returns 414 for a 200-id batch of such ids. The dedupe read is chunked
+ * at this size and the returned id sets unioned; every chunk keeps the org_id pin.
+ */
+const DEDUPE_IN_CHUNK = 100;
 
 export type BankSyncOutcome =
   | "mapped"
@@ -369,15 +382,22 @@ export function createAdminGateway(): BankSyncGateway {
 
     async existingProviderTxIds(orgId, providerTxIds) {
       if (providerTxIds.length === 0) return new Set();
-      const { data, error } = await admin
-        .from("bank_statement_lines")
-        .select("provider_tx_id")
-        .eq("org_id", orgId)
-        .in("provider_tx_id", providerTxIds);
-      if (error) throw new Error(`bank-sync: existingProviderTxIds failed: ${error.message}`);
+      // CHUNKED: `.in()` on a `.select()` is a GET, so the ids ride in the URL
+      // query string. A first sync's full candidate list overflows the request-
+      // line limit (→ 414/400) in ONE query; split into DEDUPE_IN_CHUNK batches
+      // and union the returned id sets. Every batch keeps the org_id pin.
       const set = new Set<string>();
-      for (const r of (data as Array<{ provider_tx_id: string | null }>) ?? []) {
-        if (r.provider_tx_id) set.add(r.provider_tx_id);
+      for (let i = 0; i < providerTxIds.length; i += DEDUPE_IN_CHUNK) {
+        const batch = providerTxIds.slice(i, i + DEDUPE_IN_CHUNK);
+        const { data, error } = await admin
+          .from("bank_statement_lines")
+          .select("provider_tx_id")
+          .eq("org_id", orgId)
+          .in("provider_tx_id", batch);
+        if (error) throw new Error(`bank-sync: existingProviderTxIds failed: ${error.message}`);
+        for (const r of (data as Array<{ provider_tx_id: string | null }>) ?? []) {
+          if (r.provider_tx_id) set.add(r.provider_tx_id);
+        }
       }
       return set;
     },
