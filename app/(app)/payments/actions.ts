@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
@@ -235,6 +236,27 @@ export async function confirmBankMatch(
     console.error("[payments] match payment insert failed", payErr);
     return formError("Couldn't record the payment — try again.");
   }
+
+  // Automation OS — a confirmed bank match records a real customer payment, so
+  // it fires `payment.recorded` like the other payment paths. Fired here, at the
+  // point the payment row exists, so it's independent of the subsequent bookkeeping
+  // update below. Keyed on the unique invoice_payments row id, org-pinned to
+  // ctx.org.id, best-effort. Dark by default (the only rule on this trigger ships
+  // enabled:false).
+  await dispatchAutomation({
+    type: "payment.recorded",
+    org_id: ctx.org.id,
+    source_table: "invoice_payments",
+    source_id: payment.id,
+    payload: {
+      amount: line.amount,
+      invoice_id: targetInvoiceId,
+      source: "bank_csv",
+    },
+    actor_email: user.email ?? null,
+  }).catch((e) => {
+    console.error("[payments] automation dispatch failed", e);
+  });
 
   const { error: updErr } = await supabase
     .from("bank_statement_lines")

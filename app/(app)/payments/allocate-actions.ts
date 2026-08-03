@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { recordPaymentSchema } from "@/lib/payments/schema";
 import { computePaymentAllocation } from "@/lib/payments/allocation";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
@@ -172,6 +173,30 @@ export async function recordAllocatedPayment(
       allocations: input.allocations.length,
       allocated: position.allocated,
     },
+  });
+
+  // Automation OS — dispatch `payment.recorded` ALONGSIDE the audit write above
+  // (which only records history; it never ran the engine). This is what actually
+  // lets an org's opt-in rules fire on a real payment — e.g. the
+  // `payment_recorded_email_receipt` rule (default OFF; dark until an org enables
+  // it in Settings → Automations). Idempotent via (rule_id, correlation_id) keyed
+  // on the unique payment id, so a retried POST never double-fires; org-pinned to
+  // ctx.org.id so an action can only ever act within this tenant. Best-effort —
+  // dispatchAutomation never throws, and the .catch guards even a programming
+  // error so an automation hiccup can never fail a recorded payment.
+  await dispatchAutomation({
+    type: "payment.recorded",
+    org_id: ctx.org.id,
+    source_table: "payments",
+    source_id: paymentId,
+    payload: {
+      amount: input.amount,
+      method: input.method,
+      allocations: input.allocations.length,
+    },
+    actor_email: user.email ?? null,
+  }).catch((e) => {
+    console.error("[payment-allocation] automation dispatch failed", e);
   });
 
   revalidatePath("/payments");
