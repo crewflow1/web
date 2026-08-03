@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 /**
  * Voice Telephony (Wave 8) — the Vapi inbound-voice provider.
@@ -192,11 +192,32 @@ export function extractVapiToolCalls(rawBody: string): VapiToolInvocation[] {
 }
 
 /**
+ * Resolve the ABSOLUTE, origin-pinned URL Vapi's custom-llm calls for every
+ * generated turn. Vapi's `custom-llm` provider REQUIRES `model.url` — an
+ * OpenAI-compatible `/chat/completions` endpoint — or the receptionist is mute
+ * after its fixed firstMessage. That endpoint is our own governed door
+ * (app/api/webhooks/vapi/chat-completions), so the generated turn still routes
+ * through `invokeWithGovernor` exactly like the tool-call path.
+ *
+ * Origin is env-pinned (never a request Host header) — the same posture as the
+ * integrations' redirect URIs (lib/integrations/accounting/oauth.ts): an explicit
+ * `VAPI_CUSTOM_LLM_URL` override wins, else `NEXT_PUBLIC_APP_URL`, else the prod
+ * origin. Read at call time; never throws; always non-empty.
+ */
+export function resolveVapiCustomLlmUrl(): string {
+  const pinned = process.env.VAPI_CUSTOM_LLM_URL?.trim();
+  if (pinned) return pinned.replace(/\/+$/, "");
+  const origin = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const base = (origin && origin.length > 0 ? origin : "https://crewflow.uk").replace(/\/+$/, "");
+  return `${base}/api/webhooks/vapi/chat-completions`;
+}
+
+/**
  * Build the assistant configuration Vapi expects in reply to an assistant-request.
  * Vendor-neutral, credential-free, and safe to emit while DARK — it declares the
  * receptionist's model/voice/transcriber and opening line; no live provider call
  * is made here. The generative model itself remains governed at turn time via the
- * tool-call path and `maybeGenerateVoiceTurn`.
+ * custom-llm `model.url` endpoint (below) and `maybeGenerateVoiceTurn`.
  */
 export function buildVapiAssistantConfig(opts?: {
   firstMessage?: string;
@@ -217,12 +238,155 @@ export function buildVapiAssistantConfig(opts?: {
       model: {
         provider: "custom-llm",
         model: "crewflow-receptionist",
+        // The GOVERNED custom-llm endpoint. Without this, custom-llm has nothing to
+        // call and the receptionist is mute after firstMessage (the activation gap).
+        url: resolveVapiCustomLlmUrl(),
         messages: [{ role: "system", content: systemPrompt }],
       },
       transcriber: { provider: "deepgram", model: "nova-2", language: "en-GB" },
       voice: { provider: "vapi", voiceId: "Elliot" },
     },
   };
+}
+
+/** One OpenAI chat message as Vapi's custom-llm delivers it. */
+type OpenAiChatMessage = { role?: string; content?: unknown };
+
+/** Coerce OpenAI message content (string OR content-part array) to plain text. */
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((p) =>
+        p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string"
+          ? (p as { text: string }).text
+          : "",
+      )
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+/**
+ * Parse Vapi's OpenAI-style custom-llm `/chat/completions` POST. Vapi augments the
+ * OpenAI body (`messages[]`, `stream`) with its own `call`/`phoneNumber`/`customer`
+ * context, so this yields BOTH the conversational turn (latest user utterance +
+ * prior turns as memory) AND the routing identity (dialed number, call id). Pure;
+ * never throws — null on unparseable JSON.
+ */
+export function parseVapiChatCompletion(rawBody: string): {
+  /** The caller's latest utterance — the turn to respond to. */
+  transcript: string;
+  /** Prior turns oldest-first, reconstructed from the message history (memory). */
+  priorTurns: Array<{ transcript: string; reply: string | null }>;
+  /** Vapi call id — the per-call dedupe + persistence correlation key. */
+  callId: string | null;
+  /** Dialed number — the org attribution key (never the caller identity). */
+  to: string | null;
+  from: string | null;
+  /** Whether Vapi asked for a streamed (SSE) response. Defaults to true. */
+  stream: boolean;
+} | null {
+  type CallCtx = {
+    id?: string;
+    customer?: { number?: string };
+    phoneNumber?: { number?: string };
+  };
+  // Vapi's custom-llm merges its call context at the TOP LEVEL of the OpenAI body
+  // (and, defensively, may also nest it under `message` like its other webhooks).
+  type ChatBody = {
+    messages?: OpenAiChatMessage[];
+    stream?: boolean;
+    call?: CallCtx;
+    customer?: { number?: string };
+    phoneNumber?: { number?: string };
+    message?: { call?: CallCtx; customer?: { number?: string }; phoneNumber?: { number?: string } };
+  };
+  let body: ChatBody | null;
+  try {
+    body = JSON.parse(rawBody) as ChatBody;
+  } catch {
+    return null;
+  }
+  if (!body) return null;
+
+  const call = body.message?.call ?? body.call;
+  const callId = call?.id?.trim() || null;
+  const from = (call?.customer?.number ?? body.customer?.number ?? "").trim() || null;
+  const to = (call?.phoneNumber?.number ?? body.phoneNumber?.number ?? "").trim() || null;
+
+  // Walk the messages: pair each user line with the assistant reply that follows
+  // it into a prior turn; the FINAL unanswered user line is the current transcript.
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const priorTurns: Array<{ transcript: string; reply: string | null }> = [];
+  let pendingUser: string | null = null;
+  let transcript = "";
+  for (const m of messages) {
+    const role = (m?.role ?? "").toLowerCase();
+    const text = messageText(m?.content);
+    if (role === "user") {
+      // A new user line closes any prior unanswered user line as a reply-less turn.
+      if (pendingUser !== null) priorTurns.push({ transcript: pendingUser, reply: null });
+      pendingUser = text;
+    } else if (role === "assistant") {
+      if (pendingUser !== null) {
+        priorTurns.push({ transcript: pendingUser, reply: text || null });
+        pendingUser = null;
+      }
+    }
+    // system / tool messages carry no conversational turn — ignored.
+  }
+  if (pendingUser !== null) transcript = pendingUser;
+
+  const stream = body.stream !== false;
+  return { transcript, priorTurns, callId, to, from, stream };
+}
+
+/**
+ * Build a NON-STREAMING OpenAI-compatible `chat.completion` body carrying the
+ * governed reply text. Vapi's custom-llm consumes this directly.
+ */
+export function buildOpenAiChatCompletion(
+  content: string,
+  opts?: { model?: string },
+): Record<string, unknown> {
+  return {
+    id: `chatcmpl-${randomUUID()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: opts?.model ?? "crewflow-receptionist",
+    choices: [
+      { index: 0, message: { role: "assistant", content }, finish_reason: "stop" },
+    ],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  };
+}
+
+/**
+ * Build a STREAMING OpenAI-compatible Server-Sent-Events body: one content chunk,
+ * a terminal `stop` chunk, then `[DONE]`. A single buffered content chunk (not
+ * token-by-token) — correct SSE the custom-llm client parses, and enough to
+ * deliver a governed one/two-sentence turn.
+ */
+export function buildOpenAiChatCompletionSse(
+  content: string,
+  opts?: { model?: string },
+): string {
+  const id = `chatcmpl-${randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const model = opts?.model ?? "crewflow-receptionist";
+  const frame = (delta: Record<string, unknown>, finish: string | null): string =>
+    `data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })}\n\n`;
+  return (
+    frame({ role: "assistant", content }, null) + frame({}, "stop") + "data: [DONE]\n\n"
+  );
 }
 
 /** Wrap governed tool/turn outputs into the response shape Vapi consumes. */

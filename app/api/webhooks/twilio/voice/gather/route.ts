@@ -119,7 +119,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.error("[twilio-voice-gather] call resolve / history load failed", e);
   }
 
-  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript, history: priorTurns });
+  const spokenTurn = await maybeGenerateVoiceTurn({
+    orgId,
+    transcript,
+    // Per-call dedupe identity: the resolved call row + this turn's ordinal, so the
+    // governor's duplicate refusal is scoped to THIS call+turn (not the raw phrase).
+    callId,
+    ordinal: priorTurns.length,
+    history: priorTurns,
+  });
 
   // 8b. Persist the turn — the caller's SpeechResult + the reply — to the
   //     append-only call_events audit AND into the enquiry's raw_text, mirroring
