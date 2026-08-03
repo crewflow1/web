@@ -82,7 +82,6 @@ const PAGE_PINS: Array<[string, string[]]> = [
   ["app/(app)/assets/templates/page.tsx", ["asset_inspection_templates"]],
   // ---- commercial
   ["app/(app)/jobs/page.tsx", ["customers", "jobs"]],
-  ["app/(app)/jobs/calendar/page.tsx", ["jobs"]],
   ["app/(app)/customers/page.tsx", ["customers"]],
   ["app/(app)/invoices/page.tsx", ["invoices", "customers"]],
   ["app/(app)/invoices/new/page.tsx", ["quotes"]],
@@ -254,6 +253,9 @@ describe("list helpers — the caller passes the ACTIVE org explicitly", () => {
       "lib/reports/aggregates.ts",
       ["jobsPerWeek", "revenuePerMonth", "vatPerQuarter", "topCustomersByRevenue"],
     ],
+    // The jobs calendar's read moved into this window-scoping seam (F-1);
+    // the active org is an explicit orgId argument the page derives from ctx.org.id.
+    ["lib/schedule/calendar-data.ts", ["fetchCalendarJobs"]],
     ["server/services/customer-support-service.ts", ["listMySupportTickets"]],
     [
       "server/services/notifications-service.ts",

@@ -63,20 +63,12 @@ const CALENDAR_JOB_SELECT = `
   assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
 `;
 
-export type FetchCalendarJobsArgs = {
-  supabase: CalendarSupabaseClient;
-  orgId: string;
-  range: { from: string; to: string };
-  /** Optional status filter (""/undefined = all). */
-  statusFilter?: string;
-  /** Optional assignee filter (""/undefined = all). */
-  staffFilter?: string;
-};
-
 /**
  * Read every job the calendar grid must render for `range`, truncation-safe.
  * Returns the raw merged rows (non-recurring windowed + recurring unbounded);
  * downstream code does the recurring expansion + final in-memory window clip.
+ * The active org is an explicit `orgId: string` argument (the caller resolves it
+ * from requireOrgContext → ctx.org.id), never trusted from RLS alone.
  */
 export async function fetchCalendarJobs({
   supabase,
@@ -84,7 +76,15 @@ export async function fetchCalendarJobs({
   range,
   statusFilter,
   staffFilter,
-}: FetchCalendarJobsArgs): Promise<{ rows: CalendarDbJob[]; error: unknown }> {
+}: {
+  supabase: CalendarSupabaseClient;
+  orgId: string;
+  range: { from: string; to: string };
+  /** Optional status filter (""/undefined = all). */
+  statusFilter?: string;
+  /** Optional assignee filter (""/undefined = all). */
+  staffFilter?: string;
+}): Promise<{ rows: CalendarDbJob[]; error: unknown }> {
   // Shared org + optional filter scope. ACTIVE-org pin — RLS admits every org
   // the viewer belongs to, so the grid must pin the active org itself.
   const scoped = () => {
