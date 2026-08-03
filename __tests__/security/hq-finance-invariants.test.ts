@@ -8,10 +8,12 @@ import { resolve } from "node:path";
  * Pins:
  *   1. The page AND the aggregator gate on requireHqPage — HQ-only, never
  *      tenant auth. A non-allowlisted caller must 404 before seeing any figure.
- *   2. The board narrative is DARK: the service constructs NO model SDK and
- *      imports no AI/governor module, so the dark path cannot spend money. If a
- *      governed call is ever added it must go through invokeWithGovernor, not a
- *      raw SDK — this test fails loudly the moment a raw SDK is introduced.
+ *   2. The board narrative is GOVERNED but DARK BY DEFAULT: the aggregator
+ *      delegates to the shared HQ narrative helper (server/services/hq-narrative.ts)
+ *      under the registered `hq.finance_narrative` key. It constructs NO raw model
+ *      SDK and opens no model door itself — the door + governor live in the helper
+ *      — so with no tier bound it returns null and cannot spend money. A raw SDK
+ *      on this surface still fails this test loudly.
  *   3. Registered in the HQ nav.
  */
 
@@ -38,20 +40,22 @@ describe("Finance AI — super-admin gated (HQ-only)", () => {
   });
 });
 
-describe("Finance AI — narrative is dark, constructs no model SDK", () => {
-  it("the narrative loader returns null (dark stub)", () => {
+describe("Finance AI — narrative is GOVERNED (fail-closed), constructs no raw SDK", () => {
+  it("the narrative loader delegates to the shared governed helper", () => {
     expect(SERVICE).toMatch(/loadFinanceNarrative/);
-    // The declared return path is null — no generated prose ships today.
-    expect(SERVICE).toMatch(/return\s+null\s*;/);
+    // The governed call the earlier dark stub anticipated: it goes through the
+    // shared HQ narrative helper under its registered key, never a raw client.
+    expect(SERVICE).toMatch(/generateHqBoardNarrative\(\s*"hq\.finance_narrative"/);
+    expect(SERVICE).toMatch(/@\/server\/services\/hq-narrative/);
   });
 
-  it("the service imports no AI/governor/model module and constructs no SDK", () => {
+  it("the service constructs no raw model SDK and opens no model door directly", () => {
     // No raw provider SDKs.
     expect(SERVICE).not.toMatch(/@anthropic-ai\/sdk|from\s*"openai"|new\s+Anthropic\(|new\s+OpenAI\(/);
-    // No AI module imports at all on this dark surface — a governed call, when
-    // it lands, must be added deliberately (and this pin updated to require
-    // invokeWithGovernor rather than a raw client).
+    // The provider door + governor live in the shared helper (server/services/
+    // hq-narrative.ts), never on this aggregator surface itself.
     expect(SERVICE).not.toMatch(/from\s*"@\/lib\/ai\//);
+    expect(SERVICE).not.toMatch(/\bgetTextProvider\s*\(|\bgetVisionProvider\s*\(/);
   });
 });
 

@@ -7,6 +7,7 @@ import {
   type SupportBoardInput,
   type SupportBoardTicket,
 } from "@/lib/hq/support-ai";
+import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
 
 /**
  * CrewFlow HQ — SUPPORT AI aggregator (super-admin surface). Service-role only.
@@ -26,9 +27,11 @@ import {
 export type SupportBoardResult = {
   board: SupportBoard;
   /**
-   * The governed reply-draft / triage narrative. DARK for now (see
-   * `loadSupportNarrative`) — always `null` until a model tier is bound. The UI
-   * shows an empty state.
+   * The governed triage narrative — a short prose blurb over the deterministic
+   * support-triage figures, generated via the shared HQ narrative helper. `null`
+   * until a model tier is bound (and the vendor credential + HQ budget org are
+   * present), on any governor refusal, or on a provider failure. The UI shows an
+   * empty state.
    */
   narrative: string | null;
   generatedAt: string;
@@ -60,30 +63,28 @@ export async function loadSupportBoard(): Promise<SupportBoardResult> {
   const input: SupportBoardInput = { tickets };
 
   const board = computeSupportBoard(input, new Date());
-  const narrative = await loadSupportNarrative();
+  const narrative = await loadSupportNarrative(board);
 
   return { board, narrative, generatedAt: new Date().toISOString() };
 }
 
 /**
- * Board narrative / reply-draft — DARK STUB. Returns `null` and constructs NO
- * SDK.
+ * Board triage narrative — GOVERNED, FAIL-CLOSED. Delegates to the shared HQ
+ * narrative helper (server/services/hq-narrative.ts), which reaches a model ONLY
+ * through `invokeWithGovernor` → `getTextProvider` under the registered
+ * `hq.support_ai_narrative` feature key (task class `drafting`), billed to the HQ
+ * budget org. The model is handed the FINISHED deterministic board and may only
+ * describe it — every displayed figure still comes from `computeSupportBoard`.
  *
- * A governed triage summary or a per-ticket reply draft belongs behind
- * `invokeWithGovernor` (lib/ai/governor.ts), under registered AI feature keys
- * (e.g. a `classification` triage pass and a `drafting` reply pass) whose tier
- * the registry arms. Neither is registered today, and reusing a tenant-facing
- * key (e.g. `receptionist.reply_draft`) would misattribute HQ spend in the
- * governor ledger. Rather than mis-key a governed call, this stays dark: it
- * returns `null` and imports no model SDK, so the dark path can construct
- * nothing that could spend money.
+ * This narrates the triage board only. A per-ticket AI REPLY draft is a separate,
+ * still-unbuilt capability (it needs its own registered key and a per-ticket
+ * context assembly); it is not part of this loader.
  *
- * DEFERRED: the drafts need registered feature/task_class bindings (registry
- * entries + a bound model tier, each WIRED at an `invokeWithGovernor` call
- * site per the registry doctrine) before they can be wired. Until then the
- * board is fully honest on the deterministic triage alone, and the page shows a
- * "populates once a model tier is bound" empty state.
+ * DARK until a generative tier is bound: with no tier bound the shared provider
+ * door returns null, so this returns `null` and the page shows its
+ * "populates once a model tier is bound" empty state — now honest, because
+ * binding a tier (plus the credential + HQ budget org) is the only switch.
  */
-async function loadSupportNarrative(): Promise<string | null> {
-  return null;
+async function loadSupportNarrative(board: SupportBoard): Promise<string | null> {
+  return generateHqBoardNarrative("hq.support_ai_narrative", board);
 }

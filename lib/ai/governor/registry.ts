@@ -482,6 +482,99 @@ export const AI_FEATURES = {
     degradesTo:
       "null — the caller falls back to the deterministic template decomposition (decomposeDirective), which is the substrate and is always available. No saga is ever left unplanned for want of a model.",
   },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The HQ BOARD NARRATIVES. Ten super-admin boardroom surfaces
+  // (app/admin/{finance,cto,operations,marketing,product,customer-success,
+  // qa-ai,executive-assistant,sales-orchestrator,support}-ai) each compute a
+  // deterministic board in a pure layer (lib/hq/*) and want a short prose blurb
+  // ABOVE the deterministic cards. The blurb is NARRATE-ONLY: the model is handed
+  // the FINISHED board and may only describe it — every figure the operator sees
+  // still comes from the deterministic compute, so a hallucination can never
+  // change a displayed number. All ten reach a model through the ONE shared
+  // governed door (server/services/hq-narrative.ts → invokeWithGovernor →
+  // getTextProvider), billed to the HQ budget org (hqBudgetOrgId).
+  //
+  // `drafting`, exactly like the tenant `insights.narrative`: it is prose a human
+  // reads, and the model is forbidden from reasoning past the supplied board, so
+  // there is no `complex` multi-step work to pay the high tier for. Each board
+  // gets its OWN key — never the tenant `insights.narrative` key — so the HQ
+  // per-feature cost rollup attributes HQ's own spend correctly and cannot be
+  // confused with a tenant's. Every key is WIRED at exactly one call site (the
+  // shared helper, invoked from each board's `load*Narrative`); DARK until a
+  // generative tier is bound, at which point the loader begins returning prose.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  "hq.finance_narrative": {
+    key: "hq.finance_narrative",
+    label: "HQ finance board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/finance board renders its deterministic figures only, with no prose blurb. A super-admin sees the same numbers, just no paragraph above them.",
+  },
+  "hq.cto_narrative": {
+    key: "hq.cto_narrative",
+    label: "HQ CTO board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/cto-ai engineering-health board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.operations_narrative": {
+    key: "hq.operations_narrative",
+    label: "HQ operations board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/operations-ai board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.marketing_narrative": {
+    key: "hq.marketing_narrative",
+    label: "HQ marketing board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/marketing-ai board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.product_narrative": {
+    key: "hq.product_narrative",
+    label: "HQ product board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/product-ai board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.customer_success_narrative": {
+    key: "hq.customer_success_narrative",
+    label: "HQ customer-success board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/customer-success-ai board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.qa_narrative": {
+    key: "hq.qa_narrative",
+    label: "HQ QA board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/qa-ai AI-quality board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.executive_assistant_narrative": {
+    key: "hq.executive_assistant_narrative",
+    label: "HQ executive-assistant board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/executive-assistant-ai digest renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.sales_orchestrator_narrative": {
+    key: "hq.sales_orchestrator_narrative",
+    label: "HQ sales-orchestrator board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/sales-orchestrator-ai pipeline board renders its deterministic cards only, with no prose blurb.",
+  },
+  "hq.support_ai_narrative": {
+    key: "hq.support_ai_narrative",
+    label: "HQ support board narrative",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the /admin/support-ai triage board renders its deterministic cards only, with no prose blurb.",
+  },
 } as const satisfies Record<string, AiFeatureDefinition>;
 
 export type AiFeature = keyof typeof AI_FEATURES;

@@ -7,6 +7,7 @@ import {
   type FinanceBoard,
   type FinanceInput,
 } from "@/lib/hq/finance";
+import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
 
 /**
  * CrewFlow HQ — FINANCE AI aggregator (super-admin surface). Service-role only.
@@ -31,8 +32,10 @@ import {
 export type FinanceBoardResult = {
   board: FinanceBoard;
   /**
-   * The governed board narrative. DARK for now (see `loadFinanceNarrative`) —
-   * always `null` until a model tier is bound. The UI shows an empty state.
+   * The governed board narrative — a short prose blurb over the deterministic
+   * figures, generated via the shared HQ narrative helper. `null` until a model
+   * tier is bound (and the vendor credential + HQ budget org are present), on any
+   * governor refusal, or on a provider failure. The UI shows an empty state.
    */
   narrative: string | null;
   generatedAt: string;
@@ -71,27 +74,24 @@ export async function loadFinanceBoard(): Promise<FinanceBoardResult> {
   };
 
   const board = computeFinanceBoard(input, new Date());
-  const narrative = await loadFinanceNarrative();
+  const narrative = await loadFinanceNarrative(board);
 
   return { board, narrative, generatedAt: new Date().toISOString() };
 }
 
 /**
- * Board narrative — DARK STUB. Returns `null` and constructs NO SDK.
+ * Board narrative — GOVERNED, FAIL-CLOSED. Delegates to the shared HQ narrative
+ * helper (server/services/hq-narrative.ts), which reaches a model ONLY through
+ * `invokeWithGovernor` → `getTextProvider` under the registered
+ * `hq.finance_narrative` feature key (task class `drafting`), billed to the HQ
+ * budget org. The model is handed the FINISHED deterministic board and may only
+ * describe it — every displayed figure still comes from `computeFinanceBoard`.
  *
- * A governed prose summary of the board belongs behind `invokeWithGovernor`
- * (lib/ai/governor.ts), under a registered AI feature whose tier the registry
- * arms. There is no registered feature/task_class for an HQ finance narrative
- * today, and reusing a tenant-facing key (e.g. `insights.narrative`) would
- * misattribute HQ spend in the governor ledger. Rather than mis-key a governed
- * call, this stays dark: it returns `null` and imports no model SDK, so the
- * dark path can construct nothing that could spend money.
- *
- * DEFERRED: the narrative needs a governed feature/task_class binding (a
- * registry entry + a bound model tier) before it can be wired. Until then the
- * board is fully honest on the deterministic figures alone, and the page shows
- * a "populates once a model tier is bound" empty state.
+ * DARK until a generative tier is bound: with no tier bound the shared provider
+ * door returns null, so this returns `null` and the page shows its
+ * "populates once a model tier is bound" empty state — which is now honest,
+ * because binding a tier (plus the credential + HQ budget org) is the only switch.
  */
-async function loadFinanceNarrative(): Promise<string | null> {
-  return null;
+async function loadFinanceNarrative(board: FinanceBoard): Promise<string | null> {
+  return generateHqBoardNarrative("hq.finance_narrative", board);
 }
