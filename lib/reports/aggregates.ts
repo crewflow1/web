@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Reports module — pure SQL aggregates for the /reports page.
@@ -13,9 +14,15 @@ import { readFailure } from "@/lib/supabase/read-failure";
  * with the other company's customer names listed by revenue. Same defect class
  * as #456/#459/#461/#463/#464; the caller passes `ctx.org.id`.
  *
- * Aggregation is done in TypeScript over fetched rows; with <5000 rows per
- * entity per org (the MVP target volume) this comfortably outperforms multiple
- * round-trips and avoids needing dedicated RPC views.
+ * Aggregation is done in TypeScript over fetched rows. Every read pages through
+ * `fetchAllRows` (chunks STRICTLY below the 1000-row PostgREST cap, with a
+ * unique `id` tiebreak on the ordering so no page boundary can drop or repeat a
+ * row). A bare `.select()` here is NOT safe at any volume: the moment an org
+ * crosses ~1000 matching rows PostgREST silently returns only the first page,
+ * so revenue/VAT/job/customer figures would under-report with no error — the
+ * F-1 silent-truncation class. For the much-later era where a single org carries
+ * tens of thousands of rows per entity these should move to DB-side SQL
+ * aggregates / RPC views, but that is deliberate, separate work.
  */
 
 export type JobsPerWeek = {
@@ -72,11 +79,19 @@ export async function jobsPerWeek(orgId: string, weeks = 8): Promise<JobsPerWeek
   const supabase = await createClient();
   const since = new Date(Date.now() - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("status, scheduled_date")
-    .eq("org_id", orgId)
-    .gte("scheduled_date", since);
+  const { data, error } = await fetchAllRows<{
+    status: string | null;
+    scheduled_date: string | null;
+  }>((from, to) =>
+    supabase
+      .from("jobs")
+      .select("id, status, scheduled_date")
+      .eq("org_id", orgId)
+      .gte("scheduled_date", since)
+      .order("scheduled_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   // Loud fail: pre-filled buckets make an errored read indistinguishable from
   // a genuinely quiet period — an all-zero chart must mean zero, not "failed".
   if (error) throw readFailure("reports: jobs per week", error);
@@ -112,12 +127,21 @@ export async function revenuePerMonth(
   since.setUTCDate(1);
   since.setUTCHours(0, 0, 0, 0);
 
-  const { data, error } = await supabase
-    .from("invoices")
-    .select("paid_at, total, status")
-    .eq("org_id", orgId)
-    .eq("status", "paid")
-    .gte("paid_at", since.toISOString());
+  const { data, error } = await fetchAllRows<{
+    paid_at: string | null;
+    total: number | null;
+    status: string | null;
+  }>((from, to) =>
+    supabase
+      .from("invoices")
+      .select("id, paid_at, total, status")
+      .eq("org_id", orgId)
+      .eq("status", "paid")
+      .gte("paid_at", since.toISOString())
+      .order("paid_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("reports: revenue per month", error);
 
   const buckets = new Map<string, RevenuePerMonth>();
@@ -150,17 +174,31 @@ export async function vatPerQuarter(
   // Output VAT: paid invoices' VAT collected. Input VAT: VAT paid out
   // recorded against finance entries.
   const [invRes, finRes] = await Promise.all([
-    supabase
-      .from("invoices")
-      .select("paid_at, vat_total, status")
-      .eq("org_id", orgId)
-      .eq("status", "paid")
-      .gte("paid_at", since.toISOString()),
-    supabase
-      .from("finances")
-      .select("created_at, vat_total")
-      .eq("org_id", orgId)
-      .gte("created_at", since.toISOString()),
+    fetchAllRows<{
+      paid_at: string | null;
+      vat_total: number | null;
+      status: string | null;
+    }>((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, paid_at, vat_total, status")
+        .eq("org_id", orgId)
+        .eq("status", "paid")
+        .gte("paid_at", since.toISOString())
+        .order("paid_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<{ created_at: string; vat_total: number | null }>((from, to) =>
+      supabase
+        .from("finances")
+        .select("id, created_at, vat_total")
+        .eq("org_id", orgId)
+        .gte("created_at", since.toISOString())
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   const buckets = new Map<string, VatPerQuarter>();
@@ -202,18 +240,26 @@ export async function topCustomersByRevenue(
   limit = 10,
 ): Promise<TopCustomer[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("invoices")
-    .select(
-      `
-        total, status,
+  const { data, error } = await fetchAllRows<{
+    total: number | null;
+    status: string | null;
+    quote: { customer: { id: string; name: string | null } | null } | null;
+  }>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(
+        `
+        id, total, status,
         quote:quotes (
           customer:customers ( id, name )
         )
       `,
-    )
-    .eq("org_id", orgId)
-    .eq("status", "paid");
+      )
+      .eq("org_id", orgId)
+      .eq("status", "paid")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("reports: top customers", error);
 
   const byCustomer = new Map<string, TopCustomer>();
