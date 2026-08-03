@@ -156,6 +156,20 @@ function capRows<T>(
  *
  * `generatedAt` is injected so the manifest is deterministic and testable — the
  * assembler never reads a clock.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ACTIVATION-HARDENING (documented, NOT built — required before large-tenant use)
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   (a) MEMORY CEILING. This assembles the whole archive in memory: up to
+ *       MAX_ROWS_PER_TABLE (50k) rows across every exportable table (~136), then
+ *       the route zips it in-memory too. That is bounded but large. Before
+ *       enabling for big tenants, STREAM/PAGINATE the reads and stream the zip to
+ *       the response rather than buffering the full archive.
+ *   (b) NON-DETERMINISTIC TRUNCATION. The `.limit(cap+1)` read has NO `.order()`,
+ *       so WHICH rows are dropped when a table exceeds the cap is
+ *       Postgres-defined, not deterministic. It is already flagged loudly
+ *       (`truncated` + manifest), but a large-tenant activation should add a
+ *       stable `.order()` (e.g. by primary key) so truncation is reproducible.
  */
 export async function buildOrgExport(params: {
   orgId: string;

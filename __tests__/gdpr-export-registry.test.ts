@@ -5,6 +5,7 @@ import {
   ORG_EXPORT_TABLES,
   isSensitiveColumn,
   redactRow,
+  REDACTED_PLACEHOLDER,
   SENSITIVE_COLUMN_RX,
 } from "@/lib/gdpr/export-tables";
 
@@ -127,5 +128,93 @@ describe("column redaction", () => {
     expect("public_token" in out).toBe(false);
     // Purity: original untouched.
     expect(row.portal_token).toBe("SECRET-abc");
+  });
+
+  // FIX 1 — third-party government tax identifiers (subcontractor UTR / verify
+  // ref) must be redacted, but the ORG'S OWN UTR (`contractor_utr`) must NOT be.
+  it("redacts a subcontractor's own UTR + verification_reference (exact-name)", () => {
+    for (const c of ["utr", "verification_reference"]) {
+      expect(isSensitiveColumn(c), c).toBe(true);
+      expect(SENSITIVE_COLUMN_RX.test(c), c).toBe(true);
+    }
+    // cis_subcontractors row shape: raw utr + verification_reference dropped.
+    const sub = redactRow({
+      id: "s1",
+      org_id: "o1",
+      legal_name: "Bob the Builder Ltd",
+      utr: "1234567890",
+      verification_reference: "V0001234567",
+      cis_status: "verified",
+    });
+    expect("utr" in sub).toBe(false);
+    expect("verification_reference" in sub).toBe(false);
+    expect(sub).toEqual({
+      id: "s1",
+      org_id: "o1",
+      legal_name: "Bob the Builder Ltd",
+      cis_status: "verified",
+    });
+  });
+
+  it("does NOT redact the ORG'S OWN contractor_utr, nor already-masked UTRs", () => {
+    // contractor_utr (cis_contractor_profiles) is the org's own, legitimately
+    // exportable identifier; the *_utr_masked columns are already masked.
+    for (const c of ["contractor_utr", "subcontractor_utr_masked", "utr_masked"]) {
+      expect(isSensitiveColumn(c), c).toBe(false);
+    }
+    const profile = redactRow({
+      id: "p1",
+      org_id: "o1",
+      contractor_utr: "9876543210",
+      subcontractor_utr_masked: "*****3210",
+    });
+    expect(profile).toEqual({
+      id: "p1",
+      org_id: "o1",
+      contractor_utr: "9876543210",
+      subcontractor_utr_masked: "*****3210",
+    });
+  });
+
+  // FIX 2 — jsonb-nested secrets must not bypass column redaction.
+  it("recursively redacts a nested secret-named key, keeping siblings", () => {
+    const row = {
+      id: "e1",
+      org_id: "o1",
+      // e.g. hmrc_submissions.payload / call_events.payload / *.metadata
+      payload: {
+        method: "POST",
+        access_token: "SHOULD-NOT-LEAK",
+        headers: { authorization_secret: "ALSO-SECRET", trace_id: "keep-me" },
+        items: [
+          { sku: "A1", refresh_token: "NESTED-IN-ARRAY" },
+          { sku: "B2", qty: 3 },
+        ],
+      },
+    };
+    const out = redactRow(row) as typeof row;
+    const [item0, item1] = out.payload.items;
+    // Structure + non-secret siblings preserved.
+    expect(out.payload.method).toBe("POST");
+    expect(out.payload.headers.trace_id).toBe("keep-me");
+    expect(item1).toEqual({ sku: "B2", qty: 3 });
+    expect(item0?.sku).toBe("A1");
+    // Every nested secret redacted in place (value replaced, structure kept).
+    expect(out.payload.access_token).toBe(REDACTED_PLACEHOLDER);
+    expect(out.payload.headers.authorization_secret).toBe(REDACTED_PLACEHOLDER);
+    expect(item0?.refresh_token).toBe(REDACTED_PLACEHOLDER);
+    // Purity: original untouched.
+    expect(row.payload.access_token).toBe("SHOULD-NOT-LEAK");
+  });
+
+  it("recursive redaction is bounded and cycle-safe", () => {
+    type Cyclic = { org_id: string; meta: Record<string, unknown> };
+    const row: Cyclic = { org_id: "o1", meta: { a: 1 } };
+    // Introduce a reference cycle in nested jsonb-like data.
+    (row.meta as Record<string, unknown>).self = row.meta;
+    expect(() => redactRow(row)).not.toThrow();
+    const out = redactRow(row) as Cyclic;
+    expect(out.org_id).toBe("o1");
+    expect((out.meta as Record<string, unknown>).a).toBe(1);
   });
 });

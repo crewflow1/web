@@ -94,24 +94,99 @@ export const ORG_EXPORT_TABLES: readonly string[] = Object.freeze(
  *
  * The pattern is name-based and intentionally broad on the credential families;
  * it does NOT strip benign business columns (a `notes`, `amount`, `status`).
+ *
+ * ── THIRD-PARTY GOVERNMENT TAX IDENTIFIERS (exact-name branch). ───────────────
+ * A subcontractor's own UTR (`cis_subcontractors.utr`) and HMRC verification
+ * reference (`verification_reference`, also on `cis_statements` /
+ * `cis_payment_snapshots`) are THIRD-PARTY government tax identifiers — the same
+ * class the module excludes wholesale via `staff_secrets`, and the CIS domain
+ * masks everywhere else (`subcontractor_utr_masked`). They must never leave in
+ * the clear. They are matched by an EXACT-NAME branch (`^utr$`,
+ * `^verification_reference$`), deliberately NOT the underscore-boundary branch,
+ * so that:
+ *   • `contractor_utr` — the ORG'S OWN UTR on `cis_contractor_profiles`, which
+ *     IS legitimately part of the org's exportable data — is preserved, and
+ *   • `subcontractor_utr_masked` (already masked, hence harmless) is preserved.
+ * An underscore-boundary `utr` token would over-match both; the anchors don't.
  */
 export const SENSITIVE_COLUMN_RX =
-  /(^|_)(token|secret|password|credential|salt|cipher|encrypted|signing_key|private_key|refresh|access_token|key_hash|api_key|apikey|ni_number|national_insurance|provider_auth_secret|client_secret|bearer)($|_)/i;
+  /(^|_)(token|secret|password|credential|salt|cipher|encrypted|signing_key|private_key|refresh|access_token|key_hash|api_key|apikey|ni_number|national_insurance|provider_auth_secret|client_secret|bearer)($|_)|^(utr|verification_reference)$/i;
 
 /** True when a column name looks like a secret / credential / government id. */
 export function isSensitiveColumn(name: string): boolean {
   return SENSITIVE_COLUMN_RX.test(name);
 }
 
+/** Placeholder written in place of a redacted NESTED value (see `redactRow`). */
+export const REDACTED_PLACEHOLDER = "[redacted]";
+
+/**
+ * Hard recursion bound. Exported jsonb (payloads, transcripts, metadata) is
+ * shallow in practice; this caps pathological / hostile nesting so the redactor
+ * is always O(nodes)-bounded and can never blow the stack.
+ */
+const MAX_REDACT_DEPTH = 64;
+
+/**
+ * Recursively redact secret-named keys inside a nested jsonb value. Objects and
+ * arrays are walked; a nested key whose NAME matches `SENSITIVE_COLUMN_RX` has
+ * its VALUE replaced with `REDACTED_PLACEHOLDER` while the surrounding structure
+ * (and every non-matching sibling) is preserved — so legitimate jsonb business
+ * data survives and only the secret leaves. Pure: returns new containers, never
+ * mutates the input.
+ *
+ * Bounded + cycle-safe: `depth` is hard-capped and `seen` tracks the CURRENT
+ * path (added on enter, removed on exit) so a genuine reference cycle is broken
+ * without false-positiving on benign shared/diamond references.
+ */
+function redactNested(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_REDACT_DEPTH) return value;
+  const container = value as object;
+  if (seen.has(container)) return REDACTED_PLACEHOLDER; // cycle broken
+  seen.add(container);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => redactNested(item, depth + 1, seen));
+    }
+    const obj = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(obj)) {
+      out[key] = isSensitiveColumn(key)
+        ? REDACTED_PLACEHOLDER
+        : redactNested(obj[key], depth + 1, seen);
+    }
+    return out;
+  } finally {
+    seen.delete(container);
+  }
+}
+
 /**
  * Return a copy of `row` with every sensitive-named column removed. Pure — never
  * mutates its argument. Non-object inputs pass through unchanged.
+ *
+ * Defence in depth is TWO layers deep:
+ *   1. TOP-LEVEL — a sensitive-named column is dropped entirely (the key does
+ *      not appear in the output at all).
+ *   2. NESTED — every surviving value is walked recursively (jsonb payloads,
+ *      transcripts, metadata objects/arrays), and any nested key whose name
+ *      matches the sensitive pattern has its VALUE redacted in place while the
+ *      structure and all non-matching siblings are preserved. No confirmed live
+ *      secret sits in exported jsonb today (token stores are table-excluded), so
+ *      this is a latent backstop — but the module claims defence in depth, and
+ *      this makes that claim true for a future jsonb column too.
  */
 export function redactRow<T extends Record<string, unknown>>(row: T): Partial<T> {
   const out: Partial<T> = {};
+  const seen = new WeakSet<object>();
   for (const key of Object.keys(row)) {
-    if (isSensitiveColumn(key)) continue;
-    out[key as keyof T] = row[key as keyof T];
+    if (isSensitiveColumn(key)) continue; // top-level: drop the key entirely
+    out[key as keyof T] = redactNested(row[key as keyof T], 1, seen) as T[keyof T];
   }
   return out;
 }

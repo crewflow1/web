@@ -39,6 +39,13 @@ import { buildOrgExport, recordGdprExport } from "@/server/services/gdpr-export"
  *   5. PRIVATE — `Cache-Control: private, no-store`; a per-org composite.
  *
  * JSZip renders on Node.
+ *
+ * ── ACTIVATION-HARDENING (documented, NOT built). ────────────────────────────
+ * This buffers the FULL export in memory (buildOrgExport assembles up to 50k
+ * rows × ~136 tables) and then builds the whole zip in memory before responding.
+ * Bounded but heavy. Before enabling for large tenants, STREAM the zip to the
+ * response and paginate the underlying reads (see server/services/gdpr-export.ts
+ * header (a)/(b): memory ceiling + non-deterministic, unordered truncation).
  */
 export const runtime = "nodejs";
 
