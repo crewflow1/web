@@ -4,9 +4,13 @@
 
 This is the canonical residual after the Roadmap Completion Programme (Waves 1–12). The rule of the programme: **build every engineering task that can be completed without an external credential, a CEO/product decision, real customer data, or legal approval** — and build every *gated* feature's full substrate DARK so activation is a configuration change, not an engineering project.
 
-## ✅ Category 1 — ENGINEERING (buildable now): **EMPTY**
+## ⚠️ SUPERSEDED by the C26 zero-trust audit (2026-08-03)
 
-There is no remaining feature that can be built to production without one of the external inputs below. The census-identified buildable-now queue was shipped in full across Waves 6–12 (24 trains, migrations `20261096`–`20261108`), each adversarial-gated and production-verified. Highlights: full OAuth substrates (accounting, calendar, HMRC, banking, telematics) built dark; token-encryption seam; voice-telephony routing substrate; automation engine completion; the HQ AI-workforce (13 boarded) + decision centre + approval console + workflow-saga + apply-on-approval + cadence-clock; weather consumers; offline vertical-fill + field forms; van stock; stock reorder; CIS export; EOT notice; GDPR export; governor fail-closed.
+**The "Category 1 = EMPTY" claim below is FALSE** — see `docs/roadmap/C26-ZERO-TRUST-AUDIT.md`. The audit found real engineering remaining, principally: the 5 dark OAuth integrations are NOT config-flip-ready (no token-refresh anywhere; accounting/calendar push are stubs; banking/telematics sync uncalled; connect dead-ends), a shipped `/stock` mobile-overflow, an HQ CEO honesty crack, an unwired automation trigger, 2 phantom webhook events, an orphaned VOICE_NOTES flag, and a corporation-tax under-calculation. Categories 2–4 below remain broadly valid for the genuinely-complete surfaces, but the integration rows must be read as 🔴 (engineering), not 🟡 (credential). Treat the audit doc as authoritative.
+
+## ~~Category 1 — ENGINEERING (buildable now): EMPTY~~ (RETRACTED — see above)
+
+~~There is no remaining feature that can be built to production without one of the external inputs below.~~ The census-identified buildable-now queue was shipped in full across Waves 6–12 (24 trains, migrations `20261096`–`20261108`), each adversarial-gated and production-verified. Highlights: full OAuth substrates (accounting, calendar, HMRC, banking, telematics) built dark; token-encryption seam; voice-telephony routing substrate; automation engine completion; the HQ AI-workforce (13 boarded) + decision centre + approval console + workflow-saga + apply-on-approval + cadence-clock; weather consumers; offline vertical-fill + field forms; van stock; stock reorder; CIS export; EOT notice; GDPR export; governor fail-closed.
 
 **The genuine multi-session real builds below are NOT config-gated — they are net-new product surface** and were deliberately not faked. They are the only items that would grow Category 1 again, and each needs a CEO strategy call first (noted in Cat 3):
 - **Native mobile apps** (iOS/Android) — current strategy is PWA; needs a PWA-wrapper-vs-native decision, then a real multi-session build.
