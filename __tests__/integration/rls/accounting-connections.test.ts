@@ -16,6 +16,10 @@ import {
  *   3. The connected-requires-handle CHECK: status='connected' with no account
  *      handle is refused; with a handle it is accepted.
  *   4. Disconnect (admin update back to 'disconnected', tokens cleared) works.
+ *   5. Push-once ledger reset (c29): the admin-DELETE policy on
+ *      accounting_pushed_entities lets an admin clear the (org, provider)
+ *      high-water-mark on disconnect / rebind; a member cannot; it is
+ *      provider- and org-scoped. This policy was previously DEAD/unwired.
  */
 
 type Res<T> = { data: T | null; error: { message: string } | null };
@@ -290,5 +294,76 @@ describeIntegration("accounting connections · RLS + constraints", () => {
     expect(res.error, res.error?.message).toBeNull();
     expect(String(res.data?.access_token)).toBe("tok-secret");
     expect(String(res.data?.refresh_token)).toBe("ref-secret");
+  });
+
+  // ── 6. PUSH-ONCE LEDGER RESET — the admin-DELETE policy (c29) ────────────────
+  // Disconnect / rebind must clear the (org, provider) high-water-mark so a fresh
+  // account re-pushes all history; without it the operator sees "already up to
+  // date" while the new company's books receive nothing. This exercises the
+  // admin-DELETE RLS policy on accounting_pushed_entities (20261110) — which was
+  // created FOR this reset but never wired, so it sat DEAD until now.
+
+  it("seeds a push-once ledger for (orgA, xero) and (orgA, quickbooks)", async () => {
+    const ins = await db(serviceClient())
+      .from("accounting_pushed_entities")
+      .insert([
+        { org_id: orgA, provider: "xero", entity_type: "invoice", entity_id: "inv-A" },
+        { org_id: orgA, provider: "xero", entity_type: "invoice", entity_id: "inv-B" },
+        { org_id: orgA, provider: "quickbooks", entity_type: "invoice", entity_id: "inv-Q" },
+      ])
+      .select("id");
+    expect(ins.error, ins.error?.message).toBeNull();
+    expect((ins.data ?? []).length).toBe(3);
+  });
+
+  it("a plain MEMBER may READ the ledger but may NOT delete it", async () => {
+    const asMember = db(userClient(memberToken));
+    const read = await asMember
+      .from("accounting_pushed_entities")
+      .select("entity_id")
+      .eq("org_id", orgA)
+      .eq("provider", "xero");
+    expect(read.error, read.error?.message).toBeNull();
+    expect((read.data ?? []).length).toBe(2);
+
+    // RLS refuses the delete: an error, or zero rows affected — either way the
+    // rows must survive (verified with ground-truth service_role below).
+    await asMember
+      .from("accounting_pushed_entities")
+      .delete()
+      .eq("org_id", orgA)
+      .eq("provider", "xero");
+    const survive = await db(serviceClient())
+      .from("accounting_pushed_entities")
+      .select("id")
+      .eq("org_id", orgA)
+      .eq("provider", "xero");
+    expect((survive.data ?? []).length).toBe(2);
+  });
+
+  it("an ADMIN can DELETE the (org, provider) high-water-mark; the OTHER provider survives", async () => {
+    const del = await db(userClient(ownerToken))
+      .from("accounting_pushed_entities")
+      .delete()
+      .eq("org_id", orgA)
+      .eq("provider", "xero");
+    expect(del.error, del.error?.message).toBeNull();
+
+    // The xero high-water-mark is gone → readPushedEntityIds returns empty → the
+    // next export includes every historical row again.
+    const xero = await db(serviceClient())
+      .from("accounting_pushed_entities")
+      .select("id")
+      .eq("org_id", orgA)
+      .eq("provider", "xero");
+    expect((xero.data ?? []).length).toBe(0);
+
+    // The reset is provider-scoped: quickbooks' ledger is untouched.
+    const qb = await db(serviceClient())
+      .from("accounting_pushed_entities")
+      .select("id")
+      .eq("org_id", orgA)
+      .eq("provider", "quickbooks");
+    expect((qb.data ?? []).length).toBe(1);
   });
 });

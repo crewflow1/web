@@ -198,6 +198,57 @@ export async function disconnectAccountingProvider(
     console.error("[accounting] disconnect failed", { provider, message: error.message });
     return { ok: false, error: error.message };
   }
+  // Reset the PUSH-ONCE high-water-mark for this provider. The ledger records
+  // what the now-disconnected account already accepted; leaving it in place means
+  // a RECONNECT (necessarily a fresh, possibly DIFFERENT external tenant) would
+  // have every id excluded from its export — the operator sees "already up to
+  // date" while the new company's books never receive any history. Loud on
+  // failure: a stale ledger is the exact silent-under-export hazard, so we surface
+  // it rather than report a clean disconnect. Idempotent (a re-run deletes zero).
+  const reset = await resetPushedLedger(supabase, orgId, provider);
+  if (!reset.ok) return { ok: false, error: reset.error };
+  return { ok: true };
+}
+
+/**
+ * Reset the PUSH-ONCE ledger (accounting_pushed_entities) for one (org,
+ * provider): delete every recorded high-water-mark row so the NEXT sync re-pushes
+ * the full history. Called on an explicit DISCONNECT and on a REBIND to a
+ * DIFFERENT external tenant (a reconnect that skipped an explicit disconnect) —
+ * both leave the old account's high-water-mark stale against a fresh, empty
+ * account.
+ *
+ * Runs under the CALLER's client (JWT) — the admin-DELETE RLS policy on
+ * accounting_pushed_entities (20261110) is the real authorisation, so no
+ * service-role escalation is needed (the caller is already the admin who drives
+ * disconnect / connect). Org-pinned AND provider-pinned. Idempotent.
+ */
+export async function resetPushedLedger(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  provider: AccountingProvider,
+): Promise<{ ok: boolean; error?: string }> {
+  const loose = supabase as unknown as {
+    from: (t: string) => {
+      delete: () => {
+        eq: (col: string, val: string) => {
+          eq: (
+            col: string,
+            val: string,
+          ) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("accounting_pushed_entities")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("provider", provider);
+  if (error) {
+    console.error("[accounting] ledger reset failed", { provider, message: error.message });
+    return { ok: false, error: error.message };
+  }
   return { ok: true };
 }
 
