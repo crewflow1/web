@@ -115,12 +115,43 @@ const PROVIDER_OAUTH: Record<
   google: {
     authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
-    scope: "https://www.googleapis.com/auth/calendar.events",
+    // calendar.events to push events; openid+email so the userinfo follow-up can
+    // resolve the connected account (the connection handle). NO mail scope.
+    scope: "openid email https://www.googleapis.com/auth/calendar.events",
   },
   microsoft: {
     authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    scope: "Calendars.ReadWrite offline_access",
+    // Calendars.ReadWrite to push events; offline_access for a refresh token;
+    // User.Read so the /me follow-up can resolve the account handle. NO mail scope.
+    scope: "Calendars.ReadWrite offline_access User.Read",
+  },
+};
+
+/**
+ * The identity endpoint whose response carries the connected account handle, and
+ * the field to read it from. Google returns `email` from its userinfo endpoint
+ * (available with the `openid email` scopes above); Microsoft Graph `/me` returns
+ * `userPrincipalName` / `mail`. Only ever contacted AFTER the connectable guard.
+ */
+const PROVIDER_IDENTITY: Record<
+  CalendarProvider,
+  { url: string; pick: (json: Record<string, unknown>) => string | null }
+> = {
+  google: {
+    url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    pick: (j) =>
+      (typeof j.email === "string" && j.email) ||
+      (typeof j.sub === "string" && j.sub) ||
+      null,
+  },
+  microsoft: {
+    url: "https://graph.microsoft.com/v1.0/me",
+    pick: (j) =>
+      (typeof j.userPrincipalName === "string" && j.userPrincipalName) ||
+      (typeof j.mail === "string" && j.mail) ||
+      (typeof j.id === "string" && j.id) ||
+      null,
   },
 };
 
@@ -278,15 +309,169 @@ export async function exchangeCodeForTokens(params: {
       ? new Date(Date.now() + json.expires_in * 1000).toISOString()
       : null;
 
+  // Resolve the connected account handle with a follow-up userinfo (Google) / /me
+  // (Microsoft Graph) call. The DB CHECK forbids a `connected` row with no handle,
+  // so this is what lets connect COMPLETE (no `no_account` dead-end). A failure
+  // here yields a null handle; the callback then refuses rather than writing an
+  // invalid row.
+  const handleRes = await resolveAccountHandle({
+    provider,
+    accessToken: json.access_token,
+  });
+
   return {
     ok: true,
     tokens: {
       accessToken: json.access_token,
       refreshToken: json.refresh_token ?? null,
       expiresAt,
-      // The account handle is resolved via a follow-up userinfo (Google) / /me
-      // (Microsoft Graph) call, wired at activation. Null from the exchange alone.
-      externalAccountId: null,
+      externalAccountId: handleRes.ok ? handleRes.handle : null,
+    },
+  };
+}
+
+export type AccountHandleResult =
+  | { ok: true; handle: string }
+  | { ok: false; reason: "not_configured" | "error"; message: string };
+
+/**
+ * Resolve the connected account handle from a provider's identity endpoint —
+ * Google userinfo (`email`) or Microsoft Graph `/me` (`userPrincipalName`). This
+ * is the follow-up call after a code exchange that turns a bag of tokens into a
+ * named account, so the connection can be recorded as `connected`.
+ *
+ * REFUSES (no `fetch`) when the provider is not connectable — the dark path is
+ * structural: the network call below is unreachable without client credentials.
+ */
+export async function resolveAccountHandle(params: {
+  provider: CalendarProvider;
+  accessToken: string;
+}): Promise<AccountHandleResult> {
+  const { provider, accessToken } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
+  if (!isCalendarProviderConnectable(provider)) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} calendar is not configured; cannot resolve an account handle.`,
+    };
+  }
+
+  const identity = PROVIDER_IDENTITY[provider];
+  let res: Response;
+  try {
+    res = await fetch(identity.url, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `account handle lookup failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  if (!res.ok) {
+    return { ok: false, reason: "error", message: `account handle lookup returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as Record<string, unknown>;
+  const handle = identity.pick(json);
+  if (!handle) {
+    return { ok: false, reason: "error", message: "identity response carried no account handle" };
+  }
+  return { ok: true, handle };
+}
+
+export type RefreshResult =
+  | {
+      ok: true;
+      tokens: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
+    }
+  | { ok: false; reason: "not_configured" | "error"; message: string };
+
+/**
+ * Refresh an access token with a stored refresh token
+ * (`grant_type=refresh_token`) against the provider's token endpoint. The push
+ * adapter calls this on a 401 (or a near-expiry) so a stored connection renews
+ * silently without a re-consent. Google frequently omits a new refresh token on
+ * refresh; `refreshToken` is then null and the caller keeps the existing one.
+ *
+ * REFUSES (no `fetch`) when the provider is not connectable — structurally dark
+ * without client credentials + the flag.
+ */
+export async function refreshAccessToken(params: {
+  provider: CalendarProvider;
+  refreshToken: string;
+}): Promise<RefreshResult> {
+  const { provider, refreshToken } = params;
+
+  // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
+  const client = isCalendarProviderConnectable(provider) ? resolveClient(provider) : null;
+  if (!client) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: `${provider} calendar is not configured; no token refresh is possible.`,
+    };
+  }
+
+  const cfg = PROVIDER_OAUTH[provider];
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(cfg.tokenUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: body.toString(),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `token refresh request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  if (!res.ok) {
+    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!json.access_token) {
+    return { ok: false, reason: "error", message: "token refresh returned no access token" };
+  }
+
+  const expiresAt =
+    typeof json.expires_in === "number"
+      ? new Date(Date.now() + json.expires_in * 1000).toISOString()
+      : null;
+
+  return {
+    ok: true,
+    tokens: {
+      accessToken: json.access_token,
+      // Providers may omit a rotated refresh token — the caller keeps the old one.
+      refreshToken: json.refresh_token ?? null,
+      expiresAt,
     },
   };
 }

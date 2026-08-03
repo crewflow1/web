@@ -38,6 +38,9 @@ const OAUTH = "lib/integrations/calendar/oauth.ts";
 const CONNECT = "app/api/integrations/calendar/[provider]/connect/route.ts";
 const CALLBACK = "app/api/integrations/calendar/[provider]/callback/route.ts";
 const SERVICE = "server/services/calendar-connections.ts";
+const ADAPTER = "lib/integrations/calendar/push-adapter.ts";
+const TOKEN_STORE = "lib/integrations/calendar/token-store.ts";
+const JOB_ACTIONS = "app/(app)/jobs/actions.ts";
 
 /** Strip SQL line comments so NEGATIVE assertions test EXECUTABLE statements. */
 const sqlOnly = (s: string) =>
@@ -329,7 +332,7 @@ describe("calendar connections service — org-pinned, loud, token-free reads", 
 
 describe("no secret is ever logged", () => {
   it("no source logs a client secret or a token", () => {
-    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE]) {
+    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, ADAPTER, TOKEN_STORE]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {
@@ -339,5 +342,125 @@ describe("no secret is ever logged", () => {
         expect(call).not.toMatch(/codeVerifier/i);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. THE LIVE PATHS — refresh / handle / push are refuse-before-fetch (dark)
+// ---------------------------------------------------------------------------
+
+describe("live OAuth paths REFUSE before any network call while dark", () => {
+  it("resolveAccountHandle + refreshAccessToken guard BEFORE their fetch", () => {
+    const code = codeOf(read(OAUTH));
+    // Each live network function must place its not_configured guard before its
+    // fetch. Prove it per-function by slicing at the function signature.
+    for (const fn of ["resolveAccountHandle", "refreshAccessToken"]) {
+      const start = code.indexOf(`export async function ${fn}`);
+      expect(start, `${fn} must exist`).toBeGreaterThan(-1);
+      const body = code.slice(start);
+      const guardIdx = body.indexOf('reason: "not_configured"');
+      const fetchIdx = body.indexOf("fetch(");
+      expect(guardIdx, `${fn}: guard present`).toBeGreaterThan(-1);
+      expect(fetchIdx, `${fn}: fetch present`).toBeGreaterThan(-1);
+      expect(guardIdx, `${fn}: guard before fetch`).toBeLessThan(fetchIdx);
+    }
+  });
+
+  it("resolves the handle via userinfo / Graph /me and folds it into the exchange", () => {
+    const code = codeOf(read(OAUTH));
+    expect(code).toMatch(/oauth2\/v3\/userinfo/);
+    expect(code).toMatch(/graph\.microsoft\.com\/v1\.0\/me/);
+    // The exchange populates externalAccountId from the resolved handle (no null
+    // hardcode dead-end).
+    expect(code).toMatch(/externalAccountId:\s*handleRes\.ok\s*\?\s*handleRes\.handle/);
+    // Refresh uses the refresh_token grant.
+    expect(code).toMatch(/grant_type:\s*"refresh_token"/);
+  });
+
+  it("push adapter guards BEFORE its fetch and refreshes-then-retries on 401", () => {
+    const code = codeOf(read(ADAPTER));
+    const guardIdx = code.indexOf('reason: "not_configured"');
+    const fetchIdx = code.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+    expect(code).toMatch(/isCalendarProviderConnectable\(/);
+    // 401 → refresh → retry.
+    expect(code).toMatch(/res\.status === 401/);
+    expect(code).toMatch(/refreshAccessToken\(/);
+    // Insert (POST) vs update (PATCH) keyed on an existing external event id.
+    expect(code).toMatch(/externalEventId\s*\?\s*"PATCH"\s*:\s*"POST"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. THE TOKEN STORE + EVENT-LINK WRITE — service-role, org-pinned, idempotent
+// ---------------------------------------------------------------------------
+
+describe("token store — service-role, org-pinned, encrypt-before-write", () => {
+  const code = codeOf(read(TOKEN_STORE));
+
+  it("reads/writes tokens under the service-role admin client (not a tenant JWT)", () => {
+    expect(code).toMatch(/createAdminClient\(/);
+  });
+
+  it("pins org_id on every query (eq filters) and on the event-link write (row)", () => {
+    const froms = code.match(/\.from\(/g) ?? [];
+    const orgEqPins = code.match(/\.eq\("org_id"/g) ?? [];
+    expect(froms.length).toBeGreaterThanOrEqual(4);
+    // Every read/update filters by org_id …
+    expect(orgEqPins.length).toBeGreaterThanOrEqual(4);
+    // … and the upsert carries org_id explicitly (composite FK binds it further).
+    expect(code).toMatch(/org_id:\s*params\.orgId/);
+  });
+
+  it("encrypts tokens before persisting them (never plaintext)", () => {
+    expect(code).toMatch(/encryptToken\(/);
+    expect(code).not.toMatch(/access_token:\s*tokens\.accessToken\b/);
+  });
+
+  it("upserts the event link with the composite conflict target (re-push updates, not duplicates)", () => {
+    expect(code).toMatch(/onConflict:\s*"connection_id,local_kind,local_id"/);
+  });
+});
+
+describe("the service composes the live push and writes an event link", () => {
+  const code = codeOf(read(SERVICE));
+
+  it("reads tokens via the store, decrypts on use, and pushes then links", () => {
+    expect(code).toMatch(/readConnectionTokens\(/);
+    expect(code).toMatch(/decryptStoredTokens\(/);
+    expect(code).toMatch(/pushEventToProvider\(/);
+    expect(code).toMatch(/upsertEventLink\(/);
+    // Existing mapping → patch that event; none → insert (idempotent).
+    expect(code).toMatch(/findEventLink\(/);
+    expect(code).toMatch(/status:\s*"pushed"/);
+  });
+
+  it("still contains NO token-column select in the tenant-facing service", () => {
+    // The token read lives in the isolated store module, not here.
+    expect(code).not.toMatch(/select[\s\S]{0,120}access_token/i);
+  });
+});
+
+describe("the caller is wired + no-op while dark", () => {
+  it("job create/update invoke the best-effort calendar push", () => {
+    const code = codeOf(read(JOB_ACTIONS));
+    expect(code).toMatch(/bestEffortPushJob\(/);
+    // Called from both create and update (at least twice).
+    expect((code.match(/bestEffortPushJob\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("bestEffortPushJob short-circuits on the feature flag BEFORE any DB/network", () => {
+    const code = codeOf(read(SERVICE));
+    const start = code.indexOf("export async function bestEffortPushJob");
+    expect(start).toBeGreaterThan(-1);
+    const body = code.slice(start);
+    // The very first thing it does is the dark gate returning skipped_dark.
+    const flagIdx = body.indexOf("calendarConnectFeatureEnabled()");
+    const pushIdx = body.indexOf("pushJobToCalendar(");
+    expect(flagIdx).toBeGreaterThan(-1);
+    expect(flagIdx).toBeLessThan(pushIdx);
+    expect(body).toMatch(/skipped_dark/);
   });
 });

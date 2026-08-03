@@ -11,6 +11,7 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import { bestEffortPushJob } from "@/server/services/calendar-connections";
 
 /**
  * Job CRUD server actions.
@@ -77,6 +78,14 @@ export async function createJob(
   }
 
   revalidatePath("/jobs");
+
+  // Best-effort one-way push to a connected calendar. A no-op while the calendar
+  // integration is dark (the flag is off, so no DB/network happens); once live it
+  // creates/updates the external event and never blocks or fails the save.
+  if (result.data.scheduled_date) {
+    await bestEffortPushJob(ctx.org.id, data.id);
+  }
+
   return formSuccess({
     successMessage: "Job created.",
     redirectTo: `/jobs/${data.id}`,
@@ -136,6 +145,13 @@ export async function updateJob(
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
+
+  // Best-effort one-way push to a connected calendar (see createJob). A no-op
+  // while dark; on a re-save it updates the SAME event via calendar_event_links.
+  if (result.data.scheduled_date) {
+    await bestEffortPushJob(ctx.org.id, id);
+  }
+
   return formSuccess({ successMessage: "Job updated." });
 }
 

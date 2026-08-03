@@ -4,9 +4,22 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   isCalendarProviderConnectable,
+  calendarConnectFeatureEnabled,
+  decryptStoredTokens,
   CALENDAR_PROVIDERS,
   type CalendarProvider,
 } from "@/lib/integrations/calendar/oauth";
+import {
+  buildEventPayload,
+  pushEventToProvider,
+} from "@/lib/integrations/calendar/push-adapter";
+import {
+  readConnectionTokens,
+  persistRefreshedTokens,
+  markConnectionSynced,
+  findEventLink,
+  upsertEventLink,
+} from "@/lib/integrations/calendar/token-store";
 
 /**
  * Calendar connections service — org-pinned reads + admin writes over the
@@ -205,7 +218,17 @@ type JobRow = {
   scheduled_date: string | null;
   notes: string | null;
   assigned_to: string | null;
+  site_address_line1: string | null;
+  site_address_line2: string | null;
+  site_city: string | null;
+  site_county: string | null;
+  site_postcode: string | null;
+  site_country: string | null;
 };
+
+const JOB_PUSH_COLUMNS =
+  "id, org_id, status, scheduled_date, notes, assigned_to, " +
+  "site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country";
 
 /**
  * One-way push: project a CrewFlow job (and its unified rota shift) into an
@@ -243,7 +266,7 @@ export async function pushJobToCalendar(
   };
   const { data: job, error: jobErr } = await jobQ
     .from("jobs")
-    .select("id, org_id, status, scheduled_date, notes, assigned_to")
+    .select(JOB_PUSH_COLUMNS)
     .eq("id", jobId)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -280,17 +303,115 @@ export async function pushJobToCalendar(
 
   // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
   // Compose the event body from the job (+ its unified default rota shift of
-  // 08:00–17:00 on scheduled_date, per 20260523 job↔rota unification) and hand it
-  // to the provider adapter, then upsert the (connection, 'job', jobId) →
-  // external_event_id mapping. The adapter itself is wired at activation; this
+  // 08:00–17:00 on scheduled_date, per the job↔rota unification), hand it to the
+  // provider adapter (create or patch), then upsert the (connection, 'job', jobId)
+  // → external_event_id mapping so a re-push updates rather than duplicates. This
   // build never reaches here because providerConnectable is false while dark.
-  return {
-    ok: false,
-    status: "error",
+  const payload = buildEventPayload(job);
+  if (!payload) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: null,
+      message: `Job ${job.id} has no scheduled date to place on a calendar.`,
+    };
+  }
+
+  // Service-role read of the (encrypted) stored tokens — the only reader of the
+  // token columns. Decrypted on use, immediately before the provider call.
+  const stored = await readConnectionTokens(orgId, active.provider);
+  if (!stored) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: null,
+      message: "The connected calendar has no stored credentials to push with.",
+    };
+  }
+  const tokens = decryptStoredTokens({
+    accessToken: stored.accessToken,
+    refreshToken: stored.refreshToken,
+  });
+
+  // Existing mapping → PATCH that event; none → INSERT a new one (idempotent).
+  const existingEventId = await findEventLink(orgId, stored.connectionId, "job", jobId);
+
+  const pushed = await pushEventToProvider({
     provider: active.provider,
-    externalEventId: null,
-    message:
-      "Calendar push adapter is not yet implemented (activation-gated). " +
-      `Job ${job.id} scheduled ${job.scheduled_date ?? "(unscheduled)"}.`,
+    tokens,
+    payload,
+    externalEventId: existingEventId,
+  });
+  if (!pushed.ok) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: existingEventId,
+      message: `Calendar push failed: ${pushed.message}`,
+    };
+  }
+
+  // A 401 forced a silent refresh — persist the renewed (encrypted) tokens.
+  if (pushed.refreshed) {
+    await persistRefreshedTokens(orgId, active.provider, pushed.refreshed);
+  }
+
+  // Record the mapping (upsert) so the next push updates this same event.
+  await upsertEventLink({
+    orgId,
+    connectionId: stored.connectionId,
+    localKind: "job",
+    localId: jobId,
+    externalEventId: pushed.externalEventId,
+    etag: pushed.etag,
+  });
+  await markConnectionSynced(orgId, active.provider);
+
+  return {
+    ok: true,
+    status: "pushed",
+    provider: active.provider,
+    externalEventId: pushed.externalEventId,
+    message: `Job ${job.id} pushed to the ${active.provider} calendar.`,
   };
+}
+
+/**
+ * Best-effort calendar push for a job save. This is the CALLER seam wired into
+ * the job create/update actions.
+ *
+ * DARK GATE FIRST. When the calendar-connect feature flag is off (ALWAYS, today)
+ * this returns immediately — NO database read, NO network — so a job save while
+ * dark pays nothing and touches no calendar code path. Once live it delegates to
+ * pushJobToCalendar and SWALLOWS every failure: a calendar hiccup must never fail
+ * or block the primary job save. Failures are logged (coarse, no secret), not
+ * thrown.
+ */
+export async function bestEffortPushJob(
+  orgId: string,
+  jobId: string,
+): Promise<{ status: PushResult["status"] }> {
+  if (!calendarConnectFeatureEnabled()) {
+    return { status: "skipped_dark" };
+  }
+  try {
+    const result = await pushJobToCalendar(orgId, jobId);
+    if (!result.ok && result.status === "error") {
+      console.error("[calendar] best-effort job push error", {
+        jobId,
+        provider: result.provider,
+        message: result.message,
+      });
+    }
+    return { status: result.status };
+  } catch (e) {
+    console.error("[calendar] best-effort job push threw", {
+      jobId,
+      message: e instanceof Error ? e.message : "unknown error",
+    });
+    return { status: "error" };
+  }
 }
