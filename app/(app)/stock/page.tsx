@@ -81,7 +81,7 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
             the movement history — nothing is typed in twice.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link
             href="/stock/replenishment"
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
