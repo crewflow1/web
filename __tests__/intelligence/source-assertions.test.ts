@@ -324,13 +324,19 @@ describe("dual-org: every table read is pinned to the active org", () => {
     }
   });
 
-  it("the users read — the ONE documented exception — is scoped by this org's membership ids", async () => {
+  it("every users read — the documented exception — is scoped by this org's membership ids", async () => {
     await loadCompanySignals(ORG_A, NOW);
     const usersReads = h.reads.filter((r) => r.table === "users");
-    expect(usersReads.length).toBe(1);
-    const idIn = usersReads[0]!.ins.find(([c]) => c === "id");
-    expect(idIn, "users must be reached through .in('id', memberIds)").toBeDefined();
-    expect(idIn?.[1]).toEqual(["user-a"]); // org A's members only — never Bob
+    // Two documented global-table reads: utilisation (member rates for the
+    // utilisation view) and CVR labour cost (member rates for job cost). BOTH are
+    // reached ONLY through this org's membership ids — never a raw table scan,
+    // never another org's worker.
+    expect(usersReads.length).toBe(2);
+    for (const ur of usersReads) {
+      const idIn = ur.ins.find(([c]) => c === "id");
+      expect(idIn, "users must be reached through .in('id', memberIds)").toBeDefined();
+      expect(idIn?.[1]).toEqual(["user-a"]); // org A's members only — never Bob
+    }
   });
 
   it("utilisation counts ONLY org A's rota and clock, though org B rosters the same worker", async () => {

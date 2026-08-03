@@ -10,6 +10,11 @@ import {
   computeJobProfitability,
   type CostBucket,
 } from "@/lib/profitability/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+  type CostInputRow,
+} from "@/lib/profitability/job-cost-input";
 import { computeCommittedCosts } from "@/lib/purchase-orders/committed";
 import { computeJobCommercialPosition } from "@/lib/jobs/commercial-position";
 import {
@@ -569,7 +574,8 @@ export async function gatherCvrRollup(
   const jobIds = [...budgetByJob.keys()];
   if (jobIds.length === 0) return computeCvrRollup([]);
 
-  const [quotes, invoices, finances, purchaseOrders] = await Promise.all([
+  const [quotes, invoices, finances, purchaseOrders, cvrTimeEntries, cvrMembers] =
+    await Promise.all([
     allRows("intelligence: quotes", (from, to) =>
       db
         .from("quotes")
@@ -609,7 +615,77 @@ export async function gatherCvrRollup(
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // Time-tracked labour on these jobs — the labour half of "actual cost".
+    allRows("intelligence: cvr time entries", (from, to) =>
+      db
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", orgId)
+        .in("job_id", jobIds)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // Org members, for their hourly pay — the rate side of labour cost. `user_id`
+    // only: no user embed (a bare cross-FK embed PGRST201s the whole query).
+    allRows("intelligence: cvr memberships", (from, to) =>
+      db
+        .from("memberships")
+        .select("user_id")
+        .eq("org_id", orgId)
+        .order("user_id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
+
+  // CVR/variance measures ACTUAL cost against the budget, so its cost input must be
+  // the SAME shared composition the per-job commercial page uses — finances PLUS
+  // time-tracked labour (gross) PLUS employer NI + pension on-costs — or CVR would
+  // disagree with the very page it links to. Scope is job-lifetime (a budget is a
+  // whole-job plan). Employer NI is banded per worker across their jobs, so the
+  // combined rows are built ONCE over every job, then grouped back per job.
+  //
+  // Rates come from members → `users`, the SAME source the dashboard uses, so a
+  // worker who has left the org has no rate on either surface and the figures stay
+  // in parity. `users` is global; scoped by the org's membership ids, the
+  // documented exception to the org-pin rule. allRows throws on failure, so a
+  // failed pay read can never silently zero labour cost.
+  const memberIds = [
+    ...new Set(cvrMembers.map((m) => sv(m.user_id)).filter((v): v is string => !!v)),
+  ];
+  const payRows = memberIds.length
+    ? await allRows("intelligence: cvr user pay", (from, to) =>
+        db
+          .from("users")
+          .select("id, hourly_pay")
+          .in("id", memberIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : [];
+  const hourlyByUser = new Map<string, number>();
+  for (const u of payRows) {
+    const uid = sv(u.id);
+    if (!uid) continue;
+    hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
+  }
+  const cvrCostRows = buildJobCostInput({
+    finances: finances.map((f) => ({
+      job_id: sv(f.job_id),
+      amount: mv(f.amount),
+      category: sv(f.category),
+    })),
+    timeEntries: cvrTimeEntries as unknown as TimeEntry[],
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
+  const costRowsByJob = new Map<string, CostInputRow[]>();
+  for (const r of cvrCostRows) {
+    if (!r.job_id) continue;
+    const list = costRowsByJob.get(r.job_id);
+    if (list) list.push(r);
+    else costRowsByJob.set(r.job_id, [r]);
+  }
 
   const byJob = <T extends Row>(rows: Row[]): Map<string, T[]> => {
     const m = new Map<string, T[]>();
@@ -636,15 +712,12 @@ export async function gatherCvrRollup(
     const jobPos = posByJob.get(jobId) ?? [];
 
     // EXACTLY the commercial page's composition (the one existing caller of
-    // computeJobBudgetPosition) — same authorities, same precedence.
+    // computeJobBudgetPosition) — same authorities, same precedence: finances PLUS
+    // time-tracked labour PLUS employer on-costs, from the shared builder above.
     const profit = computeJobProfitability(
       jobId,
       jobInvoices.map((i) => ({ job_id: sv(i.job_id), amount: mv(i.amount) })),
-      jobFinances.map((f) => ({
-        job_id: sv(f.job_id),
-        amount: mv(f.amount),
-        category: sv(f.category),
-      })),
+      costRowsByJob.get(jobId) ?? [],
     );
 
     // Bills already posted against each PO — bill beats PO, counted once.

@@ -1,9 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { formatGbp } from "@/lib/money";
+import type { TimeEntry } from "@/lib/time/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
@@ -160,10 +168,46 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
       billed: billedByPo.get(p.id) ?? 0,
     })),
   );
+  // Bring the per-job cost/profit into line with the dashboard: a job's ACTUAL
+  // cost is its `finances` rows PLUS time-tracked labour (gross) PLUS employer NI +
+  // pension on-costs on those hours — not `finances` alone. Composing them here via
+  // the shared builder is what stops this page from reporting every job with
+  // clocked labour as more profitable than it truly is.
+  //
+  // SCOPE: job-lifetime hours. This is a whole-job commercial/budget view, so every
+  // hour ever booked to the job counts — unlike the dashboard's month window, which
+  // would silently drop labour worked in earlier months.
+  //
+  // LOUD reads: a failed labour or pay read must NOT silently drop labour and
+  // report the job as more profitable than it is, so both throw rather than
+  // coalescing to empty. Pay is read straight from `users` for the worker ids the
+  // job's entries name — no PostgREST embed (a bare cross-FK embed PGRST201s the
+  // whole query). `users` is global (no org_id): scoping it by ids drawn from the
+  // org-pinned `time_entries` read is the documented exception to the org-pin rule.
+  // time_entries is paged: a long, well-staffed job can cross the 1000-row cap.
+  const teRes = await fetchAllRows((from, to) =>
+    supabase
+      .from("time_entries")
+      .select("id, user_id, job_id, started_at, ended_at, breaks")
+      .eq("org_id", ctx.org.id)
+      .eq("job_id", id)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (teRes.error) throw readFailure("job commercial: time entries", teRes.error);
+  const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
+  const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
+  const costInput = buildJobCostInput({
+    finances: finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    timeEntries: jobTimeEntries,
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
   const profit = computeJobProfitability(
     id,
     invoices.map((i) => ({ job_id: i.job_id, amount: i.amount })),
-    finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    costInput,
   );
   const costsTotal = profit?.costs_total ?? 0;
   const grossProfit = profit?.gross_profit ?? 0;

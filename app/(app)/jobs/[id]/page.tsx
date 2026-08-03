@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateJob, deleteJob } from "../actions";
 import { StateForm } from "@/components/forms/StateForm";
@@ -28,6 +30,12 @@ import {
   computeJobProfitability,
   marginPillClass,
 } from "@/lib/profitability/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
+import type { TimeEntry } from "@/lib/time/compute";
 import {
   computeRetentionPosition,
   maxReleasable,
@@ -191,7 +199,37 @@ export default async function EditJobPage({
     variation_number: number | null;
   }>;
 
-  const profit = computeJobProfitability(job.id, invRows, finRows);
+  // A job's ACTUAL cost is its `finances` rows PLUS time-tracked labour (gross) PLUS
+  // employer NI + pension on-costs on those hours — the same composition the
+  // dashboard uses, via the shared builder, so this summary can't report a job with
+  // clocked labour as more profitable than its own commercial page does.
+  // SCOPE: job-lifetime hours (a whole-job view, not a month).
+  //
+  // LOUD reads: a failed labour or pay read must NOT silently drop labour and make
+  // the job look more profitable, so both throw. Pay is read straight from `users`
+  // (see loadHourlyPayForWorkers) — no PostgREST embed, which would PGRST201 the
+  // whole query. time_entries is paged — a long, well-staffed job can cross the
+  // 1000-row cap.
+  const teRes = await fetchAllRows((from, to) =>
+    supabase
+      .from("time_entries")
+      .select("id, user_id, job_id, started_at, ended_at, breaks")
+      .eq("org_id", ctx.org.id)
+      .eq("job_id", job.id)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (teRes.error) throw readFailure("job summary: time entries", teRes.error);
+  const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
+  const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
+  const costInput = buildJobCostInput({
+    finances: finRows.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
+    timeEntries: jobTimeEntries,
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
+  const profit = computeJobProfitability(job.id, invRows, costInput);
 
   // Retention (Programme C) — the rate lives on the job, releases in the ledger.
   // Neither is in the generated Supabase types yet; the held figure is DERIVED.

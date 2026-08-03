@@ -7,6 +7,11 @@ import {
   computeAllJobsProfitability,
   type JobProfitability,
 } from "@/lib/profitability/compute";
+import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import type { TimeEntry } from "@/lib/time/compute";
 import { loadCompanySignals, type CompanySignalsView } from "@/server/services/intelligence";
 import { buildHealthSafetySnapshot } from "@/server/services/health-safety-snapshot";
 import {
@@ -142,7 +147,7 @@ export async function gatherProfitability(
   db: HealthClient,
   orgId: string,
 ): Promise<JobProfitability[]> {
-  const [jobs, invoices, finances] = await Promise.all([
+  const [jobs, invoices, finances, timeEntries, memberships] = await Promise.all([
     allRows("company-health: jobs", (from, to) =>
       db.from("jobs").select("id").eq("org_id", orgId).order("id", { ascending: true }).range(from, to),
     ),
@@ -162,16 +167,73 @@ export async function gatherProfitability(
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // Time-tracked labour, so company-health's profitability agrees with the
+    // corrected per-job figures (finances alone omit labour + on-costs).
+    allRows("company-health: time entries", (from, to) =>
+      db
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // Org members, for their hourly pay. `user_id` only — no user embed (a bare
+    // cross-FK embed PGRST201s the whole query).
+    allRows("company-health: memberships", (from, to) =>
+      db
+        .from("memberships")
+        .select("user_id")
+        .eq("org_id", orgId)
+        .order("user_id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
-  return computeAllJobsProfitability(
-    jobs.map((j) => ({ id: String(j.id) })),
-    invoices.map((i) => ({ job_id: sv(i.job_id), amount: i.amount as number | string | null })),
-    finances.map((f) => ({
+  // Rates come from members → `users`, the SAME source the dashboard uses, so the
+  // per-job pages and company-health agree even on ex-staff (no membership ⇒ no
+  // rate anywhere). `users` is global; scoped by the org's membership ids, the
+  // documented exception to the org-pin rule. allRows throws on failure, so a
+  // failed pay read can never silently zero labour cost and inflate profitability.
+  const memberIds = [
+    ...new Set(memberships.map((m) => sv(m.user_id)).filter((v): v is string => !!v)),
+  ];
+  const payRows = memberIds.length
+    ? await allRows("company-health: user pay", (from, to) =>
+        db
+          .from("users")
+          .select("id, hourly_pay")
+          .in("id", memberIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : [];
+  const hourlyByUser = new Map<string, number>();
+  for (const u of payRows) {
+    const uid = sv(u.id);
+    if (!uid) continue;
+    hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
+  }
+
+  // The SAME shared cost composition the per-job commercial page and CVR use:
+  // finances PLUS time-tracked labour (gross) PLUS employer NI + pension on-costs,
+  // measured over job-lifetime hours. Employer NI is banded per worker across their
+  // jobs, so this is built once over every job.
+  const costInput = buildJobCostInput({
+    finances: finances.map((f) => ({
       job_id: sv(f.job_id),
       amount: f.amount as number | string | null,
       category: sv(f.category),
     })),
+    timeEntries: timeEntries as unknown as TimeEntry[],
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
+
+  return computeAllJobsProfitability(
+    jobs.map((j) => ({ id: String(j.id) })),
+    invoices.map((i) => ({ job_id: sv(i.job_id), amount: i.amount as number | string | null })),
+    costInput,
   );
 }
 
