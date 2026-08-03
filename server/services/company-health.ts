@@ -167,8 +167,8 @@ export async function gatherProfitability(
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // Time-tracked labour + per-user pay, so company-health's profitability agrees
-    // with the corrected per-job figures (finances alone omit labour + on-costs).
+    // Time-tracked labour, so company-health's profitability agrees with the
+    // corrected per-job figures (finances alone omit labour + on-costs).
     allRows("company-health: time entries", (from, to) =>
       db
         .from("time_entries")
@@ -177,22 +177,41 @@ export async function gatherProfitability(
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // Org members, for their hourly pay. `user_id` only — no user embed (a bare
+    // cross-FK embed PGRST201s the whole query).
     allRows("company-health: memberships", (from, to) =>
       db
         .from("memberships")
-        .select("user_id, user:users ( id, hourly_pay )")
+        .select("user_id")
         .eq("org_id", orgId)
         .order("user_id", { ascending: true })
         .range(from, to),
     ),
   ]);
 
+  // Rates come from members → `users`, the SAME source the dashboard uses, so the
+  // per-job pages and company-health agree even on ex-staff (no membership ⇒ no
+  // rate anywhere). `users` is global; scoped by the org's membership ids, the
+  // documented exception to the org-pin rule. allRows throws on failure, so a
+  // failed pay read can never silently zero labour cost and inflate profitability.
+  const memberIds = [
+    ...new Set(memberships.map((m) => sv(m.user_id)).filter((v): v is string => !!v)),
+  ];
+  const payRows = memberIds.length
+    ? await allRows("company-health: user pay", (from, to) =>
+        db
+          .from("users")
+          .select("id, hourly_pay")
+          .in("id", memberIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : [];
   const hourlyByUser = new Map<string, number>();
-  for (const m of memberships) {
-    const uid = sv(m.user_id);
+  for (const u of payRows) {
+    const uid = sv(u.id);
     if (!uid) continue;
-    const u = (m as { user?: { hourly_pay?: number | string | null } }).user;
-    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
+    hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
   }
 
   // The SAME shared cost composition the per-job commercial page and CVR use:

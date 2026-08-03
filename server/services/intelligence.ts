@@ -574,7 +574,7 @@ export async function gatherCvrRollup(
   const jobIds = [...budgetByJob.keys()];
   if (jobIds.length === 0) return computeCvrRollup([]);
 
-  const [quotes, invoices, finances, purchaseOrders, cvrTimeEntries, cvrMemberships] =
+  const [quotes, invoices, finances, purchaseOrders, cvrTimeEntries, cvrMembers] =
     await Promise.all([
     allRows("intelligence: quotes", (from, to) =>
       db
@@ -625,11 +625,12 @@ export async function gatherCvrRollup(
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // Per-user hourly pay, for the labour + employer on-cost calculation.
+    // Org members, for their hourly pay — the rate side of labour cost. `user_id`
+    // only: no user embed (a bare cross-FK embed PGRST201s the whole query).
     allRows("intelligence: cvr memberships", (from, to) =>
       db
         .from("memberships")
-        .select("user_id, user:users ( id, hourly_pay )")
+        .select("user_id")
         .eq("org_id", orgId)
         .order("user_id", { ascending: true })
         .range(from, to),
@@ -642,12 +643,30 @@ export async function gatherCvrRollup(
   // disagree with the very page it links to. Scope is job-lifetime (a budget is a
   // whole-job plan). Employer NI is banded per worker across their jobs, so the
   // combined rows are built ONCE over every job, then grouped back per job.
+  //
+  // Rates come from members → `users`, the SAME source the dashboard uses, so a
+  // worker who has left the org has no rate on either surface and the figures stay
+  // in parity. `users` is global; scoped by the org's membership ids, the
+  // documented exception to the org-pin rule. allRows throws on failure, so a
+  // failed pay read can never silently zero labour cost.
+  const memberIds = [
+    ...new Set(cvrMembers.map((m) => sv(m.user_id)).filter((v): v is string => !!v)),
+  ];
+  const payRows = memberIds.length
+    ? await allRows("intelligence: cvr user pay", (from, to) =>
+        db
+          .from("users")
+          .select("id, hourly_pay")
+          .in("id", memberIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : [];
   const hourlyByUser = new Map<string, number>();
-  for (const m of cvrMemberships) {
-    const uid = sv(m.user_id);
+  for (const u of payRows) {
+    const uid = sv(u.id);
     if (!uid) continue;
-    const u = (m as { user?: { hourly_pay?: number | string | null } }).user;
-    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
+    hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
   }
   const cvrCostRows = buildJobCostInput({
     finances: finances.map((f) => ({

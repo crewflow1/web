@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { formatGbp } from "@/lib/money";
@@ -10,6 +11,7 @@ import {
   buildJobCostInput,
   lifetimeHoursSource,
 } from "@/lib/profitability/job-cost-input";
+import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
@@ -175,29 +177,26 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   // SCOPE: job-lifetime hours. This is a whole-job commercial/budget view, so every
   // hour ever booked to the job counts — unlike the dashboard's month window, which
   // would silently drop labour worked in earlier months.
+  //
+  // LOUD reads: a failed labour or pay read must NOT silently drop labour and
+  // report the job as more profitable than it is, so both throw rather than
+  // coalescing to empty. Pay is read straight from `users` for the worker ids the
+  // job's entries name — no PostgREST embed (a bare cross-FK embed PGRST201s the
+  // whole query). `users` is global (no org_id): scoping it by ids drawn from the
+  // org-pinned `time_entries` read is the documented exception to the org-pin rule.
   // time_entries is paged: a long, well-staffed job can cross the 1000-row cap.
-  const [jobTimeEntriesRes, membershipsRes] = await Promise.all([
-    fetchAllRows((from, to) =>
-      supabase
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", ctx.org.id)
-        .eq("job_id", id)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+  const teRes = await fetchAllRows((from, to) =>
     supabase
-      .from("memberships")
-      .select("user_id, user:users ( id, hourly_pay )")
-      .eq("org_id", ctx.org.id),
-  ]);
-  const jobTimeEntries = (jobTimeEntriesRes.data ?? []) as unknown as TimeEntry[];
-  const hourlyByUser = new Map<string, number>();
-  for (const m of membershipsRes.data ?? []) {
-    const uid = (m as { user_id: string }).user_id;
-    const u = (m as unknown as { user?: { hourly_pay: number | null } }).user;
-    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
-  }
+      .from("time_entries")
+      .select("id, user_id, job_id, started_at, ended_at, breaks")
+      .eq("org_id", ctx.org.id)
+      .eq("job_id", id)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (teRes.error) throw readFailure("job commercial: time entries", teRes.error);
+  const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
+  const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
   const costInput = buildJobCostInput({
     finances: finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
     timeEntries: jobTimeEntries,
