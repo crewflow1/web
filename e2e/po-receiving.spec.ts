@@ -2,6 +2,7 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { settleForAxe } from "./_settle";
 
 /**
  * Warehouse M1 — Journey: receiving a PART delivery, then the rest.
@@ -213,5 +214,47 @@ test.describe("purchase orders — receiving a delivery", () => {
     await expect(qty).toHaveAttribute("inputmode", "decimal");
     const fontPx = await qty.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(fontPx).toBeGreaterThanOrEqual(16);
+  });
+
+  test("the register LIST fits a phone at 375px — the Total is not clipped", async ({ page }) => {
+    // The bug this guards: the list wrapped a six-column w-full table in
+    // `overflow-hidden` and rendered every column at every width, so at 375px
+    // the right-aligned Total (an unbreakable "£10,000.00") was pushed past the
+    // viewport edge and CLIPPED with no scroll to reach it. The fix is the
+    // jobs/quotes/invoices idiom: `hidden md:block` table + a `md:hidden` card
+    // list. Asserting structurally (mobile cards visible, Total reachable, no
+    // body overflow) rather than trusting the classes.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto("/purchase-orders");
+    await expect(page.getByRole("heading", { name: /purchase orders/i })).toBeVisible();
+
+    // The seeded order (with its £600 total) reaches the list as a mobile card,
+    // and its Total is on screen — never clipped past the right edge.
+    const card = page.getByRole("link", { name: new RegExp(`PO-${TAG}(?!-M)`) }).first();
+    await expect(card).toBeVisible();
+    const total = card.getByText("£600.00", { exact: false }).first();
+    await expect(total).toBeVisible();
+
+    // The desktop table is hidden at this width — only the card list shows.
+    await expect(page.getByRole("table")).toHaveCount(0);
+
+    // Settle before measuring: reading scrollWidth before web fonts land uses
+    // fallback glyph metrics (narrower) and can mask a real overflow. Retries
+    // are 0 in this repo, so measure only after hydration + fonts.ready.
+    await settleForAxe(page);
+    const overflow = await page.evaluate(() => {
+      const el = document.documentElement;
+      return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+    });
+    expect(
+      overflow.scrollWidth - overflow.clientWidth,
+      `the register scrolls horizontally at 375px (${overflow.scrollWidth} > ${overflow.clientWidth})`,
+    ).toBeLessThanOrEqual(0);
+
+    // The Total is also fully inside the viewport box — the actual clip failure
+    // mode is an element that renders but sits past the right edge.
+    const box = await total.boundingBox();
+    expect(box, "the Total should have a box").not.toBeNull();
+    expect(box!.x + box!.width, "the Total is clipped past the 375px viewport").toBeLessThanOrEqual(375);
   });
 });
