@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
-import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
+import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
+import { loadRecentSpokenTurns, persistSpokenTurn, recordInboundCall } from "@/server/services/telephony";
 
 /**
  * Twilio inbound VOICE gather-callback — the conversational spoken-turn loop.
@@ -98,7 +100,48 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 8. The caller's utterance, transcribed by Twilio's <Gather input="speech">.
   //    This is the transcript the governed seam short-circuits on when empty.
   const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
-  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript });
+
+  // 8a. Resolve THIS call's row (idempotent on CallSid — origination already
+  //     created it) and load its prior spoken turns, so the turn has MEMORY of the
+  //     conversation rather than being an amnesiac single shot. Best-effort: all
+  //     persistence is wrapped so a DB error degrades the call to a graceful close
+  //     instead of dropping it — and it runs AFTER the dark + signature gates above.
+  let callId: string | null = null;
+  let priorTurns: VoiceTurnHistoryEntry[] = [];
+  try {
+    const rec = await recordInboundCall(orgId, call);
+    callId = rec.callId;
+    priorTurns = await loadRecentSpokenTurns(orgId, callId);
+  } catch (e) {
+    Sentry.captureException(e, {
+      tags: { route: "webhooks/twilio/voice/gather", stage: "load" },
+    });
+    console.error("[twilio-voice-gather] call resolve / history load failed", e);
+  }
+
+  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript, history: priorTurns });
+
+  // 8b. Persist the turn — the caller's SpeechResult + the reply — to the
+  //     append-only call_events audit AND into the enquiry's raw_text, mirroring
+  //     how SMS/WhatsApp persist. Best-effort: a persistence failure must not break
+  //     the call, so we log and continue to the TwiML below.
+  if (callId && (transcript.trim() || spokenTurn)) {
+    try {
+      await persistSpokenTurn({
+        orgId,
+        callId,
+        providerCallId: call.providerCallId,
+        transcript,
+        reply: spokenTurn,
+        priorTurns,
+      });
+    } catch (e) {
+      Sentry.captureException(e, {
+        tags: { route: "webhooks/twilio/voice/gather", stage: "persist" },
+      });
+      console.error("[twilio-voice-gather] spoken-turn persistence failed", e);
+    }
+  }
 
   // 9. A generated turn CONTINUES the loop (SAY the reply, then <Gather> again).
   //    A null turn (dark / no tier / blocked / deduped / error) degrades to a

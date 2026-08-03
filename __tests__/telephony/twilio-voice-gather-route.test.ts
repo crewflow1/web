@@ -27,6 +27,14 @@ vi.mock("@/lib/telephony/router", () => ({
 vi.mock("@/lib/telephony/ai-turn", () => ({
   maybeGenerateVoiceTurn: vi.fn(),
 }));
+// The spoken-turn PERSISTENCE seam — mocked so the route stays hermetic (no real
+// Supabase). These are the durable-loop closers under test: the route must resolve
+// the call, load prior turns as memory, and persist each turn (transcript + reply).
+vi.mock("@/server/services/telephony", () => ({
+  recordInboundCall: vi.fn(),
+  loadRecentSpokenTurns: vi.fn(),
+  persistSpokenTurn: vi.fn(),
+}));
 
 async function loadRoute() {
   return import("@/app/api/webhooks/twilio/voice/gather/route");
@@ -38,6 +46,15 @@ async function routerMock() {
 async function turnMock() {
   const { maybeGenerateVoiceTurn } = await import("@/lib/telephony/ai-turn");
   return vi.mocked(maybeGenerateVoiceTurn);
+}
+async function recordMock() {
+  return vi.mocked((await import("@/server/services/telephony")).recordInboundCall);
+}
+async function loadTurnsMock() {
+  return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
+}
+async function persistMock() {
+  return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
 }
 
 const TOKEN = "voice_gather_auth_token_abc123";
@@ -79,17 +96,24 @@ const SPEECH = {
 };
 
 describe("POST /api/webhooks/twilio/voice/gather", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.stubEnv("NEXT_PUBLIC_FEATURE_VOICE_INBOUND", "true");
     vi.stubEnv("COMMS_VOICE_PROVIDER", "twilio");
     vi.stubEnv("TWILIO_ACCOUNT_SID", "AC_test");
     vi.stubEnv("TWILIO_AUTH_TOKEN", TOKEN);
+    // Persistence defaults: the call resolves to a row, with no prior turns.
+    (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
+    (await loadTurnsMock()).mockResolvedValue([]);
+    (await persistMock()).mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
     vi.unstubAllEnvs();
     (await routerMock()).mockReset();
     (await turnMock()).mockReset();
+    (await recordMock()).mockReset();
+    (await loadTurnsMock()).mockReset();
+    (await persistMock()).mockReset();
   });
 
   it("SAYs the governed turn and NESTS a further <Gather> (loop continues)", async () => {
@@ -114,7 +138,60 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     );
   });
 
-  it("rejects a missing signature 401 FAIL-CLOSED before generating a turn", async () => {
+  it("persists the caller SpeechResult + reply and passes prior turns as memory", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    (await loadTurnsMock()).mockResolvedValue([
+      { transcript: "hello there", reply: "Hi, how can I help?" },
+    ]);
+    (await turnMock()).mockResolvedValue("Sorry to hear that. Is it dripping or fully leaking?");
+
+    const { POST } = await loadRoute();
+    const res = await POST(signedRequest(SPEECH) as never);
+    expect(res.status).toBe(200);
+
+    // (c) prior turns were LOADED (org-pinned, on the resolved call) and threaded
+    //     into the governed seam as `history` — the loop now has memory.
+    expect(await recordMock()).toHaveBeenCalledWith(
+      "org-1",
+      expect.objectContaining({ providerCallId: "CA-gather-1" }),
+    );
+    expect(await loadTurnsMock()).toHaveBeenCalledWith("org-1", "call-1");
+    expect(await turnMock()).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-1",
+        transcript: "my boiler is leaking",
+        history: [{ transcript: "hello there", reply: "Hi, how can I help?" }],
+      }),
+    );
+    // (a)+(b) the turn (SpeechResult + generated reply) is persisted to call_events
+    //         AND folded into the enquiry raw_text — carrying the prior turns.
+    expect(await persistMock()).toHaveBeenCalledWith({
+      orgId: "org-1",
+      callId: "call-1",
+      providerCallId: "CA-gather-1",
+      transcript: "my boiler is leaking",
+      reply: "Sorry to hear that. Is it dripping or fully leaking?",
+      priorTurns: [{ transcript: "hello there", reply: "Hi, how can I help?" }],
+    });
+  });
+
+  it("degrades gracefully (200, no 500) when persistence throws", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    (await turnMock()).mockResolvedValue("Understood — someone will call you back shortly.");
+    (await persistMock()).mockRejectedValue(new Error("db unavailable"));
+
+    const { POST } = await loadRoute();
+    const res = await POST(signedRequest(SPEECH) as never);
+
+    // A persistence failure must NOT break the call — the loop still returns TwiML.
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("<Say>Understood — someone will call you back shortly.</Say>");
+    expect(xml).toContain("<Gather");
+    expect(await persistMock()).toHaveBeenCalled();
+  });
+
+  it("rejects a missing signature 401 FAIL-CLOSED before generating OR persisting a turn", async () => {
     (await routerMock()).mockResolvedValue("org-1");
     const { POST } = await loadRoute();
     const res = await POST(buildRequest({ params: SPEECH, signature: null }) as never);
@@ -123,6 +200,9 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "invalid_signature" });
     expect(await turnMock()).not.toHaveBeenCalled();
     expect(await routerMock()).not.toHaveBeenCalled();
+    // Persistence must never run before the signature gate.
+    expect(await recordMock()).not.toHaveBeenCalled();
+    expect(await persistMock()).not.toHaveBeenCalled();
   });
 
   it("rejects a signature minted with the wrong token 401", async () => {
@@ -146,6 +226,9 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "not_enabled" });
     expect(await turnMock()).not.toHaveBeenCalled();
     expect(await routerMock()).not.toHaveBeenCalled();
+    // The dark gate precedes ALL work, persistence included.
+    expect(await recordMock()).not.toHaveBeenCalled();
+    expect(await persistMock()).not.toHaveBeenCalled();
   });
 
   it("degrades to a graceful close (no <Gather>) when the turn is null (no tier bound)", async () => {
