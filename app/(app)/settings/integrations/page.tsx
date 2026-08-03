@@ -10,9 +10,12 @@ import {
 import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
 import { listBankConnections } from "@/server/services/bank-connections";
 import { isBankingProviderConnectable } from "@/lib/integrations/banking/oauth";
+import { listTelematicsConnections } from "@/server/services/telematics-connections";
+import { isTelematicsProviderConnectable } from "@/lib/integrations/telematics/oauth";
 import { CalendarConnectionsPanel } from "./CalendarConnectionsPanel";
 import { HmrcConnectionPanel } from "./HmrcConnectionPanel";
 import { BankConnectionsPanel } from "./BankConnectionsPanel";
+import { TelematicsConnectionsPanel } from "./TelematicsConnectionsPanel";
 
 /**
  * /settings/integrations — third-party integration connections (calendar today).
@@ -48,6 +51,7 @@ export default async function IntegrationsSettingsPage() {
   const connections = await listCalendarConnections(ctx.org.id);
   const hmrc = await getHmrcConnection(ctx.org.id);
   const bankConnections = await listBankConnections(ctx.org.id);
+  const telematicsConnections = await listTelematicsConnections(ctx.org.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -66,6 +70,13 @@ export default async function IntegrationsSettingsPage() {
           truelayer: isBankingProviderConnectable("truelayer"),
           plaid: isBankingProviderConnectable("plaid"),
           nordigen: isBankingProviderConnectable("nordigen"),
+        }}
+      />
+      <TelematicsConnectionsPanel
+        connections={telematicsConnections}
+        connectable={{
+          samsara: isTelematicsProviderConnectable("samsara"),
+          verizon_connect: isTelematicsProviderConnectable("verizon_connect"),
         }}
       />
     </div>

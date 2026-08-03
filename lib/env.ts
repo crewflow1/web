@@ -272,6 +272,14 @@ const envSchema = z.object({
   // AISP authorisation legal gate. Never flip to "true" before all three exist.
   NEXT_PUBLIC_FEATURE_BANKING_CONNECT: z.enum(["true", "false"]).default("false"),
 
+  // Telematics / GPS fleet-feed connect surface (20261103). DEFAULTS OFF. Switch 1
+  // of two: while off, /api/integrations/telematics/[provider]/* return 503
+  // not_configured and the settings panel renders "not configured". The SECOND
+  // switch is the aggregator credentials + a bound TELEMATICS_PROVIDER; the flag
+  // alone opens no door — isTelematicsProviderConnectable() requires BOTH. Above
+  // both sits a CEO provider-choice decision. Never flip to "true" before all exist.
+  NEXT_PUBLIC_FEATURE_TELEMATICS_CONNECT: z.enum(["true", "false"]).default("false"),
+
   // -- Open Banking / bank-feed aggregator (20261100 — DARK, FCA-gated) ---
   // The single OAuth client the bank-feed substrate binds to, plus the aggregator
   // it is bound to. UNSET in every environment today. Activation is a
@@ -287,6 +295,22 @@ const envSchema = z.object({
   BANKING_PROVIDER: z.string().optional(),
   BANKING_CLIENT_ID: z.string().optional(),
   BANKING_CLIENT_SECRET: z.string().optional(),
+
+  // -- Telematics / GPS fleet feed (20261103 — DARK, provider-choice gated) ----
+  // The single OAuth client the telematics substrate binds to, plus the aggregator
+  // it is bound to. UNSET in every environment today. Activation is a
+  // configuration + CEO-provider-choice act: a live vehicle location/odometer feed
+  // requires a telematics provider ACCOUNT + these credentials AND the feature
+  // flag AND a bound TELEMATICS_PROVIDER. The substrate (lib/integrations/telematics/*)
+  // REFUSES-before-fetch while any of these is absent, so no live provider call is
+  // reachable. TELEMATICS_PROVIDER names the one active aggregator ('samsara' |
+  // 'verizon_connect'); unbound ⇒ nothing is connectable. Free string so a new
+  // aggregator needs zero env-schema edits. Tokens at rest reuse
+  // INTEGRATION_TOKEN_ENCRYPTION_KEY (declared with the accounting/calendar/banking
+  // substrates via process.env; read by token-crypto.ts).
+  TELEMATICS_PROVIDER: z.string().optional(),
+  TELEMATICS_CLIENT_ID: z.string().optional(),
+  TELEMATICS_CLIENT_SECRET: z.string().optional(),
 
   // -- Auth: Microsoft SSO (DARK — credential-gated) ----------------------
   // Whether the "Continue with Microsoft" button is exposed on /login.
