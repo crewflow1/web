@@ -23,6 +23,7 @@ export const AUTOMATION_EVENT_TYPES = [
   "quote.sent",
   "quote.accepted",
   "quote.declined",
+  "lead.created",
   "job.created",
   "job.completed",
   "invoice.created",
