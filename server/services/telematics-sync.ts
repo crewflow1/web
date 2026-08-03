@@ -12,6 +12,7 @@ import {
 } from "@/lib/integrations/telematics/oauth";
 import { encryptToken } from "@/lib/integrations/token-crypto";
 import { syncTelematicsReadings } from "@/server/services/telematics-connections";
+import type { TelematicsReadingInsert } from "@/lib/integrations/telematics/reading-map";
 
 /**
  * Telematics reading SYNC — the service-role caller that ties a connected org's
@@ -88,7 +89,17 @@ type ConnectionRow = {
   last_sync_at: string | null;
 };
 
-type VehicleRow = { asset_id: string; vin: string | null };
+type VehicleRow = { asset_id: string; vin: string | null; odometer_miles: number | null };
+
+/**
+ * The org's fleet register, indexed two ways for one service-role read: VIN →
+ * asset_id (vehicle resolution) and asset_id → current odometer (the forward-only
+ * odometer guard). Built once per connection sync.
+ */
+type FleetIndex = {
+  resolveVehicleId: (providerVehicleId: string) => string | null;
+  currentOdometerByAsset: Map<string, number | null>;
+};
 
 type DbResult<T> = { data: T | null; error: { message: string } | null };
 type WriteResult = { error: { message: string } | null };
@@ -234,10 +245,11 @@ async function syncOneConnection(
     await persistRefreshedTokens(loose, conn.id, conn.org_id, r.tokens.accessToken, r.tokens.refreshToken, r.tokens.expiresAt);
   }
 
-  // Build the vehicle resolver from THIS org's fleet register, keyed on VIN — the
-  // one identifier Samsara and fleet_vehicles share. Org-pinned: only this org's
-  // vehicles can ever be mapped, so a foreign vehicle simply resolves to null.
-  const resolveVehicleId = await buildVehicleResolver(loose, conn.org_id);
+  // Build the fleet index from THIS org's register, keyed on VIN — the one
+  // identifier Samsara and fleet_vehicles share — plus each vehicle's current
+  // odometer for the forward-only guard. Org-pinned: only this org's vehicles can
+  // ever be mapped, so a foreign vehicle simply resolves to null.
+  const { resolveVehicleId, currentOdometerByAsset } = await buildFleetIndex(loose, conn.org_id);
 
   let result = await syncTelematicsReadings({
     orgId: conn.org_id,
@@ -289,6 +301,11 @@ async function syncOneConnection(
       return { ...base, outcome: "error", written: 0, refreshed, message: `readings write failed: ${insErr.message}` };
     }
     written = count ?? 0;
+
+    // Forward the newest odometer per vehicle onto the fleet register (forward-only
+    // guard inside). Driven off the mapped readings — even a fully-deduped re-run
+    // (written === 0) is safe: the guard makes a repeat a no-op.
+    await forwardUpdateOdometers(loose, conn.org_id, result.readings, currentOdometerByAsset);
   }
 
   await markSynced(loose, conn.id, conn.org_id);
@@ -301,27 +318,86 @@ async function syncOneConnection(
   };
 }
 
-/** Build a VIN → fleet_vehicles.asset_id resolver for one org (org-pinned read). */
-async function buildVehicleResolver(
-  loose: LooseDb,
-  orgId: string,
-): Promise<(providerVehicleId: string) => string | null> {
+/**
+ * Build a VIN → fleet_vehicles.asset_id resolver AND an asset_id → current
+ * odometer index for one org, from a single org-pinned read. The odometer index
+ * backs the forward-only guard on the odometer forward-update below.
+ */
+async function buildFleetIndex(loose: LooseDb, orgId: string): Promise<FleetIndex> {
   const { data, error } = await (loose
     .from("fleet_vehicles")
-    .select("asset_id, vin") as SelectChain<VehicleRow[]>).eq("org_id", orgId);
+    .select("asset_id, vin, odometer_miles") as SelectChain<VehicleRow[]>).eq("org_id", orgId);
   const byVin = new Map<string, string>();
+  const currentOdometerByAsset = new Map<string, number | null>();
   if (!error) {
     for (const v of data ?? []) {
       if (v.vin && v.vin.trim().length > 0) {
         byVin.set(v.vin.trim().toUpperCase(), v.asset_id);
       }
+      currentOdometerByAsset.set(
+        v.asset_id,
+        typeof v.odometer_miles === "number" ? v.odometer_miles : null,
+      );
     }
   }
-  // The normaliser passes the VIN (when Samsara reports one) or the opaque vehicle
-  // id; match it case-insensitively against the org's VIN index. A key that is not
-  // a known VIN in THIS org resolves to null (the vehicle is skipped, not guessed).
-  return (providerVehicleId: string) =>
-    byVin.get(providerVehicleId.trim().toUpperCase()) ?? null;
+  return {
+    // The normaliser passes the VIN (when Samsara reports one) or the opaque
+    // vehicle id; match it case-insensitively against the org's VIN index. A key
+    // that is not a known VIN in THIS org resolves to null (skipped, not guessed).
+    resolveVehicleId: (providerVehicleId: string) =>
+      byVin.get(providerVehicleId.trim().toUpperCase()) ?? null,
+    currentOdometerByAsset,
+  };
+}
+
+/** The newest odometer reading per vehicle in a batch (drops odometer-less rows). */
+function newestOdometersByVehicle(
+  readings: readonly TelematicsReadingInsert[],
+): Map<string, { miles: number; recordedAt: string }> {
+  const out = new Map<string, { miles: number; recordedAt: string }>();
+  for (const r of readings) {
+    if (r.odometer_miles == null) continue;
+    const prev = out.get(r.vehicle_id);
+    // ISO-8601 UTC timestamps sort correctly as strings.
+    if (!prev || r.recorded_at > prev.recordedAt) {
+      out.set(r.vehicle_id, { miles: r.odometer_miles, recordedAt: r.recorded_at });
+    }
+  }
+  return out;
+}
+
+/**
+ * Forward-update `fleet_vehicles.odometer_miles`/`odometer_recorded_at` from the
+ * newest reading per vehicle — the piece the C28 audit found missing: the sync
+ * wrote telematics_readings but never advanced the register's single latest
+ * odometer, so a live feed left the mileage the fleet board renders stale.
+ *
+ * FORWARD-ONLY. An odometer only ever increases; a lower reading (a provider
+ * glitch, a swapped unit, an out-of-order sample) must NEVER decrease the stored
+ * value. There is no DB-layer forward-only guard on this column (update_vehicle
+ * sets it directly), so the guard lives HERE: we skip any reading that is not
+ * strictly greater than the current stored odometer. Org-pinned on both the read
+ * (the index) and the write (.eq org_id).
+ */
+async function forwardUpdateOdometers(
+  loose: LooseDb,
+  orgId: string,
+  readings: readonly TelematicsReadingInsert[],
+  currentOdometerByAsset: Map<string, number | null>,
+): Promise<void> {
+  for (const [vehicleId, newest] of newestOdometersByVehicle(readings)) {
+    const current = currentOdometerByAsset.get(vehicleId) ?? null;
+    // Forward-only: only advance, never decrease (or equal — a no-op write).
+    if (current !== null && newest.miles <= current) continue;
+    await loose
+      .from("fleet_vehicles")
+      .update({
+        odometer_miles: newest.miles,
+        odometer_recorded_at: newest.recordedAt,
+      })
+      .eq("asset_id", vehicleId)
+      .eq("org_id", orgId);
+  }
 }
 
 async function persistRefreshedTokens(

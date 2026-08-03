@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
-import { loadVehicleDetail, isInService } from "@/server/services/fleet-snapshot";
+import { loadVehicleDetail, loadVehicleTelematics, isInService } from "@/server/services/fleet-snapshot";
 import { formatGbp } from "@/lib/money";
 import { computeConsumption, mileageSpan, sumFuel } from "@/lib/fleet/fuel";
 import {
@@ -68,8 +68,12 @@ export default async function VehiclePage({
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
 
-  const [detail, suppliers, sites] = await Promise.all([
+  const [detail, telematics, suppliers, sites] = await Promise.all([
     loadVehicleDetail(ctx.org.id, id),
+    // The CONSUMPTION half of the telematics feed. Dark today (no readings), so
+    // this returns an empty view the section below renders as a graceful empty
+    // state rather than an error.
+    loadVehicleTelematics(ctx.org.id, id),
     loadSupplierOptions(ctx.org.id),
     // Org-pinned; includes a retired site when this vehicle still points at one,
     // so the detail page never shows a blank where a real home site exists.
@@ -257,6 +261,96 @@ export default async function VehiclePage({
             {detail.assignments.length === 1 ? "entry" : "entries"} on record.
           </p>
         ) : null}
+      </SectionCard>
+
+      {/* ── Location & telematics (READ of the live feed) ─────────────────── */}
+      <SectionCard title="Location &amp; telematics" id="telematics">
+        {telematics.track.length === 0 ? (
+          <p className="p-4 text-sm text-slate-500">
+            No telematics data for this vehicle. When a tracker feed is connected,
+            its latest position and recent movements appear here — the fleet reads
+            the same feed rather than keeping a second location log.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-3 border-b border-slate-100 p-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Latest position
+                </p>
+                {telematics.latestFix &&
+                telematics.latestFix.latitude != null &&
+                telematics.latestFix.longitude != null ? (
+                  <>
+                    <p className="mt-1 font-mono text-sm text-slate-900">
+                      {telematics.latestFix.latitude.toFixed(6)},{" "}
+                      {telematics.latestFix.longitude.toFixed(6)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      as at {fmtReadingTime(telematics.latestFix.recordedAt)} ·{" "}
+                      <a
+                        href={`https://www.openstreetmap.org/?mlat=${telematics.latestFix.latitude}&mlon=${telematics.latestFix.longitude}#map=15/${telematics.latestFix.latitude}/${telematics.latestFix.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-slate-900"
+                      >
+                        View on map
+                      </a>
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-500">
+                    No GPS fix in recent samples.
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Latest reading
+                </p>
+                <p className="mt-1 text-sm text-slate-900">
+                  {telematics.latest && telematics.latest.odometerMiles != null
+                    ? `${telematics.latest.odometerMiles.toLocaleString("en-GB")} mi`
+                    : "—"}
+                </p>
+                {telematics.latest ? (
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {fmtReadingTime(telematics.latest.recordedAt)}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <ul className="divide-y divide-slate-100">
+              {telematics.track.slice(0, 10).map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 p-3 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900">
+                      {fmtReadingTime(r.recordedAt)}
+                    </p>
+                    <p className="mt-0.5 font-mono text-xs text-slate-500">
+                      {r.latitude != null && r.longitude != null
+                        ? `${r.latitude.toFixed(6)}, ${r.longitude.toFixed(6)}`
+                        : "no fix"}
+                    </p>
+                  </div>
+                  <span className="shrink-0 tabular-nums text-xs text-slate-600">
+                    {r.odometerMiles != null
+                      ? `${r.odometerMiles.toLocaleString("en-GB")} mi`
+                      : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {telematics.track.length > 10 ? (
+              <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
+                Showing the 10 most recent of {telematics.track.length} readings.
+              </p>
+            ) : null}
+          </>
+        )}
       </SectionCard>
 
       {/* ── Compliance ────────────────────────────────────────────────────── */}
@@ -764,6 +858,19 @@ export default async function VehiclePage({
       </SectionCard>
     </div>
   );
+}
+
+/** Format a reading's ISO timestamp for display; falls back to the raw date. */
+function fmtReadingTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso.slice(0, 16).replace("T", " ");
+  return new Date(t).toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function Detail({

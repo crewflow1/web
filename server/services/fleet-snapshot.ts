@@ -41,6 +41,7 @@ type AnyBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => AnyBuilder;
   order: (k: string, o: { ascending: boolean }) => AnyBuilder;
   range: (f: number, t: number) => PromiseLike<PageResult<Row>>;
+  limit: (n: number) => PromiseLike<{ data: Row[] | null; error: unknown }>;
   eq: (k: string, v: unknown) => AnyBuilder;
   in: (k: string, v: unknown[]) => AnyBuilder;
   gte: (k: string, v: unknown) => AnyBuilder;
@@ -509,6 +510,84 @@ export async function loadVehicleDetail(orgId: string, assetId: string): Promise
     };
   } catch (err) {
     console.warn("[fleet] loadVehicleDetail failed", err);
+    return empty;
+  }
+}
+
+/** One `telematics_readings` sample, as the vehicle page consumes it. */
+export interface TelematicsReading {
+  id: string;
+  recordedAt: string;
+  latitude: number | null;
+  longitude: number | null;
+  odometerMiles: number | null;
+}
+
+/**
+ * A vehicle's telematics view: the most recent reading overall, the most recent
+ * reading that carries an actual GPS fix (both lat and lng), and a recent track.
+ * `latest` and `latestFix` differ when the newest samples are odometer-only.
+ */
+export interface VehicleTelematics {
+  latest: TelematicsReading | null;
+  latestFix: TelematicsReading | null;
+  track: TelematicsReading[];
+}
+
+/**
+ * How many recent readings to pull for the track. A bounded `.limit()` is the
+ * right tool for "recent track" — the (org_id, vehicle_id, recorded_at desc)
+ * index (20261103) makes this the hot read the table was built for, and the
+ * latest fix is derived from the same bounded window. History-wide reads (a full
+ * export) would use `fetchAllRows`; the vehicle page does not need one.
+ */
+const TELEMATICS_TRACK_LIMIT = 50;
+
+/**
+ * Load a vehicle's recent telematics readings — the CONSUMPTION half of the feed
+ * that (until now) had no reader: `telematics_readings` was written by the sync
+ * (20261103) but SELECTed by nothing, so ingested GPS/odometer landed in a table
+ * the product never rendered.
+ *
+ * ORG-PINNED like every other read here: `.eq("org_id", orgId)` on top of RLS,
+ * plus `.eq("vehicle_id", assetId)`. Ordered on the existing index
+ * (org_id, vehicle_id, recorded_at desc) with an `id` tiebreaker for a stable
+ * total order. Best-effort: a failure — or a dark build with no readings at all —
+ * degrades to an empty view the page renders as a graceful empty state, never an
+ * error. `vehicle_id` in this table is a `fleet_vehicles.asset_id`.
+ */
+export async function loadVehicleTelematics(
+  orgId: string,
+  assetId: string,
+): Promise<VehicleTelematics> {
+  const empty: VehicleTelematics = { latest: null, latestFix: null, track: [] };
+  try {
+    const supabase = await createClient();
+    const db = supabase as unknown as LooseClient;
+    const { data, error } = await db
+      .from("telematics_readings")
+      .select("id, recorded_at, latitude, longitude, odometer_miles")
+      .eq("org_id", orgId)
+      .eq("vehicle_id", assetId)
+      .order("recorded_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(TELEMATICS_TRACK_LIMIT);
+    if (error) return empty;
+    const track: TelematicsReading[] = (data ?? []).map((r) => ({
+      id: str(r.id),
+      recordedAt: str(r.recorded_at),
+      latitude: numOrNull(r.latitude),
+      longitude: numOrNull(r.longitude),
+      odometerMiles: numOrNull(r.odometer_miles),
+    }));
+    return {
+      latest: track[0] ?? null,
+      latestFix:
+        track.find((t) => t.latitude !== null && t.longitude !== null) ?? null,
+      track,
+    };
+  } catch (err) {
+    console.warn("[fleet] loadVehicleTelematics failed", err);
     return empty;
   }
 }
