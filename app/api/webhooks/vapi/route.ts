@@ -152,6 +152,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       const turn = await maybeGenerateVoiceTurn({
         orgId,
         transcript: query,
+        // Per-call dedupe identity: the resolved call row + this turn's ordinal, so
+        // two callers (or one caller repeating a short phrase) never collide on the
+        // governor's transcript-hash duplicate refusal.
+        callId,
+        ordinal: priorTurns.length,
         context: t.name,
         history: priorTurns,
       });

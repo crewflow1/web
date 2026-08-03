@@ -53,6 +53,20 @@ export type VoiceTurnInput = {
   orgId: string;
   /** The caller's latest utterance (transcribed by the provider), if any. */
   transcript: string;
+  /**
+   * THIS call's provider correlation id — the conversation identity that scopes
+   * the governor's duplicate refusal to a single call + turn (see the dedupe key
+   * below). When absent (e.g. the call row could not be resolved) the key degrades
+   * to the pre-fix, transcript-only form rather than becoming less safe.
+   */
+  callId?: string | null;
+  /**
+   * The 0-based ordinal of THIS turn within the call (i.e. how many prior turns
+   * precede it — `priorTurns.length`). It disambiguates the SAME short utterance
+   * repeated at different points of one call ("yes" … "yes") so the second is not
+   * refused as a duplicate of the first.
+   */
+  ordinal?: number;
   /** Optional prior context for the turn (e.g. the invoking tool name). */
   context?: string | null;
   /**
@@ -128,7 +142,21 @@ export async function maybeGenerateVoiceTurn(input: VoiceTurnInput): Promise<str
           },
         };
       },
-      { orgId: input.orgId, userId: null, dedupeContent: input.transcript },
+      // DEDUPE KEY — per (call, turn, transcript), NOT the raw utterance alone.
+      // The governor hashes (feature, taskClass, dedupeContent) and the reservation
+      // RPC refuses an identical (org_id, feature, content_hash) inside its 900s
+      // window as a DUPLICATE. Keying on `transcript` alone made two callers to one
+      // org — or one caller repeating a short phrase ("yes"/"no"/"hello") — collide,
+      // so the second turn returned null and the call dropped. Prefixing the call
+      // identity + turn ordinal (mirroring receptionist-generation.ts and
+      // memory-lifecycle.ts) scopes the refusal to a single call+turn, while KEEPING
+      // the transcript in the key still folds a genuine webhook REDELIVERY of the
+      // identical (call, turn, transcript) into a duplicate — which is the point.
+      {
+        orgId: input.orgId,
+        userId: null,
+        dedupeContent: `${input.callId ?? ""} ${input.ordinal ?? 0} ${input.transcript}`,
+      },
     );
     if (outcome.status === "ran") return outcome.value;
   } catch (e) {
