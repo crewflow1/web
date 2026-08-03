@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../_form-helpers";
 import { CalendarClient } from "./_calendar";
 import { MonthView } from "./_month-view";
+import { fetchCalendarJobs } from "@/lib/schedule/calendar-data";
 import {
   expandRecurring,
   isValidRecurringPayload,
@@ -84,24 +85,21 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
 
   const staff = await listStaffForOrg(ctx.org.id);
   const supabase = await createClient();
-  let q = supabase
-    .from("jobs")
-    .select(
-      `
-        id, status, scheduled_date, notes, assigned_to, customer_id, recurring,
-        customer:customers ( id, name ),
-        assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
-      `,
-    )
-    // ACTIVE-org pin — the staff filter above already comes from
-    // listStaffForOrg(ctx.org.id) (#456); the calendar grid itself did not.
-    .eq("org_id", ctx.org.id)
-    .limit(1000);
-  if (sp.status) q = q.eq("status", sp.status);
-  if (sp.staff) q = q.eq("assigned_to", sp.staff);
-  const { data: rawJobs, error } = await q;
+  // WINDOW-SCOPED (F-1): the old read pulled ALL org jobs with a blind
+  // 1000-row cap, so once an org crossed 1000 jobs the PostgREST cap silently
+  // dropped some from the grid. fetchCalendarJobs scopes non-recurring jobs to
+  // the rendered [from, to] window and reads recurring parents unbounded (they
+  // must be expanded across the window), both paged under the cap on a
+  // deterministic scheduled_date+id order. The recurring-expansion + in-memory
+  // window filter below is unchanged.
+  const { rows, error } = await fetchCalendarJobs({
+    supabase,
+    orgId: ctx.org.id,
+    range,
+    statusFilter: sp.status,
+    staffFilter: sp.staff,
+  });
   if (error) throw readFailure("jobs calendar: jobs", error);
-  const rows = rawJobs ?? [];
 
   // Build a switch-view header that preserves the active filters + anchor.
   function viewLinkQs(target: "week" | "month"): string {

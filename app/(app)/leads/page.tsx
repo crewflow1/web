@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import {
@@ -64,7 +65,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     // is the in-memory second line of defence for any other non-stage status.
     .neq("status", "archived")
     .order("last_activity_at", { ascending: false })
-    .limit(500);
+    // Stable id tiebreak so paging can't skip/duplicate rows that share a
+    // last_activity_at, and PAGED (F-1): a fixed 500-row cap silently truncated
+    // a busy pipeline — dropping cards from the kanban AND under-reporting the
+    // forecast headline. fetchAllRows pages under the 1000-row PostgREST cap.
+    .order("id", { ascending: true });
 
   if (sp.source && (LEAD_SOURCES as readonly string[]).includes(sp.source)) {
     query = query.eq("source", sp.source);
@@ -93,7 +98,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     query = query.or(leadOr);
   }
 
-  const { data: raw, error } = await query;
+  const { data: raw, error } = await fetchAllRows((from, to) =>
+    query.range(from, to),
+  );
   if (error) throw readFailure("leads pipeline: leads", error);
   const leads = raw ?? [];
 

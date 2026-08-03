@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { bucketPipelineLeads, type RawPipelineLead } from "@/app/(app)/leads/pipeline";
 import { LEAD_STAGES } from "@/lib/leads/schema";
 
@@ -82,5 +84,56 @@ describe("bucketPipelineLeads", () => {
     ]);
     expect(totalValue).toBe(300);
     expect(allCards(byStage).map((c) => c.id).sort()).toEqual(["c", "n"]);
+  });
+
+  /**
+   * F-1: the page fed the kanban + forecast from a `.limit(500)` read, so a
+   * busy pipeline was silently truncated and totalValue under-reported. The
+   * fix pages every non-archived lead in; the bucketing must scale to it while
+   * still excluding archived leads from BOTH the columns and the forecast.
+   */
+  it("buckets far more than 500 non-archived leads and counts every one in totalValue", () => {
+    const N = 1500; // past the old .limit(500) cap and the 1000-row PostgREST cap
+    const live: RawPipelineLead[] = Array.from({ length: N }, (_, i) =>
+      lead({
+        id: `live-${String(i).padStart(6, "0")}`,
+        status: LEAD_STAGES[i % LEAD_STAGES.length]!,
+        estimated_value: 10,
+      }),
+    );
+    // Archived leads mixed throughout must never leak into a column or the total.
+    const archived: RawPipelineLead[] = Array.from({ length: 40 }, (_, i) =>
+      lead({ id: `arch-${i}`, status: "archived", estimated_value: 9999 }),
+    );
+
+    const { byStage, totalValue } = bucketPipelineLeads([...live, ...archived]);
+
+    expect(allCards(byStage)).toHaveLength(N);
+    expect(totalValue).toBe(N * 10);
+    const ids = new Set(allCards(byStage).map((c) => c.id));
+    expect(ids.has(`live-${String(N - 1).padStart(6, "0")}`)).toBe(true);
+    expect([...ids].some((id) => id.startsWith("arch-"))).toBe(false);
+  });
+});
+
+describe("leads/page.tsx wiring — pipeline read is paged, not capped (F-1)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "../../app/(app)/leads/page.tsx"),
+    "utf8",
+  );
+
+  it("pages the whole pipeline via fetchAllRows and drops the .limit(500) cap", () => {
+    expect(src).toContain("fetchAllRows");
+    expect(src).toMatch(/fetchAllRows\(\(from, to\) =>\s*\n?\s*query\.range\(from, to\)/);
+    expect(src).not.toContain(".limit(500)");
+  });
+
+  it("keeps the C28 archived-lead exclusion + org scoping intact", () => {
+    expect(src).toMatch(/\.neq\("status", "archived"\)/);
+    expect(src).toMatch(/\.eq\("org_id", ctx\.org\.id\)/);
+  });
+
+  it("uses a stable id secondary sort so paging can't skip/duplicate rows", () => {
+    expect(src).toMatch(/\.order\("id", \{ ascending: true \}\)/);
   });
 });
