@@ -317,6 +317,29 @@ const envSchema = z.object({
   TELEMATICS_CLIENT_ID: z.string().optional(),
   TELEMATICS_CLIENT_SECRET: z.string().optional(),
 
+  // -- Calendar connect (Google Calendar + Microsoft Graph) — 20261097 DARK --
+  // The OAuth client credentials the calendar-connect substrate binds to, plus its
+  // master feature flag. UNSET in every environment today. Activation = set the
+  // provider's client id + secret AND flip FEATURE_CALENDAR_CONNECT (a two-switch
+  // gate) — no code change reaches the live OAuth/push path. The Microsoft client
+  // is a SEPARATE Graph calendar app from the auth-only Azure SSO (a Calendars
+  // token, never a sign-in token). The substrate (lib/integrations/calendar/*)
+  // REFUSES-before-fetch while any of these is absent, so no live provider call is
+  // reachable. Tokens at rest are encrypted with INTEGRATION_TOKEN_ENCRYPTION_KEY
+  // (below). Read via process.env by oauth.ts; declared here for schema visibility.
+  GOOGLE_CALENDAR_CLIENT_ID: z.string().optional(),
+  GOOGLE_CALENDAR_CLIENT_SECRET: z.string().optional(),
+  MS_GRAPH_CLIENT_ID: z.string().optional(),
+  MS_GRAPH_CLIENT_SECRET: z.string().optional(),
+  FEATURE_CALENDAR_CONNECT: z.string().optional(),
+
+  // -- Integration token encryption (accounting/calendar/banking substrates) --
+  // The base64-encoded 32-byte AES-256 key that encrypts OAuth tokens at rest
+  // (token-crypto.ts). UNSET today; the callback tripwire REFUSES a token exchange
+  // when it is absent, so no plaintext token can ever be written. Required before
+  // any token-storing integration is activated.
+  INTEGRATION_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+
   // -- Auth: Microsoft SSO (DARK — credential-gated) ----------------------
   // Whether the "Continue with Microsoft" button is exposed on /login.
   // DEFAULTS OFF. The button + server action (signInWithMicrosoft, provider
