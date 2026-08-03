@@ -281,8 +281,10 @@ describe("lib/ai/aggregates — every read is pinned to the orgId the payload cl
 
   it("computeActivitySummary pins all four reads (activity_log, quotes, invoices, jobs)", () => {
     const F = fn(SRC(), "computeActivitySummary");
+    // `id` is now selected as the unique pagination tiebreak (F-1 fix); the
+    // active-org pin still immediately follows the select.
     expect(F).toMatch(
-      /\.from\("activity_log"\)\s*\.select\("action, created_at"\)\s*\.eq\("org_id", orgId\)/,
+      /\.from\("activity_log"\)\s*\.select\("id, action, created_at"\)\s*\.eq\("org_id", orgId\)/,
     );
     expect(F).toMatch(/\.from\("quotes"\)[\s\S]{0,220}?\.eq\("org_id", orgId\)/);
     expect(F).toMatch(/\.from\("invoices"\)[\s\S]{0,120}?\.eq\("org_id", orgId\)/);

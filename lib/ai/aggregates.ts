@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   invoiceBusinessToday,
   invoiceDaysOverdue,
@@ -23,6 +24,18 @@ import type {
  * into one payload stamped with a single org_id. When the LLM lands the
  * prose `summary` field gets populated by a separate code path; until
  * then it's null.
+ *
+ * Every read pages through `fetchAllRows` (chunks STRICTLY below the 1000-row
+ * PostgREST cap, with a unique `id` tiebreak on the ordering so no page
+ * boundary can drop or repeat a row). A bare `.select()` here is NOT safe at
+ * any volume: the moment an org crosses ~1000 matching rows PostgREST silently
+ * returns only the first page, so the funnel/leaderboard/stalled-actions and
+ * lead figures would UNDER-report with no error — the F-1 silent-truncation
+ * class already fixed in the sibling `lib/reports/aggregates.ts`. The reads
+ * that carry a `since` window keep the `.gte("created_at", …)` INSIDE the paged
+ * query so the cap is applied to the windowed set, not a truncated superset.
+ * On error every read throws `readFailure` (loud): a silently-empty payload
+ * would read as a genuinely quiet org rather than a failed read.
  */
 
 const DAY_MS = 86_400_000;
@@ -50,11 +63,18 @@ export async function computeActivitySummary(
 
   // --- 1) action counts within the window, bucketed by prefix --------------
   //     + daily volume time series with per-prefix breakdown.
-  const { data: actions, error: actionsError } = await supabase
-    .from("activity_log")
-    .select("action, created_at")
-    .eq("org_id", orgId)
-    .gte("created_at", since);
+  const { data: actions, error: actionsError } = await fetchAllRows<{
+    action: string;
+    created_at: string;
+  }>((from, to) =>
+    supabase
+      .from("activity_log")
+      .select("id, action, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", since)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (actionsError) throw readFailure("ai aggregates: activity log", actionsError);
 
   const prefixCounts = new Map<string, number>();
@@ -84,12 +104,25 @@ export async function computeActivitySummary(
   }));
 
   // --- 2) quote funnel + latencies -----------------------------------------
-  const { data: quotes, error: quotesError } = await supabase
-    .from("quotes")
-    .select(
-      "id, number, total, sent_at, viewed_at, accepted_at, declined_at, customer:customers ( name )",
-    )
-    .eq("org_id", orgId);
+  const { data: quotes, error: quotesError } = await fetchAllRows<{
+    id: string;
+    number: string | null;
+    total: number | null;
+    sent_at: string | null;
+    viewed_at: string | null;
+    accepted_at: string | null;
+    declined_at: string | null;
+    customer: { name: string | null } | null;
+  }>((from, to) =>
+    supabase
+      .from("quotes")
+      .select(
+        "id, number, total, sent_at, viewed_at, accepted_at, declined_at, customer:customers ( name )",
+      )
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (quotesError) throw readFailure("ai aggregates: quotes", quotesError);
   let sent = 0;
   let viewed = 0;
@@ -168,10 +201,22 @@ export async function computeActivitySummary(
   // entirely. The dashboard meanwhile used due_date, so the two surfaces
   // disagreed about which invoices were overdue and by how long.
   const todayIso = invoiceBusinessToday();
-  const { data: invoices, error: invoicesError } = await supabase
-    .from("invoices")
-    .select("id, number, status, total, sent_at, due_date, paid_at")
-    .eq("org_id", orgId);
+  const { data: invoices, error: invoicesError } = await fetchAllRows<{
+    id: string;
+    number: string | null;
+    status: string | null;
+    total: number | null;
+    sent_at: string | null;
+    due_date: string | null;
+    paid_at: string | null;
+  }>((from, to) =>
+    supabase
+      .from("invoices")
+      .select("id, number, status, total, sent_at, due_date, paid_at")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (invoicesError) throw readFailure("ai aggregates: invoices", invoicesError);
   const invoices_overdue_30d: StalledInvoice[] = [];
   for (const inv of invoices ?? []) {
@@ -192,10 +237,20 @@ export async function computeActivitySummary(
   // --- 5) staff leaderboard — most completed jobs --------------------------
   // Use jobs.assigned_to since "who is credited with closing the job"
   // is the assignment, not whoever clicked the status button.
-  const { data: jobs, error: jobsError } = await supabase
-    .from("jobs")
-    .select("status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )")
-    .eq("org_id", orgId);
+  const { data: jobs, error: jobsError } = await fetchAllRows<{
+    status: string | null;
+    assigned_to: string | null;
+    assigned: { id: string; full_name: string | null; email: string | null } | null;
+  }>((from, to) =>
+    supabase
+      .from("jobs")
+      .select(
+        "id, status, assigned_to, assigned:users!jobs_assigned_to_fkey ( id, full_name, email )",
+      )
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (jobsError) throw readFailure("ai aggregates: jobs", jobsError);
   const leaderMap = new Map<
     string,
@@ -241,11 +296,21 @@ export async function computeLeadInsights(
   const supabase = await createClient();
   const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
 
-  const { data: leads, error: leadsError } = await supabase
-    .from("leads")
-    .select("id, status, source, estimated_value, created_at")
-    .eq("org_id", orgId)
-    .gte("created_at", since);
+  const { data: leads, error: leadsError } = await fetchAllRows<{
+    id: string;
+    status: string | null;
+    source: string | null;
+    estimated_value: number | null;
+    created_at: string;
+  }>((from, to) =>
+    supabase
+      .from("leads")
+      .select("id, status, source, estimated_value, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", since)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (leadsError) throw readFailure("ai aggregates: leads", leadsError);
 
   const funnel = {
