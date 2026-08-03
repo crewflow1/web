@@ -66,8 +66,13 @@ export const metadata = { title: "Weather · CrewFlow" };
  */
 export default async function WeatherPage() {
   const { ctx } = await requireOrgContext();
-  const readiness = getWeatherReadiness();
   const watches = await readWeatherWatches(ctx.org.id);
+  // Fold the runtime watch signal into readiness so `available` cannot report
+  // true while the pipeline has nothing to fetch, and the activation-blockers
+  // list below names the producer when no watch is active yet. Counted here,
+  // where the DB is reachable — the readiness module itself stays DB-free.
+  const hasActiveWatches = watches.some((w) => w.active);
+  const readiness = getWeatherReadiness({ hasActiveWatches });
 
   const sourcedCount = ALL_THRESHOLDS.length - UNSOURCED_THRESHOLD_COUNT;
 
