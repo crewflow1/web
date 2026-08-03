@@ -269,13 +269,20 @@ describe("accounting export P2 hardening", () => {
     expect(code).toMatch(/\.neq\(\s*["']status["']\s*,\s*["']draft["']\s*\)/);
   });
 
-  it("both reads request one past the cap so truncation is detectable", () => {
+  it("both reads PAGE the full ledger (fetchAllRows) — no clamp-trapped .limit()", () => {
+    // F-1: a single `.limit(MAX_ROWS + 1)` was silently clamped to the PostgREST
+    // max_rows (1000), so the export dropped rows 1001+ and the `truncated`
+    // probe was DEAD. The reads now page via fetchAllRows/.range with a unique
+    // `id` tiebreak; truncation is derived from the TRUE paged count.
     const code = codeOf(read(SERVICE));
-    const probes = code.match(/\.limit\(\s*MAX_ROWS\s*\+\s*1\s*\)/g) ?? [];
-    // Invoices + payments — both over-request by one to reveal the cap hit.
-    expect(probes.length).toBeGreaterThanOrEqual(2);
-    // The old silent `.limit(MAX_ROWS)` (no signal) must be gone.
-    expect(code).not.toMatch(/\.limit\(\s*MAX_ROWS\s*\)/);
+    expect(code).toMatch(/from\s+["']@\/lib\/supabase\/paginate["']/);
+    expect(code).toMatch(/fetchAllRows</);
+    expect(code).toMatch(/\.range\(/);
+    // A unique tiebreak on the (created_at / paid_at) ordering.
+    expect(code).toMatch(/\.order\(\s*["']id["']\s*,\s*\{\s*ascending:\s*true\s*\}\s*\)/);
+    // The clamp trap must be gone entirely: NO `.limit()` on the export path.
+    expect(code).not.toMatch(/\.limit\(/);
+    // (The dedicated F-1 clamp-trap sweep lives in f1-pagination-guard.test.ts.)
   });
 
   it("a truncated read is reported LOUDLY and returned as a flag", () => {

@@ -136,6 +136,11 @@ function makeBuilder(table: string) {
     limit() {
       return builder;
     },
+    range() {
+      // The export reads now page via fetchAllRows (F-1 clamp fix). The tiny
+      // fixtures fit in one page, so a single resolution ends the paging loop.
+      return Promise.resolve(result());
+    },
     maybeSingle() {
       return Promise.resolve(result());
     },
