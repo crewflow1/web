@@ -293,6 +293,55 @@ describe("computeCorpTaxYear", () => {
     const r = computeCorpTaxYear(invoices, [], yearStart);
     expect(r.estimated_profit).toBe(100_000);
   });
+
+  it("EXCLUDES draft (never-issued) invoices from revenue — the launch-blocking fix", () => {
+    // `draft` is the schema/new-invoice default: every invoice is a draft carrying
+    // real line amounts before it is sent. Counting it as revenue overstated profit
+    // and the CT estimate for essentially every org, contradicting the accrual basis.
+    const r = computeCorpTaxYear(
+      [{ status: "draft", vat_total: 0, total: 30_000, amount: 30_000, paid_at: null, created_at: "2026-05-01" }],
+      [],
+      yearStart,
+    );
+    expect(r.estimated_profit).toBe(0);
+    expect(r.estimated_tax).toBe(0);
+  });
+
+  it("COUNTS issued invoices (sent, paid) of the same amount that a draft does not", () => {
+    // A £30k draft contributes £0 (above); a £30k `sent` and a £30k `paid` each
+    // contribute in full, on the accrual basis, regardless of payment.
+    const sent = computeCorpTaxYear(
+      [{ status: "sent", vat_total: 0, total: 30_000, amount: 30_000, paid_at: null, created_at: "2026-05-01" }],
+      [],
+      yearStart,
+    );
+    expect(sent.estimated_profit).toBe(30_000);
+    expect(sent.estimated_tax).toBe(30_000 * 0.19);
+
+    const paid = computeCorpTaxYear(
+      [{ status: "paid", vat_total: 0, total: 30_000, amount: 30_000, paid_at: "2026-05-10", created_at: "2026-05-01" }],
+      [],
+      yearStart,
+    );
+    expect(paid.estimated_profit).toBe(30_000);
+    expect(paid.estimated_tax).toBe(30_000 * 0.19);
+  });
+
+  it("counts all issued statuses but never draft in a mixed set", () => {
+    // Issued: sent + awaiting_payment + partially_paid + paid + legacy overdue =
+    // 5 × £10k = £50k. The two £10k drafts are excluded. Costs £0 ⇒ profit £50k.
+    const invoices = [
+      { status: "sent", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-01" },
+      { status: "awaiting_payment", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-02" },
+      { status: "partially_paid", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-03" },
+      { status: "paid", vat_total: 0, total: 10_000, amount: 10_000, paid_at: "2026-05-05", created_at: "2026-05-04" },
+      { status: "overdue", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-06" },
+      { status: "draft", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-07" },
+      { status: "draft", vat_total: 0, total: 10_000, amount: 10_000, paid_at: null, created_at: "2026-05-08" },
+    ];
+    const r = computeCorpTaxYear(invoices, [], yearStart);
+    expect(r.estimated_profit).toBe(50_000);
+  });
 });
 
 describe("startOfQuarterIso", () => {
