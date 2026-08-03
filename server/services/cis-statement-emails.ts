@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { listStatements, type CisStatementRow } from "@/server/services/cis-statements";
 import {
   CIS_STATEMENT_EMAIL_SUBJECT_PREFIX,
@@ -68,11 +69,15 @@ export type QueueStatementEmailsResult = {
 
 type Res<T> = { data: T | null; error: { message: string } | null };
 
+type LooseQ = PromiseLike<Res<{ subject: string }[]>> & {
+  order: (k: string, o: { ascending: boolean }) => LooseQ;
+  range: (from: number, to: number) => LooseQ;
+};
 type LooseInsert = {
   from: (t: string) => {
     select: (c: string) => {
       eq: (k: string, v: unknown) => {
-        like: (k: string, v: string) => PromiseLike<Res<{ subject: string }[]>>;
+        like: (k: string, v: string) => LooseQ;
       };
     };
     insert: (rows: unknown) => PromiseLike<{ error: { message: string } | null }>;
@@ -156,13 +161,21 @@ export async function queueCisStatementEmails(input: {
   // 3. Existing queued subjects for this org — the idempotency guard. The queue
   //    is service-role-only, so this read uses the admin client, org-pinned.
   const admin = createAdminClient() as unknown as LooseInsert;
-  const { data: existingRows, error: existingErr } = await admin
-    .from("notification_email_queue")
-    .select("subject")
-    .eq("org_id", orgId)
-    .like("subject", `${CIS_STATEMENT_EMAIL_SUBJECT_PREFIX}%`);
-  if (existingErr) throw readFailure("cis: existing statement emails", existingErr);
-  const existingKeys = new Set((existingRows ?? []).map((r) => r.subject));
+  // PAGED (F-1): the queue is append-only and grows every month, so this
+  // idempotency read must see EVERY previously-queued statement subject — a
+  // truncated read would drop old keys from the guard Set and could re-queue
+  // (duplicate) subcontractor emails. Paged under the cap on `id`.
+  const existingRes = await fetchAllRows<{ subject: string }>((from, to) =>
+    admin
+      .from("notification_email_queue")
+      .select("subject")
+      .eq("org_id", orgId)
+      .like("subject", `${CIS_STATEMENT_EMAIL_SUBJECT_PREFIX}%`)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (existingRes.error) throw readFailure("cis: existing statement emails", existingRes.error);
+  const existingKeys = new Set((existingRes.data ?? []).map((r) => r.subject));
 
   // 4. Decide, purely.
   const plan: CisStatementEmailPlan = planStatementEmails({

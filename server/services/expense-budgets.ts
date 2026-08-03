@@ -1,5 +1,6 @@
 import "server-only";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   currentYearStartDayKey,
   type ExpenseBudgetRow,
@@ -35,8 +36,10 @@ type Builder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   select: (c: string) => Builder;
   eq: (k: string, v: unknown) => Builder;
   gte: (k: string, v: unknown) => Builder;
+  or: (f: string) => Builder;
   order: (k: string, o: { ascending: boolean }) => Builder;
   limit: (n: number) => Builder;
+  range: (from: number, to: number) => Builder;
 };
 export type ExpenseBudgetClient = { from: (t: string) => Builder };
 
@@ -78,24 +81,22 @@ export async function loadCurrentYearSpend(
 ): Promise<ExpenseSpendRow[]> {
   const yearStartDay = currentYearStartDayKey(now); // YYYY-01-01, London
   const yearStartIso = `${yearStartDay}T00:00:00.000Z`;
-  const res = await (
-    client.from("finances") as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          or: (f: string) => {
-            order: (k: string, o: { ascending: boolean }) => {
-              limit: (n: number) => PromiseLike<{ data: Row[] | null; error: unknown }>;
-            };
-          };
-        };
-      };
-    }
-  )
-    .select("category, amount, bill_date, created_at")
-    .eq("org_id", orgId)
-    .or(`bill_date.gte.${yearStartDay},created_at.gte.${yearStartIso}`)
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  // PAGED (F-1): the pure layer SUMS every returned row into the budget-vs-spend
+  // overlay, so the old `.limit(5000)` was a raw cap over an unbounded year of
+  // finances — an org with >5000 finance rows this year silently under-reported
+  // its spend and read as "under budget". `fetchAllRows` walks the whole set
+  // under the PostgREST cap on a unique `created_at`+`id` total order. `id` must
+  // be selected so it can be the pagination tiebreak.
+  const res = await fetchAllRows<Row>((from, to) =>
+    client
+      .from("finances")
+      .select("id, category, amount, bill_date, created_at")
+      .eq("org_id", orgId)
+      .or(`bill_date.gte.${yearStartDay},created_at.gte.${yearStartIso}`)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (res.error) throw readFailure("expense budgets: current-year spend", res.error);
   return (res.data ?? []) as unknown as ExpenseSpendRow[];
 }

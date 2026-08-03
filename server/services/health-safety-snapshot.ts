@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { HsSnapshot } from "@/lib/health-safety/signals";
 import { summariseSignoff } from "@/lib/health-safety/acknowledgements";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Gather the H&S dashboard signals in a small, fixed set of bounded, RLS-scoped
@@ -44,19 +45,25 @@ export async function buildHealthSafetySnapshot(orgId: string): Promise<HsSnapsh
   // serially after (avoids ~1 RTT of added latency on the shared H&S dashboard).
   const toolboxAwaitingAckP = toolboxAwaitingAckCount(supabase, orgId);
 
-  const [
-    draftRes, reviewRes, expiringRes, expiredRes,
-    activeJobsRes, issuedRamsJobsRes, highResidualRes, issuedRamsRes,
-  ] = (await Promise.all([
+  // Count reads (server-side exact counts — never row-truncated) stay bare; the
+  // four DATA reads below feed JS Sets/filters that produce compliance COUNTS, so
+  // they are PAGED (F-1): a mature org can hold >1000 in-progress jobs, issued
+  // RAMS or high-residual hazards, and a truncated read would silently report
+  // fewer "active jobs without current RAMS" / "high-residual RAMS" than exist —
+  // a false all-clear on a safety surface. Each pages on the unique `id`.
+  const [draftRes, reviewRes, expiringRes, expiredRes] = (await Promise.all([
     s.from("risk_assessments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "draft"),
     s.from("risk_assessments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "issued").not("review_date", "is", null).lt("review_date", today),
     s.from("permits_to_work").select("id", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["issued", "active"]).gte("valid_until", nowIso).lte("valid_until", soonIso),
     s.from("permits_to_work").select("id", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["issued", "active"]).lt("valid_until", nowIso),
-    s.from("jobs").select("id").eq("org_id", orgId).eq("status", "in-progress"),
-    s.from("risk_assessments").select("job_id").eq("org_id", orgId).eq("status", "issued").not("job_id", "is", null),
-    s.from("risk_assessment_hazards").select("risk_assessment_id").eq("org_id", orgId).gte("residual_rating", 16),
-    s.from("risk_assessments").select("id").eq("org_id", orgId).eq("status", "issued"),
-  ])) as [CountRes, CountRes, CountRes, CountRes, DataRes, DataRes, DataRes, DataRes];
+  ])) as [CountRes, CountRes, CountRes, CountRes];
+
+  const [activeJobsRes, issuedRamsJobsRes, highResidualRes, issuedRamsRes] = (await Promise.all([
+    fetchAllRows<Row>((from, to) => s.from("jobs").select("id").eq("org_id", orgId).eq("status", "in-progress").order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<Row>((from, to) => s.from("risk_assessments").select("id, job_id").eq("org_id", orgId).eq("status", "issued").not("job_id", "is", null).order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<Row>((from, to) => s.from("risk_assessment_hazards").select("id, risk_assessment_id").eq("org_id", orgId).gte("residual_rating", 16).order("id", { ascending: true }).range(from, to)),
+    fetchAllRows<Row>((from, to) => s.from("risk_assessments").select("id").eq("org_id", orgId).eq("status", "issued").order("id", { ascending: true }).range(from, to)),
+  ])) as [DataRes, DataRes, DataRes, DataRes];
 
   // Fail loud before any signal is derived — see the header note.
   for (const [context, res] of [

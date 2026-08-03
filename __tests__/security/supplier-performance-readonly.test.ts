@@ -227,16 +227,29 @@ describe("supplier performance is active-org pinned", () => {
     );
   });
 
-  it("orders every capped read on a unique total order", () => {
+  it("orders every capped OR paged read on a unique total order", () => {
     // Without an `id` tiebreak a capped read may drop a different row on each
-    // request, so a rate would flicker between page loads.
+    // request, so a rate would flicker between page loads — and a PAGED read
+    // (fetchAllRows) may drop or repeat a row at a 500-row page boundary (the
+    // F-1 truncation class). Both need a unique total order.
+    //
+    // The single-supplier loader caps each read with `.limit(...)` (a per-
+    // supplier ceiling); the batch comparison path pages each org-wide read with
+    // `.range(...)` because those same ceilings, applied across the whole
+    // shortlist, silently truncated the org. Every one of BOTH shapes must carry
+    // the tiebreak.
     const limits = (code.match(/\.limit\(/g) ?? []).length;
+    const ranges = (code.match(/\.range\(/g) ?? []).length;
     const idOrders = (code.match(/\.order\("id", \{ ascending: true \}\)/g) ?? []).length;
     const compositeOrders = (
       code.match(/\.order\("purchase_order_line_item_id", \{ ascending: true \}\)/g) ?? []
     ).length;
-    expect(limits).toBeGreaterThan(5);
-    expect(idOrders + compositeOrders, "a capped read has no unique tiebreak").toBe(limits);
+    expect(limits, "the single-supplier loader still caps its reads").toBeGreaterThan(5);
+    expect(ranges, "the batch comparison path pages its org-wide reads").toBeGreaterThan(5);
+    expect(
+      idOrders + compositeOrders,
+      "a capped or paged read has no unique tiebreak",
+    ).toBe(limits + ranges);
   });
 });
 
