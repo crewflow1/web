@@ -7,7 +7,11 @@ import {
   type TaxQuarterPdfInput,
   type QuarterRow,
 } from "@/lib/pdf/tax-quarter-pdf";
-import { startOfQuarterIso } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  startOfQuarterIso,
+  endOfQuarterExclusiveIso,
+} from "@/lib/tax/compute";
 
 // PDF rendering is Node.js only.
 export const runtime = "nodejs";
@@ -45,7 +49,7 @@ export async function GET(request: NextRequest) {
       // would put BOTH companies' VAT under ONE company's letterhead.
       supabase
         .from("invoices")
-        .select("number, status, amount, vat_total, total, paid_at")
+        .select("number, status, amount, vat_total, total, paid_at, created_at")
         .eq("org_id", ctx.org.id)
         .eq("status", "paid")
         .gte("paid_at", qStart)
@@ -83,17 +87,37 @@ export async function GET(request: NextRequest) {
       total: net + vat,
     };
   });
-  const outputVat = paidInvoices.reduce((s, r) => s + r.vat, 0);
-  const inputVat = financeRows.reduce((s, r) => s + r.vat, 0);
+  // SINGLE VAT AUTHORITY — the totals come from `computeVatQuarter`, exactly as
+  // the dashboard tile and the HMRC 9-box composer do, so this working paper can
+  // never drift from them. The row lists above are the audit trail behind the
+  // same figures. The EXCLUSIVE upper bound belts-and-braces the DB's paid_at
+  // filter so a future-dated payment cannot inflate output VAT.
+  const vat = computeVatQuarter(
+    (invoicesRaw ?? []).map((r) => ({
+      status: r.status as string,
+      vat_total: r.vat_total,
+      total: r.total,
+      amount: r.amount,
+      paid_at: r.paid_at as string | null,
+      created_at: r.created_at as string,
+    })),
+    (financesRaw ?? []).map((r) => ({
+      vat_total: r.vat_total,
+      amount: r.amount,
+      created_at: r.created_at as string,
+    })),
+    qStart,
+    endOfQuarterExclusiveIso(qStart),
+  );
 
   const input: TaxQuarterPdfInput = {
     org_name: org?.name ?? ctx.org.name,
     org_vat_number: org?.vat_number ?? null,
     quarter_start: qStart,
     quarter_end: qEnd,
-    output_vat: Math.round(outputVat * 100) / 100,
-    input_vat: Math.round(inputVat * 100) / 100,
-    net_payable: Math.round((outputVat - inputVat) * 100) / 100,
+    output_vat: vat.output_vat,
+    input_vat: vat.input_vat,
+    net_payable: vat.net_payable,
     paid_invoices: paidInvoices,
     finance_rows: financeRows,
   };

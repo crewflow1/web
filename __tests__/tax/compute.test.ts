@@ -52,6 +52,69 @@ describe("computeVatQuarter", () => {
     expect(result.input_vat).toBe(40.25);
     expect(result.net_payable).toBe(160.25);
   });
+
+  it("EXCLUDES future-dated paid_at / created_at when given an exclusive upper bound", () => {
+    // Quarter = 2026-04-01 .. 2026-07-01 (exclusive). Rows dated in the NEXT
+    // quarter must not leak into this one's output/input VAT.
+    const quarterEnd = "2026-07-01";
+    const invoices = [
+      { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2026-05-10", created_at: "2026-05-01" }, // in
+      { status: "paid", vat_total: 500, total: 3000, amount: 2500, paid_at: "2026-07-01", created_at: "2026-06-20" }, // next quarter (boundary is exclusive) — OUT
+      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-09-15", created_at: "2026-06-30" }, // future — OUT
+    ];
+    const finances = [
+      { vat_total: 40, amount: 200, created_at: "2026-06-30" }, // in
+      { vat_total: 88, amount: 440, created_at: "2026-07-15" }, // next quarter — OUT
+    ];
+    const result = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    expect(result.output_vat).toBe(200); // future-dated 500 + 999 excluded
+    expect(result.input_vat).toBe(40); // future-dated 88 excluded
+    expect(result.net_payable).toBe(160);
+  });
+
+  it("without an upper bound, keeps the historical open-ended behaviour (leak reproduced)", () => {
+    // This is the pre-fix behaviour the cash-out consumer still relies on: with no
+    // upper bound a future-dated payment DOES flow in. The dashboard tile and PDF
+    // now always pass the bound, so this path is only the documented default.
+    const invoices = [
+      { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2026-05-10", created_at: "2026-05-01" },
+      { status: "paid", vat_total: 500, total: 3000, amount: 2500, paid_at: "2026-09-15", created_at: "2026-06-20" },
+    ];
+    const unbounded = computeVatQuarter(invoices, [], quarterStart);
+    expect(unbounded.output_vat).toBe(700); // 200 + the future-dated 500 leaks in
+    const bounded = computeVatQuarter(invoices, [], quarterStart, "2026-07-01");
+    expect(bounded.output_vat).toBe(200);
+  });
+
+  it("is the single VAT authority the quarterly PDF reuses — same rows, same totals", () => {
+    // The PDF route maps DB rows into computeVatQuarter's shape and reads
+    // output_vat/input_vat/net_payable straight off it. We prove that reading the
+    // authority equals summing the SAME period-bounded rows the PDF renders, so
+    // the working paper's totals can never drift from the tile or the 9-box.
+    const quarterEnd = "2026-07-01";
+    const invoices = [
+      { status: "paid", vat_total: 600, total: 3600, amount: 3000, paid_at: "2026-04-10", created_at: "2026-04-01" },
+      { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-06-30", created_at: "2026-06-20" },
+      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-08-01", created_at: "2026-06-30" }, // future — must not count
+    ];
+    const finances = [
+      { vat_total: 150, amount: 750, created_at: "2026-05-05" },
+      { vat_total: 50, amount: 250, created_at: "2026-06-15" },
+    ];
+    const authority = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    // The rows the PDF actually renders (already period-bounded by the DB query):
+    const pdfPaidVat = invoices
+      .filter((i) => i.status === "paid" && i.paid_at >= quarterStart && i.paid_at < quarterEnd)
+      .reduce((s, r) => s + r.vat_total, 0);
+    const pdfInputVat = finances
+      .filter((f) => f.created_at >= quarterStart && f.created_at < quarterEnd)
+      .reduce((s, r) => s + r.vat_total, 0);
+    expect(authority.output_vat).toBe(pdfPaidVat); // 1000
+    expect(authority.input_vat).toBe(pdfInputVat); // 200
+    expect(authority.output_vat).toBe(1000);
+    expect(authority.input_vat).toBe(200);
+    expect(authority.net_payable).toBe(800);
+  });
 });
 
 describe("computePayeMonth", () => {
@@ -172,15 +235,43 @@ describe("computeCorpTaxYear", () => {
     expect(r.estimated_tax).toBe(350_000 * 0.25);
   });
 
-  it("interpolates linearly between £50k and £250k (marginal approximation)", () => {
+  it("applies HMRC marginal relief between £50k and £250k (3/200 fraction)", () => {
     const invoices = [
       { status: "paid", vat_total: 0, total: 150_000, amount: 150_000, paid_at: "2026-05-01", created_at: "2026-05-01" },
     ];
     const r = computeCorpTaxYear(invoices, [], yearStart);
     expect(r.estimated_profit).toBe(150_000);
-    // halfway between thresholds → midpoint rate ((19 + 25) / 2 = 22)
-    expect(r.rate_applied).toBe(22);
-    expect(r.estimated_tax).toBe(150_000 * 0.22);
+    // HMRC formula: 150,000×25% − (250,000 − 150,000)×3/200
+    //             = 37,500 − 1,500 = £36,000  (NOT the old linear £33,000).
+    // Effective rate 36,000 / 150,000 = 24.00%.
+    expect(r.estimated_tax).toBe(36_000);
+    expect(r.rate_applied).toBe(24);
+  });
+
+  it("marginal relief is continuous at the £50k lower boundary (= flat 19%)", () => {
+    const r = computeCorpTaxYear(
+      [{ status: "paid", vat_total: 0, total: 50_000, amount: 50_000, paid_at: "2026-05-01", created_at: "2026-05-01" }],
+      [],
+      yearStart,
+    );
+    expect(r.estimated_profit).toBe(50_000);
+    // 50,000×25% − (250,000 − 50,000)×3/200 = 12,500 − 3,000 = 9,500 = 50,000×19%.
+    expect(r.estimated_tax).toBe(9_500);
+    expect(r.rate_applied).toBe(19);
+  });
+
+  it("marginal relief is continuous at the £250k upper boundary (= flat 25%)", () => {
+    // £249,999 sits inside the marginal band; relief is a rounding-negligible £0.02
+    // below the £62,500 that £250,000 pays flat, so the effective rate is ~25%.
+    const r = computeCorpTaxYear(
+      [{ status: "paid", vat_total: 0, total: 250_000, amount: 250_000, paid_at: "2026-05-01", created_at: "2026-05-01" }],
+      [],
+      yearStart,
+    );
+    expect(r.estimated_profit).toBe(250_000);
+    // At exactly £250k relief is nil: 250,000×25% − 0 = £62,500.
+    expect(r.estimated_tax).toBe(62_500);
+    expect(r.rate_applied).toBe(25);
   });
 
   it("never produces a negative profit (clamps to 0 when costs exceed revenue)", () => {
