@@ -268,21 +268,34 @@ describe("tickCadences — unknown cadence never invents a side effect", () => {
 });
 
 describe("setCadenceEnabled — super-admin gate + catalogue validation", () => {
+  // Inject the in-memory fake client (3rd arg) so the `defaultClient()` default
+  // param — which builds a real Supabase client whose RealtimeClient constructor
+  // throws on Node 20 (no native WebSocket) — is never evaluated. Both of these
+  // paths return before touching the client, but a default param is evaluated at
+  // call time regardless, so it must be supplied.
   it("rejects a non-super-admin without touching the registry", async () => {
-    const res = await setCadenceEnabled({
-      actor: { id: "u1", email: "nobody@example.com" },
-      cadenceKey: "research-drain",
-      enabled: true,
-    });
+    const res = await setCadenceEnabled(
+      {
+        actor: { id: "u1", email: "nobody@example.com" },
+        cadenceKey: "research-drain",
+        enabled: true,
+      },
+      NOW,
+      fakeClient([], []),
+    );
     expect(res).toEqual({ ok: false, error: "forbidden" });
   });
 
   it("rejects an unknown cadence key (after passing the gate)", async () => {
-    const res = await setCadenceEnabled({
-      actor: { id: "u1", email: "boss@crewflow.uk" },
-      cadenceKey: "not-a-cadence",
-      enabled: true,
-    });
+    const res = await setCadenceEnabled(
+      {
+        actor: { id: "u1", email: "boss@crewflow.uk" },
+        cadenceKey: "not-a-cadence",
+        enabled: true,
+      },
+      NOW,
+      fakeClient([], []),
+    );
     expect(res).toEqual({ ok: false, error: "unknown_cadence" });
   });
 });
