@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
 import { StateForm } from "@/components/forms/StateForm";
@@ -41,18 +42,34 @@ export default async function ReconcilePage({
       // bank_statement_id) derived-safe; the invoice list is pinned directly.
       .eq("org_id", ctx.org.id)
       .maybeSingle(),
-    supabase
-      .from("bank_statement_lines")
-      .select(
-        "id, posted_at, amount, description, reference, matched_invoice_id, matched_payment_id, match_confidence, match_status",
-      )
-      .eq("bank_statement_id", id)
-      .order("posted_at", { ascending: false }),
-    supabase
-      .from("invoices")
-      .select("id, number, total, status")
-      .eq("org_id", ctx.org.id)
-      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]),
+    // PAGED (F-1): a single statement can carry more than 1000 lines, so a bare
+    // `.select()` clamped at the PostgREST cap would silently drop lines from the
+    // reconcile table — hiding un-reconciled money. Derived-safe via the org-pinned
+    // statement above (keyed on its bank_statement_id); `id` is the unique tiebreak
+    // for the non-unique posted_at ordering.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("bank_statement_lines")
+        .select(
+          "id, posted_at, amount, description, reference, matched_invoice_id, matched_payment_id, match_confidence, match_status",
+        )
+        .eq("bank_statement_id", id)
+        .order("posted_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // PAGED (F-1): the full outstanding ledger is the candidate set for the
+    // per-line "match to invoice" picker; truncation at the cap would drop
+    // candidates 1001+. org-pinned; `id` tiebreak for the paging order.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, number, total, status")
+        .eq("org_id", ctx.org.id)
+        .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   // A rejected statement read must not masquerade as a missing statement, and

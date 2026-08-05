@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
@@ -101,16 +102,28 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
   // screen, persisted a cross-org reference in the reconciliation ledger, and
   // inflated org A's "suggested matches" count with rows that can never be
   // confirmed (confirmBankMatch re-checks the invoice's org and refuses).
-  const { data: invoices, error: invoicesError } = await supabase
-    .from("invoices")
-    .select(
-      `
+  //
+  // PAGED (F-1): this scores EVERY incoming line against the WHOLE outstanding
+  // ledger. A bare `.select()` is clamped to the PostgREST cap (max_rows=1000),
+  // so once an org crosses 1000 open invoices the auto-matcher silently stopped
+  // seeing invoices 1001+ — an incoming payment for one of them scored 0 against
+  // the truncated set and persisted as "unmatched", quietly degrading match
+  // quality with no error. fetchAllRows pages the full set under the cap; the
+  // `id` tiebreak gives the ordering the stable total order paging requires.
+  const { data: invoices, error: invoicesError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("invoices")
+      .select(
+        `
         id, number, total, sent_at, status,
         quote:quotes ( customer:customers ( name ) )
       `,
-    )
-    .eq("org_id", ctx.org.id)
-    .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"]);
+      )
+      .eq("org_id", ctx.org.id)
+      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   // Fail loud BEFORE inserting lines — a failed read here would score against
   // an empty invoice list and persist every line as "unmatched".
   if (invoicesError) throw readFailure("payments upload: invoices", invoicesError);

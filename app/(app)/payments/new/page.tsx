@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { computeInvoiceBalance } from "@/lib/payments/allocation";
 import { AllocatePaymentForm, type OutstandingInvoice } from "./_allocate-form";
@@ -17,26 +18,44 @@ export default async function NewPaymentPage() {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data: invoices, error: invoicesError } = await supabase
-    .from("invoices")
-    .select("id, number, total, due_date, status, customer:customers ( name )")
-    // ACTIVE-org pin — recording a payment against the other org's invoice is a
-    // money defect; the picker must only offer this org's outstanding invoices.
-    .eq("org_id", ctx.org.id)
-    .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
-    .order("due_date", { ascending: true });
+  // PAGED (F-1): the whole outstanding ledger is offered in the allocation
+  // picker, so a bare `.select()` clamped at the 1000-row PostgREST cap would
+  // silently drop outstanding invoices 1001+ from the picker once an org grows
+  // past it. fetchAllRows pages under the cap; `id` is the unique tiebreak that
+  // makes the non-unique `due_date` ordering a stable total order for paging.
+  const { data: invoices, error: invoicesError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("invoices")
+      .select("id, number, total, due_date, status, customer:customers ( name )")
+      // ACTIVE-org pin — recording a payment against the other org's invoice is a
+      // money defect; the picker must only offer this org's outstanding invoices.
+      .eq("org_id", ctx.org.id)
+      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+      .order("due_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (invoicesError) throw readFailure("payments new: invoices", invoicesError);
 
   const rows = invoices ?? [];
   const invIds = rows.map((i) => i.id);
 
   // Payments already recorded against these invoices → outstanding balances.
+  // PAGED (F-1): one invoice can carry many part-payments, so across a large
+  // outstanding ledger the payment rows can exceed the 1000-row PostgREST cap.
+  // A bare `.select()` truncated there would under-count payments and OVER-state
+  // the outstanding balance — inviting double-allocation. fetchAllRows pages the
+  // full set; `id` is the unique tiebreak for the stable paging order.
   const { data: paid, error: paidError } = invIds.length
-    ? await supabase
-        .from("invoice_payments")
-        .select("invoice_id, amount")
-        .eq("org_id", ctx.org.id)
-        .in("invoice_id", invIds)
+    ? await fetchAllRows((from, to) =>
+        supabase
+          .from("invoice_payments")
+          .select("invoice_id, amount")
+          .eq("org_id", ctx.org.id)
+          .in("invoice_id", invIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
     : { data: [] as Array<{ invoice_id: string; amount: number | string }>, error: null };
   // A failed read here would show every invoice as fully outstanding and
   // invite double-allocation — fail loud.
