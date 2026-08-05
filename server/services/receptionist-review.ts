@@ -156,7 +156,8 @@ export async function listReviewQueue(input?: {
   org_id?: string;
   limit?: number;
 }): Promise<ReviewQueueItem[]> {
-  const limit = input?.limit ?? 500;
+  // F-1: bounded sample — cap provably, PostgREST clamps every read to 1000.
+  const limit = Math.min(input?.limit ?? 500, 1000);
   let q = queueView().select(QUEUE_COLUMNS);
   if (input?.org_id) q = q.eq("org_id", input.org_id);
   const { data, error } = await q.order("held_at", { ascending: false }).limit(limit);

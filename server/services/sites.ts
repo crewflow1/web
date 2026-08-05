@@ -109,7 +109,9 @@ export async function listSitesForOrg<T = SiteRow>(
     .select(opts.columns ?? SITE_LIST_COLUMNS)
     .eq("org_id", orgId)
     .order("name", { ascending: true })
-    .limit(opts.limit ?? SITE_LIST_LIMIT);
+    // F-1: bounded sample — cap provably (PostgREST clamps every read to 1000),
+    // so a large `opts.limit` can never masquerade as a complete list.
+    .limit(Math.min(opts.limit ?? SITE_LIST_LIMIT, SITE_LIST_LIMIT));
   return (data ?? []) as unknown as T[];
 }
 

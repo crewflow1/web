@@ -91,7 +91,8 @@ export async function listCoordinations(input: {
   org_id: string;
   limit?: number;
 }): Promise<CoordinationRecord[]> {
-  const limit = input.limit ?? 100;
+  // F-1: bounded sample — cap provably, PostgREST clamps every read to 1000.
+  const limit = Math.min(input.limit ?? 100, 1000);
   const { data, error } = await readModelView()
     .select(READ_MODEL_COLUMNS)
     .eq("org_id", input.org_id)

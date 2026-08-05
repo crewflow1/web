@@ -95,7 +95,9 @@ export async function listSuppliersForOrg<T = { id: string; name: string }>(
     .select(opts.columns ?? "id, name")
     .eq("org_id", orgId)
     .order(opts.orderBy ?? "name", { ascending: opts.ascending ?? true })
-    .limit(opts.limit ?? SUPPLIER_LIST_LIMIT);
+    // F-1: bounded sample — cap provably (PostgREST clamps every read to 1000),
+    // so a large `opts.limit` can never masquerade as a complete list.
+    .limit(Math.min(opts.limit ?? SUPPLIER_LIST_LIMIT, SUPPLIER_LIST_LIMIT));
   if (error) throw readFailure("suppliers: supplier list", error);
   return (data ?? []) as unknown as T[];
 }

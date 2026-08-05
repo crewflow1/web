@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { employerCostsForStoredLine, payrollCsv } from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import * as Sentry from "@sentry/nextjs";
 
 export const runtime = "nodejs";
@@ -33,17 +34,26 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       // could export org B's full payroll CSV — names, NI, gross, PAYE, net.
       .eq("org_id", ctx.org.id)
       .maybeSingle(),
-    supabase
-      .from("payroll_lines")
-      .select(
-        `
-          user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
-          user:users ( full_name )
-        `,
-      )
-      .eq("payroll_run_id", id)
-      .eq("org_id", ctx.org.id)
-      .order("gross_pay", { ascending: false }),
+    // PAGED (F-1). This CSV feeds an accountant / payroll bureau, so it must
+    // carry EVERY line: a bare `.select()` truncates at the 1000-row PostgREST
+    // cap, silently dropping employees 1001+ from the bureau file. `fetchAllRows`
+    // pages under the cap; `id` asc is the unique tiebreak so no row is dropped
+    // or repeated at a page boundary (display order stays gross-desc).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("payroll_lines")
+        .select(
+          `
+            user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
+            user:users ( full_name )
+          `,
+        )
+        .eq("payroll_run_id", id)
+        .eq("org_id", ctx.org.id)
+        .order("gross_pay", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     fetchNiNumbersForOrg(ctx.org.id),
   ]);
 

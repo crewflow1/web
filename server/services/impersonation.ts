@@ -180,7 +180,7 @@ export async function listImpersonationSessions(
       "id, admin_user_id, admin_email, target_org_id, target_user_id, reason, ip_address, user_agent, started_at, ended_at, target:organizations!impersonation_sessions_target_org_id_fkey ( name )" as never,
     )
     .order("started_at" as never, { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     console.error("[impersonation] list failed", error.message);
     return [];

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
@@ -55,16 +56,27 @@ export default async function PayrollRunPage({
       // derived-safe, so the other company's pay never renders here.
       .eq("org_id", ctx.org.id)
       .maybeSingle(),
-    supabase
-      .from("payroll_lines")
-      .select(
-        `
-          id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay, note,
-          user:users ( full_name, email )
-        `,
-      )
-      .eq("payroll_run_id", id)
-      .order("gross_pay", { ascending: false }),
+    // PAGED (F-1). These lines are reduced into the on-screen run totals below;
+    // a bare `.select()` truncates at the 1000-row PostgREST cap, so a large
+    // run's Gross/PAYE/NI/Net totals would silently under-report. `fetchAllRows`
+    // pages under the cap. The run is org-pinned above, so keying on
+    // `payroll_run_id` keeps this derived-safe; `id` asc is the unique tiebreak
+    // that keeps rows from shifting across page boundaries (display stays
+    // gross-desc, the primary sort).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("payroll_lines")
+        .select(
+          `
+            id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay, note,
+            user:users ( full_name, email )
+          `,
+        )
+        .eq("payroll_run_id", id)
+        .order("gross_pay", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
   // A rejected read must not masquerade as a missing run, and a failed lines

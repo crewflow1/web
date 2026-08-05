@@ -283,7 +283,7 @@ export async function getLatestNotificationsForCustomer(
     .select(ALL_COLS as never)
     .eq("org_id" as never, orgId as never)
     .order("created_at" as never, { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     console.error("[notifications] getLatestForCustomer failed", error);
     return [];
@@ -321,7 +321,7 @@ export async function getLatestNotificationsForHq(
     )
     .in("audience" as never, ["hq", "both"])
     .order("created_at" as never, { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     console.error("[notifications] getLatestForHq failed", error);
     return [];
