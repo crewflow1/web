@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
 import { invoiceCustomerId } from "@/lib/invoices/customer";
@@ -63,11 +64,31 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the customer's PDF shows the
   // invoice as billed, unaffected by any later quote edit or deletion.
-  const { data: lines, error: linesError } = await admin
-    .from("invoice_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("invoice_id", invoice.id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — a large invoice can carry more than the
+  // 1000-row PostgREST cap of line items; a clamped read would hand the
+  // customer a PDF billing only the first page. `sort_order` is the print
+  // order; `id` the unique tiebreak that keeps paging deterministic.
+  type LineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error: linesError } = await fetchAllRows<LineRow>(
+    (from, to) =>
+      admin
+        .from("invoice_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", invoice.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (linesError) {
     // A failed line-item read must not render a PDF with an empty body.
     return NextResponse.json({ error: "query_failed" }, { status: 500 });

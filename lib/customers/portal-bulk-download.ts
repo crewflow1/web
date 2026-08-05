@@ -2,6 +2,7 @@ import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { invoiceCustomerId } from "@/lib/invoices/customer";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
@@ -296,11 +297,31 @@ async function renderInvoice(inv: InvoiceRow | null, ctx: RenderCtx): Promise<Ui
   if (inv.org_id !== ctx.customer.org_id || invoiceCustomerId(inv) !== ctx.customer.id) {
     return null;
   }
-  const { data: lines, error } = await ctx.admin
-    .from("invoice_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("invoice_id", inv.id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — completeness matters for a bulk export; a
+  // large invoice can exceed the 1000-row PostgREST cap and a clamped read
+  // would zip a PDF billing only the first page. `sort_order` is the print
+  // order; `id` the unique tiebreak that keeps paging deterministic.
+  type LineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error } = await fetchAllRows<LineRow>(
+    (from, to) =>
+      ctx.admin
+        .from("invoice_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", inv.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (error) throw readFailure("portal bulk: invoice lines", error);
 
   const input: InvoicePdfInput = {

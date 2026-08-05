@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
@@ -54,11 +55,31 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   // Invoice-owned snapshot (Issue #349 Phase 2), not the live quote — the PDF
   // reproduces the invoice as billed, immune to later quote edits/deletion.
-  const { data: lines, error: lErr } = await supabase
-    .from("invoice_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("invoice_id", id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — a large invoice can carry more than the
+  // 1000-row PostgREST cap of line items; a clamped read would render a PDF
+  // billing only the first page. `sort_order` is the print order; `id` the
+  // unique tiebreak that keeps paging deterministic.
+  type LineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error: lErr } = await fetchAllRows<LineRow>(
+    (from, to) =>
+      supabase
+        .from("invoice_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (lErr) {
     console.error("[invoice-pdf] line items load failed", lErr);
     return NextResponse.json({ error: "Failed to load invoice" }, { status: 500 });

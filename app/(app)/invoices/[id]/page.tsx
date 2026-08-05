@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
@@ -111,13 +112,35 @@ export default async function InvoiceDetailPage({
   // not the live quote — so a later quote edit or deletion can't rewrite this
   // historical invoice. The snapshot is created atomically by the
   // invoices_snapshot_line_items trigger, so every invoice has one.
-  const lineItemsRes = await supabase
-    .from("invoice_line_items")
-    .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
-    .eq("invoice_id", id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — a large invoice can carry more than the
+  // 1000-row PostgREST cap of line items; a clamped read would render (and, on
+  // the PDF/email paths, bill) a truncated invoice. `sort_order` is the display
+  // order; `id` is the unique tiebreak that keeps paging deterministic.
+  type LineItemRow = {
+    id: string;
+    description: string;
+    qty: number | string | null;
+    unit: string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const lineItemsRes = await fetchAllRows<LineItemRow>(
+    (from, to) =>
+      supabase
+        .from("invoice_line_items")
+        .select("id, description, qty, unit, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LineItemRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (lineItemsRes.error) throw readFailure("invoice detail: line items", lineItemsRes.error);
-  const lineItems = lineItemsRes.data ?? [];
+  const lineItems = lineItemsRes.data;
 
   // Two different questions, deliberately kept apart:
   //   status        — what is STORED. The controls need this to know which

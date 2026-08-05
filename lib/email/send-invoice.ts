@@ -11,6 +11,7 @@ import {
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { env } from "@/lib/env";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import * as Sentry from "@sentry/nextjs";
 
 /**
@@ -139,11 +140,31 @@ export async function sendInvoiceEmail(
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the emailed PDF reproduces the
   // invoice as billed, independent of the live quote.
-  const { data: lines, error: linesError } = await supabase
-    .from("invoice_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("invoice_id", invoice.id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — a large invoice can carry more than the
+  // 1000-row PostgREST cap of line items; a clamped read would email a PDF
+  // billing only the first page. `sort_order` is the print order; `id` the
+  // unique tiebreak that keeps paging deterministic.
+  type LineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error: linesError } = await fetchAllRows<LineRow>(
+    (from, to) =>
+      supabase
+        .from("invoice_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("invoice_id", invoice.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (linesError) {
     // Never email a PDF with totals but zero line items on a failed read.
     // `detail` is returned to the API caller, so it must not carry raw
