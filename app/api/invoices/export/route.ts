@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
 import { csvEscape } from "@/lib/csv";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * CSV export of an org's invoices.
@@ -25,7 +26,6 @@ import { csvEscape } from "@/lib/csv";
  * RLS scopes the underlying queries to the caller's org.
  */
 
-const MAX_INVOICES = 10_000;
 const XERO_DATE = (iso: string | null): string => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -95,43 +95,46 @@ export async function GET(request: NextRequest) {
 
   const supabase = await createClient();
 
-  let q = supabase
-    .from("invoices")
-    .select(
-      `
+  // F-1: a Xero/Sage/simple export must be COMPLETE. A single `.limit(N)` is
+  // silently clamped to PostgREST max_rows (1000), so page the full sales ledger
+  // with a unique (created_at, id) total order. ACTIVE-org pin — RLS alone merged
+  // a dual-org user's two companies into one accounting import.
+  const { data: invoices, error } = await fetchAllRows<InvoiceRow>((rangeFrom, rangeTo) => {
+    let q = supabase
+      .from("invoices")
+      .select(
+        `
         id, number, status, amount, vat_total, total, due_date, paid_at,
         created_at, notes, quote_id,
         quote:quotes ( customer:customers ( name ) )
       `,
-    )
-    // ACTIVE-org pin — a Xero/Sage export must be exactly one company's sales
-    // ledger; RLS alone merged both companies into one accounting import.
-    .eq("org_id", ctx.org.id)
-    .order("created_at", { ascending: true })
-    .limit(MAX_INVOICES);
-
-  if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
-    q = q.gte("created_at", `${from}T00:00:00Z`);
-  }
-  if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
-    q = q.lte("created_at", `${to}T23:59:59Z`);
-  }
-  if (status) {
-    const allowed = new Set<string>(INVOICE_STATUSES);
-    const wanted: InvoiceStatus[] = status
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => allowed.has(s)) as InvoiceStatus[];
-    if (wanted.length > 0) q = q.in("status", wanted);
-  }
-
-  const { data: invoices, error } = await q;
+      )
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(rangeFrom, rangeTo);
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      q = q.gte("created_at", `${from}T00:00:00Z`);
+    }
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      q = q.lte("created_at", `${to}T23:59:59Z`);
+    }
+    if (status) {
+      const allowed = new Set<string>(INVOICE_STATUSES);
+      const wanted: InvoiceStatus[] = status
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => allowed.has(s)) as InvoiceStatus[];
+      if (wanted.length > 0) q = q.in("status", wanted);
+    }
+    return q as unknown as PromiseLike<{ data: InvoiceRow[] | null; error: unknown }>;
+  });
   if (error) {
     console.error("[invoices] export failed", error);
     return NextResponse.json({ error: "Failed to export" }, { status: 500 });
   }
 
-  const rows = (invoices ?? []) as unknown as InvoiceRow[];
+  const rows = invoices;
   const stamp = new Date().toISOString().slice(0, 10);
 
   if (format === "simple") {
@@ -185,27 +188,45 @@ export async function GET(request: NextRequest) {
   // (possibly since-edited or deleted) quote.
   const invoiceIds = rows.map((r) => r.id);
 
-  let lineItemsByInvoice = new Map<string, LineItemRow[]>();
+  const lineItemsByInvoice = new Map<string, LineItemRow[]>();
   if (invoiceIds.length > 0) {
-    const { data: lis, error: lisError } = await supabase
-      .from("invoice_line_items")
-      .select("invoice_id, description, qty, unit_price, vat_rate, line_total, sort_order")
-      .eq("org_id", ctx.org.id)
-      .in("invoice_id", invoiceIds)
-      .order("sort_order", { ascending: true });
-    if (lisError) {
-      // A failed line-item read must not produce a CSV with silently
-      // missing rows — that's a corrupt accounting export.
-      console.error("[invoices] export line items failed", lisError);
-      return NextResponse.json({ error: "Failed to export" }, { status: 500 });
+    // F-1 + URL safety: chunk the id list (a large `.in()` overflows the ~8KB
+    // request-line limit) AND page each chunk (a single read is clamped to 1000
+    // — a corrupt accounting export silently dropped line items past that).
+    const CHUNK = 100;
+    for (let i = 0; i < invoiceIds.length; i += CHUNK) {
+      const idsChunk = invoiceIds.slice(i, i + CHUNK);
+      const { data: lis, error: lisError } = await fetchAllRows<LineItemRow>(
+        (rangeFrom, rangeTo) =>
+          supabase
+            .from("invoice_line_items")
+            .select("id, invoice_id, description, qty, unit_price, vat_rate, line_total, sort_order")
+            .eq("org_id", ctx.org.id)
+            .in("invoice_id", idsChunk)
+            .order("invoice_id", { ascending: true })
+            .order("sort_order", { ascending: true })
+            .order("id", { ascending: true })
+            .range(rangeFrom, rangeTo) as unknown as PromiseLike<{
+            data: LineItemRow[] | null;
+            error: unknown;
+          }>,
+      );
+      if (lisError) {
+        // A failed line-item read must not produce a CSV with silently
+        // missing rows — that's a corrupt accounting export.
+        console.error("[invoices] export line items failed", lisError);
+        return NextResponse.json({ error: "Failed to export" }, { status: 500 });
+      }
+      for (const li of lis) {
+        const arr = lineItemsByInvoice.get(li.invoice_id) ?? [];
+        arr.push(li);
+        lineItemsByInvoice.set(li.invoice_id, arr);
+      }
     }
-    const grouped = new Map<string, LineItemRow[]>();
-    for (const li of (lis ?? []) as unknown as LineItemRow[]) {
-      const arr = grouped.get(li.invoice_id) ?? [];
-      arr.push(li);
-      grouped.set(li.invoice_id, arr);
+    // Page/chunk boundaries can interleave; restore per-invoice line order.
+    for (const arr of lineItemsByInvoice.values()) {
+      arr.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     }
-    lineItemsByInvoice = grouped;
   }
 
   const isXero = format === "xero";
