@@ -81,12 +81,21 @@ export default async function TaxDashboardPage() {
       // the 1000-row PostgREST cap, so a busy org's VAT / Corporation Tax would
       // silently under-report to HMRC. `fetchAllRows` pages under the cap on a
       // unique `created_at`+`id` total order.
+      //
+      // NO `created_at` floor on invoices (deliberate). Output VAT is CASH:
+      // computeVatQuarter counts every invoice PAID (paid_at) inside the quarter,
+      // regardless of when it was created. An invoice issued late in the PREVIOUS
+      // tax year but paid this quarter belongs in this quarter's output VAT — the
+      // quarterly PDF and the frozen HMRC 9-box return both read it on paid_at with
+      // no created_at floor, so filtering it out here made the on-screen tile
+      // under-report and contradict the authoritative figures. Corporation Tax is
+      // unaffected: computeCorpTaxYear re-gates revenue/costs on created_at itself,
+      // so a pre-year invoice never enters the CT profit even though it is fetched.
       fetchAllRows((from, to) =>
         supabase
           .from("invoices")
           .select("id, status, vat_total, total, amount, paid_at, created_at")
           .eq("org_id", ctx.org.id)
-          .gte("created_at", yearStartIso)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -149,8 +158,9 @@ export default async function TaxDashboardPage() {
       : null,
   }));
 
-  // Invoices/finances are fetched for the whole tax year, so the quarter's
-  // EXCLUSIVE upper bound is what keeps a next-quarter payment out of this tile.
+  // Invoices are fetched with no created_at floor (all org invoices) and finances
+  // for the whole tax year, so the quarter's EXCLUSIVE upper bound is what keeps a
+  // next-quarter payment out of this tile.
   const vat = computeVatQuarter(
     invoices,
     finances,
