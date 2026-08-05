@@ -105,6 +105,15 @@ function makeAdmin(config: {
     const obj: Record<string, unknown> = {};
     obj["eq"] = () => obj;
     obj["in"] = () => obj;
+    // The reads now page via `.order().range()` (F-1). Model the range window by
+    // slicing the (small) result set; an error result short-circuits unchanged.
+    obj["order"] = () => obj;
+    obj["range"] = (from: number, to: number) =>
+      Promise.resolve(
+        r.error
+          ? r
+          : { data: (Array.isArray(r.data) ? r.data : []).slice(from, to + 1), error: null },
+      );
     obj["then"] = (res: (v: unknown) => unknown) => Promise.resolve(r).then(res);
     return obj;
   };

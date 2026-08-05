@@ -74,6 +74,7 @@ type AnyBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   eq: (k: string, v: unknown) => AnyBuilder;
   is: (k: string, v: null) => AnyBuilder;
   not: (k: string, op: string, v: null) => AnyBuilder;
+  gte: (k: string, v: unknown) => AnyBuilder;
   lte: (k: string, v: unknown) => AnyBuilder;
   in: (k: string, v: unknown[]) => AnyBuilder;
 };
@@ -142,7 +143,25 @@ export async function buildDailyBriefing(
       ),
       pagedRows(db, "retention_releases", "job_id, amount", "job_id", orgId),
       db.from("jobs").select("id").eq("org_id", orgId).eq("scheduled_date", tomorrowIso).is("assigned_to", null),
-      db.from("compliance_documents").select("id, expires_at").eq("org_id", orgId).not("expires_at", "is", null).lte("expires_at", complianceCutoffIso),
+      // COMPLIANCE EXPIRING — the only expiry signal, so completeness matters:
+      // F-1 the read was unpaginated AND had NO lower date bound, so once an org
+      // accumulated >1000 compliance documents the 1000-row page could be filled
+      // entirely by long-expired historical docs and every genuinely-upcoming
+      // expiry would fall off the end — an all-clear on a document that expires
+      // next week. Now bounded to [today, cutoff] (the exact window the loop
+      // below counts) AND paged, so the upcoming set can never be crowded out.
+      fetchAllRows<Row>((from, to) =>
+        db
+          .from("compliance_documents")
+          .select("id, expires_at")
+          .eq("org_id", orgId)
+          .not("expires_at", "is", null)
+          .gte("expires_at", todayIso)
+          .lte("expires_at", complianceCutoffIso)
+          .order("expires_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       pagedRows(db, "leads", "id, status, estimated_value, created_at", "id", orgId),
       buildHealthSafetySnapshot(orgId),
       // LANE C — deterministic schedule conflicts. Read-only and self-limiting

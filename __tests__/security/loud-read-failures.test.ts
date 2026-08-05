@@ -361,14 +361,13 @@ const RATCHET: Array<{
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control
     // that hid itself on read failure — see the marquee pin above.
-    // 49 → 40: the F-1 per-job pagination fix (C35b) routed the job-scoped SET
-    // reads on jobs/[id]/page.tsx (invoices, finances, variations, base quotes,
-    // invoice payments — 5) and jobs/[id]/commercial/page.tsx (quotes, invoices,
-    // finances, invoice payments — 4) through fetchAllRows and bound + threw on
-    // each read's `error`. Their `?? []` now sits behind a real check, so all 9
-    // stop counting as soft-data debt. A truncated finance read silently
-    // under-stated cost / over-stated profit; a failed read now throws loudly.
-    softData: 40,
+    // 49 → 40 (C35b jobs): jobs/[id]/page.tsx (5 reads) + jobs/[id]/commercial/page.tsx
+    // (4 reads) routed through fetchAllRows with bound+thrown `error` — 9 leave the ledger.
+    // 40 → 36 (C35b services): imports/actions.ts::annotateDuplicates moved its four
+    // best-effort dedupe REFERENCE reads (customers/invoices/memberships/leads) onto
+    // fetchAllRows — the paged reads use non-null `.data` directly, so 4 more leave the
+    // soft-data ledger. Cumulative F-1 bare-select elimination: 49 → 36.
+    softData: 36,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online

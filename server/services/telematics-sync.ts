@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   telematicsProviderReady,
   type TelematicsProvider,
@@ -104,9 +105,16 @@ type FleetIndex = {
 type DbResult<T> = { data: T | null; error: { message: string } | null };
 type WriteResult = { error: { message: string } | null };
 
-/** A PostgREST-style filter chain: awaitable AND `.eq(...)`-chainable. */
+/**
+ * A PostgREST-style filter chain: awaitable, `.eq(...)`-chainable, AND
+ * pageable (`.order().range()`) so a set read can be driven through
+ * `fetchAllRows` under the PostgREST max_rows (1000) cap. `T` is the ROW-ARRAY
+ * type (e.g. ConnectionRow[]); `.range()` resolves to the same array shape.
+ */
 type SelectChain<T> = PromiseLike<DbResult<T>> & {
   eq(col: string, val: string): SelectChain<T>;
+  order(col: string, opts: { ascending: boolean }): SelectChain<T>;
+  range(from: number, to: number): PromiseLike<DbResult<T>>;
 };
 type UpdateChain = PromiseLike<WriteResult> & {
   eq(col: string, val: string): UpdateChain;
@@ -158,26 +166,35 @@ export async function runTelematicsSync(): Promise<TelematicsSyncSummary> {
   const admin = createAdminClient();
   const loose = admin as unknown as LooseDb;
 
-  const { data: connections, error } = await (loose
-    .from("telematics_connections")
-    .select(
-      "id, org_id, provider, external_account_id, access_token, refresh_token, token_expires_at, last_sync_at",
-    ) as SelectChain<ConnectionRow[]>)
-    .eq("provider", provider)
-    .eq("status", "connected");
+  // F-1: this cron must process EVERY connected org across the platform. A bare
+  // `.select()` is clamped to PostgREST max_rows (1000), silently skipping
+  // connections beyond that; page the full set on a stable unique `id` order.
+  const { data: connections, error } = await fetchAllRows<ConnectionRow>(
+    (from, to) =>
+      (loose
+        .from("telematics_connections")
+        .select(
+          "id, org_id, provider, external_account_id, access_token, refresh_token, token_expires_at, last_sync_at",
+        ) as SelectChain<ConnectionRow[]>)
+        .eq("provider", provider)
+        .eq("status", "connected")
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<ConnectionRow>>,
+  );
 
   if (error) {
+    const message = (error as { message?: string } | null)?.message ?? String(error);
     return {
       ran: true,
       provider,
       connections: 0,
       written: 0,
       outcomes: [],
-      note: `telematics_connections read failed: ${error.message}`,
+      note: `telematics_connections read failed: ${message}`,
     };
   }
 
-  const rows = connections ?? [];
+  const rows = connections;
   const outcomes: TelematicsConnectionSyncOutcome[] = [];
   let totalWritten = 0;
 
@@ -324,9 +341,20 @@ async function syncOneConnection(
  * backs the forward-only guard on the odometer forward-update below.
  */
 async function buildFleetIndex(loose: LooseDb, orgId: string): Promise<FleetIndex> {
-  const { data, error } = await (loose
-    .from("fleet_vehicles")
-    .select("asset_id, vin, odometer_miles") as SelectChain<VehicleRow[]>).eq("org_id", orgId);
+  // F-1: this backs BOTH VIN→asset resolution and the odometer guard for the
+  // whole org register — a bare `.select()` clamped at 1000 would silently drop
+  // vehicles 1001+, so their VINs would resolve to null (readings skipped) and
+  // their odometers would never advance. Page the full register on the unique
+  // `asset_id` order.
+  const { data, error } = await fetchAllRows<VehicleRow>(
+    (from, to) =>
+      (loose
+        .from("fleet_vehicles")
+        .select("asset_id, vin, odometer_miles") as SelectChain<VehicleRow[]>)
+        .eq("org_id", orgId)
+        .order("asset_id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<VehicleRow>>,
+  );
   const byVin = new Map<string, string>();
   const currentOdometerByAsset = new Map<string, number | null>();
   if (!error) {

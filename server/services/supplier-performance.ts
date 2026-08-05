@@ -234,14 +234,23 @@ export async function loadSupplierPerformanceSources(
   //    belonging to a payment we did not read (getSupplierLedger's rule).
   let allocations: SupplierAllocationRow[] = [];
   if (payments.length > 0) {
-    const res = await c
-      .from("supplier_payment_allocations")
-      .select<SupplierAllocationRow>("payment_id, finance_id, amount")
-      .eq("org_id", orgId)
-      .in(
-        "payment_id",
-        payments.map((p) => p.id),
-      );
+    // PAGED (F-1): a bare `.select()` here is clamped at max_rows (1000), so a
+    // supplier with a long settlement history had its allocations truncated and
+    // every derived settlement figure computed from a partial set. Page on the
+    // unique `id` PK for a stable page boundary (the grouping below is by
+    // payment_id, but the ORDER must be a total order). Mirrors the batch path.
+    const res = await fetchAllRows<SupplierAllocationRow>((from, to) =>
+      c
+        .from("supplier_payment_allocations")
+        .select<SupplierAllocationRow>("payment_id, finance_id, amount")
+        .eq("org_id", orgId)
+        .in(
+          "payment_id",
+          payments.map((p) => p.id),
+        )
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (res.error) throw readFailure("supplier performance: allocations", res.error);
     allocations = res.data ?? [];
   }

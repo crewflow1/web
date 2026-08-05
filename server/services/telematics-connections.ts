@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   getTelematicsAdapter,
@@ -98,16 +99,34 @@ export async function listTelematicsConnections(
         eq: (
           col: string,
           val: string,
-        ) => PromiseLike<{ data: ConnectionRow[] | null; error: { message: string } | null }>;
+        ) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean },
+          ) => {
+            range: (
+              from: number,
+              to: number,
+            ) => PromiseLike<{ data: ConnectionRow[] | null; error: { message: string } | null }>;
+          };
+        };
       };
     };
   };
-  const { data, error } = await loose
-    .from("telematics_connections")
-    .select(SELECT_COLUMNS)
-    .eq("org_id", orgId);
+  // F-1: page the full connection set — a bare `.select()` is clamped to
+  // PostgREST max_rows (1000), which for a large org would silently drop
+  // providers past the cap. Order on the unique `provider` key (one row per
+  // provider per org) for a stable page boundary.
+  const { data, error } = await fetchAllRows<ConnectionRow>((from, to) =>
+    loose
+      .from("telematics_connections")
+      .select(SELECT_COLUMNS)
+      .eq("org_id", orgId)
+      .order("provider", { ascending: true })
+      .range(from, to) as PromiseLike<PageResult<ConnectionRow>>,
+  );
   if (error) {
-    throw readFailure("telematics connections: list", error);
+    throw readFailure("telematics connections: list", error as Parameters<typeof readFailure>[1]);
   }
   const byProvider = new Map<string, TelematicsConnection>();
   for (const row of data ?? []) {

@@ -76,8 +76,14 @@ function makeDb(opts: {
   const counts = [...(opts.readingCounts ?? [])];
 
   const selectChain = (data: unknown) => {
+    const rows = Array.isArray(data) ? data : [];
     const chain: Record<string, unknown> = {};
     chain.eq = () => chain;
+    // The connection + fleet reads now page via `.order().range()` (F-1); model
+    // the range window by slicing the (small) result set.
+    chain.order = () => chain;
+    chain.range = (from: number, to: number) =>
+      Promise.resolve({ data: rows.slice(from, to + 1), error: null });
     (chain as { then: unknown }).then = (res: (v: unknown) => unknown) =>
       res({ data, error: null });
     return chain;
