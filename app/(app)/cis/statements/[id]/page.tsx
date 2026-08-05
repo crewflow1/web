@@ -183,26 +183,28 @@ export default async function CisStatementPage({
         <h2 className="text-lg font-semibold text-slate-900">
           Payments covered ({payments.length})
         </h2>
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-              <th className="py-2 pr-4">Paid on</th>
-              <th className="py-2 pr-4 text-right">Gross (ex-VAT)</th>
-              <th className="py-2 pr-4 text-right">Materials</th>
-              <th className="py-2 text-right">Deducted</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((p) => (
-              <tr key={p.payment_id} className="border-b border-slate-100">
-                <td className="py-2 pr-4">{p.paid_on}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{formatGbp(p.cis_gross_payment)}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{formatGbp(p.materials_total)}</td>
-                <td className="py-2 text-right tabular-nums">{formatGbp(p.cis_deduction)}</td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+                <th className="py-2 pr-4">Paid on</th>
+                <th className="py-2 pr-4 text-right">Gross (ex-VAT)</th>
+                <th className="py-2 pr-4 text-right">Materials</th>
+                <th className="py-2 text-right">Deducted</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {payments.map((p) => (
+                <tr key={p.payment_id} className="border-b border-slate-100">
+                  <td className="py-2 pr-4">{p.paid_on}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{formatGbp(p.cis_gross_payment)}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{formatGbp(p.materials_total)}</td>
+                  <td className="py-2 text-right tabular-nums">{formatGbp(p.cis_deduction)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p className={reconciles ? "text-xs text-emerald-700" : "text-xs font-semibold text-red-700"}>
           {reconciles
             ? "These payments reconcile exactly to the totals above."
