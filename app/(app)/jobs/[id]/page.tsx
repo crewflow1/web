@@ -127,36 +127,63 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
+  // F-1: these are all job-scoped SET reads — a long-running, well-invoiced job
+  // can cross the 1000-row PostgREST cap, so a bare `.select()` would silently
+  // truncate and under-state cost / over-state profit. Page every one through
+  // fetchAllRows on a unique `id` tiebreak (mirrors the time_entries read below),
+  // and surface a failed read LOUDLY rather than aggregating a partial set.
   const [customers, staff, invoicesForJob, financesForJob, variationsForJob, baseQuotesForJob] = await Promise.all([
     listCustomersForOrg(ctx.org.id),
     listStaffForOrg(ctx.org.id),
-    supabase
-      .from("invoices")
-      .select(
-        "id, number, status, amount, vat_total, total, due_date, job_id, quote_id, quote:quotes ( variation_number )",
-      )
-      .eq("job_id", job.id),
-    supabase
-      .from("finances")
-      .select("id, amount, vat_total, category, created_at, job_id, purchase_order_id")
-      .eq("job_id", job.id),
-    // Variations on this job (any status).
-    supabase
-      .from("quotes")
-      .select(
-        "id, number, variation_number, status, subtotal, vat_total, total, accepted_at, declined_at, created_at, notes, public_token",
-      )
-      .eq("job_id", job.id)
-      .not("variation_number", "is", null)
-      .order("variation_number", { ascending: true }),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, job_id, quote_id, quote:quotes ( variation_number )",
+        )
+        .eq("job_id", job.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("finances")
+        .select("id, amount, vat_total, category, created_at, job_id, purchase_order_id")
+        .eq("job_id", job.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // Variations on this job (any status). variation_number orders the display;
+    // `id` is the unique tiebreak paging requires (two variations can share a
+    // sort key at a page edge only with a unique second key).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("quotes")
+        .select(
+          "id, number, variation_number, status, subtotal, vat_total, total, accepted_at, declined_at, created_at, notes, public_token",
+        )
+        .eq("job_id", job.id)
+        .not("variation_number", "is", null)
+        .order("variation_number", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // Base contract quote(s) for this job — the accepted quote with no
     // variation_number is the original agreed value (Programme B: revised value).
-    supabase
-      .from("quotes")
-      .select("status, total, variation_number")
-      .eq("job_id", job.id)
-      .is("variation_number", null),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("quotes")
+        .select("id, status, total, variation_number")
+        .eq("job_id", job.id)
+        .is("variation_number", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
+  if (invoicesForJob.error) throw readFailure("job summary: invoices", invoicesForJob.error);
+  if (financesForJob.error) throw readFailure("job summary: finances", financesForJob.error);
+  if (variationsForJob.error) throw readFailure("job summary: variations", variationsForJob.error);
+  if (baseQuotesForJob.error) throw readFailure("job summary: base quotes", baseQuotesForJob.error);
 
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types.
@@ -303,9 +330,20 @@ export default async function EditJobPage({
   // Programme D — the ledger-truthful cash position (received/outstanding from
   // real payments, not invoice status). One indexed read, empty-guarded.
   const invIds = invRows.map((i) => i.id);
+  // F-1: page the payment ledger too — a job with many invoices, each with many
+  // recorded payments, can cross the cap; a truncated read would understate
+  // received cash. Empty-guarded on invoice ids, LOUD on error.
   const jobPayments = invIds.length
-    ? await supabase.from("invoice_payments").select("invoice_id, amount").in("invoice_id", invIds)
-    : { data: [] as Array<{ invoice_id: string; amount: number | string | null }> };
+    ? await fetchAllRows((from, to) =>
+        supabase
+          .from("invoice_payments")
+          .select("invoice_id, amount")
+          .in("invoice_id", invIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : { data: [] as Array<{ invoice_id: string; amount: number | string | null }>, error: null };
+  if (jobPayments.error) throw readFailure("job summary: invoice payments", jobPayments.error);
   const commercialCash = computeCommercialCash({
     quotes: [
       ...baseQuoteRows,
