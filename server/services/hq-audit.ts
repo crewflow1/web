@@ -93,7 +93,7 @@ export async function listAdminActivity(
       .eq("target_table", targetTable)
       .eq("target_id", targetId)
       .order("created_at", { ascending: false })
-      .limit(limit);
+      .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
     if (error) {
       console.error("[hq-audit] listAdminActivity failed", error);
       return [];

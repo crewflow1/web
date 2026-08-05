@@ -207,7 +207,8 @@ export async function listAllInternalNotesForHQ(
     )
     .order("pinned" as never, { ascending: false })
     .order("created_at" as never, { ascending: false })
-    .limit(options.limit ?? 500);
+    // F-1: bounded sample — cap provably (PostgREST clamps every read to 1000).
+    .limit(Math.min(options.limit ?? 500, 500));
   if (!options.include_archived) {
     q = q.is("archived_at" as never, null);
   }

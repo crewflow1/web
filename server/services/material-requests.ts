@@ -247,7 +247,7 @@ export async function gatherMaterialRequests(
   const { data, error } = await q
     .order("created_at", { ascending: false })
     .order("id", { ascending: false }) // UNIQUE tiebreaker
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     console.error("[material-requests] queue read failed", error);
     return [];

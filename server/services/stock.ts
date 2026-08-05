@@ -1,6 +1,7 @@
 import "server-only";
 
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   buildItemPositions,
   foldItemTotals,
@@ -68,13 +69,12 @@ type StockBuilder = PromiseLike<{ data: Row[] | null; error: Err }> & {
   in: (k: string, v: readonly unknown[]) => StockBuilder;
   order: (k: string, o: { ascending: boolean }) => StockBuilder;
   limit: (n: number) => StockBuilder;
+  range: (from: number, to: number) => StockBuilder;
   maybeSingle: () => Promise<{ data: Row | null; error: Err }>;
 };
 
 /** Upper bound on a catalogue read. Far beyond any 5-50 person builder. */
 export const STOCK_ITEM_LIMIT = 1000;
-/** Upper bound on a movement scan for balance folding. */
-export const STOCK_MOVEMENT_LIMIT = 5000;
 /** How many movements the overview's "recent" feed and a detail page show. */
 export const STOCK_RECENT_LIMIT = 50;
 
@@ -125,7 +125,10 @@ export async function listStockItems(
     .eq("org_id", orgId) // ACTIVE-ORG PIN
     .order("name", { ascending: true })
     .order("id", { ascending: true })
-    .limit(opts.limit ?? STOCK_ITEM_LIMIT);
+    // F-1: the caller-supplied limit is a bounded sample, but PostgREST clamps
+    // every read to 1000 — so cap it provably (never above the catalogue ceiling)
+    // rather than let a large `opts.limit` masquerade as a complete read.
+    .limit(Math.min(opts.limit ?? STOCK_ITEM_LIMIT, STOCK_ITEM_LIMIT));
   if (error) throw readFailure("stock: item register", error);
   return (data ?? []) as unknown as StockItemRow[];
 }
@@ -157,25 +160,35 @@ export async function loadStockItem(
  * Read in full rather than through the `stock_balances` view because the SAME
  * rows drive the balances AND the history panel, and one read that both use can
  * never disagree with itself. The (org_id, occurred_at desc, id desc) index
- * covers this exactly. If a tenant ever outgrows STOCK_MOVEMENT_LIMIT the right
- * answer is the view plus a paged history, not a bigger limit — recorded in
- * docs/operational-stock.md.
+ * covers this exactly.
+ *
+ * PAGED (F-1). This is a COMPLETENESS-critical read: `foldSiteBalances` sums the
+ * whole ledger, so a truncated read silently mis-states every on-hand quantity.
+ * A single `.limit(N)` cannot be honest here — PostgREST clamps every response
+ * to `max_rows` (=1000), so any bare cap silently drops movements 1001+ and the
+ * folded balance under-reports with no error. `fetchAllRows` pages under the cap
+ * on the unique `(occurred_at desc, id desc)` total order, returning the entire
+ * ledger. Callers that only want a "recent" slice take it in TypeScript from the
+ * complete set (e.g. `movements.slice(0, 12)`), so the display cap never re-caps
+ * the fold input.
  */
 export async function listStockMovements(
   db: StockClient,
   orgId: string,
-  opts: { itemId?: string; siteId?: string; limit?: number } = {},
+  opts: { itemId?: string; siteId?: string } = {},
 ): Promise<StockMovementRow[]> {
-  let q = db
-    .from("stock_movements")
-    .select(STOCK_MOVEMENT_COLUMNS)
-    .eq("org_id", orgId); // ACTIVE-ORG PIN
-  if (opts.itemId) q = q.eq("stock_item_id", opts.itemId);
-  if (opts.siteId) q = q.eq("site_id", opts.siteId);
-  const { data, error } = await q
-    .order("occurred_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(opts.limit ?? STOCK_MOVEMENT_LIMIT);
+  const { data, error } = await fetchAllRows<Row>((from, to) => {
+    let q = db
+      .from("stock_movements")
+      .select(STOCK_MOVEMENT_COLUMNS)
+      .eq("org_id", orgId); // ACTIVE-ORG PIN
+    if (opts.itemId) q = q.eq("stock_item_id", opts.itemId);
+    if (opts.siteId) q = q.eq("site_id", opts.siteId);
+    return q
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+  });
   if (error) throw readFailure("stock: movements", error);
   return (data ?? []) as unknown as StockMovementRow[];
 }

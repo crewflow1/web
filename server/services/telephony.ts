@@ -275,7 +275,7 @@ export async function loadRecentSpokenTurns(
     .eq("call_id", callId)
     .eq("event_type", SPOKEN_TURN_EVENT_TYPE)
     .order("occurred_at", { ascending: true })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     Sentry.captureException(new Error(`loadRecentSpokenTurns failed: ${error.message}`), {
       tags: { service: "telephony" },

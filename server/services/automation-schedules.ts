@@ -243,7 +243,7 @@ export async function drainDueSchedules(
     .eq("enabled", true)
     .lte("next_run_at", nowIso)
     .order("next_run_at", { ascending: true })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
 
   if (due.error) {
     console.error("[automation-schedules] due scan failed", due.error.message);

@@ -545,7 +545,7 @@ export async function listCommunicationsForDraft(
     .select(ROW_COLUMNS)
     .eq("draft_id", draftId)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) throw readFailure("hq-comms: communications for draft", error);
   return data ?? [];
 }
@@ -561,7 +561,7 @@ export async function listCommunicationsForSubject(
     .eq("subject_type", subjectType)
     .eq("subject_id", subjectId)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) throw readFailure("hq-comms: communications for subject", error);
   return data ?? [];
 }
@@ -570,7 +570,7 @@ export async function listSuppressions(limit = 100): Promise<SuppressionRow[]> {
   const { data, error } = await suppressionsTable<SuppressionRow>(createAdminClient())
     .select(SUPPRESSION_COLUMNS)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) throw readFailure("hq-comms: suppressions list", error);
   return data ?? [];
 }

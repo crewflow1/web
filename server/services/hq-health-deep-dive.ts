@@ -242,7 +242,7 @@ export async function listHealthHistoryForOrg(
     )
     .eq("org_id" as never, orgId)
     .order("recomputed_at" as never, { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     console.error("[health-deep-dive] history failed", error.message);
     return [];

@@ -303,7 +303,8 @@ export async function listConversations(input: {
   org_id: string;
   limit?: number;
 }): Promise<ConversationSummary[]> {
-  const limit = input.limit ?? 100;
+  // F-1: bounded sample — cap provably, PostgREST clamps every read to 1000.
+  const limit = Math.min(input.limit ?? 100, 1000);
   const { data, error } = await listView()
     .select(LIST_COLUMNS)
     .eq("org_id", input.org_id)
