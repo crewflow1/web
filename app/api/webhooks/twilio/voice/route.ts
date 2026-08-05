@@ -8,6 +8,10 @@ import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/te
 import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
+import {
+  buildReceptionistGreeting,
+  loadReceptionistProfile,
+} from "@/lib/telephony/receptionist-profile";
 
 /**
  * Twilio inbound VOICE webhook — the origination edge (Wave 8).
@@ -145,8 +149,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   //     generated. Activation still requires binding the generative tier — the
   //     engineering (the loop) now exists, so activation is genuinely config-only.
   //     Never throws — buildGatherTwiml always returns a safe, listening greeting.
+  //     The greeting now speaks the ORG's business name when configured (loaded
+  //     org-pinned on the admin client); a missing setup row falls back to the
+  //     generic greeting (safe default), so an unconfigured org is unchanged.
   const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
-  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript });
-  const twiml = buildGatherTwiml({ prompt: spokenTurn ?? undefined });
+  const profile = await loadReceptionistProfile(orgId);
+  const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript, business: profile });
+  const twiml = buildGatherTwiml({ prompt: spokenTurn ?? buildReceptionistGreeting(profile) });
   return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS });
 }

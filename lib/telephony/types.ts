@@ -86,6 +86,14 @@ export type VoiceProvider = {
     url: string;
     rawBody: string;
     params: Record<string, string>;
+    /**
+     * Vapi's shared-secret header (`X-Vapi-Secret`) — the PRIMARY Vapi scheme.
+     * Ignored by providers that verify a different way (e.g. Twilio's URL+params
+     * signature). Optional so the shared seam stays vendor-neutral.
+     */
+    secret?: string | null;
+    /** The `Authorization` header (`Bearer <secret>`) — an accepted Vapi alias. */
+    authorization?: string | null;
   }): Promise<boolean>;
   /** Normalise a VERIFIED webhook body, or null when it is unusable. */
   parse(input: {

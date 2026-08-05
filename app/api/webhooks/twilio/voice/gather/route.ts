@@ -6,6 +6,7 @@ import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
+import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
 import { loadRecentSpokenTurns, persistSpokenTurn, recordInboundCall } from "@/server/services/telephony";
 
 /**
@@ -106,6 +107,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   //     conversation rather than being an amnesiac single shot. Best-effort: all
   //     persistence is wrapped so a DB error degrades the call to a graceful close
   //     instead of dropping it — and it runs AFTER the dark + signature gates above.
+  // Per-org business identity (name/trade/hours) for the governed turn, as CONTEXT
+  // data. Missing setup ⇒ null ⇒ the generic behaviour (safe default).
+  const profile = await loadReceptionistProfile(orgId);
+
   let callId: string | null = null;
   let priorTurns: VoiceTurnHistoryEntry[] = [];
   try {
@@ -126,6 +131,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // governor's duplicate refusal is scoped to THIS call+turn (not the raw phrase).
     callId,
     ordinal: priorTurns.length,
+    business: profile,
     history: priorTurns,
   });
 

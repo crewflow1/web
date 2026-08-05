@@ -8,6 +8,7 @@ import {
 } from "@/lib/telephony/providers/twilio";
 import {
   verifyVapiSignature,
+  verifyVapiWebhook,
   parseVapiWebhook,
   mapVapiStatus,
 } from "@/lib/telephony/providers/vapi";
@@ -25,6 +26,7 @@ const VOICE_ENV = [
   "TWILIO_ACCOUNT_SID",
   "TWILIO_AUTH_TOKEN",
   "VAPI_WEBHOOK_SECRET",
+  "VAPI_WEBHOOK_HMAC",
 ];
 afterEach(() => {
   for (const k of VOICE_ENV) delete process.env[k];
@@ -74,12 +76,40 @@ describe("vapi verify + parse", () => {
     expect(verifyVapiSignature({ signature: "deadbeef", rawBody: "{}" })).toBe(false);
   });
 
-  it("accepts a correct HMAC", () => {
+  it("accepts a correct HMAC (the opt-in low-level verifier)", () => {
     process.env.VAPI_WEBHOOK_SECRET = "whsec";
     const body = JSON.stringify({ message: { type: "status-update", status: "ringing" } });
     const sig = createHmac("sha256", "whsec").update(body, "utf8").digest("hex");
     expect(verifyVapiSignature({ signature: sig, rawBody: body })).toBe(true);
     expect(verifyVapiSignature({ signature: `sha256=${sig}`, rawBody: body })).toBe(true);
+  });
+
+  it("PRIMARY verifier accepts the X-Vapi-Secret shared secret (constant-time)", () => {
+    const body = JSON.stringify({ message: { type: "assistant-request" } });
+    // Fail-closed when unconfigured — never accept, even with a secret header.
+    expect(verifyVapiWebhook({ secret: "whsec", rawBody: body })).toBe(false);
+
+    process.env.VAPI_WEBHOOK_SECRET = "whsec";
+    expect(verifyVapiWebhook({ secret: "whsec", rawBody: body })).toBe(true);
+    // Authorization: Bearer <secret> is an accepted alias.
+    expect(verifyVapiWebhook({ authorization: "Bearer whsec", rawBody: body })).toBe(true);
+    // Wrong / missing secret ⇒ reject fail-closed.
+    expect(verifyVapiWebhook({ secret: "nope", rawBody: body })).toBe(false);
+    expect(verifyVapiWebhook({ rawBody: body })).toBe(false);
+  });
+
+  it("does NOT accept an HMAC signature by default (Vapi never sends it) — opt-in only", () => {
+    process.env.VAPI_WEBHOOK_SECRET = "whsec";
+    const body = JSON.stringify({ message: { type: "assistant-request" } });
+    const sig = createHmac("sha256", "whsec").update(body, "utf8").digest("hex");
+    // A valid HMAC alone must NOT pass while the shared-secret scheme is primary.
+    expect(verifyVapiWebhook({ signature: sig, rawBody: body })).toBe(false);
+    // …but a valid shared secret DOES pass (this is the fail-close-on-real-traffic fix).
+    expect(verifyVapiWebhook({ secret: "whsec", rawBody: body })).toBe(true);
+    // With the explicit opt-in on, the HMAC path becomes an accepted fallback.
+    process.env.VAPI_WEBHOOK_HMAC = "true";
+    expect(verifyVapiWebhook({ signature: sig, rawBody: body })).toBe(true);
+    expect(verifyVapiWebhook({ signature: "deadbeef", rawBody: body })).toBe(false);
   });
 
   it("maps vapi status vocab", () => {
