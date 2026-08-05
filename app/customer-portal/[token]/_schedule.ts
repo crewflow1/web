@@ -9,6 +9,7 @@ import { computeRetentionPosition } from "@/lib/retentions/compute";
 import { computeRetentionSchedule } from "@/lib/retentions/schedule";
 import { deriveStageStatus } from "@/lib/billing/plan";
 import { computePortalSchedule, type PortalSchedule } from "@/lib/customers/portal-schedule";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Load a customer's agreed payment schedule for the portal (H2-CASH M3).
@@ -30,6 +31,7 @@ type Q = PromiseLike<{ data: Row[] | null; error: SupabaseReadError | null }> & 
   eq: (k: string, v: unknown) => Q;
   in: (k: string, v: unknown[]) => Q;
   order: (k: string, o: { ascending: boolean }) => Q;
+  range: (from: number, to: number) => Q;
 };
 type LooseAdmin = { from: (t: string) => Q };
 const mv = (v: unknown) => v as number | string | null;
@@ -62,23 +64,34 @@ export async function loadPortalSchedule(orgId: string, customerId: string): Pro
     const planIds = (planData ?? []).map((p) => String(p.id));
 
     // 3. Invoices + payments + releases for those jobs (stage status + retention).
-    const { data: invData, error: invError } = await admin
-      .from("invoices")
-      .select("id, status, due_date, total, amount, job_id")
-      .eq("org_id", orgId)
-      .in("job_id", jobIds);
+    // F-1: page the full set — a long-running customer's jobs can carry more
+    // than the 1000-row PostgREST cap of invoices, and these feed the schedule
+    // status + retention maths that would silently under-report if clamped.
+    const { data: invData, error: invError } = await fetchAllRows<Row>((from, to) =>
+      admin
+        .from("invoices")
+        .select("id, status, due_date, total, amount, job_id")
+        .eq("org_id", orgId)
+        .in("job_id", jobIds)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (invError) throw readFailure("portal schedule: invoices", invError);
-    const invRows = invData ?? [];
+    const invRows = invData;
     const invoiceById = new Map(invRows.map((i) => [String(i.id), i]));
     const paidByInvoice = new Map<string, number>();
     if (invRows.length > 0) {
-      const { data: payData, error: payError } = await admin
-        .from("invoice_payments")
-        .select("invoice_id, amount")
-        .eq("org_id", orgId)
-        .in("invoice_id", invRows.map((i) => String(i.id)));
+      const { data: payData, error: payError } = await fetchAllRows<Row>((from, to) =>
+        admin
+          .from("invoice_payments")
+          .select("invoice_id, amount")
+          .eq("org_id", orgId)
+          .in("invoice_id", invRows.map((i) => String(i.id)))
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
       if (payError) throw readFailure("portal schedule: invoice payments", payError);
-      for (const p of payData ?? []) {
+      for (const p of payData) {
         const id = String(p.invoice_id);
         paidByInvoice.set(id, round2((paidByInvoice.get(id) ?? 0) + toPounds(mv(p.amount))));
       }

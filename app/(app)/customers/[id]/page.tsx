@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
@@ -88,23 +89,46 @@ export default async function EditCustomerPage({
     reference: string | null;
   }> = [];
   if (quoteIds.length > 0) {
-    const { data: invs, error: invsError } = await supabase
-      .from("invoices")
-      .select("id, number, status, total, due_date, paid_at, created_at")
-      .in("quote_id", quoteIds)
-      .order("created_at", { ascending: false });
+    // F-1: page the full set — a big customer can exceed the 1000-row PostgREST
+    // cap, and these rows feed money totals (invoiced/paid/outstanding) that
+    // would silently under-report from a clamped first page.
+    const { data: invs, error: invsError } = await fetchAllRows<
+      (typeof invoiceRows)[number]
+    >(
+      (from, to) =>
+        supabase
+          .from("invoices")
+          .select("id, number, status, total, due_date, paid_at, created_at")
+          .in("quote_id", quoteIds)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: (typeof invoiceRows)[number][] | null;
+          error: unknown;
+        }>,
+    );
     if (invsError) throw readFailure("customer detail: invoices", invsError);
-    invoiceRows = invs ?? [];
+    invoiceRows = invs;
     if (invoiceRows.length > 0) {
-      const { data: pays, error: paysError } = await supabase
-        .from("invoice_payments")
-        .select("id, invoice_id, amount, paid_at, reference")
-        .in(
-          "invoice_id",
-          invoiceRows.map((i) => i.id),
-        );
+      const { data: pays, error: paysError } = await fetchAllRows<
+        (typeof paymentRows)[number]
+      >(
+        (from, to) =>
+          supabase
+            .from("invoice_payments")
+            .select("id, invoice_id, amount, paid_at, reference")
+            .in(
+              "invoice_id",
+              invoiceRows.map((i) => i.id),
+            )
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<{
+            data: (typeof paymentRows)[number][] | null;
+            error: unknown;
+          }>,
+      );
       if (paysError) throw readFailure("customer detail: payments", paysError);
-      paymentRows = pays ?? [];
+      paymentRows = pays;
     }
   }
 

@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -122,15 +123,29 @@ export default async function PortalInvoicesPage({
   const paidByInvoice = new Map<string, number>();
   if (invoices.length > 0) {
     const ids = invoices.map((i) => i.id);
-    const { data: payments, error: paymentsError } = await admin
-      .from("invoice_payments")
-      .select("invoice_id, amount")
-      .in("invoice_id", ids);
+    // F-1: page the full set — a customer's payments across all their invoices
+    // can exceed the 1000-row PostgREST cap, and a clamped read would show the
+    // late invoices as fully unpaid.
+    const { data: payments, error: paymentsError } = await fetchAllRows<{
+      invoice_id: string;
+      amount: number | string | null;
+    }>(
+      (from, to) =>
+        admin
+          .from("invoice_payments")
+          .select("invoice_id, amount")
+          .in("invoice_id", ids)
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: { invoice_id: string; amount: number | string | null }[] | null;
+          error: unknown;
+        }>,
+    );
     if (paymentsError) {
       // A failed payments read would show every invoice as fully unpaid.
       throw readFailure("portal invoices: payments", paymentsError);
     }
-    for (const p of payments ?? []) {
+    for (const p of payments) {
       const prev = paidByInvoice.get(p.invoice_id) ?? 0;
       paidByInvoice.set(p.invoice_id, prev + Number(p.amount ?? 0));
     }
