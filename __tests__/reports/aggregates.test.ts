@@ -204,6 +204,69 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     expect(byId["cust-B"]?.revenue).toBe((N / 2) * 20);
   });
 
+  it("topCustomersByRevenue resolves via customer_id when the quote is gone, and never drops paid revenue", async () => {
+    // The C35 gap: `invoices_quote_id_fkey` is ON DELETE SET NULL, so deleting a
+    // quote nulls quote/quote.customer while the denormalised `customer_id`
+    // survives. Resolving via the embed ALONE silently dropped that invoice's
+    // paid revenue. Three populations, all paid:
+    //   A — customer_id set, quote DELETED (quote is null): must attribute to A.
+    //   B — legacy row: no customer_id, resolves via the quote embed (unchanged).
+    //   ∅ — neither customer_id nor quote.customer: must land in Unattributed,
+    //       NOT be dropped, so the ranking's total reconciles with paid revenue.
+    h.tables.customers = [
+      { id: "cust-A", org_id: ORG, name: "Alpha" },
+      { id: "cust-B", org_id: ORG, name: "Beta" },
+      // A customer that belongs to ANOTHER org must never leak in as a name.
+      { id: "cust-X", org_id: OTHER_ORG, name: "Xenon" },
+    ];
+    h.tables.invoices = [
+      // A: customer_id set, quote deleted (SET NULL) → still counts for Alpha.
+      { id: "inv-a1", org_id: ORG, status: "paid", total: 100, customer_id: "cust-A", quote: null },
+      { id: "inv-a2", org_id: ORG, status: "paid", total: 50, customer_id: "cust-A", quote: null },
+      // B: legacy row, no customer_id → resolves via the quote embed fallback.
+      {
+        id: "inv-b1",
+        org_id: ORG,
+        status: "paid",
+        total: 30,
+        customer_id: null,
+        quote: { customer: { id: "cust-B", name: "Beta" } },
+      },
+      // ∅: neither resolvable → Unattributed bucket, not dropped.
+      { id: "inv-z1", org_id: ORG, status: "paid", total: 7, customer_id: null, quote: null },
+      {
+        id: "inv-z2",
+        org_id: ORG,
+        status: "paid",
+        total: 3,
+        customer_id: null,
+        quote: { customer: null },
+      },
+    ];
+
+    const rows = await topCustomersByRevenue(ORG, 10);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+
+    // (a) customer_id wins even with the quote gone.
+    expect(byId["cust-A"]?.name).toBe("Alpha");
+    expect(byId["cust-A"]?.revenue).toBe(150);
+    expect(byId["cust-A"]?.invoice_count).toBe(2);
+
+    // (c) the quote.customer fallback path still works.
+    expect(byId["cust-B"]?.name).toBe("Beta");
+    expect(byId["cust-B"]?.revenue).toBe(30);
+    expect(byId["cust-B"]?.invoice_count).toBe(1);
+
+    // (b) unresolvable revenue is bucketed, not dropped.
+    const unattributed = rows.find((r) => r.name === "Unattributed");
+    expect(unattributed?.revenue).toBe(10);
+    expect(unattributed?.invoice_count).toBe(2);
+
+    // Reconciliation: the ranking's total equals ALL paid revenue.
+    const rankedTotal = rows.reduce((s, r) => s + r.revenue, 0);
+    expect(rankedTotal).toBe(150 + 30 + 10);
+  });
+
   it("jobsPerWeek counts every job in the window, not a truncated first page", async () => {
     const N = 2000;
     // All within the last 28 days — comfortably inside the 8 pre-filled weekly
