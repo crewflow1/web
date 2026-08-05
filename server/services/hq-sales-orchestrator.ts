@@ -119,7 +119,7 @@ async function readPipeline(): Promise<CompanyRow[] | null> {
       admin.from("hq_sales_companies" as never) as unknown as HqQuery<CompanyRow>
     )
       .select("id, status, created_at, updated_at")
-      .limit(100000);
+      .limit(1000);
     if (error) throw readFailure("hq sales-orchestrator: pipeline", error);
     return (data ?? []).map((r) => ({
       id: r.id,
@@ -149,7 +149,7 @@ async function readDrains(): Promise<SalesOrchestratorDrainsInput | null> {
     )
       .select("task_type, status, created_at")
       .in("task_type", Object.values(DRAIN_TASK_TYPES))
-      .limit(100000);
+      .limit(1000);
     if (error) throw readFailure("hq sales-orchestrator: drains", error);
     const rows = data ?? [];
 
@@ -232,7 +232,7 @@ async function readCadence(
       .in("company_id", activeIds)
       .eq("direction", "outbound")
       .gte("occurred_at", cutoff)
-      .limit(100000);
+      .limit(1000);
     if (error) throw readFailure("hq sales-orchestrator: cadence", error);
     const events = data ?? [];
     const touched = new Set<string>();

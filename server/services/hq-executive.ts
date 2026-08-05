@@ -99,7 +99,7 @@ async function loadCompanyAggregate(
     .select(
       "status, estimated_deal_value_gbp, ai_qualification_score, last_researched_at",
     )
-    .limit(100_000);
+    .limit(1000);
   if (error) {
     console.error("[hq-executive] company aggregate failed", error.message);
   }

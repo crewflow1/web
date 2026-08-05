@@ -39,7 +39,7 @@ const CARD_COLUMNS = [
 ].join(", ");
 
 /** A bounded window of recent tasks — enough to keep the cards live, cheap to read. */
-const TASK_WINDOW = 5000;
+const TASK_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 type Row = BoardroomTask & { assigned_employee_id: string | null };
 

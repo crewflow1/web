@@ -119,7 +119,9 @@ export type SiteUsage = { vehicles: number; custody: number };
 export const EMPTY_SITE_USAGE: SiteUsage = { vehicles: 0, custody: 0 };
 
 /** Upper bound on the usage scan. Well beyond any real tenant's estate. */
-export const SITE_USAGE_SCAN_LIMIT = 5000;
+// Advisory usage counts only — the DB FK guard is the real delete gate (see the
+// caller). Honest bounded sample: PostgREST clamps every read to max_rows (1000).
+export const SITE_USAGE_SCAN_LIMIT = 1000;
 
 /**
  * Count what references each site in the ACTIVE org.

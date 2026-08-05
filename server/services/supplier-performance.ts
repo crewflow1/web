@@ -82,11 +82,6 @@ export type PerformanceClient = {
  * denominator the operator can see is a denominator they can sanity-check
  * against the underlying lists.
  */
-const PO_LIMIT = 1000;
-const GRN_LIMIT = 2000;
-const LINE_LIMIT = 5000;
-const BILL_LIMIT = 1000;
-const PAYMENT_LIMIT = 1000;
 
 /**
  * Every paged/limited read below is ordered on a UNIQUE TOTAL ORDER — the
@@ -136,36 +131,44 @@ export async function loadSupplierPerformanceSources(
   const c = db;
 
   // 1. This supplier's purchase orders, in THIS org.
-  const poRes = await c
-    .from("purchase_orders")
-    .select<PerfPoRow>(PO_COLUMNS)
-    .eq("org_id", orgId)
-    .eq("supplier_id", supplierId)
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: true })
-    .limit(PO_LIMIT);
+  // F-1: page the full set — a single `.limit(N)` is clamped to 1000, silently
+  // truncating a large supplier's history and skewing every derived metric.
+  const poRes = await fetchAllRows<PerfPoRow>((from, to) =>
+    c
+      .from("purchase_orders")
+      .select<PerfPoRow>(PO_COLUMNS)
+      .eq("org_id", orgId)
+      .eq("supplier_id", supplierId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (poRes.error) throw readFailure("supplier performance: purchase orders", poRes.error);
   const purchaseOrders = poRes.data ?? [];
   const poIds = purchaseOrders.map((p) => p.id);
 
   // 2. Bills + payments do not depend on the orders, so they go in parallel.
   const [billsRes, paymentsRes] = await Promise.all([
-    c
-      .from("finances")
-      .select<PerfBillRow>(BILL_COLUMNS)
-      .eq("org_id", orgId)
-      .eq("supplier_id", supplierId)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: true })
-      .limit(BILL_LIMIT),
-    c
-      .from("supplier_payments")
-      .select<SupplierPaymentRow>(PAYMENT_COLUMNS)
-      .eq("org_id", orgId)
-      .eq("supplier_id", supplierId)
-      .order("paid_at", { ascending: false })
-      .order("id", { ascending: true })
-      .limit(PAYMENT_LIMIT),
+    fetchAllRows<PerfBillRow>((from, to) =>
+      c
+        .from("finances")
+        .select<PerfBillRow>(BILL_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("supplier_id", supplierId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<SupplierPaymentRow>((from, to) =>
+      c
+        .from("supplier_payments")
+        .select<SupplierPaymentRow>(PAYMENT_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("supplier_id", supplierId)
+        .order("paid_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (billsRes.error) throw readFailure("supplier performance: bills", billsRes.error);
   // supplier_payments is admin-only at the RLS layer, so a non-admin reads an
@@ -181,22 +184,26 @@ export async function loadSupplierPerformanceSources(
   let poLines: PerfPoLineRow[] = [];
   if (poIds.length > 0) {
     const [grnRes, lineRes] = await Promise.all([
-      c
-        .from("goods_received_notes")
-        .select<PerfGrnRow>(GRN_COLUMNS)
-        .eq("org_id", orgId)
-        .in("purchase_order_id", poIds)
-        .order("delivery_date", { ascending: false })
-        .order("id", { ascending: true })
-        .limit(GRN_LIMIT),
-      c
-        .from("purchase_order_line_items")
-        .select<PerfPoLineRow>(PO_LINE_COLUMNS)
-        .eq("org_id", orgId)
-        .in("purchase_order_id", poIds)
-        .order("purchase_order_id", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(LINE_LIMIT),
+      fetchAllRows<PerfGrnRow>((from, to) =>
+        c
+          .from("goods_received_notes")
+          .select<PerfGrnRow>(GRN_COLUMNS)
+          .eq("org_id", orgId)
+          .in("purchase_order_id", poIds)
+          .order("delivery_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows<PerfPoLineRow>((from, to) =>
+        c
+          .from("purchase_order_line_items")
+          .select<PerfPoLineRow>(PO_LINE_COLUMNS)
+          .eq("org_id", orgId)
+          .in("purchase_order_id", poIds)
+          .order("purchase_order_id", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
     if (grnRes.error) throw readFailure("supplier performance: goods received notes", grnRes.error);
     if (lineRes.error) throw readFailure("supplier performance: ordered lines", lineRes.error);
@@ -208,14 +215,17 @@ export async function loadSupplierPerformanceSources(
   let grnLines: PerfGrnLineRow[] = [];
   const grnIds = grns.map((g) => g.id);
   if (grnIds.length > 0) {
-    const res = await c
-      .from("goods_received_lines")
-      .select<PerfGrnLineRow>(GRN_LINE_COLUMNS)
-      .eq("org_id", orgId)
-      .in("goods_received_note_id", grnIds)
-      .order("goods_received_note_id", { ascending: true })
-      .order("purchase_order_line_item_id", { ascending: true })
-      .limit(LINE_LIMIT);
+    const res = await fetchAllRows<PerfGrnLineRow>((from, to) =>
+      c
+        .from("goods_received_lines")
+        .select<PerfGrnLineRow>(GRN_LINE_COLUMNS)
+        .eq("org_id", orgId)
+        .in("goods_received_note_id", grnIds)
+        .order("goods_received_note_id", { ascending: true })
+        .order("purchase_order_line_item_id", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (res.error) throw readFailure("supplier performance: received lines", res.error);
     grnLines = res.data ?? [];
   }
@@ -274,12 +284,12 @@ export const COMPARISON_SUPPLIER_LIMIT = 60;
  * re-read the same `purchase_order_line_items`. Same queries, same org pin,
  * same loud-read discipline — just grouped by supplier_id afterwards.
  *
- * PAGED (F-1). The single-supplier loader's `.limit(PO_LIMIT/GRN_LIMIT/…)` caps
- * are PER-SUPPLIER ceilings; reused here across the WHOLE shortlist they became
- * ORG-WIDE caps, so an org with more than (say) 1000 purchase orders across its
- * suppliers had the tail silently dropped and every downstream rate computed
- * from a truncated denominator. Each org-wide read below therefore pages through
- * `fetchAllRows` on its existing unique (domain col + `id`) total order instead
+ * PAGED (F-1). Both this batch path AND the single-supplier loader now page
+ * every read through `fetchAllRows` — a single `.limit(N)` is clamped to
+ * PostgREST max_rows (1000), so an org (or a large supplier) with more than 1000
+ * purchase orders had the tail silently dropped and every downstream rate
+ * computed from a truncated denominator. Each read pages on its existing unique
+ * (domain col + `id`) total order instead
  * of taking a single capped page.
  *
  * Suppliers with NOTHING measurable are returned too (with `empty: true`), so
@@ -381,6 +391,7 @@ export async function listSupplierPerformance(
         .in("goods_received_note_id", grnIds)
         .order("goods_received_note_id", { ascending: true })
         .order("purchase_order_line_item_id", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, to),
     );
     if (res.error) throw readFailure("supplier comparison: received lines", res.error);

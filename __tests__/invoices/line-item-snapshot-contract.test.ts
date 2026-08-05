@@ -158,7 +158,9 @@ describe("readers use the snapshot, never live quote line items", () => {
       /\.eq\("invoice_id", invoice\.id\)/,
     );
     expect(read("lib/email/send-invoice.ts")).toMatch(/\.eq\("invoice_id", invoice\.id\)/);
-    expect(read("app/api/invoices/export/route.ts")).toMatch(/\.in\("invoice_id", invoiceIds\)/);
+    // F-1: the export now chunks the id list and pages each chunk, so the
+    // key is `idsChunk` (a slice of invoiceIds) — still keyed by invoice_id.
+    expect(read("app/api/invoices/export/route.ts")).toMatch(/\.in\("invoice_id", idsChunk\)/);
   });
 });
 

@@ -175,7 +175,7 @@ const TIMELINE_COLUMNS =
 const FACET_COLUMNS =
   "status, industry, county, region, source, assigned_to_email, employee_count, estimated_deal_value_gbp";
 
-const FACET_WINDOW = 5000; // bounded sample for facets + pipeline value
+const FACET_WINDOW = 1000; // bounded sample for facets + pipeline value (PostgREST clamps to max_rows=1000)
 const ACTIVITY_WINDOW = 1000; // bounded sample for activity series
 
 // Calling Centre (Phase 6). `transcript` (up to 200k chars) and `search_tsv`
@@ -188,7 +188,7 @@ const CALL_COLUMNS =
 // a larger window so the headline stats are honest beyond the visible page.
 const CALL_STATS_COLUMNS =
   "status, outcome, sentiment, duration_seconds, ended_at, follow_up_at, follow_up_done";
-const CALL_STATS_WINDOW = 5000;
+const CALL_STATS_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 const CALL_SCRIPT_COLUMNS =
   "id, name, category, status, version, summary, opening, body, talking_points, questions, target_persona, target_status, estimated_duration_seconds, tags, usage_count, generated_by, model, ai_employee_id, created_by_email, created_at, updated_at";
@@ -204,7 +204,7 @@ const LEARNING_COLUMNS =
 
 const LEARNING_STATS_COLUMNS =
   "status, pattern_type, confidence, times_used, times_won, memory_id, updated_at";
-const LEARNING_STATS_WINDOW = 5000;
+const LEARNING_STATS_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 // ---------------------------------------------------------------------
 // Lookups (extensible — "new lead sources are data, not code").
@@ -911,7 +911,7 @@ export async function getAiTaskCounts(): Promise<TaskStatusCounts> {
     "hq_sales_ai_tasks",
   )
     .select("status")
-    .limit(100000);
+    .limit(1000);
   if (error) {
     console.error("[hq-sales] getAiTaskCounts failed", error);
     return tallyTaskStatuses([]);
@@ -950,7 +950,7 @@ async function getStatusCounts(admin: AdminClient): Promise<StatusCounts> {
     "hq_sales_companies",
   )
     .select("status")
-    .limit(100000);
+    .limit(1000);
   if (error) {
     console.error("[hq-sales] getStatusCounts failed", error);
     return tallyStatuses([]);

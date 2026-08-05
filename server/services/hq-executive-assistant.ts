@@ -117,7 +117,7 @@ const ACTIVE_TASK_STATES = [
 ] as const;
 
 /** A bounded window of active tasks — enough for the digest, cheap to read. */
-const TASK_WINDOW = 5000;
+const TASK_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 type TaskRow = {
   status: string;

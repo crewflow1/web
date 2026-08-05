@@ -57,8 +57,11 @@ type VanBuilder = PromiseLike<{ data: Row[] | null; error: Err }> & {
   limit: (n: number) => VanBuilder;
 };
 
-/** Upper bound on a fleet/vehicle-location read. Far beyond any real fleet. */
-export const VAN_SCAN_LIMIT = 2000;
+/** Upper bound on a fleet/vehicle-location picker read. Far beyond any real
+ * fleet, and honest: PostgREST clamps every read to max_rows (1000) anyway, so a
+ * higher number would silently return only 1000. These are bounded option lists,
+ * not aggregations, so a declared 1000 cap is correct (no fleet approaches it). */
+export const VAN_SCAN_LIMIT = 1000;
 
 /**
  * Every vehicle stock location in the ACTIVE org — the vans board and the

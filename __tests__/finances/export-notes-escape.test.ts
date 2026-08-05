@@ -42,6 +42,7 @@ vi.mock("@/lib/supabase/server", () => ({
       chain.select = () => chain;
       chain.order = () => chain;
       chain.limit = () => chain;
+      chain.range = () => chain;
       chain.gte = () => chain;
       chain.lte = () => chain;
       chain.eq = (k: string, v: unknown) => {

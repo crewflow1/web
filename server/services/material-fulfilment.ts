@@ -94,7 +94,10 @@ export type StockSeamClient = {
 };
 
 /** Bound the read — a single request's lines cannot plausibly draw more. */
-const MOVEMENT_LIMIT = 2000;
+// Per-request issue/correction movements — bounded in practice (a single
+// material request never approaches this). Honest cap: PostgREST clamps every
+// read to max_rows (1000), so a higher number would silently return only 1000.
+const MOVEMENT_LIMIT = 1000;
 
 export type IssuedResult = {
   issued: IssuedQty[];

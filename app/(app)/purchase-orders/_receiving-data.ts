@@ -101,7 +101,9 @@ export async function countPostedReceipts(
     .eq("org_id", orgId) // ACTIVE-ORG PIN
     .eq("status", "posted")
     .in("purchase_order_id", purchaseOrderIds)
-    .limit(2000);
+    // Delivery counts for one list page's POs — bounded. Honest cap: PostgREST
+    // clamps every read to max_rows (1000) regardless.
+    .limit(1000);
 
   for (const row of data ?? []) {
     counts.set(row.purchase_order_id, (counts.get(row.purchase_order_id) ?? 0) + 1);

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { csvEscape } from "@/lib/csv";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * CSV export of an org's finances.
@@ -16,8 +17,6 @@ import { csvEscape } from "@/lib/csv";
  * RLS scopes rows to caller's org automatically.
  */
 
-const MAX_ROWS = 50_000;
-
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
   const url = request.nextUrl;
@@ -25,23 +24,34 @@ export async function GET(request: NextRequest) {
   const to = url.searchParams.get("to");
 
   const supabase = await createClient();
-  let q = supabase
-    .from("finances")
-    .select("created_at, job_id, category, amount, vat_rate, vat_total, notes")
-    // ACTIVE-org pin — a bookkeeping export must contain exactly one company's
-    // ledger; RLS alone merged both into a single CSV.
-    .eq("org_id", ctx.org.id)
-    .order("created_at", { ascending: true })
-    .limit(MAX_ROWS);
-
-  if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
-    q = q.gte("created_at", `${from}T00:00:00Z`);
-  }
-  if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
-    q = q.lte("created_at", `${to}T23:59:59Z`);
-  }
-
-  const { data, error } = await q;
+  // F-1: a bookkeeping export must be COMPLETE. A single `.limit(N)` is silently
+  // clamped to PostgREST max_rows (1000), so page the full ledger with a unique
+  // (created_at, id) total order. ACTIVE-org pin — RLS alone merged both of a
+  // dual-org user's companies into one CSV.
+  const { data, error } = await fetchAllRows<{
+    created_at: string;
+    job_id: string | null;
+    category: string | null;
+    amount: number | null;
+    vat_rate: number | null;
+    vat_total: number | null;
+    notes: string | null;
+  }>((rangeFrom, rangeTo) => {
+    let q = supabase
+      .from("finances")
+      .select("id, created_at, job_id, category, amount, vat_rate, vat_total, notes")
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(rangeFrom, rangeTo);
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      q = q.gte("created_at", `${from}T00:00:00Z`);
+    }
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      q = q.lte("created_at", `${to}T23:59:59Z`);
+    }
+    return q;
+  });
   if (error) {
     console.error("[finances] export failed", error);
     return NextResponse.json({ error: "Failed to export" }, { status: 500 });
