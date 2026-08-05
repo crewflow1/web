@@ -61,33 +61,54 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   }>(supabase, id, ctx.org.id, "id, customer:customers ( name )");
   if (!job) notFound();
 
+  // F-1: quotes / invoices / finances are all job-scoped SET reads. On a busy
+  // job any of them can cross the 1000-row PostgREST cap, and a truncated cost
+  // read silently under-states cost and over-states margin/budget. Page every
+  // one through fetchAllRows on a unique `id` tiebreak (mirrors the time_entries
+  // read below), and throw LOUDLY on a failed read rather than compute on a
+  // partial set.
   const [quotesRes, invoicesRes, financesRes] = await Promise.all([
-    supabase
-      .from("quotes")
-      // `subtotal` is the EX-VAT contract value. Cost is ex-VAT everywhere in
-      // this product, so the cost-value reconciliation must divide by the net
-      // contract or every margin it reports is ~20 % out.
-      // `cost_*` is the variation's PRICED COST BASIS (20261073) — the cost side
-      // of an approved scope change, and the ONLY per-variation cost store there
-      // is. `cost_total` is GENERATED from the four parts, so the budget reads it
-      // rather than re-keying or re-summing it.
-      .select(
-        "id, number, variation_number, status, subtotal, total, accepted_at, declined_at, created_at, public_token, " +
-          "cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total",
-      )
-      .eq("job_id", id),
-    supabase
-      .from("invoices")
-      .select("id, number, status, amount, total, due_date, created_at, sent_at, job_id")
-      .eq("job_id", id),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("quotes")
+        // `subtotal` is the EX-VAT contract value. Cost is ex-VAT everywhere in
+        // this product, so the cost-value reconciliation must divide by the net
+        // contract or every margin it reports is ~20 % out.
+        // `cost_*` is the variation's PRICED COST BASIS (20261073) — the cost side
+        // of an approved scope change, and the ONLY per-variation cost store there
+        // is. `cost_total` is GENERATED from the four parts, so the budget reads it
+        // rather than re-keying or re-summing it.
+        .select(
+          "id, number, variation_number, status, subtotal, total, accepted_at, declined_at, created_at, public_token, " +
+            "cost_labour, cost_materials, cost_subcontractors, cost_misc, cost_total",
+        )
+        .eq("job_id", id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, number, status, amount, total, due_date, created_at, sent_at, job_id")
+        .eq("job_id", id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // `purchase_order_id` is what links a cost back to the commitment it
     // discharges (20261009). Without it a received-and-billed PO is counted
     // twice — once as committed, once as actual — in the forecast final cost.
-    supabase
-      .from("finances")
-      .select("id, amount, category, created_at, job_id, purchase_order_id")
-      .eq("job_id", id),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("finances")
+        .select("id, amount, category, created_at, job_id, purchase_order_id")
+        .eq("job_id", id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
+  if (quotesRes.error) throw readFailure("job commercial: quotes", quotesRes.error);
+  if (invoicesRes.error) throw readFailure("job commercial: invoices", invoicesRes.error);
+  if (financesRes.error) throw readFailure("job commercial: finances", financesRes.error);
 
   type QuoteRow = {
     id: string; number: string | null; variation_number: number | null; status: string;
@@ -113,10 +134,20 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   const finances = (financesRes.data ?? []) as unknown as FinRow[];
   const invoiceIds = invoices.map((i) => i.id);
 
-  // Payment ledger (the cash truth) — one indexed `.in()`, empty-guarded.
+  // Payment ledger (the cash truth) — indexed `.in()`, empty-guarded. F-1: paged
+  // so a job with many invoices × many payments can't truncate received cash,
+  // and LOUD on error so a failed read never reads as "nothing paid".
   const paymentsRes = invoiceIds.length
-    ? await supabase.from("invoice_payments").select("invoice_id, amount, paid_at, reference").in("invoice_id", invoiceIds)
-    : { data: [] as Array<{ invoice_id: string; amount: number | string | null; paid_at: string | null; reference: string | null }> };
+    ? await fetchAllRows((from, to) =>
+        supabase
+          .from("invoice_payments")
+          .select("invoice_id, amount, paid_at, reference")
+          .in("invoice_id", invoiceIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      )
+    : { data: [] as Array<{ invoice_id: string; amount: number | string | null; paid_at: string | null; reference: string | null }>, error: null };
+  if (paymentsRes.error) throw readFailure("job commercial: invoice payments", paymentsRes.error);
   const payments = (paymentsRes.data ?? []) as unknown as Array<{
     invoice_id: string; amount: number | string | null; paid_at: string | null; reference: string | null;
   }>;
