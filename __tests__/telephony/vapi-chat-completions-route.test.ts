@@ -1,21 +1,26 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import crypto from "node:crypto";
 
 /**
- * Vapi custom-llm `/chat/completions` endpoint (C30, GAP 2).
+ * Vapi custom-llm `/chat/completions` endpoint (C30, GAP 2 / C35).
  *
  * This is the GOVERNED OpenAI-compatible door Vapi's custom-llm calls for every
- * turn (`model.url`). Hermetic: the HMAC verification runs FOR REAL (stdlib
- * crypto, VAPI_WEBHOOK_SECRET), only the org router, the governed turn seam and
- * the persistence service are mocked. Pins: it routes the caller's utterance
- * through the SAME governed seam as the other voice doors (with the per-call
- * dedupe identity), returns a well-formed OpenAI body, degrades a null/dark turn
- * to a DETERMINISTIC ack (never ungoverned), rejects a bad signature 401
- * fail-closed, and 503s while dark.
+ * turn (`model.url`). Hermetic: verification runs FOR REAL against the PRIMARY
+ * scheme Vapi sends — the `X-Vapi-Secret` shared secret checked constant-time
+ * against VAPI_WEBHOOK_SECRET — only the org router, the governed turn seam, the
+ * persistence service and the per-org profile loader are mocked. Pins: it routes
+ * the caller's utterance through the SAME governed seam as the other voice doors
+ * (with the per-call dedupe identity AND the org's business context), returns a
+ * well-formed OpenAI body, degrades a null/dark turn to a DETERMINISTIC ack
+ * (never ungoverned), rejects a wrong/missing secret 401 fail-closed, and 503s
+ * while dark.
  */
 
 vi.mock("@/lib/telephony/router", () => ({ resolveOrgForDialedNumber: vi.fn() }));
 vi.mock("@/lib/telephony/ai-turn", () => ({ maybeGenerateVoiceTurn: vi.fn() }));
+vi.mock("@/lib/telephony/receptionist-profile", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/telephony/receptionist-profile")>()),
+  loadReceptionistProfile: vi.fn(),
+}));
 vi.mock("@/server/services/telephony", () => ({
   recordInboundCall: vi.fn(),
   loadRecentSpokenTurns: vi.fn(),
@@ -40,15 +45,18 @@ async function loadTurnsMock() {
 async function persistMock() {
   return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
 }
+async function profileMock() {
+  return vi.mocked((await import("@/lib/telephony/receptionist-profile")).loadReceptionistProfile);
+}
 
 const SECRET = "whsec_vapi_test";
 
+/** A request carrying the PRIMARY Vapi credential — the X-Vapi-Secret shared secret. */
 function signed(bodyObj: unknown): Request {
   const rawBody = JSON.stringify(bodyObj);
-  const sig = crypto.createHmac("sha256", SECRET).update(rawBody, "utf8").digest("hex");
   return new Request("https://app.crewflow.uk/api/webhooks/vapi/chat-completions", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-vapi-signature": sig },
+    headers: { "content-type": "application/json", "x-vapi-secret": SECRET },
     body: rawBody,
   });
 }
@@ -81,6 +89,7 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await loadTurnsMock()).mockResolvedValue([]);
     (await persistMock()).mockResolvedValue(undefined);
+    (await profileMock()).mockResolvedValue(null);
   });
   afterEach(async () => {
     vi.unstubAllEnvs();
@@ -89,6 +98,7 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
     (await recordMock()).mockReset();
     (await loadTurnsMock()).mockReset();
     (await persistMock()).mockReset();
+    (await profileMock()).mockReset();
   });
 
   it("routes the utterance through the governed seam with the per-call dedupe identity", async () => {
@@ -111,6 +121,43 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
         history: [{ transcript: "hi", reply: "Hello, how can I help?" }],
       }),
     );
+  });
+
+  it("threads the org's business identity into the governed turn", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    const profile = {
+      businessName: "Ace Plumbing",
+      preferredVoice: null,
+      businessHours: "Mon-Fri 8-6",
+      tradeType: "Plumbing",
+    };
+    (await profileMock()).mockResolvedValue(profile);
+    (await turnMock()).mockResolvedValue("Sure.");
+
+    const { POST } = await loadRoute();
+    await POST(signed(chatBody({ stream: false })) as never);
+    expect(await turnMock()).toHaveBeenCalledWith(expect.objectContaining({ business: profile }));
+  });
+
+  it("accepts an Authorization: Bearer <secret>, and rejects a wrong secret 401", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    (await turnMock()).mockResolvedValue("ok");
+    const rawBody = JSON.stringify(chatBody({ stream: false }));
+    const { POST } = await loadRoute();
+
+    const okReq = new Request("https://app.crewflow.uk/api/webhooks/vapi/chat-completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
+      body: rawBody,
+    });
+    expect((await POST(okReq as never)).status).toBe(200);
+
+    const badReq = new Request("https://app.crewflow.uk/api/webhooks/vapi/chat-completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-vapi-secret": "wrong" },
+      body: rawBody,
+    });
+    expect((await POST(badReq as never)).status).toBe(401);
   });
 
   it("returns a well-formed non-streaming OpenAI completion carrying the governed reply", async () => {

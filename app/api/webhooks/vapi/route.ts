@@ -13,6 +13,12 @@ import {
 } from "@/lib/telephony/providers/vapi";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
 import {
+  buildReceptionistContext,
+  buildReceptionistGreeting,
+  loadReceptionistProfile,
+  mapPreferredVoiceToVapiVoiceId,
+} from "@/lib/telephony/receptionist-profile";
+import {
   appendCallEvent,
   loadRecentSpokenTurns,
   persistSpokenTurn,
@@ -26,17 +32,19 @@ import type { NormalizedInboundCall } from "@/lib/telephony/types";
  *
  * The same mandated shape as the Twilio voice edges: maintenance 503 →
  * rate-limit → DARK GATE 503 before any work → read the RAW body → verify the
- * Vapi HMAC FAIL-CLOSED, BEFORE parsing → normalise → resolve the org from the
+ * Vapi shared secret (X-Vapi-Secret) FAIL-CLOSED, BEFORE parsing → normalise →
+ * resolve the org from the
  * DIALED number (never the body identity) → record calls + append call_events
  * idempotently → delegate to the UNCHANGED processInboundEnquiry once per new
  * call. Vapi delivers status-update messages, so origination and status arrive
  * on this one door.
  *
  * CONVERSATIONAL messages (`assistant-request`, `tool-calls`/`function-call`)
- * arrive on the SAME door and are handled AFTER the fail-closed HMAC verify and
+ * arrive on the SAME door and are handled AFTER the fail-closed verify and
  * BEFORE the lifecycle parse: an assistant-request is answered with the
- * receptionist's assistant/model/voice config (org-attributed by the dialed
- * number); a tool-call routes the caller's utterance through the SAME governed
+ * receptionist's PER-ORG assistant/model/voice config (business name + greeting +
+ * mapped voice, org-attributed by the dialed number); a tool-call routes the
+ * caller's utterance through the SAME governed
  * spoken-turn seam (`maybeGenerateVoiceTurn`) as Twilio, degrading to a
  * deterministic acknowledgement when dark. No live provider call is ever made.
  *
@@ -73,9 +81,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "not_enabled" }, { status: 503 });
   }
 
-  // FAIL-CLOSED HMAC verification BEFORE parsing.
+  // FAIL-CLOSED verification BEFORE parsing. PRIMARY = the shared secret Vapi
+  // sends (X-Vapi-Secret / Authorization: Bearer); x-vapi-signature is passed too
+  // for the opt-in HMAC path (verifyVapiWebhook decides which applies).
   const authentic = await provider.verify({
     signature: request.headers.get("x-vapi-signature"),
+    secret: request.headers.get("x-vapi-secret"),
+    authorization: request.headers.get("authorization"),
     url: request.url,
     rawBody,
     params: {},
@@ -96,7 +108,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     const ctx = parseVapiConversation(rawBody);
     const orgId = ctx?.to ? await resolveOrgForDialedNumber(ctx.to) : null;
     if (!orgId) return NextResponse.json({ ok: true, unrouted: true });
-    return NextResponse.json(buildVapiAssistantConfig());
+    // Per-org identity: the org's business name → greeting/firstMessage, its
+    // preferred_voice → voiceId, and its business identity as AI CONTEXT. A
+    // missing setup row degrades to the generic anonymous config (safe default).
+    const profile = await loadReceptionistProfile(orgId);
+    return NextResponse.json(
+      buildVapiAssistantConfig({
+        firstMessage: buildReceptionistGreeting(profile),
+        businessContext: buildReceptionistContext(profile),
+        voiceId: mapPreferredVoiceToVapiVoiceId(profile?.preferredVoice),
+      }),
+    );
   }
 
   if (messageType === "tool-calls" || messageType === "function-call") {
@@ -112,6 +134,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         buildVapiToolResults(toolCalls.map((t) => ({ toolCallId: t.id, result: ack }))),
       );
     }
+
+    // Per-org business identity for the governed turn (name/trade/hours), as
+    // CONTEXT data. Missing setup ⇒ null ⇒ the generic behaviour (safe default).
+    const profile = await loadReceptionistProfile(orgId);
 
     // Resolve THIS call's row (idempotent on the Vapi call id) and load its prior
     // spoken turns, so the governed seam has MEMORY of the conversation — the same
@@ -158,6 +184,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         callId,
         ordinal: priorTurns.length,
         context: t.name,
+        business: profile,
         history: priorTurns,
       });
       if (firstReply === null && turn) firstReply = turn;

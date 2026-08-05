@@ -10,6 +10,7 @@ import {
   parseVapiChatCompletion,
 } from "@/lib/telephony/providers/vapi";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
+import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
 import { loadRecentSpokenTurns, persistSpokenTurn, recordInboundCall } from "@/server/services/telephony";
 import type { NormalizedInboundCall } from "@/lib/telephony/types";
 
@@ -25,8 +26,8 @@ import type { NormalizedInboundCall } from "@/lib/telephony/types";
  *
  * It enforces the SAME guard chain, in the SAME order, as the sibling voice
  * doors: maintenance 503 → rate-limit → DARK GATE 503 before any work → read the
- * RAW body → FAIL-CLOSED HMAC verify (x-vapi-signature) BEFORE parsing → org by
- * DIALED number (never the body identity) → governed turn. When dark / blocked /
+ * RAW body → FAIL-CLOSED verify (X-Vapi-Secret shared secret) BEFORE parsing → org
+ * by DIALED number (never the body identity) → governed turn. When dark / blocked /
  * unrouted / null-turn it returns a DETERMINISTIC safe completion (a graceful
  * acknowledgement), NEVER ungoverned generation and NEVER a 500 that leaks.
  *
@@ -84,10 +85,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "not_enabled" }, { status: 503 });
   }
 
-  // FAIL-CLOSED HMAC verification BEFORE parsing or any side effect. Reuses the
-  // exact verifier the main Vapi door uses (VAPI_WEBHOOK_SECRET, constant-time).
+  // FAIL-CLOSED verification BEFORE parsing or any side effect. Reuses the EXACT
+  // verifier the main Vapi door uses: PRIMARY = the shared secret Vapi sends
+  // (X-Vapi-Secret / Authorization: Bearer) checked constant-time against
+  // VAPI_WEBHOOK_SECRET; x-vapi-signature is passed for the opt-in HMAC path.
   const authentic = await provider.verify({
     signature: request.headers.get("x-vapi-signature"),
+    secret: request.headers.get("x-vapi-secret"),
+    authorization: request.headers.get("authorization"),
     url: request.url,
     rawBody,
     params: {},
@@ -142,6 +147,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const transcript = parsed.transcript.trim();
 
+  // Per-org business identity for the governed turn (name/trade/hours), as CONTEXT
+  // data. Missing setup ⇒ null ⇒ the generic behaviour (safe default).
+  const profile = await loadReceptionistProfile(orgId);
+
   // GOVERNED turn — the ONLY path to generated text. Dark / blocked / null ⇒ null,
   // which degrades to the deterministic ack below (never ungoverned generation).
   const turn = await maybeGenerateVoiceTurn({
@@ -149,6 +158,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     transcript,
     callId,
     ordinal: priorTurns.length,
+    business: profile,
     history: priorTurns,
   });
 

@@ -27,6 +27,10 @@ vi.mock("@/lib/telephony/router", () => ({
 vi.mock("@/lib/telephony/ai-turn", () => ({
   maybeGenerateVoiceTurn: vi.fn(),
 }));
+vi.mock("@/lib/telephony/receptionist-profile", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/telephony/receptionist-profile")>()),
+  loadReceptionistProfile: vi.fn(),
+}));
 // The spoken-turn PERSISTENCE seam — mocked so the route stays hermetic (no real
 // Supabase). These are the durable-loop closers under test: the route must resolve
 // the call, load prior turns as memory, and persist each turn (transcript + reply).
@@ -55,6 +59,9 @@ async function loadTurnsMock() {
 }
 async function persistMock() {
   return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
+}
+async function profileMock() {
+  return vi.mocked((await import("@/lib/telephony/receptionist-profile")).loadReceptionistProfile);
 }
 
 const TOKEN = "voice_gather_auth_token_abc123";
@@ -105,6 +112,7 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await loadTurnsMock()).mockResolvedValue([]);
     (await persistMock()).mockResolvedValue(undefined);
+    (await profileMock()).mockResolvedValue(null);
   });
 
   afterEach(async () => {
@@ -114,6 +122,7 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     (await recordMock()).mockReset();
     (await loadTurnsMock()).mockReset();
     (await persistMock()).mockReset();
+    (await profileMock()).mockReset();
   });
 
   it("SAYs the governed turn and NESTS a further <Gather> (loop continues)", async () => {
@@ -243,6 +252,22 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     expect(xml).toContain("<Say>");
     expect(xml).toContain("call you back"); // the deterministic polite close
     expect(xml).not.toContain("<Gather"); // never a silent re-gather loop
+  });
+
+  it("threads the org's business identity into the governed turn", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    const profile = {
+      businessName: "Ace Plumbing",
+      preferredVoice: null,
+      businessHours: null,
+      tradeType: "Plumbing",
+    };
+    (await profileMock()).mockResolvedValue(profile);
+    (await turnMock()).mockResolvedValue("Sure, we do.");
+
+    const { POST } = await loadRoute();
+    await POST(signedRequest(SPEECH) as never);
+    expect(await turnMock()).toHaveBeenCalledWith(expect.objectContaining({ business: profile }));
   });
 
   it("ack-drops an unrouted dialed number with polite TwiML and no turn", async () => {
