@@ -72,7 +72,11 @@ function clearOAuthCookies(res: NextResponse, provider: string): void {
 }
 
 function backToReports(origin: string, status: string, provider: string): NextResponse {
-  const u = new URL(`${origin}/reports/accounting`);
+  // The connect surface is /reports (which renders AccountingConnectionsPanel and
+  // reads ?connect= to show the outcome banner). /reports/accounting is NOT a
+  // routable page — only panel/action components live there — so redirecting the
+  // OAuth return there dead-ended on a 404 after an otherwise-successful connect.
+  const u = new URL(`${origin}/reports`);
   u.searchParams.set("connect", status);
   const res = NextResponse.redirect(u);
   clearOAuthCookies(res, provider);

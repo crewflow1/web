@@ -54,7 +54,33 @@ const WEEK_LABEL = (iso: string): string => {
   });
 };
 
-export default async function ReportsPage() {
+/**
+ * Accounting OAuth return banner. The connect callback
+ * (app/api/integrations/accounting/[provider]/callback/route.ts) lands the admin
+ * back here with ?connect=<outcome>. `connected` is the success path; the rest are
+ * the callback's failure exits. Keep these keys in lock-step with the statuses
+ * backToReports() emits. (`encryption_not_configured` is a JSON exit today rather
+ * than a redirect, but is mapped defensively so activation can surface it here.)
+ */
+const CONNECT_SUCCESS: Record<string, string> = {
+  connected: "Accounting account connected.",
+};
+const CONNECT_ERROR: Record<string, string> = {
+  error: "Couldn't complete the connection. Please try again.",
+  state_mismatch:
+    "The connection request expired or didn't match. Please start again.",
+  no_account:
+    "Connected, but no accounting organisation was found on that account.",
+  encryption_not_configured:
+    "Accounting connections aren't fully configured yet. No account was connected.",
+};
+
+type SP = Promise<{ connect?: string }>;
+
+export default async function ReportsPage({ searchParams }: { searchParams: SP }) {
+  const sp = await searchParams;
+  const connectSuccess = sp.connect ? (CONNECT_SUCCESS[sp.connect] ?? null) : null;
+  const connectError = sp.connect ? (CONNECT_ERROR[sp.connect] ?? null) : null;
   const { ctx } = await requireOrgContext();
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
@@ -92,6 +118,25 @@ export default async function ReportsPage() {
           Export CSV
         </a>
       </header>
+
+      {/* Accounting OAuth return — outcome banner keyed off ?connect= set by the
+          connect callback. */}
+      {connectError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {connectError}
+        </div>
+      ) : null}
+      {connectSuccess ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+        >
+          {connectSuccess}
+        </div>
+      ) : null}
 
       {/* Ledger reports ------------------------------------------------
           The four cards below are time-series aggregates. These two are
