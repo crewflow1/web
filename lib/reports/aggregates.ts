@@ -235,46 +235,97 @@ export async function vatPerQuarter(
   return Array.from(buckets.values());
 }
 
+/**
+ * The synthetic bucket for paid revenue whose customer can't be resolved at all
+ * — neither via `invoices.customer_id` nor a surviving `quote.customer`. This is
+ * a REAL row in the ranking, never a dropped one: silently `continue`-skipping
+ * it would understate a customer's rank AND shrink the org's total paid revenue,
+ * so the report would fail to reconcile against revenuePerMonth. Same discipline
+ * as lib/intelligence/concentration.ts's explicit "Unattributed" bucket. The id
+ * is a sentinel (used only as a list key / de-dupe key), not a customer id.
+ */
+export const UNATTRIBUTED_CUSTOMER_ID = "__unattributed__";
+export const UNATTRIBUTED_CUSTOMER_LABEL = "Unattributed";
+
 export async function topCustomersByRevenue(
   orgId: string,
   limit = 10,
 ): Promise<TopCustomer[]> {
   const supabase = await createClient();
-  const { data, error } = await fetchAllRows<{
-    total: number | null;
-    status: string | null;
-    quote: { customer: { id: string; name: string | null } | null } | null;
-  }>((from, to) =>
-    supabase
-      .from("invoices")
-      .select(
-        `
-        id, total, status,
-        quote:quotes (
-          customer:customers ( id, name )
+
+  // Two paged, org-pinned, loud reads (the vatPerQuarter shape):
+  //  1. paid invoices — with the DENORMALISED `customer_id` (20260915) read
+  //     FIRST, and the quote->customer embed kept only as the pre-backfill
+  //     fallback. `invoices_quote_id_fkey` is ON DELETE SET NULL, so a deleted
+  //     quote nulls `quote_id`/`quote.customer` while `customer_id` survives —
+  //     resolving via the embed ALONE silently dropped that invoice's paid
+  //     revenue from the ranking. The migration itself mandates preferring
+  //     `customer_id` over walking quote->customer.
+  //  2. the org's customers — a separate id->name lookup (the concentration.ts
+  //     idiom), so `customer_id` resolves to a display name WITHOUT adding an
+  //     invoices->customers embed. `invoices` carries a composite FK to
+  //     customers (customer_id, org_id); a bare embed is avoidable noise, and
+  //     the separate lookup keeps the resolution rule identical to the sibling
+  //     concentration surface.
+  const [invRes, custRes] = await Promise.all([
+    fetchAllRows<{
+      total: number | null;
+      status: string | null;
+      customer_id: string | null;
+      quote: { customer: { id: string; name: string | null } | null } | null;
+    }>((from, to) =>
+      supabase
+        .from("invoices")
+        .select(
+          `
+          id, total, status, customer_id,
+          quote:quotes (
+            customer:customers ( id, name )
+          )
+        `,
         )
-      `,
-      )
-      .eq("org_id", orgId)
-      .eq("status", "paid")
-      .order("id", { ascending: true })
-      .range(from, to),
+        .eq("org_id", orgId)
+        .eq("status", "paid")
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<{ id: string; name: string | null }>((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, name")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+  if (invRes.error) throw readFailure("reports: top customers", invRes.error);
+  if (custRes.error) throw readFailure("reports: top customers (names)", custRes.error);
+
+  const customerName = new Map(
+    (custRes.data ?? []).map((c) => [c.id, c.name ?? "—"]),
   );
-  if (error) throw readFailure("reports: top customers", error);
 
   const byCustomer = new Map<string, TopCustomer>();
-  for (const inv of data ?? []) {
-    const c = inv.quote?.customer;
-    if (!c?.id) continue;
-    const prev = byCustomer.get(c.id) ?? {
-      id: c.id,
-      name: c.name ?? "—",
-      revenue: 0,
-      invoice_count: 0,
-    };
+  for (const inv of invRes.data ?? []) {
+    // customer_id FIRST (denormalised anchor); quote.customer only as fallback;
+    // anything that resolves to neither lands in the Unattributed bucket rather
+    // than being dropped, so the ranking's total reconciles with paid revenue.
+    let id: string;
+    let name: string;
+    if (inv.customer_id) {
+      id = inv.customer_id;
+      name = customerName.get(inv.customer_id) ?? "—";
+    } else if (inv.quote?.customer?.id) {
+      id = inv.quote.customer.id;
+      name = inv.quote.customer.name ?? "—";
+    } else {
+      id = UNATTRIBUTED_CUSTOMER_ID;
+      name = UNATTRIBUTED_CUSTOMER_LABEL;
+    }
+    const prev = byCustomer.get(id) ?? { id, name, revenue: 0, invoice_count: 0 };
     prev.revenue += Number(inv.total ?? 0);
     prev.invoice_count++;
-    byCustomer.set(c.id, prev);
+    byCustomer.set(id, prev);
   }
   return Array.from(byCustomer.values())
     .sort((a, b) => b.revenue - a.revenue)
