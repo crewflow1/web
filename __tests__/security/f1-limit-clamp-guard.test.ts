@@ -103,7 +103,7 @@ function extractCalls(src: string, method: string): Array<{ arg: string; index: 
     }
     let depth = 0;
     let j = i + marker.length - 1; // at the '('
-    let start = j + 1;
+    const start = j + 1;
     for (; j < src.length; j++) {
       const ch = src[j];
       if (ch === "(") depth++;
