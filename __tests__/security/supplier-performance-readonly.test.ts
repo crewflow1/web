@@ -227,29 +227,28 @@ describe("supplier performance is active-org pinned", () => {
     );
   });
 
-  it("orders every capped OR paged read on a unique total order", () => {
-    // Without an `id` tiebreak a capped read may drop a different row on each
-    // request, so a rate would flicker between page loads — and a PAGED read
-    // (fetchAllRows) may drop or repeat a row at a 500-row page boundary (the
-    // F-1 truncation class). Both need a unique total order.
-    //
-    // The single-supplier loader caps each read with `.limit(...)` (a per-
-    // supplier ceiling); the batch comparison path pages each org-wide read with
-    // `.range(...)` because those same ceilings, applied across the whole
-    // shortlist, silently truncated the org. Every one of BOTH shapes must carry
-    // the tiebreak.
-    const limits = (code.match(/\.limit\(/g) ?? []).length;
+  it("pages every read on a unique total order (no .limit clamp anywhere)", () => {
+    // C34 F-1 elimination: BOTH the batch comparison path AND the single-supplier
+    // loader now page every read through fetchAllRows(`.range(...)`) — a `.limit(N)`
+    // is silently clamped to PostgREST max_rows (1000), so a large supplier's
+    // history (or the whole shortlist) was truncated and every rate computed from
+    // a truncated denominator. A paged read may drop/repeat a row at a page
+    // boundary without a unique total order, so every `.range(...)` must carry a
+    // unique `id` (or composite-key) tiebreak.
     const ranges = (code.match(/\.range\(/g) ?? []).length;
     const idOrders = (code.match(/\.order\("id", \{ ascending: true \}\)/g) ?? []).length;
     const compositeOrders = (
       code.match(/\.order\("purchase_order_line_item_id", \{ ascending: true \}\)/g) ?? []
     ).length;
-    expect(limits, "the single-supplier loader still caps its reads").toBeGreaterThan(5);
-    expect(ranges, "the batch comparison path pages its org-wide reads").toBeGreaterThan(5);
+    // The clamp ban (no .limit(N>1000)) is enforced repo-wide by
+    // f1-limit-clamp-guard.test.ts; here we assert both paths PAGE and every
+    // paged read carries a unique tiebreak (id, or the composite key on a
+    // join-line read). `>=` because a read may carry both id AND composite.
+    expect(ranges, "both paths page their reads via fetchAllRows").toBeGreaterThan(10);
     expect(
       idOrders + compositeOrders,
-      "a capped or paged read has no unique tiebreak",
-    ).toBe(limits + ranges);
+      "a paged read has no unique tiebreak",
+    ).toBeGreaterThanOrEqual(ranges);
   });
 });
 

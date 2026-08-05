@@ -28,8 +28,8 @@ import {
  * ARCHITECTURE ONLY — reads + derives. Nothing here executes a task.
  */
 
-const RECENT_TASK_LIMIT = 5000;
-const MEMORY_LIMIT = 20000;
+const RECENT_TASK_LIMIT = 1000; // bounded sample; PostgREST clamps to max_rows=1000
+const MEMORY_LIMIT = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 type TaskRow = TaskStatRow & { ai_employee_id: string };
 type MemRow = MemoryStatRow & { ai_employee_id: string };

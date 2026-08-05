@@ -57,8 +57,16 @@ import {
  * loudly, and is surfaced on the manifest.
  */
 
-/** Per-table row cap. Reads request one past it so truncation is detectable. */
-export const MAX_ROWS_PER_TABLE = 50_000;
+/**
+ * Per-table row cap. Reads request one past it (`.limit(cap + 1)`) so truncation
+ * is detectable via capRows. It MUST stay < PostgREST max_rows (1000): a higher
+ * value is silently clamped to 1000, which made the old 50_000 cap a lie and the
+ * `truncated` flag permanently dead (F-1). At 999 the probe reads exactly 1000,
+ * so truncation is correctly detected and loudly flagged on the manifest.
+ * Full streaming pagination (complete large-tenant export) is the documented
+ * activation-hardening step below.
+ */
+export const MAX_ROWS_PER_TABLE = 999;
 
 /**
  * Minimal read/insert surface. `ORG_EXPORT_TABLES` is a `string[]`, which the

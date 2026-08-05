@@ -97,7 +97,7 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
     .select("org_id, new_score, recomputed_at")
     .in("org_id", orgIds)
     .order("recomputed_at", { ascending: false })
-    .limit(5000); // generous cap; per-org slice happens below
+    .limit(1000); // bounded sample; PostgREST clamps to max_rows=1000; per-org slice below
   const events = (eventsRes.data ?? []) as unknown as HealthEventRow[];
   const trendByOrg = new Map<
     string,
@@ -169,7 +169,7 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
     .in("org_id", orgIds)
     .in("audience", ["hq", "both"])
     .order("created_at", { ascending: false })
-    .limit(2000);
+    .limit(1000);
   const notifs = (notifRes.data ?? []) as unknown as NotificationRow[];
   const notifsByOrg = new Map<string, number>();
   for (const n of notifs) {

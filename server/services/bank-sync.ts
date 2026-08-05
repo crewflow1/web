@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   getBankingAdapter,
   bankingProviderReady,
@@ -347,15 +348,42 @@ export function createAdminGateway(): BankSyncGateway {
 
   return {
     async listConnected(provider) {
-      const { data, error } = await admin
-        .from("bank_connections")
-        .select(
-          "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at",
-        )
-        .eq("provider", provider)
-        .eq("status", "connected");
-      if (error) throw new Error(`bank-sync: listConnected failed: ${error.message}`);
-      return ((data as Array<Record<string, unknown>>) ?? []).map((r) => ({
+      // F-1: the sync cron must process EVERY connected org. A single unpaginated
+      // read is clamped to PostgREST max_rows (1000), silently skipping orgs
+      // beyond that; page the full set on a stable (org_id) order.
+      const { data, error } = await fetchAllRows<Record<string, unknown>>(
+        (from, to) =>
+          (
+            admin
+              .from("bank_connections")
+              .select(
+                "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at",
+              )
+              .eq("provider", provider)
+              .eq("status", "connected") as unknown as {
+              order: (
+                k: string,
+                o: { ascending: boolean },
+              ) => {
+                range: (
+                  from: number,
+                  to: number,
+                ) => PromiseLike<{
+                  data: Record<string, unknown>[] | null;
+                  error: unknown;
+                }>;
+              };
+            }
+          )
+            .order("org_id", { ascending: true })
+            .range(from, to),
+      );
+      if (error) {
+        const msg =
+          (error as { message?: string } | null)?.message ?? String(error);
+        throw new Error(`bank-sync: listConnected failed: ${msg}`);
+      }
+      return (data ?? []).map((r) => ({
         orgId: String(r.org_id),
         provider: r.provider as BankingProvider,
         status: String(r.status),

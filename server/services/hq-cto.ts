@@ -47,7 +47,7 @@ export type CtoBoardResult = {
 };
 
 /** A lean window of recent tasks — enough to keep reliability live, cheap to read. */
-const TASK_WINDOW = 5000;
+const TASK_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 const RELIABILITY_COLUMNS = [
   "status",
   "verification",

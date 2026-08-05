@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import {
@@ -715,19 +716,39 @@ export async function readAutomationHealth(): Promise<
     created_at: string;
   };
 
-  const { data, error } = await (admin.from("automation_runs" as never) as unknown as {
-    select: (cols: string) => {
-      gte: (k: string, v: string) => {
-        order: (k: string, opts: { ascending: boolean }) => Promise<{
-          data: Row[] | null;
-          error: { message: string } | null;
-        }>;
-      };
-    };
-  })
-    .select("rule_id, status, created_at")
-    .gte("created_at", sevenDaysAgo)
-    .order("created_at", { ascending: false });
+  // F-1: this is a cross-org 7-day health rollup. A single read is clamped to
+  // PostgREST max_rows (1000), so a busy week silently under-reports run/failure
+  // counts; page the full window on a stable (created_at, id) order.
+  const { data, error } = await fetchAllRows<Row>(
+    (from, to) =>
+      (
+        admin.from("automation_runs" as never) as unknown as {
+          select: (cols: string) => {
+            gte: (k: string, v: string) => {
+              order: (
+                k: string,
+                opts: { ascending: boolean },
+              ) => {
+                order: (
+                  k: string,
+                  opts: { ascending: boolean },
+                ) => {
+                  range: (
+                    from: number,
+                    to: number,
+                  ) => PromiseLike<{ data: Row[] | null; error: unknown }>;
+                };
+              };
+            };
+          };
+        }
+      )
+        .select("id, rule_id, status, created_at")
+        .gte("created_at", sevenDaysAgo)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
   if (error) throw readFailure("automation-dispatcher: automation runs", error);
 
   const rows = data ?? [];

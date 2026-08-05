@@ -210,7 +210,7 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
       .select("import_id, updated_at")
       .in("import_id", importIds)
       .order("updated_at", { ascending: false })
-      .limit(10000);
+      .limit(1000);
     if (rowsRes.error) throw readFailure("hq alerts: import rows", rowsRes.error);
     const rows = (rowsRes.data ?? []) as unknown as Array<{
       import_id: string;

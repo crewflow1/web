@@ -391,6 +391,7 @@ export async function listSupplierPerformance(
         .in("goods_received_note_id", grnIds)
         .order("goods_received_note_id", { ascending: true })
         .order("purchase_order_line_item_id", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, to),
     );
     if (res.error) throw readFailure("supplier comparison: received lines", res.error);

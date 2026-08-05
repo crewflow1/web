@@ -52,7 +52,7 @@ export type QaBoardResult = {
 };
 
 /** A lean window of recent tasks — enough to keep reliability live, cheap to read. */
-const TASK_WINDOW = 5000;
+const TASK_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 const RELIABILITY_COLUMNS = [
   "status",
   "verification",
@@ -66,8 +66,8 @@ const RELIABILITY_COLUMNS = [
 ].join(", ");
 
 /** A lean window over the append-only reply/outcome ledgers. */
-const REPLY_WINDOW = 5000;
-const OUTCOME_WINDOW = 5000;
+const REPLY_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
+const OUTCOME_WINDOW = 1000; // bounded sample; PostgREST clamps to max_rows=1000
 
 /**
  * Read the recent `hq_ai_tasks` window for the reliability signal. Service-role
