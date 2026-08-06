@@ -9,6 +9,7 @@ import {
   buildVapiToolResults,
   extractVapiToolCalls,
   parseVapiConversation,
+  parseVapiEndOfCallReport,
   readVapiMessageType,
 } from "@/lib/telephony/providers/vapi";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
@@ -23,6 +24,7 @@ import {
   loadRecentSpokenTurns,
   persistSpokenTurn,
   recordInboundCall,
+  updateCallCompletion,
 } from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import type { NormalizedInboundCall } from "@/lib/telephony/types";
@@ -211,6 +213,40 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     return NextResponse.json(buildVapiToolResults(results));
+  }
+
+  // ── Call-completion ENRICHMENT (end-of-call-report) ─────────────────────────
+  // Vapi delivers the terminal report — recording, transcript (text + structured),
+  // AI summary, duration and ended-at — on THIS same door. Same guard chain as
+  // every branch above: the maintenance/rate-limit/DARK-503 and the FAIL-CLOSED
+  // signature verify have already run; here we attribute the org from the DIALED
+  // number (never the body identity) and enrich the calls row. The write is
+  // org-pinned + matched on the Vapi call id and idempotent (a redelivered report
+  // rewrites the same values). BEST-EFFORT: a persistence failure is logged loud
+  // and degraded to 200 — never a 500 that would make Vapi retry-storm. The
+  // transcript is stored purely as DATA (text/jsonb columns, never executed).
+  if (messageType === "end-of-call-report") {
+    const report = parseVapiEndOfCallReport(rawBody);
+    if (!report) {
+      return NextResponse.json({ ok: false, error: "unparseable" }, { status: 400 });
+    }
+    const orgId = report.to ? await resolveOrgForDialedNumber(report.to) : null;
+    if (!orgId) return NextResponse.json({ ok: true, unrouted: true });
+    try {
+      await updateCallCompletion(orgId, report.callId!, {
+        recordingUrl: report.recordingUrl,
+        transcript: report.transcript,
+        transcriptJson: report.transcriptJson,
+        aiSummary: report.summary,
+        durationSec: report.durationSec,
+        endedAt: report.endedAt,
+      });
+      return NextResponse.json({ ok: true, enriched: true });
+    } catch (e) {
+      Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "completion" } });
+      console.error("[vapi] call-completion enrichment failed", e);
+      return NextResponse.json({ ok: true, enriched: false });
+    }
   }
 
   // ── Lifecycle path (status-update / origination) ────────────────────────────
