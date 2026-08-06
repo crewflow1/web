@@ -1,0 +1,34 @@
+-- Security hardening: lock public._introspect_bare_cross_tenant_fks() to the
+-- service role only. LAUNCH-BLOCKING cross-tenant disclosure fix.
+--
+-- 20261113000000_quotes_cross_tenant_reference_integrity.sql created the catalog
+-- self-audit RPC public._introspect_bare_cross_tenant_fks() and ran
+--   revoke all on function ... from public;
+--   grant execute on function ... to service_role;
+-- INTENDING service-role-only execution (see that file's own comment, "granted
+-- to service_role ONLY ... NOT granted to anon/authenticated").
+--
+-- That intent was NOT achieved. Supabase configures default privileges
+-- (ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO
+-- anon, authenticated, service_role), so every new public function is granted
+-- EXECUTE to anon + authenticated as ROLE-SPECIFIC grants at CREATE time.
+-- `revoke ... from public` does NOT remove role-specific grants (it only strips
+-- the PUBLIC pseudo-role grant), so anon and authenticated retained EXECUTE and
+-- could invoke this RPC through PostgREST (POST /rest/v1/rpc/...) using the
+-- public anon key. Verified live in prod: proacl = {postgres=X,anon=X,
+-- authenticated=X,service_role=X}, and `SET ROLE anon; SELECT count(*) FROM
+-- public._introspect_bare_cross_tenant_fks()` returned 112 rows — disclosing a
+-- machine-readable map of every bare (single-column) cross-tenant FK, i.e. the
+-- tenant-isolation attack surface, to any unauthenticated caller.
+--
+-- This is the exact defect class already fixed for the rate-limit RPCs in
+-- 20260708000000_rate_limit_rpc_lockdown.sql (read it first) — same root cause,
+-- same fix shape.
+--
+-- Fix: explicitly revoke EXECUTE from anon + authenticated. The service_role
+-- explicit grant from 20261113000000 remains, so the CI FK-completeness test
+-- (which calls this RPC as service_role) is unaffected, and the function has no
+-- application call site outside that test. Idempotent: revoking an absent
+-- privilege is a no-op, so this is safe to (re)apply.
+
+revoke execute on function public._introspect_bare_cross_tenant_fks() from anon, authenticated;
