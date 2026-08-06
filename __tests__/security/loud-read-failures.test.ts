@@ -179,6 +179,27 @@ describe("highest-blast-radius loaders", () => {
     ]) {
       expect(s, `${ctx} must throw`).toContain(`throw readFailure("${ctx}"`);
     }
+
+    // GUARD-EVASION PIN. The six throws above are necessary but NOT sufficient:
+    // an outer try/catch that returns the empty schedule downgrades every one of
+    // them to a silent empty state at RUNTIME while this string check still
+    // passes. That is exactly the shape this loader used to carry — the sole
+    // portal loader with a blanket `} catch (err) { return EMPTY }` — so a
+    // transient DB error hid a customer's agreed payment schedule + retention
+    // release date behind a healthy-looking empty panel. readFailure is DESIGNED
+    // to propagate to the route-group error boundary; a catch that swallows it
+    // negates the pin. Forbid any catch clause that returns the empty schedule
+    // (`return EMPTY`) or fabricates a `hasSchedule: false` schedule on the
+    // error path. A string-only pin can never again pass while the runtime path
+    // stays silent.
+    expect(
+      s,
+      "an outer catch that returns EMPTY negates all six loud reads at runtime",
+    ).not.toMatch(/catch\s*\([^)]*\)\s*\{[^{}]*return EMPTY/);
+    expect(
+      s,
+      "no catch may fabricate a hasSchedule:false schedule on the error path",
+    ).not.toMatch(/catch\s*\([^)]*\)[\s\S]{0,400}hasSchedule:\s*false/);
   });
 
   it("the public quote page never tells a customer a live link is invalid on a failed read", () => {
