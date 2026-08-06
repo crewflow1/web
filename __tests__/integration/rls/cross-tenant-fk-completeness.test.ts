@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { describeIntegration, serviceClient } from "../_harness";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 
 /**
  * SYSTEMIC cross-tenant FK completeness guard (real Postgres).
@@ -253,3 +253,125 @@ describeIntegration("cross-tenant FK completeness · systemic guard", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * PRIVILEGE LOCKDOWN GUARD for public._introspect_bare_cross_tenant_fks().
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The RPC above returns a machine-readable map of every bare cross-tenant FK —
+ * i.e. the tenant-isolation attack surface. Its migration (20261113000000)
+ * declares it service_role-ONLY ("NOT granted to anon/authenticated"), but that
+ * migration only did `revoke all ... from public` + `grant ... to service_role`.
+ * Under Supabase's default privileges (ALTER DEFAULT PRIVILEGES ... GRANT EXECUTE
+ * ON FUNCTIONS TO anon, authenticated, service_role) every new public function
+ * gets ROLE-SPECIFIC EXECUTE grants to anon + authenticated at CREATE time, and
+ * `revoke ... from public` does NOT strip those. So the RPC shipped LIVE-in-prod
+ * executable by anon + authenticated via the public anon key — a cross-tenant
+ * disclosure primitive. 20261114000000_introspect_rpc_lockdown.sql closes it with
+ * an explicit `revoke execute ... from anon, authenticated`.
+ *
+ * This guard pins that lockdown so a future CREATE OR REPLACE (which re-applies
+ * the default privileges) cannot silently re-expose it. supabase-js cannot read
+ * pg_proc.proacl directly (pg_catalog is not a PostgREST-exposed schema), so the
+ * guard asserts the privilege boundary via the AUTHORITATIVE execution path — the
+ * exact PostgREST /rpc route an attacker would use — which is a stronger check
+ * than a catalog string: it proves anon and authenticated are DENIED (42501) and
+ * service_role is ALLOWED. A re-exposure would make the anon/authenticated calls
+ * succeed and fail this test.
+ */
+/**
+ * Calls the introspection RPC as whatever role `client` carries. The RPC is a
+ * `_`-prefixed internal function excluded from the generated Database types, so
+ * (like bareCrossTenantFks above) we cast to an untyped rpc signature. Returns
+ * the raw {data, error} so the guard can inspect the PostgREST error code.
+ */
+async function introspectAs(
+  client: ReturnType<typeof serviceClient>,
+): Promise<{ data: unknown; error: { code?: string; message: string } | null }> {
+  return (
+    client as unknown as {
+      rpc: (
+        fn: string,
+      ) => Promise<{
+        data: unknown;
+        error: { code?: string; message: string } | null;
+      }>;
+    }
+  ).rpc("_introspect_bare_cross_tenant_fks");
+}
+
+describeIntegration(
+  "_introspect_bare_cross_tenant_fks · privilege lockdown (service_role only)",
+  () => {
+    const T = `introspect-acl-${Date.now()}`;
+    let userToken = "";
+    let userId = "";
+
+    beforeAll(async () => {
+      // A signed-in user carries the `authenticated` Postgres role — the second
+      // grantee the default privileges would have exposed. No org/membership is
+      // needed: we assert the FUNCTION grant, not any row-level access.
+      const email = `${T}@x.test`;
+      const created = await serviceClient().auth.admin.createUser({
+        email,
+        password: `Pw-${T}`,
+        email_confirm: true,
+      });
+      if (created.error) throw new Error(created.error.message);
+      userId = created.data.user?.id ?? "";
+      const s = await anonClient().auth.signInWithPassword({
+        email,
+        password: `Pw-${T}`,
+      });
+      if (s.error) throw new Error(s.error.message);
+      userToken = s.data.session?.access_token ?? "";
+      expect(userToken, "test setup: authenticated token").not.toBe("");
+    });
+
+    afterAll(async () => {
+      if (userId) await serviceClient().auth.admin.deleteUser(userId);
+    });
+
+    it("anon is DENIED (proacl excludes anon)", async () => {
+      const res = await introspectAs(anonClient());
+      expect(
+        res.error,
+        "anon must NOT be able to execute the introspection RPC — it discloses " +
+          "the cross-tenant attack surface. If this is null, the anon EXECUTE " +
+          "grant was re-added (likely a CREATE OR REPLACE re-applying Supabase " +
+          "default privileges without a follow-up revoke).",
+      ).not.toBeNull();
+      expect(res.error?.code, "expected 42501 insufficient_privilege").toBe(
+        "42501",
+      );
+    });
+
+    it("authenticated is DENIED (proacl excludes authenticated)", async () => {
+      const res = await introspectAs(userClient(userToken));
+      expect(
+        res.error,
+        "a signed-in (authenticated) user must NOT be able to execute the " +
+          "introspection RPC. If this is null, the authenticated EXECUTE grant " +
+          "was re-added under Supabase default privileges.",
+      ).not.toBeNull();
+      expect(res.error?.code, "expected 42501 insufficient_privilege").toBe(
+        "42501",
+      );
+    });
+
+    it("service_role is ALLOWED (proacl still includes service_role)", async () => {
+      const res = await introspectAs(serviceClient());
+      expect(
+        res.error,
+        "service_role MUST retain EXECUTE — the CI FK-completeness guard above " +
+          "calls this RPC as service_role. If this errors, the lockdown revoked " +
+          "too broadly.",
+      ).toBeNull();
+      expect(
+        (res.data as unknown[])?.length ?? 0,
+        "service_role call returned no rows — the RPC or its grant is wrong",
+      ).toBeGreaterThan(0);
+    });
+  },
+);
