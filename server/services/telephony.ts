@@ -365,6 +365,80 @@ export async function persistSpokenTurn(args: {
   );
 }
 
+// =====================================================================
+// CALL-COMPLETION ENRICHMENT — populate a finished call's recording, transcript,
+// AI summary, duration and ended-at from the provider's terminal report.
+//
+// The C35c gap: the conversational + lifecycle paths above record WHO called and
+// (via spoken turns) WHAT they said mid-call, but the `calls` row's durable
+// artifacts — recording_url / transcript / transcript_json / ai_summary /
+// duration_sec / ended_at — were NEVER written, because Vapi's
+// `end-of-call-report` event was unhandled. So on activation a completed call was
+// never enriched. This is the single write door for that report. No migration:
+// every column already exists on the baseline `calls` table.
+// =====================================================================
+
+/** The enrichment fields carried by a provider's call-completion report. */
+export type CallCompletionFields = {
+  recordingUrl?: string | null;
+  transcript?: string | null;
+  transcriptJson?: unknown | null;
+  aiSummary?: string | null;
+  durationSec?: number | null;
+  endedAt?: string | null;
+};
+
+/**
+ * Enrich the `calls` row for a COMPLETED call with its recording, transcript
+ * (text + structured), AI summary, duration and ended-at. Matched on the provider
+ * call id and ORG-PINNED (defence in depth over the RLS-bypassing admin client —
+ * the org filter is the only tenant boundary left). Only the fields actually
+ * present in the report are written, so a partial report never wipes data already
+ * captured, and a REDELIVERED report simply rewrites the same values — the UPDATE
+ * is inherently idempotent (no insert ⇒ no duplicate, no corruption). A call id
+ * that matches no row updates zero rows (a benign no-op, not an error). The
+ * transcript is stored purely as DATA — text/jsonb columns, never executed.
+ *
+ * THROWS LOUD on an unexpected DB error (Sentry + console.error), like its
+ * sibling writers; the webhook wraps this best-effort so a persistence failure
+ * degrades to a 200 rather than a 500 that would make the provider retry-storm.
+ */
+export async function updateCallCompletion(
+  orgId: string,
+  providerCallId: string,
+  fields: CallCompletionFields,
+): Promise<void> {
+  // Build the patch from ONLY the fields present (non-undefined), so an absent
+  // report field is left untouched rather than nulled.
+  const row: Record<string, unknown> = {};
+  if (fields.recordingUrl !== undefined) row.recording_url = fields.recordingUrl;
+  if (fields.transcript !== undefined) row.transcript = fields.transcript;
+  if (fields.transcriptJson !== undefined) row.transcript_json = fields.transcriptJson;
+  if (fields.aiSummary !== undefined) row.ai_summary = fields.aiSummary;
+  if (fields.durationSec !== undefined) row.duration_sec = fields.durationSec;
+  if (fields.endedAt !== undefined) row.ended_at = fields.endedAt;
+
+  // Nothing to write ⇒ no-op (never issue an empty UPDATE).
+  if (Object.keys(row).length === 0) return;
+
+  const upd = await table("calls")
+    .update(row)
+    .eq("provider_call_id", providerCallId)
+    .eq("org_id", orgId);
+  if (upd.error) {
+    const message = upd.error.message;
+    Sentry.captureException(new Error(`updateCallCompletion update failed: ${message}`), {
+      tags: { service: "telephony" },
+    });
+    console.error("[telephony] updateCallCompletion update failed", {
+      org_id: orgId,
+      provider_call_id: providerCallId,
+      message,
+    });
+    throw new Error(`updateCallCompletion failed: ${message}`);
+  }
+}
+
 /** Feature flag: inbound voice is DARK unless explicitly enabled. */
 export function isVoiceInboundLive(): boolean {
   return voiceInboundFeatureEnabled();

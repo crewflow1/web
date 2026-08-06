@@ -535,6 +535,143 @@ export function parseVapiWebhook(input: {
   };
 }
 
+/**
+ * The call-completion enrichment carried by a Vapi `end-of-call-report`: the
+ * recording, the transcript (text + structured), the AI summary, the duration and
+ * the ended-at, correlated by the Vapi call id and attributed by the dialed number.
+ * `transcriptJson` is the STRUCTURED conversation as DATA (never executed).
+ */
+export type VapiEndOfCallReport = {
+  callId: string | null;
+  to: string | null;
+  from: string | null;
+  recordingUrl: string | null;
+  transcript: string | null;
+  transcriptJson: unknown | null;
+  summary: string | null;
+  durationSec: number | null;
+  endedAt: string | null;
+};
+
+/** Trim to a non-empty string, or null. */
+function strOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/**
+ * Parse a VERIFIED Vapi `end-of-call-report` into the enrichment shape, or null.
+ *
+ * Vapi delivers the terminal report on the SAME webhook door as every other server
+ * message; it carries the recording url, the full transcript (text + a structured
+ * `messages[]`), an AI `analysis.summary`, the call duration and the ended-at. The
+ * exact field names vary by Vapi version, so every field is read defensively with
+ * fallbacks (top-level and under `artifact`/`analysis`). Pure; never throws — null
+ * on unparseable JSON, a non-report type, or a missing call id (nothing to enrich).
+ */
+export function parseVapiEndOfCallReport(rawBody: string): VapiEndOfCallReport | null {
+  type Report = {
+    message?: {
+      type?: string;
+      endedReason?: string;
+      timestamp?: string | number;
+      startedAt?: string | number;
+      endedAt?: string | number;
+      transcript?: unknown;
+      summary?: unknown;
+      recordingUrl?: unknown;
+      stereoRecordingUrl?: unknown;
+      recording?: { url?: unknown; combinedUrl?: unknown; stereoUrl?: unknown };
+      messages?: unknown;
+      durationSeconds?: unknown;
+      durationMs?: unknown;
+      duration?: unknown;
+      analysis?: { summary?: unknown };
+      artifact?: {
+        transcript?: unknown;
+        messages?: unknown;
+        recordingUrl?: unknown;
+        stereoRecordingUrl?: unknown;
+        recording?: { url?: unknown; combinedUrl?: unknown; stereoUrl?: unknown };
+      };
+      call?: { id?: string; customer?: { number?: string }; phoneNumber?: { number?: string } };
+      customer?: { number?: string };
+      phoneNumber?: { number?: string };
+    };
+  };
+  let body: Report;
+  try {
+    body = JSON.parse(rawBody) as Report;
+  } catch {
+    return null;
+  }
+  const msg = body?.message;
+  if (!msg) return null;
+  if ((msg.type ?? "").trim().toLowerCase() !== "end-of-call-report") return null;
+
+  const call = msg.call;
+  const callId = call?.id?.trim() || null;
+  if (!callId) return null;
+
+  const from = (call?.customer?.number ?? msg.customer?.number ?? "").trim() || null;
+  const to = (call?.phoneNumber?.number ?? msg.phoneNumber?.number ?? "").trim() || null;
+
+  const recordingUrl =
+    strOrNull(msg.recordingUrl) ??
+    strOrNull(msg.recording?.combinedUrl) ??
+    strOrNull(msg.recording?.url) ??
+    strOrNull(msg.artifact?.recordingUrl) ??
+    strOrNull(msg.artifact?.recording?.combinedUrl) ??
+    strOrNull(msg.artifact?.recording?.url) ??
+    strOrNull(msg.stereoRecordingUrl) ??
+    strOrNull(msg.artifact?.stereoRecordingUrl) ??
+    strOrNull(msg.recording?.stereoUrl) ??
+    strOrNull(msg.artifact?.recording?.stereoUrl);
+
+  const transcript = strOrNull(msg.transcript) ?? strOrNull(msg.artifact?.transcript);
+
+  // Structured conversation, stored verbatim as DATA. Prefer the top-level list,
+  // fall back to the artifact's; only an array is kept (never a scalar/object).
+  const structured = Array.isArray(msg.messages)
+    ? msg.messages
+    : Array.isArray(msg.artifact?.messages)
+      ? msg.artifact!.messages
+      : null;
+  const transcriptJson = structured && structured.length > 0 ? structured : null;
+
+  const summary = strOrNull(msg.analysis?.summary) ?? strOrNull(msg.summary);
+
+  const durationSec = (() => {
+    const secs = msg.durationSeconds ?? msg.duration;
+    if (typeof secs === "number" && Number.isFinite(secs) && secs >= 0) return Math.round(secs);
+    if (typeof msg.durationMs === "number" && Number.isFinite(msg.durationMs) && msg.durationMs >= 0) {
+      return Math.round(msg.durationMs / 1000);
+    }
+    return null;
+  })();
+
+  const toIso = (t: unknown): string | null => {
+    if (typeof t === "number" && Number.isFinite(t)) return new Date(t).toISOString();
+    if (typeof t === "string" && t.trim()) {
+      const parsed = Date.parse(t);
+      if (!Number.isNaN(parsed)) return new Date(parsed).toISOString();
+    }
+    return null;
+  };
+  const endedAt = toIso(msg.endedAt) ?? toIso(msg.timestamp);
+
+  return {
+    callId,
+    to,
+    from,
+    recordingUrl,
+    transcript,
+    transcriptJson,
+    summary,
+    durationSec,
+    endedAt,
+  };
+}
+
 export function createVapiVoiceProvider(): VoiceProvider {
   return {
     id: "vapi",
