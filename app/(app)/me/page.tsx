@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   entryHours,
@@ -86,13 +88,24 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .eq("user_id", user.id)
         .is("ended_at", null)
         .maybeSingle(),
-      supabase
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", ctx.org.id)
-        .eq("user_id", user.id)
-        .gte("started_at", `${weekStartIso}T00:00:00Z`)
-        .order("started_at", { ascending: false }),
+      // PAGED (F-1): drives this week's hours/pay tiles — a bare `.select()`
+      // clamped at max_rows (1000) would under-count a heavy week and understate
+      // the worker's own pay estimate. Page on the unique `started_at`+`id` order.
+      fetchAllRows<TimeEntry>(
+        (from, to) =>
+          supabase
+            .from("time_entries")
+            .select("id, user_id, job_id, started_at, ended_at, breaks")
+            .eq("org_id", ctx.org.id)
+            .eq("user_id", user.id)
+            .gte("started_at", `${weekStartIso}T00:00:00Z`)
+            .order("started_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<{
+            data: TimeEntry[] | null;
+            error: unknown;
+          }>,
+      ),
       supabase
         .from("rota_entries")
         .select("id, starts_at, ends_at, job_id, notes")
@@ -117,14 +130,29 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .neq("status", "completed")
         .order("scheduled_date", { ascending: true })
         .limit(20),
-      supabase
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", ctx.org.id)
-        .eq("user_id", user.id)
-        .gte("started_at", `${monthStartIso}T00:00:00Z`)
-        .order("started_at", { ascending: false }),
+      // PAGED (F-1): drives this month's hours + the shift-history list — a
+      // clamped read would hide older shifts and under-count monthly pay. Page
+      // on the unique `started_at`+`id` order.
+      fetchAllRows<TimeEntry>(
+        (from, to) =>
+          supabase
+            .from("time_entries")
+            .select("id, user_id, job_id, started_at, ended_at, breaks")
+            .eq("org_id", ctx.org.id)
+            .eq("user_id", user.id)
+            .gte("started_at", `${monthStartIso}T00:00:00Z`)
+            .order("started_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<{
+            data: TimeEntry[] | null;
+            error: unknown;
+          }>,
+      ),
     ]);
+  // Fail loud on the hours reads — a failed read must not silently zero-out the
+  // worker's hours/pay tiles (payroll-adjacent figures are RED).
+  if (weekRes.error) throw readFailure("me: week entries", weekRes.error);
+  if (monthRes.error) throw readFailure("me: month entries", monthRes.error);
 
   const profile = profileRes.data;
   const hourlyPay = Number(profile?.hourly_pay ?? 0);

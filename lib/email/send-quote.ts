@@ -2,6 +2,7 @@ import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import * as Sentry from "@sentry/nextjs";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { sendEmail } from "@/lib/email/send";
@@ -125,11 +126,30 @@ export async function sendQuoteEmail(
   }
   const portalUrl = `${env.NEXT_PUBLIC_APP_URL}/q/${token}`;
 
-  const { data: lines, error: linesError } = await supabase
-    .from("quote_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("quote_id", quote.id)
-    .order("sort_order", { ascending: true });
+  // PAGED (F-1): the emailed PDF must contain EVERY line — a bare `.select()`
+  // clamped at max_rows (1000) would email a document with totals but only the
+  // first page of lines. Page on the unique `sort_order`+`id` order.
+  type QuoteLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error: linesError } = await fetchAllRows<QuoteLineRow>(
+    (from, to) =>
+      supabase
+        .from("quote_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("quote_id", quote.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: QuoteLineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (linesError) {
     // Never email a PDF with totals but zero line items on a failed read.
     console.error("[send-quote] line items load failed", linesError);

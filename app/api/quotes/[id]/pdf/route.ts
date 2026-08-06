@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
@@ -51,11 +52,30 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: lines, error: lErr } = await supabase
-    .from("quote_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("quote_id", quote.id)
-    .order("sort_order", { ascending: true });
+  // PAGED (F-1): a PDF must render EVERY line — a bare `.select()` clamped at
+  // max_rows (1000) would serve a document with totals but only the first page
+  // of lines. Page on the unique `sort_order`+`id` order.
+  type QuoteLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error: lErr } = await fetchAllRows<QuoteLineRow>(
+    (from, to) =>
+      supabase
+        .from("quote_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("quote_id", quote.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: QuoteLineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (lErr) {
     console.error("[quote-pdf] line items load failed", lErr);
     return NextResponse.json({ error: "Failed to load quote" }, { status: 500 });

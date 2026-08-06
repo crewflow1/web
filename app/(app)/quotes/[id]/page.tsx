@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuoteBuilder } from "../_builder";
@@ -143,13 +144,31 @@ export default async function EditQuotePage({
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const { data: rawItems, error: itemsError } = await supabase
-    .from("quote_line_items")
-    .select("description, qty, unit, unit_price, vat_rate, sort_order")
-    .eq("quote_id", id)
-    .order("sort_order", { ascending: true });
-  // The builder saves by REPLACING line items wholesale — rendering an empty
-  // builder over a failed read would let a save wipe the real items.
+  // PAGED (F-1): the builder saves by REPLACING line items wholesale, so it must
+  // load EVERY existing line — a bare `.select()` clamped at max_rows (1000)
+  // would drop the lines past the cap and a subsequent save would silently wipe
+  // them. Page on the unique `sort_order`+`id` order.
+  type RawLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit: string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: rawItems, error: itemsError } = await fetchAllRows<RawLineRow>(
+    (from, to) =>
+      supabase
+        .from("quote_line_items")
+        .select("description, qty, unit, unit_price, vat_rate, sort_order")
+        .eq("quote_id", id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: RawLineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (itemsError) throw readFailure("quote detail: line items", itemsError);
 
   const lineItems: LineItem[] = (rawItems ?? []).map((li) => ({

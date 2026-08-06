@@ -45,6 +45,14 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "goods_received_notes",
   "goods_received_lines",
   "payroll_lines",
+  // Hours source for payroll: a clamped read UNDERSTATES gross/PAYE/NI/net pay
+  // for a >1000-entry month (createPayrollRun), and cross-tenant (RLS admits
+  // every org the caller belongs to).
+  "time_entries",
+  // Quote line items: a clamped read serves a quote PDF / builder / portal view
+  // with totals but only the first 1000 lines — and the builder re-save would
+  // then wipe the dropped lines.
+  "quote_line_items",
   "stock_movements",
   "bank_statement_lines",
   "telematics_connections",
@@ -65,6 +73,13 @@ const ALLOWLIST: Record<string, string> = {
   // above). Prefer fetchAllRows/.limit only if this ever stops being chunked.
   "server/services/cis-statements.ts:169":
     "bounded: chunked .in('id', slice(≤500 unique PKs)) — ≤500 rows, analyser can't see the slice bound",
+  // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
+  // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
+  // truncate. It trips solely as a region artifact: the AFTER window bleeds into
+  // the adjacent, fully-bounded `leads` `.select('status')…maybeSingle()`, whose
+  // `.maybeSingle()`/`.eq('id')` bound markers fall just past the 1100-char cap.
+  "app/(app)/quotes/actions.ts:178":
+    "not a read: `.from('quote_line_items').insert(rows)` — flagged only because the region bleeds into an adjacent bounded leads .select whose bound falls outside the window",
 };
 
 function walk(dir: string, out: string[]): void {
