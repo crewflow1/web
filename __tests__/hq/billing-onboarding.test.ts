@@ -276,10 +276,15 @@ describe("billing snapshot — efficient cross-tenant aggregator", () => {
 });
 
 describe("onboarding snapshot — bucketed counters per org", () => {
-  it("queries imports + import_files + import_rows by org_id IN list (no N+1)", () => {
-    expect(ONBOARDING_SNAP).toMatch(/from\("imports"\)/);
-    expect(ONBOARDING_SNAP).toMatch(/from\("import_files"\)/);
-    expect(ONBOARDING_SNAP).toMatch(/from\("import_rows"\)/);
+  it("queries imports + import_files + import_rows by org_id IN list (no N+1), PAGED (F-1)", () => {
+    // F-1: the cross-tenant bucketing reads are paged via fetchAllRows so a
+    // >1000-row table (import_rows especially) can't be silently truncated and
+    // under-count. The table names are now hqPaged() arguments rather than
+    // inline .from() literals, but the IN-list batching (no N+1) is unchanged.
+    expect(ONBOARDING_SNAP).toMatch(/fetchAllRows/);
+    expect(ONBOARDING_SNAP).toMatch(/"imports"/);
+    expect(ONBOARDING_SNAP).toMatch(/"import_files"/);
+    expect(ONBOARDING_SNAP).toMatch(/"import_rows"/);
     const inCalls = (ONBOARDING_SNAP.match(/\.in\("(org_id|import_id)"/g) ?? []).length;
     expect(inCalls).toBeGreaterThanOrEqual(3);
   });

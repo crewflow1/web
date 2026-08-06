@@ -57,7 +57,8 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { reportReadFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { resolveJobAddress } from "@/lib/address";
 import { districtForAddress } from "@/lib/weather/postcode";
 import type { PostcodeDistrict } from "@/lib/weather/types";
@@ -67,6 +68,16 @@ import type { PostcodeDistrict } from "@/lib/weather/types";
  * (on-hold) one should stop costing provider calls — both are deactivated. */
 const LIVE_JOB_STATUSES = ["new", "in-progress"] as const;
 
+/**
+ * How many customer ids to send per `.in()` batch. supabase-js `.in()` on a
+ * `.select()` is a GET, so every id is serialised into the URL query string; a
+ * platform-wide first pass can gather thousands of live-job customer ids, which
+ * overflows the request-line limit (→ 414/400) in one query. Chunk at ≤200 (the
+ * bank-sync `existingProviderTxIds` idiom) and union the results. Each chunk is
+ * still paged so no single response is clamped at max_rows either.
+ */
+const CUSTOMER_IN_CHUNK = 200;
+
 // Untyped-table access uses the established Loose idiom (see
 // server/services/weather-fetch.ts and cis-deduction.ts): the weather tables
 // are deliberately absent from lib/supabase/types.ts.
@@ -74,6 +85,8 @@ type LooseRes<T> = { data: T | null; error: { message: string; code?: string } |
 type SelectBuilder<T> = PromiseLike<LooseRes<T[]>> & {
   eq: (k: string, v: unknown) => SelectBuilder<T>;
   in: (k: string, v: readonly unknown[]) => SelectBuilder<T>;
+  order: (k: string, o: { ascending: boolean }) => SelectBuilder<T>;
+  range: (from: number, to: number) => PromiseLike<PageResult<T>>;
 };
 type UpdateBuilder = {
   in: (k: string, v: readonly unknown[]) => PromiseLike<LooseRes<null>>;
@@ -226,34 +239,53 @@ export async function runWeatherWatchSync(): Promise<WeatherWatchSyncSummary> {
   const admin = createAdminClient() as unknown as LooseAdmin;
 
   // ── 1. The live jobs across every tenant. ─────────────────────────────────
-  const jobsRes = await table(admin, "jobs")
-    .select<JobRow>(
-      "id, org_id, customer_id, site_address_line1, site_address_line2, " +
-        "site_city, site_county, site_postcode, site_country",
-    )
-    .in("status", LIVE_JOB_STATUSES);
+  // F-1 + COMPLETENESS IS MANDATORY: planWatchSync is a reconciliation DIFF, so
+  // a truncated jobs read (clamped at max_rows=1000) does not merely miss watches
+  // — it makes live jobs beyond the cap look "not live", DEACTIVATING their
+  // watches (flapping) and, on the next full pass, re-INSERTing them into a
+  // unique index they still occupy (collision). Page the full set on unique `id`.
+  const jobsRes = await fetchAllRows<JobRow>((from, to) =>
+    table(admin, "jobs")
+      .select<JobRow>(
+        "id, org_id, customer_id, site_address_line1, site_address_line2, " +
+          "site_city, site_county, site_postcode, site_country",
+      )
+      .in("status", LIVE_JOB_STATUSES)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (jobsRes.error) {
     // LOUD READS: a failed job read must never read as "no live jobs", which
     // would deactivate every watch on the platform.
-    reportReadFailure("jobs (weather watch sync)", jobsRes.error);
-    return { ...empty, ok: false, note: `jobs read failed: ${jobsRes.error.message}` };
+    const err = jobsRes.error as SupabaseReadError;
+    reportReadFailure("jobs (weather watch sync)", err);
+    return { ...empty, ok: false, note: `jobs read failed: ${err.message ?? "unknown"}` };
   }
-  const jobs = jobsRes.data ?? [];
+  const jobs = jobsRes.data;
 
   // ── 2. The customers those jobs may inherit an address from. ──────────────
   const customerIds = [
     ...new Set(jobs.map((j) => j.customer_id).filter((id): id is string => id !== null)),
   ];
   const customerById = new Map<string, CustomerRow>();
-  if (customerIds.length > 0) {
-    const custRes = await table(admin, "customers")
-      .select<CustomerRow>("id, address_line1, address_line2, city, county, postcode, country")
-      .in("id", customerIds);
+  // CHUNKED (≤200 ids) + PAGED: the id list is platform-wide-unbounded, so a
+  // single `.in()` would 414 on the URL, and each chunk's result is paged so a
+  // chunk that returned >1000 rows is never clamped either.
+  for (let i = 0; i < customerIds.length; i += CUSTOMER_IN_CHUNK) {
+    const batch = customerIds.slice(i, i + CUSTOMER_IN_CHUNK);
+    const custRes = await fetchAllRows<CustomerRow>((from, to) =>
+      table(admin, "customers")
+        .select<CustomerRow>("id, address_line1, address_line2, city, county, postcode, country")
+        .in("id", batch)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (custRes.error) {
-      reportReadFailure("customers (weather watch sync)", custRes.error);
-      return { ...empty, ok: false, note: `customers read failed: ${custRes.error.message}` };
+      const err = custRes.error as SupabaseReadError;
+      reportReadFailure("customers (weather watch sync)", err);
+      return { ...empty, ok: false, note: `customers read failed: ${err.message ?? "unknown"}` };
     }
-    for (const c of custRes.data ?? []) customerById.set(c.id, c);
+    for (const c of custRes.data) customerById.set(c.id, c);
   }
 
   // ── 3. Resolve each job's district — the site override, else the customer. ─
@@ -265,12 +297,19 @@ export async function runWeatherWatchSync(): Promise<WeatherWatchSyncSummary> {
   const districtsResolved = resolved.filter((r) => r.district !== null).length;
 
   // ── 4. Existing job-anchored watches (site/standing watches are left alone). ─
-  const watchRes = await table(admin, "weather_watches").select<WatchRow>(
-    "id, job_id, postcode_district, active",
+  // F-1: the existing-watch set is the OTHER half of the reconciliation diff — a
+  // truncated read here re-inserts watches that already exist (unique-index
+  // collision) and mis-deactivates. Page the full set on unique `id`.
+  const watchRes = await fetchAllRows<WatchRow>((from, to) =>
+    table(admin, "weather_watches")
+      .select<WatchRow>("id, job_id, postcode_district, active")
+      .order("id", { ascending: true })
+      .range(from, to),
   );
   if (watchRes.error) {
-    reportReadFailure("weather watches (watch sync)", watchRes.error);
-    return { ...empty, ok: false, note: `watch read failed: ${watchRes.error.message}` };
+    const err = watchRes.error as SupabaseReadError;
+    reportReadFailure("weather watches (watch sync)", err);
+    return { ...empty, ok: false, note: `watch read failed: ${err.message ?? "unknown"}` };
   }
   const existing: ExistingJobWatch[] = (watchRes.data ?? [])
     .filter((w): w is WatchRow & { job_id: string } => w.job_id !== null)

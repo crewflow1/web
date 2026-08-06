@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { OrgStatus } from "@/server/auth/session";
 import {
   computeProgress,
@@ -16,6 +17,41 @@ import {
  * can't see other orgs' imports through normal channels; this
  * service exists specifically to give the operator that view.
  */
+
+// ---------------------------------------------------------------------------
+// F-1 paging helper. Every read in this HQ aggregator is CROSS-TENANT and
+// service-role, and each one is bucketed / counted in memory — so a bare
+// `.select()` clamped at PostgREST max_rows (1000) silently drops rows and
+// under-counts (`import_rows` in particular is a big table). These reads are
+// therefore paged under the cap on a stable unique order. The org-id `.in()`
+// lists stay un-chunked: the org count is the launch-horizon ceiling (hundreds),
+// well under the URL request-line limit.
+// ---------------------------------------------------------------------------
+type HqRow = Record<string, unknown>;
+type HqBuilder = PromiseLike<{ data: HqRow[] | null; error: unknown }> & {
+  select: (c: string) => HqBuilder;
+  eq: (k: string, v: unknown) => HqBuilder;
+  neq: (k: string, v: unknown) => HqBuilder;
+  in: (k: string, v: readonly unknown[]) => HqBuilder;
+  order: (k: string, o: { ascending: boolean }) => HqBuilder;
+  range: (f: number, t: number) => PromiseLike<PageResult<HqRow>>;
+};
+type HqLoose = { from: (t: string) => HqBuilder };
+
+/** Page a cross-tenant set read on a stable `orderKey` (default unique `id`). */
+function hqPaged(
+  loose: HqLoose,
+  table: string,
+  cols: string,
+  apply: (b: HqBuilder) => HqBuilder,
+  orderKey = "id",
+): Promise<{ data: HqRow[]; error: unknown }> {
+  return fetchAllRows<HqRow>((from, to) =>
+    apply(loose.from(table).select(cols))
+      .order(orderKey, { ascending: true })
+      .range(from, to),
+  );
+}
 
 export type OnboardingRow = {
   org_id: string;
@@ -57,31 +93,38 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
   // surfaced any more — the customer's live progress is the source
   // of truth (matches the directive's "Sync HQ onboarding % with
   // customer-facing computeProgress()" requirement).
-  const { data: orgsRaw, error: orgsError } = await admin
-    .from("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "phone",
-        "email",
-        "vat_number",
-        "logo_path",
-        "logo_url",
-        "bank_details",
-        "default_terms",
-        "address",
-        "onboarding_state",
-        "onboarding_percent",
-        "migration_percent",
-        "migration_stage",
-        "migration_eta",
-        "created_at",
-      ].join(", ") as never,
-    )
-    .order("created_at", { ascending: false });
-  if (orgsError) throw readFailure("hq-onboarding-snapshot: organizations", orgsError);
+  const loose = admin as unknown as HqLoose;
+  // F-1: the org spine itself is paged — a bare read caps the whole HQ list at
+  // 1000 orgs. Newest-first, with a unique `id` tiebreak for a stable boundary.
+  const { data: orgsRaw, error: orgsError } = await fetchAllRows<HqRow>((from, to) =>
+    loose
+      .from("organizations")
+      .select(
+        [
+          "id",
+          "name",
+          "status",
+          "phone",
+          "email",
+          "vat_number",
+          "logo_path",
+          "logo_url",
+          "bank_details",
+          "default_terms",
+          "address",
+          "onboarding_state",
+          "onboarding_percent",
+          "migration_percent",
+          "migration_stage",
+          "migration_eta",
+          "created_at",
+        ].join(", "),
+      )
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (orgsError) throw readFailure("hq-onboarding-snapshot: organizations", orgsError as SupabaseReadError);
 
   type OrgRow = {
     id: string;
@@ -119,11 +162,12 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     org_id: string;
     user: { full_name: string | null; email: string } | null;
   };
-  const { data: ownerships } = await admin
-    .from("memberships")
-    .select("org_id, user:users ( full_name, email )")
-    .in("org_id", ids)
-    .eq("role", "owner");
+  const { data: ownerships } = await hqPaged(
+    loose,
+    "memberships",
+    "org_id, user:users ( full_name, email )",
+    (b) => b.in("org_id", ids).eq("role", "owner"),
+  );
   const ownerByOrg = new Map(
     ((ownerships ?? []) as unknown as OwnerRow[]).map((r) => [
       r.org_id,
@@ -143,11 +187,13 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     committed_at: string | null;
     rolled_back_at: string | null;
   };
-  const { data: importsRaw, error: importsError } = await admin
-    .from("imports")
-    .select("id, org_id, status, created_at, committed_at, rolled_back_at")
-    .in("org_id", ids);
-  if (importsError) throw readFailure("hq-onboarding-snapshot: imports", importsError);
+  const { data: importsRaw, error: importsError } = await hqPaged(
+    loose,
+    "imports",
+    "id, org_id, status, created_at, committed_at, rolled_back_at",
+    (b) => b.in("org_id", ids),
+  );
+  if (importsError) throw readFailure("hq-onboarding-snapshot: imports", importsError as SupabaseReadError);
   const imports = ((importsRaw ?? []) as unknown as ImportRow[]);
 
   const importsByOrg = new Map<string, ImportRow[]>();
@@ -159,11 +205,13 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
 
   // ---------- Files (count per org via FK) ----------
   type FileRow = { id: string; org_id: string };
-  const { data: filesRaw, error: filesError } = await admin
-    .from("import_files")
-    .select("id, org_id")
-    .in("org_id", ids);
-  if (filesError) throw readFailure("hq-onboarding-snapshot: import files", filesError);
+  const { data: filesRaw, error: filesError } = await hqPaged(
+    loose,
+    "import_files",
+    "id, org_id",
+    (b) => b.in("org_id", ids),
+  );
+  if (filesError) throw readFailure("hq-onboarding-snapshot: import files", filesError as SupabaseReadError);
   const files = ((filesRaw ?? []) as unknown as FileRow[]);
   const filesByOrg = new Map<string, number>();
   for (const f of files) {
@@ -175,11 +223,13 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
   // bucket. RLS doesn't apply with service-role; we filter via the
   // org_ids we already know.
   type ImportRowRow = { org_id: string; status: string };
-  const { data: rowRowsRaw, error: rowRowsError } = await admin
-    .from("import_rows")
-    .select("org_id, status")
-    .in("org_id", ids);
-  if (rowRowsError) throw readFailure("hq-onboarding-snapshot: import rows", rowRowsError);
+  const { data: rowRowsRaw, error: rowRowsError } = await hqPaged(
+    loose,
+    "import_rows",
+    "id, org_id, status",
+    (b) => b.in("org_id", ids),
+  );
+  if (rowRowsError) throw readFailure("hq-onboarding-snapshot: import rows", rowRowsError as SupabaseReadError);
   const rowRows = ((rowRowsRaw ?? []) as unknown as ImportRowRow[]);
   const importedByOrg = new Map<string, number>();
   const failedByOrg = new Map<string, number>();
@@ -280,23 +330,23 @@ async function buildHqChecklistProgress(
   if (orgs.length === 0) return new Map();
   const ids = orgs.map((o) => o.id);
 
-  // Five parallel batched queries — one round trip per table, never
-  // N round trips per org.
+  // Five parallel batched queries — one PAGED read per table (F-1: a bare
+  // `.select()` clamped at max_rows would under-count a table with >1000 rows
+  // across all orgs and drift the HQ progress figure), never N round trips per
+  // org. Order on unique `id` (present on every one of these tables) so a page
+  // boundary can't drop or repeat a row that would skew a bucketed count.
+  const loose = admin as unknown as HqLoose;
   const [membersRes, customersRes, invoicesRes, quotesRes, importsCommittedRes] =
     await Promise.all([
-      admin
-        .from("memberships")
-        .select("org_id, role")
-        .in("org_id", ids)
-        .neq("role", "owner"),
-      admin.from("customers").select("org_id").in("org_id", ids),
-      admin.from("invoices").select("org_id").in("org_id", ids),
-      admin.from("quotes").select("org_id").in("org_id", ids),
-      admin
-        .from("imports")
-        .select("org_id")
-        .in("org_id", ids)
-        .eq("status", "committed"),
+      hqPaged(loose, "memberships", "org_id, role", (b) =>
+        b.in("org_id", ids).neq("role", "owner"),
+      ),
+      hqPaged(loose, "customers", "org_id", (b) => b.in("org_id", ids)),
+      hqPaged(loose, "invoices", "org_id", (b) => b.in("org_id", ids)),
+      hqPaged(loose, "quotes", "org_id", (b) => b.in("org_id", ids)),
+      hqPaged(loose, "imports", "org_id", (b) =>
+        b.in("org_id", ids).eq("status", "committed"),
+      ),
     ]);
 
   const countByOrg = (
@@ -310,19 +360,19 @@ async function buildHqChecklistProgress(
   };
 
   const membersByOrg = countByOrg(
-    (membersRes.data as ReadonlyArray<{ org_id: string }>) ?? [],
+    membersRes.data as unknown as ReadonlyArray<{ org_id: string }>,
   );
   const customersByOrg = countByOrg(
-    (customersRes.data as ReadonlyArray<{ org_id: string }>) ?? [],
+    customersRes.data as unknown as ReadonlyArray<{ org_id: string }>,
   );
   const invoicesByOrg = countByOrg(
-    (invoicesRes.data as ReadonlyArray<{ org_id: string }>) ?? [],
+    invoicesRes.data as unknown as ReadonlyArray<{ org_id: string }>,
   );
   const quotesByOrg = countByOrg(
-    (quotesRes.data as ReadonlyArray<{ org_id: string }>) ?? [],
+    quotesRes.data as unknown as ReadonlyArray<{ org_id: string }>,
   );
   const importsByOrg = countByOrg(
-    (importsCommittedRes.data as ReadonlyArray<{ org_id: string }>) ?? [],
+    importsCommittedRes.data as unknown as ReadonlyArray<{ org_id: string }>,
   );
 
   const out = new Map<string, number>();

@@ -88,16 +88,30 @@ export async function buildRetentionSnapshot(
       .eq("org_id", orgId)
       .eq("status", "accepted")
       .gte("accepted_at", sevenDaysAgo),
-    supabase
-      .from("invoices")
-      .select("id, total", { count: "exact" })
-      .eq("org_id", orgId)
-      .gte("created_at", sevenDaysAgo),
-    supabase
-      .from("invoice_payments")
-      .select("amount")
-      .eq("org_id", orgId)
-      .gte("paid_at", sevenDaysAgo.slice(0, 10)),
+    // PAGED (F-1): this set feeds BOTH `invoices_sent` and the `invoiced_gbp_7d`
+    // SUM below, so a bare `.select()` clamped at max_rows (1000) would under-
+    // state a busy org's 7-day invoiced revenue AND its sent-count. The count is
+    // now derived from the fully-paged row set (length), not a truncatable page.
+    fetchAllRows<{ total: number | string | null }>((from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, total")
+        .eq("org_id", orgId)
+        .gte("created_at", sevenDaysAgo)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // PAGED (F-1): feeds the `payments_received_gbp_7d` SUM — same truncation
+    // class as the invoices set above.
+    fetchAllRows<{ amount: number | string | null }>((from, to) =>
+      supabase
+        .from("invoice_payments")
+        .select("id, amount")
+        .eq("org_id", orgId)
+        .gte("paid_at", sevenDaysAgo.slice(0, 10))
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     // All-time invoiced (sent + paid, not draft / void). PAGED (F-1): this feeds
     // the `invoiced_total_gbp` SUM below, so a bare `.select()` truncated at the
     // 1000-row cap would silently under-state lifetime invoiced revenue once an
@@ -167,16 +181,13 @@ export async function buildRetentionSnapshot(
     0,
   );
 
-  const invoiced7Rows =
-    (invoices7Res.data as Array<{ total: number | string | null }> | null) ?? [];
+  const invoiced7Rows = invoices7Res.data;
   const invoiced_gbp_7d = invoiced7Rows.reduce(
     (acc, r) => acc + Number(r.total ?? 0),
     0,
   );
 
-  const payments7Rows =
-    (payments7Res.data as Array<{ amount: number | string | null }> | null) ??
-    [];
+  const payments7Rows = payments7Res.data;
   const payments_received_gbp_7d = payments7Rows.reduce(
     (acc, r) => acc + Number(r.amount ?? 0),
     0,
@@ -245,7 +256,9 @@ export async function buildRetentionSnapshot(
         customers_added: customers7Res.count ?? 0,
         quotes_created: quotes7Res.count ?? 0,
         quotes_accepted: quotesAccepted7Res.count ?? 0,
-        invoices_sent: invoices7Res.count ?? 0,
+        // Count derived from the fully-paged row set (see the paged read above),
+        // never a truncatable `count` on a clamped page.
+        invoices_sent: invoiced7Rows.length,
         invoiced_gbp: invoiced_gbp_7d,
         payments_received_gbp: payments_received_gbp_7d,
       },

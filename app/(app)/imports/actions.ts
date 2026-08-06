@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
 import { requireOrgContext } from "@/server/auth/session";
@@ -391,27 +392,65 @@ async function annotateDuplicates(importId: string, orgId: string): Promise<bool
   if (!rows || rows.length === 0) return true;
 
   // Load existing rows once per entity type that's actually present.
+  //
+  // PAGED (F-1): these are the dedupe REFERENCE sets — every existing customer /
+  // invoice / staff user / lead the staged rows are matched against. A bare
+  // `.select()` is clamped at max_rows (1000), so on an org with >1000 existing
+  // customers (or invoices) the duplicate check would silently compare against
+  // only the first page and wave through genuine duplicates. Page the full set
+  // on the unique `id` order. Best-effort like the originals: a failed page
+  // hands back the partial set (the annotation is enrichment, never a gate).
   const types = new Set(rows.map((r) => r.entity_type ?? "unknown"));
   const customers = types.has("customer")
-    ? (await admin.from("customers").select("id, name, email, phone").eq("org_id", orgId)).data ?? []
+    ? (
+        await fetchAllRows((from, to) =>
+          admin
+            .from("customers")
+            .select("id, name, email, phone")
+            .eq("org_id", orgId)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
+      ).data
     : [];
   const invoices = types.has("invoice")
-    ? (await admin.from("invoices").select("id, number").eq("org_id", orgId)).data ?? []
+    ? (
+        await fetchAllRows((from, to) =>
+          admin
+            .from("invoices")
+            .select("id, number")
+            .eq("org_id", orgId)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
+      ).data
     : [];
   const memberships = types.has("staff")
-    ? (await admin
-        .from("memberships")
-        .select("user_id, user:users ( id, email, full_name )")
-        .eq("org_id", orgId)).data ?? []
+    ? (
+        await fetchAllRows((from, to) =>
+          admin
+            .from("memberships")
+            .select("user_id, user:users ( id, email, full_name )")
+            .eq("org_id", orgId)
+            .order("user_id", { ascending: true })
+            .range(from, to),
+        )
+      ).data
     : [];
   const staffUsers = memberships
     .map((m) => (m as { user?: { id: string; email: string; full_name: string | null } }).user)
     .filter((u): u is { id: string; email: string; full_name: string | null } => !!u);
   const leadsRaw = types.has("lead")
-    ? (await admin
-        .from("leads")
-        .select("id, customer:customers ( email, phone )")
-        .eq("org_id", orgId)).data ?? []
+    ? (
+        await fetchAllRows((from, to) =>
+          admin
+            .from("leads")
+            .select("id, customer:customers ( email, phone )")
+            .eq("org_id", orgId)
+            .order("id", { ascending: true })
+            .range(from, to),
+        )
+      ).data
     : [];
   const leads = leadsRaw.map((l) => ({
     id: l.id,

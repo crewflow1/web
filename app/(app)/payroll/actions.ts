@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
@@ -252,11 +253,20 @@ export async function finalisePayrollRun(runId: string) {
   if (run.status === "finalised") redirect(`/payroll/${runId}`);
 
   // Lock the time entries whose user appears in this run.
-  const { data: lines, error: linesError } = await supabase
-    .from("payroll_lines")
-    .select("id, user_id")
-    .eq("payroll_run_id", runId)
-    .eq("org_id", ctx.org.id);
+  // PAGED (F-1): every line drives a time-entry lock below, so a bare `.select()`
+  // clamped at max_rows (1000) would finalise a large run (>1000 workers) with
+  // the workers past the cap left with their timesheets UNLOCKED — editable after
+  // payroll was locked. Page the full set on the unique `id` order.
+  const { data: lines, error: linesError } = await fetchAllRows<{ id: string; user_id: string }>(
+    (from, to) =>
+      supabase
+        .from("payroll_lines")
+        .select("id, user_id")
+        .eq("payroll_run_id", runId)
+        .eq("org_id", ctx.org.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
   // Fail loud BEFORE finalising — a failed read here would finalise the run
   // with every time entry left unlocked.
   if (linesError) throw readFailure("payroll finalise: lines", linesError);
