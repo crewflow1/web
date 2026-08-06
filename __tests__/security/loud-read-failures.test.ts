@@ -392,7 +392,14 @@ const RATCHET: Array<{
     // hours) and staff/[id]/timesheet/page.tsx (month entries) moved off bare reads
     // onto fetchAllRows with bound + thrown `error`, so their `?? []` now sits behind
     // a real check and stops counting as debt — 3 leave the soft-data ledger.
-    softData: 33,
+    // 33 → 34 (active-org write-pin class): jobs/[id]/billing/actions.ts
+    // generateStageInvoice gained a fail-CLOSED active-org assert
+    // (`.select("id").eq("id", stageId).eq("org_id", ctx.org.id)`) BEFORE the
+    // generate_stage_invoice RPC — the RPC only checks is_org_admin(org_id), not
+    // the active org. On a read error the `?? []` yields [] → the RPC is skipped
+    // (no invoice generated), which is the safe outcome; matches the file's other
+    // best-effort billing reads. See docs/loud-read-failures.md (C ledger).
+    softData: 34,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online

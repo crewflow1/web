@@ -696,6 +696,144 @@ describe("me/actions.ts is user-scoped BY DESIGN — do not 'fix' it", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 7b. JOB BILLING — the sites the hostile audit found the enumeration MISSED.
+//
+// job_billing_plans / job_billing_stages are org-scoped; their write RLS is
+// is_org_admin(org_id), which a dual-org owner/admin satisfies for BOTH orgs.
+// So the app-check isManager() is on the ACTIVE org's membership while the DB
+// admits every org the caller belongs to — every by-id write here must pin.
+// ---------------------------------------------------------------------------
+
+describe("job billing — every by-id write pins the active org", () => {
+  const SRC = () => src("app/(app)/jobs/[id]/billing/actions.ts");
+
+  it("deleteBillingStage pins BOTH the guard read and the DELETE", () => {
+    const F = fn(SRC(), "deleteBillingStage");
+    expect(F).toMatch(
+      /from\("job_billing_stages"\)\.select\("invoice_id"\)\.eq\("id", stageId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    expect(F).toMatch(
+      /from\("job_billing_stages"\)\.delete\(\)\.eq\("id", stageId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("cancelBillingPlan pins the plan UPDATE", () => {
+    expect(fn(SRC(), "cancelBillingPlan")).toMatch(
+      /from\("job_billing_plans"\)\.update\(\{ status: "cancelled" \}\)\.eq\("id", planId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("addBillingStage pins the plan + existing-stages reads that decide the amount", () => {
+    const F = fn(SRC(), "addBillingStage");
+    expect(F).toMatch(
+      /from\("job_billing_plans"\)\.select\("basis_amount"\)\.eq\("id", planId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    expect(F).toMatch(
+      /from\("job_billing_stages"\)\.select\("amount, sequence"\)\.eq\("plan_id", planId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("generateStageInvoice asserts the stage is in the active org BEFORE the RPC", () => {
+    // The RPC gates on is_org_admin(v_stage.org_id) — not the active org — so a
+    // dual-org admin in org A could otherwise invoice org B's stage.
+    const F = fn(SRC(), "generateStageInvoice");
+    expect(F).toMatch(
+      /from\("job_billing_stages"\)\.select\("id"\)\.eq\("id", stageId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    const assert = F.indexOf('.eq("org_id", ctx.org.id)');
+    const rpc = F.indexOf('rpc("generate_stage_invoice"');
+    expect(assert, "the org assert must precede the RPC call").toBeLessThan(rpc);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7c. JOB DOCUMENTS — a delete here triggers an IRREVERSIBLE service-role
+// storage-byte purge, so the pin protects real bytes, not just a row.
+// ---------------------------------------------------------------------------
+
+describe("job documents — complete/delete pin the active org", () => {
+  const SRC = () => src("server/services/job-documents.ts");
+
+  it("completeJobDocument pins the lock UPDATE", () => {
+    const F = fn(SRC(), "completeJobDocument");
+    expect(F).toMatch(/const \{ ctx, user \} = await requireOrgContext\(\)/);
+    expect(F).toMatch(/\.eq\("id", documentId\)\s*\.eq\("org_id", ctx\.org\.id\)/);
+  });
+
+  it("deleteJobDocument pins the version read BEFORE the purge AND the DELETE", () => {
+    const F = fn(SRC(), "deleteJobDocument");
+    // The versions read is scoped so the service-role storage purge below only
+    // ever targets active-org files.
+    expect(F).toMatch(
+      /from\("job_document_versions" as never\)\s*\.select\("storage_bucket, storage_path"\)\s*\.eq\("document_id", documentId\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    expect(F).toMatch(
+      /\.delete\(\)\s*\.eq\("id", documentId\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+    );
+    // Ordering: the pinned version read must precede the storage removal.
+    const versionRead = F.indexOf('.eq("document_id", documentId)');
+    const purge = F.indexOf("admin.storage");
+    expect(versionRead, "the version read must come before the storage purge").toBeLessThan(purge);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7d. BLUEPRINT PINS + MARKUP — movePin already pinned; delete/soft-remove did
+// not. All now mirror movePin.
+// ---------------------------------------------------------------------------
+
+describe("blueprint pins/markup — delete + soft-remove pin the active org", () => {
+  it("deletePin pins the DELETE (mirrors movePin)", () => {
+    expect(fn(src("server/services/blueprint-pins.ts"), "deletePin")).toMatch(
+      /from\("blueprint_pins"\)\.delete\(\{ count: "exact" \}\)\.eq\("id", pinId\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("removeMarkup (soft-remove UPDATE) pins the active org", () => {
+    expect(fn(src("server/services/blueprint-markup.ts"), "removeMarkup")).toMatch(
+      /\.eq\("id", parsed\.data\.id\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("deleteMarkup (hard-delete) pins the active org", () => {
+    expect(fn(src("server/services/blueprint-markup.ts"), "deleteMarkup")).toMatch(
+      /from\("blueprint_markup"\)\.delete\(\{ count: "exact" \}\)\.eq\("id", parsed\.data\.id\)\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7e. REVIEW-REQUESTS SERVICE + TENANT-ATTACHMENTS — two more the sweep missed.
+// ---------------------------------------------------------------------------
+
+describe("review-requests service + tenant-attachments pin the active org", () => {
+  it("review-requests markReviewCompleted + cancelReviewRequest pin the UPDATE", () => {
+    const SRC = src("server/services/review-requests.ts");
+    for (const name of ["markReviewCompleted", "cancelReviewRequest"]) {
+      const F = fn(SRC, name);
+      expect(F, `${name} must capture ctx`).toMatch(
+        /const \{ ctx, user \} = await requireOrgContext\(\)/,
+      );
+      expect(F, `${name} must pin org_id`).toMatch(
+        /\.eq\("id", id\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+      );
+    }
+  });
+
+  it("deleteTenantAttachment pins the DELETE (the storage purge is service-role)", () => {
+    expect(fn(src("server/services/tenant-attachments.ts"), "deleteTenantAttachment")).toMatch(
+      /\.delete\(\)\s*\.eq\("id", id\)\s*(?:\/\/[^\n]*\n\s*)*\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+
+  it("removeInvoicePayment pins the DELETE on top of its resolve-then-compare", () => {
+    expect(fn(src("app/(app)/invoices/[id]/payment-actions.ts"), "removeInvoicePayment")).toMatch(
+      /from\("invoice_payments"\)\s*\.delete\(\)\s*\.eq\("id", paymentId\)\s*\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 8. Scope note — what this slice deliberately does NOT claim
 // ---------------------------------------------------------------------------
 

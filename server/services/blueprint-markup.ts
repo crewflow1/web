@@ -24,12 +24,16 @@ type MarkupChain = PromiseLike<{ data: Record<string, unknown>[] | null; error: 
   eq: (k: string, v: unknown) => MarkupChain;
   order: (k: string, o: { ascending: boolean }) => Promise<{ data: Record<string, unknown>[] | null; error: SupabaseReadError | null }>;
 };
+/** Chainable `.eq()` so an update/delete can carry BOTH the id and the org pin. */
+type MarkupMutation = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
+  eq: (k: string, v: unknown) => MarkupMutation;
+};
 type MarkupClient = {
   from: (t: string) => {
     select: (c: string) => MarkupChain;
     insert: (r: unknown) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> } };
-    update: (r: unknown) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
-    delete: (o: { count: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+    update: (r: unknown) => MarkupMutation;
+    delete: (o: { count: string }) => MarkupMutation;
   };
 };
 const mc = (c: Awaited<ReturnType<typeof createClient>>) => c as unknown as MarkupClient;
@@ -93,10 +97,14 @@ export async function removeMarkup(rawId: string): Promise<MarkupResult> {
   if (!parsed.success) return { ok: false, error: "Invalid markup id." };
   const { ctx, user } = await requireOrgContext();
   const supabase = mc(await createClient());
+  // ACTIVE-org pin: blueprint_markup's update RLS is org_id in current_org_ids(),
+  // which admits every org the caller belongs to, so a dual-org member could
+  // soft-remove the other org's redline without it.
   const { error, count } = await supabase
     .from("blueprint_markup")
     .update({ status: "removed", deleted_at: new Date().toISOString(), updated_by: user.id })
-    .eq("id", parsed.data.id);
+    .eq("id", parsed.data.id)
+    .eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: friendly(error.message) };
   if (count === 0) return { ok: false, error: "Markup not found." };
   await recordAdminActivity({
@@ -112,7 +120,10 @@ export async function deleteMarkup(rawId: string): Promise<MarkupResult> {
   if (!parsed.success) return { ok: false, error: "Invalid markup id." };
   const { ctx, user } = await requireOrgContext();
   const supabase = mc(await createClient());
-  const { error, count } = await supabase.from("blueprint_markup").delete({ count: "exact" }).eq("id", parsed.data.id);
+  // ACTIVE-org pin (mirrors removeMarkup): the delete RLS is is_org_admin(org_id),
+  // satisfied by a dual-org owner/admin for BOTH orgs. The exact count still
+  // gates the "not found" branch.
+  const { error, count } = await supabase.from("blueprint_markup").delete({ count: "exact" }).eq("id", parsed.data.id).eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: friendly(error.message) };
   if (!count) return { ok: false, error: "Only owners/admins can permanently delete markup." };
   await recordAdminActivity({

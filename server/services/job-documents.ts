@@ -451,8 +451,11 @@ export async function getJobDocumentDownloadUrl(
 export async function completeJobDocument(
   documentId: string,
 ): Promise<MutationResult> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const tenant = await createClient();
+  // ACTIVE-org pin: job_documents' RLS spans every org the caller belongs to, so
+  // a dual-org member could otherwise complete (and lock) the OTHER org's doc.
+  // Mirrors createJobDocument/addJobDocumentVersion, which both pin org ownership.
   const { data, error } = await tenant
     .from("job_documents" as never)
     .update({
@@ -462,6 +465,7 @@ export async function completeJobDocument(
       updated_by: user.id,
     } as never)
     .eq("id", documentId)
+    .eq("org_id", ctx.org.id)
     .select("id, org_id, visibility")
     .maybeSingle();
   if (error) {
@@ -500,17 +504,22 @@ export async function deleteJobDocument(
   const tenant = await createClient();
   const admin = createAdminClient();
 
-  // Gather files before the cascade removes the version rows. RLS-gated, but
-  // only admins reach a successful delete below regardless.
+  // ACTIVE-org pin BEFORE gathering versions: the delete triggers an
+  // irreversible SERVICE-ROLE storage purge below, so the version read must be
+  // constrained to the active org too — otherwise a dual-org member in org A
+  // could gather (and, via the DELETE, orphan/purge) org B's file bytes. Both
+  // the version read and the DELETE carry .eq("org_id", ctx.org.id).
   const { data: versions } = await tenant
     .from("job_document_versions" as never)
     .select("storage_bucket, storage_path")
-    .eq("document_id", documentId);
+    .eq("document_id", documentId)
+    .eq("org_id", ctx.org.id);
 
   const { data: deleted, error } = await tenant
     .from("job_documents" as never)
     .delete()
     .eq("id", documentId)
+    .eq("org_id", ctx.org.id)
     .select("id, visibility")
     .maybeSingle();
   if (error) {

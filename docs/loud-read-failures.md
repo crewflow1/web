@@ -265,3 +265,22 @@ count-only:
 
 No soft-data change (this file adds none). Baseline raised in the same commit,
 per the UP rule.
+
+## Baseline raise — 2026-08-06: active-org write-pin class (billing invoice gate)
+
+The active-org write-slice hardening (`fix/active-org-write-pin-class`) added a
+fail-CLOSED active-org assert to `app/(app)/jobs/[id]/billing/actions.ts`
+`generateStageInvoice`, so the `app/(app)` soft-data ledger moves by exactly +1:
+
+- **soft-data 33 → 34** — `generateStageInvoice` now reads the stage scoped to
+  the active org (`.from("job_billing_stages").select("id").eq("id", stageId)
+  .eq("org_id", ctx.org.id)`) and returns early unless a row comes back, BEFORE
+  calling the `generate_stage_invoice` RPC. The RPC is SECURITY DEFINER and gates
+  only on `is_org_admin(v_stage.org_id)` — which a dual-org admin satisfies for
+  BOTH orgs — so the app-layer assert is what pins the ACTIVE org. It uses the
+  file's existing best-effort `(await …).data ?? []` shape: on a read error the
+  `?? []` yields `[]` → the RPC is SKIPPED (no invoice generated), which is the
+  safe, fail-closed outcome. Consistent with the file's other billing reads
+  (`addBillingStage`'s plan/existing reads, `deleteBillingStage`'s guard read),
+  which are already in this baseline. Baseline raised in the same commit, per the
+  UP rule.

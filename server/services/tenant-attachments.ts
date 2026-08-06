@@ -191,6 +191,12 @@ export async function deleteTenantAttachment(id: string): Promise<UploadResult> 
     .from("tenant_attachments" as never)
     .delete()
     .eq("id", id)
+    // ACTIVE-org pin: the DELETE row is the only gate that scopes the
+    // destructive action (the storage purge below uses the service-role client).
+    // tenant_attachments' delete RLS is is_org_admin(org_id), which a dual-org
+    // owner/admin satisfies for BOTH orgs — so without this a member in org A
+    // could delete org B's attachment and purge its bytes.
+    .eq("org_id", ctx.org.id)
     .select("storage_path")
     .maybeSingle();
   if (error) return { ok: false, error: error.message };

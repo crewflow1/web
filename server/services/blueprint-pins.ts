@@ -33,7 +33,7 @@ type PinChain = PromiseLike<PinRows> & {
   in: (k: string, v: unknown[]) => PinChain;
   order: (k: string, o: { ascending: boolean }) => Promise<PinRows>;
 };
-/** Chainable `.eq()` so an update can carry BOTH the id and the org pin. */
+/** Chainable `.eq()` so an update/delete can carry BOTH the id and the org pin. */
 type PinMutation = PromiseLike<{ error: { message: string } | null; count: number | null }> & {
   eq: (k: string, v: unknown) => PinMutation;
 };
@@ -42,7 +42,7 @@ type PinClient = {
     select: (c: string) => PinChain;
     insert: (r: unknown) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> } };
     update: (r: unknown, o?: { count: string }) => PinMutation;
-    delete: (o: { count: string }) => { eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }> };
+    delete: (o: { count: string }) => PinMutation;
   };
   rpc: (fn: string, args: Record<string, unknown>) => { single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }> };
 };
@@ -219,7 +219,11 @@ export async function movePin(raw: MovePinInput): Promise<PinResult> {
 export async function deletePin(pinId: string): Promise<PinResult> {
   const { ctx, user } = await requireOrgContext();
   const supabase = pc(await createClient());
-  const { error, count } = await supabase.from("blueprint_pins").delete({ count: "exact" }).eq("id", pinId);
+  // ACTIVE-org pin (mirrors movePin): blueprint_pins' delete RLS is
+  // is_org_admin(org_id), which a dual-org owner/admin satisfies for BOTH orgs,
+  // so without the pin they could delete the other org's pin. The exact count
+  // still gates the "not found" branch.
+  const { error, count } = await supabase.from("blueprint_pins").delete({ count: "exact" }).eq("id", pinId).eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: friendly(error.message) };
   if (!count) return { ok: false, error: "Only owners/admins can delete a pin." };
   await recordAdminActivity({
