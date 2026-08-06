@@ -1,6 +1,6 @@
 import "server-only";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 
 /**
  * Tenant AI Insights — the NARRATE-ONLY summary generator (Vision 2030 AI-1).
@@ -136,6 +136,14 @@ export async function generateInsightNarrative(
   payload: unknown,
   actor: { orgId: string; userId?: string | null },
 ): Promise<InsightNarrative | null> {
+  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier
+  // (isInferenceTierActivated), so with only `cheap` bound + a vendor key it
+  // hands back a LIVE provider for this `drafting`/`mid` call — which the
+  // governor's per-tier dark short-circuit would then run ungoverned (no
+  // reservation, no ledger row, ceiling never consulted). Gate on THIS call's
+  // own tier first, exactly as the self-SDK services do, so a dark `mid` tier
+  // takes the deterministic-only leg before any provider is resolved.
+  if (!isTierActivated("mid")) return null;
   const provider = getTextProvider();
   if (!provider) return null; // feature off → deterministic-only
   if (!isSupportedProvider(provider.info.provider)) return null;

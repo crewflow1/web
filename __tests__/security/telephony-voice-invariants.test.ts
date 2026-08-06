@@ -190,10 +190,14 @@ describe("lib/telephony is dark + fail-closed", () => {
     expect(code).toMatch(/process\.env\.VAPI_WEBHOOK_SECRET/);
   });
 
-  it("the ai-turn seam gates on an EXISTING tier's activation, never a bare credential", () => {
+  it("the ai-turn seam gates on its OWN class's tier activation, never any tier or a bare credential", () => {
     const code = codeOf(read(AI_TURN));
-    // Dark short-circuit on the generative modality's activation.
-    expect(code).toMatch(/if \(!isInferenceTierActivated\(\)\) return null/);
+    // PER-TIER. This is a `drafting` caller ⇒ the `mid` tier. The coarse
+    // any-generative-tier gate (isInferenceTierActivated) was the partial-binding
+    // hole: with only cheap bound + a key it answered true and this MID call ran
+    // ungoverned. It must gate on its own tier and NOT on the coarse gate.
+    expect(code).toMatch(/if \(!isTierActivated\("mid"\)\) return null/);
+    expect(code).not.toMatch(/isInferenceTierActivated/);
     // Governed, and NOT gated on the bare credential probe.
     expect(code).toMatch(/invokeWithGovernor/);
     expect(code).not.toMatch(/isAiConfigured/);

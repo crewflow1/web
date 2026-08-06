@@ -113,7 +113,11 @@ import {
   type AiFeature,
   type AiTaskClass,
 } from "./governor/registry";
-import { isTierActivated } from "./governor/readiness";
+import {
+  isEmbeddingActivated,
+  isInferenceTierActivated,
+  isTierActivated,
+} from "./governor/readiness";
 import {
   AI_MONTHLY_CEILING_PENCE,
   DEDUPE_WINDOW_MS,
@@ -468,7 +472,17 @@ export type BlockReason =
   /** The org has no headroom left this month for a call of this size. */
   | "ceiling"
   /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */
-  | "reservation_unavailable";
+  | "reservation_unavailable"
+  /**
+   * THIS call's tier is dark, BUT its modality's provider door is resolvable —
+   * so a caller that resolved a provider outside the governor (via
+   * getTextProvider / getVisionProvider, which open on ANY tier of the modality)
+   * would run a LIVE, billable call with no reservation and no ledger row. The
+   * governor REFUSES rather than run it: defence-in-depth behind each caller's
+   * own-tier gate. Genuinely dark (no provider for the modality) still runs the
+   * caller's degraded path — see the dark short-circuit.
+   */
+  | "tier_dark_provider_live";
 
 export type ReservationResult =
   | {
@@ -816,6 +830,34 @@ export async function invokeWithGovernor<T>(
   //    would have run without this wrapper: no reads, no writes.
   const tier = tierFor(taskClass);
   if (tier === null || !isTierActivated(tier)) {
+    // DEFENCE IN DEPTH — the cross-tier partial-binding backstop. "This tier is
+    // dark" is NOT the same as "no provider exists": the provider doors
+    // (getTextProvider / getVisionProvider) open on ANY tier of their modality,
+    // so with another tier of the same modality bound + a vendor key, a caller
+    // that resolved a provider OUTSIDE this wrapper and then ran it inside fn()
+    // would bill a real call with no reservation and no ledger row — the ceiling
+    // never consulted. Each door caller now gates on its OWN tier before
+    // resolving a provider (the primary fix); this is the backstop that makes a
+    // MISSED gate fail CLOSED. If the modality this class belongs to is
+    // resolvable while this tier is dark, REFUSE — do not run fn().
+    const modalityResolvable =
+      tier === "embedding" ? isEmbeddingActivated() : isInferenceTierActivated();
+    if (tier !== null && modalityResolvable) {
+      console.warn(
+        `[ai/governor] REFUSED ${feature}: task class "${taskClass}" routes to the dark ` +
+          `"${tier}" tier, but its modality provider is resolvable — running it would spend ` +
+          `ungoverned. The caller must gate on its own tier before resolving a provider.`,
+      );
+      return {
+        status: "blocked",
+        budget: "blocked",
+        spentPence: 0,
+        ceilingPence: AI_MONTHLY_CEILING_PENCE,
+        reason: "tier_dark_provider_live",
+      };
+    }
+    // GENUINELY DARK — no provider for this modality. Run the caller's function
+    // exactly as it would have run without this wrapper: no reads, no writes.
     const call = await fn();
     return { status: "ran", value: call.value, budget: "allowed", recorded: false, dark: true };
   }

@@ -49,6 +49,14 @@ import { resolve, relative, join } from "node:path";
  *      is easy to write and hard to keep true — so the mock COUNTS constructions
  *      rather than trusting a reviewer's reading.
  *
+ *      STRONGER SINCE THE PARTIAL-BINDING FIX. The doors are mocked to hand back
+ *      a LIVE provider even on a dark build — which is precisely the cross-tier
+ *      partial-binding shape (getTextProvider/getVisionProvider open on ANY tier
+ *      of their modality). Each caller must now refuse on its OWN class's tier
+ *      BEFORE it resolves a provider, so the live provider is never called and no
+ *      billable work happens. The proof is therefore two measurements: the
+ *      provider was not invoked, and the admin client was not constructed.
+ *
  * Source checks run over `code` (comments stripped), so the prose that documents
  * a removal can neither satisfy a positive match nor trip a negative one. That
  * matters more than usual here: nearly every file in the sweep now contains a
@@ -198,6 +206,59 @@ describe("self-SDK services gate on their OWN tier, never the global predicate",
       expect(code, `${file} missing from sweep`).toBeTruthy();
       expect(code!).toContain(gate);
       expect(code!).not.toMatch(/\bisGovernorActivated\s*\(/);
+    });
+  }
+});
+
+describe("DOOR CALLERS gate on their OWN class's tier BEFORE opening a door", () => {
+  // The C35-C partial-binding hole. The self-SDK services above were fixed to
+  // gate per-tier, but the DOOR callers — the modules that reach a model through
+  // getTextProvider()/getVisionProvider() rather than their own SDK — still
+  // gated coarsely (isInferenceTierActivated) or not at all. Both doors open on
+  // ANY generative tier, so with only `cheap` bound + a vendor key a `mid`/`high`
+  // caller resolved a LIVE provider that the governor's per-tier dark
+  // short-circuit then ran ungoverned: real spend, no reservation, no ledger row.
+  //
+  // The pin: EACH door caller must reference its OWN class's tier
+  // (`isTierActivated("<tier>")`), that gate must come BEFORE it opens the door,
+  // and it must NOT gate on the coarse any-tier predicate (isInferenceTierActivated)
+  // or the global one (isGovernorActivated) — "some generative tier is bound" is
+  // exactly the wrong question for a call whose own tier is dark.
+  const DOOR_CALLER_TIER: ReadonlyArray<[string, string, RegExp]> = [
+    ["lib/ai/insight-narrative.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["server/services/hq-narrative.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["server/services/receptionist-generation.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["lib/telephony/ai-turn.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["server/services/ai-quote-writer.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["server/services/ai-question.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["server/services/hq-drafts.ts", 'isTierActivated("mid")', /\bgetTextProvider\s*\(/],
+    ["lib/hq/workflow/ai-decompose.ts", 'isTierActivated("high")', /\bgetTextProvider\s*\(/],
+    ["lib/imports/ocr.ts", 'isTierActivated("cheap")', /\bgetVisionProvider\s*\(/],
+    ["server/services/expense-drafts.ts", 'isTierActivated("cheap")', /\bgetVisionProvider\s*\(/],
+    ["server/services/memory-lifecycle.ts", 'isTierActivated("cheap")', /\bgetTextProvider\s*\(/],
+  ];
+
+  for (const [file, gate, doorRe] of DOOR_CALLER_TIER) {
+    it(`${file} gates on ${gate} before it opens a provider door`, () => {
+      const code = CODE.get(file);
+      expect(code, `${file} missing from sweep`).toBeTruthy();
+      // 1. It gates on its OWN class's tier — not merely on a door call.
+      expect(code!, `${file} must gate on ${gate}`).toContain(gate);
+      // 2. The gate must precede the FIRST door open — a provider object that
+      //    exists for a call which must never happen is one someone will run.
+      const idxGate = code!.indexOf(gate);
+      const idxDoor = code!.search(doorRe);
+      expect(idxGate, `${file}: own-tier gate not found`).toBeGreaterThan(-1);
+      expect(idxDoor, `${file}: door open not found`).toBeGreaterThan(-1);
+      expect(idxGate, `${file}: own-tier gate must come before the door opens`).toBeLessThan(idxDoor);
+      // 3. It must NOT fall back to the coarse/global predicates — those are the
+      //    partial-binding hole, and are the DOORS' gate, never a caller's.
+      expect(code!, `${file} must not gate on the any-tier predicate`).not.toMatch(
+        /\bisInferenceTierActivated\s*\(/,
+      );
+      expect(code!, `${file} must not gate on the global predicate`).not.toMatch(
+        /\bisGovernorActivated\s*\(/,
+      );
     });
   }
 });
@@ -608,7 +669,10 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
     expect(isGovernorActivated()).toBe(false);
   });
 
-  it("insights.narrative — returns the prose, touches NO database", async () => {
+  it("insights.narrative — dark 'mid' tier refuses BEFORE the live provider; no prose, no database", async () => {
+    // The door is mocked LIVE (the partial-binding shape). The `drafting`/`mid`
+    // caller must gate on its own dark tier first and degrade to null — never
+    // reaching the provider it was handed, never billing.
     textGenerate.mockResolvedValue({
       text: "  Steady pipeline this month.  ",
       model: "fake-model",
@@ -622,12 +686,12 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
       { orgId: "ORG-1", userId: null },
     );
 
-    expect(out?.text).toBe("Steady pipeline this month.");
-    expect(textGenerate).toHaveBeenCalledTimes(1);
+    expect(out).toBeNull();
+    expect(textGenerate).not.toHaveBeenCalled();
     expect(adminConstructions.count).toBe(0);
   });
 
-  it("insights.question — returns the model answer, touches NO database", async () => {
+  it("insights.question — dark 'mid' tier refuses BEFORE the live provider; deterministic answer, no database", async () => {
     textGenerate.mockResolvedValue({
       text: JSON.stringify({
         answer: "Quotes are converting steadily.",
@@ -641,12 +705,13 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
 
     const out = await askAi({ orgId: "ORG-1", question: "How is the pipeline?" });
 
-    expect(out.generated_by).toBe("anthropic");
-    expect(out.answer).toBe("Quotes are converting steadily.");
+    // The deterministic fallback stands in — the model was never consulted.
+    expect(out.generated_by).toBe("deterministic");
+    expect(textGenerate).not.toHaveBeenCalled();
     expect(adminConstructions.count).toBe(0);
   });
 
-  it("imports.ocr — returns the parsed sheet, touches NO database", async () => {
+  it("imports.ocr — dark 'cheap' tier refuses BEFORE the live provider; throws unavailable, no database", async () => {
     visionExtract.mockResolvedValue({
       text: JSON.stringify({
         kind: "invoice",
@@ -661,27 +726,30 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
       outputTokens: 120,
     });
 
-    const sheet = await ocrFileToSheet({
-      filename: "invoice.pdf",
-      mimeType: "application/pdf",
-      bytes: new Uint8Array([1, 2, 3]),
-      actor: { orgId: "ORG-1", userId: "USER-1" },
-    });
+    await expect(
+      ocrFileToSheet({
+        filename: "invoice.pdf",
+        mimeType: "application/pdf",
+        bytes: new Uint8Array([1, 2, 3]),
+        actor: { orgId: "ORG-1", userId: "USER-1" },
+      }),
+    ).rejects.toBeInstanceOf(OcrUnavailableError);
 
-    expect(sheet.rows[0]).toContain("Acme Ltd");
-    expect(visionExtract).toHaveBeenCalledTimes(1);
+    expect(visionExtract).not.toHaveBeenCalled();
     expect(adminConstructions.count).toBe(0);
   });
 
-  it("a provider FAILURE on the dark path still records nothing and still rethrows", async () => {
-    // The governor settles failures as spend when activated. Dark, there is
-    // nothing to settle — but the caller's own catch must behave exactly as
-    // before, which is what preserves every degraded path.
+  it("a would-be provider failure never even fires — the dark tier refuses first, records nothing", async () => {
+    // Even if the (live-mocked) provider would throw, the `mid` caller's own-tier
+    // gate degrades to null BEFORE resolving it, so there is nothing to settle and
+    // nothing to record. The degraded leg is preserved and the failure path is
+    // simply unreachable on a dark build.
     textGenerate.mockRejectedValue(new Error("429 Too Many Requests"));
 
     const out = await generateInsightNarrative("activity", {}, { orgId: "ORG-1", userId: null });
 
     expect(out).toBeNull();
+    expect(textGenerate).not.toHaveBeenCalled();
     expect(adminConstructions.count).toBe(0);
   });
 

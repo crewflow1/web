@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider } from "@/lib/ai/text";
 import { textCostUsd } from "@/lib/ai/text/cost";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { DEDUPE_COSINE_THRESHOLD, SUMMARY_MAX_RATIO } from "@/lib/memory/lifecycle";
 
@@ -221,7 +221,13 @@ export async function runMemoryLifecycleWorker(
     // Resolve the text provider once — cheap + network-free — so we can both
     // report it and use it for summarisation. null = none configured (summaries
     // simply won't run; everything else still does).
-    const provider = getTextProvider();
+    // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+    // so with only `mid`/`high` bound + a vendor key this `classification`/`cheap`
+    // summarisation would resolve a LIVE provider that the governor's per-tier
+    // dark short-circuit then runs ungoverned. Gate on this call's own tier first;
+    // a dark cheap tier yields null, exactly the existing "no provider" leg
+    // (summaries skipped, every other reducer runs).
+    const provider = isTierActivated("cheap") ? getTextProvider() : null;
     const textProvider = provider ? `${provider.info.provider}:${provider.info.model}` : null;
     // WHOSE BUDGET. The lifecycle worker curates HQ's own memory, so there is no
     // tenant to bill and the ledger's `org_id` is NOT NULL — see

@@ -1,13 +1,65 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { AI_TASK_CLASSES, AI_TIERS, TIER_MODEL, isAnyTierBound } from "@/lib/ai/governor/registry";
 import {
   getAiGovernorReadiness,
   isGovernorActivated,
+  isInferenceTierActivated,
+  isTierActivated,
   KNOWN_VENDOR_CREDENTIALS,
 } from "@/lib/ai/governor/readiness";
 import { AI_MONTHLY_CEILING_PENCE } from "@/lib/ai/governor/policy";
+
+// ---------------------------------------------------------------------------
+// RUNTIME FIXTURES for the partial-binding proof (section 10, at the foot of
+// this file). A mutable TIER_MODEL stands in for the registry's so ONE tier can
+// be armed at a time; the admin client is a COUNTING mock so "no reservation
+// RPC" is a measurement, not a claim; the text door hands back a LIVE provider
+// so the caller is driven into exactly the cross-tier shape the fix defends.
+//
+// Everything else — readiness, the governor seam, the caller — is REAL. The mocks
+// default to fully DARK (every tier null), so the source-text sections above,
+// which assert TIER_MODEL is null and the governor is unactivated, are unaffected;
+// the one runtime describe arms `cheap` inside its own before/afterEach and resets.
+// ---------------------------------------------------------------------------
+
+const tierModelRef = vi.hoisted(
+  () =>
+    ({ cheap: null, mid: null, high: null, embedding: null }) as Record<string, unknown>,
+);
+vi.mock("@/lib/ai/governor/registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ai/governor/registry")>();
+  // Same object identity across the whole module graph; the runtime test mutates
+  // its keys. `isAnyTierBound` stays actual (it closes over the real, all-null
+  // table), so the darkness pins above keep reading false regardless.
+  return { ...actual, TIER_MODEL: tierModelRef };
+});
+
+const adminConstructions = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => {
+    adminConstructions.count += 1;
+    return {
+      from: () => ({ insert: async () => ({ error: null }) }),
+      rpc: async () => ({ data: [], error: null }),
+    };
+  },
+}));
+
+const providerGenerate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/ai/text", () => ({
+  // The door is stubbed OPEN with a live provider — the partial-binding shape.
+  // Whether the caller nonetheless calls it is the thing under test.
+  getTextProvider: () => ({
+    info: { provider: "anthropic", model: "fake-model" },
+    generate: providerGenerate,
+  }),
+  textCostUsd: () => 0,
+}));
+
+import { invokeWithGovernor } from "@/lib/ai/governor";
+import { generateInsightNarrative } from "@/lib/ai/insight-narrative";
 
 /**
  * AI Cost Governor — trust-boundary invariants (slot 20261062).
@@ -979,5 +1031,90 @@ describe("20261080 migration hygiene — embeddings admitted to the governed voc
     const sqlClasses = [...inList.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
     const billable = AI_TASK_CLASSES.filter((c) => c !== "deterministic").sort();
     expect(sqlClasses).toEqual(billable);
+  });
+});
+
+// =====================================================================
+// 10. THE CROSS-TIER PARTIAL-BINDING PROOF (C35-C) — a RUNTIME measurement.
+//
+// The defect: the doors open on ANY generative tier, but a `drafting`/`complex`
+// call's OWN tier can be dark while `cheap` is bound. With only `cheap` armed +
+// a vendor key, a `mid` door caller resolved a LIVE provider that the governor's
+// per-tier dark short-circuit then RAN — a real, billable call with no
+// reservation and no ledger row, the £100 ceiling never consulted.
+//
+// Everything here is real except the three fixtures at the top of the file: the
+// tier table (so `cheap` alone can be armed), the admin client (so "no
+// reservation RPC" is `adminConstructions.count === 0`), and the text door (stubbed
+// OPEN with a live provider, to force the exact cross-tier shape).
+// =====================================================================
+
+const CHEAP_BINDING = {
+  provider: "anthropic",
+  model: "claude-haiku-4-5",
+  usdPerMTokIn: 1,
+  usdPerMTokOut: 5,
+  reserveInputTokens: 4_000,
+  reserveOutputTokens: 1_000,
+};
+const PARTIAL_ORG = "00000000-0000-0000-0000-0000000000c3";
+
+describe("only 'cheap' bound: a 'drafting' path spends NOTHING and reserves NOTHING", () => {
+  beforeEach(() => {
+    for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+    tierModelRef.cheap = CHEAP_BINDING; // ONLY the cheap generative tier is armed…
+    adminConstructions.count = 0;
+    providerGenerate.mockReset();
+    providerGenerate.mockResolvedValue({
+      text: "should never be produced",
+      model: "fake-model",
+      inputTokens: 100,
+      outputTokens: 20,
+    });
+    // …with EVERY vendor credential present — the worst case an operator can make.
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-not-real");
+    vi.stubEnv("OPENAI_API_KEY", "sk-not-real");
+    vi.stubEnv("MEMORY_TEXT_PROVIDER", "auto");
+  });
+  afterEach(() => {
+    for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+    vi.unstubAllEnvs();
+  });
+
+  it("the fixture really is a PARTIAL binding — cheap live, the mid tier dark", () => {
+    // Otherwise both assertions below would be vacuous.
+    expect(isInferenceTierActivated()).toBe(true); // the door WOULD open…
+    expect(isTierActivated("cheap")).toBe(true);
+    expect(isTierActivated("mid")).toBe(false); // …but this call's own tier is dark
+  });
+
+  it("PRIMARY — the door caller refuses on its own dark tier: no generate, no reservation", async () => {
+    const out = await generateInsightNarrative(
+      "activity",
+      { org_id: "ORG-SECRET", key_metrics: { total_events: 7 } },
+      { orgId: PARTIAL_ORG, userId: null },
+    );
+
+    // Degrades to deterministic-only — and, crucially, spends nothing:
+    expect(out).toBeNull();
+    expect(providerGenerate, "the live provider must NEVER be called").not.toHaveBeenCalled();
+    expect(adminConstructions.count, "no reserveBudget RPC may be issued").toBe(0);
+  });
+
+  it("DEFENCE IN DEPTH — even if a caller skipped its gate, the governor BLOCKS a dark-tier live call", async () => {
+    // Drive the governor DIRECTLY with a live fn, as a caller that forgot its
+    // own-tier gate would. The dark `mid` tier + a resolvable modality provider
+    // must be REFUSED, never run.
+    const fn = vi.fn(async () => ({ value: "draft", usage: null }));
+
+    const outcome = await invokeWithGovernor("insights.narrative", "drafting", fn, {
+      orgId: PARTIAL_ORG,
+    });
+
+    expect(outcome.status).toBe("blocked");
+    if (outcome.status !== "blocked") throw new Error("unreachable");
+    expect(outcome.reason).toBe("tier_dark_provider_live");
+    expect(fn, "the governor must not run a dark-tier live call").not.toHaveBeenCalled();
+    expect(adminConstructions.count, "a blocked dark-tier call takes no reservation").toBe(0);
   });
 });

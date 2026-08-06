@@ -33,6 +33,10 @@ vi.mock("@/lib/ai/text", () => ({
 }));
 vi.mock("@/lib/ai/governor", () => ({
   invokeWithGovernor: invokeMock,
+  // The service gates on its OWN tier (`mid`, the `drafting` class) before
+  // resolving a provider; stub it armed so the governed path is exercised. The
+  // no-provider / dark legs are driven by getTextProviderMock returning null.
+  isTierActivated: () => true,
 }));
 vi.mock("@/lib/ai/governor/attribution", () => ({
   hqBudgetOrgId: hqBudgetOrgIdMock,

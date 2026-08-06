@@ -1,6 +1,6 @@
 import "server-only";
 import { getTextProvider, type TextResult } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import type { AiFeature } from "@/lib/ai/governor/registry";
 
@@ -181,6 +181,12 @@ export async function generateHqBoardNarrative(
   feature: HqNarrativeFeature,
   board: unknown,
 ): Promise<string | null> {
+  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // so a partial binding (only `cheap`) + a vendor key would hand this
+  // `drafting`/`mid` path a LIVE provider that the governor's per-tier dark
+  // short-circuit then runs ungoverned. This call's own tier must be armed
+  // first — mirroring the self-SDK services — before any provider is resolved.
+  if (!isTierActivated("mid")) return null; // dark mid tier → deterministic-only
   const provider = getTextProvider();
   if (!provider) return null; // dark / no generative tier bound → deterministic-only
   if (!isSupportedProvider(provider.info.provider)) return null;

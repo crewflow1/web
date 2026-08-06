@@ -46,7 +46,12 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { getTextProvider } from "@/lib/ai/text";
-import { invocationHash, invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
+import {
+  invocationHash,
+  invokeWithGovernor,
+  isTierActivated,
+  type GovernedCall,
+} from "@/lib/ai/governor";
 import {
   QUOTE_WRITER_FEATURE,
   QUOTE_WRITER_TASK_CLASS,
@@ -342,6 +347,12 @@ export function resolveQuoteWriterModel(
   readiness: QuoteWriterReadiness = getQuoteWriterReadiness(),
 ): QuoteWriterModel | null {
   if (!readiness.available) return null;
+  // PER-TIER OWN-CLASS GATE, EXPLICIT. `readiness.available` already requires the
+  // `mid` tier (the `drafting` class) to be provider-resolvable, so this is
+  // belt-and-braces — but stating it here keeps the invariant LOCAL and uniform
+  // with every other door caller: `getTextProvider()` opens on ANY generative
+  // tier, and only this call's own tier may authorise resolving a provider.
+  if (!isTierActivated("mid")) return null;
   const provider = getTextProvider();
   if (!provider) return null;
   return {

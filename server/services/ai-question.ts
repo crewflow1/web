@@ -1,7 +1,7 @@
 import "server-only";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import { getTextProvider, textCostUsd } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import {
   AI_FORBIDDEN_ACTIONS,
   validateAiResponse,
@@ -88,6 +88,14 @@ export async function askAi(input: {
   // key read: `getTextProvider()` owns selection, the governor's activation
   // requirement, and graceful null. When it yields nothing usable, the
   // deterministic answer stands in unchanged.
+  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // so a partial binding (only `cheap`) + a vendor key would hand this
+  // `drafting`/`mid` handler a LIVE provider that the governor's per-tier dark
+  // short-circuit then runs ungoverned. Gate on this call's own tier first —
+  // mirroring the self-SDK services — before a provider is resolved.
+  if (!isTierActivated("mid")) {
+    return deterministicAnswer(question, slim);
+  }
   const provider = getTextProvider();
   if (!provider || !isSupportedProvider(provider.info.provider)) {
     return deterministicAnswer(question, slim);

@@ -5,7 +5,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { getVisionProvider } from "@/lib/ai/vision";
-import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
 import { expenseDraftApproveSchema } from "@/lib/suppliers/schema";
 import { z } from "zod";
 
@@ -247,6 +247,14 @@ async function maybeExtractReceipt(
   mimeType: string,
   actor: { orgId: string; userId: string | null },
 ): Promise<DraftExtraction> {
+  // PER-TIER OWN-CLASS GATE. `getVisionProvider()` opens on ANY generative tier,
+  // so with only `mid`/`high` bound + a vendor key this `classification`/`cheap`
+  // path would resolve a LIVE provider that the governor's per-tier dark
+  // short-circuit then runs ungoverned. Gate on this call's own tier first — the
+  // degraded value (an empty draft the operator types over) is unchanged.
+  if (!isTierActivated("cheap")) {
+    return zeroExtraction();
+  }
   const vision = getVisionProvider();
   if (!vision || !bytes || bytes.length === 0) {
     return zeroExtraction();

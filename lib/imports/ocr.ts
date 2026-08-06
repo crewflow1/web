@@ -1,6 +1,6 @@
 import "server-only";
 import { getVisionProvider } from "@/lib/ai/vision";
-import { invokeWithGovernor, type GovernedCall } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
 import type { ParsedSheet, Cell } from "./parsers";
 
 /**
@@ -163,6 +163,16 @@ export async function ocrFileToSheet(input: {
   bytes: Uint8Array;
   actor: { orgId: string; userId?: string | null };
 }): Promise<ParsedSheet> {
+  // PER-TIER OWN-CLASS GATE. `getVisionProvider()` opens on ANY generative tier
+  // (isInferenceTierActivated), so with only `mid`/`high` bound + a vendor key it
+  // would hand this `classification`/`cheap` path a LIVE provider that the
+  // governor's per-tier dark short-circuit then runs ungoverned. Gate on this
+  // call's own tier first — same thrown error as the no-provider leg, so the
+  // action's friendly message is unchanged.
+  if (!isTierActivated("cheap")) {
+    throw new OcrUnavailableError();
+  }
+
   // The ONE vision door. It yields null unless a cost tier is BOUND as well as
   // the vendor credential being set, so a stray key can no longer switch paid
   // OCR on for every upload. Same thrown error as before, so the action's
