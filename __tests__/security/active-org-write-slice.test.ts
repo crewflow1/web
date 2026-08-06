@@ -68,6 +68,9 @@ const ARG_PIN_G = () => /\.eq\(\s*["']org_id["'],\s*orgId\s*\)/g;
 
 /** A function that pins by ctx.org.id must actually destructure ctx. */
 const CAPTURES_CTX = /const \{[^}]*\bctx\b[^}]*\} = await requireOrgContext\(\)/;
+/** Same, for files whose actions take ctx from a local requireAdmin() wrapper
+ *  (certificate/actions.ts) that itself destructures ctx from requireOrgContext(). */
+const CAPTURES_ADMIN_CTX = /const \{[^}]*\bctx\b[^}]*\} = await requireAdmin\(\)/;
 
 // ---------------------------------------------------------------------------
 // 1. deleteBlueprint — the read + DELETE pair
@@ -563,6 +566,88 @@ describe("inbox — enquiry triage", () => {
       "unpinned, a member working in org A could bury a real lead in org B by " +
         "marking their enquiry ignored",
     ).toMatch(/\.eq\("id", id\)\s*(?:\/\/[^\n]*\n\s*)*\.eq\("org_id", ctx\.org\.id\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6b. Completion certificates — a CONTRACTUAL instrument stamped with the org
+//
+// The enumeration missed this file the same way it missed the reviews
+// letterhead defect. `completion_certificates` UPDATE is member-level and
+// org-wide (`org_id in current_org_ids()`), so a member of orgs A and B can
+// capture a valid server-action blob for org B's certificate while browsing B,
+// then replay it with active org = A. issueCertificate freezes B's cert stamped
+// with `contractorName = ctx.org.name` (A) — org A's identity leaking onto org
+// B's customer portal — and setPortal toggles B's portal visibility. Every
+// sibling pins org_id (warranties/actions.ts, jobs/actions.ts); the certificate
+// actions were the lone exception. Same source-pinning style as the rest of
+// this file: these are "use server" actions with no Supabase mock harness.
+// ---------------------------------------------------------------------------
+
+describe("completion certificates — issue/publish must pin the ACTIVE org", () => {
+  const SRC = () => src("app/(app)/jobs/[id]/certificate/actions.ts");
+
+  it("issueCertificate pins the certificate read to the active org", () => {
+    // The read decides WHICH cert gets frozen under ctx.org.name's letterhead.
+    // It flows through loadCertificate(supabase, certId, ctx.org.id), which pins
+    // both id and org_id — a raw unpinned `.eq("id", certId).maybeSingle()`
+    // fails this.
+    const F = fn(SRC(), "issueCertificate");
+    // ctx reaches these actions via the module's requireAdmin() wrapper, which
+    // itself destructures ctx from requireOrgContext() — so the pin's ctx is the
+    // active org, not a form value.
+    expect(F).toMatch(CAPTURES_ADMIN_CTX);
+    expect(
+      F,
+      "the cert read must be scoped to ctx.org.id, or a sibling-org cert is " +
+        "frozen under this org's identity",
+    ).toMatch(/loadCertificate\(supabase, certId, ctx\.org\.id\)/);
+  });
+
+  it("issueCertificate pins the freeze UPDATE to the active org", () => {
+    expect(fn(SRC(), "issueCertificate")).toMatch(
+      /\.eq\("id", certId\)\s*\.eq\("org_id", ctx\.org\.id\)\s*\.eq\("status", "draft"\)/,
+    );
+  });
+
+  it("issueCertificate guards a missing/foreign job before freezing a snapshot", () => {
+    // Without the guard, loadJobForOrg returning null still builds a snapshot
+    // from empty context and freezes it — createCertificate always had this
+    // guard; issueCertificate did not.
+    const F = fn(SRC(), "issueCertificate");
+    expect(F).toMatch(/if \(!job\) return formError\("Job not found\."\)/);
+  });
+
+  it("setPortal captures ctx and pins BOTH the read and the toggle UPDATE", () => {
+    // setPortal is module-private (publishCertificate/withdrawCertificate wrap
+    // it), so it is asserted directly via localFn.
+    const F = localFn(SRC(), "setPortal");
+    expect(F).toMatch(CAPTURES_ADMIN_CTX);
+    expect(F).toMatch(/loadCertificate\(supabase, certId, ctx\.org\.id\)/);
+    expect(F).toMatch(
+      /\.eq\("id", certId\)\s*\.eq\("org_id", ctx\.org\.id\)\s*\.eq\("status", "issued"\)/,
+    );
+  });
+
+  it("loadCertificate pins both id AND org_id (the single choke point)", () => {
+    // Factored so the next action cannot forget the pin, exactly like
+    // warranties/actions.ts loadWarranty.
+    const F = localFn(SRC(), "loadCertificate");
+    expect(F).toMatch(
+      /\.eq\("id", certId\)\s*\.eq\("org_id", orgId\)\s*\.maybeSingle\(\)/,
+    );
+  });
+
+  it("no by-id write in the file mutates a cert without the active-org pin (tripwire)", () => {
+    // 4 pins: loadCertificate read (used by both issue and portal), the issue
+    // freeze UPDATE, and the setPortal toggle UPDATE. loadCertificate's pin uses
+    // the `orgId` arg form; the two UPDATEs use ctx.org.id.
+    const s = SRC();
+    const n = countPins(s) + (s.match(/\.eq\(\s*["']org_id["'],\s*orgId\s*\)/g) ?? []).length;
+    expect(
+      n,
+      `certificate/actions.ts: expected at least 3 active-org predicates, found ${n}`,
+    ).toBeGreaterThanOrEqual(3);
   });
 });
 
