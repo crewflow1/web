@@ -34,8 +34,7 @@ import "server-only";
  */
 
 import { getTextProvider } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
-import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { validateStepGraph, type SagaStep, type StepStatus } from "./model";
 import type { SagaPlan } from "./decompose";
@@ -52,9 +51,14 @@ export type AiDecomposeInput = {
  * deterministic template decomposition.
  */
 export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<SagaPlan | null> {
-  // 1. DARK SHORT-CIRCUIT — the generative modality must be armed. A key alone
-  //    does not satisfy this; nothing below runs until a tier is bound.
-  if (!isInferenceTierActivated()) return null;
+  // 1. DARK SHORT-CIRCUIT — THIS call's OWN tier must be armed, not merely
+  //    "some generative tier". The global any-tier gate (isInferenceTierActivated)
+  //    was the partial-binding hole: with only `cheap`/`mid` bound + a vendor key
+  //    it answers true, `getTextProvider()` hands back a live provider, and the
+  //    governor's per-tier dark short-circuit runs this `complex`/`high` call
+  //    ungoverned. Gate on the high tier — the class this call declares — so a
+  //    dark high tier falls back to the template decomposition before any provider.
+  if (!isTierActivated("high")) return null;
   const directive = input.directive.trim();
   if (!directive) return null;
 

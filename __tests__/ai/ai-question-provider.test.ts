@@ -61,6 +61,16 @@ vi.mock("@/lib/ai/safety", async (importOriginal) => {
   return { ...actual, isAiConfigured: isAiConfiguredMock };
 });
 
+// The handler now gates on its OWN tier (`mid`, the `drafting` class) before
+// resolving a provider. Keep the REAL governor seam — its dark pass-through is
+// what runs fn() without a database, since TIER_MODEL is unbound in the build —
+// and only arm the caller's own-tier gate so the provider path is exercised.
+// Darkness in the individual legs is still driven by getTextProviderMock.
+vi.mock("@/lib/ai/governor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ai/governor")>();
+  return { ...actual, isTierActivated: (tier: string) => tier === "mid" };
+});
+
 import { askAi } from "@/server/services/ai-question";
 
 const root = process.cwd();

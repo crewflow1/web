@@ -38,8 +38,7 @@ import "server-only";
  */
 
 import { getTextProvider } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
-import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import {
   buildReceptionistContext,
   type ReceptionistProfile,
@@ -114,9 +113,14 @@ function buildTurnPrompt(input: VoiceTurnInput): string {
  * call must always be able to fall back to the deterministic TwiML.
  */
 export async function maybeGenerateVoiceTurn(input: VoiceTurnInput): Promise<string | null> {
-  // 1. DARK SHORT-CIRCUIT — the generative modality must be armed. A key alone
-  //    does not satisfy this; nothing below runs until a tier is bound.
-  if (!isInferenceTierActivated()) return null;
+  // 1. DARK SHORT-CIRCUIT — THIS call's OWN tier must be armed, not merely
+  //    "some generative tier". The global any-tier gate (isInferenceTierActivated)
+  //    was the partial-binding hole: with only `cheap` bound + a vendor key it
+  //    answers true, `getTextProvider()` hands back a live provider, and the
+  //    governor's per-tier dark short-circuit runs this `drafting`/`mid` call
+  //    ungoverned. Gate on the mid tier — the class this call declares — so a
+  //    dark mid tier falls back to deterministic TwiML before any provider.
+  if (!isTierActivated("mid")) return null;
   if (!input.transcript.trim()) return null;
 
   // 2. The model is reachable ONLY through the shared door, which refuses

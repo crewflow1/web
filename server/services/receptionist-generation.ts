@@ -1,6 +1,6 @@
 import "server-only";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { getConversationContext } from "@/server/services/receptionist-conversation-context";
 import {
   prepareGenerationInstruction,
@@ -71,6 +71,13 @@ export async function generateConversationResponse(
       conversation_id: request.conversation_id,
     }));
   if (!context) return fallbackResponse(request.channel, "no_context");
+
+  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // so with only `cheap` bound + a vendor key this `drafting`/`mid` path would
+  // resolve a LIVE provider that the governor's per-tier dark short-circuit then
+  // runs ungoverned. This call's own tier must be armed first — same posture as
+  // the self-SDK services — before a provider is resolved.
+  if (!isTierActivated("mid")) return fallbackResponse(request.channel, "no_provider");
 
   const provider = getTextProvider();
   // No provider configured → deterministic fallback (the DEFAULT path in CI, where no LLM key is set — so

@@ -15,10 +15,12 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
  * — it refuses a `dedupeContent` it has already seen. No real provider, no DB.
  */
 
-// The seam gates on tier activation + a text provider before reaching the
-// governor; stub both present so the governed path is exercised.
+// The seam gates on its OWN tier (`mid`, the `drafting` class) via
+// `isTierActivated` + a text provider before reaching the governor; stub both
+// present so the governed path is exercised.
 vi.mock("@/lib/ai/governor/readiness", () => ({
   isInferenceTierActivated: () => true,
+  isTierActivated: () => true,
 }));
 vi.mock("@/lib/ai/text", () => ({
   getTextProvider: () => ({
@@ -32,6 +34,7 @@ vi.mock("@/lib/ai/text", () => ({
 // `seen` is hoisted so the (hoisted) vi.mock factory can safely close over it.
 const { seen } = vi.hoisted(() => ({ seen: new Set<string>() }));
 vi.mock("@/lib/ai/governor", () => ({
+  isTierActivated: () => true,
   invokeWithGovernor: vi.fn(
     async (
       _feature: string,

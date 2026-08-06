@@ -38,6 +38,16 @@ vi.mock("@/lib/ai/text", () => ({
   textCostUsd: () => 0.00042,
 }));
 
+// The generator now gates on its OWN tier (`mid`, the `drafting` class) before
+// resolving a provider. Keep the REAL governor seam — its dark pass-through runs
+// fn() without a database, since TIER_MODEL is unbound in the build — and only
+// arm the caller's own-tier gate so the provider path is exercised. The
+// no-provider / unsupported legs are still driven by getTextProviderMock.
+vi.mock("@/lib/ai/governor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ai/governor")>();
+  return { ...actual, isTierActivated: (tier: string) => tier === "mid" };
+});
+
 vi.mock("@/server/services/receptionist-conversation-context", () => ({
   getConversationContext: getConversationContextMock,
 }));

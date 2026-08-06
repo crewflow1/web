@@ -28,6 +28,16 @@ vi.mock("@/lib/ai/text", () => ({
   getTextProvider: getTextProviderMock,
 }));
 
+// Summarisation now gates on its OWN tier (`cheap`, the `classification` class)
+// before resolving a provider. Keep the REAL governor seam — its dark
+// pass-through runs fn() without a database, since TIER_MODEL is unbound in the
+// build — and only arm the caller's own-tier gate so the summarisation path is
+// exercised. The no-provider leg is still driven by getTextProviderMock.
+vi.mock("@/lib/ai/governor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/ai/governor")>();
+  return { ...actual, isTierActivated: (tier: string) => tier === "cheap" };
+});
+
 import {
   runMemoryLifecycleWorker,
   isLifecycleWorkerEnabled,

@@ -195,10 +195,15 @@ describe("workflow model + decompose — pure, deterministic (no wall clock)", (
 describe("ai-decompose — dark seam, no unbound governor TIER key", () => {
   const code = codeOf(read(AI_SEAM));
 
-  it("gates on tier ACTIVATION before any work (not a bare credential)", () => {
-    expect(code).toMatch(/isInferenceTierActivated/);
+  it("gates on its OWN class's tier ACTIVATION before any work (not any tier, not a bare credential)", () => {
+    // PER-TIER. This is a `complex` caller ⇒ the `high` tier. The coarse
+    // any-generative-tier gate (isInferenceTierActivated) was the partial-binding
+    // hole: with only cheap/mid bound + a key it answered true and this HIGH call
+    // ran ungoverned. It must gate on its own tier and NOT on the coarse gate.
+    expect(code).toMatch(/isTierActivated\("high"\)/);
+    expect(code).not.toMatch(/isInferenceTierActivated/);
     // The activation gate must come BEFORE the provider is opened.
-    const idxGate = code.indexOf("isInferenceTierActivated()");
+    const idxGate = code.indexOf('isTierActivated("high")');
     const idxProvider = code.indexOf("getTextProvider(");
     expect(idxGate).toBeGreaterThan(-1);
     expect(idxProvider).toBeGreaterThan(-1);

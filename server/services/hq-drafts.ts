@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider, textCostUsd, type TextResult } from "@/lib/ai/text";
-import { invokeWithGovernor } from "@/lib/ai/governor";
+import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import {
   assembleDraftPrompt,
@@ -232,6 +232,13 @@ async function buildDraft(
   prompt: { system: string; user: string },
   maxTokens: number,
 ): Promise<BuiltDraft> {
+  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // so a partial binding (only `cheap`) + a vendor key would hand this
+  // `drafting`/`mid` engine a LIVE provider that the governor's per-tier dark
+  // short-circuit then runs ungoverned. Gate on this call's own tier first —
+  // same posture as the self-SDK services — before a provider is resolved.
+  if (!isTierActivated("mid")) return fallbackBuilt(kind, context, "no_provider");
+
   const provider = getTextProvider();
 
   // No provider configured → deterministic fallback (the DEFAULT path in CI, where
