@@ -54,7 +54,9 @@ type FromChain = {
   };
   update: (patch: unknown, opts?: { count?: string }) => {
     eq: (k: string, v: unknown) => {
-      eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }>;
+      eq: (k: string, v: unknown) => {
+        eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null; count: number | null }>;
+      };
     };
   };
 };
@@ -65,6 +67,28 @@ async function requireAdmin() {
   const { ctx, user } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   return { ctx, user, isAdmin };
+}
+
+/**
+ * Load a certificate pinned to BOTH the id and the active org. RLS spans EVERY
+ * org the caller belongs to (`org_id in current_org_ids()`), so a member of two
+ * orgs could otherwise obtain a valid server-action blob for org B's cert while
+ * browsing B and replay it with their active org = A — mutating B's cert and
+ * freezing it under org A's letterhead (ctx.org.name). Mirrors
+ * warranties/actions.ts loadWarranty: one place that cannot forget the pin.
+ */
+async function loadCertificate(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  certId: string,
+  orgId: string,
+) {
+  const { data, error } = await certs(supabase)
+    .select("id, org_id, job_id, customer_id, certificate_number, status, content")
+    .eq("id", certId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) throw readFailure("certificate: certificate", error);
+  return data;
 }
 
 /** Create a DRAFT certificate for a completed job (owner/admin). */
@@ -145,8 +169,7 @@ export async function issueCertificate(
   if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
-  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number, content, customer_id").eq("id", certId).maybeSingle();
-  if (certError) throw readFailure("certificate issue: certificate", certError);
+  const cert = await loadCertificate(supabase, certId, ctx.org.id);
   if (!cert) return formError("Certificate not found.");
   if (cert.status !== "draft") return formError("This certificate has already been issued.");
 
@@ -163,6 +186,7 @@ export async function issueCertificate(
     ctx.org.id,
     "id, site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country, customer:customers ( name, address_line1, address_line2, city, county, postcode, country )",
   );
+  if (!job) return formError("Job not found.");
   const jobCustomer = (job as { customer?: Record<string, unknown> } | null)?.customer ?? null;
   const customerName = (jobCustomer as { name?: string } | null)?.name ?? null;
   const addr = job ? resolveJobAddress(job as never, jobCustomer as never) : null;
@@ -182,6 +206,7 @@ export async function issueCertificate(
   const { error, count } = await certs(supabase)
     .update({ status: "issued", snapshot, issued_by: user.id, issued_at: new Date().toISOString() }, { count: "exact" })
     .eq("id", certId)
+    .eq("org_id", ctx.org.id)
     .eq("status", "draft");
   if (error || !count) {
     console.error("[completion-cert] issue failed", error);
@@ -200,20 +225,19 @@ export async function issueCertificate(
 }
 
 async function setPortal(jobId: string, certId: string, publish: boolean): Promise<FormState> {
-  const { user, isAdmin } = await requireAdmin();
+  const { ctx, user, isAdmin } = await requireAdmin();
   if (!certIdSchema.safeParse(certId).success) return formError("That certificate link looks wrong — reload and try again.");
   if (!isAdmin) return formError("Only an admin can do this.");
 
   const supabase = await createClient();
-  const { data: cert, error: certError } = await certs(supabase).select("id, status, certificate_number").eq("id", certId).maybeSingle();
-  if (certError) throw readFailure("certificate portal: certificate", certError);
+  const cert = await loadCertificate(supabase, certId, ctx.org.id);
   if (!cert) return formError("Certificate not found.");
   if (cert.status !== "issued") return formError("The certificate isn't issued.");
 
   const patch = publish
     ? { portal_published_at: new Date().toISOString(), portal_published_by: user.id, portal_withdrawn_at: null }
     : { portal_withdrawn_at: new Date().toISOString() };
-  const { error } = await certs(supabase).update(patch, { count: "exact" }).eq("id", certId).eq("status", "issued");
+  const { error } = await certs(supabase).update(patch, { count: "exact" }).eq("id", certId).eq("org_id", ctx.org.id).eq("status", "issued");
   if (error) {
     console.error("[completion-cert] portal toggle failed", error);
     return formError("Something went wrong — try again.");
