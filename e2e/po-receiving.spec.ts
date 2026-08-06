@@ -50,6 +50,7 @@ test.describe("purchase orders — receiving a delivery", () => {
   test.use({ storageState: "e2e/.auth/owner.json" });
   let poId = "";
   let mobilePoId = "";
+  let bigPoId = "";
 
   /** A SENT order with one 100-unit line — the state a delivery arrives against. */
   async function seedSentPo(db: { from: (t: string) => any }, orgId: string, suffix: string) {
@@ -80,6 +81,43 @@ test.describe("purchase orders — receiving a delivery", () => {
     return po.id as string;
   }
 
+  /**
+   * A SENT order carrying a SIX-FIGURE value (£102,880.65 net + £20,576.13 VAT
+   * = £123,456.78 gross). Realistic for a material PO, and the value that used
+   * to blow out the read-only line-items table and the Committed/Billed/
+   * Remaining tri-tile past a 375px viewport.
+   */
+  async function seedBigPo(db: { from: (t: string) => any }, orgId: string) {
+    // NOTE the number is `PO-BIG-${TAG}`, NOT `PO-${TAG}-BIG`: the register
+    // specs above match on `PO-${TAG}` / `PO-${TAG}(?!-M)`, and a `-BIG` suffix
+    // on that prefix would collide with them. This prefix cannot match either.
+    const po = (
+      await db
+        .from("purchase_orders")
+        .insert({
+          org_id: orgId,
+          number: `PO-BIG-${TAG}`,
+          status: "sent",
+          subtotal: 102880.65,
+          vat_total: 20576.13,
+        })
+        .select("id")
+        .single()
+    ).data;
+    await db.from("purchase_order_line_items").insert({
+      org_id: orgId,
+      purchase_order_id: po.id,
+      description: `Structural steel BIG-${TAG}`,
+      qty: 1,
+      unit: "lot",
+      unit_price: 102880.65,
+      vat_rate: 20,
+      line_total: 102880.65,
+      sort_order: 0,
+    });
+    return po.id as string;
+  }
+
   test.beforeAll(async () => {
     const db = svc() as unknown as { from: (t: string) => any };
     const orgId = (await db.from("organizations").select("id").eq("slug", SLUG).maybeSingle()).data
@@ -90,6 +128,7 @@ test.describe("purchase orders — receiving a delivery", () => {
     // Its own order: the journey test receives the first one in FULL, which
     // (correctly) removes the receive affordance from it.
     mobilePoId = await seedSentPo(db, orgId, "-M");
+    bigPoId = await seedBigPo(db, orgId);
   });
 
   test("a logged-out visitor cannot see the receiving flow", async ({ page, context }) => {
@@ -256,5 +295,45 @@ test.describe("purchase orders — receiving a delivery", () => {
     const box = await total.boundingBox();
     expect(box, "the Total should have a box").not.toBeNull();
     expect(box!.x + box!.width, "the Total is clipped past the 375px viewport").toBeLessThanOrEqual(375);
+  });
+
+  test("the DETAIL page fits a phone at 375px on a six-figure order", async ({ page }) => {
+    // The bug this guards: the read-only line-items table (5 columns, 4 carrying
+    // unbreakable GBP/number tokens) had no overflow-x wrapper, and the
+    // Committed/Billed/Remaining tri-tile was a fixed grid-cols-3 with no
+    // min-w-0 / truncate. On a six-figure order (£123,456.78) both scrolled the
+    // body sideways at 375px. The fix wraps the table in overflow-x-auto and
+    // stacks the tri-tile 1-up on phones with truncating cells. Asserted
+    // structurally (no body overflow, Remaining tile on screen) rather than by
+    // trusting the classes.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(`/purchase-orders/${bigPoId}`);
+    await expect(page.getByRole("heading", { name: `PO-BIG-${TAG}` })).toBeVisible();
+
+    // The six-figure value reached the page — the Remaining tri-tile carries the
+    // unbreakable token that used to blow out the grid.
+    const remaining = page.locator("dt", { hasText: "Remaining" }).locator("+ dd");
+    await expect(remaining).toHaveText("£123,456.78");
+
+    // Settle before measuring: reading scrollWidth before web fonts land uses
+    // fallback glyph metrics (narrower) and can mask a real overflow.
+    await settleForAxe(page);
+    const overflow = await page.evaluate(() => {
+      const el = document.documentElement;
+      return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+    });
+    expect(
+      overflow.scrollWidth - overflow.clientWidth,
+      `the detail page scrolls horizontally at 375px (${overflow.scrollWidth} > ${overflow.clientWidth})`,
+    ).toBeLessThanOrEqual(1);
+
+    // The Remaining tile value is fully inside the viewport box — the clip
+    // failure mode is a value that renders but sits past the right edge.
+    const box = await remaining.boundingBox();
+    expect(box, "the Remaining value should have a box").not.toBeNull();
+    expect(
+      box!.x + box!.width,
+      "the Remaining tile value is clipped past the 375px viewport",
+    ).toBeLessThanOrEqual(375);
   });
 });
