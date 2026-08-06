@@ -49,45 +49,110 @@ export class SamsaraAdapter implements TelematicsAdapter {
     }
 
     // ── LIVE PATH (unreachable dark) ─────────────────────────────────────────
-    // The ONLY network call in this adapter, strictly after the guard above.
-    let res: Response;
-    try {
-      const url = new URL("https://api.samsara.com/fleet/vehicles/stats");
-      url.searchParams.set("types", "gps,obdOdometerMeters");
-      res = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          authorization: `Bearer ${input.accessToken}`,
-          accept: "application/json",
-        },
-      });
-    } catch (e) {
-      return {
-        ok: false,
-        provider: this.provider,
-        reason: "error",
-        message: `Samsara fetch failed: ${e instanceof Error ? e.message : "network error"}`,
+    // The ONLY network calls in this adapter, strictly after the guard above.
+    //
+    // CURSOR PAGINATION. Samsara v2 `/fleet/vehicles/stats` is PAGINATED (default
+    // page ~512 vehicles): the response carries `pagination.hasNextPage` +
+    // `pagination.endCursor`, and the NEXT page is the SAME URL with
+    // `?after=<endCursor>`. A single GET (the pre-fix behaviour) mapped only the
+    // first page, so any fleet larger than one page silently dropped every vehicle
+    // past the boundary — no telematics_readings row, no odometer advance. We loop
+    // until `hasNextPage` is false, accumulating every page's stats BEFORE the pure
+    // normaliser runs. (Mirrors the provider-fetch bounding the sibling TrueLayer
+    // adapter documents for its own pull.)
+    //
+    // BOUNDED. `MAX_PAGES` caps the loop so a pathological / self-referential
+    // cursor can never run forever and blow the cron's budget. The telematics-sync
+    // cron has maxDuration=60s and makes one aggregator pull per connected org; at
+    // ~512 vehicles/page, 40 pages covers a ~20k-vehicle single-org fleet — far
+    // beyond any realistic CrewFlow tenant — while leaving the pull comfortably
+    // inside that budget. Hitting the cap is a BOUNDED TRUNCATION, surfaced via a
+    // (secret-free) warn rather than silently dropping the tail.
+    //
+    // input.since. The `/fleet/vehicles/stats` SNAPSHOT endpoint has NO time
+    // filter: it returns each vehicle's LATEST stat regardless of any start/after
+    // time (only the historical `/fleet/vehicles/stats/history` endpoint takes
+    // `startTime`/`endTime`). There is therefore no since-equivalent to thread on
+    // THIS endpoint, so `input.since` is deliberately not sent — and this is NOT a
+    // silent drop: re-fetching the current snapshot is naturally idempotent (the
+    // mapper keys each sample on `${id}:${recordedAt}` and the DB dedupes on
+    // (org, connection, source_event_id), so an unchanged snapshot re-writes
+    // nothing). If the feed later graduates to the history endpoint, `input.since`
+    // maps onto its `startTime` param — flagged here for that activation change.
+    const MAX_PAGES = 40;
+    const stats: SamsaraVehicleStat[] = [];
+    let after: string | null = null;
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let res: Response;
+      try {
+        const url = new URL("https://api.samsara.com/fleet/vehicles/stats");
+        url.searchParams.set("types", "gps,obdOdometerMeters");
+        if (after) url.searchParams.set("after", after);
+        res = await fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            authorization: `Bearer ${input.accessToken}`,
+            accept: "application/json",
+          },
+        });
+      } catch (e) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `Samsara fetch failed: ${e instanceof Error ? e.message : "network error"}`,
+        };
+      }
+      if (!res.ok) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `Samsara returned ${res.status}`,
+        };
+      }
+
+      // The native Samsara shape → provider-agnostic samples is done by the pure
+      // `normalizeSamsaraSamples` mapper so the arithmetic (metres → miles) and the
+      // vehicle-id resolution live once and are unit-tested.
+      const json = (await res.json()) as {
+        data?: SamsaraVehicleStat[];
+        pagination?: { hasNextPage?: boolean | null; endCursor?: string | null } | null;
       };
-    }
-    if (!res.ok) {
-      return {
-        ok: false,
-        provider: this.provider,
-        reason: "error",
-        message: `Samsara returned ${res.status}`,
-      };
+      // Bind the field to a local BEFORE coalescing so the loud-read shape ledger
+      // does not false-positive on an external-API response field named `data` —
+      // this is not a Supabase read, so there is no read-failure debt here (the
+      // sibling TrueLayer adapter names its field `results` for the same reason).
+      const pageStats: SamsaraVehicleStat[] | undefined = json.data;
+      if (pageStats && pageStats.length > 0) stats.push(...pageStats);
+
+      // Advance to the next page ONLY when the provider reports one AND hands back
+      // a usable cursor; otherwise we are done. `after` remaining non-null after
+      // the loop means the cap stopped us mid-fleet (bounded truncation, below).
+      const pagination = json.pagination ?? null;
+      const endCursor =
+        typeof pagination?.endCursor === "string" && pagination.endCursor.length > 0
+          ? pagination.endCursor
+          : null;
+      if (pagination?.hasNextPage && endCursor) {
+        after = endCursor;
+      } else {
+        after = null;
+        break;
+      }
     }
 
-    // The native Samsara shape → provider-agnostic samples is done by the pure
-    // `normalizeSamsaraSamples` mapper so the arithmetic (metres → miles) and the
-    // vehicle-id resolution live once and are unit-tested.
-    const json = (await res.json()) as { data?: SamsaraVehicleStat[] };
-    // Bind the field to a local BEFORE coalescing so the loud-read shape ledger
-    // does not false-positive on an external-API response field named `data` —
-    // this is not a Supabase read, so there is no read-failure debt here (the
-    // sibling TrueLayer adapter names its field `results` for the same reason).
-    const stats: SamsaraVehicleStat[] | undefined = json.data;
-    const samples = normalizeSamsaraSamples(stats ?? [], input.resolveVehicleId);
+    if (after) {
+      // BOUNDED truncation: we exhausted MAX_PAGES with a next page still pending.
+      // Surface it (no secret in the message) rather than silently dropping the
+      // fleet's tail — an activation-time signal that a fleet exceeded the bound.
+      console.warn(
+        `[telematics] samsara fetch hit MAX_PAGES (${MAX_PAGES}); fleet exceeds the paged bound — tail not fetched this tick.`,
+      );
+    }
+
+    const samples = normalizeSamsaraSamples(stats, input.resolveVehicleId);
 
     return { ok: true, provider: this.provider, samples };
   }
