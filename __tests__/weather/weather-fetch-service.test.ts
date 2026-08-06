@@ -46,11 +46,18 @@ function makeAdmin(config: {
   const result = (data: unknown, err?: string) =>
     err ? { data: null, error: { message: err } } : { data, error: null };
 
+  // The reads are now paged via fetchAllRows: the builder must expose `.order`
+  // (chainable) and `.range` (a PromiseLike<PageResult>). These fixtures are all
+  // well under one page, so a single `.range(0, PAGE_SIZE-1)` returns the whole
+  // set and paging terminates on the short page. `.then` is kept for any bare
+  // await path (none remain, but it costs nothing and mirrors real supabase-js).
   const thenable = (r: { data: unknown; error: unknown }) => {
     const obj: Record<string, unknown> = {};
     obj["eq"] = () => obj;
     obj["in"] = () => obj;
     obj["gte"] = () => obj;
+    obj["order"] = () => obj;
+    obj["range"] = () => Promise.resolve(r);
     obj["then"] = (res: (v: unknown) => unknown) => Promise.resolve(r).then(res);
     return obj;
   };

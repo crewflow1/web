@@ -1102,7 +1102,10 @@ describe("the fetch pipeline writes with service role, honestly, and dark-first"
 
   it("reads are LOUD — a failed watch or freshness read aborts rather than refetching blind", () => {
     const c = code();
-    expect(c).toMatch(/import\s*\{\s*reportReadFailure\s*\}\s*from\s*"@\/lib\/supabase\/read-failure"/);
+    // `reportReadFailure` is imported from the read-failure module (the F-1 paging
+    // fix also pulls in `type SupabaseReadError` alongside it for the paged error
+    // cast, so allow additional named imports in the same statement).
+    expect(c).toMatch(/import\s*\{[^}]*\breportReadFailure\b[^}]*\}\s*from\s*"@\/lib\/supabase\/read-failure"/);
     expect((c.match(/reportReadFailure\s*\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 

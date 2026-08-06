@@ -51,10 +51,21 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "telematics_readings",
   "fleet_vehicles",
   "weather_watches",
+  "weather_readings",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
-const ALLOWLIST: Record<string, string> = {};
+const ALLOWLIST: Record<string, string> = {
+  // Surfaced only once the guard learned to see the `table()` `.from`-wrapper
+  // indirection (below). The read is GENUINELY BOUNDED, just not in a way the
+  // static analyser can see: `.in("id", idsChunk)` where `idsChunk` is
+  // `paymentIds.slice(i, i + JOIN_CHUNK)` with JOIN_CHUNK=500, and
+  // supplier_payments.id is unique — so each call returns ≤500 rows, below the
+  // 1000 cap. The snapshot set it joins is itself fully paged (listMonthSnapshots
+  // above). Prefer fetchAllRows/.limit only if this ever stops being chunked.
+  "server/services/cis-statements.ts:169":
+    "bounded: chunked .in('id', slice(≤500 unique PKs)) — ≤500 rows, analyser can't see the slice bound",
+};
 
 function walk(dir: string, out: string[]): void {
   let entries: string[];
@@ -93,6 +104,83 @@ function regionAround(src: string, fromIdx: number): string {
   return src.slice(Math.max(0, fromIdx - BEFORE), fromIdx + AFTER);
 }
 
+/** A `.from`-wrapping local helper defeats a literal `.from("TABLE")` scan.
+ *
+ * weather-fetch.ts hid its F-1 truncation exactly this way: a local
+ *   `const table = (c, name) => c.from(name)`
+ * turned every read into `table(admin, "weather_watches")`, which the literal
+ * `.from("...")` regex never matched — the guard was structurally blind to it.
+ *
+ * So we ALSO find such wrappers in each file and treat `wrapper(<x>, "TABLE")`
+ * as if it were `.from("TABLE")`: an arrow (or function) whose body calls
+ * `<something>.from(<param>)` is a `.from` wrapper, and its call sites are
+ * indirect reads that must satisfy the same paged/single-row/count rule.
+ */
+const WRAPPER_DEF_RE =
+  /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=;]*?)?=>\s*[^;{}]*?\.from\(/g;
+
+function escapeReg(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function boundedRegion(region: string): boolean {
+  return (
+    /\.single\(/.test(region) ||
+    /\.maybeSingle\(/.test(region) ||
+    /\.range\(/.test(region) ||
+    /\.limit\(/.test(region) ||
+    /fetchAllRows/.test(region) || // paged via the helper
+    /\.eq\(\s*["'`]id["'`]\s*,/.test(region) || // single-entity read by PK (<=1 row)
+    /head:\s*true/.test(region) || // count/head read — returns a count, no rows to truncate
+    /count:\s*["'`]exact["'`]/.test(region)
+  );
+}
+
+/**
+ * Every bare-select F-1 offender in one file's (raw) source, covering BOTH the
+ * literal `.from("TABLE")` form and the `.from`-wrapper indirection form. Shared
+ * by the repo-wide scan and the "would have caught the pre-fix weather-fetch"
+ * regression proof, so both exercise identical detection.
+ */
+function offendersIn(rel: string, raw: string): string[] {
+  if (!raw.includes(".from(")) return [];
+  const src = stripComments(raw);
+  const offenders: string[] = [];
+
+  const consider = (table: string | undefined, index: number, shape: string): void => {
+    if (!table || !HIGH_VALUE_TABLES.has(table)) return;
+    const region = regionAround(src, index);
+    // Must be a select (writes/upserts/rpc are not truncation-prone reads).
+    if (!/\.select\(/.test(region)) return;
+    if (boundedRegion(region)) return;
+    const line = src.slice(0, index).split("\n").length;
+    const key = `${rel}:${line}`;
+    if (ALLOWLIST[key]) return;
+    offenders.push(`${key} → bare ${shape} with no .range/.limit/.single`);
+  };
+
+  // 1. The direct form: `.from("high_value_table").select(...)`.
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fromRe.exec(src))) consider(m[1], m.index, `.from("${m[1]}").select(...)`);
+
+  // 2. The indirection form: a local `.from` wrapper + `wrapper(<x>, "table")`.
+  const wrapperNames = new Set<string>();
+  let wm: RegExpExecArray | null;
+  WRAPPER_DEF_RE.lastIndex = 0;
+  while ((wm = WRAPPER_DEF_RE.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
+  for (const name of wrapperNames) {
+    // `table(admin, "weather_watches")` — 2nd arg is the table-name literal.
+    const callRe = new RegExp(escapeReg(name) + `\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`, "g");
+    let cm: RegExpExecArray | null;
+    while ((cm = callRe.exec(src))) {
+      consider(cm[1], cm.index, `${name}(<client>, "${cm[1]}") [.from wrapper].select(...)`);
+    }
+  }
+
+  return offenders;
+}
+
 describe("F-1 bare-select guard — high-value table reads must page or be single-row", () => {
   const files: string[] = [];
   for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
@@ -101,36 +189,11 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
     expect(files.length).toBeGreaterThan(200);
   });
 
-  it("no bare unpaginated read on a money/ledger/producer table", () => {
+  it("no bare unpaginated read on a money/ledger/producer table (direct OR .from-wrapper)", () => {
     const offenders: string[] = [];
-    const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
     for (const file of files) {
       const rel = file.slice(ROOT.length + 1);
-      const raw = readFileSync(file, "utf8");
-      if (!raw.includes(".from(")) continue;
-      const src = stripComments(raw);
-      let m: RegExpExecArray | null;
-      while ((m = fromRe.exec(src))) {
-        const table = m[1];
-        if (!table || !HIGH_VALUE_TABLES.has(table)) continue;
-        const region = regionAround(src, m.index);
-        // Must be a select (writes/upserts/rpc are not truncation-prone reads).
-        if (!/\.select\(/.test(region)) continue;
-        const bounded =
-          /\.single\(/.test(region) ||
-          /\.maybeSingle\(/.test(region) ||
-          /\.range\(/.test(region) ||
-          /\.limit\(/.test(region) ||
-          /fetchAllRows/.test(region) || // paged via the helper
-          /\.eq\(\s*["'`]id["'`]\s*,/.test(region) || // single-entity read by PK (<=1 row)
-          /head:\s*true/.test(region) || // count/head read — returns a count, no rows to truncate
-          /count:\s*["'`]exact["'`]/.test(region);
-        if (bounded) continue;
-        const line = src.slice(0, m.index).split("\n").length;
-        const key = `${rel}:${line}`;
-        if (ALLOWLIST[key]) continue;
-        offenders.push(`${key} → bare .from("${table}").select(...) with no .range/.limit/.single`);
-      }
+      offenders.push(...offendersIn(rel, readFileSync(file, "utf8")));
     }
     expect(
       offenders,
@@ -138,5 +201,37 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
         `capped at PostgREST max_rows (1000). Page it via fetchAllRows (COMPLETE) or make it a ` +
         `single-row read / honest .limit(<=1000):\n` + offenders.join("\n"),
     ).toEqual([]);
+  });
+
+  it("has TEETH: catches the pre-fix weather-fetch reads through the table() wrapper", () => {
+    // The exact shape weather-fetch.ts shipped before this fix: a `.from` wrapper
+    // plus two bare, unpaginated reads. The literal `.from("...")` scan alone was
+    // blind to it; the hardened guard must flag BOTH reads.
+    const preFix = [
+      `const table = (c, name) => c.from(name);`,
+      `const watches = await table(admin, "weather_watches")`,
+      `  .select("postcode_district")`,
+      `  .eq("active", true);`,
+      `const recent = await table(admin, "weather_readings")`,
+      `  .select("postcode_district, kind, fetched_at")`,
+      `  .in("postcode_district", districts);`,
+    ].join("\n");
+    const flagged = offendersIn("server/services/weather-fetch.ts", preFix);
+    expect(flagged.some((o) => o.includes("weather_watches"))).toBe(true);
+    expect(flagged.some((o) => o.includes("weather_readings"))).toBe(true);
+  });
+
+  it("does not false-positive a PAGED .from-wrapper read (the post-fix shape)", () => {
+    const postFix = [
+      `const table = (c, name) => c.from(name);`,
+      `const watchesRes = await fetchAllRows((from, to) =>`,
+      `  table(admin, "weather_watches")`,
+      `    .select("postcode_district")`,
+      `    .eq("active", true)`,
+      `    .order("id", { ascending: true })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("server/services/weather-fetch.ts", postFix)).toEqual([]);
   });
 });

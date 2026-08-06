@@ -79,7 +79,8 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { reportReadFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   getWeatherProvider,
   getWeatherReadiness,
@@ -115,6 +116,15 @@ const BREAKER_TRIP_AFTER = 3;
 
 /** Upper bound on districts per run — one runaway watch list cannot eat the budget. */
 const MAX_DISTRICTS_PER_RUN = 200;
+
+/**
+ * How many district ids to send per `weather_readings` `.in()` batch. Mirrors
+ * weather-watch-sync's CUSTOMER_IN_CHUNK: a wide `.in()` serialises every id
+ * into the GET query string and overflows the request-line limit (→ 414/400),
+ * so chunk at ≤200 and union — and each chunk is still PAGED so a chunk that
+ * returns >1000 rows is never clamped either.
+ */
+const DISTRICT_IN_CHUNK = 200;
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -162,6 +172,8 @@ type ReadingsFilter<T> = PromiseLike<LooseRes<T[]>> & {
   eq: (k: string, v: unknown) => ReadingsFilter<T>;
   in: (k: string, v: readonly unknown[]) => ReadingsFilter<T>;
   gte: (k: string, v: unknown) => ReadingsFilter<T>;
+  order: (k: string, o: { ascending: boolean }) => ReadingsFilter<T>;
+  range: (from: number, to: number) => PromiseLike<PageResult<T>>;
 };
 type LooseTable = {
   select: <T>(cols: string) => ReadingsFilter<T>;
@@ -248,13 +260,26 @@ export async function runWeatherFetch(
   const admin = createAdminClient() as unknown as LooseAdmin;
 
   // ── 1. The districts under active watch, distinct, validated, bounded. ────
-  const watches = await table(admin, "weather_watches")
-    .select<WatchRow>("postcode_district")
-    .eq("active", true);
-  if (watches.error) {
+  // F-1: a national watch list crosses PostgREST's max_rows=1000 clamp, and a
+  // bare `.select()` with no ORDER BY would nondeterministically DROP every
+  // district past row 1000 — those tenants would silently get no weather at
+  // all. Page the COMPLETE set on a UNIQUE total order (postcode_district,
+  // job_id, id), THEN dedupe + cap, so MAX_DISTRICTS_PER_RUN is applied to the
+  // whole district set rather than an arbitrary 1000-row prefix.
+  const watchesRes = await fetchAllRows<WatchRow>((from, to) =>
+    table(admin, "weather_watches")
+      .select<WatchRow>("postcode_district")
+      .eq("active", true)
+      .order("postcode_district", { ascending: true })
+      .order("job_id", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (watchesRes.error) {
     // LOUD READS: a failed read must never be mistaken for "nobody watches
     // anything" — that would silently stop all weather refresh forever.
-    reportReadFailure("weather watches (fetch pipeline)", watches.error);
+    const err = watchesRes.error as SupabaseReadError;
+    reportReadFailure("weather watches (fetch pipeline)", err);
     return {
       ok: false,
       ran: true,
@@ -263,13 +288,13 @@ export async function runWeatherFetch(
       written: 0,
       breakerTripped: false,
       outcomes: [],
-      note: `watch read failed: ${watches.error.message}`,
+      note: `watch read failed: ${err.message ?? "unknown"}`,
     };
   }
 
   const districts = [
     ...new Set(
-      (watches.data ?? [])
+      watchesRes.data
         .map((w) => w.postcode_district)
         .filter((d): d is PostcodeDistrict => isPostcodeDistrict(d)),
     ),
@@ -294,29 +319,47 @@ export async function runWeatherFetch(
   const oldestCutoff = new Date(
     now.getTime() - Math.max(FORECAST_STALE_AFTER_MS, OBSERVATION_STALE_AFTER_MS),
   );
-  const recent = await table(admin, "weather_readings")
-    .select<FreshRow>("postcode_district, kind, fetched_at")
-    .eq("provider", provider.info.provider)
-    .in("postcode_district", districts)
-    .gte("fetched_at", oldestCutoff.toISOString());
-  if (recent.error) {
-    // Failing closed on a freshness-read failure refuses to refetch the whole
-    // watch list blind — the loud-read rule protecting the call budget too.
-    reportReadFailure("weather readings freshness (fetch pipeline)", recent.error);
-    return {
-      ok: false,
-      ran: true,
-      provider: provider.info.provider,
-      districtCount: districts.length,
-      written: 0,
-      breakerTripped: false,
-      outcomes: [],
-      note: `freshness read failed: ${recent.error.message}`,
-    };
+  // F-1: chunk the district `.in()` at ≤200 ids (a wide list would 414 the GET
+  // request line) AND page each chunk. A national freshness read easily crosses
+  // max_rows=1000, and a truncated freshness set makes fetched districts look
+  // stale — isFresh() returns false, so the pipeline re-fetches them and burns
+  // the vendor call budget redundantly. Page on the UNIQUE identity order
+  // (postcode_district, kind, valid_at) with provider fixed by the .eq above.
+  const recentRows: FreshRow[] = [];
+  for (let i = 0; i < districts.length; i += DISTRICT_IN_CHUNK) {
+    const batch = districts.slice(i, i + DISTRICT_IN_CHUNK);
+    const chunk = await fetchAllRows<FreshRow>((from, to) =>
+      table(admin, "weather_readings")
+        .select<FreshRow>("postcode_district, kind, fetched_at")
+        .eq("provider", provider.info.provider)
+        .in("postcode_district", batch)
+        .gte("fetched_at", oldestCutoff.toISOString())
+        .order("postcode_district", { ascending: true })
+        .order("kind", { ascending: true })
+        .order("valid_at", { ascending: true })
+        .range(from, to),
+    );
+    if (chunk.error) {
+      // Failing closed on a freshness-read failure refuses to refetch the whole
+      // watch list blind — the loud-read rule protecting the call budget too.
+      const err = chunk.error as SupabaseReadError;
+      reportReadFailure("weather readings freshness (fetch pipeline)", err);
+      return {
+        ok: false,
+        ran: true,
+        provider: provider.info.provider,
+        districtCount: districts.length,
+        written: 0,
+        breakerTripped: false,
+        outcomes: [],
+        note: `freshness read failed: ${err.message ?? "unknown"}`,
+      };
+    }
+    recentRows.push(...chunk.data);
   }
 
   const latestFetch = new Map<string, number>();
-  for (const row of recent.data ?? []) {
+  for (const row of recentRows) {
     const at = Date.parse(row.fetched_at);
     if (Number.isNaN(at)) continue;
     const key = `${row.postcode_district}:${row.kind}`;
