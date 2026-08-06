@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 
 /**
  * Job photos — upload + list.
@@ -40,14 +41,21 @@ function safeFilename(name: string): string {
 }
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
 
   const supabase = await createClient();
+  // ACTIVE-org pin, not merely RLS. `current_org_ids()` spans EVERY org the
+  // viewer belongs to, so `.eq("id", id)` alone would let a multi-org member
+  // read a job — and mint signed URLs for its photos — from their OTHER org
+  // via this route (the #456 read-side class). Constraining to the active org
+  // makes a non-active-org job indistinguishable from a missing one, mirroring
+  // the POST handler and jobs/[id]/page.tsx (loadJobForOrg).
   const { data: job, error } = await supabase
     .from("jobs")
     .select("id, photos")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (error) {
@@ -56,7 +64,15 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   }
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const paths = job.photos ?? [];
+  // Defence-in-depth before signing: photo keys are built server-side as
+  // `${org_id}/${job_id}/…`, so every path on an org-pinned job must live under
+  // this org's prefix. Drop any that do not — a poisoned `photos` entry
+  // pointing at another org's object must never be handed a signed URL. Mirrors
+  // the signer guard in server/services/job-documents.ts + blueprints.ts.
+  const paths = (job.photos ?? []).filter(
+    (p): p is string =>
+      typeof p === "string" && storagePathBelongsToOrg(p, ctx.org.id),
+  );
   if (paths.length === 0) return NextResponse.json({ photos: [] });
 
   // Short TTL — the gallery refetches on render so 60s is enough. Matches
