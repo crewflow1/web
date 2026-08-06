@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { anonClient, describeIntegration, serviceClient } from "../_harness";
+import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 
 /**
  * SYSTEMIC SECURITY DEFINER org-RPC membership-guard (real Postgres).
@@ -115,20 +115,21 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "requires auth.uid() and is_org_admin(stage.org_id) — owner/admin of the stage's own org only; anon/non-admins denied.",
   ],
 
-  // Derived-state read helpers. Authenticated callers are org-checked via
-  // current_org_ids(). The anon path is gated behind an existence check that
-  // needs BOTH the resource uuid AND its matching org_id (two unguessable
-  // uuids), and returns only a derived status string — not a counter high-water
-  // or a stable ledger oracle (the six's class). Not enumerable by anon.
-  [
-    "material_request_fulfilment_state",
-    "derived-state read helper: authenticated callers org-checked via current_org_ids(); anon must supply a matching (request_id, org_id) uuid pair to read a single derived status string — not enumerable, no counter/oracle leak.",
-  ],
-  [
-    "purchase_order_receipt_state",
-    "derived-state read helper: authenticated callers org-checked via current_org_ids(); anon must supply a matching (po_id, org_id) uuid pair to read a single derived status string — not enumerable, no counter/oracle leak.",
-  ],
+  // NOTE: material_request_fulfilment_state and purchase_order_receipt_state
+  // were formerly allowlisted as "derived-state read helpers" because they only
+  // gated the membership check on `auth.uid() is not null` — which let ANON skip
+  // it. That is precisely the anon-reachable-secdef-org class this file exists to
+  // close, so migration 20261116000000 replaced that gate with the canonical
+  // current_org_ids()+42501 guard. They are now canonically guarded (guarded=true)
+  // and MUST NOT be allowlisted — they are covered by FIXED_TWO_STATE below.
 ]);
+
+// The two derived-state helpers hardened in the same migration. Like FIXED_SIX
+// they MUST be guarded and MUST NOT be allowlisted.
+const FIXED_TWO_STATE: readonly string[] = [
+  "purchase_order_receipt_state",
+  "material_request_fulfilment_state",
+];
 
 type Row = {
   proname: string;
@@ -182,10 +183,10 @@ describeIntegration("SECURITY DEFINER org-RPC membership guard · systemic", () 
     ).toEqual([]);
   });
 
-  it("the six fixed functions are guarded and are NOT allowlisted", async () => {
+  it("the fixed functions are guarded and are NOT allowlisted", async () => {
     const rows = await secdefOrgRpcs();
     const byName = new Map(rows.map((r) => [r.proname, r]));
-    for (const fn of FIXED_SIX) {
+    for (const fn of [...FIXED_SIX, ...FIXED_TWO_STATE]) {
       const row = byName.get(fn);
       expect(row, `${fn} is missing from the class — did its signature change?`).toBeDefined();
       expect(
@@ -319,6 +320,153 @@ describeIntegration(
         typeof res.data,
         "cis_statement_ledger_fingerprint should return a hex digest string",
       ).toBe("string");
+    });
+  },
+);
+
+/**
+ * EFFECT verification for the two derived-state helpers.
+ *
+ * Unlike the six number fns (which return a value for any org, so service_role
+ * with a random org proves the bypass), these run an EXISTENCE check AFTER the
+ * guard — so member-success must be proven against a REAL seeded (org, member,
+ * PO, material request). anon is denied 42501 by the guard BEFORE the existence
+ * check even for the real org (anon's current_org_ids() is empty); a member of
+ * the org passes the guard and gets a derived status string.
+ */
+type InsertChain = {
+  insert: (v: unknown) => {
+    select: (c: string) => {
+      single: () => Promise<{
+        data: Record<string, unknown> | null;
+        error: { message: string } | null;
+      }>;
+    };
+  };
+  delete: () => {
+    eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+  };
+};
+function table(
+  client: ReturnType<typeof serviceClient>,
+  name: string,
+): InsertChain {
+  return (client as unknown as { from: (t: string) => InsertChain }).from(name);
+}
+
+describeIntegration(
+  "SECURITY DEFINER org-RPC membership guard · effect (state helpers: anon denied, member allowed)",
+  () => {
+    const T = `secdef-state-${Date.now()}`;
+    let orgId = "";
+    let userId = "";
+    let token = "";
+    let poId = "";
+    let reqId = "";
+
+    beforeAll(async () => {
+      const org = await table(serviceClient(), "organizations")
+        .insert({ name: `Secdef State ${T}`, slug: T })
+        .select("id")
+        .single();
+      if (org.error) throw new Error(org.error.message);
+      orgId = String(org.data?.id ?? "");
+
+      const email = `${T}@x.test`;
+      const created = await serviceClient().auth.admin.createUser({
+        email,
+        password: `Pw-${T}`,
+        email_confirm: true,
+      });
+      if (created.error) throw new Error(created.error.message);
+      userId = created.data.user?.id ?? "";
+      // memberships.user_id references public.users — mirror the auth user in.
+      const mirrored = await table(serviceClient(), "users")
+        .insert({ id: userId, email, full_name: `Secdef ${T}` })
+        .select("id")
+        .single();
+      if (mirrored.error) throw new Error(mirrored.error.message);
+      const mem = await table(serviceClient(), "memberships")
+        .insert({ user_id: userId, org_id: orgId, role: "owner" })
+        .select("user_id")
+        .single();
+      if (mem.error) throw new Error(mem.error.message);
+      const s = await anonClient().auth.signInWithPassword({
+        email,
+        password: `Pw-${T}`,
+      });
+      if (s.error) throw new Error(s.error.message);
+      token = s.data.session?.access_token ?? "";
+      expect(token, "test setup: member token").not.toBe("");
+
+      const po = await table(serviceClient(), "purchase_orders")
+        .insert({ org_id: orgId, number: "PO-0001", subtotal: 100, vat_total: 20 })
+        .select("id")
+        .single();
+      if (po.error) throw new Error(po.error.message);
+      poId = String(po.data?.id ?? "");
+
+      const req = await table(serviceClient(), "material_requests")
+        .insert({
+          org_id: orgId,
+          number: "MR-0001",
+          priority: "normal",
+          requested_by: userId,
+          created_by: userId,
+        })
+        .select("id")
+        .single();
+      if (req.error) throw new Error(req.error.message);
+      reqId = String(req.data?.id ?? "");
+    });
+
+    afterAll(async () => {
+      if (userId) await serviceClient().auth.admin.deleteUser(userId);
+      if (orgId) await table(serviceClient(), "organizations").delete().eq("id", orgId);
+    });
+
+    it("purchase_order_receipt_state: anon DENIED 42501, member ALLOWED", async () => {
+      const anon = await rpcAs(anonClient(), "purchase_order_receipt_state", {
+        p_po_id: poId,
+        p_org_id: orgId,
+      });
+      expect(
+        anon.error,
+        "anon must be denied — the membership check no longer gates on auth.uid()",
+      ).not.toBeNull();
+      expect(anon.error?.code, "expected 42501").toBe("42501");
+
+      const mem = await rpcAs(userClient(token), "purchase_order_receipt_state", {
+        p_po_id: poId,
+        p_org_id: orgId,
+      });
+      expect(mem.error, mem.error?.message).toBeNull();
+      expect(typeof mem.data, "member should get a receipt-state string").toBe(
+        "string",
+      );
+    });
+
+    it("material_request_fulfilment_state: anon DENIED 42501, member ALLOWED", async () => {
+      const anon = await rpcAs(anonClient(), "material_request_fulfilment_state", {
+        p_request_id: reqId,
+        p_org_id: orgId,
+        p_fulfilled: [],
+      });
+      expect(
+        anon.error,
+        "anon must be denied — the membership check no longer gates on auth.uid()",
+      ).not.toBeNull();
+      expect(anon.error?.code, "expected 42501").toBe("42501");
+
+      const mem = await rpcAs(
+        userClient(token),
+        "material_request_fulfilment_state",
+        { p_request_id: reqId, p_org_id: orgId, p_fulfilled: [] },
+      );
+      expect(mem.error, mem.error?.message).toBeNull();
+      expect(typeof mem.data, "member should get a fulfilment-state string").toBe(
+        "string",
+      );
     });
   },
 );

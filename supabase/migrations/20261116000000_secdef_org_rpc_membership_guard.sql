@@ -217,7 +217,63 @@ grant execute on function public.cis_monthly_return_ledger_fingerprint(uuid, dat
   to authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 7. Schema self-audit for the systemic guard test.
+-- 7. purchase_order_receipt_state(p_po_id uuid, p_org_id uuid)
+--    orig def: supabase/migrations/20261060000000_purchase_order_receipt_state.sql
+--
+--    Its membership check was gated on `auth.uid() is not null`, so an ANON
+--    caller SKIPPED it entirely — and because this is SECURITY DEFINER (RLS
+--    bypassed), anon holding a matching (po_id, org_id) uuid pair could read a
+--    victim org's receipt state. Replace ONLY that gated check with the same
+--    canonical guard applied to the six (for anon, current_org_ids() is empty,
+--    so anon is denied; genuine members and service_role still pass). The
+--    existence check and return are preserved verbatim.
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.purchase_order_receipt_state(p_po_id uuid, p_org_id uuid)
+returns text language plpgsql stable security definer set search_path = public as $$
+begin
+  if auth.role() is distinct from 'service_role'
+     and p_org_id not in (select public.current_org_ids()) then
+    raise exception 'Forbidden: not a member of this org' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.purchase_orders where id = p_po_id and org_id = p_org_id
+  ) then
+    raise exception 'purchase order not found' using errcode = 'no_data_found';
+  end if;
+  return public.po_receipt_state(p_po_id);
+end $$;
+grant execute on function public.purchase_order_receipt_state(uuid, uuid) to authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 8. material_request_fulfilment_state(p_request_id uuid, p_org_id uuid, p_fulfilled jsonb)
+--    orig def: supabase/migrations/20261067000000_material_request_lifecycle.sql
+--
+--    Same anon-reachable weakness as section 7 — same canonical-guard fix. The
+--    existence check and return are preserved verbatim.
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.material_request_fulfilment_state(
+  p_request_id uuid,
+  p_org_id     uuid,
+  p_fulfilled  jsonb
+)
+returns text language plpgsql stable security definer set search_path = public as $$
+begin
+  if auth.role() is distinct from 'service_role'
+     and p_org_id not in (select public.current_org_ids()) then
+    raise exception 'Forbidden: not a member of this org' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.material_requests where id = p_request_id and org_id = p_org_id
+  ) then
+    raise exception 'material request not found' using errcode = 'no_data_found';
+  end if;
+  return public.material_request_state(p_request_id, p_fulfilled);
+end $$;
+grant execute on function public.material_request_fulfilment_state(uuid, uuid, jsonb)
+  to authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 9. Schema self-audit for the systemic guard test.
 --
 -- Lists every public SECURITY DEFINER function that (a) is EXECUTE-able by anon
 -- or authenticated and (b) takes at least one uuid argument — i.e. the exact
