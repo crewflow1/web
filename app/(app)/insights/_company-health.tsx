@@ -178,7 +178,7 @@ function CustomerLtvPanel({ view }: { view: CompanyHealthView }) {
   const metric = customerLtvMetric(l);
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">Customer lifetime value</h3>
         <KindBadge kind={metric.provenance.kind} />
@@ -202,32 +202,37 @@ function CustomerLtvPanel({ view }: { view: CompanyHealthView }) {
                 </dd>
               </div>
             </dl>
-            <table className="mt-3 w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-slate-400">
-                  <th className="pb-1 font-medium">Customer</th>
-                  <th className="pb-1 text-right font-medium">Realised</th>
-                  <th className="pb-1 text-right font-medium">Committed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {l.top.map((c) => (
-                  <tr key={c.customerId ?? "unattributed"} className="border-t border-slate-50">
-                    <td className="py-1">
-                      <Link href={c.href} className="truncate text-slate-700 hover:underline">
-                        {c.name}
-                      </Link>
-                    </td>
-                    <td className="py-1 text-right tabular-nums text-slate-700">
-                      {formatGbp(c.realisedValue)}
-                    </td>
-                    <td className="py-1 text-right tabular-nums text-slate-500">
-                      {formatGbp(c.committedValue)}
-                    </td>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-400">
+                    <th className="pb-1 font-medium">Customer</th>
+                    <th className="pb-1 text-right font-medium">Realised</th>
+                    <th className="pb-1 text-right font-medium">Committed</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {l.top.map((c) => (
+                    <tr key={c.customerId ?? "unattributed"} className="border-t border-slate-50">
+                      <td className="py-1">
+                        <Link
+                          href={c.href}
+                          className="inline-block max-w-[12rem] truncate align-bottom text-slate-700 hover:underline"
+                        >
+                          {c.name}
+                        </Link>
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-slate-700">
+                        {formatGbp(c.realisedValue)}
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-slate-500">
+                        {formatGbp(c.committedValue)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>
@@ -248,7 +253,7 @@ function SubcontractorPanel({ view }: { view: CompanyHealthView }) {
   const anyFlag = s.overBillingFlags.length > 0 || s.slowSettlementFlags.length > 0;
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">CIS subcontractor scoreboard</h3>
         <KindBadge kind={reliability.provenance.kind} />
@@ -266,36 +271,41 @@ function SubcontractorPanel({ view }: { view: CompanyHealthView }) {
           </EmptyNote>
         ) : (
           <>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-slate-400">
-                  <th className="pb-1 font-medium">Subcontractor</th>
-                  <th className="pb-1 text-right font-medium">Late deliveries</th>
-                  <th className="pb-1 text-right font-medium">Over-invoiced</th>
-                  <th className="pb-1 text-right font-medium">We settle &gt;60d</th>
-                </tr>
-              </thead>
-              <tbody>
-                {s.rows.slice(0, 8).map((row) => (
-                  <tr key={row.supplierId} className="border-t border-slate-50">
-                    <td className="py-1">
-                      <Link href={row.href} className="truncate text-slate-700 hover:underline">
-                        {row.supplierName || "Unnamed subcontractor"}
-                      </Link>
-                    </td>
-                    <td className="py-1 text-right tabular-nums text-slate-600">
-                      <RatioLine r={row.punctuality} />
-                    </td>
-                    <td className="py-1 text-right tabular-nums text-slate-600">
-                      <RatioLine r={row.overBilled} />
-                    </td>
-                    <td className="py-1 text-right tabular-nums text-slate-600">
-                      <RatioLine r={row.slowSettlement} />
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-400">
+                    <th className="pb-1 font-medium">Subcontractor</th>
+                    <th className="pb-1 text-right font-medium">Late deliveries</th>
+                    <th className="pb-1 text-right font-medium">Over-invoiced</th>
+                    <th className="pb-1 text-right font-medium">We settle &gt;60d</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {s.rows.slice(0, 8).map((row) => (
+                    <tr key={row.supplierId} className="border-t border-slate-50">
+                      <td className="py-1">
+                        <Link
+                          href={row.href}
+                          className="inline-block max-w-[12rem] truncate align-bottom text-slate-700 hover:underline"
+                        >
+                          {row.supplierName || "Unnamed subcontractor"}
+                        </Link>
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-slate-600">
+                        <RatioLine r={row.punctuality} />
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-slate-600">
+                        <RatioLine r={row.overBilled} />
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-slate-600">
+                        <RatioLine r={row.slowSettlement} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium text-slate-800">Flags to look at</p>
@@ -308,7 +318,10 @@ function SubcontractorPanel({ view }: { view: CompanyHealthView }) {
                       key={`ob-${row.supplierId}`}
                       className="flex items-baseline justify-between gap-2 text-sm"
                     >
-                      <Link href={row.href} className="truncate text-slate-700 hover:underline">
+                      <Link
+                        href={row.href}
+                        className="min-w-0 truncate text-slate-700 hover:underline"
+                      >
                         <span className="mr-1 font-medium uppercase text-slate-500">
                           [Over-invoiced]
                         </span>
@@ -324,7 +337,10 @@ function SubcontractorPanel({ view }: { view: CompanyHealthView }) {
                       key={`ss-${row.supplierId}`}
                       className="flex items-baseline justify-between gap-2 text-sm"
                     >
-                      <Link href={row.href} className="truncate text-slate-700 hover:underline">
+                      <Link
+                        href={row.href}
+                        className="min-w-0 truncate text-slate-700 hover:underline"
+                      >
                         <span className="mr-1 font-medium uppercase text-slate-500">
                           [We settle slowly]
                         </span>
