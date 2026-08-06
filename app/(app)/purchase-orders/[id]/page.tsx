@@ -448,30 +448,35 @@ export default async function PurchaseOrderDetailPage({
 
       {/* Read-only summary */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="pb-2">Description</th>
-              <th className="pb-2 text-right">Qty</th>
-              <th className="pb-2 text-right">Unit price</th>
-              <th className="pb-2 text-right">VAT</th>
-              <th className="pb-2 text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {lines.map((li, i) => (
-              <tr key={i}>
-                <td className="py-2 text-slate-800">{li.description}</td>
-                <td className="py-2 text-right text-slate-600">
-                  {li.qty} {li.unit ?? ""}
-                </td>
-                <td className="py-2 text-right text-slate-600">{GBP.format(li.unit_price)}</td>
-                <td className="py-2 text-right text-slate-600">{li.vat_rate}%</td>
-                <td className="py-2 text-right font-medium text-slate-900">{GBP.format(Number(li.line_total ?? 0))}</td>
+        {/* The 5-column money table carries unbreakable GBP tokens; at 375px a
+            6-figure line scrolls the body sideways without this wrapper. Same
+            idiom as invoices/[id] and finances. */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="pb-2">Description</th>
+                <th className="pb-2 text-right">Qty</th>
+                <th className="pb-2 text-right">Unit price</th>
+                <th className="pb-2 text-right">VAT</th>
+                <th className="pb-2 text-right">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {lines.map((li, i) => (
+                <tr key={i}>
+                  <td className="py-2 text-slate-800">{li.description}</td>
+                  <td className="py-2 text-right text-slate-600">
+                    {li.qty} {li.unit ?? ""}
+                  </td>
+                  <td className="py-2 text-right text-slate-600">{GBP.format(li.unit_price)}</td>
+                  <td className="py-2 text-right text-slate-600">{li.vat_rate}%</td>
+                  <td className="py-2 text-right font-medium text-slate-900">{GBP.format(Number(li.line_total ?? 0))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <dl className="mt-4 space-y-1 border-t border-slate-100 pt-3 text-sm">
           <div className="flex justify-end gap-8">
             <dt className="text-slate-500">Subtotal</dt>
@@ -504,19 +509,22 @@ export default async function PurchaseOrderDetailPage({
           against the order.
         </p>
 
-        <dl className="mt-4 grid grid-cols-3 gap-4">
-          <div>
+        {/* Shrink-safe: at 375px a 6-figure GBP token (£123,456.78) overflows a
+            fixed 3-up track and scrolls the body sideways. Stack 1-up on phones,
+            3-up from sm; min-w-0 + truncate keep each value inside its cell. */}
+        <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="min-w-0">
             <dt className="text-xs uppercase tracking-wide text-slate-500">Committed</dt>
-            <dd className="mt-0.5 text-lg font-semibold text-slate-900">{GBP.format(billing.poTotal)}</dd>
+            <dd className="mt-0.5 truncate text-lg font-semibold tabular-nums text-slate-900">{GBP.format(billing.poTotal)}</dd>
           </div>
-          <div>
+          <div className="min-w-0">
             <dt className="text-xs uppercase tracking-wide text-slate-500">Billed</dt>
-            <dd className="mt-0.5 text-lg font-semibold text-slate-900">{GBP.format(billing.billedGross)}</dd>
+            <dd className="mt-0.5 truncate text-lg font-semibold tabular-nums text-slate-900">{GBP.format(billing.billedGross)}</dd>
           </div>
-          <div>
+          <div className="min-w-0">
             <dt className="text-xs uppercase tracking-wide text-slate-500">Remaining</dt>
             <dd
-              className={`mt-0.5 text-lg font-semibold ${billing.remaining < 0 ? "text-red-700" : "text-slate-900"}`}
+              className={`mt-0.5 truncate text-lg font-semibold tabular-nums ${billing.remaining < 0 ? "text-red-700" : "text-slate-900"}`}
             >
               {GBP.format(billing.remaining)}
             </dd>
