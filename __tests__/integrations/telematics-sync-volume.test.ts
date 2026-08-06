@@ -180,3 +180,98 @@ describe("runTelematicsSync — buildFleetIndex pages the whole register (F-1)",
     expect(odo!.odometer_miles).toBe(1000);
   });
 });
+
+/**
+ * SAMSARA PROVIDER-FETCH PAGINATION (F-1, adapter cursor loop).
+ *
+ * Samsara's `/fleet/vehicles/stats` is cursor-paginated: the response carries
+ * `pagination.hasNextPage` + `pagination.endCursor`, and the next page is the same
+ * URL with `?after=<endCursor>`. The pre-fix adapter issued ONE GET and mapped only
+ * page 1, so any fleet past the page boundary was silently dropped — no reading, no
+ * odometer advance. This proves the adapter now follows the cursor: a page-2 vehicle
+ * (delivered ONLY on the second request) lands a written telematics_readings row.
+ */
+const PAGE1_VIN = "VINPAGE0001";
+const PAGE1_ASSET = "veh-page-1";
+const PAGE2_VIN = "VINPAGE0002";
+const PAGE2_ASSET = "veh-page-2";
+
+const PAGE1_STAT = {
+  id: "sam-page1",
+  externalIds: { vin: PAGE1_VIN.toLowerCase() },
+  gps: { latitude: 51.5074, longitude: -0.1278, time: "2026-07-15T09:30:00Z" },
+  obdOdometerMeters: { time: "2026-07-15T09:30:00Z", value: 1609344 }, // 1000 miles
+};
+const PAGE2_STAT = {
+  id: "sam-page2",
+  externalIds: { vin: PAGE2_VIN.toLowerCase() },
+  gps: { latitude: 53.4808, longitude: -2.2426, time: "2026-07-15T09:35:00Z" },
+  obdOdometerMeters: { time: "2026-07-15T09:35:00Z", value: 3218688 }, // 2000 miles
+};
+
+describe("SamsaraAdapter — cursor loop pulls EVERY page (F-1)", () => {
+  it("writes a reading for a vehicle that only appears on page 2 of the stats feed", async () => {
+    connectableEnv();
+    const db = makeDb({
+      telematics_connections: [
+        {
+          id: CONN,
+          org_id: ORG,
+          provider: "samsara",
+          status: "connected",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      fleet_vehicles: [
+        { asset_id: PAGE1_ASSET, org_id: ORG, vin: PAGE1_VIN, odometer_miles: null },
+        { asset_id: PAGE2_ASSET, org_id: ORG, vin: PAGE2_VIN, odometer_miles: null },
+      ],
+    });
+    admin.client = db.client;
+
+    // Two-page Samsara feed: page 1 has hasNextPage=true + endCursor; page 2 (only
+    // reachable via ?after=<cursor>) has hasNextPage=false. The mock keys off the
+    // `after` param so page 2 is served ONLY on the follow-up request.
+    const fetchMock = vi.fn(async (url: string) => {
+      const after = new URL(url).searchParams.get("after");
+      if (!after) {
+        return new Response(
+          JSON.stringify({
+            data: [PAGE1_STAT],
+            pagination: { hasNextPage: true, endCursor: "cursor-page-2" },
+          }),
+          { status: 200 },
+        );
+      }
+      expect(after).toBe("cursor-page-2");
+      return new Response(
+        JSON.stringify({
+          data: [PAGE2_STAT],
+          pagination: { hasNextPage: false, endCursor: "cursor-page-2" },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const summary = await runTelematicsSync();
+
+    expect(summary.ran).toBe(true);
+    expect(summary.connections).toBe(1);
+    // The adapter followed the cursor: BOTH pages' vehicles produced readings.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(summary.written).toBe(2);
+    const writtenAssets = db.upserts.flatMap((u) => u.rows.map((r) => r.vehicle_id));
+    expect(writtenAssets).toContain(PAGE1_ASSET);
+    // The load-bearing assertion: the page-2 vehicle would be MISSING with a
+    // single-GET adapter, and is present now.
+    expect(writtenAssets).toContain(PAGE2_ASSET);
+    // Its odometer (2000 mi) also forwarded onto the register.
+    const page2Odo = db.updates.find((u) => u.odometer_miles === 2000);
+    expect(page2Odo).toBeTruthy();
+  });
+});
