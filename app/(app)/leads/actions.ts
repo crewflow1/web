@@ -17,6 +17,7 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
 
 /**
  * Lead pipeline server actions.
@@ -48,6 +49,16 @@ export async function createLead(
 
   const now = new Date().toISOString();
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity (defence in depth over the DB composite FK
+  // + membership trigger from 20261112000000): a caller must not attach another
+  // org's customer or a non-member as the assignee. Clean validation error, not a 500.
+  const refs = await verifyCrmReferences(supabase, ctx.org.id, {
+    customerId: result.data.customer_id ?? null,
+    assignedTo: result.data.assigned_to ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, result.data as LeadValues);
+
   // contact_name/email/phone columns landed in migration
   // 20260601000100_leads_contact_fields and aren't yet in the generated
   // Supabase types — the `as never` keeps the typed client happy until
@@ -98,6 +109,14 @@ export async function updateLead(
   if (!result.ok) return result.state as FormState<LeadValues>;
 
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity — see createLead. Verified before the write.
+  const refs = await verifyCrmReferences(supabase, ctx.org.id, {
+    customerId: result.data.customer_id ?? null,
+    assignedTo: result.data.assigned_to ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, result.data as LeadValues);
+
   const { error, count } = await supabase
     .from("leads")
     .update(
