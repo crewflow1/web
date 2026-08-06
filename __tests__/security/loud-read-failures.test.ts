@@ -367,7 +367,11 @@ const RATCHET: Array<{
     // best-effort dedupe REFERENCE reads (customers/invoices/memberships/leads) onto
     // fetchAllRows — the paged reads use non-null `.data` directly, so 4 more leave the
     // soft-data ledger. Cumulative F-1 bare-select elimination: 49 → 36.
-    softData: 36,
+    // 36 → 33 (F-1 time_entries/quote_line_items sweep): me/page.tsx (week + month
+    // hours) and staff/[id]/timesheet/page.tsx (month entries) moved off bare reads
+    // onto fetchAllRows with bound + thrown `error`, so their `?? []` now sits behind
+    // a real check and stops counting as debt — 3 leave the soft-data ledger.
+    softData: 33,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online

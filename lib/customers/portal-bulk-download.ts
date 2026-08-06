@@ -356,11 +356,31 @@ async function renderQuote(q: QuoteRow | null, ctx: RenderCtx): Promise<Uint8Arr
   if (q.org_id !== ctx.customer.org_id || q.customer_id !== ctx.customer.id || !q.public_token) {
     return null;
   }
-  const { data: lines, error } = await ctx.admin
-    .from("quote_line_items")
-    .select("description, qty, unit_price, vat_rate, line_total, sort_order")
-    .eq("quote_id", q.id)
-    .order("sort_order", { ascending: true });
+  // F-1: page the full snapshot — completeness matters for a bulk export; a
+  // large quote can exceed the 1000-row PostgREST cap and a clamped read would
+  // zip a PDF quoting only the first page. `sort_order` is the print order; `id`
+  // the unique tiebreak that keeps paging deterministic (mirrors renderInvoice).
+  type QuoteLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lines, error } = await fetchAllRows<QuoteLineRow>(
+    (from, to) =>
+      ctx.admin
+        .from("quote_line_items")
+        .select("description, qty, unit_price, vat_rate, line_total, sort_order")
+        .eq("quote_id", q.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: QuoteLineRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (error) throw readFailure("portal bulk: quote lines", error);
 
   const input: QuotePdfInput = {

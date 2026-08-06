@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { publicAcceptQuote, publicDeclineQuote } from "./actions";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { VariationSummary } from "./_variation-summary";
 import { buildPortalVariationView, type PortalVariationView } from "@/lib/variations/portal";
@@ -99,11 +100,32 @@ export default async function PublicQuotePage({
       .eq("id", quote.id);
   }
 
-  const { data: lineItems, error: lineItemsError } = await admin
-    .from("quote_line_items")
-    .select("description, qty, unit, unit_price, vat_rate, line_total, sort_order")
-    .eq("quote_id", quote.id)
-    .order("sort_order", { ascending: true });
+  // PAGED (F-1): the public quote view must show EVERY scope line — a bare
+  // `.select()` clamped at max_rows (1000) would render an acceptable quote with
+  // totals but only the first page of lines. Page on the unique `sort_order`+`id`
+  // order.
+  type QuoteLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit: string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    line_total: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: lineItems, error: lineItemsError } = await fetchAllRows<QuoteLineRow>(
+    (from, to) =>
+      admin
+        .from("quote_line_items")
+        .select("description, qty, unit, unit_price, vat_rate, line_total, sort_order")
+        .eq("quote_id", quote.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: QuoteLineRow[] | null;
+        error: unknown;
+      }>,
+  );
   // Never render an acceptable quote with totals but zero scope lines.
   if (lineItemsError) throw readFailure("public quote: line items", lineItemsError);
 

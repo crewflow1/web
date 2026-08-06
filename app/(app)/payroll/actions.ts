@@ -68,23 +68,39 @@ export async function createPayrollRun(
   // -----------------------------------------------------------------
   const windowEndIso = `${period_end}T23:59:59.999Z`;
   const windowStartIso = `${period_start}T00:00:00Z`;
-  const { data: openEntries, error: openError } = await supabase
-    .from("time_entries")
-    .select("id, user_id, started_at, user:users ( full_name, email )")
-    .eq("org_id", ctx.org.id)
-    .is("ended_at", null)
-    .lte("started_at", windowEndIso);
+  type OpenEntryRow = {
+    id: string;
+    user_id: string;
+    started_at: string;
+    user: { full_name: string | null; email: string | null } | null;
+  };
+  // PAGED (F-1): the guard must see EVERY open entry in the window — a bare
+  // `.select()` clamped at max_rows (1000) would let open entries past the cap
+  // slip through, so a large org with >1000 still-clocked-in shifts would create
+  // the run anyway and silently drop those hours (the exact failure this guard
+  // exists to prevent). Page the full set on the unique `started_at`+`id` order.
+  const { data: openEntries, error: openError } = await fetchAllRows<OpenEntryRow>(
+    (from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, started_at, user:users ( full_name, email )")
+        .eq("org_id", ctx.org.id)
+        .is("ended_at", null)
+        .lte("started_at", windowEndIso)
+        .order("started_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: OpenEntryRow[] | null;
+        error: unknown;
+      }>,
+  );
   // Fail loud — a failed read here would FAIL OPEN, skipping the open-entry
   // guard and silently dropping still-clocked-in hours from the run.
   if (openError) throw readFailure("payroll create: open entries", openError);
   if (openEntries && openEntries.length > 0) {
-    type OpenRow = {
-      user: { full_name: string | null; email: string | null } | null;
-      started_at: string;
-    };
     const names = Array.from(
       new Set(
-        (openEntries as unknown as OpenRow[]).map(
+        openEntries.map(
           (e) => e.user?.full_name ?? e.user?.email ?? "Unknown",
         ),
       ),
@@ -135,13 +151,28 @@ export async function createPayrollRun(
   // PAYE/NI figures filed on the inflated gross. Note the open-entry guard
   // above was ALREADY pinned to ctx.org.id, so the guard and the hour sum
   // disagreed about which company's timesheets it was reading.
-  const { data: entriesRaw, error: entriesError } = await supabase
-    .from("time_entries")
-    .select("id, user_id, job_id, started_at, ended_at, breaks")
-    .eq("org_id", ctx.org.id)
-    .gte("started_at", windowStartIso)
-    .lte("started_at", windowEndIso)
-    .not("ended_at", "is", null);
+  //
+  // PAGED (F-1): this set feeds `hoursByUser` → gross_pay/PAYE/NI/net_pay for
+  // every line in the run. A bare `.select()` clamped at max_rows (1000) would
+  // silently drop the entries past the cap, so a >1000-entry month would
+  // UNDERSTATE pay for the whole workforce with no error. Page the complete set
+  // on the unique `started_at`+`id` order (mirrors finalisePayrollRun below).
+  const { data: entriesRaw, error: entriesError } = await fetchAllRows<TimeEntry>(
+    (from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .gte("started_at", windowStartIso)
+        .lte("started_at", windowEndIso)
+        .not("ended_at", "is", null)
+        .order("started_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: TimeEntry[] | null;
+        error: unknown;
+      }>,
+  );
   if (entriesError) throw readFailure("payroll create: hours", entriesError);
   const entries = (entriesRaw ?? []) as TimeEntry[];
   const hoursByU = hoursByUser(

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   entryHours,
@@ -68,19 +70,31 @@ export default async function TimesheetPage({
       .select("full_name, email, hourly_pay, employment_type")
       .eq("id", staffId)
       .maybeSingle(),
-    supabase
-      .from("time_entries")
-      .select("id, user_id, job_id, started_at, ended_at, breaks, note, payroll_line_id")
-      // ACTIVE-org pin — a person who works for two companies through CrewFlow
-      // must not have the other company's hours (and pay) shown on this org's
-      // timesheet. `user_id` alone is not a scope.
-      .eq("org_id", ctx.org.id)
-      .eq("user_id", staffId)
-      .gte("started_at", `${monthStartIso}T00:00:00Z`)
-      .order("started_at", { ascending: false }),
+    // PAGED (F-1): this timesheet's week/month hour tiles sum the whole month —
+    // a bare `.select()` clamped at max_rows (1000) would drop shifts past the
+    // cap and under-report a busy worker's hours. Page on the unique
+    // `started_at`+`id` order. ACTIVE-org pin — a person who works for two
+    // companies through CrewFlow must not have the other company's hours (and
+    // pay) shown on this org's timesheet. `user_id` alone is not a scope.
+    fetchAllRows<TimeEntry>(
+      (from, to) =>
+        supabase
+          .from("time_entries")
+          .select("id, user_id, job_id, started_at, ended_at, breaks, note, payroll_line_id")
+          .eq("org_id", ctx.org.id)
+          .eq("user_id", staffId)
+          .gte("started_at", `${monthStartIso}T00:00:00Z`)
+          .order("started_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: TimeEntry[] | null;
+          error: unknown;
+        }>,
+    ),
   ]);
 
   if (!profileRes.data) notFound();
+  if (entriesRes.error) throw readFailure("staff timesheet: entries", entriesRes.error);
   const profile = profileRes.data;
   const entries = (entriesRes.data ?? []) as TimeEntry[];
 
