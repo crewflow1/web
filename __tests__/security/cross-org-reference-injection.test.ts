@@ -131,6 +131,88 @@ describe("cross-org reference injection · app-layer re-check on every write pat
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// QUOTES — the sibling MISS from the jobs/leads fix, and WORSE: a quote renders
+// on the PUBLIC, unauthenticated, service-role /q/[token] route (name + email),
+// so a foreign customer_id is a cross-tenant PII leak, not just an integrity slip.
+// Closed at the DB by migration 20261113000000 (composite FKs on all four child
+// refs) + app-layer verifyQuoteReferences on create AND update.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("cross-org reference injection · QUOTES migration guards", () => {
+  const MIGRATION = "supabase/migrations/20261113000000_quotes_cross_tenant_fk.sql";
+  let sql = "";
+  it("the quotes migration file exists", () => {
+    sql = read(MIGRATION);
+    expect(sql.length).toBeGreaterThan(0);
+  });
+
+  it("adds properties_id_org_key + leads_id_org_key (the parent candidate keys)", () => {
+    sql = sql || read(MIGRATION);
+    expect(sql).toMatch(
+      /properties_id_org_key[\s\S]*?add constraint properties_id_org_key unique \(id, org_id\)/,
+    );
+    expect(sql).toMatch(
+      /leads_id_org_key[\s\S]*?add constraint leads_id_org_key unique \(id, org_id\)/,
+    );
+  });
+
+  it("quotes.customer_id becomes a composite FK to customers(id, org_id), NO ACTION preserved (NOT NULL)", () => {
+    sql = sql || read(MIGRATION);
+    expect(sql).toMatch(/drop constraint quotes_customer_id_fkey/);
+    expect(sql).toMatch(
+      /add constraint quotes_customer_org_fkey[\s\S]*?foreign key \(customer_id, org_id\)[\s\S]*?references public\.customers \(id, org_id\)/,
+    );
+    // customer_id is NOT NULL — the composite FK must NOT carry an ON DELETE
+    // SET NULL (that would be impossible against a NOT NULL column). Bound the
+    // check to the customer FK's OWN statement (up to its terminating `;`), so
+    // the later property/lead/job blocks' legitimate `on delete set null` don't
+    // leak into the match via `[\s\S]`.
+    expect(sql).not.toMatch(
+      /add constraint quotes_customer_org_fkey[^;]*?on delete set null/,
+    );
+  });
+
+  it("quotes.property_id / lead_id / job_id become composite FKs with column-list SET NULL", () => {
+    sql = sql || read(MIGRATION);
+    for (const [col, name, parent] of [
+      ["property_id", "quotes_property_org_fkey", "properties"],
+      ["lead_id", "quotes_lead_org_fkey", "leads"],
+      ["job_id", "quotes_job_org_fkey", "jobs"],
+    ] as const) {
+      expect(sql, `drops bare quotes_${col}_fkey`).toMatch(
+        new RegExp(`drop constraint quotes_${col}_fkey`),
+      );
+      expect(sql, `${name} composite FK`).toMatch(
+        new RegExp(
+          `add constraint ${name}[\\s\\S]*?foreign key \\(${col}, org_id\\)[\\s\\S]*?references public\\.${parent} \\(id, org_id\\)[\\s\\S]*?on delete set null \\(${col}\\)`,
+        ),
+      );
+    }
+  });
+});
+
+describe("cross-org reference injection · QUOTES app-layer re-check", () => {
+  it("verifyQuoteReferences org-pins customer + property + lead + job lookups", () => {
+    const helper = read("lib/crm/reference-integrity.ts");
+    expect(helper).toMatch(/export async function verifyQuoteReferences/);
+    // Each ref lookup is org-pinned, and a read ERROR throws (loud reads).
+    expect(helper).toMatch(/from\("properties"\)[\s\S]*?\.eq\("id", propertyId\)[\s\S]*?\.eq\("org_id", orgId\)/);
+    expect(helper).toMatch(/from\("leads"\)[\s\S]*?\.eq\("id", leadId\)[\s\S]*?\.eq\("org_id", orgId\)/);
+    expect(helper).toMatch(/from\("jobs"\)[\s\S]*?\.eq\("id", jobId\)[\s\S]*?\.eq\("org_id", orgId\)/);
+    expect(helper).toMatch(/if \(error\) throw readFailure/);
+  });
+
+  it("quotes/actions.ts calls verifyQuoteReferences on BOTH create and update", () => {
+    const src = read("app/(app)/quotes/actions.ts");
+    expect(src).toMatch(/from "@\/lib\/crm\/reference-integrity"/);
+    const calls = src.match(/verifyQuoteReferences\(/g) ?? [];
+    // create + update = at least two call sites.
+    expect(calls.length, "createQuote + updateQuote must both re-check").toBeGreaterThanOrEqual(2);
+    // Reacts to a rejection (never ignores it).
+    expect(src).toMatch(/if \(!refs\.ok\) return formError\(refs\.message/);
+  });
+});
+
 describe("cross-org reference injection · the schema is not the guard", () => {
   // A regression that tried to "fix" this by tightening the Zod schema alone
   // would be false comfort — Zod cannot know org membership. This documents that

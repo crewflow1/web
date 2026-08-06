@@ -78,8 +78,8 @@ const ALLOWLIST: Record<string, string> = {
   // truncate. It trips solely as a region artifact: the AFTER window bleeds into
   // the adjacent, fully-bounded `leads` `.select('status')…maybeSingle()`, whose
   // `.maybeSingle()`/`.eq('id')` bound markers fall just past the 1100-char cap.
-  "app/(app)/quotes/actions.ts:178":
-    "not a read: `.from('quote_line_items').insert(rows)` — flagged only because the region bleeds into an adjacent bounded leads .select whose bound falls outside the window",
+  "app/(app)/quotes/actions.ts:192":
+    "not a read: `.from('quote_line_items').insert(rows)` — flagged only because the region bleeds into an adjacent bounded leads .select whose bound falls outside the window. (Line moved 178→192 when verifyQuoteReferences was added to createQuote in 20261113000000.)",
 };
 
 function walk(dir: string, out: string[]): void {

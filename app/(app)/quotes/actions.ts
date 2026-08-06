@@ -16,6 +16,7 @@ import { computeTotals } from "@/lib/quotes/totals";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { loadJobForOrg } from "@/lib/jobs/load";
+import { verifyQuoteReferences } from "@/lib/crm/reference-integrity";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import type { Database } from "@/lib/supabase/types";
 import {
@@ -112,6 +113,19 @@ export async function createQuote(
   if (!parsed.success) return quoteValidationFailure(parsed, formData);
 
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity (defence in depth over the DB composite FKs
+  // from 20261113000000): a caller must not attach another org's customer,
+  // property or lead. Verified BEFORE the insert so a forged reference is a clean
+  // field-level validation error rather than a raw 23503 surfacing as a 500 —
+  // and, critically, so a foreign customer_id never reaches the row that renders
+  // on the PUBLIC /q/[token] portal (name + email).
+  const refs = await verifyQuoteReferences(supabase, ctx.org.id, {
+    customerId: parsed.data.customer_id,
+    propertyId: parsed.data.property_id ?? null,
+    leadId: parsed.data.lead_id ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, echoValuesFromForm(formData));
 
   // Allocate next per-org quote number via SECURITY DEFINER RPC.
   const { data: numberRpc, error: numErr } = await supabase.rpc(
@@ -282,6 +296,16 @@ export async function updateQuote(
     existing?.status === "approved" ||
     existing?.status === "sent" ||
     existing?.status === "viewed";
+
+  // Cross-tenant reference integrity — see createQuote. Verified before the
+  // write so a forged customer_id / property_id / lead_id is a clean validation
+  // error, not a 500, and never lands on a public-portal-rendered row.
+  const refs = await verifyQuoteReferences(supabase, ctx.org.id, {
+    customerId: parsed.data.customer_id,
+    propertyId: parsed.data.property_id ?? null,
+    leadId: parsed.data.lead_id ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, echoValuesFromForm(formData));
 
   // Update parent row.
   const { error: qErr } = await supabase
