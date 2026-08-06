@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobBilling, type BillingStageView } from "@/server/services/billing";
 import { formatGbp } from "@/lib/money";
+import { StatTile } from "@/components/ui/stat-tile";
 import type { StageStatus } from "@/lib/billing/types";
 import {
   createBillingPlan,
@@ -27,16 +28,6 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   paid: "Paid",
   overdue: "Overdue",
 };
-
-function Stat({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-1 text-xl font-bold ${accent ?? "text-slate-900"}`}>{value}</p>
-      {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
-    </div>
-  );
-}
 
 export default async function JobBillingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: jobId } = await params;
@@ -67,27 +58,27 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
 
       {/* ── Get Paid summary ─────────────────────────────────────────── */}
       <section aria-label="Money summary" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Contract (ex-VAT)" value={formatGbp(s.contractNet)} hint={s.hasPlan ? `${formatGbp(s.scheduledNet)} scheduled` : "no plan yet"} />
-        <Stat label="Billed to date" value={formatGbp(s.billed)} hint={`${formatGbp(s.stillToBill)} still to bill`} />
-        <Stat label="Received" value={formatGbp(s.received)} accent="text-green-700" />
-        <Stat label="Collectable now" value={formatGbp(s.collectableNow)} accent="text-slate-900" hint={s.retentionWithheldFromCollectable > 0 ? `${formatGbp(s.retentionWithheldFromCollectable)} retention still withheld` : undefined} />
+        <StatTile label="Contract (ex-VAT)" value={formatGbp(s.contractNet)} hint={s.hasPlan ? `${formatGbp(s.scheduledNet)} scheduled` : "no plan yet"} />
+        <StatTile label="Billed to date" value={formatGbp(s.billed)} hint={`${formatGbp(s.stillToBill)} still to bill`} />
+        <StatTile label="Received" value={formatGbp(s.received)} tone="emerald" />
+        <StatTile label="Collectable now" value={formatGbp(s.collectableNow)} tone="slate" hint={s.retentionWithheldFromCollectable > 0 ? `${formatGbp(s.retentionWithheldFromCollectable)} retention still withheld` : undefined} />
       </section>
       {(s.outstanding > 0 || s.overdue > 0) ? (
         <section aria-label="Debtor detail" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="Outstanding (gross)" value={formatGbp(s.outstanding)} />
-          <Stat label="Overdue" value={formatGbp(s.overdue)} accent={s.overdue > 0 ? "text-red-700" : undefined} />
-          <Stat label="Retention held" value={formatGbp(s.retentionHeld)} hint="due back later, not overdue" />
-          <Stat label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} hint="contract, no stage & no invoice" />
+          <StatTile label="Outstanding (gross)" value={formatGbp(s.outstanding)} />
+          <StatTile label="Overdue" value={formatGbp(s.overdue)} tone={s.overdue > 0 ? "red" : undefined} />
+          <StatTile label="Retention held" value={formatGbp(s.retentionHeld)} hint="due back later, not overdue" />
+          <StatTile label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} hint="contract, no stage & no invoice" />
         </section>
       ) : null}
 
       {/* ── Cash outlook (M3) — honest due vs planned vs unscheduled ────── */}
       {(b.forecast.overdue > 0 || b.forecast.due.next7 + b.forecast.due.next30 + b.forecast.due.later > 0 || b.forecast.plannedTotal > 0 || b.forecast.unscheduled > 0) ? (
         <section aria-label="Cash outlook" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="Due — next 7 days" value={formatGbp(b.forecast.due.next7)} hint="invoiced &amp; due" />
-          <Stat label="Due — next 30 days" value={formatGbp(b.forecast.due.next7 + b.forecast.due.next30)} hint="invoiced &amp; due" />
-          <Stat label="Planned billing" value={formatGbp(b.forecast.plannedCapped)} hint="agreed stages, not yet invoiced" />
-          <Stat label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} accent={b.forecast.unscheduled > 0 ? "text-amber-700" : undefined} hint="no stage, no invoice" />
+          <StatTile label="Due — next 7 days" value={formatGbp(b.forecast.due.next7)} hint="invoiced &amp; due" />
+          <StatTile label="Due — next 30 days" value={formatGbp(b.forecast.due.next7 + b.forecast.due.next30)} hint="invoiced &amp; due" />
+          <StatTile label="Planned billing" value={formatGbp(b.forecast.plannedCapped)} hint="agreed stages, not yet invoiced" />
+          <StatTile label="Unscheduled" value={formatGbp(b.forecast.unscheduled)} tone={b.forecast.unscheduled > 0 ? "amber" : undefined} hint="no stage, no invoice" />
         </section>
       ) : null}
 
