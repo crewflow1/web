@@ -3,6 +3,11 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import type { Database } from "@/lib/supabase/types";
+import { verifyAssigneeInOrg } from "@/lib/crm/reference-integrity";
+import {
+  bestEffortPushJob,
+  bestEffortDeleteJobEvent,
+} from "@/server/services/calendar-connections";
 
 type JobUpdate = Database["public"]["Tables"]["jobs"]["Update"];
 
@@ -75,6 +80,19 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   }
 
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity (defence in depth over the membership
+  // trigger from 20261112000000): a reassignment must not attach a user who is
+  // not a member of the caller's active org. Rejected with a clean 400 rather
+  // than surfacing a raw trigger exception as a 500. (This endpoint never sets
+  // customer_id, so only assigned_to is checked.)
+  if (parsed.data.assigned_to) {
+    const check = await verifyAssigneeInOrg(supabase, parsed.data.assigned_to, ctx.org.id);
+    if (!check.ok) {
+      return NextResponse.json({ error: check.message }, { status: 400 });
+    }
+  }
+
   const { error, count } = await supabase
     .from("jobs")
     .update(patch, { count: "exact" })
@@ -94,5 +112,20 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
       { status: 403 },
     );
   }
+
+  // Keep the external calendar event in sync, mirroring updateJob. A grid-drag
+  // reschedule that changes scheduled_date must move (or, when cleared, delete)
+  // the event so it does not strand on the old day once calendar OAuth activates.
+  // Both composers are DARK no-ops today (gated on calendarConnectFeatureEnabled)
+  // — no DB read, no network — so this is safe to ship immediately. An
+  // assigned_to-only patch touches no date and needs no calendar call.
+  if (parsed.data.scheduled_date !== undefined) {
+    if (parsed.data.scheduled_date === null) {
+      await bestEffortDeleteJobEvent(ctx.org.id, id);
+    } else {
+      await bestEffortPushJob(ctx.org.id, id);
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }

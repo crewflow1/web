@@ -16,6 +16,7 @@ import {
   bestEffortDeleteJobEvent,
 } from "@/server/services/calendar-connections";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
+import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
 
 /**
  * Job CRUD server actions.
@@ -52,6 +53,17 @@ export async function createJob(
   if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity (defence in depth over the DB composite FK
+  // + membership trigger from 20261112000000): a caller must not attach another
+  // org's customer or a non-member as the assignee. Rejected with a clean
+  // validation error rather than surfacing a raw FK/trigger failure as a 500.
+  const refs = await verifyCrmReferences(supabase, ctx.org.id, {
+    customerId: result.data.customer_id ?? null,
+    assignedTo: result.data.assigned_to ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, result.data as JobValues);
+
   const recurring = buildRecurring(
     result.data.recurring_pattern,
     result.data.recurring_end_date,
@@ -106,6 +118,15 @@ export async function updateJob(
   if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
+
+  // Cross-tenant reference integrity — see createJob. Verified before the write
+  // so a forged customer_id / assigned_to is a clean validation error, not a 500.
+  const refs = await verifyCrmReferences(supabase, ctx.org.id, {
+    customerId: result.data.customer_id ?? null,
+    assignedTo: result.data.assigned_to ?? null,
+  });
+  if (!refs.ok) return formError(refs.message, result.data as JobValues);
+
   const recurring = buildRecurring(
     result.data.recurring_pattern,
     result.data.recurring_end_date,

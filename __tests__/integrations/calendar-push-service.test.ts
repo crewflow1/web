@@ -418,4 +418,34 @@ describe("delete/clear wiring (source) — the composer is invoked at the call s
       /bestEffortDeleteRotaEvent\(ctx\.org\.id, entryId\)[\s\S]*?\.from\("rota_entries"\)[\s\S]*?\.delete\(/,
     );
   });
+
+  // ── The calendar drag-drop reschedule endpoint (GAP 2) ────────────────────
+  // app/(app)/jobs/calendar/_calendar.tsx PUTs to this endpoint on every grid
+  // drag. Before the fix it did a bare jobs.update() and called NEITHER composer,
+  // so once calendar OAuth activates a grid-drag reschedule would strand the
+  // external event on the old day. It must now mirror updateJob.
+  it("the reschedule endpoint imports both calendar composers", () => {
+    const src = read("app/api/schedule/[id]/route.ts");
+    expect(src).toMatch(
+      /import \{[\s\S]*?bestEffortPushJob[\s\S]*?bestEffortDeleteJobEvent[\s\S]*?\} from "@\/server\/services\/calendar-connections"/,
+    );
+  });
+
+  it("the reschedule endpoint PUSHes on a non-null scheduled_date and DELETEs when cleared", () => {
+    const src = read("app/api/schedule/[id]/route.ts");
+    // Only when the patch actually carries a scheduled_date (a reassign-only
+    // patch touches no date), branch: null → delete the event, else → push.
+    expect(src).toMatch(
+      /scheduled_date !== undefined[\s\S]*?scheduled_date === null[\s\S]*?bestEffortDeleteJobEvent\(ctx\.org\.id, id\)[\s\S]*?\} else \{[\s\S]*?bestEffortPushJob\(ctx\.org\.id, id\)/,
+    );
+  });
+
+  it("the reschedule endpoint syncs the calendar only AFTER a successful update (count>0)", () => {
+    const src = read("app/api/schedule/[id]/route.ts");
+    // The calendar calls must sit after the count===0 (403) guard, so a denied
+    // or failed update never touches the external calendar.
+    expect(src).toMatch(
+      /if \(count === 0\)[\s\S]*?403[\s\S]*?\}[\s\S]*?bestEffortPushJob\(ctx\.org\.id, id\)/,
+    );
+  });
 });

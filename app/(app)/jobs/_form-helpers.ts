@@ -12,11 +12,17 @@ import { readFailure } from "@/lib/supabase/read-failure";
  * on the strength of "they fetch under the user JWT so RLS does the org
  * scoping for us". That is wrong for a user who belongs to more than one
  * organisation: RLS's `current_org_ids()` returns EVERY org the viewer belongs
- * to, so the dropdowns blended both orgs together. Because `jobs.customer_id`
- * and `jobs.assigned_to` have no cross-org guard at the database level (no
- * CHECK, no trigger — verified against the live schema), picking one of those
- * blended rows wrote another org's customer or staff member onto a job in the
- * active org. So this was a read defect that fed a write defect.
+ * to, so the dropdowns blended both orgs together.
+ *
+ * The WRITE path is now guarded independently at BOTH layers (migration
+ * 20261112000000): `jobs.customer_id` / `leads.customer_id` carry a composite
+ * FK to customers(id, org_id), and `assigned_to` is gated by an org-membership
+ * trigger — so even a forged form submission cannot write another org's
+ * customer or a non-member as assignee. The server actions and the calendar
+ * reschedule endpoint additionally re-check both references before the write
+ * (lib/crm/reference-integrity) to return clean validation errors. Scoping
+ * these dropdowns to the active org remains the right thing so the UI never
+ * OFFERS a foreign-org option in the first place.
  *
  * Callers pass the active org explicitly (`ctx.org.id`) so the scope is
  * visible at the call site and cannot be silently dropped.
