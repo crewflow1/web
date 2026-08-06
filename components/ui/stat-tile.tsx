@@ -57,7 +57,7 @@ export function StatTile({
       </p>
       <p
         className={cn(
-          "mt-1 text-xl font-bold tabular-nums sm:text-2xl",
+          "mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl",
           toneClass(t, "value"),
         )}
       >
