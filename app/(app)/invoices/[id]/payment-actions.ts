@@ -175,10 +175,14 @@ export async function removeInvoicePayment(paymentId: string) {
   if (!row) redirect("/invoices?error=not_found");
   if (row.org_id !== ctx.org.id) redirect("/invoices?error=forbidden");
 
+  // Belt-and-braces: the row above is already org-compared (row.org_id !==
+  // ctx.org.id → forbidden), but pin the DELETE itself to the active org too so
+  // the destructive statement is self-scoping and cannot drift from the check.
   const { error } = await supabase
     .from("invoice_payments")
     .delete()
-    .eq("id", paymentId);
+    .eq("id", paymentId)
+    .eq("org_id", ctx.org.id);
   if (error) {
     console.error("[invoice-payment] remove failed", error);
     redirect(`/invoices/${row.invoice_id}?error=remove_failed`);

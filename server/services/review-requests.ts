@@ -80,12 +80,16 @@ export async function createReviewRequest(
 export async function markReviewCompleted(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const tenant = await createClient();
+  // ACTIVE-org pin: review_requests' RLS is org_id in current_org_ids(), which
+  // admits every org the caller belongs to. Mirrors reviews/actions.ts, which
+  // pins .eq("org_id", ctx.org.id) on every by-id write.
   const { error } = await tenant
     .from("review_requests" as never)
     .update({ status: "completed", completed_at: new Date().toISOString() } as never)
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: error.message };
   await recordAdminActivity({
     actorId: user.id,
@@ -101,12 +105,14 @@ export async function markReviewCompleted(
 export async function cancelReviewRequest(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const tenant = await createClient();
+  // ACTIVE-org pin (see markReviewCompleted).
   const { error } = await tenant
     .from("review_requests" as never)
     .update({ status: "cancelled" } as never)
-    .eq("id", id);
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
   if (error) return { ok: false, error: error.message };
   await recordAdminActivity({
     actorId: user.id,

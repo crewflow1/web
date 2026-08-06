@@ -20,13 +20,22 @@ function isManager(role: string): boolean {
 function num(v: FormDataEntryValue | null): number {
   return round2(toPounds(typeof v === "string" ? v : 0));
 }
+// Chainable `.eq()` so a by-id write can ALSO carry the active-org pin
+// (`.eq("id", …).eq("org_id", ctx.org.id)`) and a read can pin both id/plan_id
+// AND org_id in one statement.
+type LooseWrite = PromiseLike<{ error: unknown }> & {
+  eq: (k: string, val: unknown) => LooseWrite;
+};
+type LooseRead = PromiseLike<{ data: Array<Record<string, unknown>> | null }> & {
+  eq: (k: string, val: unknown) => LooseRead;
+};
 const looseFrom = (c: unknown) =>
   c as unknown as {
     from: (t: string) => {
       insert: (r: Record<string, unknown>) => { select: (c: string) => { single: () => Promise<{ data: { id: string } | null; error: unknown }> } };
-      update: (v: Record<string, unknown>) => { eq: (k: string, val: unknown) => Promise<{ error: unknown }> };
-      delete: () => { eq: (k: string, val: unknown) => Promise<{ error: unknown }> };
-      select: (c: string) => { eq: (k: string, val: unknown) => Promise<{ data: Array<Record<string, unknown>> | null }> };
+      update: (v: Record<string, unknown>) => LooseWrite;
+      delete: () => LooseWrite;
+      select: (c: string) => LooseRead;
     };
     rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
   };
@@ -64,9 +73,12 @@ export async function addBillingStage(formData: FormData): Promise<void> {
   // Resolve the net amount: fixed → given; percent → % of the plan basis;
   // balance → the contract remainder (basis − Σ existing). The DB Σ≤basis guard
   // is the backstop; this keeps the stored amount correct + predictable.
-  const planRows = (await db.from("job_billing_plans").select("basis_amount").eq("id", planId)).data ?? [];
+  // Pin BOTH reads to the active org: job_billing_plans/_stages RLS admits every
+  // org the caller belongs to, so an unpinned read of a dual-org member's other
+  // plan would feed the wrong basis/existing sum into the amount resolution.
+  const planRows = (await db.from("job_billing_plans").select("basis_amount").eq("id", planId).eq("org_id", ctx.org.id)).data ?? [];
   const planBasis = round2(toPounds(planRows[0]?.basis_amount as number | string | null));
-  const existing = (await db.from("job_billing_stages").select("amount, sequence").eq("plan_id", planId)).data ?? [];
+  const existing = (await db.from("job_billing_stages").select("amount, sequence").eq("plan_id", planId).eq("org_id", ctx.org.id)).data ?? [];
   const existingSum = existing.reduce((acc, s) => round2(acc + toPounds(s.amount as number | string | null)), 0);
   const nextSeq = existing.reduce((mx, s) => Math.max(mx, Number(s.sequence ?? 0) + 1), 0);
 
@@ -106,6 +118,12 @@ export async function generateStageInvoice(formData: FormData): Promise<void> {
   const stageId = String(formData.get("stage_id") ?? "");
   if (!stageId) return;
   const db = looseFrom(await createClient());
+  // The RPC (SECURITY DEFINER) gates on is_org_admin(v_stage.org_id), which a
+  // dual-org admin satisfies for BOTH orgs — it does not pin the ACTIVE org.
+  // Assert the stage belongs to ctx.org.id here (a foreign/absent id → clean
+  // no-op) so a member working in org A can't trigger invoicing on org B's stage.
+  const stageRows = (await db.from("job_billing_stages").select("id").eq("id", stageId).eq("org_id", ctx.org.id)).data ?? [];
+  if (stageRows.length === 0) return;
   await db.rpc("generate_stage_invoice", { p_stage_id: stageId, p_due_date: null });
   revalidatePath(`/jobs/${jobId}/billing`);
 }
@@ -119,9 +137,12 @@ export async function deleteBillingStage(formData: FormData): Promise<void> {
   if (!stageId) return;
   const db = looseFrom(await createClient());
   // Only delete a stage that hasn't been invoiced (keep the billed record).
-  const rows = (await db.from("job_billing_stages").select("invoice_id").eq("id", stageId)).data ?? [];
-  if (rows[0]?.invoice_id) return;
-  await db.from("job_billing_stages").delete().eq("id", stageId);
+  // Both the read and the DELETE are pinned to the active org: the stages RLS
+  // spans every org the caller belongs to, so without the pin a dual-org member
+  // in org A could delete org B's stage.
+  const rows = (await db.from("job_billing_stages").select("invoice_id").eq("id", stageId).eq("org_id", ctx.org.id)).data ?? [];
+  if (rows.length === 0 || rows[0]?.invoice_id) return;
+  await db.from("job_billing_stages").delete().eq("id", stageId).eq("org_id", ctx.org.id);
   revalidatePath(`/jobs/${jobId}/billing`);
 }
 
@@ -133,6 +154,8 @@ export async function cancelBillingPlan(formData: FormData): Promise<void> {
   const planId = String(formData.get("plan_id") ?? "");
   if (!planId) return;
   const db = looseFrom(await createClient());
-  await db.from("job_billing_plans").update({ status: "cancelled" }).eq("id", planId);
+  // Pin the active org: cancelling frees the job for a fresh plan, so an
+  // unpinned by-id UPDATE would let a dual-org member cancel the other org's plan.
+  await db.from("job_billing_plans").update({ status: "cancelled" }).eq("id", planId).eq("org_id", ctx.org.id);
   revalidatePath(`/jobs/${jobId}/billing`);
 }
