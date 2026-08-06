@@ -68,9 +68,12 @@ test.describe("insights company-health — long names + 7-figure money at 375px 
     }
 
     // A PAID 7-figure invoice (ex-VAT amount = £5,000,000.00) attributed to the
-    // long-named customer. `paid` makes it the LTV "Realised" value, so the
-    // customer appears as a top-8 row with a 7-figure figure beside a long name —
-    // the combination that used to stretch the table past 375px.
+    // long-named customer. `paid` makes it the LTV "Realised" value — which the
+    // panel sums from `invoices.amount` (ex-VAT) — so the customer appears as a
+    // top-8 row with a 7-figure figure beside a long name, the combination that
+    // used to stretch the table past 375px. `total` is a GENERATED column
+    // (amount + vat_total, per 20260515190000_invoices.sql) so it is NEVER
+    // inserted — the DB computes it (mirrors briefing-cash / cash-owner seeds).
     const nowIso = new Date().toISOString();
     const inv = await db.from("invoices").insert({
       org_id: orgId,
@@ -78,7 +81,6 @@ test.describe("insights company-health — long names + 7-figure money at 375px 
       number: INV_NUMBER,
       amount: 5_000_000,
       vat_total: 1_000_000,
-      total: 6_000_000,
       status: "paid",
       paid_at: nowIso,
       due_date: nowIso.slice(0, 10),
