@@ -127,14 +127,21 @@ export async function revenuePerMonth(
   since.setUTCDate(1);
   since.setUTCHours(0, 0, 0, 0);
 
+  // Revenue is EX-VAT. `invoices.amount` is the net subtotal; `invoices.total` is
+  // a stored generated column = amount + vat_total (GROSS — it includes the VAT
+  // collected on HMRC's behalf, which is never the business's turnover). Summing
+  // `total` overstated revenue by the VAT rate (~20%) and disagreed with
+  // /insights and /dashboard, which both report ex-VAT `amount`
+  // (lib/intelligence/concentration.ts documents the rule). Select and sum
+  // `amount`, never `total`.
   const { data, error } = await fetchAllRows<{
     paid_at: string | null;
-    total: number | null;
+    amount: number | null;
     status: string | null;
   }>((from, to) =>
     supabase
       .from("invoices")
-      .select("id, paid_at, total, status")
+      .select("id, paid_at, amount, status")
       .eq("org_id", orgId)
       .eq("status", "paid")
       .gte("paid_at", since.toISOString())
@@ -157,7 +164,7 @@ export async function revenuePerMonth(
     const key = isoDate(startOfMonth(new Date(inv.paid_at)));
     const slot = buckets.get(key);
     if (!slot) continue;
-    slot.revenue += Number(inv.total ?? 0);
+    slot.revenue += Number(inv.amount ?? 0); // ex-VAT, never gross `total`
   }
   return Array.from(buckets.values());
 }
@@ -269,16 +276,19 @@ export async function topCustomersByRevenue(
   //     concentration surface.
   const [invRes, custRes] = await Promise.all([
     fetchAllRows<{
-      total: number | null;
+      amount: number | null;
       status: string | null;
       customer_id: string | null;
       quote: { customer: { id: string; name: string | null } | null } | null;
     }>((from, to) =>
       supabase
         .from("invoices")
+        // Revenue is EX-VAT: select `amount` (net subtotal), never the generated
+        // GROSS `total` (= amount + vat_total). Summing `total` overstated every
+        // customer's revenue by the VAT rate and disagreed with /insights.
         .select(
           `
-          id, total, status, customer_id,
+          id, amount, status, customer_id,
           quote:quotes (
             customer:customers ( id, name )
           )
@@ -323,7 +333,7 @@ export async function topCustomersByRevenue(
       name = UNATTRIBUTED_CUSTOMER_LABEL;
     }
     const prev = byCustomer.get(id) ?? { id, name, revenue: 0, invoice_count: 0 };
-    prev.revenue += Number(inv.total ?? 0);
+    prev.revenue += Number(inv.amount ?? 0); // ex-VAT, never gross `total`
     prev.invoice_count++;
     byCustomer.set(id, prev);
   }
