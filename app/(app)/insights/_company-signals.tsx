@@ -105,7 +105,7 @@ function SignalCard({
   provenance: SignalProvenance;
 }) {
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
         <KindBadge kind={kind} />
@@ -247,7 +247,7 @@ function UtilisationCard({ view }: { view: CompanySignalsView }) {
               .slice(0, 5)
               .map((m) => (
                 <li key={m.userId} className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="truncate text-slate-700">{m.name ?? "Unnamed member"}</span>
+                  <span className="min-w-0 truncate text-slate-700">{m.name ?? "Unnamed member"}</span>
                   <span className="shrink-0 tabular-nums text-slate-500">
                     {m.recordedHours}h of {m.rosteredHours}h
                     {m.coverage.pct != null ? ` (${m.coverage.pct}%)` : ""}
@@ -288,7 +288,7 @@ function ConcentrationCard({ view }: { view: CompanySignalsView }) {
           <ul className="mt-3 space-y-1">
             {c.top.map((s) => (
               <li key={s.customerId ?? "unattributed"} className="flex items-baseline justify-between gap-2 text-sm">
-                <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                <Link href={s.href} className="min-w-0 truncate text-slate-700 hover:underline">
                   {s.name}
                 </Link>
                 <span className="shrink-0 tabular-nums text-slate-500">
@@ -344,7 +344,7 @@ function ProgressCard({ view }: { view: CompanySignalsView }) {
             <ul className="mt-3 space-y-1">
               {rollup.stalled.slice(0, 5).map((j) => (
                 <li key={j.jobId} className="flex items-baseline justify-between gap-2 text-sm">
-                  <Link href={j.href} className="truncate text-slate-700 hover:underline">
+                  <Link href={j.href} className="min-w-0 truncate text-slate-700 hover:underline">
                     {j.label ?? "Job"}
                   </Link>
                   <span className="shrink-0 tabular-nums text-slate-500">
@@ -363,7 +363,7 @@ function ProgressCard({ view }: { view: CompanySignalsView }) {
               <ul className="mt-1 space-y-1">
                 {rollup.regressing.slice(0, 5).map((j) => (
                   <li key={j.jobId} className="flex items-baseline justify-between gap-2 text-sm">
-                    <Link href={j.href} className="truncate text-slate-700 hover:underline">
+                    <Link href={j.href} className="min-w-0 truncate text-slate-700 hover:underline">
                       {j.label ?? "Job"}
                     </Link>
                     <span className="shrink-0 tabular-nums text-slate-500">
@@ -434,7 +434,7 @@ function ProgrammeVarianceCard({ view }: { view: CompanySignalsView }) {
             <ul className="mt-3 space-y-1">
               {rollup.behindBaseline.slice(0, 5).map((j) => (
                 <li key={j.jobId} className="flex items-baseline justify-between gap-2 text-sm">
-                  <Link href={j.href} className="truncate text-slate-700 hover:underline">
+                  <Link href={j.href} className="min-w-0 truncate text-slate-700 hover:underline">
                     {j.label ?? "Job"}
                   </Link>
                   <span className="shrink-0 tabular-nums text-slate-500">
@@ -554,7 +554,7 @@ function CvrCard({ view }: { view: CompanySignalsView }) {
                   .slice(0, 5)
                   .map((l) => (
                     <li key={l.jobId} className="flex items-baseline justify-between gap-2 text-sm">
-                      <Link href={l.href} className="truncate text-slate-700 hover:underline">
+                      <Link href={l.href} className="min-w-0 truncate text-slate-700 hover:underline">
                         <span className="mr-1 font-medium uppercase text-slate-500">
                           [{l.band === "red" ? "Over" : "Tight"}]
                         </span>
@@ -607,7 +607,7 @@ function MaterialsCard({ view }: { view: CompanySignalsView }) {
               .slice(0, 6)
               .map((i) => (
                 <li key={i.key} className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="truncate text-slate-700">{i.label}</span>
+                  <span className="min-w-0 truncate text-slate-700">{i.label}</span>
                   <span className="shrink-0 tabular-nums text-slate-500">
                     {formatMaterialQty(i.outstanding)} {i.unit} of {formatMaterialQty(i.requested)}{" "}
                     {i.unit}
@@ -651,7 +651,7 @@ function SnagsCard({ view }: { view: CompanySignalsView }) {
               <ul className="mt-1 space-y-1">
                 {p.byTrade.slice(0, 4).map((g) => (
                   <li key={g.key || "no-trade"} className="flex items-baseline justify-between gap-2 text-sm">
-                    <span className="truncate text-slate-700">{g.label}</span>
+                    <span className="min-w-0 truncate text-slate-700">{g.label}</span>
                     <span className="shrink-0 tabular-nums text-slate-500">
                       {g.open} open / {g.total}
                     </span>
@@ -665,11 +665,11 @@ function SnagsCard({ view }: { view: CompanySignalsView }) {
                 {p.byJob.slice(0, 4).map((g) => (
                   <li key={g.key || "no-job"} className="flex items-baseline justify-between gap-2 text-sm">
                     {g.href ? (
-                      <Link href={g.href} className="truncate text-slate-700 hover:underline">
+                      <Link href={g.href} className="min-w-0 truncate text-slate-700 hover:underline">
                         {g.label}
                       </Link>
                     ) : (
-                      <span className="truncate text-slate-700">{g.label}</span>
+                      <span className="min-w-0 truncate text-slate-700">{g.label}</span>
                     )}
                     <span className="shrink-0 tabular-nums text-slate-500">
                       {g.open} open / {g.total}
@@ -744,7 +744,7 @@ function SupplierPerformanceCard({ view }: { view: CompanySignalsView }) {
                       key={s.supplierId}
                       className="flex items-baseline justify-between gap-2 text-sm"
                     >
-                      <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                      <Link href={s.href} className="min-w-0 truncate text-slate-700 hover:underline">
                         {s.supplierName || "Unnamed supplier"}
                       </Link>
                       <span className="shrink-0 tabular-nums text-slate-500">
@@ -770,7 +770,7 @@ function SupplierPerformanceCard({ view }: { view: CompanySignalsView }) {
                       key={s.supplierId}
                       className="flex items-baseline justify-between gap-2 text-sm"
                     >
-                      <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                      <Link href={s.href} className="min-w-0 truncate text-slate-700 hover:underline">
                         {s.supplierName || "Unnamed supplier"}
                       </Link>
                       <span className="shrink-0 tabular-nums text-slate-500">
@@ -799,7 +799,7 @@ function SupplierPerformanceCard({ view }: { view: CompanySignalsView }) {
                     key={`ob-${s.supplierId}`}
                     className="flex items-baseline justify-between gap-2 text-sm"
                   >
-                    <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                    <Link href={s.href} className="min-w-0 truncate text-slate-700 hover:underline">
                       <span className="mr-1 font-medium uppercase text-slate-500">
                         [Over-invoiced]
                       </span>
@@ -815,7 +815,7 @@ function SupplierPerformanceCard({ view }: { view: CompanySignalsView }) {
                     key={`ss-${s.supplierId}`}
                     className="flex items-baseline justify-between gap-2 text-sm"
                   >
-                    <Link href={s.href} className="truncate text-slate-700 hover:underline">
+                    <Link href={s.href} className="min-w-0 truncate text-slate-700 hover:underline">
                       <span className="mr-1 font-medium uppercase text-slate-500">
                         [We settle slowly]
                       </span>
