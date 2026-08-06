@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { safeWebhookFetch } from "@/lib/webhooks/ssrf";
+import { safeWebhookFetch, WEBHOOK_FETCH_TIMEOUT_MS } from "@/lib/webhooks/ssrf";
 import {
   DELIVERY_ID_HEADER,
   SIGNATURE_HEADER,
@@ -35,7 +35,21 @@ export const FAILURE_THRESHOLD = 5;
 /** Cap on a single backoff delay (~6h). */
 const MAX_BACKOFF_MINUTES = 360;
 /** How many deliveries a single pass claims. */
-const CLAIM_BATCH = 50;
+const CLAIM_BATCH = 25;
+/**
+ * Wall-clock budget for a single delivery pass.
+ *
+ * The cron that drives this pass has maxDuration=60s (app/api/cron/webhook-dispatch).
+ * Each POST is SSRF-vetted with a hard WEBHOOK_FETCH_TIMEOUT_MS ceiling, and the
+ * pass delivers sequentially, so an unbounded CLAIM_BATCH of slow endpoints could
+ * run for CLAIM_BATCH * WEBHOOK_FETCH_TIMEOUT_MS and be KILLED by the function
+ * limit mid-flight — self-stranding every row it had already claimed in
+ * 'delivering'. This budget is the guard: the loop starts no delivery that could
+ * push it past the budget, leaving headroom under maxDuration for the fan-out pass
+ * and teardown. Any un-started claims stay 'delivering' and are safely re-claimed
+ * by webhook_claim_deliveries after the lease cutoff (migration 20261115000000).
+ */
+export const PASS_BUDGET_MS = 45_000;
 
 /**
  * The retry delay, in minutes, before the given attempt number is tried.
@@ -186,6 +200,7 @@ async function deliverOne(d: ClaimedDelivery): Promise<"delivered" | "retried" |
 /** Claim + deliver a batch of due webhook deliveries. */
 export async function runDeliveryPass(limit = CLAIM_BATCH): Promise<DeliveryPassSummary> {
   try {
+    const startedAt = Date.now();
     const claimed = await claimDeliveries(limit);
     const summary: DeliveryPassSummary = {
       ok: true,
@@ -194,8 +209,13 @@ export async function runDeliveryPass(limit = CLAIM_BATCH): Promise<DeliveryPass
       retried: 0,
       dead: 0,
     };
-    // Sequential: each POST is SSRF-vetted + up to 10s, and the batch is bounded.
+    // Sequential: each POST is SSRF-vetted + up to WEBHOOK_FETCH_TIMEOUT_MS. Stop
+    // before starting any delivery that could overrun the pass budget — a delivery
+    // started here is guaranteed to finish within PASS_BUDGET_MS, so the pass can
+    // never be killed by the cron's maxDuration and self-strand its own claims.
+    // Rows left un-started stay 'delivering' and are re-claimed after the lease.
     for (const d of claimed) {
+      if (Date.now() - startedAt + WEBHOOK_FETCH_TIMEOUT_MS > PASS_BUDGET_MS) break;
       const outcome = await deliverOne(d);
       summary[outcome] += 1;
     }
