@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 /**
  * REPORTS AGGREGATES — no silent 1000-row truncation (F-1).
@@ -128,21 +130,24 @@ beforeEach(() => {
 describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
   it("revenuePerMonth sums EVERY paid invoice, not just the first 1000", async () => {
     const N = 2500;
-    // Spread across the last ~6 months so all land inside the 12-month window,
-    // each invoice £10 → a correct total of N*£10 across the returned buckets.
+    // Spread across the last ~6 months so all land inside the 12-month window.
+    // Revenue is EX-VAT: each invoice nets £10 (`amount`) with a GROSS `total` of
+    // £12 (amount + vat_total). A correct total is N*£10; if the code regressed to
+    // summing gross `total` it would come up N*£12 and fail.
     h.tables.invoices = Array.from({ length: N }, (_, i) => ({
       id: `inv-${String(i).padStart(6, "0")}`,
       org_id: ORG,
       status: "paid",
-      total: 10,
+      amount: 10,
+      total: 12,
       vat_total: 2,
       paid_at: daysAgoIso((i % 150) + 1),
     }));
     // A same-org UNPAID invoice and a paid invoice in ANOTHER org — neither may
     // be counted; both sit inside the row set the mock would otherwise return.
     h.tables.invoices.push(
-      { id: "inv-unpaid", org_id: ORG, status: "draft", total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
-      { id: "inv-other", org_id: OTHER_ORG, status: "paid", total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
+      { id: "inv-unpaid", org_id: ORG, status: "draft", amount: 999999, total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
+      { id: "inv-other", org_id: OTHER_ORG, status: "paid", amount: 999999, total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
     );
 
     const rows = await revenuePerMonth(ORG, 12);
@@ -182,13 +187,16 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     // invoices are sorted LAST by id, so a single-page read would miss them
     // entirely and drop the customer from the ranking.
     const N = 1500;
+    // Revenue is EX-VAT: `amount` is the net contribution; `total` is gross and
+    // must NOT be summed. Setting total ≠ amount catches a regression to gross.
     h.tables.invoices = Array.from({ length: N }, (_, i) => {
       const second = i >= N / 2;
       return {
         id: `inv-${String(i).padStart(6, "0")}`,
         org_id: ORG,
         status: "paid",
-        total: second ? 20 : 10,
+        amount: second ? 20 : 10,
+        total: second ? 24 : 12,
         quote: {
           customer: { id: second ? "cust-B" : "cust-A", name: second ? "Beta" : "Alpha" },
         },
@@ -219,26 +227,30 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
       // A customer that belongs to ANOTHER org must never leak in as a name.
       { id: "cust-X", org_id: OTHER_ORG, name: "Xenon" },
     ];
+    // Revenue is EX-VAT: `amount` is what the ranking sums; `total` (gross) is set
+    // higher so a regression to summing `total` would break the reconciliation.
     h.tables.invoices = [
       // A: customer_id set, quote deleted (SET NULL) → still counts for Alpha.
-      { id: "inv-a1", org_id: ORG, status: "paid", total: 100, customer_id: "cust-A", quote: null },
-      { id: "inv-a2", org_id: ORG, status: "paid", total: 50, customer_id: "cust-A", quote: null },
+      { id: "inv-a1", org_id: ORG, status: "paid", amount: 100, total: 120, customer_id: "cust-A", quote: null },
+      { id: "inv-a2", org_id: ORG, status: "paid", amount: 50, total: 60, customer_id: "cust-A", quote: null },
       // B: legacy row, no customer_id → resolves via the quote embed fallback.
       {
         id: "inv-b1",
         org_id: ORG,
         status: "paid",
-        total: 30,
+        amount: 30,
+        total: 36,
         customer_id: null,
         quote: { customer: { id: "cust-B", name: "Beta" } },
       },
       // ∅: neither resolvable → Unattributed bucket, not dropped.
-      { id: "inv-z1", org_id: ORG, status: "paid", total: 7, customer_id: null, quote: null },
+      { id: "inv-z1", org_id: ORG, status: "paid", amount: 7, total: 8.4, customer_id: null, quote: null },
       {
         id: "inv-z2",
         org_id: ORG,
         status: "paid",
-        total: 3,
+        amount: 3,
+        total: 3.6,
         customer_id: null,
         quote: { customer: null },
       },
@@ -294,18 +306,104 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
       id: `inv-${String(i).padStart(6, "0")}`,
       org_id: ORG,
       status: "paid",
-      total: 10,
+      amount: 10,
+      total: 12,
       vat_total: 2,
       paid_at: daysAgoIso((i % 150) + 1),
     }));
     // Emulate a world where each response is capped AND the reader only ever
     // takes the first page: force the cap to 1000 and confirm a naive first-page
-    // sum (what the OLD code did) is strictly less than the true total.
+    // sum (what the OLD code did) is strictly less than the true total. Sum the
+    // EX-VAT `amount` the fixed reader uses so the guard tracks the real code.
     const firstPageOnly = h.tables.invoices.slice(0, 1000);
-    const naive = firstPageOnly.reduce((s, r) => s + (r.total as number), 0);
+    const naive = firstPageOnly.reduce((s, r) => s + (r.amount as number), 0);
     const rows = await revenuePerMonth(ORG, 12);
     const paged = rows.reduce((s, r) => s + r.revenue, 0);
     expect(naive).toBeLessThan(paged);
     expect(paged).toBe(N * 10);
+  });
+});
+
+/**
+ * REPORTS REVENUE IS EX-VAT — never the gross generated `total`.
+ *
+ * ── THE DEFECT ───────────────────────────────────────────────────────────────
+ * `invoices.total` is a STORED GENERATED column (= amount + vat_total), so it is
+ * GROSS — it includes the VAT the business collects on HMRC's behalf, which is
+ * never turnover. revenuePerMonth() and topCustomersByRevenue() summed `total`,
+ * overstating /reports revenue (and the CSV export that reuses them) by the VAT
+ * rate (~20%) and disagreeing with /insights + /dashboard, which report the
+ * ex-VAT `amount` (lib/intelligence/concentration.ts documents the rule). The fix
+ * selects and sums `amount`.
+ *
+ * A behavioural assertion (a VAT-bearing invoice contributes its NET) plus a
+ * static source assertion (the reads select `amount`, not `total`) so a future
+ * regression to gross fails CI on both axes.
+ */
+describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
+  it("a VAT-bearing paid invoice contributes its NET amount to revenuePerMonth", async () => {
+    // amount=10, vat_total=2, total=12. Turnover is 10, not 12.
+    h.tables.invoices = [
+      {
+        id: "inv-vat",
+        org_id: ORG,
+        status: "paid",
+        amount: 10,
+        vat_total: 2,
+        total: 12,
+        paid_at: daysAgoIso(5),
+      },
+    ];
+
+    const rows = await revenuePerMonth(ORG, 12);
+    const total = rows.reduce((s, r) => s + r.revenue, 0);
+    expect(total).toBe(10); // ex-VAT — NOT 12
+  });
+
+  it("a VAT-bearing paid invoice contributes its NET amount to topCustomersByRevenue", async () => {
+    h.tables.customers = [{ id: "cust-A", org_id: ORG, name: "Alpha" }];
+    h.tables.invoices = [
+      {
+        id: "inv-vat",
+        org_id: ORG,
+        status: "paid",
+        amount: 10,
+        vat_total: 2,
+        total: 12,
+        customer_id: "cust-A",
+        quote: null,
+      },
+    ];
+
+    const rows = await topCustomersByRevenue(ORG, 10);
+    const alpha = rows.find((r) => r.id === "cust-A");
+    expect(alpha?.revenue).toBe(10); // ex-VAT — NOT 12
+    expect(alpha?.invoice_count).toBe(1);
+  });
+
+  it("SOURCE GUARD: both reads select `amount` and never sum gross `total`", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "lib/reports/aggregates.ts"),
+      "utf8",
+    );
+
+    // Isolate revenuePerMonth() … its terminating brace before vatPerQuarter().
+    const rpmStart = src.indexOf("export async function revenuePerMonth");
+    const rpmEnd = src.indexOf("export async function vatPerQuarter");
+    expect(rpmStart).toBeGreaterThan(-1);
+    expect(rpmEnd).toBeGreaterThan(rpmStart);
+    const rpm = src.slice(rpmStart, rpmEnd);
+    // Selects the ex-VAT column and accumulates it; never accumulates `total`.
+    expect(rpm).toMatch(/select\([^)]*\bamount\b/);
+    expect(rpm).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
+    expect(rpm).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
+
+    // Isolate topCustomersByRevenue() to end-of-file.
+    const tcStart = src.indexOf("export async function topCustomersByRevenue");
+    expect(tcStart).toBeGreaterThan(-1);
+    const tc = src.slice(tcStart);
+    expect(tc).toMatch(/\bamount\b/);
+    expect(tc).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
+    expect(tc).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
   });
 });

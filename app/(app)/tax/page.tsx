@@ -64,6 +64,19 @@ export default async function TaxDashboardPage() {
 
   const quarterStartIso = startOfQuarterIso();
   const yearStartIso = startOfTaxYearIso();
+  // The finances read feeds BOTH computeCorpTaxYear (whole tax year) and
+  // computeVatQuarter (this quarter). The calendar quarter starts 1 April while
+  // the UK tax year starts 6 April, so for the Apr–Jun quarter quarterStart (1
+  // Apr) sits BEFORE yearStart (6 Apr). Flooring the fetch at yearStart would
+  // silently drop finance rows dated 1–5 April that computeVatQuarter counts as
+  // in-quarter — understating input VAT and OVERSTATING net VAT payable, and
+  // contradicting the quarterly PDF + frozen HMRC 9-box return, which both floor
+  // finances at the QUARTER start. Fetch from whichever floor is earlier so both
+  // consumers see their full window. Corporation Tax is unaffected:
+  // computeCorpTaxYear re-gates costs on created_at >= yearStartIso itself, so
+  // the earlier 1–5 April rows never enter the CT profit even though fetched.
+  const financeFloorIso =
+    quarterStartIso < yearStartIso ? quarterStartIso : yearStartIso;
 
   const monthKey = new Date().toISOString().slice(0, 7);
   const [
@@ -105,7 +118,7 @@ export default async function TaxDashboardPage() {
           .from("finances")
           .select("id, vat_total, amount, created_at")
           .eq("org_id", ctx.org.id)
-          .gte("created_at", yearStartIso)
+          .gte("created_at", financeFloorIso)
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),

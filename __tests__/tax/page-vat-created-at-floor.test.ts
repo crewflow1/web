@@ -113,10 +113,29 @@ describe("tax page source: created_at floor stays off the invoices read (guard)"
     expect(invoiceBlock).not.toMatch(/\.gte\(\s*["']created_at["']/);
   });
 
-  it("the finances read KEEPS its tax-year floor (unchanged by this fix)", () => {
+  it("the finances read floors at the EARLIER of quarter/year start (financeFloorIso)", () => {
+    // The finances read feeds BOTH computeCorpTaxYear (tax year) and
+    // computeVatQuarter (this quarter). Because the calendar quarter starts 1
+    // April while the tax year starts 6 April, flooring at yearStartIso silently
+    // dropped 1–5 April finance rows that computeVatQuarter counts as in-quarter
+    // — understating input VAT and disagreeing with the quarterly PDF + HMRC
+    // 9-box return, both of which floor finances at the QUARTER start. The fix
+    // fetches from `financeFloorIso = min(quarterStartIso, yearStartIso)`. This
+    // guard fails if a mismatched (year-only) floor is reintroduced.
     const start = code.indexOf('.from("finances")');
     expect(start).toBeGreaterThan(-1);
     const financeBlock = code.slice(start, code.indexOf(".range(", start));
-    expect(financeBlock).toMatch(/\.gte\(\s*["']created_at["']\s*,\s*yearStartIso\s*\)/);
+    expect(financeBlock).toMatch(/\.gte\(\s*["']created_at["']\s*,\s*financeFloorIso\s*\)/);
+    // And must NOT re-narrow straight to yearStartIso.
+    expect(financeBlock).not.toMatch(/\.gte\(\s*["']created_at["']\s*,\s*yearStartIso\s*\)/);
+  });
+
+  it("financeFloorIso is defined as the earlier of quarter/year start", () => {
+    // The floor itself must be the MIN of the two starts, never hard-coded to
+    // either — otherwise the Apr–Jun quarter re-breaks or a mid-year quarter
+    // over-fetches an extra tax year.
+    expect(code).toMatch(
+      /const\s+financeFloorIso\s*=\s*quarterStartIso\s*<\s*yearStartIso\s*\?\s*quarterStartIso\s*:\s*yearStartIso/,
+    );
   });
 });
