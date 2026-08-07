@@ -66,6 +66,14 @@ export type NormalizedInboundCall = {
   status: CallEventType;
   /** The provider's own id for THIS event, for idempotent redelivery. Nullable. */
   providerEventId: string | null;
+  /**
+   * The call's total duration in whole seconds, when the provider reports it on
+   * a TERMINAL transition (Twilio sends `CallDuration` on the completed status
+   * callback). Undefined when the provider did not supply it (e.g. a non-terminal
+   * transition, or a provider whose completion arrives on a separate report), so
+   * the completion writer leaves an already-captured value untouched.
+   */
+  durationSec?: number;
   /** When the provider says the event occurred. Falls back to receipt time. */
   occurredAt: string;
   /** The untouched provider payload, persisted on the audit row. */

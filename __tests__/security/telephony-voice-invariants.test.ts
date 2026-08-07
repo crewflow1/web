@@ -257,6 +257,41 @@ describe("voice webhook routes are dark-gated + verify-before-parse", () => {
   });
 });
 
+describe("completion enrichment: BOTH terminal provider paths write it (no divergence)", () => {
+  // The defect class this pins: a provider completion-path DIVERGENCE — Vapi's
+  // end-of-call-report enriched the calls row (duration_sec / ended_at / recording)
+  // while Twilio, the DEFAULT live provider, silently discarded it. Every provider
+  // webhook that owns a call's terminal transition MUST reach the single enrichment
+  // writer, so a future provider that skips it is caught here. Source pins over
+  // comment-stripped code so prose can neither satisfy nor trip the assertion.
+  it("the Vapi webhook enriches on its terminal report", () => {
+    const code = codeOf(read(R_VAPI));
+    expect(code).toMatch(/end-of-call-report/);
+    expect(code).toMatch(/updateCallCompletion\(/);
+  });
+
+  it("the Twilio status route enriches on the TERMINAL status, gated + best-effort", () => {
+    const code = codeOf(read(R_STATUS));
+    // It reaches the single enrichment writer…
+    expect(code).toMatch(/updateCallCompletion\(/);
+    // …only on a terminal transition (the shared TERMINAL_CALL_EVENTS set, not an
+    // ad-hoc inline list that could drift from the vocabulary)…
+    expect(code).toMatch(/TERMINAL_CALL_EVENTS/);
+    // …carrying the parsed duration + the terminal timestamp…
+    expect(code).toMatch(/durationSec:\s*call\.durationSec/);
+    expect(code).toMatch(/endedAt:\s*call\.occurredAt/);
+    // …and best-effort: the enrichment is wrapped so a write failure never 500s the
+    // webhook ack (which would make Twilio retry-storm).
+    expect(code).toMatch(/updateCallCompletion[\s\S]*catch\s*\(/);
+  });
+
+  it("the Twilio parser carries CallDuration into the neutral shape", () => {
+    const code = codeOf(read(TW_PROVIDER));
+    expect(code).toMatch(/CallDuration/);
+    expect(code).toMatch(/durationSec/);
+  });
+});
+
 describe("router + service pin org_id explicitly", () => {
   it("the router resolves an ACTIVE route by dialed number on the admin client", () => {
     const code = codeOf(read(ROUTER));
