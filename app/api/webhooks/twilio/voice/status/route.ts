@@ -4,7 +4,12 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
-import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
+import { TERMINAL_CALL_EVENTS } from "@/lib/telephony/types";
+import {
+  appendCallEvent,
+  recordInboundCall,
+  updateCallCompletion,
+} from "@/server/services/telephony";
 
 /**
  * Twilio inbound-VOICE STATUS callback (Wave 8).
@@ -92,6 +97,33 @@ export async function POST(request: Request): Promise<NextResponse> {
       payload: call.raw,
       occurredAt: call.occurredAt,
     });
+
+    // ── Call-completion ENRICHMENT (terminal status callback) ─────────────────
+    // Twilio delivers the call's total `CallDuration` on the TERMINAL status
+    // callback (completed/busy/failed/no-answer/canceled). Mirroring the Vapi
+    // end-of-call-report branch, we enrich the calls row's duration_sec / ended_at
+    // (and recording_url when a <Record> supplied one — legitimately null without
+    // it) exactly once, on the terminal transition. The write is org-pinned +
+    // keyed on the provider call id and inherently idempotent (a redelivered
+    // completed callback rewrites the same values). BEST-EFFORT: a persistence
+    // failure is logged loud and degraded to a 200 — never a 500 that would make
+    // Twilio retry-storm the ack. Only the fields present are written, so this
+    // never nulls artifacts a prior report captured.
+    if ((TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)) {
+      try {
+        await updateCallCompletion(orgId, call.providerCallId, {
+          durationSec: call.durationSec,
+          endedAt: call.occurredAt,
+          recordingUrl: params.RecordingUrl ?? undefined,
+        });
+      } catch (e) {
+        Sentry.captureException(e, {
+          tags: { route: "webhooks/twilio/voice/status", stage: "completion" },
+        });
+        console.error("[twilio-voice-status] call-completion enrichment failed", e);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       duplicate: result.duplicate,

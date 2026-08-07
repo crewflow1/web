@@ -83,9 +83,25 @@ export function parseTwilioVoiceWebhook(
     // Twilio sends no per-event id; the (call, status) pair is the natural
     // idempotency key, so the mapped status is the provider_event_id.
     providerEventId: status,
+    // Twilio reports `CallDuration` (whole seconds) on the terminal `completed`
+    // status callback and omits it otherwise. Parse to a non-negative integer;
+    // leave undefined when absent or non-numeric so the completion writer never
+    // overwrites an already-captured duration with a bad value.
+    durationSec: parseCallDuration(params.CallDuration),
     occurredAt: new Date().toISOString(),
     raw: params as Record<string, unknown>,
   };
+}
+
+/**
+ * Parse Twilio's `CallDuration` (a whole-seconds string on the completed status
+ * callback) into a non-negative integer, or undefined when absent / unparseable.
+ */
+function parseCallDuration(raw: string | undefined | null): number | undefined {
+  const s = (raw ?? "").trim();
+  if (!s) return undefined;
+  const n = Number.parseInt(s, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /** XML-escape a spoken string so a caller utterance can never break the TwiML. */

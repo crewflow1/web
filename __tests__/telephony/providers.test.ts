@@ -59,6 +59,30 @@ describe("twilio voice parse", () => {
     expect(n!.to).toBe("+441234567890");
     expect(n!.status).toBe("ringing");
     expect(n!.providerEventId).toBe("ringing");
+    // No CallDuration on a non-terminal transition ⇒ undefined (writer skips it).
+    expect(n!.durationSec).toBeUndefined();
+  });
+
+  it("captures CallDuration (whole seconds) on the completed status callback", () => {
+    const n = parseTwilioVoiceWebhook({
+      CallSid: "CA123",
+      From: "+447700900123",
+      To: "+441234567890",
+      CallStatus: "completed",
+      CallDuration: "42",
+    });
+    expect(n!.status).toBe("completed");
+    expect(n!.durationSec).toBe(42);
+  });
+
+  it("leaves durationSec undefined for absent / non-numeric / negative CallDuration", () => {
+    const base = { CallSid: "CA123", To: "+441234567890", CallStatus: "completed" };
+    expect(parseTwilioVoiceWebhook(base)!.durationSec).toBeUndefined();
+    expect(parseTwilioVoiceWebhook({ ...base, CallDuration: "" })!.durationSec).toBeUndefined();
+    expect(parseTwilioVoiceWebhook({ ...base, CallDuration: "abc" })!.durationSec).toBeUndefined();
+    expect(parseTwilioVoiceWebhook({ ...base, CallDuration: "-5" })!.durationSec).toBeUndefined();
+    // A fractional string is truncated to whole seconds (Twilio sends integers).
+    expect(parseTwilioVoiceWebhook({ ...base, CallDuration: "42.9" })!.durationSec).toBe(42);
   });
 
   it("builds escaped TwiML", () => {
