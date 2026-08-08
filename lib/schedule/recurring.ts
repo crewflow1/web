@@ -14,8 +14,16 @@
  *
  * Caps:
  *   - end_date  honoured (inclusive) if set
- *   - hard cap of 60 occurrences per parent within the window so a
+ *   - hard cap of 60 occurrences per parent WITHIN THE WINDOW so a
  *     misconfigured parent can't blow up the calendar
+ *
+ * Window-relative cap:
+ *   The cap counts occurrences produced *inside* [rangeFrom, rangeTo], not
+ *   steps taken from the anchor. Before the counted loop we fast-forward the
+ *   cursor from the anchor to the first occurrence >= rangeFrom without
+ *   spending the budget, so a parent anchored arbitrarily far in the past
+ *   (e.g. an open-ended weekly job anchored 2 years ago) still expands into
+ *   the current window instead of silently vanishing.
  */
 
 export type RecurringPattern = {
@@ -23,7 +31,9 @@ export type RecurringPattern = {
   end_date?: string;
 };
 
-const MAX_OCCURRENCES = 60;
+export const MAX_OCCURRENCES = 60;
+
+const MS_PER_DAY = 86_400_000;
 
 function addDays(d: Date, days: number): Date {
   const out = new Date(d);
@@ -60,6 +70,46 @@ export function expandRecurring(
   const out: string[] = [];
   let cursor = new Date(start);
 
+  // ---- Window-relative fast-forward -------------------------------------
+  // Advance the cursor from the anchor to the first occurrence >= rangeFrom
+  // WITHOUT spending the MAX_OCCURRENCES budget. The fast-forward must land on
+  // exactly the same dates the naive per-step loop below would have produced —
+  // it only skips the pre-window occurrences, it must never shift them.
+  if (cursor < rangeFrom) {
+    switch (recurring.pattern) {
+      case "weekly":
+      case "biweekly": {
+        // Day-based intervals are path-independent under UTC day arithmetic:
+        // start + k*stepDays is the k-th occurrence regardless of how we get
+        // there. Jump arithmetically to the first k with cursor >= rangeFrom,
+        // then land the cursor via the module's own addDays so the result is
+        // byte-identical to the loop (and DST-safe, since all math is UTC).
+        const stepDays = recurring.pattern === "weekly" ? 7 : 14;
+        const deltaMs = rangeFrom.getTime() - start.getTime();
+        const steps = Math.max(0, Math.ceil(deltaMs / (stepDays * MS_PER_DAY)));
+        cursor = addDays(start, steps * stepDays);
+        break;
+      }
+      case "monthly":
+      case "quarterly": {
+        // Month steps are PATH-DEPENDENT because of day-of-month rollover:
+        // addMonths(Jan31,1)=Mar3 then +1=Apr3, but addMonths(Jan31,2)=Mar31.
+        // A single addMonths(start, n) jump would therefore NOT match the
+        // loop. Reuse the module's own addMonths one period at a time — this
+        // reproduces the loop's exact sequence, just uncounted — while still
+        // honouring stop/rangeTo so we never walk past the end of interest.
+        const stepMonths = recurring.pattern === "monthly" ? 1 : 3;
+        while (cursor < rangeFrom) {
+          if (stop && cursor > stop) break;
+          if (cursor > rangeTo) break;
+          cursor = addMonths(cursor, stepMonths);
+        }
+        break;
+      }
+    }
+  }
+
+  // ---- Counted emit loop (anti-blowup cap, now window-relative) ----------
   for (let i = 0; i < MAX_OCCURRENCES; i++) {
     if (stop && cursor > stop) break;
     if (cursor > rangeTo) break;
