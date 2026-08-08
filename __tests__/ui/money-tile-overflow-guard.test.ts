@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolve, relative } from "node:path";
 
 /**
@@ -65,7 +65,21 @@ import { resolve, relative } from "node:path";
  */
 
 const ROOT = resolve(__dirname, "../..");
-const APP_DIR = resolve(ROOT, "app/(app)");
+/**
+ * EVERY route group that renders money tiles must be walked — the "cannot be
+ * evaded" contract is a lie if it only covers `app/(app)`. The C43/C44 rewrites
+ * closed the CONTENT-signal evasion (font weight / tabular-nums / text size);
+ * this closes the DIRECTORY-SCOPE evasion. `app/customer-portal` and `app/q` are
+ * token-scoped, customer-facing money surfaces with the SAME 2-up mobile stat
+ * tiles and no owner auth — a 7-figure receivable there scrolls the page just as
+ * it does inside `(app)`. Paths are stored relative to ROOT so a tile is
+ * identified unambiguously across groups (e.g. `customer-portal/[token]/…`).
+ */
+const APP_DIRS = [
+  resolve(ROOT, "app/(app)"),
+  resolve(ROOT, "app/customer-portal"),
+  resolve(ROOT, "app/q"),
+].filter(existsSync);
 
 /**
  * A value line is PROMINENT when it is at least `text-base` — the standalone
@@ -214,13 +228,17 @@ function classifyLine(
 
 function scan(): MoneyTile[] {
   const found: MoneyTile[] = [];
-  for (const file of tsxFiles(APP_DIR)) {
-    const rel = relative(APP_DIR, file);
-    const text = readFileSync(file, "utf8");
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const t = classifyLine(text, lines, i, rel);
-      if (t) found.push(t);
+  for (const dir of APP_DIRS) {
+    for (const file of tsxFiles(dir)) {
+      // ROOT-relative so a tile is named unambiguously across route groups
+      // (`(app)/cash/page.tsx` vs `customer-portal/[token]/invoices/page.tsx`).
+      const rel = relative(ROOT, file);
+      const text = readFileSync(file, "utf8");
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const t = classifyLine(text, lines, i, rel);
+        if (t) found.push(t);
+      }
     }
   }
   return found;
@@ -259,7 +277,7 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
   });
 
   it("the /cash Stat tile — the instance the sibling guard was built for — is a guarded money primitive and is clipped", () => {
-    const cash = tiles.filter((t) => t.rel === "cash/page.tsx" && t.kind === "primitive");
+    const cash = tiles.filter((t) => t.rel === "app/(app)/cash/page.tsx" && t.kind === "primitive");
     expect(cash.length).toBeGreaterThanOrEqual(1);
     expect(cash.every((t) => t.truncated)).toBe(true);
   });
@@ -267,7 +285,7 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
   it("the /dashboard Kpi tile (text-xl primitive shape) is still caught and clipped", () => {
     // Regression pin: the previous detector's ONE recognised idiom must not
     // regress. The Kpi is a money-fed primitive and carries truncate.
-    const kpi = tiles.filter((t) => t.rel === "dashboard/page.tsx" && t.kind === "primitive");
+    const kpi = tiles.filter((t) => t.rel === "app/(app)/dashboard/page.tsx" && t.kind === "primitive");
     expect(kpi.length).toBeGreaterThanOrEqual(1);
     expect(kpi.every((t) => t.truncated)).toBe(true);
   });
@@ -331,7 +349,7 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
 
   it("every allowlist exception is real, still present, and still justified", () => {
     for (const [rel, { mustContain }] of Object.entries(ALLOWLIST)) {
-      const source = readFileSync(resolve(APP_DIR, rel), "utf8");
+      const source = readFileSync(resolve(ROOT, rel), "utf8");
       for (const marker of mustContain) {
         expect(
           source,
