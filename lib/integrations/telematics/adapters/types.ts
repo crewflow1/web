@@ -25,14 +25,20 @@ export type TelematicsProvider = "samsara" | "verizon_connect";
  * The outcome of a readings fetch.
  *   - ok           — samples returned by the aggregator (unreachable today).
  *   - unavailable  — not connectable; nothing was fetched (the dark path).
- *   - error        — connectable but the fetch failed.
+ *   - unauthorized — the access token was rejected (401/403); after a refresh+retry
+ *                    this is a TERMINAL dead grant and the caller persists
+ *                    status='error' (reconnect required). Mirrors the banking
+ *                    adapter's `unauthorized` so the sync engine can split terminal
+ *                    from transient identically across integrations.
+ *   - error        — connectable but the fetch failed for any other reason (5xx /
+ *                    429 / network): TRANSIENT, so the connection stays 'connected'.
  */
 export type TelematicsFetchResult =
   | { ok: true; provider: TelematicsProvider; samples: TelematicsSample[] }
   | {
       ok: false;
       provider: TelematicsProvider;
-      reason: "unavailable" | "error";
+      reason: "unavailable" | "unauthorized" | "error";
       message: string;
     };
 

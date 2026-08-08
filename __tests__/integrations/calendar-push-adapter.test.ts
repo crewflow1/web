@@ -200,6 +200,113 @@ describe("pushEventToProvider", () => {
     if (!res.ok) expect(res.reason).toBe("not_configured");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  // ── 403 classification (GAP 2 — the C48 regression) ─────────────────────────
+  // Google Calendar events.insert/patch returns HTTP 403 for BOTH transient
+  // rate-limit / quota errors AND genuine authz denials. A bare 403 must NOT be
+  // treated as terminal, or one bulk-import throttle strands a live calendar
+  // forever (a 403 never enters the 401-only refresh path, so the only self-heal —
+  // a later successful push — is now unreachable).
+  for (const reason of [
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "dailyLimitExceeded",
+    "quotaExceeded",
+  ] as const) {
+    it(`treats an event-API 403 '${reason}' as TRANSIENT (terminal:false → self-heal)`, async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonRes(403, {
+          error: { code: 403, errors: [{ reason, domain: "usageLimits" }] },
+        }),
+      );
+      const res = await pushEventToProvider({
+        provider: "google",
+        tokens: { accessToken: "AT", refreshToken: "RT" },
+        payload: buildEventPayload(JOB)!,
+        externalEventId: null,
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.terminal).toBeFalsy();
+      // A 403 never triggers a refresh — exactly one provider call.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("treats an event-API 403 with canonical status RESOURCE_EXHAUSTED as TRANSIENT", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, { error: { code: 403, status: "RESOURCE_EXHAUSTED" } }),
+    );
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.terminal).toBeFalsy();
+  });
+
+  it("treats a genuine authz 403 (insufficientPermissions) as TERMINAL", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, {
+        error: {
+          code: 403,
+          status: "PERMISSION_DENIED",
+          errors: [{ reason: "insufficientPermissions", domain: "global" }],
+        },
+      }),
+    );
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.terminal).toBe(true);
+  });
+
+  it("treats a Microsoft Graph 403 (ErrorAccessDenied — no rate-limit reason) as TERMINAL", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, { error: { code: "ErrorAccessDenied", message: "Access is denied." } }),
+    );
+    const res = await pushEventToProvider({
+      provider: "microsoft",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.terminal).toBe(true);
+  });
+
+  it("a 401 STILL rejected after the refresh+retry is TERMINAL", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(401, { error: "expired" })) // first event call
+      .mockResolvedValueOnce(jsonRes(200, { access_token: "AT2", expires_in: 3600 })) // refresh ok
+      .mockResolvedValueOnce(jsonRes(401, { error: "still bad" })); // retried event call — still 401
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.terminal).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("a 5xx blip stays TRANSIENT (terminal:false)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(503, { error: "unavailable" }));
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.terminal).toBeFalsy();
+  });
 });
 
 describe("deleteEventFromProvider", () => {
@@ -259,6 +366,30 @@ describe("deleteEventFromProvider", () => {
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.message).toContain("500");
+  });
+
+  it("a rate-limit 403 on DELETE is TRANSIENT (terminal:false); an authz 403 is TERMINAL", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, { error: { code: 403, errors: [{ reason: "rateLimitExceeded" }] } }),
+    );
+    const transient = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
+    });
+    expect(transient.ok).toBe(false);
+    if (!transient.ok) expect(transient.terminal).toBeFalsy();
+
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, { error: { code: 403, errors: [{ reason: "insufficientPermissions" }] } }),
+    );
+    const terminal = await deleteEventFromProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      externalEventId: "evt-g1",
+    });
+    expect(terminal.ok).toBe(false);
+    if (!terminal.ok) expect(terminal.terminal).toBe(true);
   });
 
   it("on 401 refreshes the token, retries the DELETE ONCE, and returns renewed tokens", async () => {

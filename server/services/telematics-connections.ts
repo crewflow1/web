@@ -184,6 +184,14 @@ export type TelematicsSyncResult = {
   message: string;
   /** The mapped rows a live ingest would insert. Empty dark. */
   readings: TelematicsReadingInsert[];
+  /**
+   * TERMINAL fetch failure — the access token was REJECTED (a 401/403 from the
+   * aggregator, `unauthorized`). The sync engine refreshes+retries once; if it is
+   * still terminal it persists status='error' (reconnect required). Absent/false
+   * means the failure (if any) is TRANSIENT (5xx / 429 / network) and the
+   * connection stays 'connected' to self-heal on the next tick.
+   */
+  terminal?: boolean;
 };
 
 /**
@@ -237,6 +245,9 @@ export async function syncTelematicsReadings(params: {
       readingCount: 0,
       message: fetched.message,
       readings: [],
+      // A rejected token (`unauthorized`) is TERMINAL after the engine's
+      // refresh+retry; 5xx / 429 / network stay transient (terminal undefined).
+      ...(fetched.reason === "unauthorized" ? { terminal: true } : {}),
     };
   }
 

@@ -211,12 +211,81 @@ export type PushAdapterResult =
     };
 
 /**
- * Whether a still-failing HTTP status after the refresh+retry is TERMINAL — the
- * grant is rejected (401 Unauthorized / 403 Forbidden) so re-consent is required.
- * Any other non-ok status (5xx, 429, ...) is a transient provider blip.
+ * Google Calendar event-API error `reason` codes that are TRANSIENT usage/rate
+ * limits — the request was THROTTLED, not the grant rejected. A bulk import or a
+ * multi-shift rota save can trip these on an otherwise healthy connection, so they
+ * must NEVER strand it. Google returns HTTP 403 for these, the SAME status as a
+ * genuine authorization denial — only the response body tells them apart.
  */
-function statusIsTerminal(status: number): boolean {
-  return status === 401 || status === 403;
+const GOOGLE_TRANSIENT_REASONS: ReadonlySet<string> = new Set([
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+  "dailyLimitExceeded",
+  "quotaExceeded",
+]);
+
+/** Read `error.errors[].reason` from a Google API error body (defensive; [] when absent/foreign). */
+function googleErrorReasons(body: unknown): string[] {
+  if (!body || typeof body !== "object") return [];
+  const err = (body as { error?: unknown }).error;
+  if (!err || typeof err !== "object") return [];
+  const errors = (err as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return [];
+  return errors
+    .map((e) => (e && typeof e === "object" ? (e as { reason?: unknown }).reason : null))
+    .filter((r): r is string => typeof r === "string");
+}
+
+/** Read `error.status` (the canonical code, e.g. RESOURCE_EXHAUSTED) from a Google error body. */
+function googleErrorStatus(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const err = (body as { error?: unknown }).error;
+  if (!err || typeof err !== "object") return null;
+  const status = (err as { status?: unknown }).status;
+  return typeof status === "string" ? status : null;
+}
+
+/**
+ * Classify a still-failing event-API response (AFTER the 401→refresh→retry-once)
+ * as TERMINAL — the grant is dead / genuinely unauthorized, so the caller persists
+ * status='error' and re-consent is required — or TRANSIENT — a throttle / usage
+ * cap / provider blip, so the connection stays 'connected' and self-heals on the
+ * next event.
+ *
+ *   - 401 here ⇒ TERMINAL: the one refresh+retry already had its chance and the
+ *     token is still rejected (or there was no refresh token to begin with).
+ *   - 403 is the SUBTLE case a C48 regression got wrong: Google Calendar
+ *     events.insert/patch returns 403 for TRANSIENT rate-limit / quota errors
+ *     (rateLimitExceeded / userRateLimitExceeded / dailyLimitExceeded /
+ *     quotaExceeded, canonical status RESOURCE_EXHAUSTED) AS WELL AS for genuine
+ *     authorization denials. Treating a BARE 403 as terminal stranded a live
+ *     calendar on ONE bulk-import throttle (a 403 never enters the refresh path —
+ *     refresh is 401-only — so the only self-heal, a successful push, became
+ *     unreachable). We parse the provider error body: a rate-limit signal ⇒
+ *     TRANSIENT; anything else (insufficientPermissions / forbidden authz, or an
+ *     unreadable body) ⇒ TERMINAL.
+ *   - Any other non-ok status (5xx / 429 / ...) ⇒ TRANSIENT.
+ *
+ * Microsoft Graph surfaces throttling as 429/503 (already transient above) and
+ * reserves 403 for genuine authorization failures (ErrorAccessDenied), so a
+ * Microsoft 403 carries no rate-limit reason in its body and classifies TERMINAL —
+ * the intended behaviour. Reading the body consumes it, so this is only ever called
+ * on the !res.ok branch (the ok path reads the body itself).
+ */
+async function classifyEventApiFailure(res: Response): Promise<boolean> {
+  if (res.status === 401) return true;
+  if (res.status !== 403) return false;
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    // A 403 whose body we cannot read: assume a genuine authz denial (terminal) —
+    // the safe default is to prompt re-consent, not silently retry a dead grant.
+    return true;
+  }
+  if (googleErrorStatus(body) === "RESOURCE_EXHAUSTED") return false; // transient
+  if (googleErrorReasons(body).some((r) => GOOGLE_TRANSIENT_REASONS.has(r))) return false;
+  return true; // authz / unknown 403 → terminal
 }
 
 /**
@@ -295,13 +364,15 @@ export async function pushEventToProvider(params: {
   }
 
   if (!res.ok) {
-    // Still 401/403 after the refresh+retry (or a 401 with no refresh token to
-    // begin with) ⇒ TERMINAL: the grant is rejected and re-consent is required.
+    // Classify the still-failing response: a 401 (or an authz 403) after the
+    // refresh+retry is TERMINAL; a rate-limit 403 / 5xx / 429 is TRANSIENT so the
+    // connection stays 'connected' and self-heals on the next event. Parses the
+    // provider error body — a bare event-API 403 is NOT assumed terminal.
     return {
       ok: false,
       reason: "error",
       message: `event push returned ${res.status}`,
-      terminal: statusIsTerminal(res.status),
+      terminal: await classifyEventApiFailure(res),
     };
   }
 
@@ -407,12 +478,13 @@ export async function deleteEventFromProvider(params: {
 
   // Success (204/200) OR already-gone (404/410) — either way the event is absent.
   if (!res.ok && res.status !== 404 && res.status !== 410) {
-    // Still 401/403 after the refresh+retry ⇒ TERMINAL: the grant is rejected.
+    // Classify as for a push: a 401 / authz 403 after the refresh+retry is
+    // TERMINAL; a rate-limit 403 / 5xx / 429 is TRANSIENT (stays 'connected').
     return {
       ok: false,
       reason: "error",
       message: `event delete returned ${res.status}`,
-      terminal: statusIsTerminal(res.status),
+      terminal: await classifyEventApiFailure(res),
     };
   }
 

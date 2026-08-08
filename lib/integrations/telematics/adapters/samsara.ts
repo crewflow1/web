@@ -105,10 +105,15 @@ export class SamsaraAdapter implements TelematicsAdapter {
         };
       }
       if (!res.ok) {
+        // A 401/403 means the access token was rejected — after the sync engine's
+        // refresh+retry this is a TERMINAL dead grant (reconnect required), so it
+        // is surfaced as `unauthorized`. Samsara throttles with 429 (and 5xx are
+        // provider blips): those stay `error` (TRANSIENT) so the connection is not
+        // stranded on a rate-limit or a hiccup.
         return {
           ok: false,
           provider: this.provider,
-          reason: "error",
+          reason: res.status === 401 || res.status === 403 ? "unauthorized" : "error",
           message: `Samsara returned ${res.status}`,
         };
       }
