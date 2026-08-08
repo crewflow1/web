@@ -71,6 +71,18 @@ const SYNC_OVERLAP_DAYS = 7;
  * at this size and the returned id sets unioned; every chunk keeps the org_id pin.
  */
 const DEDUPE_IN_CHUNK = 100;
+/**
+ * Minimum wait (ms) before a connection that recorded a TRANSIENT error is retried.
+ *
+ * Transient failures keep the connection status='connected' (so the cron keeps
+ * selecting it) but stamp last_error + advance last_sync_at. This floor, measured
+ * from last_sync_at, stops a hard-down provider from being re-hit on back-to-back
+ * ticks (e.g. a manual cron re-trigger) while still guaranteeing recovery on the
+ * next scheduled 6-hourly run. A FIXED floor — not exponential — is deliberate: a
+ * growing backoff would need a per-connection failure counter (a new column ⇒ a
+ * migration), and the scheduled cadence already bounds steady-state retries.
+ */
+const RETRY_BACKOFF_MS = 30 * 60_000;
 
 export type BankSyncOutcome =
   | "mapped"
@@ -98,6 +110,13 @@ export type StoredBankConnection = {
   refreshTokenCipher: string | null;
   tokenExpiresAt: string | null;
   lastSyncAt: string | null;
+  /**
+   * The last recorded sync error, or null when healthy. On a status='connected'
+   * row a non-null value means "recovering from a TRANSIENT failure" (terminal
+   * failures flip status to 'error' and are never listed by the cron). Drives the
+   * retry backoff in `isDueForSync`.
+   */
+  lastError?: string | null;
 };
 
 /**
@@ -189,7 +208,13 @@ export async function syncBankConnection(
     if (isExpired(conn.tokenExpiresAt) && refreshToken) {
       const refreshed = await refreshAndPersist(orgId, provider, refreshToken, gateway);
       if (!refreshed.ok) {
-        await gateway.markSynced(orgId, provider, { lastError: refreshed.message, status: "error" });
+        // TERMINAL (dead grant) ⇒ flip to 'error' so the cron stops selecting it
+        // until re-consent. TRANSIENT ⇒ record last_error but keep the connection
+        // 'connected' (via markSynced with NO status) so a later tick retries it.
+        await gateway.markSynced(orgId, provider, {
+          lastError: refreshed.message,
+          ...(refreshed.terminal ? { status: "error" } : {}),
+        });
         return { ok: false, orgId, provider, outcome: "error", inserted: 0, message: refreshed.message };
       }
       accessToken = refreshed.accessToken;
@@ -207,7 +232,11 @@ export async function syncBankConnection(
     if (!fetched.ok && fetched.reason === "unauthorized" && refreshToken) {
       const refreshed = await refreshAndPersist(orgId, provider, refreshToken, gateway);
       if (!refreshed.ok) {
-        await gateway.markSynced(orgId, provider, { lastError: refreshed.message, status: "error" });
+        // Same transient-vs-terminal split as the proactive refresh above.
+        await gateway.markSynced(orgId, provider, {
+          lastError: refreshed.message,
+          ...(refreshed.terminal ? { status: "error" } : {}),
+        });
         return { ok: false, orgId, provider, outcome: "error", inserted: 0, message: refreshed.message };
       }
       accessToken = refreshed.accessToken;
@@ -219,11 +248,22 @@ export async function syncBankConnection(
     }
 
     if (!fetched.ok) {
-      const outcome: BankSyncOutcome = fetched.reason === "unavailable" ? "skipped_dark" : "error";
-      if (outcome === "error") {
-        await gateway.markSynced(orgId, provider, { lastError: fetched.message, status: "error" });
+      if (fetched.reason === "unavailable") {
+        // Dark path: nothing was fetched and nothing is written.
+        return { ok: false, orgId, provider, outcome: "skipped_dark", inserted: 0, message: fetched.message };
       }
-      return { ok: false, orgId, provider, outcome, inserted: 0, message: fetched.message };
+      // 'unauthorized' here means the token was STILL rejected after a refresh+retry
+      // (or there was no refresh token) ⇒ TERMINAL: the consent is dead, so flip to
+      // 'error' and stop auto-selecting until re-consent. A plain 'error' is a
+      // TRANSIENT fetch failure (5xx / network) ⇒ record last_error but keep the
+      // connection 'connected' so the next eligible tick retries it. Conflating the
+      // two is what silently stranded a feed forever on a single blip.
+      const terminal = fetched.reason === "unauthorized";
+      await gateway.markSynced(orgId, provider, {
+        lastError: fetched.message,
+        ...(terminal ? { status: "error" } : {}),
+      });
+      return { ok: false, orgId, provider, outcome: "error", inserted: 0, message: fetched.message };
     }
 
     // Map every fetched statement to candidate lines (bank_statement_id is filled
@@ -249,7 +289,10 @@ export async function syncBankConnection(
     });
 
     if (newLines.length === 0) {
-      await gateway.markSynced(orgId, provider, { lastError: null });
+      // SELF-HEAL: a successful tick clears last_error AND restores status to
+      // 'connected', so a connection that had recorded a prior transient error
+      // recovers on its own (markSynced only writes status when we pass it).
+      await gateway.markSynced(orgId, provider, { lastError: null, status: "connected" });
       return { ok: true, orgId, provider, outcome: "no_new", inserted: 0, message: "No new transactions." };
     }
 
@@ -257,7 +300,8 @@ export async function syncBankConnection(
     const statementId = await gateway.createStatement(orgId, filename, newLines.length);
     const rows = newLines.map((r) => ({ ...r, bank_statement_id: statementId }));
     await gateway.insertLines(rows);
-    await gateway.markSynced(orgId, provider, { lastError: null });
+    // SELF-HEAL on the mapped path too (see the no_new branch above).
+    await gateway.markSynced(orgId, provider, { lastError: null, status: "connected" });
 
     return {
       ok: true,
@@ -271,7 +315,12 @@ export async function syncBankConnection(
     const message = e instanceof Error ? e.message : "bank sync failed";
     // Do not log the token payload — only a coarse failure signal.
     console.error("[banking] sync failed", { provider, orgId, message });
-    await gateway.markSynced(orgId, provider, { lastError: message, status: "error" }).catch(() => {});
+    // An unexpected throw here is almost always TRANSIENT (a DB blip in the dedupe
+    // read / insert, a decrypt hiccup) rather than a dead grant. Record last_error
+    // but do NOT flip status to 'error' — keeping it 'connected' means the next
+    // eligible tick retries instead of silently stranding the feed forever. A truly
+    // persistent fault stays visible via last_error rather than becoming invisible.
+    await gateway.markSynced(orgId, provider, { lastError: message }).catch(() => {});
     return { ok: false, orgId, provider, outcome: "error", inserted: 0, message };
   }
 }
@@ -282,9 +331,14 @@ async function refreshAndPersist(
   provider: BankingProvider,
   refreshToken: string,
   gateway: BankSyncGateway,
-): Promise<{ ok: true; accessToken: string; refreshToken: string } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; accessToken: string; refreshToken: string }
+  | { ok: false; message: string; terminal: boolean }
+> {
   const res = await refreshAccessToken({ provider, refreshToken });
-  if (!res.ok) return { ok: false, message: res.message };
+  // A refresh failure is TERMINAL only for a dead grant (invalid_grant / 400 /
+  // 401 / 403); a network/5xx blip is transient and must stay retriable.
+  if (!res.ok) return { ok: false, message: res.message, terminal: res.terminal === true };
   const newRefresh = res.tokens.refreshToken ?? refreshToken;
   await gateway.saveRefreshedTokens(orgId, provider, {
     accessTokenCipher: encryptToken(res.tokens.accessToken),
@@ -292,6 +346,24 @@ async function refreshAndPersist(
     tokenExpiresAt: res.tokens.expiresAt,
   });
   return { ok: true, accessToken: res.tokens.accessToken, refreshToken: newRefresh };
+}
+
+/**
+ * Whether a listed (status='connected') connection is due for a sync attempt now.
+ *
+ * A HEALTHY connection (no last_error) is always due — steady-state behaviour is
+ * unchanged. A connection still 'connected' but carrying a last_error is one
+ * recovering from a TRANSIENT failure; it is gated behind RETRY_BACKOFF_MS measured
+ * from last_sync_at (advanced on every attempt) so a hard-down provider is not
+ * hammered on back-to-back ticks. Terminal failures never reach here (they are
+ * status='error', which the cron does not list), so they are never auto-retried.
+ */
+export function isDueForSync(conn: StoredBankConnection, now: number = Date.now()): boolean {
+  if (!conn.lastError) return true;
+  if (!conn.lastSyncAt) return true;
+  const t = Date.parse(conn.lastSyncAt);
+  if (Number.isNaN(t)) return true;
+  return now - t >= RETRY_BACKOFF_MS;
 }
 
 /**
@@ -309,6 +381,9 @@ export async function runBankSync(
   const connections = await gateway.listConnected(provider);
   const results: BankSyncResult[] = [];
   for (const conn of connections) {
+    // Skip a connection still inside its transient-error backoff window; it stays
+    // 'connected' and becomes due again on a later tick (see isDueForSync).
+    if (!isDueForSync(conn)) continue;
     results.push(await syncBankConnection(conn, gateway));
   }
   return { ran: true, provider, results };
@@ -357,7 +432,7 @@ export function createAdminGateway(): BankSyncGateway {
             admin
               .from("bank_connections")
               .select(
-                "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at",
+                "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at, last_error",
               )
               .eq("provider", provider)
               .eq("status", "connected") as unknown as {
@@ -392,6 +467,7 @@ export function createAdminGateway(): BankSyncGateway {
         refreshTokenCipher: (r.refresh_token as string | null) ?? null,
         tokenExpiresAt: (r.token_expires_at as string | null) ?? null,
         lastSyncAt: (r.last_sync_at as string | null) ?? null,
+        lastError: (r.last_error as string | null) ?? null,
       }));
     },
 

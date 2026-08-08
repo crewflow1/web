@@ -11,6 +11,7 @@ import { mapStatementToLines } from "@/lib/integrations/banking/statement-map";
 import {
   syncBankConnection,
   runBankSync,
+  isDueForSync,
   type BankSyncGateway,
   type StoredBankConnection,
 } from "@/server/services/bank-sync";
@@ -509,6 +510,199 @@ describe("syncBankConnection — mapping, org-pin, idempotency", () => {
     expect(fg.state.inserted).toHaveLength(0);
     expect(fg.state.statementsCreated).toBe(0);
     expect(fg.state.synced).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Transient-vs-terminal failure handling + self-heal (C47)
+//
+// A bank feed used to self-strand permanently on ANY sync error: every failure
+// branch flipped status to 'error', the cron only lists status='connected', and
+// no path ever reset it — so a single transient 5xx/network blip killed the feed
+// until a human re-ran full OAuth consent. These prove the fix: only TERMINAL
+// auth failures go 'error'; TRANSIENT failures stay eligible; success self-heals.
+// ---------------------------------------------------------------------------
+
+/** Router that serves the refresh-token endpoint + a scripted /accounts status. */
+function refreshableRouter(opts: {
+  tokenStatus?: number; // /connect/token response status (default 200 ok)
+  accountsStatuses?: number[]; // successive /accounts statuses (default [200])
+}) {
+  const accountsStatuses = opts.accountsStatuses ?? [200];
+  let accountsCall = 0;
+  return vi.fn(async (url: unknown): Promise<Response> => {
+    const u = String(url);
+    if (u.includes("/connect/token")) {
+      const s = opts.tokenStatus ?? 200;
+      if (s !== 200) return json({ error: "refresh_failed" }, s);
+      return json({ access_token: "fresh", refresh_token: "fresh-ref", expires_in: 3600 });
+    }
+    if (u.endsWith("/data/v1/accounts")) {
+      const s = accountsStatuses[Math.min(accountsCall, accountsStatuses.length - 1)]!;
+      accountsCall += 1;
+      if (s !== 200) return json({ error: "nope" }, s);
+      return json({ results: [{ account_id: "acc-1", display_name: "A" }] });
+    }
+    if (u.includes("/transactions")) return json({ results: TWO_TX["acc-1"] });
+    throw new Error(`unexpected ${u}`);
+  });
+}
+
+describe("syncBankConnection — transient vs terminal failures + self-heal (C47)", () => {
+  it("TRANSIENT fetch error (5xx) keeps the connection 'connected' (retriable)", async () => {
+    enableTrueLayer();
+    // 500 is not 401/403 ⇒ adapter reason 'error' ⇒ transient. No refresh.
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX, { accountsStatus: 500 }));
+    const fg = fakeGateway();
+
+    const res = await syncBankConnection(connection(), fg.gateway);
+    expect(res.ok).toBe(false);
+    expect(res.outcome).toBe("error");
+    const last = fg.state.synced.at(-1)!;
+    expect(last.lastError).toBeTruthy(); // error is recorded...
+    expect(last.status).toBeUndefined(); // ...but status is NOT flipped to 'error'
+  });
+
+  it("TERMINAL 401 (still rejected after refresh+retry) flips status to 'error'", async () => {
+    enableTrueLayer();
+    // /accounts is 401 forever; the refresh succeeds but the retry is still 401.
+    vi.stubGlobal("fetch", refreshableRouter({ accountsStatuses: [401, 401] }));
+    const fg = fakeGateway();
+
+    const res = await syncBankConnection(connection(), fg.gateway);
+    expect(res.ok).toBe(false);
+    expect(res.outcome).toBe("error");
+    expect(fg.state.savedTokens).toBe(1); // a refresh WAS attempted
+    expect(fg.state.synced.at(-1)!.status).toBe("error"); // terminal ⇒ needs re-consent
+  });
+
+  it("TERMINAL refresh failure (400 invalid_grant, proactive) flips status to 'error'", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", refreshableRouter({ tokenStatus: 400 }));
+    const fg = fakeGateway();
+
+    // Expired token ⇒ proactive refresh ⇒ 400 ⇒ terminal.
+    const res = await syncBankConnection(
+      connection({ tokenExpiresAt: new Date(Date.now() - 1000).toISOString() }),
+      fg.gateway,
+    );
+    expect(res.ok).toBe(false);
+    expect(fg.state.savedTokens).toBe(0); // refresh never succeeded
+    expect(fg.state.synced.at(-1)!.status).toBe("error");
+  });
+
+  it("TRANSIENT refresh failure (503, proactive) keeps the connection 'connected'", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", refreshableRouter({ tokenStatus: 503 }));
+    const fg = fakeGateway();
+
+    const res = await syncBankConnection(
+      connection({ tokenExpiresAt: new Date(Date.now() - 1000).toISOString() }),
+      fg.gateway,
+    );
+    expect(res.ok).toBe(false);
+    const last = fg.state.synced.at(-1)!;
+    expect(last.lastError).toBeTruthy();
+    expect(last.status).toBeUndefined(); // 503 ⇒ transient ⇒ still retriable
+  });
+
+  it("SELF-HEAL: a successful mapped sync restores status 'connected' + clears last_error", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    const fg = fakeGateway();
+
+    const res = await syncBankConnection(connection(), fg.gateway);
+    expect(res.outcome).toBe("mapped");
+    const last = fg.state.synced.at(-1)!;
+    expect(last.status).toBe("connected");
+    expect(last.lastError).toBeNull();
+  });
+
+  it("SELF-HEAL: a successful no_new sync also restores status 'connected'", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    const fg = fakeGateway();
+    // Pre-seed both tx ids as already stored ⇒ nothing new ⇒ no_new.
+    fg.state.existing.set(ORG, new Set(["tx-1", "tx-2"]));
+
+    const res = await syncBankConnection(
+      connection({ lastSyncAt: new Date().toISOString() }),
+      fg.gateway,
+    );
+    expect(res.outcome).toBe("no_new");
+    const last = fg.state.synced.at(-1)!;
+    expect(last.status).toBe("connected");
+    expect(last.lastError).toBeNull();
+  });
+});
+
+describe("isDueForSync — transient-error retry backoff (C47)", () => {
+  // isDueForSync is pure, but the connection() fixture builds ciphertext, which
+  // needs the encryption key (not part of the dark gate). No BANKING_* switches.
+  beforeEach(() => {
+    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY = ENC_KEY;
+  });
+
+  it("a healthy connection (no last_error) is always due", () => {
+    expect(isDueForSync(connection())).toBe(true);
+    expect(isDueForSync(connection({ lastSyncAt: new Date().toISOString() }))).toBe(true);
+  });
+
+  it("a connection inside its transient backoff window is NOT due", () => {
+    const conn = connection({
+      lastError: "TrueLayer /accounts returned 503",
+      lastSyncAt: new Date().toISOString(), // just now ⇒ within the floor
+    });
+    expect(isDueForSync(conn)).toBe(false);
+  });
+
+  it("a connection past its transient backoff window IS due again", () => {
+    const conn = connection({
+      lastError: "TrueLayer /accounts returned 503",
+      lastSyncAt: new Date(Date.now() - 60 * 60_000).toISOString(), // 1h ago > 30m floor
+    });
+    expect(isDueForSync(conn)).toBe(true);
+  });
+
+  it("a never-synced connection carrying an error is due (nothing to wait on)", () => {
+    expect(isDueForSync(connection({ lastError: "boom", lastSyncAt: null }))).toBe(true);
+  });
+});
+
+describe("runBankSync — transient recovery across ticks (C47)", () => {
+  it("(a) re-selects an org that hit a transient error and self-heals it to 'connected'", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX)); // provider is healthy again
+    // Represents the org after a prior transient failure: still 'connected', with a
+    // recorded last_error and a last_sync_at older than the backoff floor.
+    const recovering = connection({
+      lastError: "TrueLayer /accounts returned 503",
+      lastSyncAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    const fg = fakeGateway({ listConnected: async () => [recovering] });
+
+    const res = await runBankSync(fg.gateway);
+    expect(res.ran).toBe(true);
+    expect(res.results).toHaveLength(1); // re-selected, not stranded
+    expect(res.results[0]!.outcome).toBe("mapped");
+    const last = fg.state.synced.at(-1)!;
+    expect(last.status).toBe("connected"); // self-healed
+    expect(last.lastError).toBeNull();
+  });
+
+  it("skips an org still inside its transient backoff window (no fetch this tick)", async () => {
+    enableTrueLayer();
+    const spy = vi.fn();
+    vi.stubGlobal("fetch", spy);
+    const recent = connection({
+      lastError: "TrueLayer /accounts returned 503",
+      lastSyncAt: new Date().toISOString(),
+    });
+    const fg = fakeGateway({ listConnected: async () => [recent] });
+
+    const res = await runBankSync(fg.gateway);
+    expect(res.results).toHaveLength(0); // gated by backoff
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

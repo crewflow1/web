@@ -213,7 +213,20 @@ export type ProviderTokens = {
 
 export type ExchangeResult =
   | { ok: true; tokens: ProviderTokens }
-  | { ok: false; reason: "not_configured" | "error"; message: string };
+  | {
+      ok: false;
+      reason: "not_configured" | "error";
+      message: string;
+      /**
+       * TERMINAL failure — the grant itself is dead (invalid_grant / 400 / 401 /
+       * 403 from the token endpoint), so a retry can never succeed without a fresh
+       * OAuth consent. Absent/false means the failure is TRANSIENT (network blip /
+       * 5xx / malformed body) and the caller may retry on a later tick WITHOUT
+       * treating the connection as permanently dead. Only `refreshAccessToken`
+       * sets this; the initial code exchange never does.
+       */
+      terminal?: boolean;
+    };
 
 /**
  * Exchange an authorization code for tokens. REFUSES (no `fetch`) when the
@@ -369,7 +382,17 @@ export async function refreshAccessToken(params: {
   }
 
   if (!res.ok) {
-    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+    // invalid_grant surfaces as 400/401/403 on the token endpoint: the refresh
+    // token is revoked/expired and NO retry can recover it — re-consent required.
+    // Any other status (5xx, 429, ...) is transient and left retriable.
+    const terminal =
+      res.status === 400 || res.status === 401 || res.status === 403;
+    return {
+      ok: false,
+      reason: "error",
+      message: `token refresh returned ${res.status}`,
+      terminal,
+    };
   }
 
   const json = (await res.json()) as {
@@ -378,6 +401,8 @@ export async function refreshAccessToken(params: {
     expires_in?: number;
   };
   if (!json.access_token) {
+    // A 2xx with no token is a provider contract violation, not a dead grant —
+    // treat as transient (retriable) rather than permanently stranding the org.
     return { ok: false, reason: "error", message: "token refresh returned no access token" };
   }
 
