@@ -50,6 +50,7 @@ const TOKEN = `it-odsched-${Date.now()}-${Math.random().toString(36).slice(2, 8)
 describeIntegration("overdue-invoice scheduler", () => {
   let orgA = "";
   let orgB = "";
+  let orgC = ""; // isolated org for the >1000-row paging proof
   let runOverdueScan: typeof import("@/lib/invoices/overdue-scheduler").runOverdueScan;
 
   // Eligible + ineligible fixtures, keyed by a label we can assert on.
@@ -135,7 +136,7 @@ describeIntegration("overdue-invoice scheduler", () => {
   });
 
   afterAll(async () => {
-    for (const id of [orgA, orgB]) {
+    for (const id of [orgA, orgB, orgC]) {
       if (id) await db(serviceClient()).from("organizations").delete().eq("id", id);
     }
   });
@@ -266,4 +267,121 @@ describeIntegration("overdue-invoice scheduler", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.completed_at).toBeTruthy();
   });
+
+  // -------------------------------------------------------------------
+  // The F-1 regression: the scan is the SOLE producer of invoice.overdue and
+  // used to read `.limit(1000)`. PostgREST clamps every response to max_rows
+  // (1000), so once the STANDING overdue backlog crossed 1000 the genuinely-new
+  // overdue invoices beyond position 1000 were NEVER read and NEVER fired. The
+  // fix pages the ENTIRE result set via fetchAllRows on a STABLE total order
+  // (due_date, then the unique id tiebreaker). This test seeds > 1000 standing
+  // overdue invoices — all sharing ONE due_date so the id tiebreaker is the only
+  // thing keeping rows from shuffling across the 500-row page boundaries — and
+  // asserts EVERY one is dispatched. Completeness is the stable-order proof: an
+  // unstable / non-total order would drop or repeat rows sharing the sort key at
+  // a page edge, and a dropped row is a missing run.
+  it(
+    "pages the ENTIRE standing overdue backlog past the 1000-row clamp (stable order, no gaps)",
+    async () => {
+      type BulkDb = {
+        from: (t: string) => {
+          insert: (rows: unknown[]) => {
+            select: (c: string) => Promise<{
+              data: Array<{ id: string }> | null;
+              error: { message: string } | null;
+            }>;
+          };
+          select: (
+            c: string,
+            opts?: { count: "exact"; head: true },
+          ) => {
+            match: (f: Record<string, unknown>) => Promise<{
+              count: number | null;
+              error: { message: string } | null;
+            }>;
+            in: (k: string, v: readonly unknown[]) => Promise<{
+              data: Array<{ correlation_id: string }> | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+      const bulk = (c: unknown): BulkDb => c as unknown as BulkDb;
+
+      // Fresh, isolated org so the global scan's other fixtures don't perturb the
+      // exact-count assertions here.
+      const orgRes = await db(serviceClient())
+        .from("organizations")
+        .insert({ name: "OD Sched C", slug: `${TOKEN}-c` })
+        .select("id")
+        .single();
+      expect(orgRes.error, orgRes.error?.message).toBeNull();
+      orgC = orgRes.data?.id as string;
+
+      // Seed > 1000 standing overdue invoices, ALL on the SAME due_date so the
+      // unique id tiebreaker is the sole guarantor of a stable page boundary.
+      const BULK = 1001; // one past the PostgREST clamp — the old code's blind spot
+      const seededIds: string[] = [];
+      const CHUNK = 500;
+      for (let start = 0; start < BULK; start += CHUNK) {
+        const rows = [];
+        for (let n = start; n < Math.min(start + CHUNK, BULK); n++) {
+          rows.push({
+            org_id: orgC,
+            number: `${TOKEN}-bulk-${n}`,
+            amount: 100,
+            vat_total: 0,
+            status: "sent",
+            due_date: YESTERDAY,
+          });
+        }
+        const ins = await bulk(serviceClient())
+          .from("invoices")
+          .insert(rows)
+          .select("id");
+        expect(ins.error, ins.error?.message).toBeNull();
+        for (const r of ins.data ?? []) seededIds.push(r.id);
+      }
+      expect(seededIds).toHaveLength(BULK);
+
+      // One scan. Paging must reach every row, not just the first clamped 1000.
+      await runOverdueScan(NOW);
+
+      // Completeness: exactly BULK completed runs for org C. A single number
+      // proves it — once-ever correlation means the count can never EXCEED BULK,
+      // so `=== BULK` proves NOTHING was dropped at a page boundary (stable order).
+      const countRes = await bulk(serviceClient())
+        .from("automation_runs")
+        .select("*", { count: "exact", head: true })
+        .match({
+          org_id: orgC,
+          rule_id: "invoice_overdue_alert",
+          status: "ok",
+        });
+      expect(countRes.error, countRes.error?.message).toBeNull();
+      expect(countRes.count).toBe(BULK);
+
+      // Targeted proof that the PREVIOUSLY-STARVED tail fired: the rows that sort
+      // LAST under (due_date asc, id asc) are exactly the ones the old
+      // `.limit(1000)` window could never reach. UUID text order matches Postgres
+      // uuid byte order for canonical lowercase ids, so a JS sort reproduces the
+      // scan's stable order closely enough to pick the tail beyond position 1000.
+      // A dispatch is proven by its terminal automation_runs row, keyed by the
+      // invoice-scoped correlation id (`invoice.overdue:invoices:{id}`) — the same
+      // column runsFor() asserts on. automation_runs has NO source_id column.
+      const tail = [...seededIds].sort().slice(1000);
+      expect(tail.length).toBeGreaterThan(0);
+      const tailCorrelations = tail.map((id) => `invoice.overdue:invoices:${id}`);
+      const tailRuns = await bulk(serviceClient())
+        .from("automation_runs")
+        .select("correlation_id")
+        .in("correlation_id", tailCorrelations);
+      expect(tailRuns.error, tailRuns.error?.message).toBeNull();
+      const dispatchedTail = new Set((tailRuns.data ?? []).map((r) => r.correlation_id));
+      for (const corr of tailCorrelations) {
+        expect(dispatchedTail.has(corr), `tail invoice ${corr} beyond position 1000 must dispatch`).toBe(true);
+      }
+    },
+    180_000,
+  );
 });

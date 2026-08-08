@@ -57,6 +57,69 @@ const CLAMP = 1000; // PostgREST max_rows
  */
 const ALLOWLIST: Record<string, string> = {};
 
+/**
+ * THE .limit(1000) BOUNDARY net (companion to the bare-select guard's boundary
+ * rule). A `.limit(N<=1000)` is "honest" to the clamp sweep above — but a
+ * `.limit` resolving to EXACTLY 1000 on a HIGH-VALUE / PRODUCER read is
+ * indistinguishable from silent truncation: a genuine top-1000 sample and a
+ * 5000-row set clamped to 1000 look identical. That is exactly how the LIVE
+ * invoice.overdue producer scan starved — `.limit(1000)` sat on the boundary and
+ * passed both F-1 guards. So such a read must page via fetchAllRows (COMPLETE) or
+ * be allowlisted as a genuinely-bounded top-1000 display sample WITH a reason.
+ *
+ * Mirrors the bare-select guard's HIGH_VALUE_TABLES: money / ledger /
+ * reconciliation / export / cross-tenant producer tables whose completeness
+ * matters.
+ */
+const PRODUCER_TABLES = new Set<string>([
+  "finances",
+  "invoices",
+  "invoice_payments",
+  "invoice_line_items",
+  "quotes",
+  "supplier_payments",
+  "supplier_payment_allocations",
+  "purchase_orders",
+  "purchase_order_line_items",
+  "goods_received_notes",
+  "goods_received_lines",
+  "payroll_lines",
+  "time_entries",
+  "quote_line_items",
+  "stock_movements",
+  "bank_statement_lines",
+  "telematics_connections",
+  "telematics_readings",
+  "fleet_vehicles",
+  "weather_watches",
+  "weather_readings",
+]);
+
+/** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
+ * The overdue producer scan is DELIBERATELY absent: it is the real offender and
+ * was fixed by paging (fetchAllRows), not allowlisted. */
+const BOUNDARY_ALLOWLIST: Record<string, string> = {
+  // countPostedReceipts: `.in("purchase_order_id", purchaseOrderIds)` where
+  // purchaseOrderIds is ONE purchase-orders list page's POs (itself paginated,
+  // tens of rows), each carrying a handful of posted GRNs — the materialised set
+  // is bounded well below the cap by the page, not a standing backlog.
+  "app/(app)/purchase-orders/_receiving-data.ts:99":
+    "bounded: delivery counts for ONE list page's POs (.in(purchaseOrderIds), page is tens of POs × few GRNs) — well below the 1000 cap",
+  // material-fulfilment: both reads are `.in(<one material request's line/id set>)`
+  // scoped to a single request's issue movements + their corrections — bounded by
+  // the request size (a handful to dozens of lines), never a standing backlog.
+  "server/services/material-fulfilment.ts:125":
+    "bounded: stock issue movements for ONE material request (.in(lineIds)) — request-sized, well below 1000",
+  "server/services/material-fulfilment.ts:150":
+    "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
+  // sites/van-stock: per-ORG fleet_vehicles scans (.eq(org_id)) for site-usage
+  // counts / a van picker. An SME org's fleet is tens of vehicles, not thousands.
+  "server/services/sites.ts:159":
+    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
+  "server/services/van-stock.ts:105":
+    "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
+};
+
 /** Strip block + line comments so historical `.limit(...)` mentions in prose
  * don't count. Replaces comment bodies with same-length blanks to keep line
  * numbers accurate. */
@@ -225,6 +288,85 @@ function buildEnv(src: string): Map<string, number> {
   return env;
 }
 
+function escapeReg(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Every high-value read in a file, covering the literal `.from("table")` form
+ * AND the `.from`-wrapper indirection (arrow OR function-declaration wrapper —
+ * e.g. `function table<T>(c, name) { return c.from(name) }` then
+ * `table<...>(client, "table")`), which the literal scan is blind to. Returns
+ * [{ table, index }] where index anchors the read for line reporting + region.
+ */
+function producerReadIndices(src: string): Array<{ table: string; index: number }> {
+  const out: Array<{ table: string; index: number }> = [];
+
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fromRe.exec(src))) out.push({ table: m[1]!, index: m.index });
+
+  const wrapperNames = new Set<string>();
+  const arrowRe =
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=;]*?)?=>\s*[^;{}]*?\.from\(/g;
+  const fnRe =
+    /function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)[^{]*\{[\s\S]{0,400}?\.from\(/g;
+  let wm: RegExpExecArray | null;
+  while ((wm = arrowRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
+  while ((wm = fnRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
+  for (const name of wrapperNames) {
+    // `table<...>(client, "table")` — allow an optional generic before the call.
+    const callRe = new RegExp(
+      escapeReg(name) + `(?:<[^()]*?>)?\\s*\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`,
+      "g",
+    );
+    let cm: RegExpExecArray | null;
+    while ((cm = callRe.exec(src))) out.push({ table: cm[1]!, index: cm.index });
+  }
+  return out;
+}
+
+/** Boundary offenders in one file: a high-value read materialising a set, capped
+ * at EXACTLY .limit(1000) (literal or same-file const), that neither pages
+ * (.range/fetchAllRows) nor is allowlisted.
+ *
+ * LIMIT-ANCHORED (not region-scanned): each boundary `.limit()` is bound to the
+ * NEAREST PRECEDING `.from`/wrapper read in the SAME statement (no intervening
+ * `;`). A pure region window bled a `.limit(1000)` onto an adjacent read and
+ * misreported the line — anchoring on the limit is exact. */
+function boundaryOffendersIn(rel: string, raw: string): string[] {
+  if (!raw.includes(".limit(")) return [];
+  const src = stripComments(raw);
+  const env = buildEnv(src);
+  // Producer reads sorted by position so we can find the nearest preceding one.
+  const reads = producerReadIndices(src).sort((a, b) => a.index - b.index);
+  const offenders = new Set<string>();
+
+  for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
+    if (provableUpperBound(arg, env) !== CLAMP) continue; // not on the boundary
+    // Nearest producer read whose `.from`/wrapper starts before this `.limit`.
+    let pRead: { table: string; index: number } | undefined;
+    for (const r of reads) {
+      if (r.index < limIdx) pRead = r;
+      else break;
+    }
+    if (!pRead) continue;
+    const between = src.slice(pRead.index, limIdx);
+    if (between.includes(";")) continue; // the limit is a DIFFERENT statement
+    if (!PRODUCER_TABLES.has(pRead.table)) continue;
+    if (!/\.select\(/.test(between)) continue; // reads only
+    if (/\.range\(/.test(between)) continue; // windowed, not a flat cap
+    const line = src.slice(0, pRead.index).split("\n").length;
+    const key = `${rel}:${line}`;
+    if (BOUNDARY_ALLOWLIST[key]) continue;
+    offenders.add(
+      `${key} → .from("${pRead.table}") read capped at exactly .limit(${CLAMP}) — ` +
+        `page via fetchAllRows or add a BOUNDARY_ALLOWLIST reason`,
+    );
+  }
+  return [...offenders];
+}
+
 describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
   const files: string[] = [];
   for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
@@ -289,6 +431,80 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
       `F-1 clamp trap: a .range() window wider than ${CLAMP} rows is truncated by ` +
         `PostgREST. Page it with fetchAllRows (pages of <=${CLAMP}):\n` + offenders.join("\n"),
     ).toEqual([]);
+  });
+
+  it("no high-value/producer read capped at exactly .limit(1000) (page or allowlist)", () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(ROOT.length + 1);
+      offenders.push(...boundaryOffendersIn(rel, readFileSync(file, "utf8")));
+    }
+    expect(
+      offenders,
+      `F-1 .limit(1000) BOUNDARY trap. A high-value/producer read capped at EXACTLY ` +
+        `the PostgREST clamp is indistinguishable from silent truncation (a genuine ` +
+        `top-1000 sample vs a larger set clamped to 1000 look identical). Page it via ` +
+        `fetchAllRows for a COMPLETE read, or add a BOUNDARY_ALLOWLIST entry with a ` +
+        `written reason if it is a genuinely-bounded top-1000 sample:\n` +
+        offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  // TEETH: the boundary net must flag the exact live shape (the invoice.overdue
+  // producer scan) and go green on the paged fix — literal AND same-file const.
+  it("boundary net has TEETH: flags a producer scan at exactly .limit(1000), passes when paged", () => {
+    const litPreFix = [
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .lt("due_date", todayIso)`,
+      `  .limit(1000);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", litPreFix).length).toBeGreaterThan(0);
+
+    const constPreFix = [
+      `const SCAN_LIMIT = 1000;`,
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .lt("due_date", todayIso)`,
+      `  .limit(SCAN_LIMIT);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", constPreFix).length).toBeGreaterThan(0);
+
+    // The COMPLETE-read fix pages via fetchAllRows → clean.
+    const pagedFix = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("invoices")`,
+      `    .select("id, org_id")`,
+      `    .lt("due_date", todayIso)`,
+      `    .order("due_date", { ascending: true })`,
+      `    .order("id", { ascending: true })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", pagedFix)).toEqual([]);
+
+    // An honest sub-cap sample is NOT a boundary trap.
+    const honest = [
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .limit(500);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", honest)).toEqual([]);
+
+    // Catches the function-declaration `.from`-wrapper form too (the shape the
+    // goods_received_notes reader uses), not just literal `.from`.
+    const wrapperPreFix = [
+      `function table<T>(supabase, name) { return supabase.from(name); }`,
+      `const { data } = await table<{ purchase_order_id: string }>(supabase, "goods_received_notes")`,
+      `  .select("purchase_order_id")`,
+      `  .eq("status", "posted")`,
+      `  .limit(1000);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("x.ts", wrapperPreFix).some((o) => o.includes("goods_received_notes"))).toBe(true);
   });
 
   // Self-test: the hardened resolver must actually catch the shapes the old
