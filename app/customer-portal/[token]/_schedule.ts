@@ -41,14 +41,20 @@ const EMPTY: PortalSchedule = { stages: [], retention: null, totalAgreed: 0, has
 export async function loadPortalSchedule(orgId: string, customerId: string): Promise<PortalSchedule> {
   const admin = createAdminClient() as unknown as LooseAdmin;
 
-  // 1. The customer's OWN jobs — the cross-customer barrier.
-  const { data: jobData, error: jobError } = await admin
-    .from("jobs")
-    .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
-    .eq("org_id", orgId)
-    .eq("customer_id", customerId);
+  // 1. The customer's OWN jobs — the cross-customer barrier. PAGED (F-1): a
+  // long-running customer can carry more than the 1000-row PostgREST cap of jobs,
+  // and a clamped set here would silently drop jobs from the retention schedule.
+  const { data: jobData, error: jobError } = await fetchAllRows<Row>((from, to) =>
+    admin
+      .from("jobs")
+      .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
+      .eq("org_id", orgId)
+      .eq("customer_id", customerId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (jobError) throw readFailure("portal schedule: jobs", jobError);
-  const jobRows = jobData ?? [];
+  const jobRows = jobData;
   const jobIds = jobRows.map((j) => String(j.id));
   // Legitimate empty state: this customer has no jobs, so there is genuinely
   // no schedule. This is a valid data state (reads SUCCEEDED), not an error —

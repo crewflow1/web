@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Customer + staff dropdown sources for the lead forms.
@@ -20,12 +21,23 @@ export async function listCustomersForLead(
   orgId: string,
 ): Promise<{ id: string; name: string }[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .order("name", { ascending: true })
-    .limit(1000);
+  // COMPLETE read (F-1). The old `.limit(1000)` sat on the PostgREST clamp: an
+  // org past the cap lost late-alphabet customers from the picker AND — worse —
+  // the EDIT path silently NULLED an out-of-cap existing link (updateLead writes
+  // the submitted <select>, and a current customer missing from the options
+  // submits empty on an untouched save). Paging the WHOLE list makes every
+  // customer selectable and guarantees the currently-set customer is present, so
+  // no edit can blank a valid link. (Scale follow-up: a name-prefix typeahead.)
+  const { data, error } = await fetchAllRows<{ id: string; name: string }>(
+    (from, to) =>
+      supabase
+        .from("customers")
+        .select("id, name")
+        .eq("org_id", orgId)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
   if (error) throw readFailure("lead form: customers", error);
   return data ?? [];
 }

@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Server-only helpers shared by the new/edit job pages (and, by now, by the
@@ -35,12 +36,23 @@ export async function listCustomersForOrg(
   orgId: string,
 ): Promise<CustomerOption[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .order("name", { ascending: true })
-    .limit(500);
+  // COMPLETE read (F-1). The old `.limit(500)` capped the picker: for an org
+  // past the cap, late-alphabet customers became unattachable AND — worse — the
+  // EDIT path silently NULLED an out-of-cap existing link, because updateJob
+  // writes `customer_id ?? null` from the submitted <select>, and a current
+  // customer missing from the options submits empty on an untouched save.
+  // Paging the WHOLE list under the PostgREST cap makes every customer selectable
+  // and guarantees the currently-set customer is always present, so no edit can
+  // blank a valid link. (Scale follow-up: a server-side name-prefix typeahead.)
+  const { data, error } = await fetchAllRows<CustomerOption>((from, to) =>
+    supabase
+      .from("customers")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("job form: customers", error);
   return data ?? [];
 }

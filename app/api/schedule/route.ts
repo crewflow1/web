@@ -5,6 +5,7 @@ import {
   expandRecurring,
   isValidRecurringPayload,
 } from "@/lib/schedule/recurring";
+import { fetchCalendarJobs } from "@/lib/schedule/calendar-data";
 import type { CalendarJob } from "@/lib/schedule/types";
 
 /**
@@ -39,31 +40,31 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = await createClient();
-  let q = supabase
-    .from("jobs")
-    .select(
-      `
-        id, status, scheduled_date, notes, assigned_to, customer_id, recurring,
-        customer:customers ( id, name ),
-        assigned:users!jobs_assigned_to_fkey ( id, full_name, email )
-      `,
-    )
-    // ACTIVE-org pin — this feeds the calendar, so it must agree with the
-    // (now pinned) /jobs/calendar server render.
-    .eq("org_id", ctx.org.id)
-    .limit(1000);
+  const statusFilter = url.searchParams.get("status") ?? undefined;
+  const staffFilter = url.searchParams.get("staff") ?? undefined;
 
-  const statusFilter = url.searchParams.get("status");
-  if (statusFilter) q = q.eq("status", statusFilter);
-  const staffFilter = url.searchParams.get("staff");
-  if (staffFilter) q = q.eq("assigned_to", staffFilter);
-
-  const { data, error } = await q;
+  // WINDOW-SCOPED (F-1): the old read pulled ALL org jobs with a blind
+  // `.limit(1000)` — no order, no date window — then expanded recurring +
+  // window-filtered in memory. Because a recurring parent anchored OUTSIDE
+  // [from, to] still yields in-window occurrences, the read cannot be
+  // date-bounded, so once an org crossed 1000 jobs PostgREST silently clamped
+  // the response and dropped in-window jobs from the calendar with no error.
+  // fetchCalendarJobs (the same reader the /jobs/calendar server render uses)
+  // splits the read: non-recurring jobs scoped to [from, to] + recurring
+  // parents read unbounded, both paged under the cap on a deterministic
+  // scheduled_date+id order. The recurring-expansion + in-memory window filter
+  // below is byte-for-byte the pre-existing logic, unchanged.
+  const { rows, error } = await fetchCalendarJobs({
+    supabase,
+    orgId: ctx.org.id,
+    range: { from, to },
+    statusFilter,
+    staffFilter,
+  });
   if (error) {
     console.error("[schedule] list failed", error);
     return NextResponse.json({ error: "Failed to load schedule" }, { status: 500 });
   }
-  const rows = data ?? [];
 
   const out: CalendarJob[] = [];
   for (const j of rows) {

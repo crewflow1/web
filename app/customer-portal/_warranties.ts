@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { buildPortalWarrantyView, type PortalWarrantyView } from "@/lib/warranties/portal";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Customer-portal warranty reads (Phase 7).
@@ -94,14 +95,22 @@ export async function listPortalWarranties(
   const admin = createAdminClient();
 
   // 1. The customer's own jobs — the only scope a warranty can be reached through.
-  const { data: jobs, error: jobsError } = await admin
-    .from("jobs")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("customer_id", customerId);
+  // PAGED (F-1): a long-running customer can carry more than the 1000-row
+  // PostgREST cap of jobs; a clamped set would silently hide warranties whose
+  // job fell past the cap, rendering "no warranties" over real cover.
+  const { data: jobs, error: jobsError } = await fetchAllRows<{ id: string }>(
+    (from, to) =>
+      admin
+        .from("jobs")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("customer_id", customerId)
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
   // Loud: a failed read here would render "no warranties" over real cover.
   if (jobsError) throw readFailure("portal warranties: jobs", jobsError);
-  const jobIds = (jobs ?? []).map((j) => j.id);
+  const jobIds = jobs.map((j) => j.id);
   if (jobIds.length === 0) return [];
 
   // 2. Published, live warranties on exactly those jobs.

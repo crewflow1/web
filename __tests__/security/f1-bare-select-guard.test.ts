@@ -75,6 +75,13 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "fleet_vehicles",
   "weather_watches",
   "weather_readings",
+  // CRM core: high-value, cross-tenant (RLS admits every org the caller belongs
+  // to) tables that feed calendars, pickers, pipelines and exports. A clamped
+  // read silently drops jobs from the schedule grid, nulls out-of-cap customer
+  // links on an edit, or under-counts the sales pipeline. (F-1 CRM wave.)
+  "jobs",
+  "leads",
+  "customers",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -107,6 +114,21 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
   "server/services/van-stock.ts:105":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
+  // CRM wave (jobs/leads/customers joined HIGH_VALUE_TABLES). Each is either a
+  // hard-bounded id-batch name lookup or a genuinely paged read the static
+  // analyser cannot see through a long builder chain.
+  "app/(app)/diary/page.tsx:83":
+    "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the diary register (.limit(500)) — ≤500 unique PKs, analyser can't see .in's slice bound",
+  "app/(app)/site-reports/page.tsx:99":
+    "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the reports register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/snags/page.tsx:134":
+    "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/toolbox/page.tsx:89":
+    "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/jobs/page.tsx:133":
+    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
+  "app/(app)/leads/page.tsx:51":
+    "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it",
 };
 
 function walk(dir: string, out: string[]): void {

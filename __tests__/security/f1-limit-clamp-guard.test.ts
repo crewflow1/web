@@ -93,6 +93,10 @@ const PRODUCER_TABLES = new Set<string>([
   "fleet_vehicles",
   "weather_watches",
   "weather_readings",
+  // CRM core (F-1 CRM wave) — mirrors the bare-select guard's HIGH_VALUE_TABLES.
+  "jobs",
+  "leads",
+  "customers",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
