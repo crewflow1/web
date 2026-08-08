@@ -43,7 +43,6 @@ const BIG_CUSTOMER = "Cash-Out E2E Big Debtor";
 // existing 375px scrollWidth assertion below exercise the wide-money case
 // (previously it only ever saw ~£1,200/£1,800 and passed vacuously).
 const BIG_INV_AMOUNT = 6234567; // ex-VAT; total = amount + vat_total (generated).
-const BIG_INV_TOKEN = "£6,234,567.00";
 
 function svc() {
   return createClient(
@@ -203,13 +202,29 @@ test.describe("cash position on a phone — money out and the net position at 37
 
     // ── The 7-figure receivable reaches the money-IN tiles ──────────────────
     // Prove the wide-money case is actually on the page (so the scrollWidth
-    // assertion below is exercising it, not passing on a narrow figure). The
-    // seeded £6,234,567.00 is both collectable now and overdue, so it renders
-    // in the `grid-cols-2` money tiles — the sub-class the earlier ~£1,200 seed
-    // never reached.
+    // assertion below is exercising it, not passing on a narrow figure).
+    //
+    // The money-in tiles show an ORG-WIDE AGGREGATE — "Collectable now" is
+    // `formatGbp(Σ remaining across every collectable invoice)` (see
+    // computeOrgCashSummary). Other specs seed into this same harness org, so
+    // the seeded £6,234,567 BLENDS into the total and the exact token is not
+    // assertable. Instead: scope to the "Collectable now" tile (our 7-figure
+    // receivable dominates it) and assert its value line renders a millions-GBP
+    // figure — a GBP token with ≥ 2 comma groups, i.e. ≥ £1,000,000 — which is
+    // exactly the wide, un-soft-wrappable case that overflowed. `sent` + a past
+    // due date routes the invoice into both this tile and "Overdue".
     const moneyIn = page.locator('section[aria-label="Money in"]');
     await expect(moneyIn).toBeVisible();
-    await expect(moneyIn.getByText(BIG_INV_TOKEN).first()).toBeVisible();
+    const collectableTile = moneyIn.locator("> div").filter({ hasText: "Collectable now" });
+    await expect(collectableTile).toBeVisible();
+    // The value line is the only `tabular-nums` <p> in the tile (label + hint
+    // are not tabular). `truncate` clips it visually but innerText keeps the
+    // full underlying figure, so the millions-GBP match is reliable.
+    const collectableValue = await collectableTile.locator("p.tabular-nums").first().innerText();
+    expect(
+      collectableValue.trim(),
+      `the Collectable-now tile should render a 7-figure GBP once the £${BIG_INV_AMOUNT} receivable is seeded, got "${collectableValue}"`,
+    ).toMatch(/£\d{1,3}(,\d{3}){2,}\.\d{2}/);
     // The tile's value line must clip, not push the page: no money tile may be
     // wider than the 375px viewport.
     for (const t of await moneyIn.locator("> div").all()) {
