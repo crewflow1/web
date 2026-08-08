@@ -93,9 +93,33 @@ describe("overdue scheduler — domain boundaries (the hard NOs)", () => {
 });
 
 describe("overdue scheduler — surfaces DB errors, does not swallow them", () => {
-  it("throws on a scan query error so telemetry records a failure", () => {
+  it("throws (loud read) on a scan query error so telemetry records a failure", () => {
     expect(SCHED).toMatch(/if \(error\)/);
-    expect(SCHED).toMatch(/throw new Error\(`overdue scan query failed/);
+    // Loud-read doctrine: bind + throw readFailure, never a silent partial scan
+    // that looks like "no overdue invoices".
+    expect(SCHED).toMatch(/throw readFailure\(/);
+    expect(SCHED).toMatch(/from "@\/lib\/supabase\/read-failure"/);
+  });
+});
+
+describe("overdue scheduler — reads the COMPLETE set (F-1: no 1000-row clamp)", () => {
+  it("pages the whole backlog via fetchAllRows, not a single clamped page", () => {
+    // This is the SOLE producer of invoice.overdue. A `.limit(1000)` read is
+    // silently clamped by PostgREST to max_rows (1000), so once the standing
+    // overdue backlog crossed 1000, invoices beyond that window never fired. The
+    // fix must page the entire result set.
+    expect(SCHED).toMatch(/fetchAllRows/);
+    expect(SCHED).toMatch(/from "@\/lib\/supabase\/paginate"/);
+    // The clamped read must be GONE — no `.limit(` anywhere in the code.
+    expect(SCHED_CODE).not.toMatch(/\.limit\(/);
+  });
+
+  it("pages on a STABLE total order — due_date, then the unique id tiebreaker", () => {
+    // Without a unique tiebreaker, rows sharing due_date can shift across a page
+    // boundary and be dropped or repeated. Pin both keys, id last.
+    expect(SCHED).toMatch(/\.order\("due_date", \{ ascending: true \}\)/);
+    expect(SCHED).toMatch(/\.order\("id", \{ ascending: true \}\)/);
+    expect(SCHED).toMatch(/\.range\(from, to\)/);
   });
 });
 

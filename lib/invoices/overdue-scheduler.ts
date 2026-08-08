@@ -6,6 +6,8 @@ import {
   invoiceBusinessToday,
 } from "@/lib/invoices/overdue";
 import { mapWithConcurrency } from "@/lib/async/concurrent";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Overdue-invoice automation scheduler.
@@ -38,9 +40,6 @@ import { mapWithConcurrency } from "@/lib/async/concurrent";
 /** Bounded fan-out — dispatch is a few DB round-trips per invoice. */
 const DISPATCH_CONCURRENCY = 5;
 
-/** Scan page size. The dispatcher dedupes, so a re-scan of the same page is safe. */
-const SCAN_LIMIT = 1000;
-
 export type OverdueScanSummary = {
   eligible: number;
   dispatched: number;
@@ -65,6 +64,27 @@ type OverdueInvoiceRow = { id: string; org_id: string };
  * row is never selected and never dispatched. Payment AFTER dispatch changes
  * only invoice_payments + the trigger-owned status; the automation_runs row is
  * untouched, so lifecycle state cannot be corrupted by this scheduler.
+ *
+ * F-1 (COMPLETE-SET producer scan): this is the SOLE producer of the
+ * `invoice.overdue` event and there is no event-driven backstop. A single
+ * `.limit(1000)` read is silently clamped by PostgREST to max_rows (1000), so
+ * once the STANDING overdue backlog exceeds 1000 the window fills with
+ * already-terminal rows (an unpaid overdue invoice stays collectable ∧
+ * due_date<today forever, so it is re-selected every day) while genuinely-new
+ * overdue invoices beyond position 1000 are NEVER read and NEVER fire. With no
+ * ORDER BY the clamped 1000 is also non-deterministic. So we page the ENTIRE
+ * result set via fetchAllRows on a STABLE total order (due_date, then the unique
+ * id tiebreaker) — every standing overdue invoice is processed each run. Paging
+ * the whole set (rather than an automation_runs anti-join) is deliberate and
+ * correct: the dispatcher's once-ever correlation id makes every re-scan of an
+ * already-dispatched invoice a cheap no-op, and a correlated NOT-EXISTS against
+ * automation_runs is not cleanly expressible in one PostgREST query — emulating
+ * it would need a second, itself-pageable read of terminal correlation ids,
+ * adding a new F-1 surface for no correctness gain. Correctness first.
+ *
+ * The read is LOUD: a query failure binds + throws readFailure, so the caller
+ * (withCronTelemetry) turns it into a 500 + telemetry row and the next daily run
+ * retries — never a silent partial scan that looks like "no overdue invoices".
  */
 export async function runOverdueScan(
   now: Date = new Date(),
@@ -72,20 +92,26 @@ export async function runOverdueScan(
   const admin = createAdminClient();
   const todayIso = invoiceBusinessToday(now);
 
-  const { data, error } = await admin
-    .from("invoices")
-    .select("id, org_id")
-    .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
-    .lt("due_date", todayIso)
-    .limit(SCAN_LIMIT);
+  const { data, error } = await fetchAllRows<OverdueInvoiceRow>((from, to) =>
+    admin
+      .from("invoices")
+      .select("id, org_id")
+      .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
+      .lt("due_date", todayIso)
+      // STABLE total order so rows never shift across page boundaries: the
+      // primary key (due_date) can repeat, so id is the unique tiebreaker.
+      .order("due_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (error) {
     // Surfaced, not swallowed — the caller (withCronTelemetry) turns a throw
     // into a 500 + telemetry row, and the next daily run simply retries.
-    throw new Error(`overdue scan query failed: ${error.message}`);
+    throw readFailure("overdue scan: invoices", error);
   }
 
-  const rows = (data ?? []) as OverdueInvoiceRow[];
+  const rows = data;
   const summary: OverdueScanSummary = {
     eligible: rows.length,
     dispatched: 0,

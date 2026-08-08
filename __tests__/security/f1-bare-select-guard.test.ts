@@ -17,17 +17,32 @@ import { resolve, join } from "node:path";
  * contain one of:
  *   - `.single(` / `.maybeSingle(`  → a single-row read (bounded)
  *   - `.range(`                     → paged (fetchAllRows) — the complete-read fix
- *   - `.limit(`                     → an explicit cap (its size is policed by the
- *                                     sibling f1-limit-clamp guard)
+ *   - `.limit(N)` with N < 1000     → an HONEST bounded sample (you asked for
+ *                                     fewer than the cap, so there is no
+ *                                     ambiguity with truncation; its size is
+ *                                     also policed by the sibling clamp guard)
  * Anything else is a BARE unpaginated read → FAIL (silent 1000-row truncation).
+ *
+ * THE .limit(1000) BOUNDARY (the trap this wave closes). An exactly-at-boundary
+ * `.limit(1000)` — the PostgREST max_rows value itself, whether written as a
+ * literal or a same-file const that resolves to 1000 — is INDISTINGUISHABLE from
+ * silent truncation: you cannot tell a genuine top-1000 sample from a 5000-row
+ * set clamped to 1000. So `.limit(1000)` on a high-value / producer read that
+ * materialises a set does NOT satisfy this guard. It must page via fetchAllRows
+ * (COMPLETE) or, if it is a genuinely-bounded top-1000 display sample, carry an
+ * ALLOWLIST entry with a written reason. This is exactly how the LIVE
+ * invoice.overdue producer scan (lib/invoices/overdue-scheduler.ts) starved once
+ * the standing overdue backlog crossed 1000: `.limit(1000)` sat on the boundary
+ * and slipped past BOTH F-1 guards.
  *
  * A genuinely-bounded read that the analyser cannot see (rare) may be added to
  * ALLOWLIST with a written justification — prefer fetchAllRows or an honest
- * `.limit(<=1000)` instead.
+ * `.limit(<1000)` instead.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
 const SCAN_DIRS = ["app", "server", "lib"];
+const CLAMP = 1000; // PostgREST max_rows (supabase/config.toml)
 
 // Tables whose completeness matters: money, ledgers, reconciliation, exports,
 // and cross-tenant producers/aggregators. A read of one of these that is not a
@@ -80,6 +95,18 @@ const ALLOWLIST: Record<string, string> = {
   // `.maybeSingle()`/`.eq('id')` bound markers fall just past the 1100-char cap.
   "app/(app)/quotes/actions.ts:192":
     "not a read: `.from('quote_line_items').insert(rows)` — flagged only because the region bleeds into an adjacent bounded leads .select whose bound falls outside the window. (Line moved 178→192 when verifyQuoteReferences was added to createQuote in 20261113000000.)",
+  // The .limit(1000) BOUNDARY entries (surfaced when this guard learned that an
+  // exactly-at-clamp .limit is not an honest bound). Each is a GENUINELY-bounded
+  // sample, not a standing-backlog producer like the overdue scan (which was
+  // PAGED, not allowlisted). Mirrors f1-limit-clamp-guard's BOUNDARY_ALLOWLIST.
+  "server/services/material-fulfilment.ts:125":
+    "bounded: stock issue movements for ONE material request (.in(lineIds)) — request-sized, well below 1000",
+  "server/services/material-fulfilment.ts:150":
+    "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
+  "server/services/sites.ts:159":
+    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
+  "server/services/van-stock.ts:105":
+    "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -138,12 +165,43 @@ function escapeReg(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function boundedRegion(region: string): boolean {
+/** Same-file numeric consts (`const NAME = 1000`) so `.limit(SCAN_LIMIT)` where
+ * SCAN_LIMIT === 1000 is resolved to the boundary just like a literal. */
+function numericConsts(src: string): Map<string, number> {
+  const m = new Map<string, number>();
+  const re = /(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*([0-9][0-9_]*)\b(?!\s*[.eE])/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(src))) {
+    if (mm[1] && mm[2]) m.set(mm[1], Number(mm[2].replace(/_/g, "")));
+  }
+  return m;
+}
+
+/** Provable bound of the FIRST `.limit(...)` in a region: a numeric literal or a
+ * same-file numeric const. Returns null when the arg is dynamic/unprovable
+ * (that case is the sibling clamp guard's fail-closed job, not ours). */
+function regionLimitBound(region: string, env: Map<string, number>): number | null {
+  const i = region.indexOf(".limit(");
+  if (i === -1) return null;
+  const arg = region.slice(i + ".limit(".length, region.indexOf(")", i)).trim();
+  if (/^[0-9][0-9_]*$/.test(arg)) return Number(arg.replace(/_/g, ""));
+  if (/^[A-Za-z_$][\w$]*$/.test(arg)) return env.has(arg) ? env.get(arg)! : null;
+  return null;
+}
+
+function boundedRegion(region: string, env: Map<string, number>): boolean {
+  // A `.limit(` only bounds the read if it is an HONEST sample: strictly below
+  // the PostgREST clamp. A provable `.limit(>=1000)` (the exact-1000 boundary,
+  // or an over-cap that also truncates) is NOT a bound — it is the truncation
+  // trap. An unprovable `.limit(x)` is left to the clamp guard's fail-closed net.
+  const limitBound = regionLimitBound(region, env);
+  const hasHonestLimit =
+    /\.limit\(/.test(region) && !(limitBound !== null && limitBound >= CLAMP);
   return (
     /\.single\(/.test(region) ||
     /\.maybeSingle\(/.test(region) ||
     /\.range\(/.test(region) ||
-    /\.limit\(/.test(region) ||
+    hasHonestLimit ||
     /fetchAllRows/.test(region) || // paged via the helper
     /\.eq\(\s*["'`]id["'`]\s*,/.test(region) || // single-entity read by PK (<=1 row)
     /head:\s*true/.test(region) || // count/head read — returns a count, no rows to truncate
@@ -160,6 +218,7 @@ function boundedRegion(region: string): boolean {
 function offendersIn(rel: string, raw: string): string[] {
   if (!raw.includes(".from(")) return [];
   const src = stripComments(raw);
+  const env = numericConsts(src);
   const offenders: string[] = [];
 
   const consider = (table: string | undefined, index: number, shape: string): void => {
@@ -167,11 +226,16 @@ function offendersIn(rel: string, raw: string): string[] {
     const region = regionAround(src, index);
     // Must be a select (writes/upserts/rpc are not truncation-prone reads).
     if (!/\.select\(/.test(region)) return;
-    if (boundedRegion(region)) return;
+    if (boundedRegion(region, env)) return;
     const line = src.slice(0, index).split("\n").length;
     const key = `${rel}:${line}`;
     if (ALLOWLIST[key]) return;
-    offenders.push(`${key} → bare ${shape} with no .range/.limit/.single`);
+    const atBoundary = regionLimitBound(region, env) === CLAMP;
+    offenders.push(
+      atBoundary
+        ? `${key} → ${shape} capped at exactly .limit(${CLAMP}) — boundary trap, page it or allowlist`
+        : `${key} → bare ${shape} with no .range/.limit(<${CLAMP})/.single`,
+    );
   };
 
   // 1. The direct form: `.from("high_value_table").select(...)`.
@@ -248,5 +312,57 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
       `);`,
     ].join("\n");
     expect(offendersIn("server/services/weather-fetch.ts", postFix)).toEqual([]);
+  });
+
+  // The .limit(1000) BOUNDARY teeth: the exact shape the live invoice.overdue
+  // producer scan shipped — `.limit(SCAN_LIMIT)` where SCAN_LIMIT === 1000 sitting
+  // ON the PostgREST clamp — must be flagged, and the paged fix must pass.
+  it("has TEETH: flags a producer scan capped at exactly .limit(1000) (literal or same-file const)", () => {
+    const litFix = [
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .lt("due_date", todayIso)`,
+      `  .limit(1000);`,
+    ].join("\n");
+    const litFlagged = offendersIn("lib/invoices/overdue-scheduler.ts", litFix);
+    expect(litFlagged.some((o) => o.includes("boundary trap"))).toBe(true);
+
+    // The exact pre-fix form: a same-file const that RESOLVES to 1000.
+    const constFix = [
+      `const SCAN_LIMIT = 1000;`,
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .lt("due_date", todayIso)`,
+      `  .limit(SCAN_LIMIT);`,
+    ].join("\n");
+    expect(offendersIn("lib/invoices/overdue-scheduler.ts", constFix).length).toBeGreaterThan(0);
+  });
+
+  it("does not flag an HONEST bounded sample (.limit < 1000) or the paged fix", () => {
+    // Honest top-N sample below the cap: no truncation ambiguity.
+    const honest = [
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, org_id")`,
+      `  .lt("due_date", todayIso)`,
+      `  .limit(999);`,
+    ].join("\n");
+    expect(offendersIn("lib/invoices/overdue-scheduler.ts", honest)).toEqual([]);
+
+    // The COMPLETE-read fix that shipped.
+    const paged = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("invoices")`,
+      `    .select("id, org_id")`,
+      `    .lt("due_date", todayIso)`,
+      `    .order("due_date", { ascending: true })`,
+      `    .order("id", { ascending: true })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("lib/invoices/overdue-scheduler.ts", paged)).toEqual([]);
   });
 });
