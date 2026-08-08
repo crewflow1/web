@@ -213,6 +213,40 @@ describe("highest-blast-radius loaders", () => {
     expect(s).toMatch(/reportReadFailure\("attachments: panel list", error\);/);
     expect(s).toMatch(/Couldn&apos;t load attachments/);
   });
+
+  /**
+   * The Daily Briefing loader is LOUD-OR-WHOLE. Its outer try/catch degrades the
+   * whole section to an honest empty state, but that only fires on a THROWN error
+   * — so every read must THROW on failure, never coalesce to a partial/empty set.
+   * The shipped bug: `pagedRows` did `const { data } = await fetchAllRows(...)`,
+   * discarding the error, and `fetchAllRows` returns the rows-so-far PLUS the
+   * error on a mid-page failure. A single-table statement timeout / RLS blip
+   * therefore zeroed ONE signal (a false all-clear on overdue invoices / stale
+   * quotes / cold leads / retention / upcoming compliance-document expiry) while
+   * every other signal rendered healthy — the outer catch never saw it.
+   */
+  it("the daily briefing pages loud — pagedRows throws on any read error, never a partial set", () => {
+    const s = src("server/services/briefing.ts");
+    expect(s, "must bind error from fetchAllRows, not `const { data } =`").toMatch(
+      /const \{ data, error \} = await fetchAllRows/,
+    );
+    expect(s, "a paged read error must throw so the WHOLE briefing degrades").toMatch(
+      /if \(error\) throw readFailure\(`briefing: \$\{table\}`, error as SupabaseReadError\);/,
+    );
+  });
+
+  it("the daily briefing's direct reads are loud (compliance expiry, jobs-tomorrow, dismissals)", () => {
+    const s = src("server/services/briefing.ts");
+    expect(s).toMatch(
+      /if \(complianceRes\.error\) throw readFailure\("briefing: compliance documents", complianceRes\.error as SupabaseReadError\);/,
+    );
+    expect(s).toMatch(
+      /if \(jobsTomorrowRes\.error\) throw readFailure\("briefing: jobs unassigned tomorrow", jobsTomorrowRes\.error as SupabaseReadError\);/,
+    );
+    expect(s).toMatch(
+      /if \(dismissRes\.error\) throw readFailure\("briefing: dismissals", dismissRes\.error as SupabaseReadError\);/,
+    );
+  });
 });
 
 /**
@@ -422,7 +456,11 @@ const RATCHET: Array<{
     // read verbatim — a missing company NAME renders as null on the recent-runs feed,
     // never as a healthy empty state, so the error is deliberately discarded (identical
     // to hq-research.ts / hq-qualification.ts). See docs/loud-read-failures.md.
-    discard: 36,
+    // 36 → 35 (briefing loud-or-whole): server/services/briefing.ts::pagedRows bound
+    // `error` from fetchAllRows and now THROWS readFailure on a (mid-page) read error
+    // instead of `const { data } = await …` discarding it — a partial paged set was
+    // silently under-counting one signal into a false all-clear. 1 discard retired.
+    discard: 35,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
@@ -441,7 +479,14 @@ const RATCHET: Array<{
     // and the ratchet still sees any future unguarded `res.data ?? []` here.
     // The new reader adds no soft-data debt; baseline is unchanged from before
     // this PR. See docs/loud-read-failures.md.
-    softData: 62,
+    // 62 → 59 (briefing loud-or-whole): server/services/briefing.ts now binds and
+    // THROWS on the `error` of its three direct (non-pagedRows) reads —
+    // complianceRes (the ONLY expiry signal), jobsTomorrowRes (unassigned jobs
+    // tomorrow) and dismissRes (the viewer's dismissals). Each `<res>.error` check
+    // now sits before its `<res>.data ?? []`, so all three leave the soft-data
+    // ledger. A swallowed error on any of them was a false all-clear / dropped
+    // dismissals while the rest of the briefing rendered healthy. 3 soft-data retired.
+    softData: 59,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.
