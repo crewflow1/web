@@ -75,10 +75,12 @@ const DEDUPE_IN_CHUNK = 100;
  * Minimum wait (ms) before a connection that recorded a TRANSIENT error is retried.
  *
  * Transient failures keep the connection status='connected' (so the cron keeps
- * selecting it) but stamp last_error + advance last_sync_at. This floor, measured
- * from last_sync_at, stops a hard-down provider from being re-hit on back-to-back
- * ticks (e.g. a manual cron re-trigger) while still guaranteeing recovery on the
- * next scheduled 6-hourly run. A FIXED floor — not exponential — is deliberate: a
+ * selecting it) and stamp last_error, but DO NOT advance last_sync_at (the success-
+ * only sync cursor). This floor is measured from updated_at — bumped by the row
+ * trigger on the failure write, so it tracks the last ATTEMPT — and stops a hard-
+ * down provider from being re-hit on back-to-back ticks (e.g. a manual cron
+ * re-trigger) while still guaranteeing recovery on the next scheduled 6-hourly run.
+ * A FIXED floor — not exponential — is deliberate: a
  * growing backoff would need a per-connection failure counter (a new column ⇒ a
  * migration), and the scheduled cadence already bounds steady-state retries.
  */
@@ -109,7 +111,20 @@ export type StoredBankConnection = {
   accessTokenCipher: string | null;
   refreshTokenCipher: string | null;
   tokenExpiresAt: string | null;
+  /**
+   * The SYNC CURSOR: the timestamp of the last SUCCESSFUL sync (or null when never
+   * synced). The `since` window derives SOLELY from this (sinceFrom), so it must be
+   * advanced ONLY when a fetch actually succeeds — never on a transient/terminal
+   * failure, or a single blip would fast-forward the cursor past unimported days.
+   */
   lastSyncAt: string | null;
+  /**
+   * Row-level last-write time, bumped by the DB trigger on EVERY update (including
+   * failure writes that leave last_sync_at untouched). Anchors the retry backoff in
+   * `isDueForSync` so a recovering connection is retried on schedule off the last
+   * ATTEMPT, without conflating attempt-time with the success-only sync cursor.
+   */
+  updatedAt?: string | null;
   /**
    * The last recorded sync error, or null when healthy. On a status='connected'
    * row a non-null value means "recovering from a TRANSIENT failure" (terminal
@@ -139,11 +154,18 @@ export interface BankSyncGateway {
   createStatement(orgId: string, filename: string, lineCount: number): Promise<string>;
   /** Insert statement lines (org-pinned), skipping any that collide on the dedupe key. */
   insertLines(rows: BankStatementLineInsert[]): Promise<void>;
-  /** Stamp last_sync_at (+ optional last_error / status) on a connection. */
+  /**
+   * Record the outcome of a sync attempt on a connection: always writes last_error
+   * (and status only when provided, per the C47 transient/terminal split). Advances
+   * the last_sync_at CURSOR **only** when `advanceSyncCursor` is true — i.e. on a
+   * SUCCESS. Failure paths must leave last_sync_at untouched, or a transient blip
+   * would fast-forward the sync window past unimported days (defeating the 90-day
+   * first-sync backfill and orphaning transactions across a multi-day outage).
+   */
   markSynced(
     orgId: string,
     provider: BankingProvider,
-    fields: { lastError: string | null; status?: string },
+    fields: { lastError: string | null; status?: string; advanceSyncCursor?: boolean },
   ): Promise<void>;
 }
 
@@ -291,8 +313,13 @@ export async function syncBankConnection(
     if (newLines.length === 0) {
       // SELF-HEAL: a successful tick clears last_error AND restores status to
       // 'connected', so a connection that had recorded a prior transient error
-      // recovers on its own (markSynced only writes status when we pass it).
-      await gateway.markSynced(orgId, provider, { lastError: null, status: "connected" });
+      // recovers on its own (markSynced only writes status when we pass it). This
+      // is a SUCCESS, so advance the sync cursor (last_sync_at).
+      await gateway.markSynced(orgId, provider, {
+        lastError: null,
+        status: "connected",
+        advanceSyncCursor: true,
+      });
       return { ok: true, orgId, provider, outcome: "no_new", inserted: 0, message: "No new transactions." };
     }
 
@@ -300,8 +327,13 @@ export async function syncBankConnection(
     const statementId = await gateway.createStatement(orgId, filename, newLines.length);
     const rows = newLines.map((r) => ({ ...r, bank_statement_id: statementId }));
     await gateway.insertLines(rows);
-    // SELF-HEAL on the mapped path too (see the no_new branch above).
-    await gateway.markSynced(orgId, provider, { lastError: null, status: "connected" });
+    // SELF-HEAL on the mapped path too (see the no_new branch above). SUCCESS ⇒
+    // advance the sync cursor (last_sync_at).
+    await gateway.markSynced(orgId, provider, {
+      lastError: null,
+      status: "connected",
+      advanceSyncCursor: true,
+    });
 
     return {
       ok: true,
@@ -354,14 +386,19 @@ async function refreshAndPersist(
  * A HEALTHY connection (no last_error) is always due — steady-state behaviour is
  * unchanged. A connection still 'connected' but carrying a last_error is one
  * recovering from a TRANSIENT failure; it is gated behind RETRY_BACKOFF_MS measured
- * from last_sync_at (advanced on every attempt) so a hard-down provider is not
- * hammered on back-to-back ticks. Terminal failures never reach here (they are
- * status='error', which the cron does not list), so they are never auto-retried.
+ * from updated_at (bumped by the row trigger on the failure write, so it tracks the
+ * last ATTEMPT) so a hard-down provider is not hammered on back-to-back ticks.
+ * Anchoring on updated_at — NOT last_sync_at — is deliberate: last_sync_at is the
+ * success-only sync cursor and no longer moves on a failure, so a recovering
+ * connection would otherwise be pinned to its last-SUCCESS time and either retried
+ * forever or (once the cursor stopped advancing) never backed off correctly.
+ * Terminal failures never reach here (they are status='error', which the cron does
+ * not list), so they are never auto-retried.
  */
 export function isDueForSync(conn: StoredBankConnection, now: number = Date.now()): boolean {
   if (!conn.lastError) return true;
-  if (!conn.lastSyncAt) return true;
-  const t = Date.parse(conn.lastSyncAt);
+  if (!conn.updatedAt) return true;
+  const t = Date.parse(conn.updatedAt);
   if (Number.isNaN(t)) return true;
   return now - t >= RETRY_BACKOFF_MS;
 }
@@ -432,7 +469,7 @@ export function createAdminGateway(): BankSyncGateway {
             admin
               .from("bank_connections")
               .select(
-                "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at, last_error",
+                "org_id, provider, status, connection_ref, access_token, refresh_token, token_expires_at, last_sync_at, updated_at, last_error",
               )
               .eq("provider", provider)
               .eq("status", "connected") as unknown as {
@@ -467,6 +504,7 @@ export function createAdminGateway(): BankSyncGateway {
         refreshTokenCipher: (r.refresh_token as string | null) ?? null,
         tokenExpiresAt: (r.token_expires_at as string | null) ?? null,
         lastSyncAt: (r.last_sync_at as string | null) ?? null,
+        updatedAt: (r.updated_at as string | null) ?? null,
         lastError: (r.last_error as string | null) ?? null,
       }));
     },
@@ -526,10 +564,15 @@ export function createAdminGateway(): BankSyncGateway {
     },
 
     async markSynced(orgId, provider, fields) {
+      // last_error (and status, when given) are written on every outcome. The
+      // last_sync_at CURSOR advances ONLY on success (advanceSyncCursor) — a
+      // failure path must not touch it, or a single transient blip fast-forwards
+      // the sync window past unimported days. updated_at is left to the row trigger
+      // (bumped on any write), so isDueForSync's backoff still tracks the attempt.
       const patch: Record<string, unknown> = {
-        last_sync_at: new Date().toISOString(),
         last_error: fields.lastError,
       };
+      if (fields.advanceSyncCursor) patch.last_sync_at = new Date().toISOString();
       if (fields.status) patch.status = fields.status;
       const { error } = await admin
         .from("bank_connections")
