@@ -76,6 +76,14 @@ export interface WeatherScheduleSignal {
   readonly available: boolean;
   /** The one honest sentence a surface shows — sourced from readiness. */
   readonly statusLine: string;
+  /**
+   * The active provider's weather-data licence attribution (CC-BY for
+   * Open-Meteo) — the string a surface MUST render alongside the risk output it
+   * draws from that provider's readings. Threaded in from the service (derived
+   * from the active provider), never re-typed here so the pure module invents
+   * nothing. `null` while dark: no provider, no readings, nothing to attribute.
+   */
+  readonly attribution: string | null;
   /** Jobs assessed against REAL readings covering their day. */
   readonly assessedJobs: number;
   /** Jobs with a known district but NO readings for their day — "could not check". */
@@ -91,6 +99,8 @@ export function unavailableWeatherSignal(statusLine: string): WeatherScheduleSig
   return {
     available: false,
     statusLine,
+    // Dark ⇒ no data rendered ⇒ nothing to attribute.
+    attribution: null,
     assessedJobs: 0,
     insufficientJobs: 0,
     unlocatedJobs: 0,
@@ -141,7 +151,12 @@ function conditionsFor(snapshot: WeatherSnapshot): {
  */
 export function assessScheduleWeather(
   jobs: readonly ScheduledJobWeatherInput[],
-  readiness: { readonly available: boolean; readonly statusLine: string },
+  readiness: {
+    readonly available: boolean;
+    readonly statusLine: string;
+    /** The active provider's licence string, threaded from the service. */
+    readonly attribution?: string | null;
+  },
 ): WeatherScheduleSignal {
   if (!readiness.available) return unavailableWeatherSignal(readiness.statusLine);
 
@@ -182,6 +197,8 @@ export function assessScheduleWeather(
   return {
     available: true,
     statusLine: readiness.statusLine,
+    // The active provider's attribution, rendered wherever these risks show.
+    attribution: readiness.attribution ?? null,
     assessedJobs,
     insufficientJobs,
     unlocatedJobs,

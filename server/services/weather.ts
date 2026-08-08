@@ -42,6 +42,7 @@ import {
   assessAll,
   getWeatherReadiness,
   isPostcodeDistrict,
+  weatherAttributionFor,
   weatherStatusLine,
   type PostcodeDistrict,
   type WeatherReading,
@@ -123,6 +124,15 @@ export type WeatherSnapshot = {
   readonly readiness: WeatherReadiness;
   /** The one sentence a surface shows when `readiness.available` is false. */
   readonly statusLine: string;
+  /**
+   * The licence attribution of the ACTIVE provider whose data this snapshot's
+   * readings carry — the CC-BY string that MUST be rendered wherever those
+   * readings are displayed (EOT PDF, schedule signal, weather page). Derived
+   * from `readiness.provider` via `weatherAttributionFor`, so it can never
+   * drift from the provider actually serving the data. `null` on a dark build
+   * (no provider ⇒ no readings ⇒ nothing to attribute).
+   */
+  readonly attribution: string | null;
   /** The district assessed, when one could be derived. */
   readonly district: PostcodeDistrict | null;
   /** The window the assessments were made over. Empty on a dark build. */
@@ -160,6 +170,9 @@ export async function buildWeatherSnapshot(input: {
 }): Promise<WeatherSnapshot> {
   const readiness = getWeatherReadiness();
   const statusLine = weatherStatusLine(readiness);
+  // The active provider's licence string, resolved from the SAME id the readings
+  // are stored under — null while dark, when there are no readings to attribute.
+  const attribution = weatherAttributionFor(readiness.provider);
 
   // The empty window. Note it is still handed to the decision layer rather than
   // skipping assessment: the layer's answer to an empty window is `unknown` with
@@ -177,6 +190,7 @@ export async function buildWeatherSnapshot(input: {
     return {
       readiness,
       statusLine,
+      attribution,
       district: input.district,
       window: input.district === null ? null : emptyWindow(input.district),
       assessments:
@@ -189,6 +203,7 @@ export async function buildWeatherSnapshot(input: {
     return {
       readiness,
       statusLine,
+      attribution,
       district: null,
       window: null,
       assessments: [],
@@ -224,6 +239,7 @@ export async function buildWeatherSnapshot(input: {
     return {
       readiness,
       statusLine,
+      attribution,
       district,
       window: emptyWindow(district),
       assessments: assessAll(emptyWindow(district), input.workTypes),
@@ -245,6 +261,7 @@ export async function buildWeatherSnapshot(input: {
   return {
     readiness,
     statusLine,
+    attribution,
     district,
     window,
     assessments: assessAll(window, input.workTypes),

@@ -672,6 +672,14 @@ export interface WeatherBriefingInput {
   insufficientJobs: number;
   /** The at-risk jobs, already deterministic. */
   risks: readonly WeatherBriefingRisk[];
+  /**
+   * The active provider's weather-data licence attribution (CC-BY for
+   * Open-Meteo), threaded in from the schedule signal. Optional and defaulting
+   * to null so a dark build (and any caller that has not wired it yet) composes
+   * unchanged; the composer surfaces it only when it actually renders assessed
+   * weather (a `clear` or `risk` section), never on the honest dark line.
+   */
+  attribution?: string | null;
 }
 
 export type WeatherBriefingStatus = "unavailable" | "clear" | "risk";
@@ -687,6 +695,12 @@ export interface WeatherBriefingSection {
   line: string;
   /** The at-risk jobs, for a surface that wants to itemise them. */
   risks: readonly WeatherBriefingRisk[];
+  /**
+   * The weather-data licence string a surface MUST render alongside a `clear`
+   * or `risk` section (both draw on real provider readings). `null` on an
+   * `unavailable` section, which renders no weather data to attribute.
+   */
+  attribution: string | null;
 }
 
 /**
@@ -703,6 +717,8 @@ export function composeWeatherSection(input: WeatherBriefingInput): WeatherBrief
         ? "Weather intelligence is connected, but no forecast readings cover the scheduled work yet — nothing has been checked."
         : "Weather intelligence is not connected — no forecast is being checked. This is not a report that conditions are clear.",
       risks: [],
+      // No assessed weather rendered ⇒ nothing to attribute.
+      attribution: null,
     };
   }
 
@@ -717,6 +733,8 @@ export function composeWeatherSection(input: WeatherBriefingInput): WeatherBrief
       status: "clear",
       line: `Checked ${n} scheduled ${plural(n, "job")} against the forecast — no weather stoppages flagged.${insuff}`,
       risks: [],
+      // Real readings were assessed and rendered ⇒ attribute the provider.
+      attribution: input.attribution ?? null,
     };
   }
 
@@ -730,5 +748,7 @@ export function composeWeatherSection(input: WeatherBriefingInput): WeatherBrief
     status: "risk",
     line: `${lead}. Check the forecast before committing crews.`,
     risks: input.risks,
+    // Weather-derived conditions are rendered ⇒ attribute the provider.
+    attribution: input.attribution ?? null,
   };
 }

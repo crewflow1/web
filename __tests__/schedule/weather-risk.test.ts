@@ -22,6 +22,7 @@ function snapshot(readings: WeatherReading[]): WeatherSnapshot {
   return {
     readiness: {} as WeatherSnapshot["readiness"],
     statusLine: "active",
+    attribution: null,
     district: LS1,
     window,
     assessments: assessAll(window, [...WORK_TYPES]),

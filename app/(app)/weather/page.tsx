@@ -3,6 +3,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { readWeatherWatches } from "@/server/services/weather";
 import {
   getWeatherReadiness,
+  weatherAttributionFor,
   weatherStatusLine,
   datasetInfo,
   WORK_TYPES,
@@ -135,6 +136,10 @@ export default async function WeatherPage() {
 function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeatherReadiness> }) {
   const built = readiness.decisionLayerImplemented;
   const geo = datasetInfo();
+  // The WEATHER-DATA licence, distinct from the ONSPD/OGL geo attribution below:
+  // resolved from the active provider so it appears the moment weather goes live
+  // and is absent (null) on the dark build, where no weather data is shown.
+  const weatherAttribution = weatherAttributionFor(readiness.provider);
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -193,6 +198,14 @@ function ReadinessPanel({ readiness }: { readiness: ReturnType<typeof getWeather
           integration or remove the credential — a key that nothing reads is an invitation for
           some future call site to read it directly and bypass this seam.
         </p>
+      ) : null}
+
+      {weatherAttribution ? (
+        // The WEATHER-DATA licence (CC-BY 4.0 for Open-Meteo), required wherever
+        // the vendor's weather data is displayed. Sourced from the active
+        // provider, so it is correct if the provider changes and absent while
+        // dark. Distinct from the ONSPD/OGL geo attribution below.
+        <p className="mt-3 text-[11px] leading-4 text-slate-400">{weatherAttribution}.</p>
       ) : null}
 
       {readiness.districtResolutionAvailable ? (

@@ -24,6 +24,7 @@ import {
 import { buildWeatherSnapshot, type WeatherSnapshot } from "@/server/services/weather";
 import {
   getWeatherReadiness,
+  weatherAttributionFor,
   weatherStatusLine,
   districtForAddress,
   WORK_TYPES,
@@ -520,7 +521,13 @@ async function buildScheduleWeatherSignal(
     inputs.push({ jobId: j.id, label, day, district, snapshot });
   }
 
-  return assessScheduleWeather(inputs, { available: readiness.available, statusLine });
+  return assessScheduleWeather(inputs, {
+    available: readiness.available,
+    statusLine,
+    // The active provider's CC-BY string, resolved from the same id its readings
+    // are stored under, so the schedule surface can attribute what it renders.
+    attribution: weatherAttributionFor(readiness.provider),
+  });
 }
 
 /**
