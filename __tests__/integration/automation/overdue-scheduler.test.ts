@@ -300,7 +300,7 @@ describeIntegration("overdue-invoice scheduler", () => {
               error: { message: string } | null;
             }>;
             in: (k: string, v: readonly unknown[]) => Promise<{
-              data: Array<{ source_id: string }> | null;
+              data: Array<{ correlation_id: string }> | null;
               error: { message: string } | null;
             }>;
           };
@@ -366,16 +366,20 @@ describeIntegration("overdue-invoice scheduler", () => {
       // `.limit(1000)` window could never reach. UUID text order matches Postgres
       // uuid byte order for canonical lowercase ids, so a JS sort reproduces the
       // scan's stable order closely enough to pick the tail beyond position 1000.
+      // A dispatch is proven by its terminal automation_runs row, keyed by the
+      // invoice-scoped correlation id (`invoice.overdue:invoices:{id}`) — the same
+      // column runsFor() asserts on. automation_runs has NO source_id column.
       const tail = [...seededIds].sort().slice(1000);
       expect(tail.length).toBeGreaterThan(0);
+      const tailCorrelations = tail.map((id) => `invoice.overdue:invoices:${id}`);
       const tailRuns = await bulk(serviceClient())
         .from("automation_runs")
-        .select("source_id")
-        .in("source_id", tail);
+        .select("correlation_id")
+        .in("correlation_id", tailCorrelations);
       expect(tailRuns.error, tailRuns.error?.message).toBeNull();
-      const dispatchedTail = new Set((tailRuns.data ?? []).map((r) => r.source_id));
-      for (const id of tail) {
-        expect(dispatchedTail.has(id), `tail invoice ${id} beyond position 1000 must dispatch`).toBe(true);
+      const dispatchedTail = new Set((tailRuns.data ?? []).map((r) => r.correlation_id));
+      for (const corr of tailCorrelations) {
+        expect(dispatchedTail.has(corr), `tail invoice ${corr} beyond position 1000 must dispatch`).toBe(true);
       }
     },
     180_000,
