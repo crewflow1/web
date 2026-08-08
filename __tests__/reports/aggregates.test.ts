@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -340,6 +340,103 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
  * static source assertion (the reads select `amount`, not `total`) so a future
  * regression to gross fails CI on both axes.
  */
+/**
+ * MONTH-WINDOW CONSTRUCTION MUST NOT OVERFLOW ON A 29/30/31 `now` (C48).
+ *
+ * ── THE DEFECT ───────────────────────────────────────────────────────────────
+ * revenuePerMonth built its window by mutating a live Date:
+ *   since.setUTCMonth(getUTCMonth() - months + 1); since.setUTCDate(1)
+ * and each bucket key the same way. setUTCMonth runs WHILE the Date still holds
+ * day 29/30/31, so for a shorter target month it OVERFLOWS into the following
+ * month (the day-1 floor happens too late). On a 31st the 12-month loop produced
+ * only 7 DISTINCT buckets (duplicated/skipped months); the invoice-key path uses
+ * the day-safe startOfMonth(), so an invoice whose real month had no bucket hit
+ * `if (!slot) continue;` and its revenue was SILENTLY DROPPED — a live financial
+ * miscompute on /reports and the CSV export. The fix builds every window month
+ * from a day-1-normalised Date.UTC() base, which can never overflow.
+ *
+ * These tests FREEZE `now` to month-ends (a 31st, a 30th, and the Feb-28/29
+ * boundary) and assert the window is always 12 DISTINCT months with every seeded
+ * invoice in its correct bucket. Pre-fix, the 31st case yields 7 distinct months
+ * and drops revenue → these assertions fail; post-fix they pass.
+ */
+describe("revenuePerMonth window never overflows on a 29/30/31 now (C48)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Freeze to `frozenIso`, seed exactly one paid invoice per trailing 12 months
+   * (each a distinct amount, placed mid-month), and assert 12 distinct buckets
+   * with every invoice attributed to its own month — no drops, no duplicates.
+   */
+  async function assertTwelveDistinctMonths(frozenIso: string) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(frozenIso));
+
+    const now = new Date(frozenIso);
+    // Expected bucket key for each of the 12 trailing months (first-of-month ISO).
+    const expected = new Map<string, number>();
+    const invoices: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 12; i++) {
+      const first = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
+      );
+      const key = first.toISOString().slice(0, 10);
+      const amount = (i + 1) * 100; // distinct per month → catches mis-bucketing
+      expected.set(key, amount);
+      // Place the invoice mid-month (day 15) so it can't slip a month boundary.
+      const midMonth = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 15, 12),
+      );
+      invoices.push({
+        id: `inv-${String(i).padStart(2, "0")}`,
+        org_id: ORG,
+        status: "paid",
+        amount,
+        total: amount * 1.2,
+        vat_total: amount * 0.2,
+        paid_at: midMonth.toISOString(),
+      });
+    }
+    h.tables.invoices = invoices;
+
+    const rows = await revenuePerMonth(ORG, 12);
+
+    // Exactly 12 buckets, all distinct.
+    expect(rows).toHaveLength(12);
+    const months = rows.map((r) => r.month);
+    expect(new Set(months).size).toBe(12);
+    // Every expected month present, each carrying exactly its own invoice — the
+    // fingerprint of correct bucketing (no drop, no duplicate collapse).
+    for (const [key, amount] of expected) {
+      const slot = rows.find((r) => r.month === key);
+      expect(slot, `missing bucket ${key}`).toBeDefined();
+      expect(slot!.revenue).toBe(amount);
+    }
+    // Nothing dropped: the sum of all buckets equals the sum of all invoices.
+    const total = rows.reduce((s, r) => s + r.revenue, 0);
+    const seeded = [...expected.values()].reduce((s, a) => s + a, 0);
+    expect(total).toBe(seeded);
+  }
+
+  it("31st: now=2026-08-31 yields 12 distinct months, no dropped revenue", async () => {
+    await assertTwelveDistinctMonths("2026-08-31T00:00:00.000Z");
+  });
+
+  it("30th: now=2026-07-30 yields 12 distinct months, no dropped revenue", async () => {
+    await assertTwelveDistinctMonths("2026-07-30T00:00:00.000Z");
+  });
+
+  it("Feb 28 boundary: now=2026-02-28 yields 12 distinct months", async () => {
+    await assertTwelveDistinctMonths("2026-02-28T00:00:00.000Z");
+  });
+
+  it("Feb 29 leap boundary: now=2028-02-29 yields 12 distinct months", async () => {
+    await assertTwelveDistinctMonths("2028-02-29T00:00:00.000Z");
+  });
+});
+
 describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
   it("a VAT-bearing paid invoice contributes its NET amount to revenuePerMonth", async () => {
     // amount=10, vat_total=2, total=12. Turnover is 10, not 12.

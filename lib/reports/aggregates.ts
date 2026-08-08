@@ -122,10 +122,17 @@ export async function revenuePerMonth(
   months = 12,
 ): Promise<RevenuePerMonth[]> {
   const supabase = await createClient();
-  const since = new Date();
-  since.setUTCMonth(since.getUTCMonth() - months + 1);
-  since.setUTCDate(1);
-  since.setUTCHours(0, 0, 0, 0);
+  // Build the window from a DAY-1-NORMALISED UTC base. Mutating a live Date with
+  // setUTCMonth WHILE it still holds day 29/30/31 overflows into the next month
+  // for shorter target months (setUTCMonth clamps day-of-month AFTER the shift,
+  // and the setUTCDate(1) floor happened too late) — so on a 31st the window
+  // silently lost/duplicated buckets. Date.UTC() takes the target month with
+  // day=1 up front, so the month can never overflow and negative months roll the
+  // year back correctly. Same day-safe construction as lib/profitability/compute.ts:261.
+  const now = new Date();
+  const since = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1),
+  );
 
   // Revenue is EX-VAT. `invoices.amount` is the net subtotal; `invoices.total` is
   // a stored generated column = amount + vat_total (GROSS — it includes the VAT
@@ -153,9 +160,8 @@ export async function revenuePerMonth(
 
   const buckets = new Map<string, RevenuePerMonth>();
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setUTCMonth(d.getUTCMonth() - i);
-    const m = startOfMonth(d);
+    // Day-1-normalised UTC construction (see `since` above): never overflow.
+    const m = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     buckets.set(isoDate(m), { month: isoDate(m), revenue: 0 });
   }
 
@@ -174,9 +180,13 @@ export async function vatPerQuarter(
   quarters = 4,
 ): Promise<VatPerQuarter[]> {
   const supabase = await createClient();
-  const since = new Date();
-  since.setUTCMonth(since.getUTCMonth() - quarters * 3 + 1);
-  since.setUTCDate(1);
+  // Day-1-normalised UTC base (see revenuePerMonth): the mutable-Date idiom would
+  // overflow on a 31st. startOfQuarter flooring later absorbs the slip here, but
+  // build it safely for consistency with the revenue path.
+  const now = new Date();
+  const since = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (quarters * 3 - 1), 1),
+  );
 
   // Output VAT: paid invoices' VAT collected. Input VAT: VAT paid out
   // recorded against finance entries.
@@ -210,9 +220,10 @@ export async function vatPerQuarter(
 
   const buckets = new Map<string, VatPerQuarter>();
   for (let i = quarters - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setUTCMonth(d.getUTCMonth() - i * 3);
-    const q = startOfQuarter(d);
+    // Day-1-normalised UTC construction (see revenuePerMonth): never overflow.
+    const q = startOfQuarter(
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i * 3, 1)),
+    );
     buckets.set(isoDate(q), {
       quarter: isoDate(q),
       output_vat: 0,
