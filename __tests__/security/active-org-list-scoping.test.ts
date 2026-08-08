@@ -388,7 +388,9 @@ describe("/api/search — every entity in the palette is active-org scoped", () 
 describe("list + export routes — pinned to the ACTIVE org", () => {
   const ROUTES: Array<[string, string[]]> = [
     ["app/api/activity/route.ts", ["activity_log"]],
-    ["app/api/schedule/route.ts", ["jobs"]],
+    // NB: app/api/schedule/route.ts is asserted separately below — it delegates
+    // its jobs read to the shared fetchCalendarJobs reader (lib/schedule/
+    // calendar-data.ts), so the `.from("jobs")` + org pin live there, not inline.
     ["app/api/finances/route.ts", ["finances"]],
     ["app/api/invoices/route.ts", ["invoices"]],
     ["app/api/finances/export/route.ts", ["finances"]],
@@ -412,6 +414,32 @@ describe("list + export routes — pinned to the ACTIVE org", () => {
       ).toBeGreaterThanOrEqual(tables.length);
     });
   }
+
+  it("app/api/schedule/route.ts pins jobs via the shared fetchCalendarJobs reader", () => {
+    // The GET handler no longer reads jobs inline: it was routed through
+    // fetchCalendarJobs (lib/schedule/calendar-data.ts) to fix the F-1 silent
+    // truncation — the same reader the /jobs/calendar server render uses. The
+    // active-org pin must survive that delegation, so it is followed here rather
+    // than dropped: the route must (a) capture ctx and (b) hand the ACTIVE org to
+    // the reader, and the reader must (c) read `.from("jobs")` with the org pin.
+    const route = src("app/api/schedule/route.ts");
+    expect(route).toMatch(CAPTURES_CTX);
+    expect(
+      route,
+      "schedule route must pass the ACTIVE org (ctx.org.id) into fetchCalendarJobs",
+    ).toMatch(/fetchCalendarJobs\(\s*\{[\s\S]*?orgId:\s*ctx\.org\.id/);
+
+    const reader = src("lib/schedule/calendar-data.ts");
+    const i = reader.indexOf(`.from("jobs")`);
+    expect(i, "calendar-data reader no longer reads jobs").toBeGreaterThan(-1);
+    // The org pin (ARG_PIN — the reader takes the active org as `orgId`) must sit
+    // in the shared scoped() builder that both the non-recurring and recurring
+    // reads compose from.
+    expect(
+      reader,
+      "the shared calendar jobs read lost its active-org predicate",
+    ).toMatch(ARG_PIN);
+  });
 
   it("the money exports are pinned — a bookkeeping CSV is ONE company's ledger", () => {
     // The sharpest consequence of the blend: a Xero/Sage import or a VAT

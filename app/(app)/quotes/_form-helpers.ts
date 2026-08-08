@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Shared server-only fetchers for the quote builder dropdowns.
@@ -21,12 +22,20 @@ export type LeadOption = { id: string; label: string; customer_id: string | null
 
 export async function listCustomersForQuote(orgId: string): Promise<CustomerOption[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .order("name", { ascending: true })
-    .limit(1000);
+  // COMPLETE read (F-1). The old `.limit(1000)` sat on the PostgREST clamp, so an
+  // org past the cap lost late-alphabet customers from the quote builder and the
+  // edit path could drop an out-of-cap link. Page the WHOLE list so every
+  // customer is selectable and the currently-set one is always present. (Scale
+  // follow-up: a name-prefix typeahead.)
+  const { data, error } = await fetchAllRows<CustomerOption>((from, to) =>
+    supabase
+      .from("customers")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("quote form: customers", error);
   return data ?? [];
 }

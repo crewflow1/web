@@ -49,23 +49,57 @@ export default async function EditCustomerPage({
   if (customerError) throw readFailure("customer detail: customer", customerError);
   if (!customer) notFound();
 
-  // Wave 6 — rollups
+  // Wave 6 — rollups. PAGED (F-1): these are per-customer histories with no cap,
+  // rendered in full. A long-running commercial customer can carry more than the
+  // 1000-row PostgREST cap of quotes/jobs/leads, so a bare read would silently
+  // drop the oldest rows from the history (and, for quotes, understate the money
+  // totals derived from them). fetchAllRows pages the complete set on a stable
+  // created_at+id order — matching the invoice/payment paging already below.
   const [quotesRes, jobsRes, leadsRes] = await Promise.all([
-    supabase
-      .from("quotes")
-      .select("id, number, status, total, created_at")
-      .eq("customer_id", id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("jobs")
-      .select("id, status, scheduled_date, created_at")
-      .eq("customer_id", id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("leads")
-      .select("id, source, service, urgency, created_at")
-      .eq("customer_id", id)
-      .order("created_at", { ascending: false }),
+    fetchAllRows<{
+      id: string;
+      number: string;
+      status: string;
+      total: number | string | null;
+      created_at: string;
+    }>((from, to) =>
+      supabase
+        .from("quotes")
+        .select("id, number, status, total, created_at")
+        .eq("customer_id", id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<{
+      id: string;
+      status: string;
+      scheduled_date: string | null;
+      created_at: string;
+    }>((from, to) =>
+      supabase
+        .from("jobs")
+        .select("id, status, scheduled_date, created_at")
+        .eq("customer_id", id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<{
+      id: string;
+      source: string | null;
+      service: string | null;
+      urgency: string | null;
+      created_at: string;
+    }>((from, to) =>
+      supabase
+        .from("leads")
+        .select("id, source, service, urgency, created_at")
+        .eq("customer_id", id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (quotesRes.error) throw readFailure("customer detail: quotes", quotesRes.error);
   if (jobsRes.error) throw readFailure("customer detail: jobs", jobsRes.error);
