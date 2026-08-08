@@ -82,6 +82,11 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "jobs",
   "leads",
   "customers",
+  // Sites/addresses: high-value, cross-tenant (RLS admits every org the caller
+  // belongs to), and a quote/job reference picker. A clamped read silently drops
+  // sites from the builder and — on an edit — nulls an out-of-cap property_id.
+  // (F-1 picker-class wave.)
+  "properties",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.

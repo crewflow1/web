@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { NewInvoiceForm } from "./_form";
@@ -19,15 +20,27 @@ import { NewInvoiceForm } from "./_form";
 export default async function NewInvoicePage() {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: quotes, error: quotesError } = await supabase
-    .from("quotes")
-    .select("id, number, subtotal, total, status")
-    // ACTIVE-org pin — offering the other org's accepted quote here produces an
-    // invoice the org-scoped write side cannot honour.
-    .eq("org_id", ctx.org.id)
-    .eq("status", "accepted")
-    .order("created_at", { ascending: false })
-    .limit(500);
+  // COMPLETE read (F-1). The old `.limit(500)` capped this picker: an org with
+  // more than 500 accepted-but-uninvoiced quotes silently could not bill the
+  // overflow. Page the WHOLE accepted set so every billable quote is selectable.
+  const { data: quotes, error: quotesError } = await fetchAllRows<{
+    id: string;
+    number: string | null;
+    subtotal: number | null;
+    total: number | null;
+    status: string | null;
+  }>((from, to) =>
+    supabase
+      .from("quotes")
+      .select("id, number, subtotal, total, status")
+      // ACTIVE-org pin — offering the other org's accepted quote here produces an
+      // invoice the org-scoped write side cannot honour.
+      .eq("org_id", ctx.org.id)
+      .eq("status", "accepted")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (quotesError) throw readFailure("new invoice: accepted quotes", quotesError);
 
   const options = (quotes ?? []).map((q) => ({

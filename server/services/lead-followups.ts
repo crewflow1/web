@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { emitNotifications } from "@/server/services/notifications-service";
 import type { NotificationCreate } from "@/lib/notifications/types";
 
@@ -63,17 +64,24 @@ export async function runLeadFollowups(): Promise<FollowupRunResult> {
       acted_at: string | null;
     } | null;
   };
-  const { data, error } = await admin
-    .from("leads")
-    .select(
-      `
+  // COMPLETE read (F-1). The old `.limit(500)` silently STARVED lead follow-ups
+  // once the standing backlog of unactioned 'new' leads crossed 500 across all
+  // orgs (this is a cross-org admin scan). Page the whole candidate set; the
+  // per-row state re-check keeps re-runs idempotent, so no lead is double-fired.
+  const { data, error } = await fetchAllRows((from, to) =>
+    admin
+      .from("leads")
+      .select(
+        `
         id, org_id, source, service, urgency, created_at,
         state:lead_followup_state ( reminder_72h_at, reminder_7d_at, acted_at )
       `,
-    )
-    .eq("status", "new")
-    .lte("created_at", cutoff72h)
-    .limit(500);
+      )
+      .eq("status", "new")
+      .lte("created_at", cutoff72h)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) {
     console.error("[lead-followups] query failed", error);
     return { ...stats, errors: stats.errors + 1 };

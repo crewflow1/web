@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { createReviewRequestAction } from "../actions";
 
@@ -31,12 +32,24 @@ export default async function NewReviewRequestPage({
   const [customersRes, jobsRes] = await Promise.all([
     // ACTIVE-org pins — both pickers wrote their selection onto a review
     // request in THIS org, so a blended option produced a cross-org row.
-    supabase
-      .from("customers")
-      .select("id, name, email" as never)
-      .eq("org_id", ctx.org.id)
-      .order("name", { ascending: true })
-      .limit(500),
+    //
+    // COMPLETE read (F-1) for the CUSTOMER picker: the old `.limit(500)` on an
+    // alphabetical list dropped late-alphabet customers past the cap, so a
+    // review could never be requested from them. Page the whole org-scoped set.
+    fetchAllRows<CustomerOption>(
+      (from, to) =>
+        supabase
+          .from("customers")
+          .select("id, name, email" as never)
+          .eq("org_id", ctx.org.id)
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<CustomerOption>>,
+    ),
+    // The JOB picker is a deliberate "recent 200 completed jobs" sample — you
+    // request a review off a RECENT job, not one from years ago — and this is a
+    // NEW form (no saved reference re-rendered through it). Bounded by design;
+    // allowlisted in the F-1 producer guards.
     supabase
       .from("jobs")
       .select("id, customer_id, status, notes" as never)

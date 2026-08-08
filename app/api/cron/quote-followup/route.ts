@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendEmail } from "@/lib/email/send";
 import { buildQuoteFollowup } from "@/lib/email/templates/reminders";
 import { isCronAuthorised } from "@/lib/cron/auth";
@@ -75,29 +76,42 @@ async function runFollowup() {
   horizon.setUTCDate(horizon.getUTCDate() - FOLLOWUP_DAYS);
   const horizonIso = horizon.toISOString();
 
-  const { data: rowsRaw, error } = await admin
-    .from("quotes")
-    .select(
-      `
+  // COMPLETE read (F-1). The old `.limit(500)` silently STARVED follow-ups once
+  // the standing candidate backlog crossed 500 across all orgs (this is a
+  // cross-org admin scan). Page the whole candidate set; `followup_sent_at` +
+  // the per-row re-check make re-runs idempotent, so no quote is double-chased.
+  const { data: rowsRaw, error } = await fetchAllRows((from, to) =>
+    admin
+      .from("quotes")
+      .select(
+        `
         id, org_id, number, total, sent_at, viewed_at, accepted_at, declined_at,
         customer:customers ( name, email ),
         org:organizations ( name )
       `,
-    )
-    .is("viewed_at", null)
-    .is("accepted_at", null)
-    .is("declined_at", null)
-    .is("followup_sent_at", null)
-    .not("sent_at", "is", null)
-    .lte("sent_at", horizonIso)
-    .limit(500);
+      )
+      .is("viewed_at", null)
+      .is("accepted_at", null)
+      .is("declined_at", null)
+      .is("followup_sent_at", null)
+      .not("sent_at", "is", null)
+      .lte("sent_at", horizonIso)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const rows = rowsRaw as unknown as Row[] | null;
 
   if (error) {
     console.error("[cron/quote-followup] query failed", error);
     // Throwing surfaces the failure to the telemetry wrapper which
     // marks the run failed + writes the error message into cron_runs.
-    throw new Error(`query_failed: ${error.message ?? "unknown"}`);
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" && error !== null && "message" in error
+          ? String((error as { message?: unknown }).message)
+          : "unknown";
+    throw new Error(`query_failed: ${message}`);
   }
 
   const stats = { scanned: rows?.length ?? 0, sent: 0, skipped_no_email: 0, failed: 0 };

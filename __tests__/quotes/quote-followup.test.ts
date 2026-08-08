@@ -31,7 +31,10 @@ function makeMockSupabase() {
     return entry;
   }
 
-  const passthrough = ["select", "eq", "is", "not", "lt", "lte", "gt", "gte", "order", "in", "match"];
+  // `range` is the terminal method now that the candidate scan pages via
+  // fetchAllRows; awaiting the chain after `.range()` resolves a single short
+  // page for the small test fixtures.
+  const passthrough = ["select", "eq", "is", "not", "lt", "lte", "gt", "gte", "order", "in", "match", "range"];
 
   function makeChain(table: string): Record<string, unknown> {
     const chain: Record<string, unknown> = {};

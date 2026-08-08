@@ -43,6 +43,33 @@ export function TalkForm({
   const d = defaults ?? {};
   const today = new Date().toISOString().slice(0, 10);
 
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The option
+  // lists are bounded/filtered: jobs is a recent-200 sample, and RAMS/permits
+  // are deliberately restricted to CURRENT controls (issued RAMS, issued/active
+  // permits). So when EDITING a talk, a saved link can be absent from its list —
+  // an old job, or a RAMS/permit that has since been superseded. Without a
+  // matching <option> the <select> falls back to value="" and updateToolboxTalk
+  // then writes the id as null on ANY save. Pre-inject the saved id as a
+  // preserved option so an edit can never silently drop the reference.
+  const jobOptions =
+    d.job_id && !options.jobs.some((j) => j.id === d.job_id)
+      ? [
+          { id: d.job_id, status: null, scheduled_date: null, customer: { name: "Current job" } },
+          ...options.jobs,
+        ]
+      : options.jobs;
+  const ramsOptions =
+    d.risk_assessment_id && !options.rams.some((r) => r.id === d.risk_assessment_id)
+      ? [{ id: d.risk_assessment_id, reference: null, title: "Current RAMS" }, ...options.rams]
+      : options.rams;
+  const permitOptions =
+    d.permit_to_work_id && !options.permits.some((p) => p.id === d.permit_to_work_id)
+      ? [
+          { id: d.permit_to_work_id, reference: null, title: "Current permit", status: "linked" },
+          ...options.permits,
+        ]
+      : options.permits;
+
   return (
     <form action={action} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       {d.id ? <input type="hidden" name="id" value={d.id} /> : null}
@@ -100,7 +127,7 @@ export function TalkForm({
           </label>
           <select id="job_id" name="job_id" defaultValue={d.job_id ?? ""} className={inputClass}>
             <option value="">No job (general)</option>
-            {options.jobs.map((j) => (
+            {jobOptions.map((j) => (
               <option key={j.id} value={j.id}>
                 {(j.customer?.name ?? "Job") + (j.scheduled_date ? ` · ${j.scheduled_date}` : "") + (j.status ? ` · ${j.status}` : "")}
               </option>
@@ -122,7 +149,7 @@ export function TalkForm({
           </label>
           <select id="risk_assessment_id" name="risk_assessment_id" defaultValue={d.risk_assessment_id ?? ""} className={inputClass}>
             <option value="">None</option>
-            {options.rams.map((r) => (
+            {ramsOptions.map((r) => (
               <option key={r.id} value={r.id}>
                 {(r.reference ? `${r.reference} · ` : "") + r.title}
               </option>
@@ -136,7 +163,7 @@ export function TalkForm({
           </label>
           <select id="permit_to_work_id" name="permit_to_work_id" defaultValue={d.permit_to_work_id ?? ""} className={inputClass}>
             <option value="">None</option>
-            {options.permits.map((p) => (
+            {permitOptions.map((p) => (
               <option key={p.id} value={p.id}>
                 {(p.reference ? `${p.reference} · ` : "") + p.title + ` · ${p.status}`}
               </option>

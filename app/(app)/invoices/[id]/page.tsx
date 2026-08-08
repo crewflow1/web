@@ -316,10 +316,22 @@ export default async function InvoiceDetailPage({
             status={status}
             customerEmail={customerEmail}
             linkedJobId={linkedJobId}
-            jobsForPicker={(jobsForPicker ?? []).map((j) => ({
-              id: j.id,
-              label: `${j.customer?.name ?? "Job"} · ${j.status}${j.scheduled_date ? ` · ${j.scheduled_date}` : ""}`,
-            }))}
+            jobsForPicker={(() => {
+              const opts = (jobsForPicker ?? []).map((j) => ({
+                id: j.id,
+                label: `${j.customer?.name ?? "Job"} · ${j.status}${j.scheduled_date ? ` · ${j.scheduled_date}` : ""}`,
+              }));
+              // Preserve-option (F-1 picker class): this is a recent-50 sample, so
+              // an already-linked job older than the top 50 would have no matching
+              // <option> and the controlled select would render blank — misleading
+              // the user into thinking the invoice is unlinked. Inject the linked
+              // id so it always displays. (Linking is an explicit onChange action,
+              // so no unrelated save can null it — this only fixes the display.)
+              if (linkedJobId && !opts.some((o) => o.id === linkedJobId)) {
+                return [{ id: linkedJobId, label: "Currently linked job" }, ...opts];
+              }
+              return opts;
+            })()}
           />
         </div>
       </section>
