@@ -89,25 +89,35 @@ export async function removeAttachment(
  * session before the URL is generated.
  */
 export async function getAttachmentSignedUrl(attachmentId: string): Promise<string | null> {
-  await requireOrgContext();
+  const { ctx } = await requireOrgContext();
   const id = z.string().uuid().safeParse(attachmentId);
   if (!id.success) return null;
 
   const tenant = await createClient();
+  // ACTIVE-org pin. `tenant_attachments` RLS is `org_id in current_org_ids()`,
+  // which admits EVERY org the viewer belongs to — so a dual-org member active
+  // in org A could otherwise pass an attachment id from org B, have RLS admit
+  // it, and be minted a signed URL for org B's bytes. `storagePathBelongsToOrg`
+  // below proves the path is under the ROW's own org (anti-poisoning), NOT that
+  // the row is in the ACTIVE org, so it does not stop this leak. Mirrors the
+  // signer pins in server/services/job-documents.ts + blueprints.ts.
   const { data: row, error: rowError } = await (
     tenant.from("tenant_attachments" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{
-            data: { org_id: string | null; storage_path: string | null } | null;
-            error: SupabaseReadError | null;
-          }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { org_id: string | null; storage_path: string | null } | null;
+              error: SupabaseReadError | null;
+            }>;
+          };
         };
       };
     }
   )
     .select("org_id, storage_path")
     .eq("id", id.data)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   // REPORT, don't throw. This action is called from a click handler inside
   // startTransition (AttachmentsClient.onOpen); a thrown Server Action error

@@ -396,10 +396,19 @@ export async function getJobDocumentDownloadUrl(
   const { ctx } = await requireOrgContext();
   const tenant = await createClient();
 
+  // ACTIVE-org pin. `job_document_versions`/`job_documents` RLS is
+  // `current_org_ids()` + (staff|is_org_admin) — it admits EVERY org the viewer
+  // belongs to, so a dual-org member active in org A could otherwise pass a
+  // versionId from org B, have RLS admit it, and be minted a signed URL for org
+  // B's bytes. `storagePathBelongsToOrg` below proves the path is under the
+  // ROW's own org (anti-poisoning), NOT that the row is in the ACTIVE org — so
+  // it does not stop this leak. Mirrors getBlueprintVersionUrl and this file's
+  // C40 write pins (completeJobDocument/deleteJobDocument).
   const { data, error } = await tenant
     .from("job_document_versions" as never)
     .select("org_id, document_id, visibility, storage_bucket, storage_path")
     .eq("id", versionId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (error) {
     console.error("[job-documents] download lookup failed", error);
