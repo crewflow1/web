@@ -672,31 +672,31 @@ export default async function EditJobPage({
             </Link>
           </div>
           <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-            <div>
+            <div className="min-w-0">
               <dt className="text-xs uppercase tracking-wide text-slate-500">Original</dt>
-              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+              <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
                 {GBP.format(originalRevenue)}
               </dd>
             </div>
-            <div>
+            <div className="min-w-0">
               <dt className="text-xs uppercase tracking-wide text-slate-500">Variations</dt>
-              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+              <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
                 {variationRevenue > 0 ? "+" : ""}
                 {GBP.format(variationRevenue)}
               </dd>
             </div>
-            <div>
+            <div className="min-w-0">
               <dt className="text-xs uppercase tracking-wide text-slate-500">Total</dt>
-              <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+              <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
                 {GBP.format(totalCommitted)}
               </dd>
             </div>
             {profit ? (
               <>
-                <div>
+                <div className="min-w-0">
                   <dt className="text-xs uppercase tracking-wide text-slate-500">Profit</dt>
                   <dd
-                    className={`mt-0.5 text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
+                    className={`mt-0.5 truncate text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
                   >
                     {GBP.format(profit.gross_profit)}
                   </dd>
@@ -714,7 +714,7 @@ export default async function EditJobPage({
               </>
             ) : null}
             {hasCommittedCosts(committed) ? (
-              <div>
+              <div className="min-w-0">
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Committed (POs)</dt>
                 {/* EX-VAT. `committed.committed` is the GROSS ordered value
                     (purchase_orders.total = subtotal + vat_total); Profit,
@@ -722,7 +722,7 @@ export default async function EditJobPage({
                     ex-VAT `finances.amount`. Showing the gross figure here
                     overstated the commitment by up to 20% against its own
                     neighbours on a job that is exactly on plan. */}
-                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
                   {GBP.format(committed.committedNet)}
                 </dd>
                 <p className="text-xs text-slate-500">
@@ -732,9 +732,9 @@ export default async function EditJobPage({
               </div>
             ) : null}
             {billedActual > 0 ? (
-              <div>
+              <div className="min-w-0">
                 <dt className="text-xs uppercase tracking-wide text-slate-500">Billed (actual)</dt>
-                <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+                <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
                   {GBP.format(billedActual)}
                 </dd>
                 <p className="text-xs text-slate-500">
@@ -836,22 +836,22 @@ export default async function EditJobPage({
         ) : (
           <div className="mt-4 space-y-4">
             <div className="grid grid-cols-3 gap-3 text-sm">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Revenue</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
+                <div className="mt-1 truncate text-lg font-semibold text-slate-900">
                   {GBP.format(profit.revenue)}
                 </div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Costs</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
+                <div className="mt-1 truncate text-lg font-semibold text-slate-900">
                   {GBP.format(profit.costs_total)}
                 </div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Gross profit</div>
                 <div
-                  className={`mt-1 text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
+                  className={`mt-1 truncate text-lg font-semibold ${profit.gross_profit < 0 ? "text-red-700" : "text-slate-900"}`}
                 >
                   {GBP.format(profit.gross_profit)}
                 </div>
@@ -1013,9 +1013,9 @@ function PositionCell({
   tone?: "amber";
 }) {
   return (
-    <div className={`rounded-lg border p-3 ${tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+    <div className={`min-w-0 rounded-lg border p-3 ${tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
       <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 ${strong ? "text-lg font-bold text-slate-900" : "text-sm font-semibold text-slate-800"}`}>
+      <dd className={`mt-0.5 truncate ${strong ? "text-lg font-bold text-slate-900" : "text-sm font-semibold text-slate-800"}`}>
         {value}
       </dd>
       {sub ? <dd className="text-[11px] text-slate-500">{sub}</dd> : null}

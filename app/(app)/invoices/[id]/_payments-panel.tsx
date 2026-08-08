@@ -42,22 +42,22 @@ export function PaymentsPanel({
       <h2 className="text-base font-semibold text-slate-900">Payments</h2>
 
       <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
-        <div>
+        <div className="min-w-0">
           <dt className="text-xs uppercase tracking-wide text-slate-500">Invoice total</dt>
-          <dd className="mt-0.5 text-lg font-semibold text-slate-900">
+          <dd className="mt-0.5 truncate text-lg font-semibold text-slate-900">
             {GBP.format(invoiceTotal)}
           </dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-xs uppercase tracking-wide text-slate-500">Paid</dt>
-          <dd className="mt-0.5 text-lg font-semibold text-green-700">
+          <dd className="mt-0.5 truncate text-lg font-semibold text-green-700">
             {GBP.format(paidTotal)}
           </dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-xs uppercase tracking-wide text-slate-500">Outstanding</dt>
           <dd
-            className={`mt-0.5 text-lg font-semibold ${outstanding === 0 ? "text-slate-500" : "text-slate-900"}`}
+            className={`mt-0.5 truncate text-lg font-semibold ${outstanding === 0 ? "text-slate-500" : "text-slate-900"}`}
           >
             {GBP.format(outstanding)}
           </dd>
