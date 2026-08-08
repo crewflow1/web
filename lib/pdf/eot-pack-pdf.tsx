@@ -1,5 +1,5 @@
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
-import type { EotEvidencePack, EotPackEvent } from "@/lib/eot/pack";
+import type { EotEvidencePack, EotPackEvent, EotWeatherEvidence } from "@/lib/eot/pack";
 
 /**
  * EOT evidence pack PDF. Server-side only via @react-pdf renderToBuffer —
@@ -90,6 +90,37 @@ const s = StyleSheet.create({
 
 const dd = (x: string | null): string => (x ? x.slice(0, 10) : "—");
 
+/**
+ * The dark-state weather line — printed ONLY when a weather event carries a
+ * postcode district but the caller resolved no observed readings (provider
+ * dark, cache empty). Honest by construction: it says none is today.
+ */
+export function weatherDarkLine(district: string): string {
+  return `Postcode district ${district} — observed weather readings will attach here when a weather provider is connected (none is today).`;
+}
+
+/**
+ * Render the OBSERVED weather evidence for one delay event as a single sentence.
+ *
+ * Every metric is `number | null`, and `null` means "no reading reported this
+ * metric" (the assembly layer's rule) — so a null is OMITTED, never printed as
+ * zero, which would read as calm/dry on a contractual document. Present metrics
+ * are printed with their observed values and units. Used INSTEAD OF the dark
+ * placeholder whenever real readings exist, so the false "none is today" can
+ * never print alongside evidence.
+ */
+export function weatherEvidenceLine(ev: EotWeatherEvidence): string {
+  const parts: string[] = [];
+  if (ev.minAirTempC !== null) parts.push(`min air temp ${ev.minAirTempC}°C`);
+  if (ev.maxWindSpeedMs !== null) parts.push(`max mean wind ${ev.maxWindSpeedMs} m/s`);
+  if (ev.maxWindGustMs !== null) parts.push(`max gust ${ev.maxWindGustMs} m/s`);
+  if (ev.maxPrecipRateMmH !== null) parts.push(`peak rainfall ${ev.maxPrecipRateMmH} mm/h`);
+  if (ev.totalPrecipMm !== null) parts.push(`total rainfall ${ev.totalPrecipMm} mm`);
+  const readings = `${ev.readingCount} observed reading${ev.readingCount === 1 ? "" : "s"}`;
+  const metrics = parts.length > 0 ? `: ${parts.join(", ")}.` : " — no metric values reported.";
+  return `Postcode district ${ev.district} — ${readings} over the delay window${metrics}`;
+}
+
 function EventBlock({ e }: { e: EotPackEvent }) {
   return (
     <View style={s.event} wrap={false}>
@@ -127,11 +158,10 @@ function EventBlock({ e }: { e: EotPackEvent }) {
             : ""}
         </Text>
       ) : null}
-      {e.weatherDistrict ? (
-        <Text style={s.evidence}>
-          Postcode district {e.weatherDistrict} — observed weather readings will attach
-          here when a weather provider is connected (none is today).
-        </Text>
+      {e.weatherEvidence ? (
+        <Text style={s.evidence}>{weatherEvidenceLine(e.weatherEvidence)}</Text>
+      ) : e.weatherDistrict ? (
+        <Text style={s.evidence}>{weatherDarkLine(e.weatherDistrict)}</Text>
       ) : null}
       <Text style={{ ...s.evidence, fontSize: 7 }}>
         Recorded {e.recordedAt ? e.recordedAt.slice(0, 16).replace("T", " ") : "—"} · ref {e.id}
