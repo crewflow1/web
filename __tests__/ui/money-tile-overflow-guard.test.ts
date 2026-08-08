@@ -7,58 +7,84 @@ import { resolve, relative } from "node:path";
  *
  * The sibling guard (money-table-overflow-guard.test.ts) covers hand-rolled
  * `<table>` money grids. It does NOT cover the OTHER shape of the same bug: a
- * KPI/stat TILE. A stat tile renders one big bold money figure
- * ("£6,234,567.00") in a card, and those cards are laid out 2-up at mobile
- * (`grid grid-cols-2`). A comma-grouped GBP token has NO soft-wrap opportunity,
- * so at `text-xl` it takes its full min-content width; in a ~133px half-width
- * tile that width exceeds the box, and with nothing to clip it the tile pushes
- * its grid parent past the viewport and the ENTIRE document scrolls sideways.
+ * KPI/stat TILE. A stat tile renders one big money figure ("£6,234,567.00") in
+ * a card, and those cards are laid out 2-up (or denser) at mobile
+ * (`grid grid-cols-2`/`grid-cols-3`). A comma-grouped GBP token has NO soft-wrap
+ * opportunity, so it takes its full min-content width; in a ~90-133px tile that
+ * width exceeds the box, and with nothing to clip it the tile pushes its grid
+ * parent past the viewport and the ENTIRE document scrolls sideways.
  *
- * The proven fix is one Tailwind class on the value line: `truncate`
- * (overflow-hidden + text-ellipsis + whitespace-nowrap). The dashboard `Kpi`
- * tile carries it; this guard makes it a contract for every money tile.
+ * The proven fix is `truncate` on the value line + `min-w-0` on the grid item
+ * (a grid track's default min-width is `min-content`, so `truncate` alone is
+ * inert until the track is allowed to shrink). The dashboard `Kpi` and /cash
+ * `Stat` carry it; this guard makes it a contract for every money tile.
+ *
+ * WHY THE DETECTOR IS CONTENT-DRIVEN (the C43 gap this rewrite closes):
+ * the previous detector classified a value line as money ONLY when it was
+ * `font-bold` AND `tabular-nums` AND `text-xl/2xl/3xl`. That is ONE money idiom
+ * (the cash/dashboard Stat/Kpi). The far more common `text-lg font-semibold`
+ * money tile (no `tabular-nums`) — the jobs, invoices and commercial tiles —
+ * was NEVER scanned, so the "cannot be evaded" claim was false and three live
+ * grid-cols-3 offenders shipped. This detector instead classifies a line as
+ * MONEY by its FORMATTER/CONTENT signal — `formatGbp(` / `GBP.format` / a
+ * literal `£` in the rendered value, or a bare `{value}`/`{amount}`/`{money}`
+ * prop in a file that feeds it money — INDEPENDENT of font-bold vs font-semibold,
+ * of `tabular-nums`, and of `text-lg` vs `text-xl/2xl/3xl`.
  *
  * TWO tile shapes are guarded, each by the tightest signal that keeps false
  * positives at ZERO (a flaky guard is worse than none):
  *
- *   1. A money-fed PRIMITIVE — a reusable `Stat`/`Kpi` component whose value
- *      line renders a bare `{value}`/`{amount}` prop, in a file that also feeds
- *      it money (`value={formatGbp(…)}`). A primitive can land in ANY grid, so
- *      its value line must ALWAYS `truncate`. (This is exactly the /cash `Stat`
- *      bug this guard was built for, and the /dashboard `Kpi` precedent.)
+ *   1. A money-fed PRIMITIVE — a reusable `Stat`/`Kpi`/`Tile` whose value line
+ *      renders a bare `{value}`/`{amount}`/`{money}` prop, in a file that also
+ *      feeds it money (`value={formatGbp(…)}`). A primitive can land in ANY
+ *      grid, so its value line must ALWAYS `truncate`.
  *
  *   2. An INLINE money tile — a value line that renders `formatGbp(…)` / a `£`
  *      figure directly. This overflows only when it is 2-up (or denser) at the
  *      mobile base, so it is flagged only when its nearest enclosing grid has a
  *      base (unprefixed) `grid-cols-N` with N ≥ 2. A `grid-cols-1` base tile is
- *      full-width at 375px and a 7-figure GBP fits — NOT flagged (the /cash
- *      "Net position" `<dd>` tiles are this safe case).
+ *      full-width at 375px and a 7-figure GBP fits — NOT flagged.
+ *
+ * A "value line" is anchored two ways so captions and prose never count:
+ *   - it carries a `className` (it is a rendered element, not a JS line or a
+ *     prop-feeder such as `<Tile value={formatGbp(x)} />`, which has none), and
+ *   - it is PROMINENT: `text-base|text-lg|text-xl|text-2xl|text-3xl`. A money
+ *     figure typeset at `text-xs`/`text-sm`/`text-[11px]` is a caption/sub or a
+ *     dense list row that soft-wraps in flow — it is not a standalone tile
+ *     value and is out of scope by construction. (This is the ONLY typographic
+ *     gate; weight and `tabular-nums` do not gate, closing the C43 evasion.)
  *
  * NON-money tiles are out of scope by construction: a tile whose value is a
- * bounded count/percent/mpg ("40%", "12.3 mpg", "—") cannot grow without bound,
- * so it is never classified as money and never flagged (fleet mpg, stock
- * quantities, job-progress percent, CIS deduction-rate all sit outside).
+ * bounded count/percent/mpg ("40%", "12.3 mpg", "—") carries no money signal,
+ * so it is never classified and never flagged.
  *
  * A SOURCE pin in the fast unit tier: it proves the structural contract holds
  * across the whole app surface at once. The per-surface e2e
- * (e2e/cash-position-mobile.spec.ts) seeds a 7-figure receivable and adds the
- * pixel confirmation that truncate actually contains it at 375px.
+ * (e2e/cash-position-mobile.spec.ts, e2e/money-tile-mobile.spec.ts) seed
+ * 7-figure figures and add the pixel confirmation that truncate contains them.
  */
 
 const ROOT = resolve(__dirname, "../..");
 const APP_DIR = resolve(ROOT, "app/(app)");
 
-/** A tile value line is a big, bold, tabular figure — the stat/KPI idiom. */
-const TILE_SIZES = ["text-xl", "text-2xl", "text-3xl"];
-/** Money reaches a tile either literally on the line, or via a fed prop. */
+/**
+ * A value line is PROMINENT when it is at least `text-base` — the standalone
+ * tile-figure sizes. `text-xs`/`text-sm`/`text-[11px]` captions and dense list
+ * rows are excluded so a money figure inside prose is never flagged. Weight
+ * (`font-bold` vs `font-semibold`) and `tabular-nums` do NOT gate — that is the
+ * whole point of this rewrite.
+ */
+const PROMINENT_SIZES = ["text-base", "text-lg", "text-xl", "text-2xl", "text-3xl"];
+/** Money reaches a tile either literally in its body, or via a fed prop. */
 const INLINE_MONEY = /formatGbp\(|GBP\.format|£/;
-const BARE_VALUE_PROP = /\{\s*(?:value|amount)\s*\}/;
+const BARE_VALUE_PROP = /\{\s*(?:value|amount|money)\s*\}/;
 /**
  * A file that hands money to a primitive tile: `value={formatGbp(…)}`,
  * `value={GBP.format(…)}` (the /dashboard idiom), or a `£` template literal.
- * `amount=` is accepted too — some tiles name the money prop `amount`.
+ * `amount=`/`money=` are accepted too — some tiles name the money prop that.
  */
-const FILE_FEEDS_MONEY = /(?:value|amount)=\{\s*(?:formatGbp\(|GBP\.format)|(?:value|amount)=\{`[^`]*£/;
+const FILE_FEEDS_MONEY =
+  /(?:value|amount|money)=\{\s*(?:formatGbp\(|GBP\.format)|(?:value|amount|money)=\{`[^`]*£/;
 
 /**
  * Documented, legitimate exceptions — a money tile that defends 375px by a
@@ -79,20 +105,47 @@ function tsxFiles(dir: string): string[] {
   return out;
 }
 
-/** Is this className line a tile value line (big + bold + tabular)? */
-function isTileValueLine(line: string): boolean {
-  return (
-    line.includes("font-bold") &&
-    line.includes("tabular-nums") &&
-    TILE_SIZES.some((s) => line.includes(s))
-  );
+/**
+ * Is this a candidate tile value line: a rendered element (`className`) typeset
+ * at a prominent, standalone size? This deliberately does NOT look at weight or
+ * `tabular-nums` — the money signal is decided from the element body below.
+ */
+function isProminentValueLine(line: string): boolean {
+  if (!line.includes("className")) return false;
+  return PROMINENT_SIZES.some((s) => line.includes(s));
+}
+
+/**
+ * Block-level tile value tags: a stat/KPI/tile figure is a stacked BLOCK value
+ * (`<div>`/`<dd>`/`<p>`/heading) under a label. An INLINE `<span>` amount in a
+ * flex ROW is a different, safe shape — it sits opposite a `min-w-0` sibling
+ * that absorbs the squeeze inside a full-width row, so it never scrolls the
+ * page (e.g. the /cash `OutlookRow` `<span className="shrink-0 …">{amount}`).
+ * Excluding it is not an evasion hole: `flex-shrink` has no effect on a GRID
+ * item, so a real grid money tile can never legitimately carry `shrink-0`.
+ */
+const BLOCK_VALUE_TAG = /^(?:div|dd|dt|p|h[1-6]|li|section|article)$/;
+
+/**
+ * True when the element whose opening spans line `i` is a block-level value
+ * element. The tag name may sit on the `className` line (`<dd className=…>`) or
+ * up to two lines above it (a multi-line `<p>\n  className={…}` opening).
+ */
+function isBlockValueElement(lines: string[], i: number): boolean {
+  for (let j = i; j >= Math.max(0, i - 2); j--) {
+    const tags = (lines[j] ?? "").match(/<([a-zA-Z][\w]*)/g);
+    if (tags && tags.length > 0) {
+      return BLOCK_VALUE_TAG.test(tags[tags.length - 1]!.slice(1));
+    }
+  }
+  return false;
 }
 
 /**
  * The element body: this line plus the next few, up to the first close tag.
- * The window (7 lines) spans a multi-line `className={` template + the value
- * on a following line (the /cash "Net position" tile), while the `</…>` cut
- * keeps it from bleeding into the next sibling element.
+ * The window (7 lines) spans a multi-line `className={` template + the value on
+ * a following line (the jobs/invoices `<dd>` renders `{GBP.format(x)}` on the
+ * next line), while the `</…>` cut keeps it from bleeding into the next sibling.
  */
 function elementBody(lines: string[], i: number): string {
   const win = lines.slice(i, i + 7).join("\n");
@@ -134,10 +187,19 @@ function classifyLine(
   rel: string,
 ): MoneyTile | null {
   const line = lines[i] ?? "";
-  if (!isTileValueLine(line)) return null;
+  if (!isProminentValueLine(line)) return null;
+  // A tile value is a BLOCK figure, not an inline flex-row `<span>` amount.
+  if (!isBlockValueElement(lines, i)) return null;
   const body = elementBody(lines, i);
   const truncated = body.includes("truncate");
 
+  // A money-FED primitive: bare {value}/{amount}/{money} in a file that hands
+  // it money. Decided FIRST so a `<Tile>` whose body also happens to mention a
+  // `£`-bearing prop is scored as the primitive it is (must always clip).
+  if (BARE_VALUE_PROP.test(body) && FILE_FEEDS_MONEY.test(fileText)) {
+    return { rel, line: i + 1, kind: "primitive", truncated, baseCols: 0 };
+  }
+  // An inline money tile: the value line renders formatGbp(…)/£ directly.
   if (INLINE_MONEY.test(body)) {
     return {
       rel,
@@ -146,10 +208,6 @@ function classifyLine(
       truncated,
       baseCols: enclosingBaseGridCols(lines, i),
     };
-  }
-  // A money-FED primitive: bare {value}/{amount} in a file that hands it money.
-  if (BARE_VALUE_PROP.test(body) && FILE_FEEDS_MONEY.test(fileText)) {
-    return { rel, line: i + 1, kind: "primitive", truncated, baseCols: 0 };
   }
   return null;
 }
@@ -192,17 +250,26 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
     expect(
       unguarded,
       `these money tiles scroll the whole page sideways at 375px — add \`truncate\` ` +
-        `to the value line (the fix on /cash Stat and /dashboard Kpi):\n` +
+        `to the value line and \`min-w-0\` to the grid item (the fix on /cash Stat, ` +
+        `/dashboard Kpi, jobs/invoices/commercial tiles):\n` +
         unguarded
           .map((t) => `  ${t.rel}:${t.line} [${t.kind}${t.kind === "inline" ? ` grid-cols-${t.baseCols}` : ""}]`)
           .join("\n"),
     ).toEqual([]);
   });
 
-  it("the /cash Stat tile — the instance this guard was built for — is a guarded money primitive and is clipped", () => {
+  it("the /cash Stat tile — the instance the sibling guard was built for — is a guarded money primitive and is clipped", () => {
     const cash = tiles.filter((t) => t.rel === "cash/page.tsx" && t.kind === "primitive");
-    expect(cash.length).toBe(1);
-    expect(cash[0]!.truncated).toBe(true);
+    expect(cash.length).toBeGreaterThanOrEqual(1);
+    expect(cash.every((t) => t.truncated)).toBe(true);
+  });
+
+  it("the /dashboard Kpi tile (text-xl primitive shape) is still caught and clipped", () => {
+    // Regression pin: the previous detector's ONE recognised idiom must not
+    // regress. The Kpi is a money-fed primitive and carries truncate.
+    const kpi = tiles.filter((t) => t.rel === "dashboard/page.tsx" && t.kind === "primitive");
+    expect(kpi.length).toBeGreaterThanOrEqual(1);
+    expect(kpi.every((t) => t.truncated)).toBe(true);
   });
 
   it("CALIBRATION: the classifier flags a money primitive value line WITHOUT truncate, and clears it WITH truncate", () => {
@@ -221,6 +288,24 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
     expect(isViolation(cleared!)).toBe(false);
   });
 
+  it("CALIBRATION (the C43 evasion): a `text-lg font-semibold` inline money tile (NO tabular-nums, NOT text-xl) is flagged in a grid-cols-3, and cleared by truncate", () => {
+    // This is EXACTLY the shape the previous detector could not see. Prove the
+    // rewrite has teeth on it: an inline GBP value line typeset text-lg
+    // font-semibold, inside a base grid-cols-3, must fail without truncate.
+    const value = `<dd className="mt-0.5 text-lg font-semibold text-slate-900">{GBP.format(x)}</dd>`;
+    const risky = [`<dl className="grid grid-cols-3 gap-3 text-sm">`, value];
+    const safe = [`<dl className="grid grid-cols-3 gap-3 text-sm">`, value.replace("mt-0.5 ", "mt-0.5 truncate ")];
+
+    const flagged = classifyLine(risky.join("\n"), risky, 1, "probe.tsx");
+    expect(flagged?.kind).toBe("inline");
+    expect(flagged?.baseCols).toBe(3);
+    expect(isViolation(flagged!)).toBe(true);
+
+    const cleared = classifyLine(safe.join("\n"), safe, 1, "probe.tsx");
+    expect(cleared?.kind).toBe("inline");
+    expect(isViolation(cleared!)).toBe(false);
+  });
+
   it("CALIBRATION: a single-column (grid-cols-1 base) inline money tile is SAFE, a grid-cols-2 one is not", () => {
     const value = `<dd className="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{formatGbp(x)}</dd>`;
     const safe = [`<dl className="grid grid-cols-1 sm:grid-cols-3">`, value];
@@ -233,6 +318,15 @@ describe("money stat/KPI tiles are clipped against 375px horizontal overflow", (
     const riskyTile = classifyLine(risky.join("\n"), risky, 1, "probe.tsx");
     expect(riskyTile?.kind).toBe("inline");
     expect(isViolation(riskyTile!)).toBe(true);
+  });
+
+  it("CALIBRATION: a text-xs money CAPTION (not a standalone tile value) is NOT classified — false positives stay at zero", () => {
+    // The jobs "Job value" grid carries a `text-xs` sub-caption that embeds
+    // `${GBP.format(committed.remaining)}` in prose. It soft-wraps in flow and
+    // is NOT a tile value — the prominence gate must exclude it.
+    const caption = `<p className="text-xs text-slate-500">{committed.count} orders · ${"${GBP.format(committed.remaining)}"} still to come</p>`;
+    const t = classifyLine(caption, [caption], 0, "probe.tsx");
+    expect(t, "a text-xs money caption must not be classified as a tile value").toBeNull();
   });
 
   it("every allowlist exception is real, still present, and still justified", () => {

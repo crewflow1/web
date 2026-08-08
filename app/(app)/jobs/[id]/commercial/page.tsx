@@ -447,9 +447,9 @@ function Tile({
     : tone === "bad" ? "text-red-700"
     : "text-slate-900";
   return (
-    <div className="rounded-lg bg-slate-50 px-3 py-2.5">
+    <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2.5">
       <dt className="text-[11px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 ${strong ? "text-lg font-bold" : "text-base font-semibold"} ${toneClass}`}>
+      <dd className={`mt-0.5 truncate ${strong ? "text-lg font-bold" : "text-base font-semibold"} ${toneClass}`}>
         {pill ? <span className={`inline-block rounded-full px-2 py-0.5 text-sm font-semibold ${pill}`}>{value}</span> : value}
       </dd>
       {sub ? <dd className="mt-0.5 text-[11px] text-slate-600">{sub}</dd> : null}

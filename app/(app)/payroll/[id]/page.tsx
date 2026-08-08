@@ -329,9 +329,9 @@ export default async function PayrollRunPage({
 
 function Stat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={emphasis ? "mt-1 text-2xl font-bold text-slate-900" : "mt-1 text-lg font-semibold text-slate-900"}>
+      <div className={emphasis ? "mt-1 truncate text-2xl font-bold text-slate-900" : "mt-1 truncate text-lg font-semibold text-slate-900"}>
         {value}
       </div>
     </div>

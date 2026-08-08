@@ -72,10 +72,10 @@ function Tile({
   tone?: "amber" | "default";
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
       <p className="text-xs font-medium text-slate-500">{label}</p>
       <p
-        className={`mt-0.5 text-lg font-bold tabular-nums ${
+        className={`mt-0.5 truncate text-lg font-bold tabular-nums ${
           tone === "amber" ? "text-amber-800" : "text-slate-900"
         }`}
       >
