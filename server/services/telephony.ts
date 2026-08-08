@@ -507,6 +507,36 @@ export async function updateCallAssociation(
   }
 }
 
+/**
+ * Load the GOVERNED `ai_summary` the receptionist extraction already wrote to the
+ * origination enquiry for a call, correlated by (org_id, provider_message_id =
+ * CallSid) — the key the enquiry was created under. Returns a trimmed non-empty
+ * summary, or null when none exists yet (a benign no-op, not an error). This lets
+ * the completion-enrichment path fold an EXISTING governed summary onto the calls
+ * row WITHOUT ever making a new / ungoverned model call — the summary was produced
+ * once, through the governor, by processInboundEnquiry. Org-pinned (defence in
+ * depth over the RLS-bypassing admin client). THROWS LOUD on an unexpected DB
+ * error, like its sibling readers; the webhook wraps this best-effort.
+ */
+export async function loadEnquirySummary(
+  orgId: string,
+  providerCallId: string,
+): Promise<string | null> {
+  const res = await table("inbound_enquiries")
+    .select("ai_summary")
+    .eq("org_id", orgId)
+    .eq("provider_message_id", providerCallId)
+    .maybeSingle();
+  if (res.error) {
+    Sentry.captureException(new Error(`loadEnquirySummary failed: ${res.error.message}`), {
+      tags: { service: "telephony" },
+    });
+    throw new Error(`loadEnquirySummary failed: ${res.error.message}`);
+  }
+  const summary = res.data?.ai_summary;
+  return typeof summary === "string" && summary.trim() ? summary : null;
+}
+
 /** Feature flag: inbound voice is DARK unless explicitly enabled. */
 export function isVoiceInboundLive(): boolean {
   return voiceInboundFeatureEnabled();

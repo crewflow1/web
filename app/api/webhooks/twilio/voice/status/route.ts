@@ -7,6 +7,9 @@ import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { TERMINAL_CALL_EVENTS } from "@/lib/telephony/types";
 import {
   appendCallEvent,
+  composeCallTranscript,
+  loadEnquirySummary,
+  loadRecentSpokenTurns,
   recordInboundCall,
   updateCallCompletion,
 } from "@/server/services/telephony";
@@ -101,20 +104,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call-completion ENRICHMENT (terminal status callback) ─────────────────
     // Twilio delivers the call's total `CallDuration` on the TERMINAL status
     // callback (completed/busy/failed/no-answer/canceled). Mirroring the Vapi
-    // end-of-call-report branch, we enrich the calls row's duration_sec / ended_at
-    // (and recording_url when a <Record> supplied one — legitimately null without
-    // it) exactly once, on the terminal transition. The write is org-pinned +
-    // keyed on the provider call id and inherently idempotent (a redelivered
-    // completed callback rewrites the same values). BEST-EFFORT: a persistence
-    // failure is logged loud and degraded to a 200 — never a 500 that would make
-    // Twilio retry-storm the ack. Only the fields present are written, so this
-    // never nulls artifacts a prior report captured.
+    // end-of-call-report branch, we enrich the calls row exactly once, on the
+    // terminal transition. Beyond duration_sec / ended_at (and recording_url when a
+    // <Record> supplied one — legitimately null without it), Twilio NEVER sends a
+    // transcript on this callback, so — unlike Vapi — the transcript would stay
+    // blank on the tenant lead timeline even though the spoken-turn loop already
+    // persisted every turn to call_events. We reconstruct it here: load this call's
+    // persisted spoken turns (org-pinned) and fold them into calls.transcript via
+    // the SAME composeCallTranscript helper the enquiry raw_text uses, keeping the
+    // structured turns as transcript_json. ai_summary REUSES the GOVERNED summary
+    // the receptionist extraction already wrote to the origination enquiry
+    // (correlated by CallSid) — NO new / ungoverned model call is made here. The
+    // write is org-pinned + keyed on the provider call id and inherently idempotent
+    // (a redelivered completed callback rewrites the same values). BEST-EFFORT: a
+    // persistence failure is logged loud and degraded to a 200 — never a 500 that
+    // would make Twilio retry-storm the ack. Only the fields present are written
+    // (empty transcript / absent summary pass `undefined`), so this never nulls
+    // artifacts a prior report captured.
     if ((TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)) {
       try {
+        const turns = await loadRecentSpokenTurns(orgId, callId);
+        const transcript = composeCallTranscript(turns);
+        const aiSummary = await loadEnquirySummary(orgId, call.providerCallId);
         await updateCallCompletion(orgId, call.providerCallId, {
           durationSec: call.durationSec,
           endedAt: call.occurredAt,
           recordingUrl: params.RecordingUrl ?? undefined,
+          transcript: transcript || undefined,
+          transcriptJson: turns.length ? turns : undefined,
+          aiSummary: aiSummary ?? undefined,
         });
       } catch (e) {
         Sentry.captureException(e, {

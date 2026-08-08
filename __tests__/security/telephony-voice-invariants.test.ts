@@ -264,10 +264,14 @@ describe("completion enrichment: BOTH terminal provider paths write it (no diver
   // webhook that owns a call's terminal transition MUST reach the single enrichment
   // writer, so a future provider that skips it is caught here. Source pins over
   // comment-stripped code so prose can neither satisfy nor trip the assertion.
-  it("the Vapi webhook enriches on its terminal report", () => {
+  it("the Vapi webhook enriches on its terminal report — INCLUDING the transcript", () => {
     const code = codeOf(read(R_VAPI));
     expect(code).toMatch(/end-of-call-report/);
     expect(code).toMatch(/updateCallCompletion\(/);
+    // The transcript MUST be folded, not just duration/ended-at — the divergence
+    // this whole block guards is a provider that persists the call but drops the
+    // transcript off the tenant-facing calls row.
+    expect(code).toMatch(/transcript:\s*report\.transcript/);
   });
 
   it("the Twilio status route enriches on the TERMINAL status, gated + best-effort", () => {
@@ -283,6 +287,25 @@ describe("completion enrichment: BOTH terminal provider paths write it (no diver
     // …and best-effort: the enrichment is wrapped so a write failure never 500s the
     // webhook ack (which would make Twilio retry-storm).
     expect(code).toMatch(/updateCallCompletion[\s\S]*catch\s*\(/);
+  });
+
+  it("the Twilio status route FOLDS the persisted transcript onto calls.transcript (no divergence from Vapi)", () => {
+    const code = codeOf(read(R_STATUS));
+    // The exact divergence this pins: Twilio never sends a transcript on its status
+    // callback, so unless it reconstructs one from the persisted spoken turns, a
+    // Twilio-answered call shows duration but a BLANK transcript on the lead
+    // timeline — even though the whole conversation was captured. It MUST load the
+    // spoken turns…
+    expect(code).toMatch(/loadRecentSpokenTurns\(/);
+    // …compose them through the SAME shared helper the enquiry raw_text uses…
+    expect(code).toMatch(/composeCallTranscript\(/);
+    // …and pass the composed transcript into the single enrichment writer (so a
+    // future edit that drops the fold — leaving only duration/ended-at — fails CI).
+    expect(code).toMatch(/transcript:\s*transcript\b/);
+    // ai_summary is REUSED from the governed enquiry summary — never a new /
+    // ungoverned model call in the webhook path.
+    expect(code).toMatch(/loadEnquirySummary\(/);
+    expect(code).toMatch(/aiSummary:\s*aiSummary\b/);
   });
 
   it("the Twilio parser carries CallDuration into the neutral shape", () => {

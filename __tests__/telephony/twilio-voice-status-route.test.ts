@@ -28,13 +28,21 @@ import crypto from "node:crypto";
 vi.mock("@/lib/telephony/router", () => ({
   resolveOrgForDialedNumber: vi.fn(),
 }));
-// Mock the whole service so the enrichment write is assertable and no branch can
-// fall through to Supabase.
-vi.mock("@/server/services/telephony", () => ({
-  recordInboundCall: vi.fn(),
-  appendCallEvent: vi.fn(),
-  updateCallCompletion: vi.fn(),
-}));
+// Mock the service's DB WRITERS/READERS so the enrichment write is assertable and
+// no branch can fall through to Supabase — but keep the PURE helpers real (via
+// importActual), so composeCallTranscript folds turns for real and a divergence in
+// the composed transcript is caught rather than stubbed away.
+vi.mock("@/server/services/telephony", async (importActual) => {
+  const actual = await importActual<typeof import("@/server/services/telephony")>();
+  return {
+    ...actual,
+    recordInboundCall: vi.fn(),
+    appendCallEvent: vi.fn(),
+    updateCallCompletion: vi.fn(),
+    loadRecentSpokenTurns: vi.fn(),
+    loadEnquirySummary: vi.fn(),
+  };
+});
 
 async function loadRoute() {
   return import("@/app/api/webhooks/twilio/voice/status/route");
@@ -50,6 +58,12 @@ async function appendMock() {
 }
 async function updateMock() {
   return vi.mocked((await import("@/server/services/telephony")).updateCallCompletion);
+}
+async function turnsMock() {
+  return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
+}
+async function summaryMock() {
+  return vi.mocked((await import("@/server/services/telephony")).loadEnquirySummary);
 }
 
 const TOKEN = "voice_status_auth_token_abc123";
@@ -100,6 +114,10 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await appendMock()).mockResolvedValue({ duplicate: false, status: "completed" } as never);
     (await updateMock()).mockResolvedValue(undefined);
+    // Default: no persisted turns and no governed summary yet ⇒ the fold leaves
+    // transcript / ai_summary UNWRITTEN (undefined), never blanking captured data.
+    (await turnsMock()).mockResolvedValue([]);
+    (await summaryMock()).mockResolvedValue(null);
   });
 
   afterEach(async () => {
@@ -108,6 +126,8 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await recordMock()).mockReset();
     (await appendMock()).mockReset();
     (await updateMock()).mockReset();
+    (await turnsMock()).mockReset();
+    (await summaryMock()).mockReset();
   });
 
   it("enriches duration_sec + ended_at on a signed `completed` callback, org-pinned by CallSid", async () => {
@@ -141,6 +161,53 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
       durationSec: 42,
       recordingUrl: "https://api.twilio.com/rec/RE1.mp3",
     });
+  });
+
+  it("FOLDS the persisted spoken-turn transcript (and reused governed summary) onto calls.transcript", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    (await turnsMock()).mockResolvedValue([
+      { transcript: "Hi, my boiler is leaking", reply: "I can help with that. Where are you?" },
+      { transcript: "In Leeds, LS1", reply: "Thanks — the team will call you back." },
+    ]);
+    (await summaryMock()).mockResolvedValue("Caller reports a leaking boiler in Leeds (LS1).");
+    const { POST } = await loadRoute();
+    const res = await POST(signedRequest(COMPLETED) as never);
+    expect(res.status).toBe(200);
+
+    // The turns were loaded org-pinned by the resolved call row id…
+    expect(await turnsMock()).toHaveBeenCalledWith("org-1", "call-1");
+    // …the governed summary was reused org-pinned by CallSid (no new AI call)…
+    expect(await summaryMock()).toHaveBeenCalledWith("org-1", "CA-status-1");
+    // …and the composed transcript + structured turns + summary were folded onto
+    // the calls row alongside duration/ended-at, keyed on the CallSid.
+    const fields = (await updateMock()).mock.calls[0]![2] as Record<string, unknown>;
+    expect(fields).toMatchObject({
+      durationSec: 42,
+      transcript:
+        "Caller: Hi, my boiler is leaking\n" +
+        "Receptionist: I can help with that. Where are you?\n" +
+        "Caller: In Leeds, LS1\n" +
+        "Receptionist: Thanks — the team will call you back.",
+      aiSummary: "Caller reports a leaking boiler in Leeds (LS1).",
+    });
+    expect(fields.transcriptJson).toEqual([
+      { transcript: "Hi, my boiler is leaking", reply: "I can help with that. Where are you?" },
+      { transcript: "In Leeds, LS1", reply: "Thanks — the team will call you back." },
+    ]);
+  });
+
+  it("leaves transcript / ai_summary UNWRITTEN when there are no turns and no governed summary", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    // Defaults from beforeEach: [] turns, null summary.
+    const { POST } = await loadRoute();
+    await POST(signedRequest(COMPLETED) as never);
+    const fields = (await updateMock()).mock.calls[0]![2] as Record<string, unknown>;
+    // Duration/ended-at still enriched…
+    expect(fields.durationSec).toBe(42);
+    // …but the fold NEVER blanks captured data: absent ⇒ undefined, not "".
+    expect(fields.transcript).toBeUndefined();
+    expect(fields.transcriptJson).toBeUndefined();
+    expect(fields.aiSummary).toBeUndefined();
   });
 
   it("does NOT enrich on a non-terminal transition (ringing)", async () => {
