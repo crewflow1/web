@@ -312,13 +312,26 @@ type GatewayState = {
   existing: Map<string, Set<string>>;
   statementsCreated: number;
   savedTokens: number;
-  synced: Array<{ orgId: string; lastError: string | null; status?: string }>;
+  synced: Array<{
+    orgId: string;
+    lastError: string | null;
+    status?: string;
+    advanceSyncCursor?: boolean;
+  }>;
+  /**
+   * org_id → the (mutable) connection row, so markSynced can model how the DB
+   * actually moves: updated_at bumps on EVERY write (the row trigger), last_sync_at
+   * advances ONLY when advanceSyncCursor is set (success). Seed via `register`.
+   */
+  connections: Map<string, StoredBankConnection>;
 };
 
 /** An in-memory, org-scoped gateway recording writes for assertions. */
 function fakeGateway(overrides: Partial<BankSyncGateway> = {}): {
   gateway: BankSyncGateway;
   state: GatewayState;
+  /** Track a connection so markSynced mutates its cursor/updated_at like the DB. */
+  register: (conn: StoredBankConnection) => StoredBankConnection;
 } {
   const state: GatewayState = {
     inserted: [],
@@ -326,6 +339,11 @@ function fakeGateway(overrides: Partial<BankSyncGateway> = {}): {
     statementsCreated: 0,
     savedTokens: 0,
     synced: [],
+    connections: new Map(),
+  };
+  const register = (conn: StoredBankConnection) => {
+    state.connections.set(conn.orgId, conn);
+    return conn;
   };
   const gateway: BankSyncGateway = {
     listConnected: async () => [],
@@ -354,10 +372,23 @@ function fakeGateway(overrides: Partial<BankSyncGateway> = {}): {
     },
     markSynced: async (orgId, _provider, fields) => {
       state.synced.push({ orgId, ...fields });
+      // Model the DB write path so cross-tick behaviour is real, not assumed:
+      //  • updated_at bumps on EVERY write (the row trigger) — anchors the backoff.
+      //  • last_sync_at (the sync cursor) advances ONLY on success.
+      // This is the model that was MISSING before, which let a failure silently
+      // advance the cursor go undetected.
+      const conn = state.connections.get(orgId);
+      if (conn) {
+        const now = new Date().toISOString();
+        conn.updatedAt = now;
+        if (fields.advanceSyncCursor) conn.lastSyncAt = now;
+        conn.lastError = fields.lastError;
+        if (fields.status) conn.status = fields.status;
+      }
     },
     ...overrides,
   };
-  return { gateway, state };
+  return { gateway, state, register };
 }
 
 function connection(over: Partial<StoredBankConnection> = {}): StoredBankConnection {
@@ -370,6 +401,10 @@ function connection(over: Partial<StoredBankConnection> = {}): StoredBankConnect
     refreshTokenCipher: encryptToken("refresh-1"),
     tokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(), // future ⇒ no proactive refresh
     lastSyncAt: null,
+    // updated_at is NEVER null in the DB (default now() + trigger); default it to
+    // "just now" so isDueForSync's backoff anchor behaves like a live row. Tests
+    // that exercise the backoff window set it explicitly.
+    updatedAt: new Date().toISOString(),
     ...over,
   };
 }
@@ -648,24 +683,30 @@ describe("isDueForSync — transient-error retry backoff (C47)", () => {
     expect(isDueForSync(connection({ lastSyncAt: new Date().toISOString() }))).toBe(true);
   });
 
-  it("a connection inside its transient backoff window is NOT due", () => {
+  it("a connection inside its transient backoff window is NOT due (anchored on updated_at)", () => {
     const conn = connection({
       lastError: "TrueLayer /accounts returned 503",
-      lastSyncAt: new Date().toISOString(), // just now ⇒ within the floor
+      updatedAt: new Date().toISOString(), // last ATTEMPT just now ⇒ within the floor
+      // last_sync_at is the SUCCESS cursor and is deliberately STALE here — proving
+      // the backoff anchors on updated_at, not on last_sync_at.
+      lastSyncAt: new Date(Date.now() - 10 * 24 * 60 * 60_000).toISOString(),
     });
     expect(isDueForSync(conn)).toBe(false);
   });
 
-  it("a connection past its transient backoff window IS due again", () => {
+  it("a connection past its transient backoff window IS due again (anchored on updated_at)", () => {
     const conn = connection({
       lastError: "TrueLayer /accounts returned 503",
-      lastSyncAt: new Date(Date.now() - 60 * 60_000).toISOString(), // 1h ago > 30m floor
+      updatedAt: new Date(Date.now() - 60 * 60_000).toISOString(), // 1h ago > 30m floor
+      // A RECENT success cursor must NOT hold the connection back — only the last
+      // attempt (updated_at) gates the retry.
+      lastSyncAt: new Date().toISOString(),
     });
     expect(isDueForSync(conn)).toBe(true);
   });
 
-  it("a never-synced connection carrying an error is due (nothing to wait on)", () => {
-    expect(isDueForSync(connection({ lastError: "boom", lastSyncAt: null }))).toBe(true);
+  it("a connection with no updated_at recorded is due (defensive)", () => {
+    expect(isDueForSync(connection({ lastError: "boom", updatedAt: null }))).toBe(true);
   });
 });
 
@@ -674,10 +715,13 @@ describe("runBankSync — transient recovery across ticks (C47)", () => {
     enableTrueLayer();
     vi.stubGlobal("fetch", trueLayerRouter(TWO_TX)); // provider is healthy again
     // Represents the org after a prior transient failure: still 'connected', with a
-    // recorded last_error and a last_sync_at older than the backoff floor.
+    // recorded last_error and an updated_at (last ATTEMPT) older than the backoff
+    // floor. last_sync_at (the success cursor) is null — it was never advanced by
+    // the failure, which is exactly the fix under test.
     const recovering = connection({
       lastError: "TrueLayer /accounts returned 503",
-      lastSyncAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      lastSyncAt: null,
+      updatedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
     });
     const fg = fakeGateway({ listConnected: async () => [recovering] });
 
@@ -696,13 +740,141 @@ describe("runBankSync — transient recovery across ticks (C47)", () => {
     vi.stubGlobal("fetch", spy);
     const recent = connection({
       lastError: "TrueLayer /accounts returned 503",
-      lastSyncAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(), // last attempt just now ⇒ within the floor
     });
     const fg = fakeGateway({ listConnected: async () => [recent] });
 
     const res = await runBankSync(fg.gateway);
     expect(res.results).toHaveLength(0); // gated by backoff
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Sync CURSOR only advances on SUCCESS (C48)
+//
+// last_sync_at is the ONLY input to the `since` window. It used to be stamped =now
+// on EVERY markSynced call — including every transient/terminal failure path — so
+// a single blip fast-forwarded the cursor past days that were never fetched. Two
+// launch-blocking consequences, proven here end-to-end with a gateway that models
+// the real DB write (updated_at bumps on every write; last_sync_at moves only on
+// success):
+//   (a) a first-sync failure must NOT collapse the 90-day backfill to 7 days;
+//   (b) a multi-day outage must NOT orphan the transactions between last success
+//       and recovery−7d.
+// And success must still advance the cursor, with the backoff anchored on
+// updated_at so a recovering connection is still retried on schedule.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** Extract the `from=` day the adapter put on the /transactions URL of a router. */
+function txFromDay(router: ReturnType<typeof vi.fn>): string {
+  const call = router.mock.calls.find((c) => String(c[0]).includes("/transactions"));
+  const url = String(call?.[0] ?? "");
+  const m = url.match(/from=([^&]+)/);
+  if (!m) throw new Error(`no from= in ${url}`);
+  return decodeURIComponent(m[1]!).slice(0, 10);
+}
+
+describe("sync cursor advances on SUCCESS only (C48)", () => {
+  it("(a) a FIRST-SYNC transient failure does NOT collapse the 90-day backfill", async () => {
+    enableTrueLayer();
+    const fg = fakeGateway();
+    const conn = fg.register(connection({ lastSyncAt: null, updatedAt: null }));
+
+    // Tick 1: the very first /accounts call fails 5xx (transient). If the cursor
+    // were advanced here, last_sync_at would jump to now and the backfill would
+    // shrink to 7 days on the next tick.
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX, { accountsStatus: 503 }));
+    const failed = await syncBankConnection(conn, fg.gateway);
+    expect(failed.outcome).toBe("error");
+    expect(conn.status).toBe("connected"); // transient ⇒ still eligible
+    expect(conn.lastSyncAt).toBeNull(); // ← cursor NOT advanced by the failure
+    expect(conn.lastError).toBeTruthy();
+
+    // Tick 2: the provider is healthy. Because the cursor is still null, this is
+    // STILL a first sync ⇒ the adapter must open a ~90-day backfill window.
+    const healthy = trueLayerRouter(TWO_TX);
+    vi.stubGlobal("fetch", healthy);
+    const before = Date.now();
+    const ok = await syncBankConnection(conn, fg.gateway);
+    expect(ok.ok).toBe(true);
+    expect(ok.outcome).toBe("mapped");
+
+    const fromMs = Date.parse(`${txFromDay(healthy)}T00:00:00Z`);
+    // ~90 days back (bounded), NOT ~7 days — the backfill survived the blip.
+    expect(fromMs).toBeGreaterThanOrEqual(before - 91 * DAY_MS);
+    expect(fromMs).toBeLessThanOrEqual(before - 80 * DAY_MS);
+    // Now that it succeeded, the cursor finally advances.
+    expect(conn.lastSyncAt).not.toBeNull();
+  });
+
+  it("(b) a >7-day outage of failed ticks does NOT orphan transactions on recovery", async () => {
+    enableTrueLayer();
+    // Last SUCCESS was 10 days ago; steady-state cursor sat there.
+    const lastSuccess = new Date(Date.now() - 10 * DAY_MS);
+    const fg = fakeGateway();
+    const conn = fg.register(
+      connection({
+        lastSyncAt: lastSuccess.toISOString(),
+        updatedAt: lastSuccess.toISOString(),
+      }),
+    );
+
+    // Several 6-hourly ticks fail while the provider is down (transient 503). None
+    // may move the cursor, or the window between last success and recovery is lost.
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX, { accountsStatus: 503 }));
+    for (let i = 0; i < 4; i++) {
+      const r = await syncBankConnection(conn, fg.gateway);
+      expect(r.outcome).toBe("error");
+      expect(conn.status).toBe("connected");
+    }
+    // Cursor pinned at the last SUCCESS across the whole outage.
+    expect(conn.lastSyncAt).toBe(lastSuccess.toISOString());
+
+    // Recovery tick: the window must open at last-success − 7d overlap, so every
+    // transaction during the outage is pulled (the DB dedupes the overlap).
+    const healthy = trueLayerRouter(TWO_TX);
+    vi.stubGlobal("fetch", healthy);
+    const ok = await syncBankConnection(conn, fg.gateway);
+    expect(ok.ok).toBe(true);
+
+    const expectedFrom = new Date(lastSuccess.getTime() - 7 * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
+    expect(txFromDay(healthy)).toBe(expectedFrom);
+    // Sanity: the window reaches back ~17 days, NOT the ~7 the bug produced.
+    const fromMs = Date.parse(`${txFromDay(healthy)}T00:00:00Z`);
+    expect(Date.now() - fromMs).toBeGreaterThan(14 * DAY_MS);
+  });
+
+  it("(c) SUCCESS advances the cursor, and the backoff still runs off updated_at", async () => {
+    enableTrueLayer();
+    const fg = fakeGateway();
+    const conn = fg.register(connection({ lastSyncAt: null, updatedAt: null }));
+
+    // Success ⇒ cursor advances (advanceSyncCursor flag was passed) + updated_at bumps.
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    const ok = await syncBankConnection(conn, fg.gateway);
+    expect(ok.outcome).toBe("mapped");
+    expect(fg.state.synced.at(-1)!.advanceSyncCursor).toBe(true);
+    expect(conn.lastSyncAt).not.toBeNull();
+    expect(conn.updatedAt).not.toBeNull();
+
+    // Now a transient failure: updated_at bumps but the cursor must NOT.
+    const cursorAfterSuccess = conn.lastSyncAt;
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX, { accountsStatus: 503 }));
+    await syncBankConnection(conn, fg.gateway);
+    expect(fg.state.synced.at(-1)!.advanceSyncCursor).toBeFalsy();
+    expect(conn.lastSyncAt).toBe(cursorAfterSuccess); // cursor frozen on failure
+
+    // Backoff is anchored on updated_at (just bumped) ⇒ NOT due right now...
+    expect(isDueForSync(conn)).toBe(false);
+    // ...but becomes due once updated_at ages past the 30-min floor, even though the
+    // success cursor never moved — the connection recovers on schedule.
+    conn.updatedAt = new Date(Date.now() - 60 * 60_000).toISOString();
+    expect(isDueForSync(conn)).toBe(true);
   });
 });
 

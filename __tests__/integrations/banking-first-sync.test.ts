@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import { TrueLayerAdapter } from "@/lib/integrations/banking/adapters/truelayer";
+import { encryptToken } from "@/lib/integrations/token-crypto";
+import {
+  syncBankConnection,
+  type BankSyncGateway,
+  type StoredBankConnection,
+} from "@/server/services/bank-sync";
 
 /**
  * FIRST-SYNC BOUNDS — hermetic proofs (no DB, no network).
@@ -175,5 +181,122 @@ describe("existingProviderTxIds chunks a large candidate set", () => {
     const result = await gw.existingProviderTxIds("org-1", []);
     expect(result.size).toBe(0);
     expect(batches).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. The 90-day first-sync backfill SURVIVES a first-sync failure (C48)
+//
+// The backfill window is gated on `since === null` (never synced). Before C48, ANY
+// failure — including a first-sync transient 503 — stamped last_sync_at=now, so the
+// next tick derived since=now−7d and only 7 of the 90 backfill days imported; the
+// other 83 were permanently unreachable. The cursor now advances on SUCCESS only,
+// so a first-sync blip leaves last_sync_at=null and the full backfill is preserved.
+// ---------------------------------------------------------------------------
+
+describe("first-sync backfill survives a first-sync transient failure (C48)", () => {
+  const ENC_KEY = Buffer.alloc(32, 7).toString("base64");
+  const ORG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const DAY_MS = 24 * 60 * 60_000;
+
+  function enableTrueLayer(): void {
+    process.env.NEXT_PUBLIC_FEATURE_BANKING_CONNECT = "true";
+    process.env.BANKING_PROVIDER = "truelayer";
+    process.env.BANKING_CLIENT_ID = "client-id";
+    process.env.BANKING_CLIENT_SECRET = "client-secret";
+    process.env.INTEGRATION_TOKEN_ENCRYPTION_KEY = ENC_KEY;
+  }
+  const BANKING_ENV = [
+    "NEXT_PUBLIC_FEATURE_BANKING_CONNECT",
+    "BANKING_PROVIDER",
+    "BANKING_CLIENT_ID",
+    "BANKING_CLIENT_SECRET",
+    "INTEGRATION_TOKEN_ENCRYPTION_KEY",
+  ];
+  afterEach(() => {
+    for (const k of BANKING_ENV) delete process.env[k];
+  });
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  /** Router serving /accounts (scripted status) + /transactions (empty results). */
+  function router(accountsStatuses: number[]) {
+    let i = 0;
+    return vi.fn(async (url: unknown): Promise<Response> => {
+      const u = String(url);
+      if (u.endsWith("/data/v1/accounts")) {
+        const s = accountsStatuses[Math.min(i, accountsStatuses.length - 1)]!;
+        i += 1;
+        if (s !== 200) return json({ error: "down" }, s);
+        return json({ results: [{ account_id: "acc-1", display_name: "A" }] });
+      }
+      if (u.includes("/transactions")) return json({ results: [] });
+      throw new Error(`unexpected ${u}`);
+    });
+  }
+
+  /** Gateway that models the DB cursor: last_sync_at moves only on advanceSyncCursor. */
+  function cursorGateway(conn: StoredBankConnection): BankSyncGateway {
+    return {
+      listConnected: async () => [conn],
+      saveRefreshedTokens: async () => {},
+      existingProviderTxIds: async () => new Set<string>(),
+      createStatement: async () => "stmt-1",
+      insertLines: async () => {},
+      markSynced: async (_orgId, _provider, fields) => {
+        const now = new Date().toISOString();
+        conn.updatedAt = now;
+        if (fields.advanceSyncCursor) conn.lastSyncAt = now;
+        conn.lastError = fields.lastError;
+        if (fields.status) conn.status = fields.status;
+      },
+    };
+  }
+
+  function connection(): StoredBankConnection {
+    return {
+      orgId: ORG,
+      provider: "truelayer",
+      status: "connected",
+      connectionRef: "conn-1",
+      accessTokenCipher: encryptToken("access-1"),
+      refreshTokenCipher: encryptToken("refresh-1"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      lastSyncAt: null, // ← never synced
+      updatedAt: null,
+      lastError: null,
+    };
+  }
+
+  it("first-sync 503 then a healthy tick still opens a ~90-day window", async () => {
+    enableTrueLayer();
+    const conn = connection();
+    const gw = cursorGateway(conn);
+
+    // Tick 1 (first sync): /accounts 503 (transient). Cursor must stay null.
+    vi.stubGlobal("fetch", router([503]));
+    const failed = await syncBankConnection(conn, gw);
+    expect(failed.outcome).toBe("error");
+    expect(conn.lastSyncAt).toBeNull(); // ← the whole fix in one assertion
+
+    // Tick 2 (recovery): healthy. Still a first sync ⇒ ~90-day backfill, not 7.
+    const healthy = router([200]);
+    vi.stubGlobal("fetch", healthy);
+    const before = Date.now();
+    const ok = await syncBankConnection(conn, gw);
+    expect(ok.ok).toBe(true);
+
+    const call = healthy.mock.calls.find((c) => String(c[0]).includes("/transactions"));
+    const m = String(call?.[0]).match(/from=([^&]+)/);
+    expect(m, "no from= on recovery /transactions call").not.toBeNull();
+    const fromMs = Date.parse(decodeURIComponent(m![1]!));
+
+    expect(fromMs).toBeGreaterThanOrEqual(before - 91 * DAY_MS);
+    expect(fromMs).toBeLessThanOrEqual(before - 80 * DAY_MS); // ~90d, decisively not 7d
   });
 });
