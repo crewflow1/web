@@ -439,6 +439,74 @@ export async function updateCallCompletion(
   }
 }
 
+// =====================================================================
+// CALL ↔ LEAD LINKAGE — bind an inbound call's row to the lead + conversation
+// its origination enquiry resolved to.
+//
+// The C42 gap: `recordInboundCall` writes the `calls` row with NULL
+// `lead_id`/`conversation_id`, and `processInboundEnquiry` (which creates the
+// lead) RETURNED the ids but no caller wrote them back — so the columns stayed
+// NULL forever. That made BOTH the C41 duration_sec/ended_at AND the C35c
+// transcript/ai_summary/recording_url enrichment write to a row NO tenant UI can
+// read: the tenant-facing `leads/[id]` Calls section filters `calls.lead_id = id`,
+// so with the link never written it is always empty. This is the single write
+// door that closes the loop. No migration: `calls.lead_id`/`conversation_id` (and
+// the lead FK) exist on the baseline table.
+// =====================================================================
+
+/** The association fields carried back from the origination enquiry. */
+export type CallAssociationFields = {
+  leadId?: string | null;
+  conversationId?: string | null;
+};
+
+/**
+ * Link the `calls` row for an inbound call to the lead + conversation its
+ * origination enquiry resolved. Matched on the provider call id and ORG-PINNED
+ * (defence in depth over the RLS-bypassing admin client — the org filter is the
+ * only tenant boundary left). Only columns with a REAL value are written, so a
+ * missing conversation never nulls an existing link and re-linkage is monotonic;
+ * a redelivered origination simply rewrites the same ids — the UPDATE is
+ * inherently idempotent (no insert ⇒ no duplicate). A call id that matches no row
+ * updates zero rows (a benign no-op, not an error).
+ *
+ * THROWS LOUD on an unexpected DB error (Sentry + console.error), like its
+ * sibling writers ({@link updateCallCompletion}); the webhook wraps this
+ * best-effort so a linkage failure degrades gracefully rather than breaking the
+ * webhook ack.
+ */
+export async function updateCallAssociation(
+  orgId: string,
+  providerCallId: string,
+  fields: CallAssociationFields,
+): Promise<void> {
+  // Build the patch from ONLY the fields with a real value, so an absent
+  // conversation id (or a bare re-link) never nulls a link already captured.
+  const row: Record<string, unknown> = {};
+  if (fields.leadId != null) row.lead_id = fields.leadId;
+  if (fields.conversationId != null) row.conversation_id = fields.conversationId;
+
+  // Nothing to write ⇒ no-op (never issue an empty UPDATE).
+  if (Object.keys(row).length === 0) return;
+
+  const upd = await table("calls")
+    .update(row)
+    .eq("provider_call_id", providerCallId)
+    .eq("org_id", orgId);
+  if (upd.error) {
+    const message = upd.error.message;
+    Sentry.captureException(new Error(`updateCallAssociation update failed: ${message}`), {
+      tags: { service: "telephony" },
+    });
+    console.error("[telephony] updateCallAssociation update failed", {
+      org_id: orgId,
+      provider_call_id: providerCallId,
+      message,
+    });
+    throw new Error(`updateCallAssociation failed: ${message}`);
+  }
+}
+
 /** Feature flag: inbound voice is DARK unless explicitly enabled. */
 export function isVoiceInboundLive(): boolean {
   return voiceInboundFeatureEnabled();

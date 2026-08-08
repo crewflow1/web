@@ -24,6 +24,7 @@ import {
   loadRecentSpokenTurns,
   persistSpokenTurn,
   recordInboundCall,
+  updateCallAssociation,
   updateCallCompletion,
 } from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
@@ -279,7 +280,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // into the same enquiry. Best-effort: a failure must not break the response.
     {
       try {
-        await processInboundEnquiry({
+        const { lead_id, conversation_id } = await processInboundEnquiry({
           org_id: orgId,
           channel: "phone",
           caller: call.from,
@@ -288,6 +289,24 @@ export async function POST(request: Request): Promise<NextResponse> {
           // can populate its raw_text (mirrors the Twilio origination edge).
           provider_message_id: call.providerCallId,
         });
+
+        // LINK the calls row to the lead + conversation the enquiry resolved, so
+        // the C41 duration/ended-at and C35c transcript/summary/recording
+        // enrichment become reachable by the tenant-facing leads/[id] reader
+        // (which filters `calls.lead_id = id`). Matched on the SAME
+        // providerCallId recordInboundCall wrote above. Best-effort: a linkage
+        // failure must NEVER break the webhook response.
+        if (lead_id) {
+          try {
+            await updateCallAssociation(orgId, call.providerCallId, {
+              leadId: lead_id,
+              conversationId: conversation_id,
+            });
+          } catch (e) {
+            Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "link" } });
+            console.error("[vapi] call-lead linkage failed", e);
+          }
+        }
       } catch (e) {
         Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "enquiry" } });
         console.error("[vapi] enquiry delegation failed", e);

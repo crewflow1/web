@@ -5,7 +5,11 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
-import { appendCallEvent, recordInboundCall } from "@/server/services/telephony";
+import {
+  appendCallEvent,
+  recordInboundCall,
+  updateCallAssociation,
+} from "@/server/services/telephony";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
 import {
@@ -118,13 +122,33 @@ export async function POST(request: Request): Promise<NextResponse> {
     //    partial-unique dedup, so a redelivered origination folds into the same
     //    enquiry. Best-effort: a failure must not break the TwiML.
     try {
-      await processInboundEnquiry({
+      const { lead_id, conversation_id } = await processInboundEnquiry({
         org_id: orgId,
         channel: "phone",
         caller: call.from,
         dedup_key: call.providerCallId,
         provider_message_id: call.providerCallId,
       });
+
+      // LINK the calls row to the lead + conversation the enquiry resolved, so
+      // the C41 duration/ended-at and C35c transcript/summary/recording
+      // enrichment become reachable by the tenant-facing leads/[id] reader
+      // (which filters `calls.lead_id = id`). Matched on the SAME providerCallId
+      // recordInboundCall wrote above, so the UPDATE hits the right row.
+      // Best-effort: a linkage failure must NEVER break the TwiML ack.
+      if (lead_id) {
+        try {
+          await updateCallAssociation(orgId, call.providerCallId, {
+            leadId: lead_id,
+            conversationId: conversation_id,
+          });
+        } catch (e) {
+          Sentry.captureException(e, {
+            tags: { route: "webhooks/twilio/voice", stage: "link" },
+          });
+          console.error("[twilio-voice] call-lead linkage failed", e);
+        }
+      }
     } catch (e) {
       Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice", stage: "enquiry" } });
       console.error("[twilio-voice] enquiry delegation failed", e);
