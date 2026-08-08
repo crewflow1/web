@@ -121,6 +121,18 @@ export function weatherEvidenceLine(ev: EotWeatherEvidence): string {
   return `Postcode district ${ev.district} — ${readings} over the delay window${metrics}`;
 }
 
+/**
+ * The weather-data licence line, printed on the pack whenever it renders
+ * observed weather evidence — CC-BY (or the active vendor's terms) compliance
+ * on a CLIENT-FACING document. The string is the provider's own attribution,
+ * passed down from the active provider (never re-typed), so it stays correct if
+ * the vendor changes. Rendered ONLY when `pack.weatherAttribution` is non-null,
+ * which the assembly layer guarantees to coincide with evidence being present.
+ */
+export function weatherAttributionLine(attribution: string): string {
+  return `Weather observations: ${attribution}.`;
+}
+
 function EventBlock({ e }: { e: EotPackEvent }) {
   return (
     <View style={s.event} wrap={false}>
@@ -237,6 +249,16 @@ export function EotPackPdf({ input }: { input: EotPackPdfInput }) {
             ))}
           </View>
         ))}
+
+        {pack.weatherAttribution ? (
+          // CC-BY / vendor-terms attribution — printed once, beside the weather
+          // evidence it licenses. Present ONLY when real readings were rendered
+          // (the assembly layer nulls it on the dark path), so nothing new shows
+          // when there is no weather data to attribute.
+          <Text style={{ ...s.evidence, fontSize: 7, marginTop: 6 }}>
+            {weatherAttributionLine(pack.weatherAttribution)}
+          </Text>
+        ) : null}
 
         {pack.eotVariations.length > 0 ? (
           <View>

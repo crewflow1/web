@@ -72,9 +72,13 @@ const OBSERVED = {
   visibilityM: 3000,
 };
 
+const ATTRIBUTION =
+  "Weather data by Open-Meteo.com (https://open-meteo.com/), licensed under CC BY 4.0";
+
 const buildWeatherSnapshot = vi.fn(async () => ({
   readiness: {} as never,
   statusLine: "active",
+  attribution: ATTRIBUTION,
   district: "LS1",
   window: { district: "LS1", readings: [OBSERVED] },
   assessments: [],
@@ -97,5 +101,9 @@ describe("loadEotEvidencePack on the active path", () => {
     expect(ev.weatherEvidence!.minAirTempC).toBe(5);
 
     expect(pack.gaps.some((g) => g.kind === "weather_evidence_dark")).toBe(false);
+
+    // CC-BY: the provider's attribution rides on the pack alongside the evidence,
+    // so the client-facing PDF can print the licence line with the data.
+    expect(pack.weatherAttribution).toBe(ATTRIBUTION);
   });
 });

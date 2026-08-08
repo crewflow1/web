@@ -201,12 +201,13 @@ function delayWindow(startedOn: string, endedOn: string | null): { from: Date; t
 async function resolveWeatherEvidence(
   orgId: string,
   events: readonly DelayEventRow[],
-): Promise<Map<string, EotWeatherEvidence>> {
+): Promise<{ evidence: Map<string, EotWeatherEvidence>; attribution: string | null }> {
   const evidence = new Map<string, EotWeatherEvidence>();
+  let attribution: string | null = null;
   // The readiness short-circuit, taken here too so the dark build does zero
   // weather work (the accessor would also short-circuit, but skipping the loop
   // keeps the common case a single boolean check).
-  if (!isWeatherAvailable()) return evidence;
+  if (!isWeatherAvailable()) return { evidence, attribution };
 
   for (const e of events) {
     if (e.status !== "recorded" || e.category !== "weather") continue;
@@ -227,6 +228,10 @@ async function resolveWeatherEvidence(
     const readings = snapshot.window?.readings ?? [];
     if (readings.length === 0) continue; // No reading ⇒ no evidence, never a guess.
 
+    // The provider's licence string travels with the readings on the snapshot —
+    // captured here so the pack can print it beside the evidence it corroborates.
+    attribution = snapshot.attribution;
+
     const { summary, coverage } = summariseWindow(snapshot.window!);
     evidence.set(e.id, {
       district: e.weather_district,
@@ -238,7 +243,7 @@ async function resolveWeatherEvidence(
       totalPrecipMm: summary.totalPrecipMm,
     });
   }
-  return evidence;
+  return { evidence, attribution };
 }
 
 /**
@@ -268,7 +273,8 @@ export async function loadEotEvidencePack(
 
   // Dark-safe: an empty map in every environment today (provider unbound), so
   // `weatherEvidenceAvailable` is false and the pack keeps its honest gaps.
-  const weatherEvidenceByEvent = await resolveWeatherEvidence(orgId, events.rows);
+  const { evidence: weatherEvidenceByEvent, attribution: weatherAttribution } =
+    await resolveWeatherEvidence(orgId, events.rows);
 
   const pack = assembleEotPack({
     jobId,
@@ -282,6 +288,9 @@ export async function loadEotEvidencePack(
     // least one weather event. False in every environment today (dark cache).
     weatherEvidenceAvailable: weatherEvidenceByEvent.size > 0,
     weatherEvidenceByEvent,
+    // CC-BY attribution for the observed evidence — non-null exactly when the
+    // pack renders real readings, so the licence line prints with the data.
+    weatherAttribution,
     generatedAt: now.toISOString(),
   });
 

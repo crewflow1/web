@@ -59,7 +59,7 @@ import "server-only";
 import { env } from "@/lib/env";
 import type { WeatherProvider } from "./types";
 import { getWeatherReadiness } from "./readiness";
-import { createOpenMeteoProvider } from "./providers/open-meteo";
+import { createOpenMeteoProvider, OPEN_METEO_ATTRIBUTION } from "./providers/open-meteo";
 
 export { WeatherProviderError } from "./types";
 
@@ -198,4 +198,38 @@ export function getWeatherProvider(): WeatherProvider | null {
 /** Cheap presence check, mirroring `isEmailConfigured()`. False in every environment today. */
 export function isWeatherProviderConfigured(): boolean {
   return getWeatherProvider() !== null;
+}
+
+/**
+ * Provider id → the CC-BY / vendor-terms attribution string that vendor's data
+ * carries, keyed by the SAME id every `weather_readings` row records in its
+ * `provider` column and the same id `WeatherProviderInfo.provider` reports.
+ *
+ * The strings are imported from each adapter (never re-typed here), so this map
+ * is a pure INDEX over the seam's single sources — it cannot drift from the
+ * attribution the live provider serves on `info.attribution`. Only the seam may
+ * import an adapter, which is exactly why this resolver lives here: a surface
+ * that needs a licence string imports `weatherAttributionFor`, not a provider.
+ */
+const PROVIDER_ATTRIBUTION: Readonly<Record<string, string>> = {
+  "open-meteo": OPEN_METEO_ATTRIBUTION,
+};
+
+/**
+ * Resolve the licence attribution for a provider id — the string that MUST be
+ * rendered wherever that provider's weather data is displayed.
+ *
+ * Takes the id rather than a provider instance so a PERSISTED reading is
+ * attributable from its stored `provider` column with no live provider bound,
+ * and so callers on the read path (which never construct a vendor) can resolve
+ * it from `readiness.provider`. Returns null for a null/unknown id — a dark
+ * build resolves to null, which is correct: nothing renders, nothing to attribute.
+ *
+ * NO MIGRATION is needed for reading-level attributability: `weather_readings`
+ * already stores `provider`, and this is the pure function from that column to
+ * its licence string.
+ */
+export function weatherAttributionFor(provider: string | null | undefined): string | null {
+  if (!provider) return null;
+  return PROVIDER_ATTRIBUTION[provider] ?? null;
 }

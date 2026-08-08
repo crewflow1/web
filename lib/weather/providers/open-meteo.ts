@@ -82,9 +82,17 @@ import { WeatherProviderError } from "../types";
 
 const PROVIDER_ID = "open-meteo";
 
-/** CC-BY 4.0 — required on every surface that displays this vendor's data. */
-const ATTRIBUTION =
+/**
+ * CC-BY 4.0 — required on every surface that displays this vendor's data.
+ *
+ * Exported as the SINGLE SOURCE of the Open-Meteo licence string: the seam's
+ * provider→attribution map (../index) resolves it by id so a persisted reading
+ * (whose `provider` column names this adapter) is attributable everywhere the
+ * data renders, WITHOUT any surface re-typing the string and risking drift.
+ */
+export const OPEN_METEO_ATTRIBUTION =
   "Weather data by Open-Meteo.com (https://open-meteo.com/), licensed under CC BY 4.0";
+const ATTRIBUTION = OPEN_METEO_ATTRIBUTION;
 
 /** Commercial endpoints ONLY — see the licence-trap block in the header. */
 const FORECAST_ENDPOINT = "https://customer-api.open-meteo.com/v1/forecast";

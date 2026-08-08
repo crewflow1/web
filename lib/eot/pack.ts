@@ -227,6 +227,15 @@ export interface EotEvidencePack {
   /** Progress context from lib/job-progress/series.ts, or null if that read failed. */
   progress: ProgressSummary | null;
   gaps: EotGap[];
+  /**
+   * The weather-data licence attribution (CC-BY for Open-Meteo) that MUST be
+   * printed on this client-facing pack whenever it renders observed weather
+   * evidence. Non-null IFF at least one event carries `weatherEvidence` — the
+   * caller derives it from the active provider (server/services/eot-pack.ts),
+   * so it is present exactly when there is weather data to attribute and null
+   * on every dark build. The template renders nothing new when it is null.
+   */
+  weatherAttribution: string | null;
 }
 
 // ── Assembly ─────────────────────────────────────────────────────────────────
@@ -255,6 +264,13 @@ export interface EotPackInput {
    * weather event, keeps its dark gap. Never contains a fabricated reading.
    */
   weatherEvidenceByEvent?: ReadonlyMap<string, EotWeatherEvidence>;
+  /**
+   * The active provider's weather-data licence attribution, supplied alongside
+   * real evidence so the pack can print it (CC-BY compliance). Optional and
+   * defaulting to null: a dark build supplies no evidence and no attribution,
+   * keeping the pack byte-identical to before this seam existed.
+   */
+  weatherAttribution?: string | null;
   /** ISO timestamp for the pack header — injected, never `new Date()` here. */
   generatedAt: string;
 }
@@ -436,5 +452,11 @@ export function assembleEotPack(input: EotPackInput): EotEvidencePack {
     eotVariations,
     progress: input.progress,
     gaps,
+    // Attribution rides on the pack ONLY when real evidence is actually rendered,
+    // so the licence line prints exactly when there is weather data to license —
+    // and never on the dark path, where no event carries evidence.
+    weatherAttribution: categories.some((c) => c.events.some((e) => e.weatherEvidence !== null))
+      ? (input.weatherAttribution ?? null)
+      : null,
   };
 }

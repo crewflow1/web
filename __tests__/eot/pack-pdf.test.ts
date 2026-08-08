@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToBuffer } from "@react-pdf/renderer";
 import {
   EotPackPdf,
+  weatherAttributionLine,
   weatherDarkLine,
   weatherEvidenceLine,
   type EotPackPdfInput,
@@ -54,7 +55,14 @@ const EVIDENCE: EotWeatherEvidence = {
   totalPrecipMm: 30,
 };
 
-function pdfInput(evidenceAvailable: boolean, byEvent?: Map<string, EotWeatherEvidence>): EotPackPdfInput {
+const ATTRIBUTION =
+  "Weather data by Open-Meteo.com (https://open-meteo.com/), licensed under CC BY 4.0";
+
+function pdfInput(
+  evidenceAvailable: boolean,
+  byEvent?: Map<string, EotWeatherEvidence>,
+  attribution?: string | null,
+): EotPackPdfInput {
   return {
     org_name: "Acme Build",
     job_label: "Plot 4 — Maple Rise",
@@ -66,6 +74,7 @@ function pdfInput(evidenceAvailable: boolean, byEvent?: Map<string, EotWeatherEv
       progress: null,
       weatherEvidenceAvailable: evidenceAvailable,
       weatherEvidenceByEvent: byEvent,
+      weatherAttribution: attribution,
       generatedAt: GENERATED,
     }),
   };
@@ -136,5 +145,22 @@ describe("EotPackPdf · component render", () => {
     // The template branches on this field; before the fix it was ignored entirely.
     expect(ev.weatherEvidence).toEqual(EVIDENCE);
     expect(pack.gaps.some((g) => g.kind === "weather_evidence_dark")).toBe(false);
+  });
+
+  it("renders the CC-BY attribution when evidence AND an attribution are supplied", async () => {
+    const input = pdfInput(true, new Map([["ev-weather", EVIDENCE]]), ATTRIBUTION);
+    // Assembly binds the attribution onto the pack exactly when evidence is present.
+    expect(input.pack.weatherAttribution).toBe(ATTRIBUTION);
+    const b = await renderToBuffer(EotPackPdf({ input }));
+    expect(isPdf(b)).toBe(true);
+    // The rendered licence line carries the vendor string verbatim.
+    expect(weatherAttributionLine(ATTRIBUTION)).toContain("CC BY 4.0");
+  });
+
+  it("binds NO attribution when evidence is absent — the dark PDF prints nothing new", () => {
+    // Attribution supplied but no evidence rendered ⇒ the pack drops it, so the
+    // licence line never prints on a pack that shows no weather data.
+    const dark = pdfInput(false, undefined, ATTRIBUTION).pack;
+    expect(dark.weatherAttribution).toBeNull();
   });
 });
