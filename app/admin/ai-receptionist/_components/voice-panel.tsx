@@ -33,6 +33,12 @@ type CallRow = {
   provider: string;
   started_at: string | null;
   created_at: string;
+  // Enrichment artefacts (C41 duration/ended-at + C35c transcript/summary). Now
+  // that inbound calls are linked to a lead, these columns are populated on a
+  // completed call — surface them for HQ so the enrichment is verifiably reachable.
+  duration_sec: number | null;
+  ai_summary: string | null;
+  transcript: string | null;
 };
 
 type EventRow = {
@@ -80,7 +86,9 @@ export async function VoicePanel({ orgId, setupId }: { orgId: string; setupId: s
       };
     }
   )
-    .select("id, direction, status, caller_number, receiver_number, provider, started_at, created_at")
+    .select(
+      "id, direction, status, caller_number, receiver_number, provider, started_at, created_at, duration_sec, ai_summary, transcript",
+    )
     .eq("org_id", orgId)
     .order("created_at", { ascending: false })
     .limit(20);
@@ -227,6 +235,8 @@ export async function VoicePanel({ orgId, setupId }: { orgId: string; setupId: s
                   <th className="px-2 py-1">Caller</th>
                   <th className="px-2 py-1">Dialed</th>
                   <th className="px-2 py-1">Provider</th>
+                  <th className="px-2 py-1">Duration</th>
+                  <th className="px-2 py-1">Summary</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -238,6 +248,12 @@ export async function VoicePanel({ orgId, setupId }: { orgId: string; setupId: s
                     <td className="px-2 py-1 font-mono">{c.caller_number ?? "—"}</td>
                     <td className="px-2 py-1 font-mono">{c.receiver_number ?? "—"}</td>
                     <td className="px-2 py-1">{c.provider}</td>
+                    <td className="px-2 py-1 tabular-nums">
+                      {c.duration_sec != null ? `${c.duration_sec}s` : "—"}
+                    </td>
+                    <td className="max-w-xs truncate px-2 py-1" title={c.ai_summary ?? c.transcript ?? undefined}>
+                      {c.ai_summary ?? (c.transcript ? c.transcript.slice(0, 80) : "—")}
+                    </td>
                   </tr>
                 ))}
               </tbody>

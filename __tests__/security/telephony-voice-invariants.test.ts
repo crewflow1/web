@@ -292,6 +292,49 @@ describe("completion enrichment: BOTH terminal provider paths write it (no diver
   });
 });
 
+describe("call ↔ lead linkage: the enrichment columns are provably reachable", () => {
+  // The defect class this pins: a WRITE-ONLY PHANTOM. `recordInboundCall` inserts
+  // the calls row with NULL lead_id/conversation_id, and both webhook callers used
+  // to DISCARD processInboundEnquiry's returned ids — so calls.lead_id stayed NULL
+  // forever. The tenant-facing leads/[id] Calls section filters `calls.lead_id = id`,
+  // so with the link never written the C41 duration_sec/ended_at AND the C35c
+  // transcript/ai_summary/recording enrichment wrote to a row NO user-facing UI can
+  // read. This block proves the ingestion path WRITES the link on BOTH provider
+  // paths, so a future regression (dropping the return / the write) fails CI. Source
+  // pins over comment-stripped code so prose can neither satisfy nor trip them.
+
+  it("the service exposes an org-pinned, fail-loud linkage writer that sets lead_id + conversation_id", () => {
+    const code = codeOf(read(SERVICE));
+    expect(code).toMatch(/export async function updateCallAssociation\(/);
+    // Writes the two linkage columns the reader needs…
+    expect(code).toMatch(/row\.lead_id\s*=\s*fields\.leadId/);
+    expect(code).toMatch(/row\.conversation_id\s*=\s*fields\.conversationId/);
+    // …org-pinned on the provider_call_id-matched UPDATE (defence in depth over the
+    // RLS-bypassing admin client)…
+    expect(code).toMatch(
+      /updateCallAssociation[\s\S]*\.eq\("provider_call_id",\s*providerCallId\)[\s\S]*\.eq\("org_id",\s*orgId\)/,
+    );
+    // …and fails loud like its siblings (Sentry + throw), never swallows.
+    expect(code).toMatch(/updateCallAssociation update failed/);
+  });
+
+  for (const f of [R_VOICE, R_VAPI]) {
+    it(`${f}: captures the enquiry's lead_id/conversation_id and writes the linkage`, () => {
+      const code = codeOf(read(f));
+      // The return is CAPTURED (not discarded) — the exact regression this guards.
+      expect(code).toMatch(
+        /const \{ lead_id, conversation_id \} = await processInboundEnquiry\(/,
+      );
+      // And, when a lead exists, the linkage is written against the SAME
+      // providerCallId recordInboundCall used, so the UPDATE hits the right row.
+      expect(code).toMatch(/if \(lead_id\)/);
+      expect(code).toMatch(
+        /updateCallAssociation\(\s*orgId,\s*call\.providerCallId,\s*\{[\s\S]*leadId:\s*lead_id[\s\S]*conversationId:\s*conversation_id/,
+      );
+    });
+  }
+});
+
 describe("router + service pin org_id explicitly", () => {
   it("the router resolves an ACTIVE route by dialed number on the admin client", () => {
     const code = codeOf(read(ROUTER));
