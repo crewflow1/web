@@ -230,18 +230,18 @@ export default async function PortalInvoicesPage({
     <PortalShell customer={customer} org={org} token={token} active="invoices">
       {paySummary.paidToDate > 0 || paySummary.dueNow > 0 ? (
         <section aria-label="Your payments" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500">Paid to date</p>
-            <p className="mt-1 text-xl font-bold text-green-700">{GBP.format(paySummary.paidToDate)}</p>
+            <p className="mt-1 truncate text-xl font-bold text-green-700">{GBP.format(paySummary.paidToDate)}</p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500">Due now</p>
-            <p className="mt-1 text-xl font-bold text-slate-900">{GBP.format(paySummary.dueNow)}</p>
+            <p className="mt-1 truncate text-xl font-bold text-slate-900">{GBP.format(paySummary.dueNow)}</p>
           </div>
           {paySummary.overdue > 0 ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <div className="min-w-0 rounded-xl border border-red-200 bg-red-50 p-4">
               <p className="text-xs uppercase tracking-wide text-red-600">Overdue</p>
-              <p className="mt-1 text-xl font-bold text-red-700">{GBP.format(paySummary.overdue)}</p>
+              <p className="mt-1 truncate text-xl font-bold text-red-700">{GBP.format(paySummary.overdue)}</p>
             </div>
           ) : null}
         </section>
