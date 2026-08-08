@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/lib/invoices/overdue";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { buildOrgCash } from "./org-cash";
@@ -85,9 +86,18 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Read every row of a paged select, swallowing errors to a partial/empty set. */
+/**
+ * Read every row of a paged select. LOUD-OR-WHOLE: a read error THROWS
+ * readFailure (mirrors buildHealthSafetySnapshot) so it propagates to
+ * buildDailyBriefing's outer catch and the WHOLE briefing degrades to its
+ * honest empty state. It must never return a PARTIAL set: fetchAllRows hands
+ * back the rows-so-far PLUS the error on a mid-page failure, and swallowing
+ * that error would collapse ONE signal to count=0 (a false all-clear on
+ * overdue invoices / follow-up quotes / cold leads / retention) while every
+ * other signal renders healthy — the silent under-count this loader shipped.
+ */
 async function pagedRows(db: LooseClient, table: string, cols: string, orderKey: string, orgId: string): Promise<Row[]> {
-  const { data } = await fetchAllRows<Row>((from, to) => {
+  const { data, error } = await fetchAllRows<Row>((from, to) => {
     // org_id-PINNED, not RLS-only: current_org_ids() returns EVERY org a viewer
     // belongs to, so a dual-org member would otherwise see BOTH orgs' invoices /
     // quotes / retention / leads BLENDED on one org's dashboard briefing (the M2
@@ -96,6 +106,7 @@ async function pagedRows(db: LooseClient, table: string, cols: string, orderKey:
     const base = db.from(table).select(cols).eq("org_id", orgId).order(orderKey, { ascending: true });
     return (orderKey === "id" ? base : base.order("id", { ascending: true })).range(from, to);
   });
+  if (error) throw readFailure(`briefing: ${table}`, error as SupabaseReadError);
   return data;
 }
 
@@ -202,6 +213,16 @@ export async function buildDailyBriefing(
       // already org-pinned; this one was the exception.
       db.from("briefing_dismissals").select("item_key").eq("org_id", orgId).eq("user_id", userId).eq("dismissed_on", todayIso),
     ]);
+
+    // LOUD-OR-WHOLE for the direct (non-pagedRows) reads in the batch above.
+    // Each returns { data, error }; a swallowed error would zero one signal — a
+    // false all-clear on upcoming compliance-document expiry (the ONLY expiry
+    // signal) or on unassigned jobs tomorrow — while the rest of the briefing
+    // renders healthy, or (dismissals) silently drop the viewer's dismissals.
+    // Throw so the WHOLE briefing degrades to the honest empty state instead.
+    if (complianceRes.error) throw readFailure("briefing: compliance documents", complianceRes.error as SupabaseReadError);
+    if (jobsTomorrowRes.error) throw readFailure("briefing: jobs unassigned tomorrow", jobsTomorrowRes.error as SupabaseReadError);
+    if (dismissRes.error) throw readFailure("briefing: dismissals", dismissRes.error as SupabaseReadError);
 
     // --- Overdue invoices --------------------------------------------------
     let overdueCount = 0;
