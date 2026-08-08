@@ -195,7 +195,29 @@ export type PushAdapterResult =
       /** Present only when a 401 forced a refresh; the caller must persist these. */
       refreshed?: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
     }
-  | { ok: false; reason: "not_configured" | "error"; message: string };
+  | {
+      ok: false;
+      reason: "not_configured" | "error";
+      message: string;
+      /**
+       * TERMINAL push failure — the connection's OAuth grant is dead (a token
+       * refresh returned invalid_grant, or the provider still answered 401/403
+       * with no way to recover). The caller persists status='error' so the admin
+       * is prompted to reconnect. Absent/false means the failure is TRANSIENT
+       * (5xx / network / a 2xx contract violation) and the connection stays live
+       * to self-heal on the next event.
+       */
+      terminal?: boolean;
+    };
+
+/**
+ * Whether a still-failing HTTP status after the refresh+retry is TERMINAL — the
+ * grant is rejected (401 Unauthorized / 403 Forbidden) so re-consent is required.
+ * Any other non-ok status (5xx, 429, ...) is a transient provider blip.
+ */
+function statusIsTerminal(status: number): boolean {
+  return status === 401 || status === 403;
+}
 
 /**
  * Create or patch a provider calendar event. `externalEventId` null → INSERT
@@ -250,12 +272,21 @@ export async function pushEventToProvider(params: {
     if (res.status === 401 && tokens.refreshToken) {
       const r = await refreshAccessToken({ provider, refreshToken: tokens.refreshToken });
       if (!r.ok) {
-        return { ok: false, reason: "error", message: `token refresh failed: ${r.message}` };
+        // A dead grant (invalid_grant) propagates as TERMINAL so the caller flips
+        // status='error'; a transient refresh blip does not.
+        return {
+          ok: false,
+          reason: "error",
+          message: `token refresh failed: ${r.message}`,
+          terminal: r.terminal === true,
+        };
       }
       refreshed = r.tokens;
       res = await doFetch(r.tokens.accessToken);
     }
   } catch (e) {
+    // A thrown request is a TRANSIENT network failure — the grant is not proven
+    // dead, so the connection stays live to retry on the next event.
     return {
       ok: false,
       reason: "error",
@@ -264,7 +295,14 @@ export async function pushEventToProvider(params: {
   }
 
   if (!res.ok) {
-    return { ok: false, reason: "error", message: `event push returned ${res.status}` };
+    // Still 401/403 after the refresh+retry (or a 401 with no refresh token to
+    // begin with) ⇒ TERMINAL: the grant is rejected and re-consent is required.
+    return {
+      ok: false,
+      reason: "error",
+      message: `event push returned ${res.status}`,
+      terminal: statusIsTerminal(res.status),
+    };
   }
 
   const json = (await res.json()) as Record<string, unknown>;
@@ -287,7 +325,13 @@ export type DeleteAdapterResult =
       /** Present only when a 401 forced a refresh; the caller must persist these. */
       refreshed?: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
     }
-  | { ok: false; reason: "not_configured" | "error"; message: string };
+  | {
+      ok: false;
+      reason: "not_configured" | "error";
+      message: string;
+      /** TERMINAL delete failure — a dead grant (see PushAdapterResult.terminal). */
+      terminal?: boolean;
+    };
 
 /**
  * DELETE a provider calendar event — the removal half of the one-way push. Called
@@ -341,12 +385,19 @@ export async function deleteEventFromProvider(params: {
     if (res.status === 401 && tokens.refreshToken) {
       const r = await refreshAccessToken({ provider, refreshToken: tokens.refreshToken });
       if (!r.ok) {
-        return { ok: false, reason: "error", message: `token refresh failed: ${r.message}` };
+        // A dead grant (invalid_grant) propagates as TERMINAL; a transient blip does not.
+        return {
+          ok: false,
+          reason: "error",
+          message: `token refresh failed: ${r.message}`,
+          terminal: r.terminal === true,
+        };
       }
       refreshed = r.tokens;
       res = await doFetch(r.tokens.accessToken);
     }
   } catch (e) {
+    // A thrown request is a TRANSIENT network failure — the grant is not proven dead.
     return {
       ok: false,
       reason: "error",
@@ -356,7 +407,13 @@ export async function deleteEventFromProvider(params: {
 
   // Success (204/200) OR already-gone (404/410) — either way the event is absent.
   if (!res.ok && res.status !== 404 && res.status !== 410) {
-    return { ok: false, reason: "error", message: `event delete returned ${res.status}` };
+    // Still 401/403 after the refresh+retry ⇒ TERMINAL: the grant is rejected.
+    return {
+      ok: false,
+      reason: "error",
+      message: `event delete returned ${res.status}`,
+      terminal: statusIsTerminal(res.status),
+    };
   }
 
   return { ok: true, ...(refreshed ? { refreshed } : {}) };

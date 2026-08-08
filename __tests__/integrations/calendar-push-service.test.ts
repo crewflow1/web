@@ -28,7 +28,16 @@ const h = vi.hoisted(() => {
     connections: ConnRow[];
     tokenRow: Record<string, unknown> | null;
     eventLinks: Map<string, { external_event_id: string }>;
-  } = { job: null, rota: null, connections: [], tokenRow: null, eventLinks: new Map() };
+    /** Every UPDATE row written to calendar_connections via the admin client (status writes, sync/error stamps). */
+    connectionUpdates: Record<string, unknown>[];
+  } = {
+    job: null,
+    rota: null,
+    connections: [],
+    tokenRow: null,
+    eventLinks: new Map(),
+    connectionUpdates: [],
+  };
 
   type BuilderState = {
     table: string;
@@ -86,8 +95,10 @@ const h = vi.hoisted(() => {
   const adminResolver: Resolver = (st) => {
     if (st.table === "calendar_connections" && st.op === "select")
       return { data: state.tokenRow, error: null };
-    if (st.table === "calendar_connections" && st.op === "update")
+    if (st.table === "calendar_connections" && st.op === "update") {
+      if (st.row) state.connectionUpdates.push(st.row);
       return { data: null, error: null };
+    }
     if (st.table === "calendar_event_links" && st.op === "select") {
       const key = `${eqVal(st, "connection_id")}|${eqVal(st, "local_kind")}|${eqVal(st, "local_id")}`;
       return { data: state.eventLinks.get(key) ?? null, error: null };
@@ -199,6 +210,7 @@ beforeEach(() => {
     token_expires_at: null,
   };
   h.state.eventLinks = new Map();
+  h.state.connectionUpdates = [];
   fetchMock = vi.fn().mockResolvedValue(jsonRes(200, { id: "evt-1", etag: "etag-1" }));
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -391,6 +403,136 @@ describe("bestEffortDeleteRotaEvent — removes the provider event + 'rota' link
     expect(res).toEqual({ status: "skipped_dark" });
     expect(h.createClientMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("terminal vs transient refresh failure — status='error' persistence + self-heal", () => {
+  // Helper: assert whether a status='error' connection UPDATE was written.
+  const errorWrites = () =>
+    h.state.connectionUpdates.filter((u) => u.status === "error");
+  const connectedWrites = () =>
+    h.state.connectionUpdates.filter((u) => u.status === "connected");
+
+  it("TERMINAL refresh failure during a push persists status='error' + last_error", async () => {
+    // First push → 401 (access token rejected); the refresh then returns 400
+    // invalid_grant ⇒ the grant is DEAD (terminal), no retry can recover it.
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(401, { error: "invalid" })) // event push
+      .mockResolvedValueOnce(jsonRes(400, { error: "invalid_grant" })); // refresh — terminal
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+
+    // The launch-blocking fix: the row is flipped to 'error' so the panel shows
+    // "reconnect required" and pushes stop silently failing forever.
+    const errs = errorWrites();
+    expect(errs.length).toBe(1);
+    expect(typeof errs[0]!.last_error).toBe("string");
+    expect(String(errs[0]!.last_error).length).toBeGreaterThan(0);
+    // No spurious success/self-heal write happened.
+    expect(connectedWrites().length).toBe(0);
+  });
+
+  it("TERMINAL failure (401 with NO refresh token) also persists status='error'", async () => {
+    // No refresh token stored ⇒ a 401 can never be refreshed ⇒ terminal.
+    h.state.tokenRow = { ...(h.state.tokenRow as object), refresh_token: null };
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(jsonRes(401, { error: "invalid" }));
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    expect(errorWrites().length).toBe(1);
+    // Exactly one provider call — no refresh was attempted (no refresh token).
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("TRANSIENT failure (5xx) keeps status='connected' — never writes 'error'", async () => {
+    // A 500 is a provider blip, not a dead grant; no refresh is triggered and the
+    // connection must stay live so the next job save self-heals.
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(jsonRes(500, { error: "boom" }));
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" }); // push result is an error…
+    expect(errorWrites().length).toBe(0); // …but the CONNECTION is NOT marked error.
+  });
+
+  it("TRANSIENT failure (network throw) keeps status='connected'", async () => {
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new Error("ECONNRESET"));
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    expect(errorWrites().length).toBe(0);
+  });
+
+  it("TRANSIENT refresh failure (refresh 5xx) keeps status='connected'", async () => {
+    // 401 on the push, but the refresh itself 503s — a blip, not invalid_grant.
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(401, { error: "expired" })) // event push
+      .mockResolvedValueOnce(jsonRes(503, { error: "unavailable" })); // refresh — transient
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    expect(errorWrites().length).toBe(0);
+  });
+
+  it("a SUCCESSFUL push restores/re-asserts status='connected' and clears last_error (self-heal)", async () => {
+    // A healthy push (default mock returns 200) must stamp status='connected'
+    // with last_error null, so a connection recovering from a prior error heals.
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed" });
+    const heal = connectedWrites();
+    expect(heal.length).toBe(1);
+    expect(heal[0]!.last_error).toBeNull();
+    expect(errorWrites().length).toBe(0);
+  });
+
+  it("TERMINAL failure during a DELETE persists status='error'", async () => {
+    // Seed a link with a successful push, then reset and drive a terminal delete.
+    await pushJobToCalendar("org-1", "job-1");
+    h.state.connectionUpdates = [];
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(401, { error: "invalid" })) // delete
+      .mockResolvedValueOnce(jsonRes(403, { error: "forbidden" })); // refresh — terminal
+
+    const res = await bestEffortDeleteJobEvent("org-1", "job-1");
+    expect(res).toEqual({ status: "error" });
+    expect(errorWrites().length).toBe(1);
+  });
+
+  it("a status='error' connection is not 'connected', so a later push is a skipped_dark no-op until re-consent", async () => {
+    // Once the row is 'error', the connected-provider lookup finds nothing, so the
+    // push neither contacts the provider nor re-writes status — it stays 'error'
+    // until the callback re-consent path restores 'connected'.
+    h.state.connections = [{ ...CONNECTED_GOOGLE, status: "error" }];
+    fetchMock.mockReset();
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "skipped_dark" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(errorWrites().length).toBe(0);
+    expect(connectedWrites().length).toBe(0);
+  });
+});
+
+describe("re-consent + panel wiring (source) — the error state clears and is rendered", () => {
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+
+  it("the OAuth callback upsert restores status='connected' AND clears last_error (re-consent heals a terminal error)", () => {
+    const src = read("app/api/integrations/calendar/[provider]/callback/route.ts");
+    // A single upsert that both sets connected and nulls last_error.
+    expect(src).toMatch(
+      /upsert\([\s\S]*?status:\s*"connected"[\s\S]*?last_error:\s*null[\s\S]*?\}/,
+    );
+  });
+
+  it("the connections panel renders a live 'reconnect required' branch for status==='error'", () => {
+    const src = read("app/(app)/settings/integrations/CalendarConnectionsPanel.tsx");
+    expect(src).toMatch(/conn\.status === "error"/);
+    expect(src).toMatch(/reconnect required/i);
   });
 });
 

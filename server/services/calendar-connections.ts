@@ -19,6 +19,7 @@ import {
   readConnectionTokens,
   persistRefreshedTokens,
   markConnectionSynced,
+  markConnectionError,
   findEventLink,
   upsertEventLink,
   deleteEventLink,
@@ -348,6 +349,14 @@ export async function pushJobToCalendar(
     externalEventId: existingEventId,
   });
   if (!pushed.ok) {
+    // TERMINAL failure (dead grant — refresh token revoked/expired) ⇒ persist
+    // status='error' so the admin sees "reconnect required" and pushes stop
+    // silently failing forever; re-consent (the callback upsert) clears it. A
+    // TRANSIENT failure (5xx / network / contract) leaves status='connected' so
+    // the next job save self-heals — never strand a live connection on one blip.
+    if (pushed.terminal) {
+      await markConnectionError(orgId, active.provider, pushed.message);
+    }
     return {
       ok: false,
       status: "error",
@@ -553,6 +562,14 @@ export async function pushRotaToCalendar(
     externalEventId: existingEventId,
   });
   if (!pushed.ok) {
+    // TERMINAL failure (dead grant — refresh token revoked/expired) ⇒ persist
+    // status='error' so the admin sees "reconnect required" and pushes stop
+    // silently failing forever; re-consent (the callback upsert) clears it. A
+    // TRANSIENT failure (5xx / network / contract) leaves status='connected' so
+    // the next job save self-heals — never strand a live connection on one blip.
+    if (pushed.terminal) {
+      await markConnectionError(orgId, active.provider, pushed.message);
+    }
     return {
       ok: false,
       status: "error",
@@ -703,7 +720,12 @@ async function deleteEventForLocalEntity(
     externalEventId,
   });
   if (!deleted.ok) {
-    // Leave the link row in place so a later retry can still find + remove it.
+    // TERMINAL failure (dead grant) ⇒ persist status='error' (reconnect required);
+    // TRANSIENT ⇒ leave status='connected' so a later event self-heals. Either way
+    // leave the link row in place so a later retry can still find + remove it.
+    if (deleted.terminal) {
+      await markConnectionError(orgId, active.provider, deleted.message);
+    }
     return {
       ok: false,
       status: "error",

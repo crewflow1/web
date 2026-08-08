@@ -393,7 +393,22 @@ export type RefreshResult =
       ok: true;
       tokens: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
     }
-  | { ok: false; reason: "not_configured" | "error"; message: string };
+  | {
+      ok: false;
+      reason: "not_configured" | "error";
+      message: string;
+      /**
+       * TERMINAL failure — the grant itself is dead (invalid_grant / 400 / 401 /
+       * 403 from the token endpoint), so no retry can succeed without a fresh
+       * OAuth consent (the refresh token was revoked or expired). Absent/false
+       * means the failure is TRANSIENT (network blip / 5xx / 429 / a 2xx with no
+       * token) and the caller may retry on a later event WITHOUT treating the
+       * connection as permanently dead. This is what lets a push-time refresh
+       * failure persist status='error' ONLY when re-consent is genuinely required,
+       * instead of silently stranding a live connection on a single blip.
+       */
+      terminal?: boolean;
+    };
 
 /**
  * Refresh an access token with a stored refresh token
@@ -448,7 +463,18 @@ export async function refreshAccessToken(params: {
   }
 
   if (!res.ok) {
-    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+    // invalid_grant surfaces as 400/401/403 on the token endpoint: the refresh
+    // token is revoked/expired and NO retry can recover it — re-consent required
+    // (TERMINAL). Any other status (5xx, 429, ...) is a transient provider blip
+    // and is left retriable so a live connection is not stranded on one failure.
+    const terminal =
+      res.status === 400 || res.status === 401 || res.status === 403;
+    return {
+      ok: false,
+      reason: "error",
+      message: `token refresh returned ${res.status}`,
+      terminal,
+    };
   }
 
   const json = (await res.json()) as {
@@ -457,6 +483,8 @@ export async function refreshAccessToken(params: {
     expires_in?: number;
   };
   if (!json.access_token) {
+    // A 2xx with no token is a provider contract violation, not a dead grant —
+    // treat as TRANSIENT (retriable) rather than permanently stranding the org.
     return { ok: false, reason: "error", message: "token refresh returned no access token" };
   }
 
