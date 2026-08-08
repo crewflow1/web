@@ -121,7 +121,12 @@ export async function persistRefreshedTokens(
   }
 }
 
-/** Update last_sync_at (+ clear last_error) after a successful push. Org + provider pinned. */
+/**
+ * Update last_sync_at + clear last_error AND restore status='connected' after a
+ * successful push/delete. SELF-HEAL: re-asserting 'connected' clears any prior
+ * 'error' state so a connection that recovered (e.g. after re-consent) returns to
+ * healthy on its own — mirroring the bank-sync engine. Org + provider pinned.
+ */
 export async function markConnectionSynced(
   orgId: string,
   provider: CalendarProvider,
@@ -138,9 +143,59 @@ export async function markConnectionSynced(
   };
   await loose
     .from("calendar_connections")
-    .update({ last_sync_at: new Date().toISOString(), last_error: null })
+    .update({
+      status: "connected",
+      last_sync_at: new Date().toISOString(),
+      last_error: null,
+    })
     .eq("org_id", orgId)
     .eq("provider", provider);
+}
+
+/**
+ * Flip a connection to status='error' + record last_error after a TERMINAL push
+ * failure — a dead OAuth grant (refresh token revoked/expired) that no retry can
+ * recover without a fresh re-consent. This is the writer that closes the
+ * launch-blocking gap: before it existed, a terminal refresh failure was swallowed
+ * in-memory and the row stayed 'connected' forever, so the admin never saw
+ * "reconnect required" and every subsequent push failed silently.
+ *
+ * Called ONLY for terminal failures — a transient blip must NOT reach here (the
+ * connection stays 'connected' so the next event self-heals). Service-role, org +
+ * provider pinned. Never throws: a secondary DB blip while recording the error
+ * must not mask the original failure to the (best-effort) caller.
+ */
+export async function markConnectionError(
+  orgId: string,
+  provider: CalendarProvider,
+  message: string,
+): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      update: (row: Record<string, unknown>) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("calendar_connections")
+    .update({
+      status: "error",
+      last_error: message,
+      last_sync_at: new Date().toISOString(),
+    })
+    .eq("org_id", orgId)
+    .eq("provider", provider);
+  if (error) {
+    // Coarse signal only — never the token payload or the raw provider body.
+    console.error("[calendar] failed to record connection error", {
+      provider,
+      message: error.message,
+    });
+  }
 }
 
 /**
