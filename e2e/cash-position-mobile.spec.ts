@@ -33,6 +33,16 @@ const SLUG = "e2e-harness-org";
 const REF_BILL = "CASHOUT-E2E-BILL";
 const REF_PO_BILL = "CASHOUT-E2E-POBILL";
 const PO_NUMBER = "CASHOUT-E2E-PO";
+const BIG_INV_NUMBER = "CASHOUT-E2E-BIGINV";
+const BIG_CUSTOMER = "Cash-Out E2E Big Debtor";
+// A 7-figure receivable: the mobile-overflow case the money-IN tiles must clip.
+// `£6,234,567.00` is a comma-grouped GBP token with no soft-wrap; at text-xl in
+// a 375px `grid-cols-2` tile it exceeds the ~133px content box, so without
+// `truncate` on the value line it grows documentElement.scrollWidth and the
+// whole page scrolls sideways. Seeding a realistic-but-large amount makes the
+// existing 375px scrollWidth assertion below exercise the wide-money case
+// (previously it only ever saw ~£1,200/£1,800 and passed vacuously).
+const BIG_INV_AMOUNT = 6234567; // ex-VAT; total = amount + vat_total (generated).
 
 function svc() {
   return createClient(
@@ -54,6 +64,7 @@ test.describe("cash position on a phone — money out and the net position at 37
     await db.from("finances").delete().eq("org_id", orgId).in("reference", [REF_BILL, REF_PO_BILL]);
     await db.from("payroll_runs").delete().eq("org_id", orgId).eq("period_start", "2020-01-06");
     await db.from("purchase_orders").delete().eq("org_id", orgId).eq("number", PO_NUMBER);
+    await db.from("invoices").delete().eq("org_id", orgId).eq("number", BIG_INV_NUMBER);
 
     let supplierId = (
       await db.from("suppliers").select("id").eq("org_id", orgId).eq("name", "Cash-Out E2E Merchant").maybeSingle()
@@ -118,6 +129,28 @@ test.describe("cash position on a phone — money out and the net position at 37
         net_pay: 800,
       });
     }
+
+    // A 7-figure OUTSTANDING receivable — the wide-money case for the money-IN
+    // tiles. `sent` + a past due date makes it both collectable now AND overdue,
+    // so £6,234,567.00 lands in two `grid-cols-2` money tiles at 375px. This is
+    // what makes the scrollWidth assertion below non-vacuous.
+    let bigCustomerId = (
+      await db.from("customers").select("id").eq("org_id", orgId).eq("name", BIG_CUSTOMER).maybeSingle()
+    ).data?.id;
+    if (!bigCustomerId) {
+      bigCustomerId = (
+        await db.from("customers").insert({ org_id: orgId, name: BIG_CUSTOMER }).select("id").single()
+      ).data?.id;
+    }
+    await db.from("invoices").insert({
+      org_id: orgId,
+      customer_id: bigCustomerId,
+      number: BIG_INV_NUMBER,
+      amount: BIG_INV_AMOUNT,
+      vat_total: 0,
+      status: "sent",
+      due_date: "2020-01-01",
+    });
   });
 
   test("renders the position and the money-out breakdown with no horizontal scroll", async ({ page }) => {
@@ -166,6 +199,39 @@ test.describe("cash position on a phone — money out and the net position at 37
     await expect(bills).toBeVisible();
     await expect(bills.getByText(/Cash-Out E2E Merchant/).first()).toBeVisible();
     await expect(bills.locator('a[href*="/payments"]').first()).toBeVisible();
+
+    // ── The 7-figure receivable reaches the money-IN tiles ──────────────────
+    // Prove the wide-money case is actually on the page (so the scrollWidth
+    // assertion below is exercising it, not passing on a narrow figure).
+    //
+    // The money-in tiles show an ORG-WIDE AGGREGATE — "Collectable now" is
+    // `formatGbp(Σ remaining across every collectable invoice)` (see
+    // computeOrgCashSummary). Other specs seed into this same harness org, so
+    // the seeded £6,234,567 BLENDS into the total and the exact token is not
+    // assertable. Instead: scope to the "Collectable now" tile (our 7-figure
+    // receivable dominates it) and assert its value line renders a millions-GBP
+    // figure — a GBP token with ≥ 2 comma groups, i.e. ≥ £1,000,000 — which is
+    // exactly the wide, un-soft-wrappable case that overflowed. `sent` + a past
+    // due date routes the invoice into both this tile and "Overdue".
+    const moneyIn = page.locator('section[aria-label="Money in"]');
+    await expect(moneyIn).toBeVisible();
+    const collectableTile = moneyIn.locator("> div").filter({ hasText: "Collectable now" });
+    await expect(collectableTile).toBeVisible();
+    // The value line is the only `tabular-nums` <p> in the tile (label + hint
+    // are not tabular). `truncate` clips it visually but innerText keeps the
+    // full underlying figure, so the millions-GBP match is reliable.
+    const collectableValue = await collectableTile.locator("p.tabular-nums").first().innerText();
+    expect(
+      collectableValue.trim(),
+      `the Collectable-now tile should render a 7-figure GBP once the £${BIG_INV_AMOUNT} receivable is seeded, got "${collectableValue}"`,
+    ).toMatch(/£\d{1,3}(,\d{3}){2,}\.\d{2}/);
+    // The tile's value line must clip, not push the page: no money tile may be
+    // wider than the 375px viewport.
+    for (const t of await moneyIn.locator("> div").all()) {
+      const box = await t.boundingBox();
+      expect(box, "each money-in tile should have a box").not.toBeNull();
+      expect(box!.width, "a money-in tile is wider than the 375px viewport").toBeLessThanOrEqual(375);
+    }
 
     // ── 375px: the page body must not scroll sideways ───────────────────────
     // Settle first: reading scrollWidth before web fonts land measures fallback
