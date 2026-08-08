@@ -6,7 +6,7 @@ import {
   type CalendarDbJob,
   type CalendarSupabaseClient,
 } from "@/lib/schedule/calendar-data";
-import { expandRecurring } from "@/lib/schedule/recurring";
+import { expandRecurring, MAX_OCCURRENCES } from "@/lib/schedule/recurring";
 
 /**
  * F-1 launch-blocker regression: /jobs/calendar loaded ALL org jobs with a
@@ -276,5 +276,150 @@ describe("wiring — the query strategy stays window-scoped + paged", () => {
     // org scoping + FK-hinted users embed preserved
     expect(lib).toMatch(/\.eq\("org_id", orgId\)/);
     expect(lib).toContain("users!jobs_assigned_to_fkey");
+  });
+});
+
+/**
+ * F-? launch-blocker regression: expandRecurring() consumed its 60-occurrence
+ * budget WALKING from the parent anchor, not producing in-window occurrences.
+ * A far-anchored open-ended recurring job (weekly anchor >60 weeks before the
+ * window; biweekly >60 fortnights; monthly >60 months) exited the loop before
+ * ever reaching rangeFrom and returned [] — silently vanishing from the month
+ * view, week view AND the schedule API (all three call expandRecurring), while
+ * calendar-data.ts deliberately reads recurring parents UNBOUNDED so the DB
+ * still holds the row. The fix makes the cap WINDOW-relative via a fast-forward
+ * that lands on exactly the dates the naive loop would have produced.
+ *
+ * The prior regression test (above) only anchored ~4 weeks before the window,
+ * so it never exercised this far-anchor class — this block closes that gap.
+ */
+describe("expandRecurring — window-relative cap for far-anchored parents", () => {
+  const from = RANGE.from; // 2026-08-01
+  const to = RANGE.to; // 2026-08-31
+
+  const inWindow = (d: string) => d >= from && d <= to;
+
+  // Naive, uncapped, step-by-step reference expansion — the ground truth the
+  // fast-forward must match exactly (just skipping the pre-window dates).
+  function naiveExpand(
+    anchor: string,
+    pattern: "weekly" | "biweekly" | "monthly" | "quarterly",
+    endDate?: string,
+  ): string[] {
+    const stepDays = pattern === "weekly" ? 7 : pattern === "biweekly" ? 14 : 0;
+    const stepMonths = pattern === "monthly" ? 1 : pattern === "quarterly" ? 3 : 0;
+    const stop = endDate ? new Date(`${endDate}T00:00:00Z`) : null;
+    const toD = new Date(`${to}T00:00:00Z`);
+    let c = new Date(`${anchor}T00:00:00Z`);
+    const out: string[] = [];
+    // Unbounded walk (test-only) so we can compare dates independent of the cap.
+    for (let i = 0; i < 100_000; i++) {
+      if (stop && c > stop) break;
+      if (c > toD) break;
+      const iso = c.toISOString().slice(0, 10);
+      if (iso >= from) out.push(iso);
+      if (stepDays) {
+        c = new Date(c);
+        c.setUTCDate(c.getUTCDate() + stepDays);
+      } else {
+        c = new Date(c);
+        c.setUTCMonth(c.getUTCMonth() + stepMonths);
+      }
+    }
+    return out;
+  }
+
+  it("weekly parent anchored WAY more than 60 weeks before the window still expands", () => {
+    // 2024-01-01 is ~83 weeks before 2026-08-01 — old loop returned [].
+    const anchor = "2024-01-01"; // Monday
+    const occ = expandRecurring(anchor, { pattern: "weekly" }, from, to);
+
+    expect(occ.length).toBeGreaterThan(0);
+    for (const d of occ) expect(inWindow(d)).toBe(true);
+    expect(occ.length).toBeLessThanOrEqual(MAX_OCCURRENCES);
+    // Date-identity: exactly the naive in-window dates, in order.
+    expect(occ).toEqual(naiveExpand(anchor, "weekly"));
+  });
+
+  it("biweekly parent anchored WAY more than 60 fortnights before the window still expands", () => {
+    // ~4.5 years back = >100 fortnights.
+    const anchor = "2022-01-03"; // Monday
+    const occ = expandRecurring(anchor, { pattern: "biweekly" }, from, to);
+
+    expect(occ.length).toBeGreaterThan(0);
+    for (const d of occ) expect(inWindow(d)).toBe(true);
+    expect(occ.length).toBeLessThanOrEqual(MAX_OCCURRENCES);
+    expect(occ).toEqual(naiveExpand(anchor, "biweekly"));
+  });
+
+  it("monthly parent anchored WAY more than 60 months before the window still expands (path-dependent day-of-month preserved)", () => {
+    // 2019-01-31: >90 months back AND a 31st anchor, so the fast-forward must
+    // reproduce the loop's day-of-month rollover exactly (Jan31→Mar3→Apr3…).
+    const anchor = "2019-01-31";
+    const occ = expandRecurring(anchor, { pattern: "monthly" }, from, to);
+
+    expect(occ.length).toBeGreaterThan(0);
+    for (const d of occ) expect(inWindow(d)).toBe(true);
+    expect(occ.length).toBeLessThanOrEqual(MAX_OCCURRENCES);
+    // Byte-identical to the naive iterative walk (proves no single-jump drift).
+    expect(occ).toEqual(naiveExpand(anchor, "monthly"));
+  });
+
+  it("quarterly far-anchored parent expands and matches the naive walk", () => {
+    const anchor = "2010-08-15"; // 16 years back, >60 quarters
+    const occ = expandRecurring(anchor, { pattern: "quarterly" }, from, to);
+    expect(occ.length).toBeGreaterThan(0);
+    for (const d of occ) expect(inWindow(d)).toBe(true);
+    expect(occ.length).toBeLessThanOrEqual(MAX_OCCURRENCES);
+    expect(occ).toEqual(naiveExpand(anchor, "quarterly"));
+  });
+
+  it("far-anchored parent with an end_date BEFORE the window still yields [] (end_date honoured)", () => {
+    // Weekly anchored years back but ended before the window opens.
+    expect(
+      expandRecurring(
+        "2024-01-01",
+        { pattern: "weekly", end_date: "2026-07-15" },
+        from,
+        to,
+      ),
+    ).toEqual([]);
+    // Monthly variant (exercises the month fast-forward's stop guard).
+    expect(
+      expandRecurring(
+        "2019-01-31",
+        { pattern: "monthly", end_date: "2026-07-31" },
+        from,
+        to,
+      ),
+    ).toEqual([]);
+  });
+
+  it("end_date INSIDE the window truncates a far-anchored parent to the honoured tail", () => {
+    const anchor = "2024-01-01"; // weekly, far back
+    const endDate = "2026-08-14";
+    const occ = expandRecurring(anchor, { pattern: "weekly", end_date: endDate }, from, to);
+    expect(occ.length).toBeGreaterThan(0);
+    for (const d of occ) {
+      expect(inWindow(d)).toBe(true);
+      expect(d <= endDate).toBe(true);
+    }
+    expect(occ).toEqual(naiveExpand(anchor, "weekly", endDate));
+  });
+
+  it("the anti-blowup cap still holds: a daily-dense-ish far-anchored parent never exceeds MAX_OCCURRENCES", () => {
+    // Weekly across a 1-year window from a far anchor → ~52 occurrences, but
+    // assert the cap is the ceiling regardless.
+    const occ = expandRecurring("2020-01-06", { pattern: "weekly" }, "2026-01-01", "2027-12-31");
+    expect(occ.length).toBeLessThanOrEqual(MAX_OCCURRENCES);
+  });
+
+  it("near-anchor parents are unaffected (no fast-forward when anchor is inside/after the window)", () => {
+    // Anchor inside the window: first occurrence is the anchor itself.
+    const occ = expandRecurring("2026-08-03", { pattern: "weekly" }, from, to);
+    expect(occ[0]).toBe("2026-08-03");
+    expect(occ).toEqual(naiveExpand("2026-08-03", "weekly"));
+    // Anchor after the window: nothing.
+    expect(expandRecurring("2026-09-10", { pattern: "weekly" }, from, to)).toEqual([]);
   });
 });
