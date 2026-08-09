@@ -331,6 +331,73 @@ function scanRepo(orgTables: Set<string>): ReadOffender[] {
 }
 
 // ---------------------------------------------------------------------------
+// SERVICE-LAYER sweep (the blind-spot closure). The route-file scan above sees
+// only reads that live IN a dynamic route file. But a detail page can DELEGATE
+// its primary subject read to a `server/services/*` or `lib/**` loader and carry
+// no `.from` of its own (exactly how jobs/[id]/billing leaked: the page called
+// loadJobBilling and the unpinned `.from("jobs").eq("id", …)` lived in
+// server/services/billing.ts, invisible to the route scan). This walker runs the
+// SAME detector over every service/lib source, so an unpinned by-id single-row
+// read on an org-scoped table cannot hide behind a service-layer delegation.
+// ---------------------------------------------------------------------------
+
+const SERVICE_LIB_ROOTS = ["server/services", "lib"];
+
+function walkTsFiles(dir: string, acc: string[]): void {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (["node_modules", ".next", "__tests__"].includes(e.name)) continue;
+      walkTsFiles(full, acc);
+    } else if (/\.ts$/.test(e.name) && !/\.d\.ts$/.test(e.name)) {
+      acc.push(full);
+    }
+  }
+}
+
+function scanServiceLayer(orgTables: Set<string>): ReadOffender[] {
+  const files: string[] = [];
+  for (const root of SERVICE_LIB_ROOTS) walkTsFiles(join(ROOT, root), files);
+  const out: ReadOffender[] = [];
+  for (const f of files) {
+    out.push(
+      ...findReadOffendersInSource(
+        f.replace(ROOT + "/", ""),
+        readFileSync(f, "utf8"),
+        orgTables,
+      ),
+    );
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// SERVICE_ALLOWLIST — genuinely-safe by-id tenant single-row reads in a
+// server/services or lib loader that intentionally do NOT carry an in-statement
+// `.eq("org_id", …)`. Same key shape and same TIGHT-list discipline as ALLOWLIST
+// above: a stale entry (no live matching site) fails the suite. The canonical
+// safe pattern here is RESOLVE-THEN-COMPARE — a mutation gate that SELECTs
+// `org_id` and refuses a mismatch (`if (row.org_id !== ctx.org.id) return
+// not_found`) before writing, so an in-chain pin would collapse the deliberate
+// forbidden/not-found handling. These are WRITE gates, not detail-route READ
+// loaders; the class this guard closes (a rendered subject) does not apply.
+// ---------------------------------------------------------------------------
+const SERVICE_ALLOWLIST: Record<string, string> = {
+  // addBlueprintRevision: reads the drawing shell to gate an upload, then
+  // `if (shell.org_id !== ctx.org.id) return { ok:false, error:"Drawing not
+  // found." }` (blueprints.ts) BEFORE the version insert. The read selects
+  // org_id precisely to run that check; it is a write gate, not a rendered read.
+  "server/services/blueprints.ts::blueprints::input.blueprintId":
+    "resolve-then-compare write gate: shell.org_id is checked against ctx.org.id (return not-found on mismatch) before the revision insert; the read selects org_id to run that check",
+  // createJobDocument: reads the parent job to gate a document create, then
+  // `if (!jobRow || jobRow.org_id !== ctx.org.id) return { ok:false,
+  // error:"job_not_found" }` (job-documents.ts) BEFORE the insert. Same
+  // resolve-then-compare write-gate shape; not a rendered detail read.
+  "server/services/job-documents.ts::jobs::input.jobId":
+    "resolve-then-compare write gate: jobRow.org_id is checked against ctx.org.id (return job_not_found on mismatch) before the document insert; the read selects org_id to run that check",
+};
+
+// ---------------------------------------------------------------------------
 // ALLOWLIST — genuinely-safe by-id tenant single-row reads in a dynamic detail
 // route that intentionally do NOT carry an in-statement `.eq("org_id", …)`.
 // Each entry states WHY it cannot leak across the active-org boundary. Key
@@ -532,6 +599,133 @@ describe("active-org read-pin guard · every dynamic detail route is swept", () 
         ? ""
         : `ALLOWLIST entries no longer match any site (fixed or moved — delete ` +
             `these):\n${stale.map((k) => `  • ${k}`).join("\n")}`,
+    ).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// BLIND-SPOT CLOSURE #1 — the jobs/[id]/** detail family must route its subject
+// through the org-pinned chokepoint. This is the class that let jobs/[id]/billing
+// slip: the page carried no `.from` (it delegated to loadJobBilling), so the
+// route-file scan above saw nothing, and the unpinned read lived in the service
+// layer. The rule for this family is simple and already followed by every OTHER
+// sub-page: resolve the subject via loadJobForOrg(...) + notFound() (the
+// lib/jobs/load.ts chokepoint), OR pin org_id on an in-page by-id jobs read.
+// ===========================================================================
+describe("active-org read-pin guard · jobs/[id]/** subject goes through the org chokepoint", () => {
+  const orgTables = deriveOrgScopedTables();
+  const jobPages: string[] = [];
+  (function collect(dir: string) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) collect(full);
+      else if (e.name === "page.tsx") jobPages.push(full);
+    }
+  })(join(ROOT, "app/(app)/jobs/[id]"));
+
+  it("finds the jobs/[id] sub-page family", () => {
+    // If this ever collapses to ~0 the assertion below becomes vacuous.
+    expect(jobPages.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("every jobs/[id]/** page resolves its subject via loadJobForOrg + notFound() or pins org_id in-page", () => {
+    const bad: string[] = [];
+    for (const f of jobPages) {
+      const rel = f.replace(ROOT + "/", "");
+      const raw = readFileSync(f, "utf8");
+      // Accept both the plain call and the generic form `loadJobForOrg<{…}>(`.
+      const usesChokepoint =
+        /loadJobForOrg\s*[<(]/.test(raw) && /notFound\s*\(/.test(raw);
+      // In-page fallback: a jobs by-id read that is itself org-pinned (so the
+      // detector reports no offender for this file) AND actually reads jobs.
+      const stripped = stripComments(raw);
+      const pinsInPage =
+        /\.from\(\s*["']jobs["']/.test(stripped) &&
+        HAS_ORG.test(stripped) &&
+        findReadOffendersInSource(rel, raw, orgTables).length === 0;
+      if (!(usesChokepoint || pinsInPage)) bad.push(rel);
+    }
+    expect(
+      bad,
+      bad.length === 0
+        ? ""
+        : `jobs/[id]/** page(s) that neither route the subject through ` +
+            `loadJobForOrg(...) + notFound() nor pin org_id on an in-page jobs ` +
+            `read — a delegated (no-.from) page like this is exactly how ` +
+            `jobs/[id]/billing leaked another org's billing:\n` +
+            bad.map((b) => `  • ${b}`).join("\n"),
+    ).toHaveLength(0);
+  });
+
+  it("RED-calibration: jobs/[id]/billing without its loadJobForOrg gate is flagged", () => {
+    // Prove the chokepoint assertion is not vacuous for the file that leaked:
+    // strip the loadJobForOrg gate from billing and it must fail the rule.
+    const rel = "app/(app)/jobs/[id]/billing/page.tsx";
+    const raw = readFileSync(join(ROOT, rel), "utf8");
+    const stripped = raw
+      .replace(/loadJobForOrg/g, "loadJobBilling_noGate")
+      .replace(/\bnotFound\b/g, "noop");
+    const usesChokepoint =
+      /loadJobForOrg\s*\(/.test(stripped) && /notFound\s*\(/.test(stripped);
+    const s2 = stripComments(stripped);
+    const pinsInPage =
+      /\.from\(\s*["']jobs["']/.test(s2) &&
+      HAS_ORG.test(s2) &&
+      findReadOffendersInSource(rel, stripped, orgTables).length === 0;
+    expect(usesChokepoint || pinsInPage).toBe(false);
+  });
+});
+
+// ===========================================================================
+// BLIND-SPOT CLOSURE #2 — the service/lib loader sweep. Runs the SAME by-id
+// single-row read detector over server/services/*.ts and lib/**/*.ts, so an
+// unpinned subject read cannot hide behind a delegating (no-.from) detail page.
+// This is the guard that would have caught loadJobBilling directly.
+// ===========================================================================
+describe("active-org read-pin guard · service/lib loaders pin org on by-id reads", () => {
+  const orgTables = deriveOrgScopedTables();
+  const offenders = scanServiceLayer(orgTables);
+
+  it("RED-calibration: server/services/billing.ts loadJobBilling without its org pins is flagged", () => {
+    // The exact leak this fix closes. Strip every in-statement org pin from the
+    // billing service and the detector must flag the subject `jobs` by-id read —
+    // proving the sweep genuinely reaches the service layer and is not vacuous.
+    const rel = "server/services/billing.ts";
+    const raw = readFileSync(join(ROOT, rel), "utf8");
+    const stripped = raw.replace(/\.eq\(\s*["']org_id["'][^)]*\)/g, "");
+    const found = findReadOffendersInSource(rel, stripped, orgTables);
+    expect(
+      found.some((o) => o.table === "jobs"),
+      "with the org pin stripped the detector must flag billing.ts's jobs by-id read",
+    ).toBe(true);
+  });
+
+  it("every by-id tenant single-row read in a service/lib loader is pinned or allowlisted", () => {
+    const unlisted = offenders.filter((o) => !(o.key in SERVICE_ALLOWLIST));
+    const report = unlisted
+      .map((o) => `  • ${o.rel}\n      ${o.table} → ${o.chain}\n      key: ${o.key}`)
+      .join("\n");
+    expect(
+      unlisted,
+      unlisted.length === 0
+        ? ""
+        : `Unpinned by-id tenant single-row read(s) on org-scoped table(s) in a ` +
+            `service/lib loader — a delegating detail page renders these without ` +
+            `an active-org pin. Add .eq("org_id", orgId) to the read, or (if a ` +
+            `genuinely-safe resolve-then-compare write gate) add a reasoned ` +
+            `SERVICE_ALLOWLIST entry:\n${report}`,
+    ).toHaveLength(0);
+  });
+
+  it("has no stale SERVICE_ALLOWLIST entries (each must still match a real site)", () => {
+    const liveKeys = new Set(offenders.map((o) => o.key));
+    const stale = Object.keys(SERVICE_ALLOWLIST).filter((k) => !liveKeys.has(k));
+    expect(
+      stale,
+      stale.length === 0
+        ? ""
+        : `SERVICE_ALLOWLIST entries no longer match any site (fixed or moved — ` +
+            `delete these):\n${stale.map((k) => `  • ${k}`).join("\n")}`,
     ).toHaveLength(0);
   });
 });

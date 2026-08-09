@@ -116,6 +116,7 @@ export async function listMySupportTickets(
 // ---------------------------------------------------------------------
 
 export async function loadMySupportTicket(
+  orgId: string,
   ticketId: string,
 ): Promise<CustomerSupportTicketDetail | null> {
   const supabase = await createClient();
@@ -143,6 +144,13 @@ export async function loadMySupportTicket(
         "customer:customers ( name )",
       ].join(", "),
     )
+    // ACTIVE-org read-pin (#456 read-side class). RLS here is
+    // `org_id in current_org_ids()`, which admits EVERY org the viewer belongs
+    // to — so a bare `.eq("id", …)` returns, for a dual-org member, the OTHER
+    // org's ticket (subject + full message thread + customer name) rendered
+    // under the active org's shell. Pinning `org_id` makes a foreign ticket
+    // indistinguishable from a missing one, exactly like the reply action does.
+    .eq("org_id", orgId)
     .eq("id", ticketId)
     .maybeSingle();
   if (error) {
